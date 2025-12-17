@@ -808,6 +808,7 @@ WantedBy=multi-user.target
 
         print("\n🗄️  MinIO Cluster Status\n")
         print_table_header(columns, widths)
+        servers = []
 
         for inst_name in instances:
             if inst_name not in self.configs:

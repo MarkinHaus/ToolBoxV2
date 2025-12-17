@@ -206,18 +206,17 @@ class SmartInitManager:
                 if not docs_system:
                     return {"status": "not_available"}
 
-                index_file = docs_system.index_file
-                use_cached = self.config.use_cached_index and index_file.exists()
+                use_cached = self.config.use_cached_index
 
                 if use_cached:
                     quick_info("MCP Docs", "Found cached index, loading...")
                     # Load existing index without rebuild
-                    result = await tb_app.initial_docs_parse(update_index=False)
+                    result = await tb_app.docs_init()
                     action = "cached_load"
                 else:
                     quick_info("MCP Docs", "Building fresh documentation index...")
                     # Build new index
-                    result = await tb_app.initial_docs_parse(update_index=True)
+                    result = await tb_app.docs_init(True)
                     action = "fresh_build"
 
                 if result.is_ok():
@@ -874,9 +873,8 @@ This ToolBoxV2 MCP server provides comprehensive access to a sophisticated devel
 ### Documentation Discovery
 ```
 1. docs_system_status() → Check index status
-2. get_update_suggestions() → Find improvement opportunities
-3. docs_reader(section_id="direct_access") → Fast specific retrieval
-4. optional source_code_lookup(element_name="target", element_type="class") → Code context lookup
+2. docs_reader(section_id="direct_access") → Fast specific retrieval
+3. optional source_code_lookup(element_name="target", element_type="class") → Code context lookup
 ```
 
 ### Complex Workflow Pattern
@@ -1133,18 +1131,6 @@ This ToolBoxV2 MCP server provides comprehensive access to a sophisticated devel
                         }
                     ),
                     types.Tool(
-                        name="get_update_suggestions",
-                        description="AI-powered documentation improvement suggestions",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "force_scan": {"type": "boolean", "default": False, "description": "Force full project scan"},
-                                "priority_filter": {"type": "array", "items": {"type": "string", "enum": ["high", "medium", "low"]}, "description": "Filter by priority"},
-                                "max_suggestions": {"type": "integer", "default": 50, "minimum": 1, "maximum": 200}
-                            }
-                        }
-                    ),
-                    types.Tool(
                         name="source_code_lookup",
                         description="Intelligent source code lookup with caching and smart search",
                         inputSchema={
@@ -1261,10 +1247,8 @@ This ToolBoxV2 MCP server provides comprehensive access to a sophisticated devel
                     result = await self._handle_docs_reader(arguments)
                 elif name == "docs_writer":
                     result = await self._handle_docs_writer(arguments)
-                elif name == "get_update_suggestions":
-                    result = await self._handle_update_suggestions(arguments)
                 elif name == "source_code_lookup":
-                    result = self._handle_source_code_lookup(arguments)
+                    result = await self._handle_source_code_lookup(arguments)
                 elif name == "toolbox_status":
                     result = await self._handle_toolbox_status(arguments)
                 elif name == "toolbox_info":
@@ -1318,15 +1302,12 @@ This ToolBoxV2 MCP server provides comprehensive access to a sophisticated devel
             quick_info("Execute", f"Running {module_name}.{function_name}")
 
             with MCPSafeIO():
-                result = await asyncio.wait_for(
-                    self.tb_app.a_run_any(
+                result = await self.tb_app.a_run_any(
                         (module_name, function_name),
                         args_=arguments.get("args", []),
                         get_results=arguments.get("get_results", False),
                         **arguments.get("kwargs", {})
-                    ),
-                    timeout=timeout
-                )
+                    )
 
             # Format result
             if arguments.get("get_results", False) and hasattr(result, 'as_dict'):
@@ -1377,15 +1358,14 @@ This ToolBoxV2 MCP server provides comprehensive access to a sophisticated devel
                     section_id=arguments.get("section_id"),
                     file_path=arguments.get("file_path"),
                     tags=arguments.get("tags"),
-                    include_source_refs=arguments.get("include_source_refs", True),
                     format_type=arguments.get("format_type", "structured"),
                     max_results=min(arguments.get("max_results", 20), 100)
                 ),
                 timeout=15.0
             )
 
-            if result.is_ok():
-                data = result.get()
+            if 'error' not in result:
+                data = result
                 if arguments.get("format_type") == "markdown":
                     content = data
                 else:
@@ -1407,8 +1387,8 @@ This ToolBoxV2 MCP server provides comprehensive access to a sophisticated devel
 
                 return [types.TextContent(type="text", text=content)]
             else:
-                quick_warning("Docs", f"Query failed: {result.error}")
-                return [types.TextContent(type="text", text=f"⚠️ Documentation query error: {result.error}")]
+                quick_warning("Docs", f"Query failed: {result}")
+                return [types.TextContent(type="text", text=f"⚠️ Documentation query error: {result}")]
 
         except asyncio.TimeoutError:
             quick_warning("Docs", "Documentation query timed out")
@@ -1420,107 +1400,33 @@ This ToolBoxV2 MCP server provides comprehensive access to a sophisticated devel
     async def _handle_docs_writer(self, arguments: Dict) -> List[types.TextContent]:
         """Enhanced docs writer with progress notifications"""
         try:
-            action = arguments["action"]
+            action = arguments.pop("action")
             quick_info("Docs Writer", f"Starting {action} operation...")
 
             result = await asyncio.wait_for(
                 self.tb_app.docs_writer(
                     action=action,
-                    file_path=arguments.get("file_path"),
-                    section_title=arguments.get("section_title"),
-                    content=arguments.get("content"),
-                    source_file=arguments.get("source_file"),
-                    auto_generate=arguments.get("auto_generate", False),
-                    position=arguments.get("position"),
-                    level=arguments.get("level", 2)
+                    **arguments
                 ),
                 timeout=60.0
             )
 
-            if result.is_ok():
-                data = result.get()
+            if 'error' not in result:
+                data = result
                 quick_success("Docs Writer", f"Successfully completed {action}")
                 return [types.TextContent(
                     type="text",
                     text=f"✅ **Documentation {action} completed successfully**\n\n```json\n{json.dumps(data, indent=2)}\n```"
                 )]
             else:
-                quick_error("Docs Writer", f"{action} failed: {result.error}")
-                return [types.TextContent(type="text", text=f"❌ Documentation {action} failed: {result.error}")]
+                quick_error("Docs Writer", f"{action} failed: {result}")
+                return [types.TextContent(type="text", text=f"❌ Documentation {action} failed: {result}")]
 
         except Exception as e:
             quick_error("Docs Writer", f"Writer error: {str(e)[:100]}")
             return [types.TextContent(type="text", text=f"❌ Documentation writer error: {e}")]
 
-    async def _handle_update_suggestions(self, arguments: Dict) -> List[types.TextContent]:
-        """Enhanced update suggestions with progress tracking"""
-        try:
-            force_scan = arguments.get("force_scan", False)
-            max_suggestions = min(arguments.get("max_suggestions", 50), 200)
-
-            if force_scan:
-                quick_info("Suggestions", "Performing comprehensive project scan...")
-            else:
-                quick_info("Suggestions", "Analyzing documentation for improvements...")
-
-            result = await asyncio.wait_for(
-                self.tb_app.get_update_suggestions(
-                    force_scan=force_scan,
-                    priority_filter=arguments.get("priority_filter"),
-                    max_suggestions=max_suggestions
-                ),
-                timeout=90.0
-            )
-
-            if result.is_ok():
-                data = result.get()
-                suggestions = data.get('suggestions', [])[:max_suggestions]
-
-                # Format with rich presentation
-                content = f"""# 📋 Documentation Update Suggestions
-
-## 📊 Analysis Summary
-- **Total suggestions**: {data.get('total_suggestions', 0)} (showing {len(suggestions)})
-- **Analysis type**: {"Full project scan" if force_scan else "Git-based changes"}
-- **Priority distribution**:
-  - 🔴 High: {len([s for s in suggestions if s.get('priority') == 'high'])}
-  - 🟡 Medium: {len([s for s in suggestions if s.get('priority') == 'medium'])}
-  - 🟢 Low: {len([s for s in suggestions if s.get('priority') == 'low'])}
-
-## 📈 Index Statistics
-- **Code elements**: {data.get('index_stats', {}).get('code_elements', 0)}
-- **Doc sections**: {data.get('index_stats', {}).get('doc_sections', 0)}
-- **Linked sections**: {data.get('index_stats', {}).get('linked_sections', 0)}
-
-## 🎯 Top Suggestions
-"""
-
-                for i, suggestion in enumerate(suggestions[:15], 1):
-                    priority_icon = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(suggestion.get('priority', 'low'), "⚪")
-                    content += f"""
-### {i}. {priority_icon} {suggestion.get('suggestion', 'Unknown')}
-- **Priority**: {suggestion.get('priority', 'unknown')}
-- **Type**: {suggestion.get('type', 'unknown')}
-- **Action**: `{suggestion.get('action', 'unknown')}`
-"""
-
-                if len(suggestions) > 15:
-                    content += f"\n... and {len(suggestions) - 15} more suggestions available"
-
-                quick_success("Suggestions", f"Generated {len(suggestions)} improvement suggestions")
-                return [types.TextContent(type="text", text=content)]
-            else:
-                quick_error("Suggestions", f"Analysis failed: {result.error}")
-                return [types.TextContent(type="text", text=f"❌ Suggestion analysis failed: {result.error}")]
-
-        except asyncio.TimeoutError:
-            quick_warning("Suggestions", "Analysis timed out after 90 seconds")
-            return [types.TextContent(type="text", text="⏱️ Suggestion analysis timed out. Try with force_scan=false.")]
-        except Exception as e:
-            quick_error("Suggestions", f"Analysis error: {str(e)[:100]}")
-            return [types.TextContent(type="text", text=f"❌ Error generating suggestions: {e}")]
-
-    def _handle_source_code_lookup(self, arguments: Dict) -> List[types.TextContent]:
+    async def _handle_source_code_lookup(self, arguments: Dict) -> List[types.TextContent]:
         """Enhanced source code lookup with caching and notifications"""
         try:
             element_name = arguments.get("element_name")
@@ -1531,16 +1437,16 @@ This ToolBoxV2 MCP server provides comprehensive access to a sophisticated devel
 
             quick_info("Code Lookup", f"Searching for {element_name} in source code...")
 
-            result = self.tb_app.source_code_lookup(
-                element_name=element_name,
+            result = await self.tb_app.docs_lookup(
+                name=element_name,
                 file_path=file_path,
                 element_type=element_type,
                 max_results=max_results,
-                return_code_block=return_code_block
+                include_code=return_code_block
             )
 
-            if result.is_ok():
-                data = result.get()
+            if 'error' not in result:
+                data = result
                 matches = data.get("matches", [])
                 match_count = len(matches)
                 quick_success("Code Lookup", f"Found {match_count} matches for {element_name}")
@@ -1548,8 +1454,8 @@ This ToolBoxV2 MCP server provides comprehensive access to a sophisticated devel
                 content = f"Found {match_count} matches for {element_name}:\n\n```json\n{json.dumps(data, indent=2)}\n```"
                 return [types.TextContent(type="text", text=content)]
             else:
-                quick_error("Code Lookup", f"Lookup failed: {result.error}")
-                return [types.TextContent(type="text", text=f"❌ Code lookup failed: {result.error}")]
+                quick_error("Code Lookup", f"Lookup failed: {result}")
+                return [types.TextContent(type="text", text=f"❌ Code lookup failed: {result}")]
         except Exception as e:
             quick_error("Code Lookup", f"Lookup error: {str(e)[:100]}")
             return [types.TextContent(type="text", text=f"❌ Code lookup error: {e}")]

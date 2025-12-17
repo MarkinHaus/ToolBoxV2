@@ -203,9 +203,11 @@ class App(AppType, metaclass=Singleton):
 
         from .system.session import Session
         self.session: Session = Session(self.get_username())
+        self.logger.info(f"Session created for {self.session.username}")
         if len(sys.argv) > 2 and sys.argv[1] == "db":
             return
         from .extras.blobs import create_server_storage, create_desktop_storage, create_offline_storage
+        # TODO detect db status and (auto start)
         self.root_blob_storage = create_server_storage() if os.getenv("IS_OFFLINE_DB", "false")!="true" else create_offline_storage()
         self.desktop_blob_storage = create_desktop_storage() if os.getenv("IS_OFFLINE_DB", "false")!="true" else create_offline_storage()
         self.mkdocs = add_to_app(self)
@@ -2448,5 +2450,6 @@ class App(AppType, metaclass=Singleton):
             await self._rust_ws_bridge.broadcast_message(channel_id, json.dumps(payload), source_conn_id)
         except Exception as e:
             self.logger.error(f"Failed to broadcast WebSocket message to channel {channel_id}: {e}", exc_info=True)
+
 
 

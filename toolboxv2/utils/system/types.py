@@ -15,7 +15,7 @@ from dataclasses import field
 from datetime import timedelta, datetime
 from inspect import signature
 from types import ModuleType
-from typing import Any, TypeVar, Dict
+from typing import Any, TypeVar, Dict, Coroutine
 
 import psutil
 from pydantic import BaseModel
@@ -1628,7 +1628,11 @@ class AppType:
         "provider::": "provider::",
     }
 
-    defaults: dict[str, (bool or dict or dict[str, dict[str, str]] or str or list[str] or list[list]) | None] = {
+    defaults: dict[
+        str,
+        (bool or dict or dict[str, dict[str, str]] or str or list[str] or list[list])
+        | None,
+    ] = {
         "MACRO": list[str],
         "MACRO_C": dict,
         "HELPER": dict,
@@ -1665,13 +1669,6 @@ class AppType:
     websocket_handlers: dict[str, dict[str, Callable]] = {}
     _rust_ws_bridge: Any = None
 
-    docs_reader: Callable | None = None
-    docs_writer: Callable | None = None
-    get_update_suggestions: Callable | None = None
-    auto_update_docs: Callable | None = None
-    source_code_lookup: Callable | None = None
-
-    initial_docs_parse: Callable | None = None
 
     def __init__(self, prefix=None, args=None):
         self.args_sto = args
@@ -2309,35 +2306,35 @@ class AppType:
             interface = "tb"
         if test_only and 'test' not in self.id:
             return lambda *args, **kwargs: args
-        return self._create_decorator(interface,
-                                      name,
-                                      mod_name,
-                                      version=version,
-                                      test=test,
-                                      restrict_in_virtual_mode=restrict_in_virtual_mode,
-                                      api=api,
-                                      initial=initial,
-                                      exit_f=exit_f,
-                                      test_only=test_only,
-                                      memory_cache=memory_cache,
-                                      file_cache=file_cache,
-                                      row=row,
-                                      request_as_kwarg=request_as_kwarg,
-                                      state=state,
-                                      level=level,
-                                      memory_cache_max_size=memory_cache_max_size,
-                                      memory_cache_ttl=memory_cache_ttl,
-                                      samples=samples,
-                                      interface=interface,
-                                      pre_compute=pre_compute,
-                                      post_compute=post_compute,
-                                      api_methods=api_methods,
-                                      websocket_handler=websocket_handler,
-                                      websocket_context=websocket_context)
+        return self._create_decorator(
+            interface,
+            name,
+            mod_name,
+            version=version,
+            test=test,
+            restrict_in_virtual_mode=restrict_in_virtual_mode,
+            api=api,
+            initial=initial,
+            exit_f=exit_f,
+            test_only=test_only,
+            memory_cache=memory_cache,
+            file_cache=file_cache,
+            row=row,
+            request_as_kwarg=request_as_kwarg,
+            state=state,
+            level=level,
+            memory_cache_max_size=memory_cache_max_size,
+            memory_cache_ttl=memory_cache_ttl,
+            samples=samples,
+            interface=interface,
+            pre_compute=pre_compute,
+            post_compute=post_compute,
+            api_methods=api_methods,
+            websocket_handler=websocket_handler,
+            websocket_context=websocket_context,
+        )
 
     def print_functions(self, name=None):
-
-
         if not self.functions:
             return
 
@@ -2346,21 +2343,27 @@ class AppType:
                 if not isinstance(data, dict):
                     continue
 
-                func_type = data.get('type', 'Unknown')
-                func_level = 'r' if data['level'] == -1 else data['level']
-                api_status = 'Api' if data.get('api', False) else 'Non-Api'
+                func_type = data.get("type", "Unknown")
+                func_level = "r" if data["level"] == -1 else data["level"]
+                api_status = "Api" if data.get("api", False) else "Non-Api"
 
-                print(f"  Function: {func_name}{data.get('signature', '()')}; "
-                      f"Type: {func_type}, Level: {func_level}, {api_status}")
+                print(
+                    f"  Function: {func_name}{data.get('signature', '()')}; "
+                    f"Type: {func_type}, Level: {func_level}, {api_status}"
+                )
 
         if name is not None:
             functions = self.functions.get(name)
             if functions is not None:
-                print(f"\nModule: {name}; Type: {functions.get('app_instance_type', 'Unknown')}")
+                print(
+                    f"\nModule: {name}; Type: {functions.get('app_instance_type', 'Unknown')}"
+                )
                 helper(functions)
                 return
         for module, functions in self.functions.items():
-            print(f"\nModule: {module}; Type: {functions.get('app_instance_type', 'Unknown')}")
+            print(
+                f"\nModule: {module}; Type: {functions.get('app_instance_type', 'Unknown')}"
+            )
             helper(functions)
 
     def save_autocompletion_dict(self):
@@ -2374,6 +2377,69 @@ class AppType:
 
     def save_registry_as_enums(self, directory: str, filename: str):
         """proxi attr"""
+
+    async def docs_reader(
+        self,
+        query: Optional[str] = None,
+        section_id: Optional[str] = None,
+        file_path: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        max_results: int = 25,
+        format_type: str = "structured",
+    ) -> dict:
+        """"mkdocs system [extra]"""
+    async def docs_writer(self, action: str, **kwargs) -> dict:
+        """"mkdocs system [extra]
+        Actions:
+            - create_file
+                Kwargs: file_path, content
+                Returns: {"status": "created", "file": file_path, "sections": num_sections}
+            - add_section
+                Kwargs: file_path, section_title, content, position, level
+                Returns: {"status": "added", "section": section_id}
+            - update_section
+                Kwargs: section_id, content
+                Returns: {"status": "updated", "section": section_id}
+            - delete_section
+                Kwargs: section_id
+                Returns: {"status": "deleted", "section": section_id}
+
+            on error
+                Returns: {"error": "error_message"}
+        """
+    async def docs_lookup(self,
+                          name: Optional[str] = None,
+                          element_type: Optional[str] = None,
+                          file_path: Optional[str] = None,
+                          language: Optional[str] = None,
+                          include_code: bool = False,
+                          max_results: int = 25,
+                          ) -> dict:
+        """"mkdocs system [extra]"""
+    async def docs_suggestions(self, max_suggestions: int = 20) -> dict:
+        """mkdocs system [extra]
+            Returns:
+                {"suggestions": [{"type": "unclear_section", "section_id": "123", "title": "Section Title", "priority": "low"}, ...], "total": 100, "time_ms": 123}
+        """
+
+    async def docs_sync(self):
+        """"mkdocs system [extra]"""
+    async def docs_init(self, force_rebuild: bool = False) -> dict:
+        """mkdocs system [extra]
+            Returns:
+                {"status": "loaded", "sections": num_sections, "elements": num_elements, "time_ms": time_taken}
+        """
+    async def get_task_context(self, files: List[str], intent: str) -> dict:
+        """mkdocs system [extra]
+        Get optimized context for a specific editing task.
+
+        Args:
+            files: List of file paths relevant to the task.
+            intent: Description of what the user wants to do (e.g., "Add logging to auth").
+
+        Returns:
+            ContextBundle dictionary ready for LLM injection.
+        """
 
     async def execute_all_functions_(self, m_query='', f_query='', test_class=None):
 

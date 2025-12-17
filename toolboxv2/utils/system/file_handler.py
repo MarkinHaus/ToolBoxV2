@@ -182,8 +182,8 @@ class FileHandler(Code):
                             f"No data  {obj}  ; {self.file_handler_filename}"
                         )
                     )
-                except ValueError:
-                    logger.error(f"ValueError Loading {obj} ; {self.file_handler_filename}")
+                except ValueError as e:
+                    logger.error(f"ValueError Loading {obj} ; {self.file_handler_filename} {e}")
                 except SyntaxError:
                     if isinstance(objects[1], str):
                         return objects[1]

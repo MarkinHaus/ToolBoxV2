@@ -1,35 +1,62 @@
+"""
+Markdown Documentation System - Refactored v2.1
+================================================
+Modular, async, memory-efficient documentation management.
+
+Fixes in v2.1:
+- Inverted Index for O(1) keyword lookups
+- Proper error logging instead of swallowing
+- JS/TS support via RegexAnalyzer
+
+Architecture:
+- DataModels: __slots__ dataclasses for minimal RAM
+- DocParser: State-machine parser (code-block aware)
+- CodeAnalyzer: AST-based extraction with visitor pattern
+- JSTSAnalyzer: Regex-based JS/TS extraction
+- IndexManager: Thread-safe persistence with atomic writes
+- ContextEngine: Inverted index for fast lookups
+- DocsSystem: Facade orchestrating all components
+"""
+
+from __future__ import annotations
 
 import asyncio
-import os
-import json
-import hashlib
 import ast
-import subprocess
+import hashlib
+import json
+import logging
+import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from enum import Enum, auto
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any, Union, Set
-from dataclasses import dataclass, asdict, field
-from datetime import datetime
-from enum import Enum
+from typing import Dict, List, Optional, Tuple, Set, Iterator, Any, Callable, Coroutine
+from collections import defaultdict
 
-import yaml
-from ..system.tb_logger import get_logger
-from ..system.types import AppType, Result
+from tqdm import tqdm
 
-logger = get_logger()
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# =============================================================================
+# DATA MODELS - Memory Efficient with __slots__
+# =============================================================================
 
 
 class ChangeType(Enum):
-    ADDED = "added"
-    MODIFIED = "modified"
-    DELETED = "deleted"
-    RENAMED = "renamed"
+    ADDED = auto()
+    MODIFIED = auto()
+    DELETED = auto()
+    RENAMED = auto()
 
 
-@dataclass
+@dataclass(slots=True)
 class DocSection:
-    """Represents a documentation section with change tracking"""
+    """Documentation section with minimal memory footprint."""
+
     section_id: str
     file_path: str
     title: str
@@ -37,2491 +64,2183 @@ class DocSection:
     level: int
     line_start: int
     line_end: int
-    source_refs: List[str] = field(default_factory=list)
-    tags: List[str] = field(default_factory=list)
-    hash_signature: str = ""
-    content_hash: str = ""
-    last_modified: datetime = field(default_factory=datetime.now)
-    change_detected: bool = False
+    content_hash: str
+    last_modified: float
+    source_refs: tuple = ()
+    tags: tuple = ()
+    doc_style: str = "markdown"
 
 
-@dataclass
+@dataclass(slots=True)
 class CodeElement:
-    """Represents a code element (class, function, etc.)"""
+    """Code element (class/function/method)."""
+
     name: str
     element_type: str
     file_path: str
     line_start: int
     line_end: int
     signature: str
+    content_hash: str
+    language: str = "python"
     docstring: Optional[str] = None
-    hash_signature: str = ""
     parent_class: Optional[str] = None
+
+
+@dataclass(slots=True)
+class FileChange:
+    """Git file change."""
+
+    file_path: str
+    change_type: ChangeType
+    old_path: Optional[str] = None
+
+
+@dataclass
+class InvertedIndex:
+    """Inverted index for fast keyword lookups."""
+
+    # keyword -> set of section_ids
+    keyword_to_sections: Dict[str, Set[str]] = field(
+        default_factory=lambda: defaultdict(set)
+    )
+    # tag -> set of section_ids
+    tag_to_sections: Dict[str, Set[str]] = field(default_factory=lambda: defaultdict(set))
+    # file_path -> set of section_ids
+    file_to_sections: Dict[str, Set[str]] = field(
+        default_factory=lambda: defaultdict(set)
+    )
+    # name -> set of element_ids (for code)
+    name_to_elements: Dict[str, Set[str]] = field(
+        default_factory=lambda: defaultdict(set)
+    )
+    # type -> set of element_ids
+    type_to_elements: Dict[str, Set[str]] = field(
+        default_factory=lambda: defaultdict(set)
+    )
+    # file -> set of element_ids
+    file_to_elements: Dict[str, Set[str]] = field(
+        default_factory=lambda: defaultdict(set)
+    )
+
+    def clear(self):
+        """Clear all indexes."""
+        self.keyword_to_sections.clear()
+        self.tag_to_sections.clear()
+        self.file_to_sections.clear()
+        self.name_to_elements.clear()
+        self.type_to_elements.clear()
+        self.file_to_elements.clear()
 
 
 @dataclass
 class DocsIndex:
-    """Complete documentation index with section-level tracking"""
+    """Complete documentation index."""
+
     sections: Dict[str, DocSection] = field(default_factory=dict)
     code_elements: Dict[str, CodeElement] = field(default_factory=dict)
     file_hashes: Dict[str, str] = field(default_factory=dict)
-    section_hashes: Dict[str, str] = field(default_factory=dict)
+    inverted: InvertedIndex = field(default_factory=InvertedIndex)
     last_git_commit: Optional[str] = None
-    last_indexed: datetime = field(default_factory=datetime.now)
-    version: str = "1.1"
+    last_indexed: float = field(default_factory=time.time)
+    version: str = "2.1"
+
+# =============================================================================
+# NEW DATA MODELS & TYPES
+# =============================================================================
+
+class ContextBundle(dict):
+    """
+    Token-optimized context dictionary for LLMs.
+    Structure:
+    {
+        "intent": str,
+        "focus_files": { path: content },
+        "definitions": [ { signature, docstring, ... } ],
+        "graph": {
+            "upstream": [ { name, file, type } ],   # Dependencies (Imports)
+            "downstream": [ { name, file, usage } ] # Usage (Callers)
+        },
+        "documentation": [ { title, content_snippet, relevance } ]
+    }
+    """
+
+# =============================================================================
+# DOC PARSER - State Machine for Robust Parsing
+# =============================================================================
 
 
+class ParserState(Enum):
+    """Parser states for state machine."""
 
-@dataclass
-class FileChange:
-    """Represents a file change detected by git"""
-    file_path: str
-    change_type: ChangeType
-    old_hash: Optional[str] = None
-    new_hash: Optional[str] = None
-    old_path: Optional[str] = None  # for renamed files
+    NORMAL = auto()
+    CODE_BLOCK = auto()
+    FRONTMATTER = auto()
 
 
-@dataclass
-class ImportReference:
-    """Represents an import/dependency reference"""
-    source_file: str
-    target_file: str
-    import_name: str
-    line_number: int
-    import_type: str  # 'python', 'js', 'relative', 'absolute'
+class DocParser:
+    """
+    State-machine based document parser.
+    Supports: Markdown, RST-style, YAML frontmatter, code-block aware.
+    """
 
+    PATTERN_ATX = re.compile(r"^(#{1,6})\s+(.+)$")
+    CODE_FENCE = re.compile(r"^(`{3,}|~{3,})")
+    FRONTMATTER = re.compile(r"^---\s*$")
+    TAG_PATTERN = re.compile(r"(?:^|\s)#([a-zA-Z][a-zA-Z0-9_-]{1,30})(?:\s|$)")
+    REF_PATTERN = re.compile(r"`([^`]+\.py(?::[^`]+)?)`")
 
-class TOCEntry:
-    """Represents a table of contents entry"""
+    __slots__ = ("_cache",)
 
-    def __init__(self, title: str, file_path: str, level: int, line_number: int):
-        self.title = title
-        self.file_path = file_path
-        self.level = level
-        self.line_number = line_number
-        self.has_implementation = False
-        self.is_unclear = False
-        self.source_refs: List[str] = []
+    def __init__(self):
+        self._cache: Dict[str, Tuple[float, List[DocSection]]] = {}
 
-class DocsAnalyzer:
-    """Analyzes documentation quality and completeness"""
-
-    def __init__(self, index: DocsIndex, project_root: Path):
-        self.index = index
-        self.project_root = project_root
-
-    def find_unclear_sections(self) -> List[str]:
-        """Find sections with unclear or placeholder content"""
-        unclear_indicators = [
-            "todo", "fixme", "placeholder", "coming soon", "not implemented",
-            "tbd", "under construction", "work in progress", "missing",
-            "add content here", "fill this", "example here"
-        ]
-
-        unclear_sections = []
-
-        for section_id, section in self.index.sections.items():
-            content_lower = section.content.lower()
-
-            # Check for unclear indicators
-            if any(indicator in content_lower for indicator in unclear_indicators):
-                unclear_sections.append(section_id)
-                continue
-
-            # Check for very short content (likely incomplete)
-            if len(section.content.strip()) < 50:
-                unclear_sections.append(section_id)
-                continue
-
-            # Check for sections with only code blocks (no explanation)
-            code_blocks = re.findall(r'```[\s\S]*?```', section.content)
-            text_without_code = re.sub(r'```[\s\S]*?```', '', section.content).strip()
-            if code_blocks and len(text_without_code) < 20:
-                unclear_sections.append(section_id)
-
-        return unclear_sections
-
-    def find_missing_implementations(self) -> List[Dict]:
-        """Find TOC entries that don't have corresponding implementations"""
-        missing = []
-
-        for section_id, section in self.index.sections.items():
-            # Look for function/class references that don't exist in code
-            potential_refs = re.findall(r'`([A-Za-z_][A-Za-z0-9_.]*)`', section.content)
-
-            for ref in potential_refs:
-                if '.' in ref:  # Looks like a class.method reference
-                    if not any(ref in element_id for element_id in self.index.code_elements.keys()):
-                        missing.append({
-                            "section_id": section_id,
-                            "missing_ref": ref,
-                            "type": "code_reference",
-                            "content_context": section.content[:200] + "..."
-                        })
-
-        return missing
-
-class GitChangeDetector:
-    """Detects changes in the repository since last index update"""
-
-    def __init__(self, repo_root: Path):
-        self.repo_root = repo_root
-
-    def get_current_commit_hash(self) -> Optional[str]:
-        """Get current git commit hash"""
-        try:
-            result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=self.repo_root,
-                capture_output=True,
-                text=True
-            )
-            return result.stdout.strip() if result.returncode == 0 else None
-        except Exception:
-            return None
-
-    def get_changed_files(self, since_commit: Optional[str] = None) -> List[FileChange]:
-        """Get list of changed files since given commit with timeout"""
-        changes = []
+    def parse(self, file_path: Path, use_cache: bool = True) -> List[DocSection]:
+        """Parse document file into sections."""
+        path_str = str(file_path)
 
         try:
-            if since_commit:
-                cmd = ["git", "diff", "--name-status", f"{since_commit}..HEAD"]
-            else:
-                cmd = ["git", "ls-files"]
+            mtime = file_path.stat().st_mtime
+        except OSError as e:
+            logger.warning(f"Cannot stat file {file_path}: {e}")
+            return []
 
-            # Add timeout to subprocess
-            result = subprocess.run(
-                cmd,
-                cwd=self.repo_root,
-                capture_output=True,
-                text=True,
-                timeout=20  # 20 second timeout for git operations
-            )
+        if use_cache and path_str in self._cache:
+            cached_mtime, cached_sections = self._cache[path_str]
+            if cached_mtime == mtime:
+                return cached_sections
 
-            if result.returncode != 0:
-                logger.warning(f"Git command failed with return code {result.returncode}")
-                return changes
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except OSError as e:
+            logger.warning(f"Cannot read file {file_path}: {e}")
+            return []
 
-            # Process output with limits
-            lines = result.stdout.strip().split('\n')[:1000]  # Limit to 1000 files
+        if not content.strip():
+            return []
 
-            for line in lines:
-                if not line:
+        style = self._detect_style(content)
+        sections = self._parse_with_state_machine(file_path, content, style, mtime)
+
+        self._cache[path_str] = (mtime, sections)
+        return sections
+
+    def _detect_style(self, content: str) -> str:
+        """Auto-detect documentation style."""
+        lines = content[:2000].split("\n")
+
+        has_atx = any(self.PATTERN_ATX.match(line) for line in lines[:50])
+        has_rst = any(re.match(r"^[=\-~]{3,}\s*$", line) for line in lines[:50])
+        has_frontmatter = lines[0].strip() == "---" if lines else False
+
+        if has_frontmatter:
+            return "yaml_md"
+        if has_rst and not has_atx:
+            return "rst"
+        return "markdown"
+
+    def _parse_with_state_machine(
+        self, file_path: Path, content: str, style: str, mtime: float
+    ) -> List[DocSection]:
+        """State machine parser - handles code blocks correctly."""
+        sections: List[DocSection] = []
+        lines = content.split("\n")
+
+        state = ParserState.NORMAL
+        fence_char = ""
+        fence_len = 0
+
+        current_title: Optional[str] = None
+        current_level = 0
+        current_lines: List[str] = []
+        section_start = 0
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+
+            if state == ParserState.NORMAL:
+                if i == 0 and self.FRONTMATTER.match(line):
+                    state = ParserState.FRONTMATTER
+                    i += 1
                     continue
 
-                if since_commit:
-                    parts = line.split('\t')
-                    if len(parts) >= 2:
-                        status = parts[0]
-                        file_path = parts[1]
+                fence_match = self.CODE_FENCE.match(line)
+                if fence_match:
+                    fence_char = fence_match.group(1)[0]
+                    fence_len = len(fence_match.group(1))
+                    state = ParserState.CODE_BLOCK
+                    if current_title:
+                        current_lines.append(line)
+                    i += 1
+                    continue
 
-                        if status == 'A':
-                            change_type = ChangeType.ADDED
-                        elif status == 'M':
-                            change_type = ChangeType.MODIFIED
-                        elif status == 'D':
-                            change_type = ChangeType.DELETED
-                        elif status.startswith('R'):
-                            change_type = ChangeType.RENAMED
-                            old_path = parts[1] if len(parts) > 2 else None
-                            file_path = parts[2] if len(parts) > 2 else parts[1]
-                        else:
-                            continue
+                header = self._extract_header(line, lines, i, style)
+                if header:
+                    title, level, skip_lines = header
 
-                        changes.append(FileChange(
-                            file_path=file_path,
-                            change_type=change_type,
-                            old_path=old_path if change_type == ChangeType.RENAMED else None
-                        ))
-                else:
-                    changes.append(FileChange(
-                        file_path=line.strip(),
-                        change_type=ChangeType.ADDED
-                    ))
+                    if current_title is not None:
+                        section = self._create_section(
+                            file_path,
+                            current_title,
+                            current_level,
+                            current_lines,
+                            section_start,
+                            i - 1,
+                            mtime,
+                            style,
+                        )
+                        if section:
+                            sections.append(section)
 
-        except subprocess.TimeoutExpired:
-            logger.error("Git operation timed out after 20 seconds")
+                    current_title = title
+                    current_level = level
+                    current_lines = []
+                    section_start = i
+                    i += skip_lines
+                    continue
+
+                if current_title is not None:
+                    current_lines.append(line)
+
+            elif state == ParserState.CODE_BLOCK:
+                if current_title:
+                    current_lines.append(line)
+
+                if (
+                    line.startswith(fence_char * fence_len)
+                    and len(line.strip()) <= fence_len + 1
+                ):
+                    state = ParserState.NORMAL
+
+            elif state == ParserState.FRONTMATTER:
+                if self.FRONTMATTER.match(line):
+                    state = ParserState.NORMAL
+
+            i += 1
+
+        if current_title is not None:
+            section = self._create_section(
+                file_path,
+                current_title,
+                current_level,
+                current_lines,
+                section_start,
+                len(lines) - 1,
+                mtime,
+                style,
+            )
+            if section:
+                sections.append(section)
+
+        return sections
+
+    def _extract_header(
+        self, line: str, lines: List[str], idx: int, style: str
+    ) -> Optional[Tuple[str, int, int]]:
+        """Extract header from line(s). Returns (title, level, lines_to_skip)."""
+        match = self.PATTERN_ATX.match(line)
+        if match:
+            level = len(match.group(1))
+            title = match.group(2).strip().rstrip("#").strip()
+            return (title, level, 1) if title else None
+
+        if idx + 1 < len(lines):
+            next_line = lines[idx + 1]
+            if re.match(r"^={3,}\s*$", next_line) and line.strip():
+                return (line.strip(), 1, 2)
+            if re.match(r"^-{3,}\s*$", next_line) and line.strip():
+                return (line.strip(), 2, 2)
+
+        if style == "rst" and idx + 2 < len(lines):
+            if re.match(r"^[=\-~`]{3,}$", line):
+                title = lines[idx + 1].strip()
+                underline = lines[idx + 2] if idx + 2 < len(lines) else ""
+                if title and re.match(r"^[=\-~`]{3,}$", underline):
+                    level = {"=": 1, "-": 2, "~": 3}.get(line[0], 2)
+                    return (title, level, 3)
+
+        return None
+
+    def _create_section(
+        self,
+        file_path: Path,
+        title: str,
+        level: int,
+        content_lines: List[str],
+        line_start: int,
+        line_end: int,
+        mtime: float,
+        style: str,
+    ) -> Optional[DocSection]:
+        """Create DocSection from parsed data."""
+        content = "\n".join(content_lines).strip()
+        if len(content) < 5:
+            return None
+
+        content_hash = hashlib.md5(content.encode()).hexdigest()[:12]
+        tags = tuple(set(self.TAG_PATTERN.findall(content)))
+        refs = tuple(set(self.REF_PATTERN.findall(content)))
+
+        return DocSection(
+            section_id=f"{file_path.name}#{title}",
+            file_path=str(file_path),
+            title=title,
+            content=content,
+            level=level,
+            line_start=line_start,
+            line_end=line_end,
+            content_hash=content_hash,
+            last_modified=mtime,
+            source_refs=refs,
+            tags=tags,
+            doc_style=style,
+        )
+
+    def clear_cache(self):
+        """Clear parser cache."""
+        self._cache.clear()
+
+
+# =============================================================================
+# CODE ANALYZER - AST-based with Visitor Pattern (Python)
+# =============================================================================
+
+
+class CodeAnalyzer:
+    """Efficient AST-based code analyzer using visitor pattern for Python."""
+
+    __slots__ = ("_cache",)
+
+    def __init__(self):
+        self._cache: Dict[str, Tuple[float, List[CodeElement]]] = {}
+
+    def analyze(self, file_path: Path, use_cache: bool = True) -> List[CodeElement]:
+        """Analyze Python file for code elements."""
+        path_str = str(file_path)
+
+        try:
+            mtime = file_path.stat().st_mtime
+        except OSError as e:
+            logger.warning(f"Cannot stat Python file {file_path}: {e}")
+            return []
+
+        if use_cache and path_str in self._cache:
+            cached_mtime, cached = self._cache[path_str]
+            if cached_mtime == mtime:
+                return cached
+
+        try:
+            content = file_path.read_text(encoding="utf-8")
+            tree = ast.parse(content, filename=str(file_path))
+            elements = list(self._visit(tree, file_path))
+            self._cache[path_str] = (mtime, elements)
+            return elements
+        except SyntaxError as e:
+            logger.warning(f"Syntax error in {file_path}: {e.msg} at line {e.lineno}")
+            return []
+        except UnicodeDecodeError as e:
+            logger.warning(f"Unicode decode error in {file_path}: {e}")
+            return []
         except Exception as e:
-            logger.error(f"Error detecting git changes: {e}")
+            logger.error(f"Unexpected error analyzing {file_path}: {e}")
+            return []
+
+    def _visit(self, tree: ast.AST, file_path: Path) -> Iterator[CodeElement]:
+        """Visit AST nodes once, extracting all elements."""
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                yield self._class_element(node, file_path)
+
+                for item in node.body:
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        yield self._method_element(item, node.name, file_path)
+
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if not any(
+                    isinstance(p, ast.ClassDef)
+                    for p in ast.walk(tree)
+                    if hasattr(p, "body") and node in getattr(p, "body", [])
+                ):
+                    yield self._function_element(node, file_path)
+
+    def _class_element(self, node: ast.ClassDef, file_path: Path) -> CodeElement:
+        """Create CodeElement for class."""
+        bases = ", ".join(self._get_name(b) for b in node.bases[:3])
+        sig = f"class {node.name}({bases})" if bases else f"class {node.name}"
+
+        return CodeElement(
+            name=node.name,
+            element_type="class",
+            file_path=str(file_path),
+            line_start=node.lineno,
+            line_end=getattr(node, "end_lineno", node.lineno),
+            signature=sig,
+            language="python",
+            docstring=ast.get_docstring(node),
+            content_hash=self._hash_node(node),
+        )
+
+    def _function_element(self, node: ast.FunctionDef, file_path: Path) -> CodeElement:
+        """Create CodeElement for function."""
+        return CodeElement(
+            name=node.name,
+            element_type="function",
+            file_path=str(file_path),
+            line_start=node.lineno,
+            line_end=getattr(node, "end_lineno", node.lineno),
+            signature=self._get_signature(node),
+            language="python",
+            docstring=ast.get_docstring(node),
+            content_hash=self._hash_node(node),
+        )
+
+    def _method_element(
+        self, node: ast.FunctionDef, parent: str, file_path: Path
+    ) -> CodeElement:
+        """Create CodeElement for method."""
+        return CodeElement(
+            name=node.name,
+            element_type="method",
+            file_path=str(file_path),
+            line_start=node.lineno,
+            line_end=getattr(node, "end_lineno", node.lineno),
+            signature=self._get_signature(node),
+            language="python",
+            docstring=ast.get_docstring(node),
+            parent_class=parent,
+            content_hash=self._hash_node(node),
+        )
+
+    @staticmethod
+    def _get_signature(node: ast.FunctionDef) -> str:
+        """Extract function signature."""
+        args = [a.arg for a in node.args.args[:5]]
+        if len(node.args.args) > 5:
+            args.append("...")
+        prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
+        return f"{prefix} {node.name}({', '.join(args)})"
+
+    @staticmethod
+    def _get_name(node: ast.expr) -> str:
+        """Get name from AST node."""
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            return node.attr
+        return "?"
+
+    @staticmethod
+    def _hash_node(node: ast.AST) -> str:
+        """Hash AST node content."""
+        try:
+            return hashlib.md5(ast.unparse(node).encode()).hexdigest()[:12]
+        except:
+            return hashlib.md5(str(node.lineno).encode()).hexdigest()[:12]
+
+    def clear_cache(self):
+        """Clear analyzer cache."""
+        self._cache.clear()
+
+
+# =============================================================================
+# JS/TS ANALYZER - Regex-based for JavaScript/TypeScript
+# =============================================================================
+
+
+class JSTSAnalyzer:
+    """Regex-based analyzer for JavaScript and TypeScript files."""
+
+    # Patterns for JS/TS constructs
+    PATTERNS = {
+        "class": re.compile(
+            r"^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+(\w+)(?:\s+extends\s+(\w+))?(?:\s+implements\s+[\w,\s]+)?\s*\{",
+            re.MULTILINE,
+        ),
+        "function": re.compile(
+            r"^(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)", re.MULTILINE
+        ),
+        "arrow_const": re.compile(
+            r"^(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s+)?\([^)]*\)\s*(?::\s*\w+)?\s*=>",
+            re.MULTILINE,
+        ),
+        "method": re.compile(
+            r"^\s+(?:async\s+)?(?:static\s+)?(?:private\s+|public\s+|protected\s+)?(\w+)\s*\(([^)]*)\)\s*(?::\s*[\w<>\[\]|]+)?\s*\{",
+            re.MULTILINE,
+        ),
+        "interface": re.compile(
+            r"^(?:export\s+)?interface\s+(\w+)(?:\s+extends\s+[\w,\s]+)?\s*\{",
+            re.MULTILINE,
+        ),
+        "type": re.compile(r"^(?:export\s+)?type\s+(\w+)\s*=", re.MULTILINE),
+        "jsdoc": re.compile(r"/\*\*\s*([\s\S]*?)\s*\*/", re.MULTILINE),
+    }
+
+    __slots__ = ("_cache",)
+
+    def __init__(self):
+        self._cache: Dict[str, Tuple[float, List[CodeElement]]] = {}
+
+    def analyze(self, file_path: Path, use_cache: bool = True) -> List[CodeElement]:
+        """Analyze JS/TS file for code elements."""
+        path_str = str(file_path)
+
+        try:
+            mtime = file_path.stat().st_mtime
+        except OSError as e:
+            logger.warning(f"Cannot stat JS/TS file {file_path}: {e}")
+            return []
+
+        if use_cache and path_str in self._cache:
+            cached_mtime, cached = self._cache[path_str]
+            if cached_mtime == mtime:
+                return cached
+
+        try:
+            content = file_path.read_text(encoding="utf-8")
+            elements = self._extract_elements(content, file_path)
+            self._cache[path_str] = (mtime, elements)
+            return elements
+        except UnicodeDecodeError as e:
+            logger.warning(f"Unicode decode error in {file_path}: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error analyzing JS/TS {file_path}: {e}")
+            return []
+
+    def _extract_elements(self, content: str, file_path: Path) -> List[CodeElement]:
+        """Extract code elements from JS/TS content."""
+        elements = []
+        lines = content.split("\n")
+        language = "typescript" if file_path.suffix == ".ts" else "javascript"
+
+        # Extract JSDoc comments for later matching
+        jsdocs = {}
+        for match in self.PATTERNS["jsdoc"].finditer(content):
+            end_pos = match.end()
+            line_num = content[:end_pos].count("\n") + 1
+            jsdocs[line_num] = self._clean_jsdoc(match.group(1))
+
+        # Extract classes
+        for match in self.PATTERNS["class"].finditer(content):
+            line_num = content[: match.start()].count("\n") + 1
+            name = match.group(1)
+            extends = match.group(2)
+            sig = f"class {name}" + (f" extends {extends}" if extends else "")
+
+            elements.append(
+                CodeElement(
+                    name=name,
+                    element_type="class",
+                    file_path=str(file_path),
+                    line_start=line_num,
+                    line_end=self._find_block_end(lines, line_num - 1),
+                    signature=sig,
+                    language=language,
+                    docstring=jsdocs.get(line_num - 1),
+                    content_hash=hashlib.md5(match.group(0).encode()).hexdigest()[:12],
+                )
+            )
+
+        # Extract functions
+        for match in self.PATTERNS["function"].finditer(content):
+            line_num = content[: match.start()].count("\n") + 1
+            name = match.group(1)
+            params = match.group(2).strip()
+
+            elements.append(
+                CodeElement(
+                    name=name,
+                    element_type="function",
+                    file_path=str(file_path),
+                    line_start=line_num,
+                    line_end=self._find_block_end(lines, line_num - 1),
+                    signature=f"function {name}({params})",
+                    language=language,
+                    docstring=jsdocs.get(line_num - 1),
+                    content_hash=hashlib.md5(match.group(0).encode()).hexdigest()[:12],
+                )
+            )
+
+        # Extract arrow functions (const)
+        for match in self.PATTERNS["arrow_const"].finditer(content):
+            line_num = content[: match.start()].count("\n") + 1
+            name = match.group(1)
+
+            elements.append(
+                CodeElement(
+                    name=name,
+                    element_type="function",
+                    file_path=str(file_path),
+                    line_start=line_num,
+                    line_end=line_num,  # Arrow functions are usually single expression
+                    signature=f"const {name} = () =>",
+                    language=language,
+                    docstring=jsdocs.get(line_num - 1),
+                    content_hash=hashlib.md5(match.group(0).encode()).hexdigest()[:12],
+                )
+            )
+
+        # Extract interfaces (TypeScript)
+        if language == "typescript":
+            for match in self.PATTERNS["interface"].finditer(content):
+                line_num = content[: match.start()].count("\n") + 1
+                name = match.group(1)
+
+                elements.append(
+                    CodeElement(
+                        name=name,
+                        element_type="interface",
+                        file_path=str(file_path),
+                        line_start=line_num,
+                        line_end=self._find_block_end(lines, line_num - 1),
+                        signature=f"interface {name}",
+                        language=language,
+                        docstring=jsdocs.get(line_num - 1),
+                        content_hash=hashlib.md5(match.group(0).encode()).hexdigest()[
+                            :12
+                        ],
+                    )
+                )
+
+            # Extract type aliases
+            for match in self.PATTERNS["type"].finditer(content):
+                line_num = content[: match.start()].count("\n") + 1
+                name = match.group(1)
+
+                elements.append(
+                    CodeElement(
+                        name=name,
+                        element_type="type",
+                        file_path=str(file_path),
+                        line_start=line_num,
+                        line_end=line_num,
+                        signature=f"type {name}",
+                        language=language,
+                        docstring=jsdocs.get(line_num - 1),
+                        content_hash=hashlib.md5(match.group(0).encode()).hexdigest()[
+                            :12
+                        ],
+                    )
+                )
+
+        return elements
+
+    def _find_block_end(self, lines: List[str], start_idx: int) -> int:
+        """Find the end of a code block by matching braces."""
+        brace_count = 0
+        started = False
+
+        for i in range(start_idx, min(start_idx + 500, len(lines))):
+            line = lines[i]
+            for char in line:
+                if char == "{":
+                    brace_count += 1
+                    started = True
+                elif char == "}":
+                    brace_count -= 1
+                    if started and brace_count == 0:
+                        return i + 1
+
+        return start_idx + 1
+
+    @staticmethod
+    def _clean_jsdoc(doc: str) -> str:
+        """Clean JSDoc comment content."""
+        lines = doc.split("\n")
+        cleaned = []
+        for line in lines:
+            line = re.sub(r"^\s*\*\s?", "", line).strip()
+            if line and not line.startswith("@"):
+                cleaned.append(line)
+        return " ".join(cleaned)[:500] if cleaned else None
+
+    def clear_cache(self):
+        """Clear analyzer cache."""
+        self._cache.clear()
+
+
+# =============================================================================
+# INDEX MANAGER - Thread-safe Persistence with Inverted Index
+# =============================================================================
+
+
+class IndexManager:
+    """Thread-safe index management with atomic writes and inverted indexing."""
+
+    __slots__ = ("index_path", "index", "_lock", "_executor", "_dirty")
+
+    # Stop words to exclude from inverted index
+    STOP_WORDS = frozenset(
+        {
+            "the",
+            "a",
+            "an",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "being",
+            "have",
+            "has",
+            "had",
+            "do",
+            "does",
+            "did",
+            "will",
+            "would",
+            "could",
+            "should",
+            "may",
+            "might",
+            "must",
+            "shall",
+            "can",
+            "need",
+            "to",
+            "of",
+            "in",
+            "for",
+            "on",
+            "with",
+            "at",
+            "by",
+            "from",
+            "as",
+            "into",
+            "through",
+            "and",
+            "or",
+            "but",
+            "if",
+            "then",
+            "else",
+            "when",
+            "where",
+            "why",
+            "how",
+            "all",
+            "each",
+            "every",
+            "both",
+            "few",
+            "more",
+            "most",
+            "other",
+            "some",
+            "such",
+            "no",
+            "nor",
+            "not",
+            "only",
+            "own",
+            "same",
+            "so",
+            "than",
+            "too",
+            "very",
+            "just",
+            "also",
+            "now",
+            "here",
+            "there",
+            "this",
+            "that",
+            "these",
+            "those",
+            "it",
+            "its",
+            "itself",
+            "they",
+            "them",
+            "their",
+            "themselves",
+        }
+    )
+
+    def __init__(self, index_path: Path):
+        self.index_path = index_path
+        self.index = DocsIndex()
+        self._lock = asyncio.Lock()
+        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="idx")
+        self._dirty = False
+
+    async def load(self) -> DocsIndex:
+        """Load index from disk."""
+        async with self._lock:
+            if not self.index_path.exists():
+                return self.index
+
+            data = await asyncio.get_event_loop().run_in_executor(
+                self._executor, self._sync_load
+            )
+            if data:
+                self.index = self._deserialize(data)
+                self._rebuild_inverted_index()
+            return self.index
+
+    def _sync_load(self) -> Optional[dict]:
+        """Synchronous load (runs in thread)."""
+        try:
+            with open(self.index_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError) as e:
+            logger.warning(f"Could not load index: {e}")
+            return None
+
+    async def save(self, force: bool = False):
+        """Save index with atomic write pattern."""
+        if not self._dirty and not force:
+            return
+
+        async with self._lock:
+            await asyncio.get_event_loop().run_in_executor(
+                self._executor, self._sync_save
+            )
+            self._dirty = False
+
+    def _sync_save(self):
+        """Synchronous atomic save (runs in thread)."""
+        data = self._serialize()
+        temp_path = self.index_path.with_suffix(".tmp")
+
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, separators=(",", ":"), ensure_ascii=False)
+            os.replace(temp_path, self.index_path)
+        except OSError as e:
+            logger.error(f"Failed to save index: {e}")
+            raise
+
+    def _serialize(self) -> dict:
+        """Serialize index to dict (inverted index is rebuilt on load)."""
+        return {
+            "version": self.index.version,
+            "last_git_commit": self.index.last_git_commit,
+            "last_indexed": self.index.last_indexed,
+            "file_hashes": self.index.file_hashes,
+            "sections": {
+                sid: {
+                    "section_id": s.section_id,
+                    "file_path": s.file_path,
+                    "title": s.title,
+                    "content": s.content,
+                    "level": s.level,
+                    "line_start": s.line_start,
+                    "line_end": s.line_end,
+                    "content_hash": s.content_hash,
+                    "last_modified": s.last_modified,
+                    "source_refs": list(s.source_refs),
+                    "tags": list(s.tags),
+                    "doc_style": s.doc_style,
+                }
+                for sid, s in self.index.sections.items()
+            },
+            "code_elements": {
+                eid: {
+                    "name": e.name,
+                    "element_type": e.element_type,
+                    "file_path": e.file_path,
+                    "line_start": e.line_start,
+                    "line_end": e.line_end,
+                    "signature": e.signature,
+                    "content_hash": e.content_hash,
+                    "language": e.language,
+                    "docstring": e.docstring,
+                    "parent_class": e.parent_class,
+                }
+                for eid, e in self.index.code_elements.items()
+            },
+        }
+
+    def _deserialize(self, data: dict) -> DocsIndex:
+        """Deserialize dict to index."""
+        index = DocsIndex()
+        index.version = data.get("version", "2.1")
+        index.last_git_commit = data.get("last_git_commit")
+        index.last_indexed = data.get("last_indexed", time.time())
+        index.file_hashes = data.get("file_hashes", {})
+
+        for sid, s in data.get("sections", {}).items():
+            index.sections[sid] = DocSection(
+                section_id=s["section_id"],
+                file_path=s["file_path"],
+                title=s["title"],
+                content=s["content"],
+                level=s["level"],
+                line_start=s["line_start"],
+                line_end=s["line_end"],
+                content_hash=s["content_hash"],
+                last_modified=s["last_modified"],
+                source_refs=tuple(s.get("source_refs", [])),
+                tags=tuple(s.get("tags", [])),
+                doc_style=s.get("doc_style", "markdown"),
+            )
+
+        for eid, e in data.get("code_elements", {}).items():
+            index.code_elements[eid] = CodeElement(
+                name=e["name"],
+                element_type=e["element_type"],
+                file_path=e["file_path"],
+                line_start=e["line_start"],
+                line_end=e["line_end"],
+                signature=e["signature"],
+                content_hash=e["content_hash"],
+                language=e.get("language", "python"),
+                docstring=e.get("docstring"),
+                parent_class=e.get("parent_class"),
+            )
+
+        return index
+
+    def _rebuild_inverted_index(self):
+        """Rebuild inverted index from loaded data."""
+        self.index.inverted.clear()
+
+        for sid, section in self.index.sections.items():
+            self._index_section(sid, section)
+
+        for eid, element in self.index.code_elements.items():
+            self._index_element(eid, element)
+
+        logger.debug(
+            f"Rebuilt inverted index: {len(self.index.inverted.keyword_to_sections)} keywords"
+        )
+
+    def _tokenize(self, text: str) -> Set[str]:
+        """Tokenize text into searchable keywords."""
+        words = re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]{2,}\b", text.lower())
+        return {w for w in words if w not in self.STOP_WORDS and len(w) <= 50}
+
+    def _index_section(self, section_id: str, section: DocSection):
+        """Add section to inverted index."""
+        # Index keywords from title and content
+        keywords = self._tokenize(f"{section.title} {section.content[:1000]}")
+        for keyword in keywords:
+            self.index.inverted.keyword_to_sections[keyword].add(section_id)
+
+        # Index tags
+        for tag in section.tags:
+            self.index.inverted.tag_to_sections[tag.lower()].add(section_id)
+
+        # Index by file
+        self.index.inverted.file_to_sections[section.file_path].add(section_id)
+
+    def _index_element(self, element_id: str, element: CodeElement):
+        """Add code element to inverted index."""
+        # Index by name (and name parts for camelCase/snake_case)
+        name_parts = re.findall(
+            r"[a-zA-Z][a-z]*|[A-Z]+(?=[A-Z][a-z]|\d|\W|$)|\d+", element.name
+        )
+        for part in name_parts:
+            self.index.inverted.name_to_elements[part.lower()].add(element_id)
+        self.index.inverted.name_to_elements[element.name.lower()].add(element_id)
+
+        # Index by type
+        self.index.inverted.type_to_elements[element.element_type].add(element_id)
+
+        # Index by file
+        self.index.inverted.file_to_elements[element.file_path].add(element_id)
+
+    def _unindex_section(self, section_id: str, section: DocSection):
+        """Remove section from inverted index."""
+        keywords = self._tokenize(f"{section.title} {section.content[:1000]}")
+        for keyword in keywords:
+            self.index.inverted.keyword_to_sections[keyword].discard(section_id)
+
+        for tag in section.tags:
+            self.index.inverted.tag_to_sections[tag.lower()].discard(section_id)
+
+        self.index.inverted.file_to_sections[section.file_path].discard(section_id)
+
+    def _unindex_element(self, element_id: str, element: CodeElement):
+        """Remove code element from inverted index."""
+        name_parts = re.findall(
+            r"[a-zA-Z][a-z]*|[A-Z]+(?=[A-Z][a-z]|\d|\W|$)|\d+", element.name
+        )
+        for part in name_parts:
+            self.index.inverted.name_to_elements[part.lower()].discard(element_id)
+        self.index.inverted.name_to_elements[element.name.lower()].discard(element_id)
+
+        self.index.inverted.type_to_elements[element.element_type].discard(element_id)
+        self.index.inverted.file_to_elements[element.file_path].discard(element_id)
+
+    def mark_dirty(self):
+        self._dirty = True
+
+    def update_section(self, section: DocSection):
+        """Update or add section with inverted index update."""
+        old_section = self.index.sections.get(section.section_id)
+        if old_section:
+            self._unindex_section(section.section_id, old_section)
+
+        self.index.sections[section.section_id] = section
+        self._index_section(section.section_id, section)
+        self._dirty = True
+
+    def update_element(self, element_id: str, element: CodeElement):
+        """Update or add code element with inverted index update."""
+        old_element = self.index.code_elements.get(element_id)
+        if old_element:
+            self._unindex_element(element_id, old_element)
+
+        self.index.code_elements[element_id] = element
+        self._index_element(element_id, element)
+        self._dirty = True
+
+    def remove_file(self, file_path: str):
+        """Remove all entries for a file."""
+        # Remove sections
+        sections_to_remove = list(
+            self.index.inverted.file_to_sections.get(file_path, set())
+        )
+        for sid in sections_to_remove:
+            if sid in self.index.sections:
+                self._unindex_section(sid, self.index.sections[sid])
+                del self.index.sections[sid]
+
+        # Remove elements
+        elements_to_remove = list(
+            self.index.inverted.file_to_elements.get(file_path, set())
+        )
+        for eid in elements_to_remove:
+            if eid in self.index.code_elements:
+                self._unindex_element(eid, self.index.code_elements[eid])
+                del self.index.code_elements[eid]
+
+        self.index.file_hashes.pop(file_path, None)
+        self._dirty = True
+
+
+# =============================================================================
+# CONTEXT ENGINE - Fast Search with Inverted Index
+# =============================================================================
+
+
+class ContextEngine:
+    """Fast context lookups using inverted index for O(1) keyword search."""
+
+    __slots__ = ("_index_mgr", "_query_cache", "_cache_ttl")
+
+    def __init__(self, index_manager: IndexManager, cache_ttl: float = 300.0):
+        self._index_mgr = index_manager
+        self._query_cache: Dict[str, Tuple[float, Any]] = {}
+        self._cache_ttl = cache_ttl
+
+    def search_sections(
+        self,
+        query: Optional[str] = None,
+        file_path: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        max_results: int = 25,
+    ) -> List[DocSection]:
+        """Fast section search using inverted index."""
+        cache_key = f"s:{query}:{file_path}:{tags}:{max_results}"
+        cached = self._get_cached(cache_key)
+        if cached is not None:
+            return cached
+
+        inverted = self._index_mgr.index.inverted
+        candidate_ids: Optional[Set[str]] = None
+
+        # Filter by query keywords using inverted index - O(k) where k = keyword count
+        if query:
+            query_terms = set(query.lower().split())
+            for term in query_terms:
+                term_ids = inverted.keyword_to_sections.get(term, set())
+                if candidate_ids is None:
+                    candidate_ids = term_ids.copy()
+                else:
+                    candidate_ids &= term_ids  # Intersection for AND semantics
+
+        # Filter by tags using inverted index - O(t) where t = tag count
+        if tags:
+            tag_ids: Set[str] = set()
+            for tag in tags:
+                tag_ids |= inverted.tag_to_sections.get(tag.lower(), set())
+            if candidate_ids is None:
+                candidate_ids = tag_ids
+            else:
+                candidate_ids &= tag_ids
+
+        # Filter by file path using inverted index - O(1)
+        if file_path:
+            file_ids = inverted.file_to_sections.get(file_path, set())
+            # Also check partial path match
+            if not file_ids:
+                file_ids = set()
+                for fp, ids in inverted.file_to_sections.items():
+                    if file_path in fp:
+                        file_ids |= ids
+            if candidate_ids is None:
+                candidate_ids = file_ids
+            else:
+                candidate_ids &= file_ids
+
+        # If no filters, return all (but limit)
+        if candidate_ids is None:
+            candidate_ids = set(self._index_mgr.index.sections.keys())
+
+        # Fetch actual sections
+        results = []
+        for sid in candidate_ids:
+            if len(results) >= max_results:
+                break
+            section = self._index_mgr.index.sections.get(sid)
+            if section:
+                results.append(section)
+
+        self._set_cached(cache_key, results)
+        return results
+
+    def search_elements(
+        self,
+        name: Optional[str] = None,
+        element_type: Optional[str] = None,
+        file_path: Optional[str] = None,
+        max_results: int = 25,
+    ) -> List[CodeElement]:
+        """Fast code element search using inverted index."""
+        cache_key = f"e:{name}:{element_type}:{file_path}:{max_results}"
+        cached = self._get_cached(cache_key)
+        if cached is not None:
+            return cached
+
+        inverted = self._index_mgr.index.inverted
+        candidate_ids: Optional[Set[str]] = None
+
+        # Filter by name using inverted index - O(1)
+        if name:
+            name_lower = name.lower()
+            candidate_ids = inverted.name_to_elements.get(name_lower, set()).copy()
+            # Also check partial matches
+            for indexed_name, ids in inverted.name_to_elements.items():
+                if name_lower in indexed_name or indexed_name in name_lower:
+                    if candidate_ids is None:
+                        candidate_ids = ids.copy()
+                    else:
+                        candidate_ids |= ids
+
+        # Filter by type using inverted index - O(1)
+        if element_type:
+            type_ids = inverted.type_to_elements.get(element_type, set())
+            if candidate_ids is None:
+                candidate_ids = type_ids.copy()
+            else:
+                candidate_ids &= type_ids
+
+        # Filter by file path using inverted index - O(1)
+        if file_path:
+            file_ids = inverted.file_to_elements.get(file_path, set())
+            if not file_ids:
+                file_ids = set()
+                for fp, ids in inverted.file_to_elements.items():
+                    if file_path in fp:
+                        file_ids |= ids
+            if candidate_ids is None:
+                candidate_ids = file_ids
+            else:
+                candidate_ids &= file_ids
+
+        # If no filters, return all (but limit)
+        if candidate_ids is None:
+            candidate_ids = set(self._index_mgr.index.code_elements.keys())
+
+        # Fetch actual elements
+        results = []
+        for eid in candidate_ids:
+            if len(results) >= max_results:
+                break
+            element = self._index_mgr.index.code_elements.get(eid)
+            if element:
+                results.append(element)
+
+        self._set_cached(cache_key, results)
+        return results
+
+    def get_context_for_element(self, element_id: str) -> dict:
+        """Get comprehensive context for a code element."""
+        element = self._index_mgr.index.code_elements.get(element_id)
+        if not element:
+            return {}
+
+        related_docs = []
+        for section in self._index_mgr.index.sections.values():
+            if (
+                element_id in section.source_refs
+                or element.name in section.title
+                or element.name in section.content[:300]
+            ):
+                related_docs.append(
+                    {
+                        "section_id": section.section_id,
+                        "title": section.title,
+                        "relevance": self._calc_relevance(element, section),
+                    }
+                )
+
+        related_docs.sort(key=lambda x: x["relevance"], reverse=True)
+
+        related_elements = []
+        for eid, e in self._index_mgr.index.code_elements.items():
+            if eid == element_id:
+                continue
+            if e.file_path == element.file_path:
+                if (
+                    e.parent_class == element.parent_class
+                    or e.name == element.parent_class
+                ):
+                    related_elements.append(eid)
+
+        return {
+            "element": {
+                "id": element_id,
+                "name": element.name,
+                "type": element.element_type,
+                "signature": element.signature,
+                "file": element.file_path,
+                "language": element.language,
+                "lines": (element.line_start, element.line_end),
+            },
+            "documentation": related_docs[:5],
+            "related_elements": related_elements[:10],
+        }
+
+    def _calc_relevance(self, element: CodeElement, section: DocSection) -> float:
+        score = 0.0
+        if element.name in section.title:
+            score += 5.0
+        if element.name in section.source_refs:
+            score += 3.0
+        if element.name in section.content:
+            score += 1.0
+        if element.file_path in section.file_path:
+            score += 2.0
+        return score
+
+    def _get_cached(self, key: str) -> Optional[Any]:
+        if key in self._query_cache:
+            ts, value = self._query_cache[key]
+            if time.time() - ts < self._cache_ttl:
+                return value
+            del self._query_cache[key]
+        return None
+
+    def _set_cached(self, key: str, value: Any):
+        if len(self._query_cache) > 100:
+            oldest = min(self._query_cache.items(), key=lambda x: x[1][0])
+            del self._query_cache[oldest[0]]
+        self._query_cache[key] = (time.time(), value)
+
+    def clear_cache(self):
+        self._query_cache.clear()
+
+    # Add new logic for Graph-based Context
+    def get_context_for_task(
+        self, files: List[str], intent: str, max_tokens: int = 8000
+    ) -> ContextBundle:
+        """
+        Generates a graph-based context bundle optimized for an LLM task.
+
+        1. Loads code elements for focus files.
+        2. Resolves Upstream (what these files need).
+        3. Resolves Downstream (what uses these files).
+        4. Finds relevant docs based on code entities AND intent.
+        """
+        # Normalize paths
+        focus_paths = {str(Path(f).resolve()) for f in files}
+        relative_paths = [str(Path(f)) for f in files]
+
+        # 1. Analyze Focus Files
+        focus_elements = []
+        focus_names = set()
+
+        for eid, elem in self._index_mgr.index.code_elements.items():
+            # Check if element belongs to focus files (absolute or relative match)
+            if any(str(Path(elem.file_path).resolve()) == fp for fp in focus_paths):
+                focus_elements.append(elem)
+                focus_names.add(elem.name)
+
+        # 2. Build Dependency Graph (Just-In-Time)
+        upstream = self._resolve_upstream(focus_elements)
+        downstream = self._resolve_downstream(focus_names, exclude_paths=focus_paths)
+
+        # 3. Find Relevant Documentation
+        # Combine intent keywords + focus element names for doc search
+        search_query = f"{intent} {' '.join(focus_names)}"
+        docs = self.search_sections(query=search_query, max_results=10)
+
+        # Filter docs: prioritize those explicitly referencing focus files/elements
+        relevant_docs = []
+        for doc in docs:
+            score = 0
+            # Higher score if doc references our code
+            if any(name in doc.content for name in focus_names):
+                score += 5
+            if any(path in doc.file_path for path in relative_paths):
+                score += 5
+            # Base score from intent match
+            score += 1
+
+            relevant_docs.append(
+                {
+                    "title": doc.title,
+                    "file": doc.file_path,
+                    "content": self._truncate_content(
+                        doc.content, 500
+                    ),  # Token efficient
+                    "score": score,
+                }
+            )
+
+        relevant_docs.sort(key=lambda x: x["score"], reverse=True)
+
+        # 4. Assemble Bundle (Token Optimization)
+        bundle = ContextBundle(
+            {
+                "task_intent": intent,
+                "focus_code": {
+                    # We assume file content reading happens in System or here if needed
+                    # Here we just list the analyzed elements to save tokens vs full file
+                    fp: [
+                        e.signature
+                        for e in focus_elements
+                        if str(Path(e.file_path)) == str(Path(fp))
+                    ]
+                    for fp in relative_paths
+                },
+                "context_graph": {
+                    "upstream_dependencies": [
+                        {"name": u.name, "file": u.file_path, "type": u.element_type}
+                        for u in upstream[:10]  # Limit for tokens
+                    ],
+                    "downstream_usages": [
+                        {
+                            "name": d["element"].name,
+                            "file": d["element"].file_path,
+                            "context": "caller",
+                        }
+                        for d in downstream[:10]
+                    ],
+                },
+                "relevant_docs": relevant_docs[:5],
+            }
+        )
+
+        return bundle
+
+    def _resolve_upstream(
+        self, focus_elements: List[CodeElement]
+    ) -> List[CodeElement]:
+        """
+        Find dependencies: What do the focus elements call/inherit/use?
+        Strategy: Look for known element names inside the focus file content.
+        """
+        dependencies = []
+        # Get all known names in the index (excluding the focus elements themselves)
+        all_known_names = self._index_mgr.index.inverted.name_to_elements
+
+        # We need the content of the focus files to check for usage
+        # This is a simplified check. A full AST traversal for calls is better but expensive.
+        for elem in focus_elements:
+            try:
+                # Read specific lines of the element
+                path = Path(elem.file_path)
+                if not path.exists():
+                    continue
+
+                # Naive: Read full file (cached by OS usually), extract lines
+                # Optimization: In a real persistent system, cache content or AST Analysis result
+                lines = path.read_text(encoding="utf-8").splitlines()
+                code_snippet = "\n".join(lines[elem.line_start - 1 : elem.line_end])
+
+                # Check which known global names appear in this snippet
+                # Tokenization similar to Inverted Index building
+                tokens = set(re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", code_snippet))
+
+                for token in tokens:
+                    if token in all_known_names and token != elem.name:
+                        # Found a dependency! Get the element definition
+                        # Resolve ambiguous names (multiple files might have 'utils')
+                        # Heuristic: Prefer same directory or utils
+                        possible_ids = all_known_names[token]
+                        for eid in possible_ids:
+                            dep_elem = self._index_mgr.index.code_elements.get(eid)
+                            if dep_elem and dep_elem.file_path != elem.file_path:
+                                dependencies.append(dep_elem)
+                                break  # Take first match for now
+            except Exception:
+                continue
+
+        # Deduplicate
+        unique_deps = {e.content_hash: e for e in dependencies}
+        return list(unique_deps.values())
+
+    def _resolve_downstream(
+        self, focus_names: Set[str], exclude_paths: Set[str]
+    ) -> List[dict]:
+        """
+        Find usage: Who calls/uses the focus elements?
+        Strategy: Search inverted index or file contents for focus_names.
+        """
+        usages = []
+
+        # Use Inverted Index for fast candidate finding
+        # keyword_to_sections tracks Docs, but we need Code usage.
+        # We iterate over other code elements and check their definitions/bodies?
+        # Too slow.
+
+        # Fast path: Check specific files that likely import these modules
+        # (This implies we need an Import Graph, which we approximate here)
+
+        for name in focus_names:
+            # We look for files containing this name textually
+            # This relies on the FileScanner or IndexManager having a "files_containing_token" map
+            # Since we don't have that in v2.1, we iterate code elements names (definitions)
+            # and check if they *contain* our name? No.
+
+            # Fallback: Scan known code elements to see if their *signatures* or *docstrings*
+            # mention the focus name (e.g. type hinting `def foo(bar: FocusClass)`)
+
+            for eid, elem in self._index_mgr.index.code_elements.items():
+                if str(Path(elem.file_path).resolve()) in exclude_paths:
+                    continue
+
+                # Check signature for type usage or docstring for references
+                if (name in elem.signature) or (
+                    elem.docstring and name in elem.docstring
+                ):
+                    usages.append({"element": elem, "match": "signature_or_doc"})
+
+        return usages
+
+    def _truncate_content(self, content: str, limit: int) -> str:
+        """Helper to keep context bundle small."""
+        if len(content) <= limit:
+            return content
+        return content[:limit] + "... (truncated)"
+
+
+# =============================================================================
+# FILE SCANNER - Efficient File Discovery
+# =============================================================================
+
+def iter_files(root: Path, suffixes: Set[str], exclude_dirs: Set[str]):
+    stack = [root] if isinstance(root, Path) else root
+
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    if entry.is_dir(follow_symlinks=False):
+                        if entry.name not in exclude_dirs:
+                            stack.append(Path(entry.path))
+                    else:
+                        if Path(entry.name).suffix in suffixes:
+                            yield Path(entry.path)
+        except PermissionError:
+            pass
+
+class FileScanner:
+    """Fast file discovery with filtering."""
+
+    DEFAULT_EXCLUDES = frozenset(
+        {
+            "__pycache__",
+            ".git",
+            "node_modules",
+            ".venv",
+            "venv",
+            "env",
+            ".pytest_cache",
+            ".mypy_cache",
+            "dist",
+            "build",
+            ".tox",
+            ".next",
+            ".nuxt",
+            "target",
+            ".gradle",
+            ".idea",
+            ".vscode",
+            ".coverage",
+            "coverage",
+            ".cache",
+            "temp",
+            "tmp",
+        }
+    )
+
+    __slots__ = ("root", "docs_root", "include_dirs", "exclude_dirs", "_file_cache")
+
+    def __init__(
+        self,
+        root: Path,
+        include_dirs: Optional[List[str]] = None,
+        exclude_dirs: Optional[Set[str]] = None,
+        docs_root: Optional[Path] = None,
+    ):
+        self.root = root
+        self.docs_root = docs_root
+        self.include_dirs = include_dirs
+        self.exclude_dirs = exclude_dirs or self.DEFAULT_EXCLUDES
+        self._file_cache: Optional[Tuple[float, List[Path]]] = None
+
+    def scan(self, extensions: Set[str], use_cache: bool = True, show_tqdm: bool = True
+    ) -> List[Path]:
+        """Scan for files with given extensions."""
+        if use_cache and self._file_cache:
+            cache_time, cached_files = self._file_cache
+            if time.time() - cache_time < 60:
+                return [f for f in cached_files if f.suffix in extensions]
+
+        files = []
+        search_roots = self._get_search_roots()
+
+        for search_root in (search_roots if not show_tqdm else tqdm(search_roots, desc="Scanning files", unit="dir", total=len(search_roots))):
+            print(search_root)
+            for path in iter_files(search_root, extensions, self.exclude_dirs):
+                if path.is_file() and self._should_include(path):
+                    files.append(path)
+
+        self._file_cache = (time.time(), files)
+        return [f for f in files if f.suffix in extensions]
+
+    def _get_search_roots(self) -> List[Path]:
+        if not self.include_dirs:
+            return [self.root, self.docs_root]
+
+        roots = [self.docs_root]
+        for include in self.include_dirs:
+            path = self.root / include
+            if path.exists() and path.is_dir():
+                roots.append(path)
+
+        return roots or [self.root, self.docs_root]
+
+    def _should_include(self, path: Path) -> bool:
+        """Check if file should be included (exclude only check)."""
+        parts = path.parts
+        return not any(exc in parts for exc in self.exclude_dirs)
+
+    def get_file_hash(self, path: Path) -> str:
+        try:
+            stat = path.stat()
+            return hashlib.md5(f"{stat.st_size}:{stat.st_mtime}".encode()).hexdigest()[
+                :12
+            ]
+        except OSError:
+            return ""
+
+    def clear_cache(self):
+        self._file_cache = None
+
+
+# =============================================================================
+# GIT TRACKER - Async Change Detection
+# =============================================================================
+
+
+class GitTracker:
+    """Async git change detection."""
+
+    __slots__ = ("root",)
+
+    def __init__(self, root: Path):
+        self.root = root
+
+    async def get_commit_hash(self) -> Optional[str]:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                "rev-parse",
+                "HEAD",
+                cwd=self.root,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+            return stdout.decode().strip() if proc.returncode == 0 else None
+        except (asyncio.TimeoutError, FileNotFoundError):
+            return None
+
+    async def get_changes(self, since_commit: Optional[str] = None) -> List[FileChange]:
+        try:
+            cmd = (
+                ["git", "diff", "--name-status", f"{since_commit}..HEAD"]
+                if since_commit
+                else ["git", "ls-files"]
+            )
+
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=self.root,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+
+            if proc.returncode != 0:
+                return []
+
+            return self._parse_changes(stdout.decode(), bool(since_commit))
+        except (asyncio.TimeoutError, FileNotFoundError):
+            return []
+
+    def _parse_changes(self, output: str, has_status: bool) -> List[FileChange]:
+        changes = []
+
+        for line in output.strip().split("\n")[:500]:
+            if not line:
+                continue
+
+            if has_status:
+                parts = line.split("\t")
+                if len(parts) < 2:
+                    continue
+
+                status, path = parts[0], parts[-1]
+                change_type = {
+                    "A": ChangeType.ADDED,
+                    "M": ChangeType.MODIFIED,
+                    "D": ChangeType.DELETED,
+                }.get(status[0], ChangeType.MODIFIED)
+                old_path = parts[1] if status.startswith("R") and len(parts) > 2 else None
+                changes.append(FileChange(path, change_type, old_path))
+            else:
+                changes.append(FileChange(line.strip(), ChangeType.ADDED))
 
         return changes
 
 
-class ImportAnalyzer:
-    """Analyzes imports and dependencies in Python and JS files"""
-
-    def __init__(self, project_root: Path):
-        self.project_root = project_root
-
-    def analyze_python_imports(self, file_path: Path) -> List[ImportReference]:
-        """Analyze Python imports"""
-        imports = []
-
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-
-            tree = ast.parse(content)
-
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        imports.append(ImportReference(
-                            source_file=str(file_path),
-                            target_file=self._resolve_python_import(alias.name),
-                            import_name=alias.name,
-                            line_number=node.lineno,
-                            import_type='python'
-                        ))
-
-                elif isinstance(node, ast.ImportFrom):
-                    module = node.module or ""
-                    for alias in node.names:
-                        target_file = self._resolve_python_import(f"{module}.{alias.name}")
-                        imports.append(ImportReference(
-                            source_file=str(file_path),
-                            target_file=target_file,
-                            import_name=f"{module}.{alias.name}",
-                            line_number=node.lineno,
-                            import_type='relative' if node.level > 0 else 'absolute'
-                        ))
-
-        except Exception as e:
-            logger.error(f"Error analyzing Python imports in {file_path}: {e}")
-
-        return imports
-
-    def analyze_js_imports(self, file_path: Path) -> List[ImportReference]:
-        """Analyze JavaScript/TypeScript imports"""
-        imports = []
-
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-
-            # Regex patterns for different import types
-            patterns = [
-                r'import\s+(?:{\s*([^}]+)\s*}|\*\s+as\s+(\w+)|(\w+))\s+from\s+["\']([^"\']+)["\']',
-                r'const\s+(?:{\s*([^}]+)\s*}|(\w+))\s*=\s*require\(["\']([^"\']+)["\']\)',
-                r'import\(["\']([^"\']+)["\']\)'
-            ]
-
-            for i, line in enumerate(content.split('\n'), 1):
-                for pattern in patterns:
-                    matches = re.finditer(pattern, line)
-                    for match in matches:
-                        groups = match.groups()
-                        target = groups[-1]  # Last group is always the module path
-
-                        imports.append(ImportReference(
-                            source_file=str(file_path),
-                            target_file=self._resolve_js_import(file_path.parent, target),
-                            import_name=target,
-                            line_number=i,
-                            import_type='js'
-                        ))
-
-        except Exception as e:
-            logger.error(f"Error analyzing JS imports in {file_path}: {e}")
-
-        return imports
-
-    def _resolve_python_import(self, import_name: str) -> str:
-        """Resolve Python import to file path"""
-        # Try to find the actual file
-        parts = import_name.split('.')
-
-        # Check in project root
-        potential_paths = [
-            self.project_root / '/'.join(parts) / '__init__.py',
-            self.project_root / f"{'/'.join(parts)}.py",
-        ]
-
-        for path in potential_paths:
-            if path.exists():
-                return str(path)
-
-        return import_name  # Return original if not found
-
-    def _resolve_js_import(self, current_dir: Path, import_path: str) -> str:
-        """Resolve JS import to file path"""
-        if import_path.startswith('.'):
-            # Relative import
-            resolved = (current_dir / import_path).resolve()
-
-            # Try different extensions
-            for ext in ['.js', '.ts', '.jsx', '.tsx', '.json']:
-                if resolved.with_suffix(ext).exists():
-                    return str(resolved.with_suffix(ext))
-
-            # Try index files
-            for ext in ['.js', '.ts']:
-                index_file = resolved / f"index{ext}"
-                if index_file.exists():
-                    return str(index_file)
-
-        return import_path  # Return original if not found
-
-
-class CodeElementExtractor:
-    """Extracts code elements from source files"""
-
-    def extract_python_elements(self, file_path: Path) -> List[CodeElement]:
-        """Extract elements from Python file"""
-        elements = []
-
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-
-            tree = ast.parse(content)
-
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ClassDef):
-                    elements.append(CodeElement(
-                        name=node.name,
-                        element_type='class',
-                        file_path=str(file_path),
-                        line_start=node.lineno,
-                        line_end=getattr(node, 'end_lineno', node.lineno),
-                        signature=f"class {node.name}",
-                        docstring=ast.get_docstring(node),
-                        hash_signature=self._hash_node(node, content)
-                    ))
-
-                    # Extract methods
-                    for item in node.body:
-                        if isinstance(item, ast.FunctionDef):
-                            elements.append(CodeElement(
-                                name=item.name,
-                                element_type='method',
-                                file_path=str(file_path),
-                                line_start=item.lineno,
-                                line_end=getattr(item, 'end_lineno', item.lineno),
-                                signature=self._get_function_signature(item),
-                                docstring=ast.get_docstring(item),
-                                parent_class=node.name,
-                                hash_signature=self._hash_node(item, content)
-                            ))
-
-                elif isinstance(node, ast.FunctionDef):
-                    elements.append(CodeElement(
-                        name=node.name,
-                        element_type='function',
-                        file_path=str(file_path),
-                        line_start=node.lineno,
-                        line_end=getattr(node, 'end_lineno', node.lineno),
-                        signature=self._get_function_signature(node),
-                        docstring=ast.get_docstring(node),
-                        hash_signature=self._hash_node(node, content)
-                    ))
-
-        except Exception as e:
-            logger.error(f"Error extracting Python elements from {file_path}: {e}")
-
-        return elements
-
-    def _get_function_signature(self, node: ast.FunctionDef) -> str:
-        """Get function signature string"""
-        args = []
-        for arg in node.args.args:
-            args.append(arg.arg)
-
-        return f"def {node.name}({', '.join(args)})"
-
-    def _hash_node(self, node: ast.AST, content: str) -> str:
-        """Generate hash for AST node"""
-        try:
-            node_source = ast.unparse(node)
-            return hashlib.md5(node_source.encode()).hexdigest()
-        except:
-            # Fallback: use line-based hash
-            lines = content.split('\n')
-            start = getattr(node, 'lineno', 1) - 1
-            end = getattr(node, 'end_lineno', start + 1)
-            node_content = '\n'.join(lines[start:end])
-            return hashlib.md5(node_content.encode()).hexdigest()
-
-
-class MarkdownParser:
-    """Parses markdown files and extracts sections"""
-
-    def parse_file(self, file_path: Path) -> List[DocSection]:
-        """Parse markdown file into sections"""
-        sections = []
-
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-
-            lines = content.split('\n')
-            current_section = None
-            section_content = []
-            line_start = 0
-
-            for i, line in enumerate(lines):
-                # Check for header
-                header_match = re.match(r'^(#{1,6})\s+(.+)$', line)
-
-                if header_match:
-                    # Save previous section
-                    if current_section:
-                        sections.append(self._create_section(
-                            file_path, current_section, section_content,
-                            line_start, i - 1
-                        ))
-
-                    # Start new section
-                    level = len(header_match.group(1))
-                    title = header_match.group(2).strip()
-                    current_section = (title, level)
-                    section_content = []
-                    line_start = i
-
-                elif current_section:
-                    section_content.append(line)
-
-            # Save last section
-            if current_section:
-                sections.append(self._create_section(
-                    file_path, current_section, section_content,
-                    line_start, len(lines) - 1
-                ))
-
-        except Exception as e:
-            logger.error(f"Error parsing markdown file {file_path}: {e}")
-
-        return sections
-
-    def _create_section(self, file_path: Path, section_info: Tuple[str, int],
-                        content_lines: List[str], line_start: int, line_end: int) -> DocSection:
-        """Create DocSection from parsed data"""
-        title, level = section_info
-        content = '\n'.join(content_lines).strip()
-
-        # Extract source references from content
-        source_refs = self._extract_source_refs(content)
-
-        # Extract tags
-        tags = self._extract_tags(content)
-
-        section_id = f"{file_path.name}#{title}"
-
-        return DocSection(
-            section_id=section_id,
-            file_path=str(file_path),
-            title=title,
-            content=content,
-            level=level,
-            line_start=line_start,
-            line_end=line_end,
-            source_refs=source_refs,
-            tags=tags,
-            hash_signature=hashlib.md5(content.encode()).hexdigest(),
-            last_modified=datetime.fromtimestamp(file_path.stat().st_mtime)
-        )
-
-    def _extract_source_refs(self, content: str) -> List[str]:
-        """Extract source code references from markdown content"""
-        refs = []
-
-        # Look for code references in various formats
-        patterns = [
-            r'`([^`]+\.py:[^`]+)`',  # `file.py:Class.method`
-            r'\[([^\]]+)\]\([^)]*\.py[^)]*\)',  # [text](file.py)
-            r'```python[^`]*?([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*)[^`]*?```'  # code blocks
-        ]
-
-        for pattern in patterns:
-            matches = re.findall(pattern, content)
-            refs.extend(matches)
-
-        return list(set(refs))  # Remove duplicates
-
-    def _extract_tags(self, content: str) -> List[str]:
-        """Extract tags from markdown content"""
-        tags = []
-
-        # Look for tags in various formats
-        tag_patterns = [
-            r'Tags?:\s*([^\n]+)',  # Tags: tag1, tag2
-            r'#([a-zA-Z][a-zA-Z0-9_-]*)',  # #hashtag
-        ]
-
-        for pattern in tag_patterns:
-            matches = re.findall(pattern, content, re.IGNORECASE)
-            for match in matches:
-                if ',' in match:
-                    tags.extend([tag.strip() for tag in match.split(',')])
-                else:
-                    tags.append(match.strip())
-
-        return list(set(tags))
-
-    def parse_file_incremental(self, file_path: Path, existing_sections: Dict[str, DocSection] = None) -> Tuple[
-        List[DocSection], List[str]]:
-        """Parse file with section-level change detection"""
-        if existing_sections is None:
-            existing_sections = {}
-
-        new_sections = []
-        changed_sections = []
-
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-
-            lines = content.split('\n')
-            current_section = None
-            section_content = []
-            line_start = 0
-
-            for i, line in enumerate(lines):
-                header_match = re.match(r'^(#{1,6})\s+(.+)$', line)
-
-                if header_match:
-                    # Process previous section
-                    if current_section:
-                        section = self._create_section_with_hash(
-                            file_path, current_section, section_content,
-                            line_start, i - 1
-                        )
-
-                        # Check if section changed
-                        existing_section = existing_sections.get(section.section_id)
-                        if self._section_changed(section, existing_section):
-                            section.change_detected = True
-                            changed_sections.append(section.section_id)
-
-                        new_sections.append(section)
-
-                    # Start new section
-                    level = len(header_match.group(1))
-                    title = header_match.group(2).strip()
-                    current_section = (title, level)
-                    section_content = []
-                    line_start = i
-
-                elif current_section:
-                    section_content.append(line)
-
-            # Handle last section
-            if current_section:
-                section = self._create_section_with_hash(
-                    file_path, current_section, section_content,
-                    line_start, len(lines) - 1
-                )
-
-                existing_section = existing_sections.get(section.section_id)
-                if self._section_changed(section, existing_section):
-                    section.change_detected = True
-                    changed_sections.append(section.section_id)
-
-                new_sections.append(section)
-
-        except Exception as e:
-            logger.error(f"Error parsing markdown file {file_path}: {e}")
-
-        return new_sections, changed_sections
-
-    def _create_section_with_hash(self, file_path: Path, section_info: Tuple[str, int],
-                                  content_lines: List[str], line_start: int, line_end: int) -> DocSection:
-        """Create DocSection with precise hash tracking"""
-        title, level = section_info
-        content = '\n'.join(content_lines).strip()
-
-        # Create separate hashes for different aspects
-        content_hash = hashlib.md5(content.encode()).hexdigest()
-        title_hash = hashlib.md5(title.encode()).hexdigest()
-        combined_hash = hashlib.md5(f"{title}:{content}:{line_start}:{line_end}".encode()).hexdigest()
-
-        source_refs = self._extract_source_refs(content)
-        tags = self._extract_tags(content)
-        section_id = f"{file_path.name}#{title}"
-
-        return DocSection(
-            section_id=section_id,
-            file_path=str(file_path),
-            title=title,
-            content=content,
-            level=level,
-            line_start=line_start,
-            line_end=line_end,
-            source_refs=source_refs,
-            tags=tags,
-            hash_signature=combined_hash,
-            content_hash=content_hash,
-            last_modified=datetime.fromtimestamp(file_path.stat().st_mtime),
-            change_detected=False
-        )
-
-    def _section_changed(self, new_section: DocSection, existing_section: Optional[DocSection]) -> bool:
-        """Check if section actually changed"""
-        if not existing_section:
-            return True  # New section
-
-        # Quick hash comparison
-        if new_section.content_hash == existing_section.content_hash:
-            return False
-
-        # Title change
-        if new_section.title != existing_section.title:
-            return True
-
-        # Significant content change (not just whitespace)
-        if new_section.hash_signature != existing_section.hash_signature:
-            return True
-
-        return False
-
-
-class DocsIndexer:
-    """Main indexer that builds and maintains the complete documentation index"""
-
-    def __init__(self, project_root: Path, docs_root: Path,
-                 include_dirs: List[str] = None, exclude_dirs: List[str] = None):
+# =============================================================================
+# DOCS SYSTEM - Main Facade
+# =============================================================================
+
+
+class DocsSystem:
+    """Main documentation system facade with multi-language support."""
+
+    # Supported file extensions
+    DOC_EXTENSIONS = {".md", ".markdown", ".rst", ".txt"}
+    PYTHON_EXTENSIONS = {".py", ".pyw"}
+    JSTS_EXTENSIONS = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
+
+    def __init__(
+        self,
+        project_root: Path,
+        docs_root: Path,
+        include_dirs: Optional[List[str]] = None,
+        exclude_dirs: Optional[Set[str]] = None,
+        extensions: Optional[Dict[str, Set[str]]] = None,
+    ):
         self.project_root = project_root
         self.docs_root = docs_root
-        self.git_detector = GitChangeDetector(project_root)
-        self.import_analyzer = ImportAnalyzer(project_root)
-        self.code_extractor = CodeElementExtractor()
-        self.md_parser = MarkdownParser()
-        self.index_file = docs_root / '.docs_index.json'
+        if extensions:
+            for k, v in extensions.items():
+                if k == "doc":
+                    self.DOC_EXTENSIONS = v
+                elif k == "python":
+                    self.PYTHON_EXTENSIONS = v
+                elif k == "jsts":
+                    self.JSTS_EXTENSIONS = v
+
+        self.scanner = FileScanner(project_root, include_dirs, exclude_dirs, docs_root=docs_root)
+        self.doc_parser = DocParser()
+        self.code_analyzer = CodeAnalyzer()
+        self.jsts_analyzer = JSTSAnalyzer()
+        self.index_mgr = IndexManager(docs_root / ".docs_index.json")
+        self.context = ContextEngine(self.index_mgr)
+        self.git = GitTracker(project_root)
 
-        # Directory filters
-        self.include_dirs = include_dirs or ["toolboxv2", "src", "lib", "docs"]
-        self.exclude_dirs = exclude_dirs or [
-            "__pycache__", ".git", "node_modules", ".venv", "venv", "env",
-            ".pytest_cache", ".mypy_cache", "dist", "build", ".tox",
-            "coverage_html_report", ".coverage", ".next", ".nuxt",
-            "target", "bin", "obj", ".gradle", ".idea", ".vscode"
-        ]
-
-    async def update_index_precise(self, current_index: DocsIndex,
-                                   force_full_scan: bool = False,
-                                   max_files_per_batch: int = 10) -> Tuple[DocsIndex, List[str], Dict[str, List[str]]]:
-        """Update index with precise section-level tracking"""
-        logger.info("Starting precise index update...")
-
-        update_notes = []
-        section_changes = {}  # file_path -> [changed_section_ids]
-
-        if force_full_scan:
-            return await self._full_scan_with_sections(current_index, max_files_per_batch)
-
-        # Quick git change detection with timeout
-        try:
-            changes = await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(
-                    None, self.git_detector.get_changed_files, current_index.last_git_commit
-                ),
-                timeout=15.0
-            )
-        except asyncio.TimeoutError:
-            logger.warning("Git detection timed out, using cached index")
-            return current_index, ["Git timeout - using cached index"], {}
-
-        # Process changes in batches
-        changed_files = [c for c in changes if self._should_include_file(Path(c.file_path))]
-
-        for i in range(0, len(changed_files), max_files_per_batch):
-            batch = changed_files[i:i + max_files_per_batch]
-
-            for change in batch:
-                file_path = Path(change.file_path)
-
-                if change.change_type == ChangeType.DELETED:
-                    removed_sections = self._remove_file_from_index(current_index, str(file_path))
-                    update_notes.append(f"Removed file: {file_path} ({len(removed_sections)} sections)")
-
-                elif change.change_type in [ChangeType.ADDED, ChangeType.MODIFIED]:
-                    if not file_path.exists():
-                        continue
-
-                    # Quick hash check first
-                    new_hash = self._get_file_hash(file_path)
-                    old_hash = current_index.file_hashes.get(str(file_path))
-
-                    if new_hash == old_hash:
-                        continue  # No actual change
-
-                    # Section-level update for markdown files
-                    if file_path.suffix == '.md' and file_path.is_relative_to(self.docs_root):
-                        changed_section_ids = await self._update_markdown_sections(
-                            current_index, file_path
-                        )
-                        if changed_section_ids:
-                            section_changes[str(file_path)] = changed_section_ids
-                            update_notes.append(f"Updated {len(changed_section_ids)} sections in {file_path.name}")
-
-                    # Code files - update entire file (faster for code)
-                    elif file_path.suffix in ['.py', '.js', '.ts', '.jsx', '.tsx']:
-                        self._update_file_in_index(current_index, file_path)
-                        update_notes.append(f"Updated code file: {file_path}")
-
-                    # Update file hash
-                    current_index.file_hashes[str(file_path)] = new_hash
-
-            # Yield control between batches
-            await asyncio.sleep(0.01)
-
-        # Update timestamps
-        current_index.last_git_commit = self.git_detector.get_current_commit_hash()
-        current_index.last_indexed = datetime.now()
-
-        return current_index, update_notes, section_changes
-
-    async def _update_markdown_sections(self, index: DocsIndex, file_path: Path) -> List[str]:
-        """Update only changed sections in a markdown file"""
-        try:
-            # Get existing sections for this file
-            existing_sections = {
-                sid: section for sid, section in index.sections.items()
-                if section.file_path == str(file_path)
-            }
-
-            # Parse with change detection
-            new_sections, changed_section_ids = self.md_parser.parse_file_incremental(
-                file_path, existing_sections
-            )
-
-            # Update only changed sections
-            for section in new_sections:
-                if section.change_detected or section.section_id not in index.sections:
-                    index.sections[section.section_id] = section
-                    # Update section hash tracking
-                    index.section_hashes[section.section_id] = section.hash_signature
-
-            # Remove sections that no longer exist
-            current_section_ids = {s.section_id for s in new_sections}
-            to_remove = [sid for sid in existing_sections.keys() if sid not in current_section_ids]
-
-            for sid in to_remove:
-                if sid in index.sections:
-                    del index.sections[sid]
-                if sid in index.section_hashes:
-                    del index.section_hashes[sid]
-                changed_section_ids.append(f"REMOVED:{sid}")
-
-            return changed_section_ids
-
-        except Exception as e:
-            logger.error(f"Error updating markdown sections in {file_path}: {e}")
-            return []
-
-    def build_initial_index(self, file_extensions: List[str] = None) -> DocsIndex:
-        """Build complete index for the first time with directory filtering"""
-        logger.info("Building initial documentation index...")
-
-        if file_extensions is None:
-            file_extensions = ['.py', '.js', '.ts', '.jsx', '.tsx', '.md']
-
-        index = DocsIndex()
-
-        # Get current git commit
-        index.last_git_commit = self.git_detector.get_current_commit_hash()
-
-        # Get filtered file list
-        target_files = self._get_filtered_files(file_extensions)
-
-        logger.info(f"Processing {len(target_files)} files in {len(self.include_dirs)} directories")
-
-        # Process each file type
-        for file_path in target_files:
-            logger.debug(f"Indexing {file_path}")
-            try:
-                if file_path.suffix == '.py':
-                    self._index_python_file(file_path, index)
-                elif file_path.suffix in ['.js', '.ts', '.jsx', '.tsx']:
-                    self._index_js_file(file_path, index)
-                elif file_path.suffix == '.md' and file_path.is_relative_to(self.docs_root):
-                    self._index_md_file(file_path, index)
-
-                # Store file hash for change detection
-                index.file_hashes[str(file_path)] = self._get_file_hash(file_path)
-
-            except Exception as e:
-                logger.error(f"Error indexing {file_path}: {e}")
-                continue
-
-        index.last_indexed = datetime.now()
-
-        logger.info(f"Initial index built: {len(index.code_elements)} code elements, "
-                    f"{len(index.sections)} doc sections, {len(index.import_refs)} import maps")
-
-        return index
-
-    def update_index(self, current_index: DocsIndex,
-                     force_full_scan: bool = False) -> Tuple[DocsIndex, List[str]]:
-        """Update index based on detected changes or force full scan"""
-        logger.info("Updating documentation index...")
-
-        update_notes = []
-
-        if force_full_scan:
-            logger.info("Performing force full scan...")
-            # Get all current files
-            current_files = set(self._get_filtered_files(['.py', '.js', '.ts', '.jsx', '.tsx', '.md']))
-
-            # Check each file for changes
-            for file_path in current_files:
-                new_hash = self._get_file_hash(file_path)
-                old_hash = current_index.file_hashes.get(str(file_path))
-
-                if new_hash != old_hash:
-                    self._update_file_in_index(current_index, file_path)
-                    update_notes.append(f"Updated (force scan): {file_path}")
-                    current_index.file_hashes[str(file_path)] = new_hash
-
-            # Remove files that no longer exist
-            existing_files = {str(f) for f in current_files}
-            to_remove = [f for f in current_index.file_hashes.keys() if f not in existing_files]
-
-            for file_path in to_remove:
-                self._remove_file_from_index(current_index, file_path)
-                update_notes.append(f"Removed (no longer exists): {file_path}")
-
-        else:
-            # Git-based change detection
-            changes = self.git_detector.get_changed_files(current_index.last_git_commit)
-
-            for change in changes:
-                file_path = Path(change.file_path)
-
-                # Skip if not in our target directories
-                if not self._should_include_file(file_path):
-                    continue
-
-                if change.change_type == ChangeType.DELETED:
-                    self._remove_file_from_index(current_index, str(file_path))
-                    update_notes.append(f"Removed (git): {file_path}")
-
-                elif change.change_type == ChangeType.RENAMED:
-                    if change.old_path:
-                        self._remove_file_from_index(current_index, change.old_path)
-                        update_notes.append(f"Removed (renamed from): {change.old_path}")
-
-                    if file_path.exists():
-                        self._update_file_in_index(current_index, file_path)
-                        update_notes.append(f"Added (renamed to): {file_path}")
-                        current_index.file_hashes[str(file_path)] = self._get_file_hash(file_path)
-
-                elif change.change_type in [ChangeType.ADDED, ChangeType.MODIFIED]:
-                    if not file_path.exists():
-                        continue
-
-                    # Verify actual change with hash comparison
-                    new_hash = self._get_file_hash(file_path)
-                    old_hash = current_index.file_hashes.get(str(file_path))
-
-                    if new_hash != old_hash:
-                        self._update_file_in_index(current_index, file_path)
-                        update_notes.append(f"Updated (git {change.change_type.value}): {file_path}")
-                        current_index.file_hashes[str(file_path)] = new_hash
-
-        # Update git commit and timestamp
-        current_index.last_git_commit = self.git_detector.get_current_commit_hash()
-        current_index.last_indexed = datetime.now()
-
-        if update_notes:
-            logger.info(f"Index updated with {len(update_notes)} changes")
-        else:
-            logger.info("No changes detected in index update")
-
-        return current_index, update_notes
-
-    def _get_filtered_files(self, extensions: List[str]) -> List[Path]:
-        """Get list of files matching extensions and directory filters"""
-        files = []
-
-        # If include_dirs is specified, only search in those directories
-        search_dirs = []
-        for include_dir in self.include_dirs:
-            search_path = self.project_root / include_dir
-            if search_path.exists() and search_path.is_dir():
-                search_dirs.append(search_path)
-
-        # If no include dirs exist, search entire project root
-        if not search_dirs:
-            search_dirs = [self.project_root]
-
-        for search_dir in search_dirs:
-            for ext in extensions:
-                pattern = f"**/*{ext}"
-                for file_path in search_dir.rglob(pattern):
-                    if self._should_include_file(file_path):
-                        files.append(file_path)
-
-        return list(set(files))  # Remove duplicates
-
-    def _should_include_file(self, file_path: Path) -> bool:
-        """Check if file should be included based on directory filters"""
-        file_str = str(file_path)
-
-        # Check exclude patterns
-        for exclude_dir in self.exclude_dirs:
-            if exclude_dir in file_str:
-                return False
-
-        # If include_dirs specified, file must be in one of them
-        if self.include_dirs:
-            for include_dir in self.include_dirs:
-                include_path = self.project_root / include_dir
-                try:
-                    if file_path.is_relative_to(include_path):
-                        return True
-                except ValueError:
-                    continue
-            return False
-
-        return True
-
-    def _update_file_in_index(self, index: DocsIndex, file_path: Path):
-        """Update index for a specific file"""
-        # Remove old entries first
-        self._remove_file_from_index(index, str(file_path))
-
-        # Add new entries based on file type
-        try:
-            if file_path.suffix == '.py':
-                self._index_python_file(file_path, index)
-            elif file_path.suffix in ['.js', '.ts', '.jsx', '.tsx']:
-                self._index_js_file(file_path, index)
-            elif file_path.suffix == '.md' and file_path.is_relative_to(self.docs_root):
-                self._index_md_file(file_path, index)
-        except Exception as e:
-            logger.error(f"Error updating file {file_path}: {e}")
-
-    def _index_python_file(self, file_path: Path, index: DocsIndex):
-        """Index a Python file"""
-        # Extract code elements
-        elements = self.code_extractor.extract_python_elements(file_path)
-        for element in elements:
-            element_id = f"{element.file_path}:{element.name}"
-            if element.parent_class:
-                element_id = f"{element.file_path}:{element.parent_class}.{element.name}"
-            index.code_elements[element_id] = element
-
-        # Analyze imports
-        imports = self.import_analyzer.analyze_python_imports(file_path)
-        if imports:
-            index.import_refs[str(file_path)] = imports
-
-    def _index_js_file(self, file_path: Path, index: DocsIndex):
-        """Index a JavaScript/TypeScript file"""
-        imports = self.import_analyzer.analyze_js_imports(file_path)
-        if imports:
-            index.import_refs[str(file_path)] = imports
-
-    def _index_md_file(self, file_path: Path, index: DocsIndex):
-        """Index a markdown file"""
-        sections = self.md_parser.parse_file(file_path)
-        for section in sections:
-            index.sections[section.section_id] = section
-
-    def _get_file_hash(self, file_path: Path) -> str:
-        """Get MD5 hash of file content"""
-        try:
-            with open(file_path, 'rb') as f:
-                return hashlib.md5(f.read()).hexdigest()
-        except Exception:
-            return ""
-
-    def _remove_file_from_index(self, index: DocsIndex, file_path: str):
-        """Remove all references to a file from index"""
-        # Remove code elements
-        to_remove = [k for k, v in index.code_elements.items() if v.file_path == file_path]
-        for key in to_remove:
-            del index.code_elements[key]
-
-        # Remove doc sections
-        to_remove = [k for k, v in index.sections.items() if v.file_path == file_path]
-        for key in to_remove:
-            del index.sections[key]
-
-        # Remove import refs
-        if file_path in index.import_refs:
-            del index.import_refs[file_path]
-
-        # Remove file hash
-        if file_path in index.file_hashes:
-            del index.file_hashes[file_path]
-
-
-class SectionManager:
-    """Manages precise operations on documentation sections"""
-
-    def __init__(self, docs_root: Path):
-        self.docs_root = docs_root
-
-    def create_new_file(self, file_path: str, initial_content: str = "") -> Result:
-        """Create a new markdown file"""
-        try:
-            full_path = self.docs_root / file_path
-            full_path.parent.mkdir(parents=True, exist_ok=True)
-
-            if full_path.exists():
-                return Result.default_user_error(f"File already exists: {file_path}")
-
-            with open(full_path, 'w', encoding='utf-8') as f:
-                f.write(initial_content)
-
-            return Result.ok({"file_path": str(full_path), "action": "created"})
-
-        except Exception as e:
-            return Result.default_user_error(f"Error creating file: {e}")
-
-    def add_section(self, file_path: str, section: DocSection, position: Optional[str] = None) -> Result:
-        """Add a new section to a markdown file"""
-        try:
-            full_path = self.docs_root / file_path
-
-            if not full_path.exists():
-                # Create new file
-                content = f"{'#' * section.level} {section.title}\n\n{section.content}\n\n"
-                with open(full_path, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                return Result.ok({"action": "created_file_with_section"})
-
-            # Read existing content
-            with open(full_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-
-            # Find insertion point
-            insert_index = len(lines)  # Default: append at end
-
-            if position:
-                if position == "top":
-                    insert_index = 0
-                elif position.startswith("after:"):
-                    target_section = position[6:]
-                    for i, line in enumerate(lines):
-                        if line.strip().endswith(target_section):
-                            # Find end of this section
-                            for j in range(i + 1, len(lines)):
-                                if re.match(r'^#{1,6}\s+', lines[j]):
-                                    insert_index = j
-                                    break
-                            break
-
-            # Insert new section
-            new_content = f"{'#' * section.level} {section.title}\n\n{section.content}\n\n"
-            lines.insert(insert_index, new_content)
-
-            # Write back
-            with open(full_path, 'w', encoding='utf-8') as f:
-                f.writelines(lines)
-
-            return Result.ok({"action": "section_added", "position": insert_index})
-
-        except Exception as e:
-            return Result.default_user_error(f"Error adding section: {e}")
-
-    def update_section(self, section: DocSection, new_content: str) -> Result:
-        """Update an existing section"""
-        try:
-            file_path = Path(section.file_path)
-
-            with open(file_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-
-            # Replace content between line_start and line_end
-            new_section_content = f"{'#' * section.level} {section.title}\n\n{new_content}\n\n"
-            new_lines = new_section_content.split('\n')
-
-            # Replace the section
-            lines[section.line_start:section.line_end + 1] = [line + '\n' for line in new_lines]
-
-            # Write back
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.writelines(lines)
-
-            return Result.ok({"action": "section_updated"})
-
-        except Exception as e:
-            return Result.default_user_error(f"Error updating section: {e}")
-
-    def delete_section(self, section: DocSection) -> Result:
-        """Delete a section from a file"""
-        try:
-            file_path = Path(section.file_path)
-
-            with open(file_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-
-            # Remove lines for this section
-            del lines[section.line_start:section.line_end + 1]
-
-            # Write back
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.writelines(lines)
-
-            return Result.ok({"action": "section_deleted"})
-
-        except Exception as e:
-            return Result.default_user_error(f"Error deleting section: {e}")
-
-
-class MarkdownDocsSystem:
-    """Production-ready unified markdown documentation system"""
-
-    def __init__(self, app: AppType, docs_root: str = "../docs", source_root: str = ".",
-                 include_dirs: List[str] = None, exclude_dirs: List[str] = None):
-        self.app = app
-        self.docs_root = Path(docs_root)
-        self.source_root = Path(source_root)
-        self.project_root = Path.cwd()
-
-        # Directory filters
-        self.include_dirs = include_dirs or ["toolboxv2", "flows", "mods", "utils", "tbjs", "tests", "tcm", "docs"]
-        self.exclude_dirs = exclude_dirs or [
-            "__pycache__", ".git", "node_modules", ".venv", "venv", "env", "python_env",
-            ".pytest_cache", ".mypy_cache", "dist", "build", ".tox", "coverage_html_report",
-            ".coverage", ".next", ".nuxt", "target", "bin", "obj", ".gradle", ".idea",
-            ".vscode", "temp", "tmp", "logs", ".cache", "coverage", ".data", ".config",
-            ".info", "web", "simple-core", "src-core"
-        ]
-
-        # Index management
-        self.index_file = self.docs_root / '.docs_index.json'
-        self.current_index: Optional[DocsIndex] = None
-
-        # Ensure directories exist
         self.docs_root.mkdir(exist_ok=True)
 
-        # Internal cache for performance
-        self._search_cache = {}
-        self._cache_timeout = 300  # 5 minutes
-
-    # ==================== CORE INDEX MANAGEMENT ====================
-
-
-    def _load_index(self, minimal: bool = False, force_reload: bool = False) -> DocsIndex:
-        """Unified index loading with proper incremental loading"""
-        # Return cached index if available and not forcing reload
-        if not force_reload and self.current_index and not minimal:
-            return self.current_index
-
-        if not self.index_file.exists():
-            logger.info("No index file found, will build new index")
-            return DocsIndex()
-
-        try:
-            with open(self.index_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-
-            index = DocsIndex()
-            index.last_indexed = datetime.fromisoformat(
-                data.get('last_indexed', datetime.now().isoformat())
-            )
-            index.last_git_commit = data.get('last_git_commit')
-            index.version = data.get('version', '1.1')
-            index.file_hashes = data.get('file_hashes', {})
-            index.section_hashes = data.get('section_hashes', {})
-
-            # Load sections with optional truncation for performance
-            sections_data = data.get('sections', {})
-            section_limit = 200 if minimal else None
-            section_count = 0
-
-            for section_id, section_data in sections_data.items():
-                if minimal and section_count >= section_limit:
-                    break
-
-                content = section_data['content']
-                if minimal:
-                    content = content[:800]  # Truncate for speed
-
-                index.sections[section_id] = DocSection(
-                    section_id=section_data['section_id'],
-                    file_path=section_data['file_path'],
-                    title=section_data['title'],
-                    content=content,
-                    level=section_data['level'],
-                    line_start=section_data['line_start'],
-                    line_end=section_data['line_end'],
-                    source_refs=section_data.get('source_refs', [])[:5 if minimal else None],
-                    tags=section_data.get('tags', [])[:3 if minimal else None],
-                    hash_signature=section_data.get('hash_signature', ''),
-                    content_hash=section_data.get('content_hash', ''),
-                    last_modified=datetime.fromisoformat(
-                        section_data.get('last_modified', datetime.now().isoformat()))
-                )
-                section_count += 1
-
-            # Load code elements only if not minimal
-            if not minimal:
-                for element_id, element_data in data.get('code_elements', {}).items():
-                    index.code_elements[element_id] = CodeElement(
-                        name=element_data['name'],
-                        element_type=element_data['element_type'],
-                        file_path=element_data['file_path'],
-                        line_start=element_data['line_start'],
-                        line_end=element_data['line_end'],
-                        signature=element_data['signature'],
-                        docstring=element_data.get('docstring'),
-                        hash_signature=element_data.get('hash_signature', ''),
-                        parent_class=element_data.get('parent_class')
-                    )
-
-            # Cache full index for future use
-            if not minimal:
-                self.current_index = index
-
-            logger.info(
-                f"Loaded {'minimal' if minimal else 'full'} index: {len(index.sections)} sections, {len(index.code_elements)} elements")
-            return index
-
-        except Exception as e:
-            logger.error(f"Error loading index: {e}")
-            return DocsIndex()
-
-    def _save_index(self, index: DocsIndex):
-        """Optimized index saving"""
-        try:
-            data = {
-                'version': index.version,
-                'last_git_commit': index.last_git_commit,
-                'last_indexed': index.last_indexed.isoformat(),
-                'file_hashes': index.file_hashes,
-                'section_hashes': index.section_hashes,
-                'sections': {},
-                'code_elements': {}
-            }
-
-            # Convert sections efficiently
-            for section_id, section in index.sections.items():
-                section_dict = asdict(section)
-                section_dict['last_modified'] = section.last_modified.isoformat()
-                data['sections'][section_id] = section_dict
-
-            # Convert code elements efficiently
-            for element_id, element in index.code_elements.items():
-                data['code_elements'][element_id] = asdict(element)
-
-            # Write with minimal formatting for speed
-            with open(self.index_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, separators=(',', ':'), ensure_ascii=False)
-
-        except Exception as e:
-            logger.error(f"Error saving index: {e}")
-
-    async def _save_index_async(self, index: DocsIndex):
-        """Async wrapper for index saving"""
-        try:
-            await asyncio.get_event_loop().run_in_executor(None, self._save_index, index)
-        except Exception as e:
-            logger.error(f"Async index save failed: {e}")
-
-    # ==================== CORE FUNCTIONALITY ====================
-
-    async def docs_reader(self,
-                          query: Optional[str] = None,
-                          section_id: Optional[str] = None,
-                          file_path: Optional[str] = None,
-                          tags: Optional[List[str]] = None,
-                          include_source_refs: bool = True,
-                          format_type: str = "structured",
-                          max_results: int = 25) -> Result:
-        """Ultra-fast unified docs reader with proper index loading"""
-        try:
-            start_time = time.time()
-
-            # Load index if needed - try cached first, then saved, then build
-            if not self.current_index:
-                # First try to load from saved file
-                self.current_index = self._load_index(minimal=False)
-
-                # If no sections found, suggest running initial_docs_parse
-                if not self.current_index.sections:
-                    if self.index_file.exists():
-                        logger.warning("Index file exists but contains no documentation sections")
-                        # Try to find any markdown files
-                        md_files = list(self.docs_root.rglob('*.md'))
-                        if md_files:
-                            logger.info(f"Found {len(md_files)} markdown files, re-parsing...")
-                            # Re-parse markdown files
-                            for md_file in md_files[:10]:  # Limit for quick check
-                                sections = self._parse_markdown_file(md_file)
-                                for section in sections:
-                                    self.current_index.sections[section.section_id] = section
-
-                            if self.current_index.sections:
-                                logger.info(f"Re-parsed {len(self.current_index.sections)} sections")
-                                await self._save_index_async(self.current_index)
-
-                    if not self.current_index.sections:
-                        return Result.default_user_error(
-                            "No documentation sections found. Run initial_docs_parse() to build the documentation index, "
-                            "or create some .md files in the docs directory."
-                        )
-
-            # Check cache for repeated queries
-            cache_key = f"{query}:{section_id}:{file_path}:{tags}:{format_type}:{max_results}"
-            if cache_key in self._search_cache:
-                cache_entry = self._search_cache[cache_key]
-                if time.time() - cache_entry['timestamp'] < self._cache_timeout:
-                    return Result.ok(cache_entry['result'])
-
-            # Fast path for specific section
-            if section_id:
-                if section_id in self.current_index.sections:
-                    section = self.current_index.sections[section_id]
-                    result = self._format_single_section(section, include_source_refs, format_type)
-                    return result
-                else:
-                    return Result.default_user_error(f"Section not found: {section_id}")
-
-            # Search and format results
-            matching_sections = await self._search_sections(query, file_path, tags, max_results, start_time)
-            result_data = self._format_sections(matching_sections, include_source_refs, format_type)
-
-            # Cache the result
-            self._search_cache[cache_key] = {
-                'result': result_data,
-                'timestamp': time.time()
-            }
-
-            return Result.ok(result_data)
-
-        except Exception as e:
-            logger.error(f"Error in docs_reader: {e}")
-            return Result.default_user_error(f"Error reading documentation: {e}")
-
-    async def docs_writer(self,
-                          action: str,
-                          file_path: Optional[str] = None,
-                          section_title: Optional[str] = None,
-                          content: Optional[str] = None,
-                          source_file: Optional[str] = None,
-                          auto_generate: bool = False,
-                          position: Optional[str] = None,
-                          level: int = 2) -> Result:
-        """Unified optimized docs writer"""
-        try:
-            if not self.current_index:
-                self.current_index = self._load_index(minimal=True)
-
-            result = {"action": action, "timestamp": datetime.now().isoformat()}
-
-            if action == "update_section":
-                return await self._update_section(file_path, section_title, content,
-                                                  source_file, auto_generate)
-            elif action == "add_section":
-                return await self._add_section(file_path, section_title, content,
-                                               source_file, auto_generate, position, level)
-            elif action == "create_file":
-                return await self._create_file(file_path, content, source_file, auto_generate)
-            elif action == "generate_from_code":
-                return await self._generate_from_code(source_file, file_path, auto_generate)
-            else:
-                return Result.default_user_error(f"Unknown action: {action}")
-
-        except Exception as e:
-            logger.error(f"Error in docs_writer: {e}")
-            return Result.default_user_error(f"Error writing documentation: {e}")
-
-    # ==================== ADVANCED OPERATIONS ====================
-
-    async def get_update_suggestions(self, force_scan: bool = False,
-                                     max_suggestions: int = 50) -> Result:
-        """Get prioritized documentation update suggestions"""
-        try:
-            if not self.current_index:
-                self.current_index = self._load_index()
-
-            # Quick scan for changes if needed
-            if force_scan:
-                await self._quick_update_index()
-
-            suggestions = []
-
-            # Find undocumented code elements
-            undocumented = self._find_undocumented_elements()
-            for element in undocumented[:max_suggestions // 2]:
-                priority = self._assess_priority(element)
-                suggestions.append({
-                    "type": "missing_documentation",
-                    "element_name": element.name,
-                    "element_type": element.element_type,
-                    "file_path": element.file_path,
-                    "priority": priority,
-                    "action": "generate_from_code" if element.element_type == "class" else "add_section"
-                })
-
-            # Find unclear sections
-            unclear = self._find_unclear_sections()
-            for section_id in unclear[:max_suggestions // 2]:
-                section = self.current_index.sections[section_id]
-                suggestions.append({
-                    "type": "unclear_documentation",
-                    "section_id": section_id,
-                    "title": section.title,
-                    "file_path": section.file_path,
-                    "priority": "medium",
-                    "action": "update_section"
-                })
-
-            # Sort by priority
-            priority_order = {"high": 0, "medium": 1, "low": 2}
-            suggestions.sort(key=lambda x: priority_order.get(x["priority"], 3))
-
-            return Result.ok({
-                "suggestions": suggestions[:max_suggestions],
-                "total_found": len(suggestions),
-                "undocumented_elements": len(undocumented),
-                "unclear_sections": len(unclear)
-            })
-
-        except Exception as e:
-            logger.error(f"Error getting update suggestions: {e}")
-            return Result.default_user_error(f"Error analyzing updates: {e}")
-
-    async def auto_update_docs(self, dry_run: bool = False, max_updates: int = 5,
-                               timeout: int = 30) -> Result:
-        """Automatically update documentation with timeout protection"""
-        try:
-            # Get suggestions
-            suggestions_result = await asyncio.wait_for(
-                self.get_update_suggestions(max_suggestions=max_updates * 2),
-                timeout=10.0
-            )
-
-            if suggestions_result.is_error():
-                return suggestions_result
-
-            suggestions = suggestions_result.get("suggestions")[:max_updates]
-
-            if dry_run:
-                return Result.ok({
-                    "dry_run": True,
-                    "would_update": len(suggestions),
-                    "suggestions": [s["type"] + ": " + s.get("element_name", s.get("title", ""))
-                                    for s in suggestions]
-                })
-
-            results = []
-            start_time = time.time()
-
-            for suggestion in suggestions:
-                if time.time() - start_time > timeout:
-                    break
-
-                try:
-                    if suggestion["action"] == "generate_from_code":
-                        result = await asyncio.wait_for(
-                            self.docs_writer(
-                                action="generate_from_code",
-                                source_file=suggestion["file_path"],
-                                auto_generate=True
-                            ), timeout=10.0
-                        )
-                    elif suggestion["action"] == "add_section":
-                        result = await asyncio.wait_for(
-                            self.docs_writer(
-                                action="add_section",
-                                file_path=f"{Path(suggestion['file_path']).stem}.md",
-                                section_title=suggestion["element_name"],
-                                source_file=suggestion["file_path"],
-                                auto_generate=True
-                            ), timeout=8.0
-                        )
-                    else:
-                        continue
-
-                    results.append({
-                        "suggestion": suggestion["type"],
-                        "status": "success" if result.is_ok() else "error",
-                        "details": str(result.error) if result.is_error() else "completed"
-                    })
-
-                except asyncio.TimeoutError:
-                    results.append({
-                        "suggestion": suggestion["type"],
-                        "status": "timeout",
-                        "details": "Operation timed out"
-                    })
-
-                await asyncio.sleep(0.1)  # Brief pause between operations
-
-            return Result.ok({
-                "processed": len(results),
-                "successful": len([r for r in results if r["status"] == "success"]),
-                "results": results,
-                "execution_time": f"{time.time() - start_time:.2f}s"
-            })
-
-        except Exception as e:
-            logger.error(f"Error in auto_update_docs: {e}")
-            return Result.default_user_error(f"Auto-update failed: {e}")
-
-    async def initial_docs_parse(self, update_index: bool = True, force_rebuild: bool = False) -> Result:
-        """Parse existing documentation and build initial index with proper saving"""
-        try:
-            logger.info("Starting initial documentation parse...")
-
-            # Check if we can use existing index
-            if not force_rebuild and self.index_file.exists() and not update_index:
-                self.current_index = self._load_index(minimal=False)
-                if self.current_index.sections or self.current_index.code_elements:
-                    logger.info("Using existing index")
-                    return Result.ok({
-                        "total_sections": len(self.current_index.sections),
-                        "total_code_elements": len(self.current_index.code_elements),
-                        "linked_sections": len([s for s in self.current_index.sections.values() if s.source_refs]),
-                        "completion_rate": f"{(len([s for s in self.current_index.sections.values() if s.source_refs]) / max(len(self.current_index.sections), 1) * 100):.1f}%",
-                        "used_cached": True
-                    })
-
-            if update_index or force_rebuild:
-                # Build comprehensive index
-                logger.info("Building comprehensive index from source files...")
-                self.current_index = await asyncio.get_event_loop().run_in_executor(
-                    None, self._build_full_index
-                )
-            else:
-                self.current_index = self._load_index(minimal=False)
-
-            # Ensure we have some documentation sections
-            if not self.current_index.sections:
-                logger.info("No documentation sections found, scanning for markdown files...")
-                # Look for markdown files in docs and project root
-                search_paths = [self.docs_root]
-                if self.docs_root != self.project_root:
-                    search_paths.append(self.project_root)
-
-                for search_path in search_paths:
-                    for md_file in search_path.rglob('*.md'):
-                        if self._should_include_file(md_file):
-                            sections = self._parse_markdown_file(md_file)
-                            for section in sections:
-                                self.current_index.sections[section.section_id] = section
-
-                    # Don't search too deep
-                    if len(self.current_index.sections) > 0:
-                        break
-
-                logger.info(f"Found {len(self.current_index.sections)} documentation sections")
-
-            # Link documentation sections to code elements
-            linked_count = await self._link_docs_to_code()
-
-            # Save updated index with proper error handling
-            try:
-                await self._save_index_async(self.current_index)
-                logger.info("Index saved successfully")
-            except Exception as e:
-                logger.error(f"Failed to save index: {e}")
-                # Continue anyway, we have the index in memory
-
-            completion_rate = (
-                    linked_count / max(len(self.current_index.sections), 1) * 100) if self.current_index.sections else 0
-
-            return Result.ok({
-                "total_sections": len(self.current_index.sections),
-                "total_code_elements": len(self.current_index.code_elements),
-                "linked_sections": linked_count,
-                "completion_rate": f"{completion_rate:.1f}%",
-                "index_file": str(self.index_file),
-                "docs_root": str(self.docs_root)
-            })
-
-        except Exception as e:
-            logger.error(f"Error in initial_docs_parse: {e}")
-            return Result.default_user_error(f"Failed to parse docs: {e}")
-
-    # ==================== INTERNAL HELPER METHODS ====================
-
-    async def _search_sections(self, query: Optional[str], file_path: Optional[str],
-                               tags: Optional[List[str]], max_results: int, start_time: float) -> List[DocSection]:
-        """Optimized section search with early termination"""
-        matching_sections = []
-        search_terms = set(query.lower().split()) if query else set()
-
-        for section in self.current_index.sections.values():
-            if len(matching_sections) >= max_results:
-                break
-
-            # Timeout protection
-            if time.time() - start_time > 3.0:
-                break
-
-            # Quick filters
-            if file_path and file_path not in section.file_path:
-                continue
-
-            if tags and not any(tag in section.tags for tag in tags):
-                continue
-
-            if search_terms:
-                search_content = f"{section.title} {section.content[:200]}".lower()
-                if not any(term in search_content for term in search_terms):
-                    continue
-
-            matching_sections.append(section)
-
-        return matching_sections
-
-    def _format_sections(self, sections: List[DocSection], include_source_refs: bool,
-                         format_type: str) -> dict:
-        """Unified section formatting"""
-        if format_type == "markdown":
-            output = []
-            for section in sections[:20]:
-                output.append(f"{'#' * section.level} {section.title}")
-                output.append("")
-                content = section.content[:500] + ("..." if len(section.content) > 500 else "")
-                output.append(content)
-                if include_source_refs and section.source_refs:
-                    output.append(f"\n**References:** {', '.join(section.source_refs[:3])}")
-                output.append("")
-            return "\n".join(output)
-
-        elif format_type == "json":
-            return [self._section_to_dict(s, include_source_refs) for s in sections[:20]]
-
-        else:  # structured
-            return {
-                "sections": [self._section_to_dict(s, include_source_refs) for s in sections[:20]],
-                "metadata": {
-                    "total_available": len(sections),
-                    "returned_sections": min(len(sections), 20),
-                    "truncated": len(sections) > 20
+    async def initialize(self, force_rebuild: bool = False, show_tqdm=False) -> dict:
+        """Initialize or load documentation index."""
+        start = time.perf_counter()
+
+        if not force_rebuild:
+            await self.index_mgr.load()
+            if self.index_mgr.index.sections or self.index_mgr.index.code_elements:
+                return {
+                    "status": "loaded",
+                    "sections": len(self.index_mgr.index.sections),
+                    "elements": len(self.index_mgr.index.code_elements),
+                    "time_ms": (time.perf_counter() - start) * 1000,
                 }
-            }
 
-    def _format_single_section(self, section: DocSection, include_source_refs: bool,
-                               format_type: str) -> Result:
-        """Format a single section efficiently"""
-        if format_type == "markdown":
-            content = f"{'#' * section.level} {section.title}\n\n{section.content}"
-            if include_source_refs and section.source_refs:
-                content += f"\n\n**References:** {', '.join(section.source_refs[:5])}"
-            return Result.ok(content)
+        await self._build_index(show_tqdm=show_tqdm)
+        await self.index_mgr.save(force=True)
 
-        elif format_type == "json":
-            return Result.ok([self._section_to_dict(section, include_source_refs)])
-
-        else:  # structured
-            return Result.ok({
-                "sections": [self._section_to_dict(section, include_source_refs)],
-                "metadata": {"total_sections": 1, "query_type": "specific_section"}
-            })
-
-    def _section_to_dict(self, section: DocSection, include_source_refs: bool) -> dict:
-        """Convert section to dictionary efficiently"""
-        data = {
-            "id": section.section_id,
-            "title": section.title,
-            "content": section.content[:500],  # Limit for performance
-            "file_path": section.file_path,
-            "level": section.level,
-            "tags": section.tags[:3]
+        return {
+            "status": "rebuilt",
+            "sections": len(self.index_mgr.index.sections),
+            "elements": len(self.index_mgr.index.code_elements),
+            "time_ms": (time.perf_counter() - start) * 1000,
         }
-        if include_source_refs:
-            data["source_refs"] = section.source_refs[:3]
-        return data
 
-    async def _update_section(self, file_path: str, section_title: str, content: str,
-                              source_file: str, auto_generate: bool) -> Result:
-        """Update existing section"""
-        if not file_path or not section_title:
-            return Result.default_user_error("file_path and section_title required")
+    async def read(
+        self,
+        query: Optional[str] = None,
+        section_id: Optional[str] = None,
+        file_path: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        max_results: int = 25,
+        format_type: str = "structured",
+    ) -> dict:
+        """Read documentation sections."""
+        start = time.perf_counter()
 
-        section_id = f"{Path(file_path).name}#{section_title}"
-        if section_id not in self.current_index.sections:
-            return Result.default_user_error(f"Section not found: {section_id}")
+        if not self.index_mgr.index.sections:
+            await self.index_mgr.load()
 
-        section = self.current_index.sections[section_id]
+        if section_id:
+            section = self.index_mgr.index.sections.get(section_id)
+            if not section:
+                return {"error": f"Section not found: {section_id}"}
+            return self._format_sections([section], format_type, start)
 
-        if auto_generate and source_file:
-            content = await self._generate_content(section_title, source_file)
+        sections = self.context.search_sections(query, file_path, tags, max_results)
+        return self._format_sections(sections, format_type, start)
 
-        if not content:
-            return Result.default_user_error("content required")
+    async def write(self, action: str, **kwargs) -> dict:
+        """Write/modify documentation."""
+        start = time.perf_counter()
 
-        # Update file
-        success = self._update_section_in_file(section, content)
-        if not success:
-            return Result.default_user_error("Failed to update file")
+        handlers = {
+            "create_file": self._handle_create_file,
+            "add_section": self._handle_add_section,
+            "update_section": self._handle_update_section,
+            "delete_section": self._handle_delete_section,
+        }
 
-        # Update index
-        section.content = content
-        section.content_hash = hashlib.md5(content.encode()).hexdigest()
-        section.last_modified = datetime.now()
+        handler = handlers.get(action)
+        if not handler:
+            return {"error": f"Unknown action: {action}"}
 
-        asyncio.create_task(self._save_index_async(self.current_index))
+        result = await handler(**kwargs)
+        result["time_ms"] = (time.perf_counter() - start) * 1000
+        await self.index_mgr.save()
+        return result
 
-        return Result.ok({"action": "section_updated", "section_id": section_id})
+    async def lookup_code(
+        self,
+        name: Optional[str] = None,
+        element_type: Optional[str] = None,
+        file_path: Optional[str] = None,
+        language: Optional[str] = None,
+        include_code: bool = False,
+        max_results: int = 25,
+    ) -> dict:
+        """Look up code elements across all languages."""
+        start = time.perf_counter()
 
-    async def _add_section(self, file_path: str, section_title: str, content: str,
-                           source_file: str, auto_generate: bool, position: str, level: int) -> Result:
-        """Add new section to file"""
-        if not file_path or not section_title:
-            return Result.default_user_error("file_path and section_title required")
+        if not self.index_mgr.index.code_elements:
+            await self.index_mgr.load()
 
-        if auto_generate and source_file:
-            content = await self._generate_content(section_title, source_file)
-
-        if not content:
-            content = f"Content for {section_title}\n\nTODO: Add documentation here."
-
-        # Create section
-        section = DocSection(
-            section_id=f"{Path(file_path).name}#{section_title}",
-            file_path=str(self.docs_root / file_path),
-            title=section_title,
-            content=content,
-            level=level,
-            line_start=0,
-            line_end=0,
-            hash_signature=hashlib.md5(content.encode()).hexdigest(),
-            content_hash=hashlib.md5(content.encode()).hexdigest()
+        elements = self.context.search_elements(
+            name, element_type, file_path, max_results
         )
 
-        # Add to file
-        success = self._add_section_to_file(file_path, section, position)
-        if not success:
-            return Result.default_user_error("Failed to add section to file")
+        # Filter by language if specified
+        if language:
+            elements = [e for e in elements if e.language == language]
 
-        # Update index
-        self.current_index.sections[section.section_id] = section
-        asyncio.create_task(self._save_index_async(self.current_index))
+        results = []
+        for elem in elements:
+            elem_data = {
+                "name": elem.name,
+                "type": elem.element_type,
+                "signature": elem.signature,
+                "file": elem.file_path,
+                "lines": (elem.line_start, elem.line_end),
+                "language": elem.language,
+                "parent": elem.parent_class,
+                "docstring": elem.docstring[:200] if elem.docstring else None,
+            }
+            if include_code:
+                elem_data["code"] = self._extract_code(elem)
+            results.append(elem_data)
 
-        return Result.ok({"action": "section_added", "section_id": section.section_id})
+        return {
+            "results": results,
+            "count": len(results),
+            "time_ms": (time.perf_counter() - start) * 1000,
+        }
 
-    async def _create_file(self, file_path: str, content: str, source_file: str,
-                           auto_generate: bool) -> Result:
-        """Create new documentation file"""
-        if not file_path:
-            return Result.default_user_error("file_path required")
+    async def get_suggestions(self, max_suggestions: int = 20) -> dict:
+        """Get documentation improvement suggestions."""
+        start = time.perf_counter()
 
+        if not self.index_mgr.index.code_elements:
+            await self.index_mgr.load()
+
+        suggestions = []
+        documented_names = set()
+        for section in self.index_mgr.index.sections.values():
+            documented_names.update(section.source_refs)
+            documented_names.add(section.title.lower())
+
+        for eid, elem in self.index_mgr.index.code_elements.items():
+            if elem.name.startswith("_"):
+                continue
+            if (
+                eid not in documented_names
+                and elem.name.lower() not in documented_names
+                and not elem.docstring
+            ):
+                priority = "high" if elem.element_type == "class" else "medium"
+                suggestions.append(
+                    {
+                        "type": "missing_docs",
+                        "element": elem.name,
+                        "element_type": elem.element_type,
+                        "language": elem.language,
+                        "file": elem.file_path,
+                        "priority": priority,
+                    }
+                )
+
+        unclear_markers = {"todo", "fixme", "tbd", "placeholder"}
+        for sid, section in self.index_mgr.index.sections.items():
+            content_lower = section.content.lower()
+            if (
+                any(m in content_lower for m in unclear_markers)
+                or len(section.content) < 50
+            ):
+                suggestions.append(
+                    {
+                        "type": "unclear_section",
+                        "section_id": sid,
+                        "title": section.title,
+                        "priority": "low",
+                    }
+                )
+
+        priority_order = {"high": 0, "medium": 1, "low": 2}
+        suggestions.sort(key=lambda x: priority_order[x["priority"]])
+
+        return {
+            "suggestions": suggestions[:max_suggestions],
+            "total": len(suggestions),
+            "time_ms": (time.perf_counter() - start) * 1000,
+        }
+
+    async def sync(self) -> dict:
+        """Sync index with file system changes."""
+        start = time.perf_counter()
+
+        changes = await self.git.get_changes(self.index_mgr.index.last_git_commit)
+        updated = 0
+
+        for change in changes:
+            path = self.project_root / change.file_path
+
+            if change.change_type == ChangeType.DELETED:
+                self.index_mgr.remove_file(str(path))
+                updated += 1
+                continue
+
+            if not path.exists():
+                continue
+
+            new_hash = self.scanner.get_file_hash(path)
+            old_hash = self.index_mgr.index.file_hashes.get(str(path))
+
+            if new_hash != old_hash:
+                await self._update_file(path)
+                self.index_mgr.index.file_hashes[str(path)] = new_hash
+                updated += 1
+
+        self.index_mgr.index.last_git_commit = await self.git.get_commit_hash()
+        self.index_mgr.index.last_indexed = time.time()
+
+        if updated:
+            await self.index_mgr.save()
+            self.context.clear_cache()
+
+        return {
+            "changes_detected": len(changes),
+            "files_updated": updated,
+            "time_ms": (time.perf_counter() - start) * 1000,
+        }
+
+    async def _build_index(self, show_tqdm: bool = True):
+        """Build complete index from scratch."""
+        self.index_mgr.index = DocsIndex()
+
+        # Scan and parse markdown files
+        md_files = self.scanner.scan(self.DOC_EXTENSIONS, show_tqdm=show_tqdm)
+        for md_file in (md_files if not show_tqdm else tqdm(md_files, desc="Indexing docs", unit="file", total=len(md_files))):
+            sections = self.doc_parser.parse(md_file)
+            for section in sections:
+                self.index_mgr.update_section(section)
+            self.index_mgr.index.file_hashes[str(md_file)] = self.scanner.get_file_hash(
+                md_file
+            )
+
+        # Scan and analyze Python files
+        py_files = self.scanner.scan(self.PYTHON_EXTENSIONS, show_tqdm=show_tqdm, use_cache=False)
+        for py_file in (py_files if not show_tqdm else tqdm(py_files, desc="Indexing py code", unit="file", total=len(py_files))):
+            elements = self.code_analyzer.analyze(py_file)
+            for elem in elements:
+                eid = (
+                    f"{elem.file_path}:{elem.parent_class}.{elem.name}"
+                    if elem.parent_class
+                    else f"{elem.file_path}:{elem.name}"
+                )
+                self.index_mgr.update_element(eid, elem)
+            self.index_mgr.index.file_hashes[str(py_file)] = self.scanner.get_file_hash(
+                py_file
+            )
+
+        # Scan and analyze JS/TS files
+        jsts_files = self.scanner.scan(self.JSTS_EXTENSIONS, show_tqdm=show_tqdm, use_cache=False)
+        for jsts_file in (jsts_files if not show_tqdm else tqdm(jsts_files, desc="Indexing js code", unit="file", total=len(jsts_files))):
+            elements = self.jsts_analyzer.analyze(jsts_file)
+            for elem in elements:
+                eid = (
+                    f"{elem.file_path}:{elem.parent_class}.{elem.name}"
+                    if elem.parent_class
+                    else f"{elem.file_path}:{elem.name}"
+                )
+                self.index_mgr.update_element(eid, elem)
+            self.index_mgr.index.file_hashes[str(jsts_file)] = self.scanner.get_file_hash(
+                jsts_file
+            )
+
+        self.index_mgr.index.last_git_commit = await self.git.get_commit_hash()
+        self.index_mgr.index.last_indexed = time.time()
+
+        logger.info(
+            f"Built index: {len(self.index_mgr.index.sections)} sections, "
+            f"{len(self.index_mgr.index.code_elements)} code elements"
+        )
+
+    async def _update_file(self, path: Path):
+        """Update index for a single file."""
+        self.index_mgr.remove_file(str(path))
+
+        if path.suffix in self.DOC_EXTENSIONS:
+            sections = self.doc_parser.parse(path, use_cache=False)
+            for section in sections:
+                self.index_mgr.update_section(section)
+        elif path.suffix in self.PYTHON_EXTENSIONS:
+            elements = self.code_analyzer.analyze(path, use_cache=False)
+            for elem in elements:
+                eid = (
+                    f"{elem.file_path}:{elem.parent_class}.{elem.name}"
+                    if elem.parent_class
+                    else f"{elem.file_path}:{elem.name}"
+                )
+                self.index_mgr.update_element(eid, elem)
+        elif path.suffix in self.JSTS_EXTENSIONS:
+            elements = self.jsts_analyzer.analyze(path, use_cache=False)
+            for elem in elements:
+                eid = (
+                    f"{elem.file_path}:{elem.parent_class}.{elem.name}"
+                    if elem.parent_class
+                    else f"{elem.file_path}:{elem.name}"
+                )
+                self.index_mgr.update_element(eid, elem)
+
+    def _format_sections(
+        self, sections: List[DocSection], format_type: str, start: float
+    ) -> dict:
+        """Format sections for output."""
+        if format_type == "markdown":
+            output = []
+            for s in sections[:20]:
+                output.append(f"{'#' * s.level} {s.title}\n")
+                output.append(s.content[:1000])
+                output.append("")
+            return {
+                "content": "\n".join(output),
+                "count": len(sections),
+                "time_ms": (time.perf_counter() - start) * 1000,
+            }
+
+        return {
+            "sections": [
+                {
+                    "id": s.section_id,
+                    "title": s.title,
+                    "content": s.content[:1000],
+                    "file": s.file_path,
+                    "level": s.level,
+                    "tags": list(s.tags),
+                    "refs": list(s.source_refs)[:5],
+                }
+                for s in sections[:20]
+            ],
+            "count": len(sections),
+            "time_ms": (time.perf_counter() - start) * 1000,
+        }
+
+    def _extract_code(self, elem: CodeElement) -> str:
+        """Extract code block for element."""
+        try:
+            path = Path(elem.file_path)
+            lines = path.read_text(encoding="utf-8").split("\n")
+            return "\n".join(lines[elem.line_start - 1 : elem.line_end])
+        except:
+            return ""
+
+    async def _handle_create_file(self, file_path: str, content: str = "") -> dict:
         full_path = self.docs_root / file_path
-
         if full_path.exists():
-            return Result.default_user_error(f"File already exists: {file_path}")
-
-        if auto_generate and source_file:
-            content = await self._generate_file_content(source_file)
-
-        if not content:
-            title = Path(file_path).stem.replace('_', ' ').title()
-            content = f"# {title}\n\nDocumentation for {title}.\n\n"
+            return {"error": f"File exists: {file_path}"}
 
         full_path.parent.mkdir(parents=True, exist_ok=True)
-        full_path.write_text(content, encoding='utf-8')
+        if not content:
+            title = Path(file_path).stem.replace("_", " ").title()
+            content = f"# {title}\n\nDocumentation for {title}.\n"
 
-        return Result.ok({"action": "file_created", "file_path": str(full_path)})
+        full_path.write_text(content, encoding="utf-8")
+        sections = self.doc_parser.parse(full_path, use_cache=False)
+        for section in sections:
+            self.index_mgr.update_section(section)
 
-    async def _generate_from_code(self, source_file: str, file_path: str,
-                                  auto_generate: bool) -> Result:
-        """Generate documentation from source code"""
-        if not source_file:
-            return Result.default_user_error("source_file required")
+        return {"status": "created", "file": str(full_path), "sections": len(sections)}
 
-        if not Path(source_file).exists():
-            return Result.default_user_error(f"Source file not found: {source_file}")
+    async def _handle_add_section(
+        self,
+        file_path: str,
+        title: str,
+        content: str,
+        level: int = 2,
+        position: str = "end",
+    ) -> dict:
+        full_path = self.docs_root / file_path
+        section_md = f"\n{'#' * level} {title}\n\n{content}\n"
 
-        if not file_path:
-            file_path = f"{Path(source_file).stem}.md"
-
-        content = await self._generate_file_content(source_file) if auto_generate else ""
-
-        return await self._create_file(file_path, content, source_file, False)
-
-    async def _generate_content(self, title: str, source_file: str) -> str:
-        """Generate content using AI with timeout protection"""
-        try:
-            isaa = self.app.get_mod("isaa")
-            agent = await isaa.get_agent("docwriter")
-
-            if not agent:
-                return f"# {title}\n\nAI agent not available. Please add content manually."
-
-            with open(source_file, 'r', encoding='utf-8') as f:
-                source_content = f.read()[:2000]  # Limit source size
-
-            prompt = f"""Generate concise documentation for "{title}" from this code:
-
-```python
-{source_content}
-```
-
-Requirements: Clear, concise, markdown format, no section header."""
-
-            result = await asyncio.wait_for(
-                agent.a_run_llm_completion(
-                    messages=[{"role": "user", "content": prompt}],
-                    model_preference="fast"
-                ), timeout=8.0
+        if full_path.exists():
+            existing = full_path.read_text(encoding="utf-8")
+            new_content = (
+                section_md + existing if position == "start" else existing + section_md
             )
-            return result
-
-        except Exception as e:
-            logger.error(f"Error generating content: {e}")
-            return f"# {title}\n\nError generating content: {e}"
-
-    async def _generate_file_content(self, source_file: str) -> str:
-        """Generate complete file documentation"""
-        try:
-            isaa = self.app.get_mod("isaa")
-            agent = await isaa.get_agent("docwriter")
-
-            if not agent:
-                return f"# {Path(source_file).stem}\n\nAI agent not available."
-
-            # Extract code elements
-            elements = self._extract_code_elements(Path(source_file))
-
-            with open(source_file, 'r', encoding='utf-8') as f:
-                source_content = f.read()[:3000]  # Limit source size
-
-            prompt = f"""Generate comprehensive documentation for: {source_file}
-
-Code:
-```python
-{source_content}
-```
-
-Elements: {len(elements)} classes/functions found
-
-Create complete markdown with headers, overview, and examples."""
-
-            result = await asyncio.wait_for(
-                agent.a_run_llm_completion(
-                    messages=[{"role": "user", "content": prompt}],
-                    model_preference="fast"
-                ), timeout=12.0
-            )
-            return result
-
-        except Exception as e:
-            logger.error(f"Error generating file content: {e}")
-            return f"# {Path(source_file).stem}\n\nError generating documentation: {e}"
-
-    def _build_full_index(self) -> DocsIndex:
-        """Build comprehensive index from scratch with better progress tracking"""
-        logger.info("Building full documentation index...")
-
-        index = DocsIndex()
-        index.last_git_commit = self._get_git_commit()
-
-        # Get target files
-        target_files = self._get_target_files()
-        logger.info(f"Processing {len(target_files)} files")
-
-        code_files_processed = 0
-        md_files_processed = 0
-
-        for i, file_path in enumerate(target_files):
-            try:
-                if file_path.suffix == '.py':
-                    elements = self._extract_code_elements(file_path)
-                    for element in elements:
-                        element_id = f"{element.file_path}:{element.name}"
-                        if element.parent_class:
-                            element_id = f"{element.file_path}:{element.parent_class}.{element.name}"
-                        index.code_elements[element_id] = element
-                    code_files_processed += 1
-
-                elif file_path.suffix.lower() == '.md':
-                    sections = self._parse_markdown_file(file_path)
-                    for section in sections:
-                        index.sections[section.section_id] = section
-                    if sections:
-                        md_files_processed += 1
-
-                # Store file hash
-                index.file_hashes[str(file_path)] = self._get_file_hash(file_path)
-
-                # Progress logging
-                if i % 50 == 0 and i > 0:
-                    logger.info(f"Progress: {i}/{len(target_files)} files processed")
-
-            except Exception as e:
-                logger.error(f"Error processing {file_path}: {e}")
-
-        index.last_indexed = datetime.now()
-        logger.info(f"Index built: {len(index.code_elements)} elements from {code_files_processed} Python files, "
-                    f"{len(index.sections)} sections from {md_files_processed} markdown files")
-
-        return index
-
-    async def _quick_update_index(self):
-        """Quick index update for changed files only"""
-        try:
-            changes = await asyncio.get_event_loop().run_in_executor(
-                None, self._get_git_changes
-            )
-
-            for change in changes[:20]:  # Limit changes processed
-                file_path = Path(change)
-                if not self._should_include_file(file_path):
-                    continue
-
-                if not file_path.exists():
-                    self._remove_file_from_index(file_path)
-                    continue
-
-                new_hash = self._get_file_hash(file_path)
-                old_hash = self.current_index.file_hashes.get(str(file_path))
-
-                if new_hash != old_hash:
-                    self._update_file_in_index(file_path)
-                    self.current_index.file_hashes[str(file_path)] = new_hash
-
-            self.current_index.last_indexed = datetime.now()
-
-        except Exception as e:
-            logger.error(f"Error in quick index update: {e}")
-
-    async def _link_docs_to_code(self) -> int:
-        """Link documentation sections to code elements"""
-        linked_count = 0
-
-        for section_id, section in self.current_index.sections.items():
-            matches = self._find_code_matches(section)
-            if matches:
-                section.source_refs.extend(matches)
-                section.source_refs = list(set(section.source_refs))  # Remove duplicates
-                linked_count += 1
-
-        return linked_count
-
-    def _find_code_matches(self, section: DocSection) -> List[str]:
-        """Find code elements that match a documentation section"""
-        matches = []
-        title_words = set(re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', section.title.lower()))
-        content_words = set(re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', section.content.lower()))
-
-        for element_id, element in self.current_index.code_elements.items():
-            score = 0
-
-            # Direct matches
-            if element.name.lower() in title_words:
-                score += 10
-            if element.name.lower() in content_words:
-                score += 5
-
-            # File correlation
-            if Path(element.file_path).stem.lower() in Path(section.file_path).stem.lower():
-                score += 3
-
-            if score >= 5:
-                matches.append(element_id)
-
-        return matches
-
-    def _find_undocumented_elements(self) -> List[CodeElement]:
-        """Find code elements without documentation"""
-        undocumented = []
-
-        for element_id, element in self.current_index.code_elements.items():
-            has_docs = any(
-                element_id in section.source_refs or
-                element.name in section.content or
-                element.name in section.title
-                for section in self.current_index.sections.values()
-            )
-
-            if not has_docs:
-                undocumented.append(element)
-
-        return undocumented
-
-    def _find_unclear_sections(self) -> List[str]:
-        """Find sections with unclear content"""
-        unclear = []
-        unclear_indicators = ['todo', 'fixme', 'placeholder', 'coming soon', 'tbd']
-
-        for section_id, section in self.current_index.sections.items():
-            content_lower = section.content.lower()
-
-            if (any(indicator in content_lower for indicator in unclear_indicators) or
-                len(section.content.strip()) < 50):
-                unclear.append(section_id)
-
-        return unclear
-
-    def _assess_priority(self, element: CodeElement) -> str:
-        """Assess documentation priority for code element"""
-        score = 0
-
-        # Type weights
-        type_scores = {'class': 5, 'function': 3, 'method': 2}
-        score += type_scores.get(element.element_type, 1)
-
-        # Complexity
-        if element.signature and element.signature.count(',') > 2:
-            score += 2
-
-        # Public vs private
-        if not element.name.startswith('_'):
-            score += 2
-
-        # No docstring
-        if not element.docstring:
-            score += 2
-
-        return "high" if score >= 8 else "medium" if score >= 5 else "low"
-
-    # ==================== FILE OPERATIONS ====================
-
-    def _update_section_in_file(self, section: DocSection, new_content: str) -> bool:
-        """Update section content in file"""
-        try:
-            file_path = Path(section.file_path)
-            with open(file_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-
-            # Replace section content
-            new_section = f"{'#' * section.level} {section.title}\n\n{new_content}\n\n"
-            new_lines = new_section.split('\n')
-
-            # Update the lines
-            lines[section.line_start:section.line_end + 1] = [line + '\n' for line in new_lines]
-
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.writelines(lines)
-
-            return True
-        except Exception as e:
-            logger.error(f"Error updating section in file: {e}")
-            return False
-
-    def _add_section_to_file(self, file_path: str, section: DocSection, position: str) -> bool:
-        """Add section to file"""
-        try:
-            full_path = self.docs_root / file_path
-
-            if not full_path.exists():
-                # Create new file
-                content = f"{'#' * section.level} {section.title}\n\n{section.content}\n\n"
-                full_path.write_text(content, encoding='utf-8')
-                return True
-
-            # Add to existing file
-            with open(full_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-
-            new_section = f"\n{'#' * section.level} {section.title}\n\n{section.content}\n\n"
-
-            if position == "top":
-                content = new_section + content
-            else:
-                content = content + new_section
-
-            full_path.write_text(content, encoding='utf-8')
-            return True
-
-        except Exception as e:
-            logger.error(f"Error adding section to file: {e}")
-            return False
-
-    # ==================== UTILITY METHODS ====================
-
-    def _get_target_files(self) -> List[Path]:
-        """Get filtered list of target files"""
-        files = []
-        extensions = ['.py', '.md']
-
-        search_dirs = [self.project_root / d for d in self.include_dirs if (self.project_root / d).exists()]
-        if not search_dirs:
-            search_dirs = [self.project_root]
-
-        for search_dir in search_dirs:
-            for ext in extensions:
-                for file_path in search_dir.rglob(f"*{ext}"):
-                    if self._should_include_file(file_path):
-                        files.append(file_path)
-
-        return list(set(files))
-
-    def _should_include_file(self, file_path: Path) -> bool:
-        """Check if file should be processed"""
-        file_str = str(file_path)
-
-        # Exclude patterns
-        if any(exclude in file_str for exclude in self.exclude_dirs):
-            return False
-
-        # Include patterns
-        if self.include_dirs:
-            return any(file_path.is_relative_to(self.project_root / include_dir)
-                       for include_dir in self.include_dirs
-                       if (self.project_root / include_dir).exists())
-
-        return True
-
-    def _get_file_hash(self, file_path: Path) -> str:
-        """Get file hash for change detection"""
-        try:
-            with open(file_path, 'rb') as f:
-                return hashlib.md5(f.read()).hexdigest()
-        except Exception:
-            return ""
-
-    def _get_git_commit(self) -> Optional[str]:
-        """Get current git commit hash"""
-        try:
-            result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=self.project_root,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            return result.stdout.strip() if result.returncode == 0 else None
-        except Exception:
-            return None
-
-    def _get_git_changes(self) -> List[str]:
-        """Get changed files from git"""
-        try:
-            result = subprocess.run(
-                ["git", "diff", "--name-only", "HEAD~1", "HEAD"],
-                cwd=self.project_root,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            return result.stdout.strip().split('\n') if result.returncode == 0 else []
-        except Exception:
-            return []
-
-    def _extract_code_elements(self, file_path: Path) -> List[CodeElement]:
-        """Extract code elements from Python file"""
-        elements = []
-
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-
-            tree = ast.parse(content)
-
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ClassDef):
-                    elements.append(CodeElement(
-                        name=node.name,
-                        element_type='class',
-                        file_path=str(file_path),
-                        line_start=node.lineno,
-                        line_end=getattr(node, 'end_lineno', node.lineno),
-                        signature=f"class {node.name}",
-                        docstring=ast.get_docstring(node),
-                        hash_signature=hashlib.md5(f"class {node.name}".encode()).hexdigest()
-                    ))
-
-                    # Add methods
-                    for item in node.body:
-                        if isinstance(item, ast.FunctionDef):
-                            elements.append(CodeElement(
-                                name=item.name,
-                                element_type='method',
-                                file_path=str(file_path),
-                                line_start=item.lineno,
-                                line_end=getattr(item, 'end_lineno', item.lineno),
-                                signature=f"def {item.name}",
-                                docstring=ast.get_docstring(item),
-                                parent_class=node.name,
-                                hash_signature=hashlib.md5(f"def {item.name}".encode()).hexdigest()
-                            ))
-
-                elif isinstance(node, ast.FunctionDef):
-                    elements.append(CodeElement(
-                        name=node.name,
-                        element_type='function',
-                        file_path=str(file_path),
-                        line_start=node.lineno,
-                        line_end=getattr(node, 'end_lineno', node.lineno),
-                        signature=f"def {node.name}",
-                        docstring=ast.get_docstring(node),
-                        hash_signature=hashlib.md5(f"def {node.name}".encode()).hexdigest()
-                    ))
-
-        except Exception as e:
-            logger.error(f"Error extracting elements from {file_path}: {e}")
-
-        return elements
-
-    def _parse_markdown_file(self, file_path: Path) -> List[DocSection]:
-        """Enhanced markdown file parsing with better error handling"""
-        sections = []
-
-        try:
-            # Skip non-markdown files and hidden files
-            if not file_path.suffix.lower() == '.md' or file_path.name.startswith('.'):
-                return sections
-
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-
-            if not content.strip():
-                return sections
-
-            lines = content.split('\n')
-            current_section = None
-            section_content = []
-            line_start = 0
-
-            for i, line in enumerate(lines):
-                # Look for markdown headers with improved regex
-                header_match = re.match(r'^(#{1,6})\s+(.+)$', line.strip())
-
-                if header_match:
-                    # Save previous section if exists
-                    if current_section:
-                        section = self._create_doc_section(
-                            file_path, current_section, section_content, line_start, i - 1
-                        )
-                        if section:  # Only add non-empty sections
-                            sections.append(section)
-
-                    # Start new section
-                    level = len(header_match.group(1))
-                    title = header_match.group(2).strip()
-
-                    # Skip empty titles
-                    if not title:
-                        continue
-
-                    current_section = (title, level)
-                    section_content = []
-                    line_start = i
-
-                elif current_section:
-                    section_content.append(line)
-
-            # Save last section
-            if current_section:
-                section = self._create_doc_section(
-                    file_path, current_section, section_content, line_start, len(lines) - 1
-                )
-                if section:
-                    sections.append(section)
-
-            if sections:
-                logger.debug(f"Parsed {len(sections)} sections from {file_path}")
-
-        except Exception as e:
-            logger.error(f"Error parsing markdown {file_path}: {e}")
-
-        return sections
-
-    def _create_doc_section(self, file_path: Path, section_info: Tuple[str, int],
-                            content_lines: List[str], line_start: int, line_end: int) -> Optional[DocSection]:
-        """Create DocSection with validation"""
-        try:
-            title, level = section_info
-            content = '\n'.join(content_lines).strip()
-
-            # Skip sections with no meaningful content
-            if len(content) < 10 and not any(c.isalnum() for c in content):
-                return None
-
-            # Extract tags and references with safer regex
-            tags = []
-            source_refs = []
-
-            try:
-                tags = re.findall(r'#([a-zA-Z][a-zA-Z0-9_-]*)', content)
-                source_refs = re.findall(r'`([^`]+\.py:[^`]+)`', content)
-            except Exception:
-                pass  # If regex fails, continue with empty lists
-
-            section_id = f"{file_path.name}#{title}"
-            content_hash = hashlib.md5(content.encode()).hexdigest()
-            combined_hash = hashlib.md5(f"{title}:{content}:{line_start}".encode()).hexdigest()
-
-            return DocSection(
-                section_id=section_id,
-                file_path=str(file_path),
-                title=title,
-                content=content,
-                level=level,
-                line_start=line_start,
-                line_end=line_end,
-                source_refs=source_refs,
-                tags=tags,
-                hash_signature=combined_hash,
-                content_hash=content_hash,
-                last_modified=datetime.fromtimestamp(
-                    file_path.stat().st_mtime) if file_path.exists() else datetime.now()
-            )
-        except Exception as e:
-            logger.error(f"Error creating doc section: {e}")
-            return None
-
-    def _remove_file_from_index(self, file_path: Path):
-        """Remove all references to a file from index"""
-        file_str = str(file_path)
-
-        # Remove sections
-        to_remove = [k for k, v in self.current_index.sections.items() if v.file_path == file_str]
-        for key in to_remove:
-            del self.current_index.sections[key]
-
-        # Remove code elements
-        to_remove = [k for k, v in self.current_index.code_elements.items() if v.file_path == file_str]
-        for key in to_remove:
-            del self.current_index.code_elements[key]
-
-        # Remove file hash
-        if file_str in self.current_index.file_hashes:
-            del self.current_index.file_hashes[file_str]
-
-    def _update_file_in_index(self, file_path: Path):
-        """Update index for a specific file"""
-        # Remove old entries
-        self._remove_file_from_index(file_path)
-
-        # Add new entries
-        try:
-            if file_path.suffix == '.py':
-                elements = self._extract_code_elements(file_path)
-                for element in elements:
-                    element_id = f"{element.file_path}:{element.name}"
-                    if element.parent_class:
-                        element_id = f"{element.file_path}:{element.parent_class}.{element.name}"
-                    self.current_index.code_elements[element_id] = element
-
-            elif file_path.suffix == '.md' and file_path.is_relative_to(self.docs_root):
-                sections = self._parse_markdown_file(file_path)
-                for section in sections:
-                    self.current_index.sections[section.section_id] = section
-
-        except Exception as e:
-            logger.error(f"Error updating file {file_path}: {e}")
-
-
-    def source_code_lookup(self,
-                           element_name: Optional[str] = None,
-                           file_path: Optional[str] = None,
-                           element_type: Optional[str] = None,
-                           max_results: int = 25,
-                           return_code_block: bool = True) -> Result:
-        """Look up source code elements with option to return single method code blocks"""
-        try:
-            if not self.current_index:
-                self.current_index = self._load_index(minimal=False)
-
-            matches = []
-
-            for element_id, element in self.current_index.code_elements.items():
-                if len(matches) >= max_results:
-                    break
-
-                # Apply filters
-                if element_name and element_name.lower() not in element.name.lower():
-                    continue
-                if file_path and file_path not in element.file_path:
-                    continue
-                if element_type and element.element_type != element_type:
-                    continue
-
-                # Get code block for this specific element
-                code_block = ""
-                if return_code_block:
-                    code_block = self._extract_single_code_block(element)
-
-                # Find related docs
-                related_docs = []
-                for section_id, section in self.current_index.sections.items():
-                    if len(related_docs) >= 3:  # Limit related docs
-                        break
-                    if (element_id in section.source_refs or
-                        element.name in section.content[:200] or
-                        element.name in section.title):
-                        related_docs.append({
-                            "section_id": section_id,
-                            "title": section.title,
-                            "file_path": section.file_path
-                        })
-
-                match_data = {
-                    "element_id": element_id,
-                    "name": element.name,
-                    "type": element.element_type,
-                    "signature": element.signature,
-                    "file_path": element.file_path,
-                    "line_start": element.line_start,
-                    "line_end": element.line_end,
-                    "parent_class": element.parent_class,
-                    "docstring": element.docstring[:300] if element.docstring else None,
-                    "related_documentation": related_docs
-                }
-
-                if return_code_block and code_block:
-                    match_data["code_block"] = code_block
-
-                matches.append(match_data)
-
-            return Result.ok({
-                "matches": matches,
-                "total_matches": len(matches),
-                "total_available": len(self.current_index.code_elements),
-                "truncated": len(matches) >= max_results
-            })
-
-        except Exception as e:
-            logger.error(f"Error in source code lookup: {e}")
-            return Result.default_user_error(f"Error looking up source code: {e}")
-
-    def _extract_single_code_block(self, element: CodeElement) -> str:
-        """Extract single method/class code block from source file"""
-        try:
-            with open(element.file_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-
-            # Get lines for this element only
-            start_line = max(0, element.line_start - 1)  # Convert to 0-based
-            end_line = min(len(lines), element.line_end)
-
-            element_lines = lines[start_line:end_line]
-
-            # Clean up the code block
-            if element_lines:
-                # Remove common leading whitespace
-                import textwrap
-                code_block = textwrap.dedent(''.join(element_lines))
-
-                # Add language hint for syntax highlighting
-                return f"```python\n{code_block}```"
-
-            return ""
-
-        except Exception as e:
-            logger.error(f"Error extracting code block for {element.name}: {e}")
-            return ""
-
-    # Add the missing method to the app registration
-    def add_source_code_lookup_to_app(self):
-        """Add source code lookup method to app"""
-        if hasattr(self, 'app'):
-            self.app.source_code_lookup = self.source_code_lookup
-
-
-# Update the app registration function
-def add_to_app(app: AppType, include_dirs: List[str] = None, exclude_dirs: List[str] = None) -> MarkdownDocsSystem:
-    """Add optimized markdown docs system to app"""
-    from toolboxv2 import tb_root_dir
-
-    docs_system = MarkdownDocsSystem(
-        app,
-        docs_root=str(tb_root_dir.parent / "docs"),
+        else:
+            new_content = section_md
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+
+        full_path.write_text(new_content, encoding="utf-8")
+
+        self.index_mgr.remove_file(str(full_path))
+        sections = self.doc_parser.parse(full_path, use_cache=False)
+        for section in sections:
+            self.index_mgr.update_section(section)
+
+        return {"status": "added", "section": f"{file_path}#{title}"}
+
+    async def _handle_update_section(self, section_id: str, content: str) -> dict:
+        section = self.index_mgr.index.sections.get(section_id)
+        if not section:
+            return {"error": f"Section not found: {section_id}"}
+
+        path = Path(section.file_path)
+        lines = path.read_text(encoding="utf-8").split("\n")
+
+        header = "#" * section.level + " " + section.title
+        new_lines = [header, "", content, ""]
+        lines[section.line_start : section.line_end + 1] = new_lines
+        path.write_text("\n".join(lines), encoding="utf-8")
+
+        self.index_mgr.remove_file(str(path))
+        sections = self.doc_parser.parse(path, use_cache=False)
+        for s in sections:
+            self.index_mgr.update_section(s)
+
+        return {"status": "updated", "section": section_id}
+
+    async def _handle_delete_section(self, section_id: str) -> dict:
+        section = self.index_mgr.index.sections.get(section_id)
+        if not section:
+            return {"error": f"Section not found: {section_id}"}
+
+        path = Path(section.file_path)
+        lines = path.read_text(encoding="utf-8").split("\n")
+        del lines[section.line_start : section.line_end + 1]
+        path.write_text("\n".join(lines), encoding="utf-8")
+
+        self.index_mgr.remove_file(str(path))
+        sections = self.doc_parser.parse(path, use_cache=False)
+        for s in sections:
+            self.index_mgr.update_section(s)
+
+        return {"status": "deleted", "section": section_id}
+
+    async def get_task_context(self, files: List[str], intent: str) -> dict:
+        """
+        New Endpoint: Get optimized context for a specific editing task.
+
+        Args:
+            files: List of file paths relevant to the task.
+            intent: Description of what the user wants to do (e.g., "Add logging to auth").
+
+        Returns:
+            ContextBundle dictionary ready for LLM injection.
+        """
+        start = time.perf_counter()
+
+        # Ensure index is loaded
+        if not self.index_mgr.index.code_elements:
+            await self.index_mgr.load()
+
+        # Offload graph analysis to thread as it involves I/O and regex
+        loop = asyncio.get_running_loop()
+        bundle = await loop.run_in_executor(
+            self.index_mgr._executor, self.context.get_context_for_task, files, intent
+        )
+
+        # Wrap in result dict
+        return {
+            "result": bundle,
+            "meta": {
+                "analyzed_files": len(files),
+                "time_ms": (time.perf_counter() - start) * 1000,
+            },
+        }
+
+
+# =============================================================================
+# APP INTEGRATION
+# =============================================================================
+
+
+def create_docs_system(
+    project_root: str = ".",
+    docs_root: str = "../docs",
+    include_dirs: Optional[List[str]] = None,
+    exclude_dirs: Optional[Set[str]] = None,
+) -> DocsSystem:
+    """Factory function for DocsSystem."""
+    return DocsSystem(
+        project_root=Path(project_root).resolve(),
+        docs_root=Path(docs_root).resolve(),
         include_dirs=include_dirs,
-        exclude_dirs=exclude_dirs
+        exclude_dirs=exclude_dirs,
     )
 
-    # Register core functions
-    app.docs_reader = docs_system.docs_reader
-    app.docs_writer = docs_system.docs_writer
-    app.get_update_suggestions = docs_system.get_update_suggestions
-    app.auto_update_docs = docs_system.auto_update_docs
-    app.initial_docs_parse = docs_system.initial_docs_parse
-    app.source_code_lookup = docs_system.source_code_lookup
 
-    return docs_system
+def add_to_app(
+    app, docs_root: str = "../docs", include_dirs: Optional[List[str]] = None
+) -> DocsSystem:
+    """Add docs system to ToolBoxV2 app."""
+    system = DocsSystem(
+        project_root=Path.cwd(),
+        docs_root=Path(docs_root).resolve(),
+        include_dirs=include_dirs or ["toolboxv2", "flows", "mods", "utils", "docs"],
+    )
 
+    app.docs_reader = system.read
+    app.docs_writer = system.write
+    app.docs_lookup = system.lookup_code
+    app.docs_suggestions = system.get_suggestions
+    app.docs_sync = system.sync
+    app.docs_init = system.initialize
+    app.get_task_context = system.get_task_context
+
+    return system

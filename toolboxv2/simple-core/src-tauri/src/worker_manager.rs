@@ -3,6 +3,7 @@
 
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::AppHandle;
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -29,7 +30,7 @@ pub struct WorkerManager {
     http_port: u16,
     ws_port: u16,
     endpoint: ApiEndpoint,
-    running: AtomicBool,
+    running: Arc<AtomicBool>,
     data_dir: Option<std::path::PathBuf>,
 }
 
@@ -47,7 +48,7 @@ impl WorkerManager {
             http_port: DEFAULT_HTTP_PORT,
             ws_port: DEFAULT_WS_PORT,
             endpoint: ApiEndpoint::default(),
-            running: AtomicBool::new(false),
+            running: Arc::new(AtomicBool::new(false)),
             data_dir,
         }
     }

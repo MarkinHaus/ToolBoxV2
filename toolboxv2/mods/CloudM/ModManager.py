@@ -2725,7 +2725,7 @@ export = get_app(f"{Name}.Export").tb
 version = '{VERSION}'
 
 
-class {MODULE_NAME}Core:
+class Tool:
     """Core service class for {MODULE_NAME}"""
 
     def __init__(self, app: App):

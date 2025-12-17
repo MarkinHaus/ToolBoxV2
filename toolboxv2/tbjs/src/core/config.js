@@ -65,12 +65,65 @@ const Config = {
              _config.isProduction = !(window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
         }
 
+        // Detect Tauri environment and set API URLs
+        const isTauri = window.location.hostname === 'tauri.localhost' ||
+                        window.location.protocol === 'tauri:' ||
+                        (typeof window.__TAURI__ !== 'undefined');
+
+        // Remote API fallback (for mobile or when worker unavailable)
+        const remoteApiUrl = initialUserConfig.remoteApiUrl || 'https://simplecore.app/api';
+        const remoteWsUrl = initialUserConfig.remoteWsUrl || 'wss://simplecore.app';
+
+        if (isTauri && !initialUserConfig.baseApiUrl) {
+            const workerHttpPort = initialUserConfig.workerHttpPort || 5000;
+            const workerWsPort = initialUserConfig.workerWsPort || 5001;
+            const localApiUrl = `http://localhost:${workerHttpPort}/api`;
+            const localWsUrl = `ws://localhost:${workerWsPort}`;
+
+            // Detect platform from user agent
+            const ua = navigator.userAgent.toLowerCase();
+            const isIOS = /iphone|ipad|ipod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            const isAndroid = /android/.test(ua);
+            const isMobile = isIOS || isAndroid;
+
+            _config.isTauri = true;
+            _config.isMobile = isMobile;
+            _config.isIOS = isIOS;
+            _config.isAndroid = isAndroid;
+
+            if (isIOS) {
+                // iOS: Always use remote API (no local worker possible)
+                _config.baseApiUrl = remoteApiUrl;
+                _config.baseWsUrl = remoteWsUrl;
+                _config.useRemoteApi = true;
+                console.log('[Config] Tauri iOS detected, using remote API:', remoteApiUrl);
+            } else if (isAndroid) {
+                // Android: Check if worker is available, fallback to remote
+                _config.baseApiUrl = localApiUrl;
+                _config.baseWsUrl = localWsUrl;
+                _config.useRemoteApi = false;
+                _config._remoteApiUrl = remoteApiUrl;
+                _config._remoteWsUrl = remoteWsUrl;
+
+                // Async worker check - will update config if worker unavailable
+                Config._checkWorkerAndFallback(localApiUrl, remoteApiUrl, remoteWsUrl);
+                console.log('[Config] Tauri Android detected, checking worker availability...');
+            } else {
+                // Desktop: Use local worker
+                _config.baseApiUrl = localApiUrl;
+                _config.baseWsUrl = localWsUrl;
+                _config.useRemoteApi = false;
+                console.log('[Config] Tauri Desktop detected, using local worker:', localApiUrl);
+            }
+        } else {
+            _config.isTauri = isTauri;
+        }
 
         // Ensure baseFileUrl ends with a slash if it's not just the origin and contains a path
         if (_config.baseFileUrl && new URL(_config.baseFileUrl).pathname !== '/' && !_config.baseFileUrl.endsWith('/')) {
             _config.baseFileUrl += '/';
         }
-         // Ensure baseApiUrl is absolute
+         // Ensure baseApiUrl is absolute (skip if already set for Tauri)
         if (_config.baseApiUrl && !_config.baseApiUrl.startsWith('http') && !_config.baseApiUrl.startsWith('/')) {
             _config.baseApiUrl = '/' + _config.baseApiUrl;
         }
@@ -129,6 +182,40 @@ const Config = {
             _config[key] = value;
         }
         logger.debug(`[Config] Set: ${key} =`, value);
+    },
+
+    /**
+     * Check if local worker is available (Android), fallback to remote API if not.
+     * @param {string} localApiUrl - Local worker API URL
+     * @param {string} remoteApiUrl - Remote API URL fallback
+     * @param {string} remoteWsUrl - Remote WebSocket URL fallback
+     */
+    _checkWorkerAndFallback: async (localApiUrl, remoteApiUrl, remoteWsUrl) => {
+        try {
+            // Try to reach the local worker with a health check
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+
+            const response = await fetch(`${localApiUrl.replace('/api', '')}/health`, {
+                method: 'GET',
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+
+            if (response.ok) {
+                console.log('[Config] Local worker is available');
+                _config.useRemoteApi = false;
+                return;
+            }
+        } catch (error) {
+            console.log('[Config] Local worker not available, falling back to remote API:', error.message);
+        }
+
+        // Fallback to remote API
+        _config.baseApiUrl = remoteApiUrl;
+        _config.baseWsUrl = remoteWsUrl;
+        _config.useRemoteApi = true;
+        console.log('[Config] Using remote API:', remoteApiUrl);
     }
 };
 

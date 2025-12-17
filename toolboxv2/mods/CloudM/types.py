@@ -40,3 +40,4 @@ class UserCreator(User):
         self.user_pass_pub, self.user_pass_pri = Code.generate_asymmetric_keys()
         self.user_pass_sync = Code.generate_symmetric_key()
         self.challenge = Code.encrypt_asymmetric(str(uuid.uuid4()), self.user_pass_pub)
+

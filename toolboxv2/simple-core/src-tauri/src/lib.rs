@@ -8,7 +8,7 @@
 mod worker_manager;
 
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Manager, State};
 use worker_manager::WorkerManager;
 
 /// Application state containing the worker manager
@@ -91,16 +91,16 @@ pub fn run() {
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
                 let state = app.state::<AppState>();
-                if let Ok(mut manager) = state.worker_manager.lock() {
-                    // Set app handle for resource resolution
-                    manager.set_app_handle(app.handle().clone());
+                let mut manager = state.worker_manager.lock().unwrap();
+                // Set app handle for resource resolution
+                manager.set_app_handle(app.handle().clone());
 
-                    // Try to start worker automatically
-                    if let Err(e) = manager.start() {
-                        eprintln!("Failed to auto-start worker: {}", e);
-                        // Not fatal - user can start manually or use remote API
-                    }
+                // Try to start worker automatically
+                if let Err(e) = manager.start() {
+                    eprintln!("Failed to auto-start worker: {}", e);
+                    // Not fatal - user can start manually or use remote API
                 }
+                drop(manager); // Explicitly drop the guard
             }
             Ok(())
         })
@@ -108,9 +108,9 @@ pub fn run() {
             // Graceful shutdown on window close
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 let state = window.state::<AppState>();
-                if let Ok(mut manager) = state.worker_manager.lock() {
-                    let _ = manager.stop();
-                }
+                let mut manager = state.worker_manager.lock().unwrap();
+                let _ = manager.stop();
+                drop(manager); // Explicitly drop the guard
             }
         })
         .run(tauri::generate_context!())
