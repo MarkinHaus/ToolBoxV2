@@ -1,259 +1,553 @@
-# file: toolboxv2/tests/test_mods/test_blob_db.py
+"""
+Tests for BlobDB with automatic offline fallback when MinIO is unavailable.
+Tests the refactored BlobDB that uses Environment-based configuration
+and SQLite fallback for offline/mobile modes.
+"""
+
 import os
 import tempfile
 import shutil
 import unittest
-from unittest.mock import MagicMock, patch, call
-import pickle
+from unittest.mock import MagicMock, patch, PropertyMock
 import json
-
-from toolboxv2.mods.DB.blob_instance import BlobDB
-from toolboxv2.utils.extras.blobs import BlobStorage, BlobFile
-from toolboxv2.utils.security.cryp import Code
+import time
 
 
-class TestBlobDBMultiFile(unittest.TestCase):
+class TestBlobDBOfflineFallback(unittest.TestCase):
     """
-    Tests for the refactored BlobDB that uses multiple BlobFiles instead of a single file.
+    Tests for BlobDB automatic offline fallback when MinIO is not available.
     """
 
     def setUp(self):
-        """Set up a mock BlobStorage and BlobDB instance."""
+        """Set up test environment."""
         self.test_dir = tempfile.mkdtemp()
-        self.mock_storage = MagicMock(spec=BlobStorage)
-        self.db = BlobDB()
-        self.key = Code.generate_symmetric_key()
-        self.db_path = "test_db_blob"
+        self.original_env = os.environ.copy()
 
-        # Track created blobs for verification
-        self.created_blobs = {}
-
-        # Mock BlobFile behavior
-        def mock_blob_file_init(filename, mode='r', storage=None, key=None, servers=None, use_cache=True):
-            """Mock BlobFile initialization"""
-            instance = MagicMock()
-            instance.filename = filename
-            instance.mode = mode
-            instance.storage = storage or self.mock_storage
-            instance.key = key
-            instance.data_buffer = b""
-
-            # Parse the filename
-            parts = filename.lstrip('/\\').split('/')
-            instance.blob_id = parts[0] if parts else ""
-            instance.datei = parts[-1] if len(parts) > 1 else ""
-            instance.folder = '|'.join(parts[1:-1]) if len(parts) > 2 else ""
-
-            # Mock exists method
-            def exists():
-                return filename in self.created_blobs
-            instance.exists.return_value = exists()
-            instance.exists = exists
-
-            # Mock create method
-            def create():
-                self.created_blobs[filename] = {}
-                return instance
-            instance.create = create
-
-            # Mock context manager
-            def enter(self_arg):
-                if 'r' in mode and filename in self.created_blobs:
-                    instance.data_buffer = json.dumps(self.created_blobs[filename]).encode()
-                return instance
-
-            def exit(self_arg, exc_type, exc_value, traceback):
-                if 'w' in mode:
-                    # Parse the written data
-                    try:
-                        data = json.loads(instance.data_buffer.decode())
-                        self.created_blobs[filename] = data
-                    except:
-                        pass
-
-            instance.__enter__ = enter
-            instance.__exit__ = exit
-
-            # Mock read_json
-            def read_json():
-                if filename in self.created_blobs:
-                    return self.created_blobs[filename]
-                return {}
-            instance.read_json = read_json
-
-            # Mock write_json
-            def write_json(data):
-                instance.data_buffer = json.dumps(data).encode()
-            instance.write_json = write_json
-
-            return instance
-
-        self.blob_file_patcher = patch('toolboxv2.mods.DB.blob_instance.BlobFile', side_effect=mock_blob_file_init)
-        self.mock_blob_file = self.blob_file_patcher.start()
+        # Force offline mode for testing
+        os.environ["IS_OFFLINE_DB"] = "true"
+        os.environ["SERVER_ID"] = "test_server"
+        os.environ["DB_CACHE_TTL"] = "60"
 
     def tearDown(self):
-        """Clean up the temporary directory and stop patches."""
+        """Clean up test environment."""
         shutil.rmtree(self.test_dir, ignore_errors=True)
-        self.blob_file_patcher.stop()
+        os.environ.clear()
+        os.environ.update(self.original_env)
 
-    def test_initialize(self):
-        """Test that BlobDB initializes correctly with multi-file storage."""
-        result = self.db.initialize(self.db_path, self.key, self.mock_storage)
+    def test_initialize_offline_mode(self):
+        """Test BlobDB initializes in offline mode when IS_OFFLINE_DB=true."""
+        from toolboxv2.mods.DB.blob_instance import BlobDB, Config
 
-        self.assertTrue(result.is_ok())
-        self.assertEqual(self.db.db_base_path, self.db_path)
-        self.assertEqual(self.db.enc_key, self.key)
-        self.assertEqual(self.db.storage_client, self.mock_storage)
+        Config.reload()
+        db = BlobDB()
+        result = db.initialize(db_path="test_db")
 
-    def test_key_to_blob_path_conversion(self):
-        """Test that keys are correctly converted to blob file paths."""
-        self.db.initialize(self.db_path, self.key, self.mock_storage)
+        self.assertFalse(result.is_error())
+        self.assertIsNotNone(db._sqlite)
+        self.assertIsNone(db._local_minio)
+        self.assertIsNone(db._cloud_minio)
 
-        # Test various key formats
-        test_cases = [
-            ("USER::XYZ::", f"{self.db_path}/USER/XYZ.json"),
-            ("MANAGER::SPACE::DATA::XYZ", f"{self.db_path}/MANAGER/SPACE/DATA/XYZ.json"),
-            ("SIMPLE::KEY", f"{self.db_path}/SIMPLE/KEY.json"),
-        ]
+        db.exit()
 
-        for key, expected_path in test_cases:
-            actual_path = self.db._key_to_path(key)
-            self.assertEqual(actual_path, expected_path, f"Failed for key: {key}")
+    def test_initialize_fallback_when_minio_unavailable(self):
+        """Test BlobDB falls back to SQLite when MinIO credentials are missing."""
+        from toolboxv2.mods.DB.blob_instance import BlobDB, Config
 
-    def test_set_and_get_single_key(self):
-        """Test setting and getting a single key."""
-        self.db.initialize(self.db_path, self.key, self.mock_storage)
+        # Clear MinIO credentials
+        os.environ["IS_OFFLINE_DB"] = "false"
+        os.environ["MINIO_SECRET_KEY"] = ""
 
-        key = "USER::john::profile"
+        Config.reload()
+        db = BlobDB()
+        result = db.initialize(db_path="test_db")
+
+        self.assertFalse(result.is_error())
+        # Should fall back to SQLite
+        self.assertIsNotNone(db._sqlite)
+
+        db.exit()
+
+    def test_set_and_get_offline(self):
+        """Test set and get operations in offline mode."""
+        from toolboxv2.mods.DB.blob_instance import BlobDB, Config
+
+        Config.reload()
+        db = BlobDB()
+        db.initialize(db_path="test_db")
+
+        key = "users/john/profile"
         value = {"name": "John Doe", "age": 30}
 
-        # Set the value
-        result = self.db.set(key, value)
-        self.assertTrue(result.is_ok())
+        # Set value
+        result = db.set(key, value)
+        self.assertFalse(result.is_error())
 
-        # Get the value
-        result = self.db.get(key)
-        self.assertTrue(result.is_ok())
-        print(result.result.data)
-        self.assertEqual(value, result.get())
+        # Get value
+        result = db.get(key)
+        self.assertFalse(result.is_error())
+        self.assertEqual(result.get(), value)
 
-    def test_set_multiple_keys_different_paths(self):
-        """Test that keys with different prefixes are stored in different blob files."""
-        self.db.initialize(self.db_path, self.key, self.mock_storage)
+        db.exit()
 
-        # Set keys with different prefixes
+    def test_key_to_path_conversion(self):
+        """Test key to path conversion."""
+        from toolboxv2.mods.DB.blob_instance import BlobDB, Config
+
+        Config.reload()
+        db = BlobDB()
+        db.initialize(db_path="test_db")
+
+        # Test path conversion
+        key = "users/alice/profile"
+        expected_path = "test_db/users/alice/profile.json"
+        actual_path = db._key_to_path(key)
+
+        self.assertEqual(actual_path, expected_path)
+
+        db.exit()
+
+    def test_multiple_keys_different_paths(self):
+        """Test storing multiple keys creates proper paths."""
+        from toolboxv2.mods.DB.blob_instance import BlobDB, Config
+
+        Config.reload()
+        db = BlobDB()
+        db.initialize(db_path="test_db")
+
         keys_values = [
-            ("USER::alice::profile", {"name": "Alice"}),
-            ("USER::bob::profile", {"name": "Bob"}),
-            ("MANAGER::team1::data", {"team": "Team 1"}),
-            ("MANAGER::team2::data", {"team": "Team 2"}),
+            ("users/alice/profile", {"name": "Alice"}),
+            ("users/bob/profile", {"name": "Bob"}),
+            ("admin/settings", {"theme": "dark"}),
         ]
 
         for key, value in keys_values:
-            result = self.db.set(key, value)
-            self.assertTrue(result.is_ok())
+            result = db.set(key, value)
+            self.assertFalse(result.is_error())
 
-        # Exit to save all data
-        result = self.db.exit()
-        self.assertTrue(result.is_ok())
+        # Verify all keys exist in manifest
+        for key, _ in keys_values:
+            self.assertTrue(db.if_exist(key))
 
-        # Verify that multiple blob files were created
-        expected_paths = [
-            f"{self.db_path}/USER/alice/profile.json",
-            f"{self.db_path}/USER/bob/profile.json",
-            f"{self.db_path}/MANAGER/team1/data.json",
-            f"{self.db_path}/MANAGER/team2/data.json",
-        ]
+        db.exit()
 
-        for path in expected_paths:
-            self.assertIn(path, self.created_blobs, f"Expected blob file not created: {path}")
+    def test_delete_key_offline(self):
+        """Test deleting a key in offline mode."""
+        from toolboxv2.mods.DB.blob_instance import BlobDB, Config
 
-    def test_exit_saves_to_multiple_files(self):
-        """Test that exit() saves data to multiple blob files based on key structure."""
-        self.db.initialize(self.db_path, self.key, self.mock_storage)
+        Config.reload()
+        db = BlobDB()
+        db.initialize(db_path="test_db")
 
-        # Add data with different key prefixes
-        self.db.set("USER::alice::name", "Alice")
-        self.db.set("USER::bob::name", "Bob")
-        self.db.set("ADMIN::settings::theme", "dark")
+        key = "users/alice/profile"
+        db.set(key, {"name": "Alice"})
 
-        # Exit should save to multiple files
-        result = self.db.exit()
-        self.assertTrue(result.is_ok())
+        # Verify exists
+        self.assertTrue(db.if_exist(key))
 
-        # Verify multiple blob files were created
-        self.assertGreater(len(self.created_blobs), 0)
+        # Delete
+        result = db.delete(key)
+        self.assertFalse(result.is_error())
 
-    def test_scan_iter_with_prefix(self):
-        """Test scanning for keys with a specific prefix."""
-        self.db.initialize(self.db_path, self.key, self.mock_storage)
+        # Verify deleted
+        self.assertFalse(db.if_exist(key))
 
-        # Add multiple keys with same prefix
-        self.db.set("USER::alice::profile", {"name": "Alice"})
-        self.db.set("USER::bob::profile", {"name": "Bob"})
-        self.db.set("ADMIN::settings", {"theme": "dark"})
+        db.exit()
 
-        # Scan for USER keys
-        user_keys = self.db.get("USER::*").get()
-        self.assertEqual(len(user_keys), 2)
-        self.assertTrue(all(k.startswith("USER::") for k in user_keys))
+    def test_append_on_set_offline(self):
+        """Test append_on_set creates and appends to lists."""
+        from toolboxv2.mods.DB.blob_instance import BlobDB, Config
 
-    def test_delete_key(self):
-        """Test deleting a key."""
-        self.db.initialize(self.db_path, self.key, self.mock_storage)
+        Config.reload()
+        db = BlobDB()
+        db.initialize(db_path="test_db")
 
-        key = "USER::alice::profile"
-        self.db.set(key, {"name": "Alice"})
+        key = "users/alice/tags"
 
-        # Verify key exists
-        print(self.db.if_exist(key), self.db._manifest_cache)
-        self.assertTrue(self.db.if_exist(key))
+        # First append creates list
+        result = db.append_on_set(key, ["tag1", "tag2"])
+        self.assertFalse(result.is_error())
 
-        # Delete the key
-        result = self.db.delete(key)
-        self.assertTrue(result.is_ok())
+        # Second append adds to list (no duplicates)
+        result = db.append_on_set(key, ["tag3", "tag1"])
+        self.assertFalse(result.is_error())
 
-        # Verify key is gone
-        self.assertEqual(self.db.if_exist(key), 0)
-
-    def test_append_on_set(self):
-        """Test appending to a list value."""
-        self.db.initialize(self.db_path, self.key, self.mock_storage)
-
-        key = "USER::alice::tags"
-
-        # First append creates the list
-        result = self.db.append_on_set(key, ["tag1", "tag2"])
-        self.assertTrue(result.is_ok())
-
-        # Second append adds to existing list
-        result = self.db.append_on_set(key, ["tag3", "tag1"])  # tag1 is duplicate
-        self.assertTrue(result.is_ok())
-
-        # Verify the list contains unique items
-        result = self.db.get(key)
-        self.assertTrue(result.is_ok())
-        result.print()
+        # Verify list
+        result = db.get(key)
+        self.assertFalse(result.is_error())
         tags = result.get()
-        self.assertEqual(len(tags), 3)  # tag1, tag2, tag3 (no duplicate)
+        self.assertEqual(len(tags), 3)
+        self.assertIn("tag1", tags)
+        self.assertIn("tag2", tags)
+        self.assertIn("tag3", tags)
 
-    def test_isolation_between_blob_files(self):
-        """Test that a problem with one blob file doesn't affect others."""
-        self.db.initialize(self.db_path, self.key, self.mock_storage)
+        db.exit()
 
-        # Set data in different blob files
-        self.db.set("USER::alice::data", {"value": 1})
-        self.db.set("ADMIN::settings", {"value": 2})
+    def test_pattern_matching_get(self):
+        """Test wildcard pattern matching for get."""
+        from toolboxv2.mods.DB.blob_instance import BlobDB, Config
 
-        # Simulate corruption in one blob file
-        corrupted_path = f"{self.db_path}/USER/alice/data.json"
-        self.created_blobs[corrupted_path] = "CORRUPTED_DATA"
+        Config.reload()
+        db = BlobDB()
+        db.initialize(db_path="test_db")
 
-        # The ADMIN data should still be accessible
-        result = self.db.get("ADMIN::settings")
-        self.assertTrue(result.is_ok())
+        # Add test data
+        db.set("users/alice/profile", {"name": "Alice"})
+        db.set("users/bob/profile", {"name": "Bob"})
+        db.set("admin/settings", {"theme": "dark"})
+
+        # Pattern match
+        result = db.get("users/*")
+        self.assertFalse(result.is_error())
+
+        users = result.get()
+        self.assertEqual(len(users), 2)
+
+        db.exit()
+
+    def test_get_all_keys(self):
+        """Test getting all keys."""
+        from toolboxv2.mods.DB.blob_instance import BlobDB, Config
+
+        Config.reload()
+        db = BlobDB()
+        db.initialize(db_path="test_db")
+
+        db.set("key1", "value1")
+        db.set("key2", "value2")
+
+        result = db.get("all-k")
+        self.assertFalse(result.is_error())
+
+        keys = result.get()
+        self.assertIn("key1", keys)
+        self.assertIn("key2", keys)
+
+        db.exit()
+
+    def test_cache_ttl(self):
+        """Test cache TTL behavior."""
+        from toolboxv2.mods.DB.blob_instance import BlobDB, Config
+
+        os.environ["DB_CACHE_TTL"] = "1"  # 1 second TTL
+        Config.reload()
+
+        db = BlobDB()
+        db.initialize(db_path="test_db")
+
+        key = "test/cache"
+        value = {"data": "test"}
+
+        db.set(key, value)
+
+        # Should be in cache
+        found, cached = db._cache_get(key)
+        self.assertTrue(found)
+        self.assertEqual(cached, value)
+
+        # Wait for TTL
+        time.sleep(1.5)
+
+        # Should be expired
+        found, cached = db._cache_get(key)
+        self.assertFalse(found)
+
+        db.exit()
+
+    def test_stats(self):
+        """Test get_stats returns correct info."""
+        from toolboxv2.mods.DB.blob_instance import BlobDB, Config
+
+        Config.reload()
+        db = BlobDB()
+        db.initialize(db_path="test_db")
+
+        db.delete('*')
+
+        db.set("key1", "value1")
+        db.set("key2", "value2")
+
+        stats = db.get_stats()
+
+        self.assertTrue(stats["initialized"])
+        self.assertEqual(stats["server_id"], "test_db")
+        self.assertEqual(stats["keys_count"], 2)
+        self.assertTrue(stats["has_sqlite"])
+        self.assertFalse(stats["has_local_minio"])
+        self.assertTrue(stats["is_offline"])
+
+        db.exit()
+
+    def test_clear_cache(self):
+        """Test cache clearing."""
+        from toolboxv2.mods.DB.blob_instance import BlobDB, Config
+
+        Config.reload()
+        db = BlobDB()
+        db.initialize(db_path="test_db")
+
+        db.set("key1", "value1")
+        db.set("key2", "value2")
+
+        # Cache should have entries
+        self.assertGreater(len(db._cache), 0)
+
+        db.clear_cache()
+
+        # Cache should be empty
+        self.assertEqual(len(db._cache), 0)
+
+        db.exit()
+
+    def test_reload_manifest(self):
+        """Test manifest reloading."""
+        from toolboxv2.mods.DB.blob_instance import BlobDB, Config
+
+        Config.reload()
+        db = BlobDB()
+        db.initialize(db_path="test_db")
+
+        db.set("key1", "value1")
+
+        # Clear manifest
+        db._manifest = set()
+        db._manifest_loaded = False
+
+        # Reload
+        db.reload_manifest()
+
+        # Should have key1 back
+        self.assertIn("key1", db._manifest)
+
+        db.exit()
+
+    def test_exit_closes_connections(self):
+        """Test exit properly closes all connections."""
+        from toolboxv2.mods.DB.blob_instance import BlobDB, Config
+
+        Config.reload()
+        db = BlobDB()
+        db.initialize(db_path="test_db")
+
+        self.assertTrue(db._initialized)
+        self.assertIsNotNone(db._sqlite)
+
+        result = db.exit()
+        self.assertFalse(result.is_error())
+
+        self.assertFalse(db._initialized)
+        self.assertIsNone(db._sqlite)
+
+    def test_delete_with_pattern(self):
+        """Test delete with pattern matching."""
+        from toolboxv2.mods.DB.blob_instance import BlobDB, Config
+
+        Config.reload()
+        db = BlobDB()
+        db.initialize(db_path="test_db")
+
+        db.set("users/alice", {"name": "Alice"})
+        db.set("users/bob", {"name": "Bob"})
+        db.set("admin/settings", {"theme": "dark"})
+
+        # Delete all users
+        result = db.delete("users/*", matching=True)
+        self.assertFalse(result.is_error())
+
+        # Users should be gone
+        self.assertFalse(db.if_exist("users/alice"))
+        self.assertFalse(db.if_exist("users/bob"))
+
+        # Admin should still exist
+        self.assertTrue(db.if_exist("admin/settings"))
+
+        db.exit()
+
+class TestConfigReload(unittest.TestCase):
+    """Tests for Config class environment variable handling."""
+
+    def setUp(self):
+        self.original_env = os.environ.copy()
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self.original_env)
+
+    def test_config_defaults(self):
+        """Test Config uses defaults when env vars not set."""
+        from toolboxv2.mods.DB.blob_instance import Config
+
+        # Clear relevant env vars
+        for key in ["MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "IS_OFFLINE_DB"]:
+            os.environ.pop(key, None)
+
+        Config.reload()
+
+        self.assertEqual(Config.MINIO_ENDPOINT, "127.0.0.1:9000")
+        self.assertEqual(Config.MINIO_ACCESS_KEY, "admin")
+        self.assertFalse(Config.IS_OFFLINE_DB)
+
+    def test_config_from_env(self):
+        """Test Config reads from environment variables."""
+        from toolboxv2.mods.DB.blob_instance import Config
+
+        os.environ["MINIO_ENDPOINT"] = "minio.example.com:9000"
+        os.environ["MINIO_ACCESS_KEY"] = "mykey"
+        os.environ["MINIO_SECRET_KEY"] = "mysecret"
+        os.environ["IS_OFFLINE_DB"] = "true"
+        os.environ["DB_CACHE_TTL"] = "120"
+
+        Config.reload()
+
+        self.assertEqual(Config.MINIO_ENDPOINT, "minio.example.com:9000")
+        self.assertEqual(Config.MINIO_ACCESS_KEY, "mykey")
+        self.assertEqual(Config.MINIO_SECRET_KEY, "mysecret")
+        self.assertTrue(Config.IS_OFFLINE_DB)
+        self.assertEqual(Config.DB_CACHE_TTL, 120)
+
+    def test_has_local_minio(self):
+        """Test has_local_minio check."""
+        from toolboxv2.mods.DB.blob_instance import Config
+
+        os.environ["MINIO_ENDPOINT"] = "localhost:9000"
+        os.environ["MINIO_ACCESS_KEY"] = "admin"
+        os.environ["MINIO_SECRET_KEY"] = ""
+
+        Config.reload()
+        self.assertFalse(Config.has_local_minio())
+
+        os.environ["MINIO_SECRET_KEY"] = "secret"
+        Config.reload()
+        self.assertTrue(Config.has_local_minio())
+
+    def test_has_cloud_minio(self):
+        """Test has_cloud_minio check."""
+        from toolboxv2.mods.DB.blob_instance import Config
+
+        os.environ["CLOUD_ENDPOINT"] = ""
+        Config.reload()
+        self.assertFalse(Config.has_cloud_minio())
+
+        os.environ["CLOUD_ENDPOINT"] = "cloud.example.com"
+        os.environ["CLOUD_ACCESS_KEY"] = "key"
+        os.environ["CLOUD_SECRET_KEY"] = "secret"
+        Config.reload()
+        self.assertTrue(Config.has_cloud_minio())
 
 
-if __name__ == '__main__':
+class TestSQLiteCache(unittest.TestCase):
+    """Tests for SQLiteCache offline storage."""
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.db_path = os.path.join(self.test_dir, "test.db")
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_sqlite_put_get(self):
+        """Test SQLite put and get operations."""
+        from toolboxv2.mods.DB.blob_instance import SQLiteCache
+
+        cache = SQLiteCache(self.db_path)
+
+        path = "test/path.json"
+        data = b'{"key": "value"}'
+
+        self.assertTrue(cache.put(path, data))
+
+        result = cache.get(path)
+        self.assertEqual(result, data)
+
+        cache.close()
+
+    def test_sqlite_exists(self):
+        """Test SQLite exists check."""
+        from toolboxv2.mods.DB.blob_instance import SQLiteCache
+
+        cache = SQLiteCache(self.db_path)
+
+        path = "test/path.json"
+        self.assertFalse(cache.exists(path))
+
+        cache.put(path, b"data")
+        self.assertTrue(cache.exists(path))
+
+        cache.close()
+
+    def test_sqlite_delete(self):
+        """Test SQLite delete operation."""
+        from toolboxv2.mods.DB.blob_instance import SQLiteCache
+
+        cache = SQLiteCache(self.db_path)
+
+        path = "test/path.json"
+        cache.put(path, b"data")
+
+        self.assertTrue(cache.exists(path))
+        cache.delete(path)
+        self.assertFalse(cache.exists(path))
+
+        cache.close()
+
+    def test_sqlite_list(self):
+        """Test SQLite list with prefix."""
+        from toolboxv2.mods.DB.blob_instance import SQLiteCache
+
+        cache = SQLiteCache(self.db_path)
+
+        cache.put("users/alice.json", b"data1")
+        cache.put("users/bob.json", b"data2")
+        cache.put("admin/settings.json", b"data3")
+
+        users = cache.list("users/")
+        self.assertEqual(len(users), 2)
+        self.assertIn("users/alice.json", users)
+        self.assertIn("users/bob.json", users)
+
+        cache.close()
+
+    def test_sqlite_manifest(self):
+        """Test SQLite manifest operations."""
+        from toolboxv2.mods.DB.blob_instance import SQLiteCache
+
+        cache = SQLiteCache(self.db_path)
+
+        cache.add_to_manifest("key1")
+        cache.add_to_manifest("key2")
+
+        manifest = cache.get_manifest()
+        self.assertIn("key1", manifest)
+        self.assertIn("key2", manifest)
+
+        cache.remove_from_manifest("key1")
+        manifest = cache.get_manifest()
+        self.assertNotIn("key1", manifest)
+        self.assertIn("key2", manifest)
+
+        cache.close()
+
+    def test_sqlite_dirty_tracking(self):
+        """Test SQLite dirty/sync status tracking."""
+        from toolboxv2.mods.DB.blob_instance import SQLiteCache
+
+        cache = SQLiteCache(self.db_path)
+
+        cache.put("path1", b"data1")
+        cache.put("path2", b"data2")
+
+        # Both should be dirty
+        dirty = cache.get_dirty()
+        self.assertEqual(len(dirty), 2)
+
+        # Mark one as synced
+        cache.mark_synced("path1")
+
+        dirty = cache.get_dirty()
+        self.assertEqual(len(dirty), 1)
+        self.assertIn("path2", dirty)
+
+        cache.close()
+
+
+if __name__ == "__main__":
     unittest.main(verbosity=2)
-

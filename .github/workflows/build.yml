@@ -163,48 +163,6 @@ jobs:
         working-directory: ./toolboxv2/tb-exc/src
         run: cargo test
         continue-on-error: true
-  # ============================================================================
-  # r_DB BUILD & TEST
-  # ============================================================================
-
-  r_blob_db:
-    name: Blob DB Build & Test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Check for TBLang project
-        id: check
-        shell: bash
-        run: |
-          if [ -f "./toolboxv2/r_blob_db/Cargo.toml" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          elif [ -f "./toolboxv2/r_blob_dbCargo.toml" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Install Rust toolchain
-        if: steps.check.outputs.exists == 'true'
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Build Blob DB
-        if: steps.check.outputs.exists == 'true'
-        working-directory: ./toolboxv2/r_blob_db
-        run: cargo build --release
-        continue-on-error: true
-
-      - name: Test Blob DB
-        if: steps.check.outputs.exists == 'true'
-        working-directory: ./toolboxv2/r_blob_db
-        run: cargo test
-        continue-on-error: true
 
   # ============================================================================
   # BROWSER EXTENSION BUILD
@@ -338,12 +296,15 @@ jobs:
           - platform: 'macos-latest'
             args: '--target aarch64-apple-darwin'
             rust_targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
+            target_triple: 'aarch64-apple-darwin'
           - platform: 'ubuntu-22.04'
             args: ''
             rust_targets: ''
+            target_triple: 'x86_64-unknown-linux-gnu'
           - platform: 'windows-latest'
             args: ''
             rust_targets: ''
+            target_triple: 'x86_64-pc-windows-msvc'
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout Code
@@ -365,49 +326,68 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev
 
-      - name: Build Worker Server
-        working-directory: ./toolboxv2/src-core
+      - name: Setup Python for Worker
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ToolBoxV2 for Worker Build
+        run: |
+          pip install --upgrade pip
+          pip install pyinstaller
+          pip install -e .
+
+      - name: Create Worker Wrapper Binary
         shell: bash
         run: |
-          # Determine target based on platform
-          if [[ "${{ matrix.platform }}" == "macos-latest" ]]; then
-            # Extract target from args (e.g., --target aarch64-apple-darwin)
-            TARGET="${{ matrix.args }}"
-            TARGET="${TARGET#*--target }"
-            TARGET="${TARGET%% *}"
-            if [[ -z "$TARGET" || "$TARGET" == "${{ matrix.args }}" ]]; then
-              # No target specified, use default
-              TARGET="$(rustc -vV | sed -n 's|host: ||p')"
-            fi
-          elif [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
-            TARGET="x86_64-pc-windows-msvc"
-          else
-            TARGET="x86_64-unknown-linux-gnu"
-          fi
-
-          echo "Building worker server for target: $TARGET"
-          cargo build --release --target "$TARGET"
-
           # Create binaries directory
-          mkdir -p ../simple-core/src-tauri/binaries
+          mkdir -p ./toolboxv2/simple-core/src-tauri/binaries
 
-          # Copy binary to Tauri binaries folder with correct name
+          # Create the worker runner script
+          cat > worker_runner.py << 'PYEOF'
+          #!/usr/bin/env python3
+          """ToolBoxV2 Worker Runner - Sidecar for Tauri Desktop App"""
+          import sys
+          import os
+          import argparse
+
+          def main():
+              parser = argparse.ArgumentParser(description='ToolBoxV2 HTTP Worker')
+              parser.add_argument('--http-port', type=int, default=5000)
+              parser.add_argument('--ws-port', type=int, default=5001)
+              parser.add_argument('--mode', type=str, default='tauri')
+              args, unknown = parser.parse_known_args()
+
+              try:
+                  from toolboxv2.utils.workers.server_worker import run_http_worker
+                  run_http_worker(port=args.http_port, ws_port=args.ws_port, mode=args.mode)
+              except ImportError as e:
+                  print(f"Error: toolboxv2 not installed: {e}", file=sys.stderr)
+                  sys.exit(1)
+
+          if __name__ == "__main__":
+              main()
+          PYEOF
+
+          # Build with PyInstaller
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cp "target/$TARGET/release/simple-core-server.exe" "../simple-core/src-tauri/binaries/tb-worker-x86_64-pc-windows-msvc.exe"
-          elif [[ "${{ runner.os }}" == "macOS" ]]; then
-            cp "target/$TARGET/release/simple-core-server" "../simple-core/src-tauri/binaries/tb-worker-$TARGET"
+            pyinstaller --onefile --name "tb-worker-${{ matrix.target_triple }}" --console worker_runner.py
+            cp dist/tb-worker-${{ matrix.target_triple }}.exe ./toolboxv2/simple-core/src-tauri/binaries/
           else
-            cp "target/$TARGET/release/simple-core-server" "../simple-core/src-tauri/binaries/tb-worker-x86_64-unknown-linux-gnu"
+            pyinstaller --onefile --name "tb-worker-${{ matrix.target_triple }}" worker_runner.py
+            cp dist/tb-worker-${{ matrix.target_triple }} ./toolboxv2/simple-core/src-tauri/binaries/
+            chmod +x ./toolboxv2/simple-core/src-tauri/binaries/tb-worker-${{ matrix.target_triple }}
           fi
+
+          echo "Created worker binary: tb-worker-${{ matrix.target_triple }}"
+          ls -la ./toolboxv2/simple-core/src-tauri/binaries/
 
       - name: Install frontend dependencies
-        working-directory: ./toolboxv2/web
+        working-directory: ./toolboxv2
         run: |
           npm install
-          cd ../simple-core
-          npm install
-          cd ..
-          npm install
+          npm install --prefix ./web
+          npm install --prefix ./simple-core
           npm run build
 
       - name: Build Tauri (dry-run)
@@ -488,10 +468,18 @@ jobs:
         run: black --check . || true
         continue-on-error: true
 
-      - name: Check Rust formatting
+      - name: Check Rust formatting (Tauri)
         run: |
-          cd toolboxv2/src-core
+          cd toolboxv2/simple-core/src-tauri
           cargo fmt --check || true
+        continue-on-error: true
+
+      - name: Check Rust formatting (TBLang)
+        run: |
+          if [ -d "toolboxv2/tb-exc/src" ]; then
+            cd toolboxv2/tb-exc/src
+            cargo fmt --check || true
+          fi
         continue-on-error: true
 
   # ============================================================================
@@ -523,11 +511,19 @@ jobs:
         run: bandit -r toolboxv2/ -x toolboxv2/tests || true
         continue-on-error: true
 
-      - name: Rust security audit
+      - name: Rust security audit (Tauri)
         run: |
           cargo install cargo-audit || true
-          cd toolboxv2/src-core
+          cd toolboxv2/simple-core/src-tauri
           cargo audit || true
+        continue-on-error: true
+
+      - name: Rust security audit (TBLang)
+        run: |
+          if [ -d "toolboxv2/tb-exc/src" ]; then
+            cd toolboxv2/tb-exc/src
+            cargo audit || true
+          fi
         continue-on-error: true
 
   # ============================================================================
@@ -542,7 +538,6 @@ jobs:
       - build-root
       - test-root
       - tblang
-      - r_blob_db
       - browser-extension
       - nuitka-build
     if: always()

@@ -232,9 +232,9 @@ jobs:
           if [ -f "./toolboxv2/zile/Cargo.toml" ]; then
             echo "exists=true" >> $GITHUB_OUTPUT
             echo "path=./toolboxv2/zile" >> $GITHUB_OUTPUT
-          elif [ -f "./toolboxv2/src-core/Cargo.toml" ]; then
+          elif [ -f "./toolboxv2/tcm/Cargo.toml" ]; then
             echo "exists=true" >> $GITHUB_OUTPUT
-            echo "path=./toolboxv2/src-core" >> $GITHUB_OUTPUT
+            echo "path=./toolboxv2/tcm" >> $GITHUB_OUTPUT
           else
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
@@ -404,15 +404,19 @@ jobs:
           - platform: 'macos-latest'
             args: '--target aarch64-apple-darwin'
             artifact_suffix: 'macos-arm64'
+            target_triple: 'aarch64-apple-darwin'
           - platform: 'macos-latest'
             args: '--target x86_64-apple-darwin'
             artifact_suffix: 'macos-x64'
+            target_triple: 'x86_64-apple-darwin'
           - platform: 'ubuntu-22.04'
             args: ''
             artifact_suffix: 'linux-x64'
+            target_triple: 'x86_64-unknown-linux-gnu'
           - platform: 'windows-latest'
             args: ''
             artifact_suffix: 'windows-x64'
+            target_triple: 'x86_64-pc-windows-msvc'
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout Code
@@ -434,49 +438,72 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev
 
-      - name: Build Worker Server
-        working-directory: ./toolboxv2/src-core
+      - name: Setup Python for Worker
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Create Worker Wrapper Binary
         shell: bash
         run: |
-          # Determine target based on platform
-          if [[ "${{ matrix.platform }}" == "macos-latest" ]]; then
-            # Extract target from args (e.g., --target aarch64-apple-darwin)
-            TARGET="${{ matrix.args }}"
-            TARGET="${TARGET#*--target }"
-            TARGET="${TARGET%% *}"
-            if [[ -z "$TARGET" || "$TARGET" == "${{ matrix.args }}" ]]; then
-              # No target specified, use default
-              TARGET="$(rustc -vV | sed -n 's|host: ||p')"
-            fi
-          elif [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
-            TARGET="x86_64-pc-windows-msvc"
-          else
-            TARGET="x86_64-unknown-linux-gnu"
-          fi
-
-          echo "Building worker server for target: $TARGET"
-          cargo build --release --target "$TARGET"
-
           # Create binaries directory
-          mkdir -p ../simple-core/src-tauri/binaries
+          mkdir -p ./toolboxv2/simple-core/src-tauri/binaries
 
-          # Copy binary to Tauri binaries folder with correct name
+          # Install PyInstaller for creating standalone executable
+          pip install pyinstaller
+
+          # Create the worker runner script
+          cat > worker_runner.py << 'PYEOF'
+          #!/usr/bin/env python3
+          """
+          ToolBoxV2 Worker Runner - Sidecar for Tauri Desktop App
+          This script starts the Python HTTP worker server.
+          """
+          import sys
+          import os
+
+          # Add toolboxv2 to path if needed
+          script_dir = os.path.dirname(os.path.abspath(__file__))
+          parent_dir = os.path.dirname(script_dir)
+
+          # Try to import and run the worker
+          try:
+              from toolboxv2.utils.workers.server_worker import run_http_worker
+              import argparse
+
+              parser = argparse.ArgumentParser(description='ToolBoxV2 HTTP Worker')
+              parser.add_argument('--http-port', type=int, default=5000, help='HTTP port')
+              parser.add_argument('--ws-port', type=int, default=5001, help='WebSocket port')
+              parser.add_argument('--mode', type=str, default='tauri', help='Run mode')
+              args, unknown = parser.parse_known_args()
+
+              run_http_worker(port=args.http_port, ws_port=args.ws_port, mode=args.mode)
+          except ImportError:
+              # Fallback: run via subprocess
+              import subprocess
+              cmd = [sys.executable, "-m", "toolboxv2", "workers", "start", "http"] + sys.argv[1:]
+              subprocess.run(cmd)
+          PYEOF
+
+          # Build the executable with PyInstaller
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cp "target/$TARGET/release/simple-core-server.exe" "../simple-core/src-tauri/binaries/tb-worker-x86_64-pc-windows-msvc.exe"
-          elif [[ "${{ runner.os }}" == "macOS" ]]; then
-            cp "target/$TARGET/release/simple-core-server" "../simple-core/src-tauri/binaries/tb-worker-$TARGET"
+            pyinstaller --onefile --name "tb-worker-${{ matrix.target_triple }}" --console worker_runner.py
+            cp dist/tb-worker-${{ matrix.target_triple }}.exe ./toolboxv2/simple-core/src-tauri/binaries/
           else
-            cp "target/$TARGET/release/simple-core-server" "../simple-core/src-tauri/binaries/tb-worker-x86_64-unknown-linux-gnu"
+            pyinstaller --onefile --name "tb-worker-${{ matrix.target_triple }}" worker_runner.py
+            cp dist/tb-worker-${{ matrix.target_triple }} ./toolboxv2/simple-core/src-tauri/binaries/
+            chmod +x ./toolboxv2/simple-core/src-tauri/binaries/tb-worker-${{ matrix.target_triple }}
           fi
+
+          echo "Created worker binary for ${{ matrix.target_triple }}"
+          ls -la ./toolboxv2/simple-core/src-tauri/binaries/
 
       - name: Install frontend dependencies
-        working-directory: ./toolboxv2/web
+        working-directory: ./toolboxv2
         run: |
           npm install
-          cd ../simple-core
-          npm install
-          cd ..
-          npm install
+          npm install --prefix ./web
+          npm install --prefix ./simple-core
           npm run build
 
       - name: Build Tauri App
@@ -487,11 +514,19 @@ jobs:
           projectPath: ./toolboxv2/simple-core
           tauriScript: npx tauri
           tagName: simple-v__VERSION__
-          releaseName: 'App v__VERSION__'
+          releaseName: 'SimpleCore v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Upload Tauri artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-${{ matrix.artifact_suffix }}
+          path: |
+            ./toolboxv2/simple-core/src-tauri/target/release/bundle/**/*
+            ./toolboxv2/simple-core/src-tauri/target/*/release/bundle/**/*
 
   # ============================================================================
   # ANDROID BUILD (Tauri Mobile)
@@ -825,6 +860,20 @@ jobs:
 
           # Browser extension
           cp all-artifacts/browser-extension/* release-upload/ 2>/dev/null || true
+
+          # Tauri Desktop Apps
+          for dir in all-artifacts/tauri-*; do
+            if [ -d "$dir" ]; then
+              # Find and copy installer files
+              find "$dir" -name "*.dmg" -exec cp {} release-upload/ \; 2>/dev/null || true
+              find "$dir" -name "*.app.tar.gz" -exec cp {} release-upload/ \; 2>/dev/null || true
+              find "$dir" -name "*.msi" -exec cp {} release-upload/ \; 2>/dev/null || true
+              find "$dir" -name "*.exe" -exec cp {} release-upload/ \; 2>/dev/null || true
+              find "$dir" -name "*.deb" -exec cp {} release-upload/ \; 2>/dev/null || true
+              find "$dir" -name "*.AppImage" -exec cp {} release-upload/ \; 2>/dev/null || true
+              find "$dir" -name "*.rpm" -exec cp {} release-upload/ \; 2>/dev/null || true
+            fi
+          done
 
           # Android APK
           cp all-artifacts/android-apk/*.apk release-upload/ 2>/dev/null || true

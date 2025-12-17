@@ -61,6 +61,7 @@ dependencies = [
     "minio>=7.2.20",
     "waitress>=3.0.2",
     "pyzmq>=27.1.0",
+    "aiohttp-cors>=0.8.1",
 ]
 
 [project.scripts]

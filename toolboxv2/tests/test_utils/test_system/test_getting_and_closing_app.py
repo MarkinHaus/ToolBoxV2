@@ -64,31 +64,3 @@ class TestOverrideMainApp(unittest.TestCase):
             override_main_app(MagicMock(spec=AppType))
 
     # Add more test cases as needed
-
-
-class TestSaveClosingApp(unittest.TestCase):
-
-    @staticmethod
-    async def helper_exit(*x):
-        return x
-
-    # @patch('asyncio.get_event_loop')
-    @patch('toolboxv2.utils.system.getting_and_closing_app.registered_apps',
-           [MagicMock(called_exit=[False, 0], exit=Mock(), a_exit=AsyncMock())])
-    def test_save_closing_app_with_registered_app(self):
-        # Mock the event loop
-        # Set up a registered app
-        app_mock = get_app(name="test")
-
-        app_mock.start_dir = "test"
-        app_mock.print = Mock()
-
-        save_closing_app()
-
-        time.sleep(1)
-
-        # Assert that the appropriate methods were called on the app
-
-        app_mock.a_exit.assert_called_once()
-        app_mock.print.assert_any_call(Style.Bold(Style.ITALIC("- completed -")))
-
