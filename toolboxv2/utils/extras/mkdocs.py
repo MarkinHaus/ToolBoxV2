@@ -457,11 +457,16 @@ class CodeAnalyzer:
                         yield self._method_element(item, node.name, file_path)
 
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if not any(
-                    isinstance(p, ast.ClassDef)
-                    for p in ast.walk(tree)
-                    if hasattr(p, "body") and node in getattr(p, "body", [])
-                ):
+                # Check if this function is a method (inside a class)
+                is_method = False
+                for p in ast.walk(tree):
+                    if isinstance(p, ast.ClassDef):
+                        body = getattr(p, "body", None)
+                        # Ensure body is iterable (list)
+                        if isinstance(body, list) and node in body:
+                            is_method = True
+                            break
+                if not is_method:
                     yield self._function_element(node, file_path)
 
     def _class_element(self, node: ast.ClassDef, file_path: Path) -> CodeElement:
@@ -1212,12 +1217,16 @@ class ContextEngine:
         candidate_ids: Optional[Set[str]] = None
 
         # Filter by name using inverted index - O(1)
+        # Track exact matches separately for prioritization
+        exact_match_ids: Set[str] = set()
         if name:
             name_lower = name.lower()
-            candidate_ids = inverted.name_to_elements.get(name_lower, set()).copy()
-            # Also check partial matches
+            # First get exact matches (highest priority)
+            exact_match_ids = inverted.name_to_elements.get(name_lower, set()).copy()
+            candidate_ids = exact_match_ids.copy() if exact_match_ids else None
+            # Also check partial matches (lower priority)
             for indexed_name, ids in inverted.name_to_elements.items():
-                if name_lower in indexed_name or indexed_name in name_lower:
+                if indexed_name != name_lower and (name_lower in indexed_name or indexed_name in name_lower):
                     if candidate_ids is None:
                         candidate_ids = ids.copy()
                     else:
@@ -1233,11 +1242,19 @@ class ContextEngine:
 
         # Filter by file path using inverted index - O(1)
         if file_path:
+            # Normalize file path for matching (handle both / and \)
+            file_path_normalized = file_path.replace("\\", "/").lower()
             file_ids = inverted.file_to_elements.get(file_path, set())
             if not file_ids:
                 file_ids = set()
                 for fp, ids in inverted.file_to_elements.items():
-                    if file_path in fp:
+                    # Normalize indexed path for comparison
+                    fp_normalized = fp.replace("\\", "/").lower()
+                    # Check if the query path is contained in the indexed path
+                    # or if the indexed path ends with the query path
+                    if (file_path_normalized in fp_normalized or
+                        fp_normalized.endswith(file_path_normalized) or
+                        file_path_normalized.endswith(fp_normalized.split("/")[-1])):
                         file_ids |= ids
             if candidate_ids is None:
                 candidate_ids = file_ids
@@ -1248,14 +1265,59 @@ class ContextEngine:
         if candidate_ids is None:
             candidate_ids = set(self._index_mgr.index.code_elements.keys())
 
-        # Fetch actual elements
-        results = []
+        # Fetch actual elements with smart ranking
+        all_matches = []
+
         for eid in candidate_ids:
-            if len(results) >= max_results:
-                break
             element = self._index_mgr.index.code_elements.get(eid)
             if element:
-                results.append(element)
+                all_matches.append(element)
+
+        # Sort by relevance score
+        def score_element(elem: CodeElement) -> tuple:
+            """Score element for ranking. Higher = better. Returns tuple for multi-key sort."""
+            file_path = elem.file_path.replace("\\", "/").lower()
+            elem_name = elem.name.lower()
+            query_name = name.lower() if name else ""
+
+            # Exact name match is highest priority
+            exact_match = 1 if elem_name == query_name else 0
+
+            # Prefer source files over test files
+            is_test = 1 if "/test" in file_path or "_test" in file_path else 0
+
+            # Prefer Python files when searching for Python-like names
+            # (classes with CamelCase, functions with snake_case)
+            is_python = 1 if file_path.endswith(".py") else 0
+
+            # Prefer core source directories over mods/flows/clis
+            # utils/system and utils/extras are primary sources
+            is_core = 0
+            if "/utils/system/" in file_path:
+                is_core = 4  # Highest priority - core system definitions
+            elif "/utils/extras/" in file_path:
+                is_core = 4  # Highest priority - core extras definitions
+            elif "/utils/" in file_path and "/clis/" not in file_path:
+                is_core = 3  # High priority - other utility code
+            elif "/mods/" in file_path:
+                is_core = 2  # Medium priority - module code (actual definitions)
+            elif "/src-core/" in file_path:
+                is_core = 1  # Lower priority - compiled/bridge code
+            elif "/clis/" in file_path or "/flows/" in file_path:
+                is_core = 0  # Lowest - CLI wrappers and flows (usually imports, not definitions)
+            else:
+                is_core = 1
+
+            # Prefer shorter file paths (usually more fundamental)
+            path_depth = file_path.count("/")
+
+            # Return tuple: (exact_match, not_test, is_python, is_core, -path_depth)
+            # Higher values = better match
+            return (exact_match, 1 - is_test, is_python, is_core, -path_depth)
+
+        all_matches.sort(key=score_element, reverse=True)
+
+        results = all_matches[:max_results]
 
         self._set_cached(cache_key, results)
         return results

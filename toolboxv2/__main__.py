@@ -40,7 +40,7 @@ from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyprojec
 from toolboxv2.utils.clis.tcm_p2p_cli import cli_tcm_runner
 from .utils.toolbox import App as TbApp
 try:
-    from .mcp_server import main as cli_mcp_server
+    from .mcp_server.__main__ import main as cli_mcp_server
 except ImportError:
     cli_mcp_server = lambda :None
 
