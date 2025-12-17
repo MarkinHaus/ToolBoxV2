@@ -355,15 +355,19 @@ class NginxManager:
         if use_ssl:
             ssl_port = getattr(cfg, "listen_ssl_port", 443)
             ssl_block = f"""
-            listen {ssl_port} ssl http2;
+            listen {ssl_port} ssl;
+            listen {ssl_port} quic reuseport;
+            http2 on;
+            http3 on;
+            quic_retry on;
             ssl_certificate {self._ssl.cert_path};
             ssl_certificate_key {self._ssl.key_path};
-            ssl_protocols TLSv1.2 TLSv1.3;
-            ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
-            ssl_prefer_server_ciphers off;
+            ssl_protocols TLSv1.3;
+            ssl_early_data on;
             ssl_session_cache shared:SSL:10m;
             ssl_session_timeout 1d;
-            ssl_session_tickets off;"""
+            ssl_session_tickets on;
+            add_header Alt-Svc 'h3=":{ssl_port}"; ma=86400';"""
 
             listen_port = getattr(cfg, "listen_port", 80)
             ssl_redirect = f"""
