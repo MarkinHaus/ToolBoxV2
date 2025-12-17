@@ -388,7 +388,7 @@ class NginxManager:
         else:
             mime_include = "include /etc/nginx/mime.types;"
             log_path = "/var/log/nginx"
-            pid_directive = "pid /run/nginx.pid;"
+            pid_directive = "" #"pid /run/nginx.pid;"
 
         # Rate limiting configuration
         rate_limit_enabled = getattr(cfg, "rate_limit_enabled", True)
@@ -1918,7 +1918,7 @@ def _run_http_worker_process(worker_id: str, config_dict: Dict, port: int, socke
     config = Config.from_dict(config_dict)
     worker = HTTPWorker(worker_id, config)
     if socket_path and not IS_WINDOWS:
-        worker.run(socket_path=socket_path)
+        worker.run(port=port)
     else:
         worker.run(port=port)
 

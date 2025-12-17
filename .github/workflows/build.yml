@@ -468,6 +468,22 @@ jobs:
           cd simple-core && npm install && cd ..
           npm run build
 
+      - name: Remove externalBin for Mobile
+        working-directory: ./toolboxv2/simple-core/src-tauri
+        run: |
+          # Remove externalBin from tauri.conf.json for mobile builds
+          # PyInstaller cannot create Android binaries
+          python3 -c "
+          import json
+          with open('tauri.conf.json', 'r') as f:
+              config = json.load(f)
+          if 'bundle' in config and 'externalBin' in config['bundle']:
+              del config['bundle']['externalBin']
+              print('Removed externalBin from config')
+          with open('tauri.conf.json', 'w') as f:
+              json.dump(config, f, indent=2)
+          "
+
       - name: Initialize Android project
         working-directory: ./toolboxv2/simple-core
         run: cargo tauri android init || true
@@ -512,6 +528,22 @@ jobs:
           npm install --prefix ./web
           cd simple-core && npm install && cd ..
           npm run build
+
+      - name: Remove externalBin for Mobile
+        working-directory: ./toolboxv2/simple-core/src-tauri
+        run: |
+          # Remove externalBin from tauri.conf.json for mobile builds
+          # PyInstaller cannot create iOS binaries
+          python3 -c "
+          import json
+          with open('tauri.conf.json', 'r') as f:
+              config = json.load(f)
+          if 'bundle' in config and 'externalBin' in config['bundle']:
+              del config['bundle']['externalBin']
+              print('Removed externalBin from config')
+          with open('tauri.conf.json', 'w') as f:
+              json.dump(config, f, indent=2)
+          "
 
       - name: Initialize iOS project
         working-directory: ./toolboxv2/simple-core
