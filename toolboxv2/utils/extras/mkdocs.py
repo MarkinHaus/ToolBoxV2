@@ -1151,14 +1151,26 @@ class ContextEngine:
         candidate_ids: Optional[Set[str]] = None
 
         # Filter by query keywords using inverted index - O(k) where k = keyword count
+        # Use same tokenization as indexing + OR semantics with ranking
         if query:
-            query_terms = set(query.lower().split())
-            for term in query_terms:
+            # Tokenize query the same way as content is tokenized
+            query_terms = self._index_mgr._tokenize(query)
+            # Also add raw words for flexibility (handles short words)
+            raw_terms = set(query.lower().split())
+            all_terms = query_terms | raw_terms
+
+            # Use OR semantics: collect all matching sections with match counts
+            term_match_counts: Dict[str, int] = defaultdict(int)
+            for term in all_terms:
                 term_ids = inverted.keyword_to_sections.get(term, set())
-                if candidate_ids is None:
-                    candidate_ids = term_ids.copy()
-                else:
-                    candidate_ids &= term_ids  # Intersection for AND semantics
+                for sid in term_ids:
+                    term_match_counts[sid] += 1
+
+            if term_match_counts:
+                # Sort by match count (more matches = better)
+                sorted_ids = sorted(term_match_counts.keys(),
+                                   key=lambda x: term_match_counts[x], reverse=True)
+                candidate_ids = set(sorted_ids)
 
         # Filter by tags using inverted index - O(t) where t = tag count
         if tags:

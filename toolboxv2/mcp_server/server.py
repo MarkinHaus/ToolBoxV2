@@ -421,26 +421,90 @@ class ToolBoxV2MCPServer:
                 },
                 {
                     "name": "toolbox_info",
-                    "description": "Get detailed information about modules, functions, or guides.",
+                    "description": "Get detailed information about modules, functions, flows, or guides. Use this to discover and understand ToolBoxV2 capabilities.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
                             "info_type": {
                                 "type": "string",
-                                "enum": ["modules", "functions", "flows", "python_guide", "performance_guide"],
-                                "description": "Type of information to retrieve"
+                                "enum": [
+                                    "modules",
+                                    "functions",
+                                    "function_detail",
+                                    "flows",
+                                    "flow_detail",
+                                    "python_guide",
+                                    "performance_guide",
+                                    "discovery"
+                                ],
+                                "description": "Type of information: 'modules' (list all), 'functions' (list in module), 'function_detail' (specific function), 'flows' (list all), 'flow_detail' (specific flow), 'discovery' (full overview)"
                             },
                             "target": {
                                 "type": "string",
-                                "description": "Specific target (e.g., module name for functions)"
+                                "description": "Target for detail queries. For 'functions': module name. For 'function_detail': 'Module.function'. For 'flow_detail': flow name."
                             },
                             "include_examples": {
                                 "type": "boolean",
                                 "default": False,
-                                "description": "Include usage examples"
+                                "description": "Include usage examples in output"
                             }
                         },
                         "required": ["info_type"]
+                    }
+                },
+                {
+                    "name": "toolbox_search",
+                    "description": "Search for functions across all modules by name, module, or docstring content. Great for finding relevant functions when you don't know the exact name.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Search query (matches function names, module names, docstrings)"
+                            },
+                            "max_results": {
+                                "type": "integer",
+                                "default": 20,
+                                "minimum": 1,
+                                "maximum": 50,
+                                "description": "Maximum results to return"
+                            }
+                        },
+                        "required": ["query"]
+                    }
+                },
+                {
+                    "name": "toolbox_tree",
+                    "description": "Get a visual tree view of modules and their functions. Useful for exploring the system structure.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "module": {
+                                "type": "string",
+                                "description": "Specific module to show (omit for all modules)"
+                            },
+                            "depth": {
+                                "type": "integer",
+                                "default": 2,
+                                "minimum": 1,
+                                "maximum": 3,
+                                "description": "Tree depth: 1 = modules only, 2 = with functions"
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "toolbox_callable",
+                    "description": "Get a concise summary of all callable API functions in a module with their signatures. Optimized for understanding what you can call.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "module": {
+                                "type": "string",
+                                "description": "Module name to get callable summary for"
+                            }
+                        },
+                        "required": ["module"]
                     }
                 }
             ])
@@ -615,6 +679,26 @@ class ToolBoxV2MCPServer:
                     info_type=arguments.get("info_type"),
                     target=arguments.get("target"),
                     include_examples=arguments.get("include_examples", False)
+                )
+
+            elif name == "toolbox_search":
+                result = await self.system_worker.search_functions(
+                    app=self._app,
+                    query=arguments.get("query", ""),
+                    max_results=arguments.get("max_results", 20)
+                )
+
+            elif name == "toolbox_tree":
+                result = await self.system_worker.get_module_tree(
+                    app=self._app,
+                    module=arguments.get("module"),
+                    depth=arguments.get("depth", 2)
+                )
+
+            elif name == "toolbox_callable":
+                result = await self.system_worker.get_callable_summary(
+                    app=self._app,
+                    module=arguments.get("module", "")
                 )
 
             # Route all flow tools to enhanced FlowHandlers

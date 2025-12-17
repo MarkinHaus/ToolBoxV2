@@ -40,7 +40,8 @@ EXPECTED_CLASSES = {
     "Style": "toolboxv2/utils/extras/Style.py",
     "Spinner": "toolboxv2/utils/extras/Style.py",
     # Mod-specific classes - MUST be from mods/
-    "User": "toolboxv2/mods/CloudM/types.py",
+    # Note: User exists in both types.py (dataclass) and models.py (pydantic)
+    "User": ["toolboxv2/mods/CloudM/types.py", "toolboxv2/mods/CloudM/models.py"],
     "LocalUserData": "toolboxv2/mods/CloudM/AuthClerk.py",
     "StorageProvider": "toolboxv2/mods/CloudM/UserDataAPI.py",
     "ModDataClient": "toolboxv2/mods/CloudM/UserDataAPI.py",
@@ -97,12 +98,14 @@ async def run_accuracy_test():
         lookup = await system.lookup_code(name=class_name, element_type="class")
         if lookup["results"]:
             actual_file = lookup["results"][0]["file"]
-            if path_matches(actual_file, expected_file):
-                print(f"  ✓ {class_name}: {expected_file}")
+            # Handle multiple valid expected files
+            expected_files = expected_file if isinstance(expected_file, list) else [expected_file]
+            if any(path_matches(actual_file, ef) for ef in expected_files):
+                print(f"  ✓ {class_name}: {normalize_path(actual_file).split('toolboxv2/')[-1]}")
                 class_passed += 1
             else:
                 print(f"  ✗ {class_name}: WRONG!")
-                print(f"      Expected: {expected_file}")
+                print(f"      Expected: {expected_files}")
                 print(f"      Got:      {actual_file}")
                 class_failed += 1
         else:
