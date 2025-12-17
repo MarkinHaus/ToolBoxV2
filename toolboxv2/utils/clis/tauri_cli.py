@@ -259,8 +259,8 @@ def run_worker_debug(project_root: Path, http_port: int = 5000, ws_port: int = 5
         [sys.executable, str(worker_entry)],
         cwd=project_root,
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        # stdout=subprocess.PIPE,
+        # stderr=subprocess.STDOUT,
     )
 
 

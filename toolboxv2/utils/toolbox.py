@@ -934,7 +934,7 @@ class App(AppType, metaclass=Singleton):
 
 
     def load_mod(self, mod_name: str, mlm='I', **kwargs):
-
+        from .. import __init__
         action_list_helper = ['I (inplace load dill on error python)',
                               # 'C (coppy py file to runtime dir)',
                               # 'S (save py file to dill)',

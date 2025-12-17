@@ -1,5 +1,3 @@
-from toolboxv2 import get_logger
-
 from .tb_adapter import Tools
 from .tb_adapter import Tools as DB
 from .ui import db_manager_ui

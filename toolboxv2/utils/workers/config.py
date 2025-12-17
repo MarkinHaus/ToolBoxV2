@@ -117,7 +117,7 @@ class AuthConfig:
 @dataclass
 class HTTPWorkerConfig:
     """HTTP worker configuration."""
-    host: str = "127.0.0.1"
+    host: str = "localhost"
     port: int = 8000
     workers: int = 4
     max_concurrent: int = 100
@@ -130,7 +130,7 @@ class HTTPWorkerConfig:
 @dataclass
 class WSWorkerConfig:
     """WebSocket worker configuration."""
-    host: str = "127.0.0.1"
+    host: str = "localhost"
     port: int = 8100
     max_connections: int = 10000
     ping_interval: int = 30
@@ -381,8 +381,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config_data.setdefault("debug", False)
         config_data.setdefault("nginx", {}).setdefault("enabled", False)
         config_data.setdefault("http_worker", {}).setdefault("workers", 1)
-        config_data.setdefault("http_worker", {}).setdefault("host", "127.0.0.1")
-        config_data.setdefault("ws_worker", {}).setdefault("host", "127.0.0.1")
+        config_data.setdefault("http_worker", {}).setdefault("host", "localhost")
+        config_data.setdefault("ws_worker", {}).setdefault("host", "localhost")
         config_data.setdefault("manager", {}).setdefault("web_ui_enabled", False)
         config_data.setdefault("auth", {}).setdefault("ws_allow_anonymous", True)
 

@@ -50,23 +50,11 @@ class TauriWorkerManager:
         os.environ["TB_ENV"] = "tauri"
 
         try:
-            from toolboxv2.utils.system.getting_and_closing_app import get_app
-            app = get_app()
-            return app.config
+            from toolboxv2.utils.workers.config import load_config
+            return load_config()
         except ImportError:
             logger.warning("ToolBoxV2 config not available, using defaults")
-            return self._create_default_config()
-
-    def _create_default_config(self):
-        """Create default configuration for standalone mode."""
-        class DefaultConfig:
-            class http_worker:
-                host = "127.0.0.1"
-                port = 8000
-            class ws_worker:
-                host = "127.0.0.1"
-                port = 8001
-        return DefaultConfig()
+            raise
 
     def _init_app(self):
         """Initialize ToolBoxV2 app."""
@@ -101,9 +89,11 @@ class TauriWorkerManager:
 
         # Run HTTP in thread (WSGI is blocking)
         def run_http():
+            print(f"RUN HTTP WORKER: {config.http_worker.host}:{config.http_worker.port}")
             http_worker.run(
                 host=config.http_worker.host,
                 port=config.http_worker.port,
+                do_run=False,
             )
 
         http_thread = threading.Thread(target=run_http, daemon=True)

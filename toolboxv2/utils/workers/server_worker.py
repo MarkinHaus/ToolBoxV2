@@ -1032,7 +1032,7 @@ class HTTPWorker:
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
         try:
-            from toolboxv2 import get_app
+            from ..system.getting_and_closing_app  import get_app
             instance_id = f"{self.config.toolbox.instance_id}_{self.worker_id}"
             self._app = get_app(name=instance_id, from_="HTTPWorker")
             logger.info(f"ToolBoxV2 initialized: {instance_id}")
@@ -1042,7 +1042,7 @@ class HTTPWorker:
 
     def _init_session_manager(self):
         """Initialize session manager."""
-        from toolboxv2.utils.workers.session import SessionManager
+        from ..workers.session import SessionManager
 
         secret = self.config.session.cookie_secret
         if not secret:
@@ -1151,12 +1151,51 @@ class HTTPWorker:
         self._metrics["requests_auth"] += 1
         return await handler(request)
 
+    def _get_cors_headers(self, environ: Dict) -> Dict[str, str]:
+        """Get CORS headers for the response."""
+        origin = environ.get("HTTP_ORIGIN", "*")
+        # Allow requests from Tauri and localhost
+        allowed_origins = [
+            "http://tauri.localhost",
+            "https://tauri.localhost",
+            "tauri://localhost",
+            "http://localhost",
+            "https://localhost",
+            "http://127.0.0.1",
+            "https://127.0.0.1",
+        ]
+        # Also allow any localhost port
+        if origin and (origin in allowed_origins or
+                       origin.startswith("http://localhost:") or
+                       origin.startswith("http://127.0.0.1:") or
+                       origin.startswith("https://localhost:") or
+                       origin.startswith("https://127.0.0.1:")):
+            allow_origin = origin
+        else:
+            allow_origin = "*"
+
+        return {
+            "Access-Control-Allow-Origin": allow_origin,
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With, Accept, Origin, X-Session-Token",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Max-Age": "86400",
+        }
+
     def wsgi_app(self, environ: Dict, start_response: Callable) -> List[bytes]:
         """Raw WSGI application entry point."""
         start_time = time.time()
         self._metrics["requests_total"] += 1
 
         try:
+            # Handle CORS preflight requests
+            if environ.get("REQUEST_METHOD") == "OPTIONS":
+                cors_headers = self._get_cors_headers(environ)
+                status_line = "204 No Content"
+                response_headers = [(k, v) for k, v in cors_headers.items()]
+                start_response(status_line, response_headers)
+                return [b""]
+
             # Add session to environ
             if self._session_manager:
                 session = self._session_manager.get_session_from_request_sync(environ)
@@ -1189,6 +1228,10 @@ class HTTPWorker:
                 if cookie_header:
                     headers["Set-Cookie"] = cookie_header
 
+            # Add CORS headers to all responses
+            cors_headers = self._get_cors_headers(environ)
+            headers.update(cors_headers)
+
             # Build response
             status_line = f"{status} {HTTPStatus(status).phrase}"
             response_headers = [(k, v) for k, v in headers.items()]
@@ -1210,24 +1253,41 @@ class HTTPWorker:
             traceback.print_exc()
             self._metrics["requests_error"] += 1
 
+            # Add CORS headers even to error responses
+            cors_headers = self._get_cors_headers(environ)
             status_line = "500 Internal Server Error"
-            response_headers = [("Content-Type", "application/json")]
+            response_headers = [("Content-Type", "application/json")] + [(k, v) for k, v in cors_headers.items()]
             start_response(status_line, response_headers)
 
             return [json.dumps({"error": "InternalError", "message": str(e)}).encode()]
 
     def _run_async(self, coro) -> Any:
-        """Run async coroutine from sync context."""
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(coro)
-        except Exception as e:
-            logger.error(f"Async run error: {e}")
-            return self._app.run_bg_task(coro)
+        """Run async coroutine from sync context using the background event loop."""
+        # Use the background event loop thread if available
+        if self._event_loop and self._event_loop.is_running():
+            # Schedule coroutine in the background event loop and wait for result
+            future = asyncio.run_coroutine_threadsafe(coro, self._event_loop)
+            try:
+                # Wait for result with timeout
+                return future.result(timeout=self.config.http_worker.timeout or 30)
+            except Exception as e:
+                logger.error(f"Async run error (threadsafe): {e}")
+                raise
+        else:
+            # Fallback: create new event loop for this thread
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    return loop.run_until_complete(coro)
+                finally:
+                    loop.close()
+            except Exception as e:
+                try:
+                    self._app.run_bg_task(coro)
+                except Exception:
+                    logger.error(f"Async run error (fallback): {e}")
+                    raise
 
     def _handle_health(self) -> Tuple:
         """Health check endpoint."""
@@ -1260,7 +1320,7 @@ class HTTPWorker:
 
         return json_response(metrics)
 
-    def run(self, host: str = None, port: int = None):
+    def run(self, host: str = None, port: int = None, do_run=True):
         """Run the HTTP worker."""
         host = host or self.config.http_worker.host
         port = port or self.config.http_worker.port
@@ -1281,6 +1341,9 @@ class HTTPWorker:
         )
 
         # Initialize event manager in a background thread with its own event loop
+        import threading
+        loop_ready_event = threading.Event()
+
         def run_event_loop():
             """Run the event loop in a background thread."""
             loop = asyncio.new_event_loop()
@@ -1292,23 +1355,27 @@ class HTTPWorker:
                 loop.run_until_complete(self._init_event_manager())
                 logger.info(f"[HTTP] Event manager initialized, starting event loop")
 
+                # Signal that the loop is ready
+                loop_ready_event.set()
+
                 # Keep the event loop running to process events
                 loop.run_forever()
             except Exception as e:
                 logger.error(f"Event loop error: {e}", exc_info=True)
+                loop_ready_event.set()  # Unblock main thread even on error
             finally:
                 loop.close()
                 logger.info("[HTTP] Event loop stopped")
 
         try:
-            import threading
             self._event_loop_thread = threading.Thread(target=run_event_loop, daemon=True, name="event-loop")
             self._event_loop_thread.start()
 
-            # Wait a bit for the event manager to initialize
-            import time
-            time.sleep(0.5)
-            logger.info(f"[HTTP] Event loop thread started: {self._event_loop_thread.is_alive()}")
+            # Wait for the event loop to be ready (with timeout)
+            if not loop_ready_event.wait(timeout=10.0):
+                logger.warning("[HTTP] Event loop initialization timed out, continuing anyway")
+
+            logger.info(f"[HTTP] Event loop thread started: {self._event_loop_thread.is_alive()}, loop running: {self._event_loop and self._event_loop.is_running()}")
         except Exception as e:
             logger.error(f"Event manager init failed: {e}", exc_info=True)
 
@@ -1335,8 +1402,16 @@ class HTTPWorker:
                 if self._server:
                     self._server.close()
 
-            signal.signal(signal.SIGINT, signal_handler)
-            signal.signal(signal.SIGTERM, signal_handler)
+            # Only register signal handlers in main thread
+            try:
+                import threading
+                if threading.current_thread() is threading.main_thread():
+                    signal.signal(signal.SIGINT, signal_handler)
+                    signal.signal(signal.SIGTERM, signal_handler)
+                else:
+                    logger.info("[HTTP] Running in non-main thread, skipping signal handlers")
+            except (ValueError, RuntimeError) as e:
+                logger.warning(f"[HTTP] Could not register signal handlers: {e}")
 
             logger.info(f"Serving on http://{host}:{port}")
             self._server.run()
@@ -1375,11 +1450,19 @@ class HTTPWorker:
                 if self._server:
                     self._server.shutdown()
 
-            signal.signal(signal.SIGINT, signal_handler)
-            signal.signal(signal.SIGTERM, signal_handler)
+            # Only register signal handlers in main thread
+            try:
+                if threading.current_thread() is threading.main_thread():
+                    signal.signal(signal.SIGINT, signal_handler)
+                    signal.signal(signal.SIGTERM, signal_handler)
+                else:
+                    logger.info("[HTTP] Running in non-main thread, skipping signal handlers")
+            except (ValueError, RuntimeError) as e:
+                logger.warning(f"[HTTP] Could not register signal handlers: {e}")
 
-            logger.info(f"Serving on http://{host}:{port}")
-            self._server.serve_forever()
+            if do_run:
+                logger.info(f"Serving on http://{host}:{port}")
+                self._server.serve_forever()
 
         except KeyboardInterrupt:
             logger.info("Shutdown requested...")

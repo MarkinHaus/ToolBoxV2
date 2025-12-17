@@ -26,7 +26,17 @@ import weakref
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Set
 
-from toolboxv2 import get_logger
+try:
+    from toolboxv2 import get_logger
+except ImportError:
+    try:
+        from ..system.tb_logger import get_logger
+    except ImportError:
+
+        def get_logger():
+            import logging
+
+            return logging.getLogger()
 
 try:
     import websockets
@@ -828,7 +838,7 @@ class WSWorker:
         - Within an existing event loop as a coroutine
         """
         global logger
-        from toolboxv2 import get_app
+        from ..system.getting_and_closing_app import get_app
         print("WS_WORKER:: ",get_app().set_logger(True, self.worker_id))
         get_logger().info("WS_WORKER:: ")
         logger = get_logger()

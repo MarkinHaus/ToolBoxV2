@@ -37,7 +37,14 @@ def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None, sync=
         return registered_apps[0]
 
     if app_con is None:
-        from ... import App
+        try:
+            from ... import App
+        except ImportError:
+            try:
+                from ..toolbox import App
+            except ImportError:
+                from toolboxv2 import App
+
         app_con = App
     app = app_con(name, args=args) if name else app_con()
     logger.info(Style.Bold(f"App instance, returned ID: {app.id}"))

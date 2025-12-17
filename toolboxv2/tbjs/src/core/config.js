@@ -98,16 +98,41 @@ const Config = {
                 _config.useRemoteApi = true;
                 console.log('[Config] Tauri iOS detected, using remote API:', remoteApiUrl);
             } else if (isAndroid) {
-                // Android: Check if worker is available, fallback to remote
-                _config.baseApiUrl = localApiUrl;
-                _config.baseWsUrl = localWsUrl;
-                _config.useRemoteApi = false;
+                // Android: User can choose between local, remote, or custom endpoint
+                // Store available endpoints for switching
+                _config._localApiUrl = localApiUrl;
+                _config._localWsUrl = localWsUrl;
                 _config._remoteApiUrl = remoteApiUrl;
                 _config._remoteWsUrl = remoteWsUrl;
+                _config.canSwitchEndpoint = true; // Flag for UI to show settings
 
-                // Async worker check - will update config if worker unavailable
-                Config._checkWorkerAndFallback(localApiUrl, remoteApiUrl, remoteWsUrl);
-                console.log('[Config] Tauri Android detected, checking worker availability...');
+                // Load user preference from localStorage
+                const savedEndpoint = localStorage.getItem('tb_api_endpoint_mode') || 'local';
+                const customApiUrl = localStorage.getItem('tb_custom_api_url');
+                const customWsUrl = localStorage.getItem('tb_custom_ws_url');
+
+                if (savedEndpoint === 'remote') {
+                    _config.baseApiUrl = remoteApiUrl;
+                    _config.baseWsUrl = remoteWsUrl;
+                    _config.useRemoteApi = true;
+                    _config.endpointMode = 'remote';
+                    console.log('[Config] Tauri Android: Using saved remote API:', remoteApiUrl);
+                } else if (savedEndpoint === 'custom' && customApiUrl) {
+                    _config.baseApiUrl = customApiUrl;
+                    _config.baseWsUrl = customWsUrl || remoteWsUrl;
+                    _config.useRemoteApi = true;
+                    _config.endpointMode = 'custom';
+                    console.log('[Config] Tauri Android: Using custom API:', customApiUrl);
+                } else {
+                    // Default to local, with fallback check
+                    _config.baseApiUrl = localApiUrl;
+                    _config.baseWsUrl = localWsUrl;
+                    _config.useRemoteApi = false;
+                    _config.endpointMode = 'local';
+                    // Async worker check - will update config if worker unavailable
+                    Config._checkWorkerAndFallback(localApiUrl, remoteApiUrl, remoteWsUrl);
+                    console.log('[Config] Tauri Android: Using local API with fallback check');
+                }
             } else {
                 // Desktop: Use local worker
                 _config.baseApiUrl = localApiUrl;
@@ -123,13 +148,67 @@ const Config = {
         if (_config.baseFileUrl && new URL(_config.baseFileUrl).pathname !== '/' && !_config.baseFileUrl.endsWith('/')) {
             _config.baseFileUrl += '/';
         }
-         // Ensure baseApiUrl is absolute (skip if already set for Tauri)
-        if (_config.baseApiUrl && !_config.baseApiUrl.startsWith('http') && !_config.baseApiUrl.startsWith('/')) {
-            _config.baseApiUrl = '/' + _config.baseApiUrl;
+
+        // Only convert relative URLs to absolute - skip if already absolute (http/https)
+        // This preserves the Tauri-specific URLs set above
+        if (_config.baseApiUrl && !_config.baseApiUrl.startsWith('http')) {
+            if (!_config.baseApiUrl.startsWith('/')) {
+                _config.baseApiUrl = '/' + _config.baseApiUrl;
+            }
+            // Only resolve relative URLs for non-Tauri environments
+            // In Tauri, we've already set absolute URLs above
+            if (!_config.isTauri) {
+                _config.baseApiUrl = new URL(_config.baseApiUrl, window.location.origin).href;
+            } else {
+                // For Tauri with relative URL (shouldn't happen, but fallback to local worker)
+                const workerHttpPort = initialUserConfig.workerHttpPort || 5000;
+                _config.baseApiUrl = `http://localhost:${workerHttpPort}${_config.baseApiUrl}`;
+            }
         }
-        // If baseApiUrl is relative, make it absolute from baseFileUrl or origin
-        if (_config.baseApiUrl && _config.baseApiUrl.startsWith('/')) {
-             _config.baseApiUrl = new URL(_config.baseApiUrl, window.location.origin).href;
+
+        // Override global fetch in Tauri to redirect /api/ requests to the correct backend
+        if (_config.isTauri && typeof window !== 'undefined') {
+            const originalFetch = window.fetch;
+            window.fetch = function(input, init) {
+                let url = input;
+
+                // Handle Request objects
+                if (input instanceof Request) {
+                    url = input.url;
+                }
+
+                // Convert to string for checking
+                const urlStr = typeof url === 'string' ? url : url.toString();
+
+                // Check if it's a relative /api/ request or tauri.localhost/api request
+                if (urlStr.startsWith('/api/') || urlStr.startsWith('/api')) {
+                    // Redirect to the configured backend
+                    const newUrl = _config.baseApiUrl.replace(/\/api\/?$/, '') + urlStr;
+                    console.log('[Config] Fetch redirect:', urlStr, '->', newUrl);
+
+                    if (input instanceof Request) {
+                        // Clone request with new URL
+                        return originalFetch.call(this, new Request(newUrl, input), init);
+                    }
+                    return originalFetch.call(this, newUrl, init);
+                }
+
+                // Check for tauri.localhost/api URLs
+                if (urlStr.includes('tauri.localhost/api')) {
+                    const path = urlStr.replace(/^https?:\/\/tauri\.localhost/, '');
+                    const newUrl = _config.baseApiUrl.replace(/\/api\/?$/, '') + path;
+                    console.log('[Config] Fetch redirect (tauri.localhost):', urlStr, '->', newUrl);
+
+                    if (input instanceof Request) {
+                        return originalFetch.call(this, new Request(newUrl, input), init);
+                    }
+                    return originalFetch.call(this, newUrl, init);
+                }
+
+                // Pass through all other requests
+                return originalFetch.call(this, input, init);
+            };
+            console.log('[Config] Global fetch override installed for Tauri');
         }
 
         // After logger is initialized in TB.init, this can be moved there or use a preliminary log.
@@ -215,7 +294,110 @@ const Config = {
         _config.baseApiUrl = remoteApiUrl;
         _config.baseWsUrl = remoteWsUrl;
         _config.useRemoteApi = true;
+        _config.endpointMode = 'remote';
         console.log('[Config] Using remote API:', remoteApiUrl);
+    },
+
+    /**
+     * Switch API endpoint (Android only).
+     * @param {'local' | 'remote' | 'custom'} mode - The endpoint mode
+     * @param {string} [customApiUrl] - Custom API URL (required if mode is 'custom')
+     * @param {string} [customWsUrl] - Custom WebSocket URL (optional for custom mode)
+     * @returns {boolean} - True if switch was successful
+     */
+    setApiEndpoint: (mode, customApiUrl = null, customWsUrl = null) => {
+        if (!_config.canSwitchEndpoint) {
+            console.warn('[Config] API endpoint switching is not available on this platform');
+            return false;
+        }
+
+        const localApiUrl = _config._localApiUrl;
+        const localWsUrl = _config._localWsUrl;
+        const remoteApiUrl = _config._remoteApiUrl;
+        const remoteWsUrl = _config._remoteWsUrl;
+
+        switch (mode) {
+            case 'local':
+                _config.baseApiUrl = localApiUrl;
+                _config.baseWsUrl = localWsUrl;
+                _config.useRemoteApi = false;
+                _config.endpointMode = 'local';
+                localStorage.setItem('tb_api_endpoint_mode', 'local');
+                localStorage.removeItem('tb_custom_api_url');
+                localStorage.removeItem('tb_custom_ws_url');
+                console.log('[Config] Switched to local API:', localApiUrl);
+                break;
+
+            case 'remote':
+                _config.baseApiUrl = remoteApiUrl;
+                _config.baseWsUrl = remoteWsUrl;
+                _config.useRemoteApi = true;
+                _config.endpointMode = 'remote';
+                localStorage.setItem('tb_api_endpoint_mode', 'remote');
+                localStorage.removeItem('tb_custom_api_url');
+                localStorage.removeItem('tb_custom_ws_url');
+                console.log('[Config] Switched to remote API:', remoteApiUrl);
+                break;
+
+            case 'custom':
+                if (!customApiUrl) {
+                    console.error('[Config] Custom API URL is required for custom mode');
+                    return false;
+                }
+                // Ensure URL has /api suffix if not present
+                const apiUrl = customApiUrl.endsWith('/api') ? customApiUrl :
+                               customApiUrl.endsWith('/') ? customApiUrl + 'api' : customApiUrl + '/api';
+                _config.baseApiUrl = apiUrl;
+                _config.baseWsUrl = customWsUrl || remoteWsUrl;
+                _config.useRemoteApi = true;
+                _config.endpointMode = 'custom';
+                localStorage.setItem('tb_api_endpoint_mode', 'custom');
+                localStorage.setItem('tb_custom_api_url', apiUrl);
+                if (customWsUrl) {
+                    localStorage.setItem('tb_custom_ws_url', customWsUrl);
+                }
+                console.log('[Config] Switched to custom API:', apiUrl);
+                break;
+
+            default:
+                console.error('[Config] Invalid endpoint mode:', mode);
+                return false;
+        }
+
+        // Notify Tauri backend if available
+        if (window.__TAURI__?.invoke) {
+            window.__TAURI__.invoke('set_api_endpoint', { endpoint: _config.baseApiUrl })
+                .catch(err => console.warn('[Config] Failed to notify Tauri backend:', err));
+        }
+
+        // Emit event for other components to react
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('tb:apiEndpointChanged', {
+                detail: {
+                    mode: _config.endpointMode,
+                    apiUrl: _config.baseApiUrl,
+                    wsUrl: _config.baseWsUrl
+                }
+            }));
+        }
+
+        return true;
+    },
+
+    /**
+     * Get available endpoint options (for settings UI).
+     * @returns {object|null} - Endpoint options or null if not available
+     */
+    getEndpointOptions: () => {
+        if (!_config.canSwitchEndpoint) {
+            return null;
+        }
+        return {
+            currentMode: _config.endpointMode || 'local',
+            local: _config._localApiUrl,
+            remote: _config._remoteApiUrl,
+            custom: localStorage.getItem('tb_custom_api_url') || null
+        };
     }
 };
 
