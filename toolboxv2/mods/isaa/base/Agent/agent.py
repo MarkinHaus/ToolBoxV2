@@ -9239,7 +9239,7 @@ class FlowAgent:
                 processed_messages.append(msg)
         return processed_messages
 
-    async def a_run_llm_completion(self, node_name="FlowAgentLLMCall",task_id="unknown",model_preference="fast", with_context=True, auto_fallbacks=True, llm_kwargs=None, **kwargs) -> str:
+    async def a_run_llm_completion(self, node_name="FlowAgentLLMCall",task_id="unknown",model_preference="fast", with_context=True, auto_fallbacks=False, llm_kwargs=None, **kwargs) -> str:
         """
         Run LLM completion with support for media inputs and custom kwargs
 
