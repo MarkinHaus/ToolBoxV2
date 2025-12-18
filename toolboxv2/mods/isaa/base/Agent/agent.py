@@ -11424,6 +11424,8 @@ Respond in YAML format only:
 
                 yaml_content = self._extract_yaml_content(response)
 
+                print(f"{'='*20}\n {prompt} \n{'-'*20}\n")
+                print(f"{response} \n{'='*20}")
 
                 if not yaml_content:
                     raise ValueError("No valid YAML content found in response")

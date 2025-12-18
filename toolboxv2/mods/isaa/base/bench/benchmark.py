@@ -16,6 +16,7 @@ Usage:
 """
 
 import re, random, asyncio, json
+import time
 from pathlib import Path
 from enum import Enum
 from dataclasses import dataclass, field
@@ -681,6 +682,28 @@ class Benchmark:
 # ADAPTERS FOR DIFFERENT FRAMEWORKS
 # ══════════════════════════════════════════════════════════════════════════════
 
+class AgentAdapter:
+    """Adapter for FlowAgent integration with cost tracking"""
+    def __init__(self, agent):
+        self.agent = agent
+        self.bench = Benchmark()
+
+    async def benchmark(self, model_id: str, mode: str = "standard", seed: int = None) -> Report:
+        async def fn(p: str):
+            start_time = time.perf_counter()
+            start_cost = self.agent.total_cost_accumulated
+            start_tokens_in = self.agent.total_tokens_in
+            start_tokens_out = self.agent.total_tokens_out
+            r = await self.agent.a_run(query=p, remember=False, fast_run=True)
+            cost_info = {
+                "total_cost": self.agent.total_cost_accumulated - start_cost,
+                "tokens_in": self.agent.total_tokens_in - start_tokens_in,
+                "tokens_out": self.agent.total_tokens_out - start_tokens_out,
+                "execution_time_s": (time.perf_counter() - start_time)
+            }
+            return r, cost_info
+        return await self.bench.run(fn, mode, model_id, seed)
+
 class MAKERAdapter:
     """Adapter for FlowAgent integration with cost tracking"""
     def __init__(self, agent):
@@ -691,6 +714,7 @@ class MAKERAdapter:
         async def fn(p: str):
             r = await self.agent.a_accomplish(task=p, min_complexity=3, max_parallel=3)
             cost_info = r.get('cost_info', {})
+            print(r)
             return r.get('result', str(r)), cost_info
         return await self.bench.run(fn, mode, model_id, seed)
 

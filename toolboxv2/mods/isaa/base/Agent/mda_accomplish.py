@@ -70,7 +70,7 @@ class DivisionResult(BaseModel):
     """Result of task division"""
     can_divide: bool = Field(description="Can be further divided")
     subtasks: list[SubTask] = Field(default_factory=list)
-    division_reasoning: str = Field(description="Explanation of the division")
+    # division_reasoning: str = Field(description="Explanation of the division")
     preserved_context: str = Field(description="Context passed to subtasks")
     context_mappings: dict[str, str] = Field(default_factory=dict, description="Context flow between dependent tasks")
 
@@ -800,7 +800,7 @@ WICHTIG für context_mappings:
                     complexity=complexity.score,
                     is_atomic=True
                 )],
-                division_reasoning=f"Fallback to atomic due to: {str(e)}",
+                #division_reasoning=f"Fallback to atomic due to: {str(e)}",
                 preserved_context=task_node.context
             )
 

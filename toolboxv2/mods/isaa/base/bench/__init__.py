@@ -17,7 +17,7 @@ from typing import Dict, List, Any
 # report_a = await bench.run(model_a, seed=42)
 # report_b = await bench.run(model_b, seed=42)
 
-from benchmark import Benchmark, Report, RowModelAdapter, MAKERAdapter
+from benchmark import Benchmark, Report, RowModelAdapter, MAKERAdapter, AgentAdapter
 from dashboard import Dashboard
 
 filepath_ = r"reports5.json"
@@ -28,9 +28,9 @@ def load_reports_from_file(filepath: str) -> Dict[str,List[Report]]:
         return {
         "all":[],
         "Row": [],
-        "Agent": [],
-        "MADAP": [],
-    }
+        "Agent": [], # TODO add apdapter
+        "MADAP": [], # TODO fix
+    } # TODO: fix , android build server logtim running agnet web safty disckrd bot oline update web installer
     with open(filepath) as f:
         data = json.load(f)
         return data
@@ -80,12 +80,20 @@ async def main():
         "qwen3-plus": "openrouter/qwen/qwen3-coder-plus",
         "qwen3-flash": "openrouter/qwen/qwen3-coder-flash",
         # Flagship
-        "gpt-5.1": "openrouter/openai/gpt-5.1",
-        "gpt-5.2": "openrouter/openai/gpt-5.2",
+        #"gpt-5.1": "openrouter/openai/gpt-5.1",
+        #"gpt-5.2": "openrouter/openai/gpt-5.2",
         "claude-4.5-opus": "openrouter/anthropic/claude-opus-4.5",
         # "gemini-3-pro": "openrouter/google/gemini-3-pro-preview",
         "Mistral-Large": "openrouter/mistralai/mistral-large-2512",
 
+    }
+    models = {
+        "gemma-3-27b": "openrouter/google/gemma-3-27b-it",
+        "qwen3-vl-8b-thinking": "openrouter/qwen/qwen3-vl-8b-thinking",
+        "qwen-3-vl-32b": "openrouter/qwen/qwen3-vl-32b-instruct",
+        "gemini-2.5-flash": "openrouter/google/gemini-2.5-flash",
+        "gemini-2.5-flash-lite": "openrouter/google/gemini-2.5-flash-lite",
+        # "olmo-7b": "openrouter/allenai/olmo-3-7b-instruct",
     }
     from toolboxv2 import get_app
     app = get_app()
@@ -106,8 +114,15 @@ async def main():
         res = await adapter.benchmark(m_id+'MADAP', mode='quick', seed=seed)
         return res, 'MADAP'
 
+    async def run_agent(m_id:str, model_name:str):
+        agent.amd.fast_llm_model = model_name
+        agent.amd.complex_llm_model = model_name
+        adapter = AgentAdapter(agent)
+        res = await adapter.benchmark(m_id+'Agent', mode='full', seed=seed)
+        return res, 'Agent'
+
     tasks = []
-    for model_id, model_name in models.items():
+    for model_id, model_sig in models.items():
         # creat all tasks
         do = True
         for model_id_s in reports["all"]:
@@ -118,8 +133,8 @@ async def main():
                 break
         if not do:
             continue
-        #tasks.append(asyncio.create_task(run_row(model_id, model_name)))
-        # tasks.append(asyncio.create_task(run_maker(model_id, model_name)))
+        tasks.append(asyncio.create_task(run_row(model_id, model_sig)))
+        tasks.append(asyncio.create_task(run_agent(model_id, model_sig)))
     # wait for all tasks to complete
     import tqdm
     for task in tqdm.tqdm(asyncio.as_completed(tasks), total=len(tasks)):
@@ -130,7 +145,8 @@ async def main():
 
     # Dashboard generieren
     # Dashboard.save(reports["MADAP"], "MADAP_comparison.html")
-    Dashboard.save(reports["all"], "comparison4.html")
+    Dashboard.save(reports["all"], "comparison5.html")
+    Dashboard.save(reports["Agent"], "comparisonAgent.html")
 
 if __name__ == "__main__":
     asyncio.run(main())
