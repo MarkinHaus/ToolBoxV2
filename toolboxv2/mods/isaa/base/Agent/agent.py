@@ -14,8 +14,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from functools import wraps
-from typing import Any
+from typing import Dict, List
 
+import pandas as pd
 import yaml
 
 from toolboxv2.mods.isaa.base.IntelligentRateLimiter.intelligent_rate_limiter import (
@@ -550,1962 +551,6 @@ def with_progress_tracking(cls):
 
 # ===== CORE NODE IMPLEMENTATIONS =====
 
-@with_progress_tracking
-class TaskPlannerNode(AsyncNode):
-    """Erweiterte Aufgabenplanung mit dynamischen Referenzen und Tool-Integration"""
-
-    async def prep_async(self, shared):
-        """Enhanced preparation with goals-based planning support"""
-
-        # Check if this is a goals-based call from LLMReasonerNode
-        replan_context = shared.get("replan_context", {})
-        goals_list = replan_context.get("goals", [])
-
-        if goals_list:
-            # Goals-based planning (called by LLMReasonerNode)
-            return {
-                "goals": goals_list,
-                "planning_mode": "goals_based",
-                "query": shared.get("current_query", ""),
-                "reasoning_context": replan_context.get("reasoning_context", ""),
-                "triggered_by": replan_context.get("triggered_by", "unknown"),
-                "tasks": shared.get("tasks", {}),
-                "system_status": shared.get("system_status", "idle"),
-                "tool_capabilities": shared.get("tool_capabilities", {}),
-                "available_tools_names": shared.get("available_tools", []),
-                "strategy": "goals_decomposition",  # New strategy type
-                "fast_llm_model": shared.get("fast_llm_model"),
-                "complex_llm_model": shared.get("complex_llm_model"),
-                "agent_instance": shared.get("agent_instance"),
-                "variable_manager": shared.get("variable_manager"),
-            }
-        else:
-            # Legacy planning (original query-based approach)
-            return {
-                "query": shared.get("current_query", ""),
-                "tasks": shared.get("tasks", {}),
-                "system_status": shared.get("system_status", "idle"),
-                "tool_capabilities": shared.get("tool_capabilities", {}),
-                "available_tools_names": shared.get("available_tools", []),
-                "strategy": shared.get("selected_strategy", "direct_response"),
-                "fast_llm_model": shared.get("fast_llm_model"),
-                "complex_llm_model": shared.get("complex_llm_model"),
-                "agent_instance": shared.get("agent_instance"),
-                "variable_manager": shared.get("variable_manager"),
-                "planning_mode": "legacy"
-            }
-
-    async def exec_async(self, prep_res):
-        if prep_res["strategy"] == "fast_simple_planning":
-            return await self._create_simple_plan(prep_res)
-        else:
-            return await self._advanced_llm_decomposition(prep_res)
-
-    async def post_async(self, shared, prep_res, exec_res):
-        """Post-processing nach Plan-Erstellung"""
-
-        if exec_res is None:
-            shared["planning_error"] = "Plan creation returned None"
-            return "planning_failed"
-
-        if isinstance(exec_res, TaskPlan):
-
-            progress_tracker = shared.get("progress_tracker")
-            if progress_tracker:
-                await progress_tracker.emit_event(ProgressEvent(
-                    event_type="plan_created",
-                    node_name="TaskPlannerNode",
-                    session_id=shared.get("session_id"),
-                    status=NodeStatus.COMPLETED,
-                    success=True,
-                    plan_id=exec_res.id,
-                    metadata={
-                        "plan_name": exec_res.name,
-                        "task_count": len(exec_res.tasks),
-                        "strategy": exec_res.execution_strategy
-                    }
-                ))
-
-            # Erfolgreicher Plan
-            shared["current_plan"] = exec_res
-
-            # Tasks in shared state für Executor verfügbar machen
-            task_dict = {task.id: task for task in exec_res.tasks}
-            if "tasks" not in shared:
-                shared["tasks"] = task_dict
-            else:
-                shared["tasks"].update(task_dict)
-
-            # Plan-Metadaten setzen
-            shared["plan_created_at"] = datetime.now().isoformat()
-            shared["plan_strategy"] = exec_res.execution_strategy
-            shared["total_tasks_planned"] = len(exec_res.tasks)
-
-            rprint(f"Plan created successfully: {exec_res.name} with {len(exec_res.tasks)} tasks")
-            return "planned"
-
-        else:
-            # Plan creation failed
-            shared["planning_error"] = "Invalid plan format returned"
-            shared["current_plan"] = None
-            eprint("Plan creation failed - invalid format")
-            return "planning_failed"
-
-    async def _create_simple_plan(self, prep_res) -> TaskPlan:
-        """Fast lightweight planning for direct or simple multi-step queries."""
-        taw = self._build_tool_intelligence(prep_res)
-        rprint("You are a FAST "+ taw)
-        prompt = f"""
-You are a FAST abstract pattern recognizer and task planner.
-Identify if the query needs a **single-step LLM answer** or a **simple 2–3 task plan** using available tools.
-Output ONLY YAML.
-
-## User Query
-{prep_res['query']}
-
-## Available Tools
-{taw}
-
-## Pattern Recognition (Internal Only)
-- Detect if query is informational, action-based, or tool-eligible.
-- Map to minimal plan type: "direct_llm" or "simple_tool_plus_llm".
-
-## YAML Schema
-```yaml
-plan_name: string
-description: string
-execution_strategy: "sequential" | "parallel"
-tasks:
-  - id: string
-    type: "LLMTask" | "ToolTask"
-    description: string
-    priority: int
-    dependencies: [list]
-Example 1 — Direct LLM
-```yaml
-plan_name: Direct Response
-description: Quick answer from LLM
-execution_strategy: sequential
-tasks:
-  - id: answer
-    type: LLMTask
-    description: Respond to query
-    priority: 1
-    dependencies: []
-    prompt_template: Respond concisely to: {prep_res['query']}
-    llm_config:
-      model_preference: fast
-      temperature: 0.3
-```
-Example 2 — Tool + LLM
-```yaml
-plan_name: Fetch and Answer
-description: Get info from tool and summarize
-execution_strategy: sequential
-tasks:
-  - id: fetch_info
-    type: ToolTask
-    description: Get required data
-    priority: 1
-    dependencies: []
-    tool_name: info_api
-    arguments:
-      query: "{prep_res['query']}"
-  - id: summarize
-    type: LLMTask
-    description: Summarize fetched data
-    priority: 2
-    dependencies: ["fetch_info"]
-    prompt_template: Summarize: {{ results.fetch_info.data }}
-    llm_config:
-      model_preference: fast
-      temperature: 0.3
-```
-Output Requirements
-Use ONLY YAML for the final output
-Pick minimal plan type for fastest completion!
-focus on correct quotation and correct yaml format!
-    """
-
-        try:
-            agent_instance = prep_res["agent_instance"]
-            plan_data = await agent_instance.a_format_class(PlanData,
-                model=prep_res.get("complex_llm_model", "openrouter/anthropic/claude-3-haiku"),
-                prompt= prompt,
-                temperature=0.3,
-                max_tokens=4512,
-                auto_context=True,
-                node_name="TaskPlannerNode",
-                task_id="fast_simple_planning"
-            )
-            # print("Simple", json.dumps(plan_data, indent=2))
-            return TaskPlan(
-                id=str(uuid.uuid4()),
-                name=plan_data.get("plan_name", "Generated Plan"),
-                description=plan_data.get("description", f"Plan for: {prep_res['query']}"),
-                tasks=[
-                    [LLMTask, ToolTask, DecisionTask, Task][["LLMTask", "ToolTask", "DecisionTask", "Task"].index(t.get("type"))](**t)
-                    for t in plan_data.get("tasks", [])
-                ],
-                execution_strategy=plan_data.get("execution_strategy", "sequential")
-            )
-
-        except Exception as e:
-            eprint(f"Simple plan creation failed: {e}")
-            import traceback
-            print(traceback.format_exc())
-            return TaskPlan(
-                id=str(uuid.uuid4()),
-                name="Fallback Plan",
-                description="Direct response only",
-                tasks=[
-                    LLMTask(
-                        id="fast_simple_planning",
-                        type="LLMTask",
-                        description="Generate direct response",
-                        priority=1,
-                        dependencies=[],
-                        prompt_template=f"Respond to the query: {prep_res['query']}",
-                        llm_config={"model_preference": "fast"}
-                    )
-                ]
-            )
-
-    async def _advanced_llm_decomposition(self, prep_res) -> TaskPlan:
-        """Enhanced LLM-based decomposition with goals-based planning support"""
-
-        planning_mode = prep_res.get("planning_mode", "legacy")
-        variable_manager = prep_res.get("variable_manager")
-        tool_intelligence = self._build_tool_intelligence(prep_res)
-
-        if planning_mode == "goals_based":
-            # Goals-based planning from LLMReasonerNode
-            goals_list = prep_res.get("goals", [])
-            reasoning_context = prep_res.get("reasoning_context", "")
-
-            prompt = f"""
-You are an expert task planner specialized in creating execution plans from strategic goals.
-Create a comprehensive plan that addresses all goals with proper dependencies and parallelization.
-
-## Strategic Goals from Reasoner
-{chr(10).join([f"{i + 1}. {goal}" for i, goal in enumerate(goals_list)])}
-
-## Reasoning Context
-{reasoning_context}
-
-## Your Available Tools & Intelligence
-{tool_intelligence}
-
-{variable_manager.get_llm_variable_context() if variable_manager else ""}
-
-## Goals-Based Planning Instructions
-1. Analyze each goal for dependencies on other goals
-2. Identify goals that can be executed in parallel
-3. Create tasks that address each goal effectively
-4. Use variable references {{ results.task_id.data }} for dependencies
-5. Ensure proper sequencing and coordination
-
-## YAML Schema
-```yaml
-plan_name: string
-description: string
-execution_strategy: "sequential" | "parallel" | "mixed"
-tasks:
-  - id: string
-    type: "LLMTask" | "ToolTask" | "DecisionTask"
-    description: string
-    priority: int
-    dependencies: [list of task ids]
-    # Type-specific fields as needed
-Goals Decomposition Strategy
-
-Independent Goals: Create parallel tasks
-Sequential Goals: Use dependencies array
-Complex Goals: Break into sub-tasks with DecisionTask routing
-Data Dependencies: Use variable references between tasks
-
-Example for Multi-Goal Plan
-yamlCopyplan_name: "Multi-Goal Strategic Plan"
-description: "Execute multiple strategic objectives with proper coordination"
-execution_strategy: "mixed"
-tasks:
-  - id: "goal_1_research"
-    type: "ToolTask"
-    description: "Research data for Goal 1"
-    priority: 1
-    dependencies: []
-    tool_name: "search_web"
-    arguments:
-      query: "research topic for goal 1"
-
-  - id: "goal_2_research"
-    type: "ToolTask"
-    description: "Research data for Goal 2"
-    priority: 1
-    dependencies: []
-    tool_name: "search_web"
-    arguments:
-      query: "research topic for goal 2"
-
-  - id: "analyze_combined"
-    type: "LLMTask"
-    description: "Analyze combined research results"
-    priority: 2
-    dependencies: ["goal_1_research", "goal_2_research"]
-    prompt_template: |
-      Analyze these research results:
-      Goal 1 Data: {{ results.goal_1_research.data }}
-      Goal 2 Data: {{ results.goal_2_research.data }}
-
-      Provide comprehensive analysis addressing both goals.
-    llm_config:
-      model_preference: "complex"
-      temperature: 0.3
-Generate the execution plan for the strategic goals:
-    """
-
-        else:
-            # Legacy single-query planning
-            base_query = prep_res['query']
-            prompt = f"""
-You are an expert task planner with dynamic adaptation capabilities.
-Create intelligent, adaptive execution plans for the user query.
-User Query
-{base_query}
-Your Available Tools & Intelligence
-{tool_intelligence}
-{variable_manager.get_llm_variable_context() if variable_manager else ""}
-TASK TYPES (Dataclass-Aligned)
-
-LLMTask: Step that uses a language model
-ToolTask: Step that calls an available tool
-DecisionTask: Step that decides routing between tasks
-
-YAML SCHEMA
-yamlCopyplan_name: string
-description: string
-execution_strategy: "sequential" | "parallel" | "mixed"
-tasks:
-  - id: string
-    type: "LLMTask" | "ToolTask" | "DecisionTask"
-    description: string
-    priority: int
-    dependencies: [list of task ids]
-    # Additional fields depending on type
-Generate the adaptive execution plan:
-            """
-
-        try:
-            model_to_use = prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
-            agent_instance = prep_res["agent_instance"]
-
-            plan_data = await agent_instance.a_format_class(PlanData,
-                model=model_to_use,
-                prompt= prompt,
-                temperature=0.3,
-                auto_context=True,
-                node_name="TaskPlannerNode",
-                task_id="goals_based_planning" if planning_mode == "goals_based" else "adaptive_planning"
-            )
-            # Create specialized tasks
-            tasks = []
-            for task_data in plan_data.get("tasks", []):
-                task_type = task_data.pop("type", "generic")
-                task = create_task(task_type, **task_data)
-                tasks.append(task)
-
-            plan = TaskPlan(
-                id=str(uuid.uuid4()),
-                name=plan_data.get("plan_name", "Generated Plan"),
-                description=plan_data.get("description",
-                                          "Plan for goals-based execution" if planning_mode == "goals_based" else f"Plan for: {base_query}"),
-                tasks=tasks,
-                execution_strategy=plan_data.get("execution_strategy", "sequential"),
-                metadata={
-                    "planning_mode": planning_mode,
-                    "goals_count": len(prep_res.get("goals", [])) if planning_mode == "goals_based" else 1
-                }
-            )
-
-            rprint(f"Created {planning_mode} plan with {len(tasks)} tasks")
-            return plan
-
-        except Exception as e:
-            eprint(f"Advanced planning failed: {e}")
-            import traceback
-
-            print(traceback.format_exc())
-            return await self._create_simple_plan(prep_res)
-
-    def _build_tool_intelligence(self, prep_res: dict) -> str:
-        """Build detailed tool intelligence for planning"""
-
-        agent_instance = prep_res.get("agent_instance")
-        if not agent_instance or not hasattr(agent_instance, '_tool_capabilities'):
-            return "No tool intelligence available."
-
-        capabilities = agent_instance._tool_capabilities
-        query = prep_res.get('query', '').lower()
-
-        context_parts = []
-        context_parts.append("### Intelligent Tool Analysis:")
-
-        for tool_name, cap in capabilities.items():
-            context_parts.append(f"\n{tool_name}:")
-            context_parts.append(f"- Function: {cap.get('primary_function', 'Unknown')}")
-            context_parts.append(f"- Arguments: {yaml.dump(safe_for_yaml(cap.get('args_schema', 'takes no arguments!')), default_flow_style=False)}")
-
-            # Check relevance to current query
-            relevance_score = self._calculate_tool_relevance(query, cap)
-            context_parts.append(f"- Query relevance: {relevance_score:.2f}")
-
-            if relevance_score > 0.4:
-                context_parts.append("- ⭐ HIGHLY RELEVANT - SHOULD USE THIS TOOL!")
-
-            # Show trigger analysis
-            triggers = cap.get('trigger_phrases', [])
-            matched_triggers = [t for t in triggers if t.lower() in query]
-            if matched_triggers:
-                context_parts.append(f"- Matched triggers: {matched_triggers}")
-
-            # Show use cases
-            use_cases = cap.get('use_cases', [])[:3]
-            context_parts.append(f"- Use cases: {', '.join(use_cases)}")
-
-        return "\n".join(context_parts)
-
-    def _calculate_tool_relevance(self, query: str, capabilities: dict) -> float:
-        """Calculate how relevant a tool is to the current query"""
-
-        query_words = set(query.lower().split())
-
-        # Check trigger phrases
-        trigger_score = 0.0
-        triggers = capabilities.get('trigger_phrases', [])
-        for trigger in triggers:
-            trigger_words = set(trigger.lower().split())
-            if trigger_words.intersection(query_words):
-                trigger_score += 0.04
-        # Check confidence triggers if available
-        conf_triggers = capabilities.get('confidence_triggers', {})
-        for phrase, confidence in conf_triggers.items():
-            if phrase.lower() in query:
-                trigger_score += confidence/10
-        # Check indirect connections
-        indirect = capabilities.get('indirect_connections', [])
-        for connection in indirect:
-            connection_words = set(connection.lower().split())
-            if connection_words.intersection(query_words):
-                trigger_score += 0.02
-        return min(1.0, trigger_score)
-
-@with_progress_tracking
-class TaskExecutorNode(AsyncNode):
-    """Vollständige Task-Ausführung als unabhängige Node mit LLM-unterstützter Planung"""
-
-    def __init__(self, max_parallel: int = 3, task_timeout: float = 300.0, **kwargs):
-        super().__init__(**kwargs)
-        self.max_parallel = max_parallel
-        self.task_timeout = task_timeout  # P0 - KRITISCH: Global timeout for task execution (default 5 minutes)
-        self.results_store = {}  # Für {{ }} Referenzen
-        self.execution_history = []  # Für LLM-basierte Optimierung
-        self.agent_instance = None  # Wird gesetzt vom FlowAgent
-        self.variable_manager = None
-        self.fast_llm_model = None
-        self.complex_llm_model = None
-        self.progress_tracker = None
-
-    async def prep_async(self, shared):
-        """Enhanced preparation with unified variable system"""
-        current_plan = shared.get("current_plan")
-        tasks = shared.get("tasks", {})
-
-        # Get unified variable manager
-        self.variable_manager = shared.get("variable_manager")
-        self.progress_tracker = shared.get("progress_tracker")
-        if not self.variable_manager:
-            self.variable_manager = VariableManager(shared.get("world_model", {}), shared)
-
-        # Register all necessary scopes
-        self.variable_manager.set_results_store(self.results_store)
-        self.variable_manager.set_tasks_store(tasks)
-        self.variable_manager.register_scope('user', shared.get('user_context', {}))
-        self.variable_manager.register_scope('system', {
-            'timestamp': datetime.now().isoformat(),
-            'agent_name': shared.get('agent_instance', {}).amd.name if shared.get('agent_instance') else 'unknown'
-        })
-
-        # Stelle sicher, dass Agent-Referenz verfügbar ist
-        if not self.agent_instance:
-            self.agent_instance = shared.get("agent_instance")
-
-        if not current_plan:
-            return {"error": "No active plan", "tasks": tasks}
-
-        # Rest of existing prep_async logic...
-        ready_tasks = self._find_ready_tasks(current_plan, tasks)
-        blocked_tasks = self._find_blocked_tasks(current_plan, tasks)
-
-        execution_plan = await self._create_intelligent_execution_plan(
-            ready_tasks, blocked_tasks, current_plan, shared
-        )
-        self.complex_llm_model = shared.get("complex_llm_model")
-        self.fast_llm_model = shared.get("fast_llm_model")
-
-        return {
-            "plan": current_plan,
-            "ready_tasks": ready_tasks,
-            "blocked_tasks": blocked_tasks,
-            "all_tasks": tasks,
-            "execution_plan": execution_plan,
-            "fast_llm_model": self.fast_llm_model,
-            "complex_llm_model": self.complex_llm_model,
-            "available_tools": shared.get("available_tools", []),
-            "world_model": shared.get("world_model", {}),
-            "results": self.results_store,
-            "variable_manager": self.variable_manager,
-            "progress_tracker": self.progress_tracker ,
-        }
-
-    def _find_ready_tasks(self, plan: TaskPlan, all_tasks: dict[str, Task]) -> list[Task]:
-        """Finde Tasks die zur Ausführung bereit sind"""
-        ready = []
-        for task in plan.tasks:
-            if task.status == "pending" and self._dependencies_satisfied(task, all_tasks):
-                ready.append(task)
-        return ready
-
-    def _find_blocked_tasks(self, plan: TaskPlan, all_tasks: dict[str, Task]) -> list[Task]:
-        """Finde blockierte Tasks für Analyse"""
-        blocked = []
-        for task in plan.tasks:
-            if task.status == "pending" and not self._dependencies_satisfied(task, all_tasks):
-                blocked.append(task)
-        return blocked
-
-    def _dependencies_satisfied(self, task: Task, all_tasks: dict[str, Task]) -> bool:
-        """Prüfe ob alle Dependencies erfüllt sind"""
-        for dep_id in task.dependencies:
-            if dep_id in all_tasks:
-                dep_task = all_tasks[dep_id]
-                if dep_task.status not in ["completed"]:
-                    return False
-            else:
-                # Dependency existiert nicht - könnte Problem sein
-                wprint(f"Task {task.id} has missing dependency: {dep_id}")
-                return False
-        return True
-
-    async def _create_intelligent_execution_plan(
-        self,
-        ready_tasks: list[Task],
-        blocked_tasks: list[Task],
-        plan: TaskPlan,
-        shared: dict
-    ) -> dict[str, Any]:
-        """LLM-unterstützte intelligente Ausführungsplanung"""
-
-        if not ready_tasks:
-            return {
-                "strategy": "waiting",
-                "reason": "No ready tasks",
-                "blocked_count": len(blocked_tasks),
-                "recommendations": []
-            }
-
-        # Einfache Planung für wenige Tasks
-        if len(ready_tasks) <= 2 and not LITELLM_AVAILABLE:
-            return self._create_simple_execution_plan(ready_tasks, plan)
-
-        # LLM-basierte intelligente Planung
-        return await self._llm_execution_planning(ready_tasks, blocked_tasks, plan, shared)
-
-    def _create_simple_execution_plan(self, ready_tasks: list[Task], plan: TaskPlan) -> dict[str, Any]:
-        """Einfache heuristische Ausführungsplanung"""
-
-        # Prioritäts-basierte Sortierung
-        sorted_tasks = sorted(ready_tasks, key=lambda t: (t.priority, t.created_at))
-
-        # Parallelisierbare Tasks identifizieren
-        parallel_groups = []
-        current_group = []
-
-        for task in sorted_tasks:
-            # ToolTasks können oft parallel laufen
-            if isinstance(task, ToolTask) and len(current_group) < self.max_parallel:
-                current_group.append(task)
-            else:
-                if current_group:
-                    parallel_groups.append(current_group)
-                    current_group = []
-                current_group.append(task)
-
-        if current_group:
-            parallel_groups.append(current_group)
-
-        strategy = "parallel" if len(parallel_groups) > 1 or len(parallel_groups[0]) > 1 else "sequential"
-
-        return {
-            "strategy": strategy,
-            "execution_groups": parallel_groups,
-            "total_groups": len(parallel_groups),
-            "reasoning": "Simple heuristic: priority-based with tool parallelization",
-            "estimated_duration": self._estimate_duration(sorted_tasks)
-        }
-
-    async def _llm_execution_planning(
-        self,
-        ready_tasks: list[Task],
-        blocked_tasks: list[Task],
-        plan: TaskPlan,
-        shared: dict
-    ) -> dict[str, Any]:
-        """Erweiterte LLM-basierte Ausführungsplanung"""
-
-        try:
-            # Erstelle detaillierte Task-Analyse für LLM
-            task_analysis = self._analyze_tasks_for_llm(ready_tasks, blocked_tasks)
-            execution_context = self._build_execution_context(shared)
-
-            prompt = f"""
-Du bist ein Experte für Task-Ausführungsplanung. Analysiere die verfügbaren Tasks und erstelle einen optimalen Ausführungsplan.
-
-## Verfügbare Tasks zur Ausführung
-{task_analysis['ready_tasks_summary']}
-
-## Blockierte Tasks (zur Information)
-{task_analysis['blocked_tasks_summary']}
-
-## Ausführungskontext
-- Max parallele Tasks: {self.max_parallel}
-- Plan-Strategie: {plan.execution_strategy}
-- Verfügbare Tools: {', '.join(shared.get('available_tools', []))}
-- Bisherige Ergebnisse: {len(self.results_store)} Tasks abgeschlossen
-- Execution History: {len(self.execution_history)} vorherige Zyklen
-
-## Bisherige Performance
-{execution_context}
-
-## Aufgabe
-Erstelle einen optimierten Ausführungsplan. Berücksichtige:
-1. Task-Abhängigkeiten und Prioritäten
-2. Parallelisierungsmöglichkeiten
-3. Resource-Optimierung (Tools, LLM-Aufrufe)
-4. Fehlerwahrscheinlichkeit und Retry-Strategien
-5. Dynamische Argument-Auflösung zwischen Tasks
-
-Antworte mit YAML:
-
-```yaml
-strategy: "parallel"  # "parallel" | "sequential" | "hybrid"
-execution_groups:
-  - group_id: 1
-    tasks: ["task_1", "task_2"]  # Task IDs
-    execution_mode: "parallel"
-    priority: "high"
-    estimated_duration: 30  # seconds
-    risk_level: "low"  # low | medium | high
-    dependencies_resolved: true
-  - group_id: 2
-    tasks: ["task_3"]
-    execution_mode: "sequential"
-    priority: "medium"
-    estimated_duration: 15
-    depends_on_groups: [1]
-reasoning: "Detailed explanation of the execution strategy"
-optimization_suggestions:
-  - "Specific optimization 1"
-  - "Specific optimization 2"
-risk_mitigation:
-  - risk: "Tool timeout"
-    mitigation: "Use shorter timeout for parallel calls"
-  - risk: "Argument resolution failure"
-    mitigation: "Validate references before execution"
-total_estimated_duration: 45
-confidence: 0.85
-```"""
-
-            model_to_use = shared.get("complex_llm_model", "openrouter/openai/gpt-4o")
-
-            content = await self.agent_instance.a_run_llm_completion(
-                model=model_to_use,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=2000,
-                node_name="TaskExecutorNode", task_id="llm_execution_planning"
-            )
-
-            yaml_match = re.search(r"```yaml\s*(.*?)\s*```", content, re.DOTALL)
-            yaml_str = yaml_match.group(1) if yaml_match else content.strip()
-
-            execution_plan = yaml.safe_load(yaml_str)
-
-            # Validiere und erweitere den Plan
-            validated_plan = self._validate_execution_plan(execution_plan, ready_tasks)
-
-            rprint(
-                f"LLM execution plan created: {validated_plan.get('strategy')} with {len(validated_plan.get('execution_groups', []))} groups")
-            return validated_plan
-
-        except Exception as e:
-            eprint(f"LLM execution planning failed: {e}")
-            return self._create_simple_execution_plan(ready_tasks, plan)
-
-    def _analyze_tasks_for_llm(self, ready_tasks: list[Task], blocked_tasks: list[Task]) -> dict[str, str]:
-        """Analysiere Tasks für LLM-Prompt"""
-
-        ready_summary = []
-        for task in ready_tasks:
-            task_info = f"- {task.id} ({task.type}): {task.description}"
-            if hasattr(task, 'priority'):
-                task_info += f" [Priority: {task.priority}]"
-            if isinstance(task, ToolTask):
-                task_info += f" [Tool: {task.tool_name}]"
-                if task.arguments:
-                    # Zeige dynamische Referenzen
-                    dynamic_refs = [arg for arg in task.arguments.values() if isinstance(arg, str) and "{{" in arg]
-                    if dynamic_refs:
-                        task_info += f" [Dynamic refs: {len(dynamic_refs)}]"
-            ready_summary.append(task_info)
-
-        blocked_summary = []
-        for task in blocked_tasks:
-            deps = ", ".join(task.dependencies) if task.dependencies else "None"
-            blocked_summary.append(f"- {task.id}: waiting for [{deps}]")
-
-        return {
-            "ready_tasks_summary": "\n".join(ready_summary) or "No ready tasks",
-            "blocked_tasks_summary": "\n".join(blocked_summary) or "No blocked tasks"
-        }
-
-    def _build_execution_context(self, shared: dict) -> str:
-        """Baue Kontext für LLM-Planung"""
-        context_parts = []
-
-        # Performance der letzten Executions
-        if self.execution_history:
-            recent = self.execution_history[-3:]  # Last 3 executions
-            avg_duration = sum(h.get("duration", 0) for h in recent) / len(recent)
-            success_rate = sum(1 for h in recent if h.get("success", False)) / len(recent)
-            context_parts.append(f"Recent performance: {avg_duration:.1f}s avg, {success_rate:.1%} success rate")
-
-        # Resource utilization
-        if self.results_store:
-            tool_usage = {}
-            for task_result in self.results_store.values():
-                metadata = task_result.get("metadata", {})
-                task_type = metadata.get("task_type", "unknown")
-                tool_usage[task_type] = tool_usage.get(task_type, 0) + 1
-            context_parts.append(f"Resource usage: {tool_usage}")
-
-        return "\n".join(context_parts) if context_parts else "No previous execution history"
-
-    def _validate_execution_plan(self, plan: dict, ready_tasks: list[Task]) -> dict:
-        """Validiere und korrigiere LLM-generierten Ausführungsplan"""
-
-        # Standard-Werte setzen
-        validated = {
-            "strategy": plan.get("strategy", "sequential"),
-            "execution_groups": [],
-            "reasoning": plan.get("reasoning", "LLM-generated plan"),
-            "total_estimated_duration": plan.get("total_estimated_duration", 60),
-            "confidence": min(1.0, max(0.0, plan.get("confidence", 0.5)))
-        }
-
-        # Validiere execution groups
-        task_ids_available = [t.id for t in ready_tasks]
-
-        for group_data in plan.get("execution_groups", []):
-            group_tasks = group_data.get("tasks", [])
-            # Filtere nur verfügbare Tasks
-            valid_tasks = [tid for tid in group_tasks if tid in task_ids_available]
-
-            if valid_tasks:
-                validated["execution_groups"].append({
-                    "group_id": group_data.get("group_id", len(validated["execution_groups"]) + 1),
-                    "tasks": valid_tasks,
-                    "execution_mode": group_data.get("execution_mode", "sequential"),
-                    "priority": group_data.get("priority", "medium"),
-                    "estimated_duration": group_data.get("estimated_duration", 30),
-                    "risk_level": group_data.get("risk_level", "medium")
-                })
-
-        # Falls keine validen Groups, erstelle Fallback
-        if not validated["execution_groups"]:
-            validated["execution_groups"] = [{
-                "group_id": 1,
-                "tasks": task_ids_available[:self.max_parallel],
-                "execution_mode": "parallel",
-                "priority": "high"
-            }]
-
-        return validated
-
-    def _estimate_duration(self, tasks: list[Task]) -> int:
-        """Schätze Ausführungsdauer in Sekunden"""
-        duration = 0
-        for task in tasks:
-            if isinstance(task, ToolTask):
-                duration += 10  # Tool calls meist schneller
-            elif isinstance(task, LLMTask):
-                duration += 20  # LLM calls brauchen länger
-            else:
-                duration += 15  # Standard
-        return duration
-
-    async def exec_async(self, prep_res):
-        """Hauptausführungslogik mit intelligentem Routing"""
-
-        if "error" in prep_res:
-            return {"error": prep_res["error"]}
-
-        execution_plan = prep_res["execution_plan"]
-
-        if execution_plan["strategy"] == "waiting":
-            return {
-                "status": "waiting",
-                "message": execution_plan["reason"],
-                "blocked_count": execution_plan.get("blocked_count", 0)
-            }
-
-        # Starte Ausführung basierend auf Plan
-        execution_start = datetime.now()
-
-        try:
-            if execution_plan["strategy"] == "parallel":
-                results = await self._execute_parallel_plan(execution_plan, prep_res)
-            elif execution_plan["strategy"] == "sequential":
-                results = await self._execute_sequential_plan(execution_plan, prep_res)
-            else:  # hybrid
-                results = await self._execute_hybrid_plan(execution_plan, prep_res)
-
-            execution_duration = (datetime.now() - execution_start).total_seconds()
-
-            # Speichere Execution-History für LLM-Optimierung
-            self.execution_history.append({
-                "timestamp": execution_start.isoformat(),
-                "strategy": execution_plan["strategy"],
-                "duration": execution_duration,
-                "tasks_executed": len(results),
-                "success": all(r.get("status") == "completed" for r in results),
-                "plan_confidence": execution_plan.get("confidence", 0.5)
-            })
-
-            # Behalte nur letzte 10 Executions
-            if len(self.execution_history) > 10:
-                self.execution_history = self.execution_history[-10:]
-
-            return {
-                "status": "executed",
-                "results": results,
-                "execution_duration": execution_duration,
-                "strategy_used": execution_plan["strategy"],
-                "completed_tasks": len([r for r in results if r.get("status") == "completed"]),
-                "failed_tasks": len([r for r in results if r.get("status") == "failed"])
-            }
-
-        except Exception as e:
-            eprint(f"Execution plan failed: {e}")
-            return {
-                "status": "execution_failed",
-                "error": str(e),
-                "results": []
-            }
-
-    async def _execute_parallel_plan(self, plan: dict, prep_res: dict) -> list[dict]:
-        """Führe Plan mit parallelen Gruppen aus"""
-        all_results = []
-
-        for group in plan["execution_groups"]:
-            group_tasks = self._get_tasks_by_ids(group["tasks"], prep_res)
-
-            if group.get("execution_mode") == "parallel":
-                # Parallele Ausführung innerhalb der Gruppe
-                batch_results = await self._execute_parallel_batch(group_tasks)
-            else:
-                # Sequenzielle Ausführung innerhalb der Gruppe
-                batch_results = await self._execute_sequential_batch(group_tasks)
-
-            all_results.extend(batch_results)
-
-            # Prüfe ob kritische Tasks fehlgeschlagen sind
-            critical_failures = [
-                r for r in batch_results
-                if r.get("status") == "failed" and self._is_critical_task(r.get("task_id"), prep_res)
-            ]
-
-            if critical_failures:
-                eprint(f"Critical task failures in group {group['group_id']}, stopping execution")
-                break
-
-        return all_results
-
-    async def _execute_sequential_plan(self, plan: dict, prep_res: dict) -> list[dict]:
-        """Führe Plan sequenziell aus"""
-        all_results = []
-
-        for group in plan["execution_groups"]:
-            group_tasks = self._get_tasks_by_ids(group["tasks"], prep_res)
-            batch_results = await self._execute_sequential_batch(group_tasks)
-            all_results.extend(batch_results)
-
-            # Stoppe bei kritischen Fehlern
-            critical_failures = [
-                r for r in batch_results
-                if r.get("status") == "failed" and self._is_critical_task(r.get("task_id"), prep_res)
-            ]
-
-            if critical_failures:
-                break
-
-        return all_results
-
-    async def _execute_hybrid_plan(self, plan: dict, prep_res: dict) -> list[dict]:
-        """Hybride Ausführung - Groups parallel, innerhalb je nach Mode"""
-
-        # Führe Gruppen parallel aus (wenn möglich)
-        group_tasks_list = []
-        for group in plan["execution_groups"]:
-            group_tasks = self._get_tasks_by_ids(group["tasks"], prep_res)
-            group_tasks_list.append((group, group_tasks))
-
-        # Führe bis zu max_parallel Gruppen parallel aus
-        batch_size = min(len(group_tasks_list), self.max_parallel)
-        all_results = []
-
-        for i in range(0, len(group_tasks_list), batch_size):
-            batch = group_tasks_list[i:i + batch_size]
-
-            # Erstelle Coroutines für jede Gruppe
-            group_coroutines = []
-            for group, tasks in batch:
-                if group.get("execution_mode") == "parallel":
-                    coro = self._execute_parallel_batch(tasks)
-                else:
-                    coro = self._execute_sequential_batch(tasks)
-                group_coroutines.append(coro)
-
-            # Führe Gruppen-Batch parallel aus
-            batch_results = await asyncio.gather(*group_coroutines, return_exceptions=True)
-
-            # Flache Liste der Ergebnisse
-            for result_group in batch_results:
-                if isinstance(result_group, Exception):
-                    eprint(f"Group execution failed: {result_group}")
-                    continue
-                all_results.extend(result_group)
-
-        return all_results
-
-    def _get_tasks_by_ids(self, task_ids: list[str], prep_res: dict) -> list[Task]:
-        """Hole Task-Objekte basierend auf IDs"""
-        all_tasks = prep_res["all_tasks"]
-        return [all_tasks[tid] for tid in task_ids if tid in all_tasks]
-
-    def _is_critical_task(self, task_id: str, prep_res: dict) -> bool:
-        """Prüfe ob Task kritisch ist"""
-        task = prep_res["all_tasks"].get(task_id)
-        if not task:
-            return False
-        return getattr(task, 'critical', False) or task.priority == 1
-
-    async def _execute_parallel_batch(self, tasks: list[Task]) -> list[dict]:
-        """Führe Tasks parallel aus mit Timeout-Schutz"""
-        if not tasks:
-            return []
-
-        # Limitiere auf max_parallel
-        batch_size = min(len(tasks), self.max_parallel)
-        batches = [tasks[i:i + batch_size] for i in range(0, len(tasks), batch_size)]
-
-        all_results = []
-        for batch in batches:
-            # P0 - KRITISCH: Wrap each task with timeout
-            batch_results = await asyncio.gather(
-                *[asyncio.wait_for(self._execute_single_task(task), timeout=self.task_timeout) for task in batch],
-                return_exceptions=True
-            )
-
-            # Handle exceptions (including TimeoutError)
-            processed_results = []
-            for i, result in enumerate(batch_results):
-                if isinstance(result, asyncio.TimeoutError):
-                    eprint(f"Task {batch[i].id} timed out after {self.task_timeout}s")
-                    processed_results.append({
-                        "task_id": batch[i].id,
-                        "status": "failed",
-                        "error": f"Task execution timed out after {self.task_timeout}s"
-                    })
-                elif isinstance(result, Exception):
-                    eprint(f"Task {batch[i].id} failed with exception: {result}")
-                    processed_results.append({
-                        "task_id": batch[i].id,
-                        "status": "failed",
-                        "error": str(result)
-                    })
-                else:
-                    processed_results.append(result)
-
-            all_results.extend(processed_results)
-
-        return all_results
-
-    async def _execute_sequential_batch(self, tasks: list[Task]) -> list[dict]:
-        """Führe Tasks sequenziell aus mit Timeout-Schutz"""
-        results = []
-
-        for task in tasks:
-            try:
-                # P0 - KRITISCH: Add timeout to sequential execution
-                result = await asyncio.wait_for(self._execute_single_task(task), timeout=self.task_timeout)
-                results.append(result)
-
-                # Stoppe bei kritischen Fehlern in sequenzieller Ausführung
-                if result.get("status") == "failed" and getattr(task, 'critical', False):
-                    eprint(f"Critical task {task.id} failed, stopping sequential execution")
-                    break
-
-            except asyncio.TimeoutError:
-                eprint(f"Sequential task {task.id} timed out after {self.task_timeout}s")
-                results.append({
-                    "task_id": task.id,
-                    "status": "failed",
-                    "error": f"Task execution timed out after {self.task_timeout}s"
-                })
-
-                if getattr(task, 'critical', False):
-                    break
-
-            except Exception as e:
-                eprint(f"Sequential task {task.id} failed: {e}")
-                results.append({
-                    "task_id": task.id,
-                    "status": "failed",
-                    "error": str(e)
-                })
-
-                if getattr(task, 'critical', False):
-                    break
-
-        return results
-
-    async def _execute_single_task(self, task: Task) -> dict:
-        """Enhanced task execution with unified LLMToolNode usage"""
-        if self.progress_tracker:
-            await self.progress_tracker.emit_event(ProgressEvent(
-                event_type="task_start",
-                node_name="TaskExecutorNode",
-                status=NodeStatus.RUNNING,
-                task_id=task.id,
-                plan_id=self.variable_manager.get("shared.current_plan.id"),
-                metadata={
-                    "description": task.description,
-                    "type": task.type,
-                    "priority": task.priority,
-                    "dependencies": task.dependencies
-                }
-            ))
-
-        task_start = time.perf_counter()
-        try:
-            task.status = "running"
-            task.started_at = datetime.now()
-
-            # Ensure metadata is initialized
-            if not hasattr(task, 'metadata') or task.metadata is None:
-                task.metadata = {}
-
-            # Pre-process task with variable resolution
-            if isinstance(task, ToolTask):
-                resolved_args = self._resolve_task_variables(task.arguments)
-                result = await self._execute_tool_task_with_validation(task, resolved_args)
-            elif isinstance(task, LLMTask):
-                # Use LLMToolNode for LLM tasks instead of direct execution
-                result = await self._execute_llm_via_llmtool(task)
-            elif isinstance(task, DecisionTask):
-                # Enhanced decision task with context awareness
-                result = await self._execute_decision_task_enhanced(task)
-            else:
-                # Use LLMToolNode for generic tasks as well
-                result = await self._execute_generic_via_llmtool(task)
-
-            # Store result in unified system
-            self._store_task_result(task.id, result, True)
-
-            task.result = result
-            task.status = "completed"
-            task.completed_at = datetime.now()
-
-            task_duration = time.perf_counter() - task_start
-
-            if self.progress_tracker:
-                await self.progress_tracker.emit_event(ProgressEvent(
-                    event_type="task_complete",
-                    node_name="TaskExecutorNode",
-                    task_id=task.id,
-                    plan_id=self.variable_manager.get("shared.current_plan.id"),
-                    status=NodeStatus.COMPLETED,
-                    success=True,
-                    duration=task_duration,
-                    metadata={
-                        "result_type": type(result).__name__,
-                        "description": task.description
-                    }
-                ))
-
-            return {
-                "task_id": task.id,
-                "status": "completed",
-                "result": result
-            }
-
-        except Exception as e:
-            task.error = str(e)
-            task.status = "failed"
-            task.retry_count += 1
-
-            # Store error in unified system
-            self._store_task_result(task.id, None, False, str(e))
-            task_duration = time.perf_counter() - task_start
-
-            if self.progress_tracker:
-                await self.progress_tracker.emit_event(ProgressEvent(
-                    event_type="task_error",  # Klarer Event-Typ
-                    node_name="TaskExecutorNode",
-                    task_id=task.id,
-                    plan_id=self.variable_manager.get("shared.current_plan.id"),
-                    status=NodeStatus.FAILED,
-                    success=False,
-                    duration=task_duration,
-                    error_details={
-                        "message": str(e),
-                        "type": type(e).__name__
-                    },
-                    metadata={
-                        "retry_count": task.retry_count,
-                        "description": task.description
-                    }
-                ))
-
-            eprint(f"Task {task.id} failed: {e}")
-            return {
-                "task_id": task.id,
-                "status": "failed",
-                "error": str(e),
-                "retry_count": task.retry_count
-            }
-
-    async def _resolve_dynamic_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Enhanced dynamic argument resolution with full variable system"""
-        resolved = {}
-
-        for key, value in arguments.items():
-            if isinstance(value, str):
-                # FIXED: Use unified variable manager for all resolution
-                resolved_value = self.variable_manager.format_text(value)
-
-                # Log if variables weren't resolved (debugging)
-                if "{{" in resolved_value and "}}" in resolved_value:
-                    wprint(f"Unresolved variables in argument '{key}': {resolved_value}")
-
-                resolved[key] = resolved_value
-            else:
-                resolved[key] = value
-
-        return resolved
-
-    async def _execute_tool_task_with_validation(self, task: ToolTask, resolved_args: dict[str, Any]) -> Any:
-        """Tool execution with improved error detection and validation"""
-
-        if not task.tool_name:
-            raise ValueError(f"ToolTask {task.id} missing tool_name")
-
-        agent = self.agent_instance
-        if not agent:
-            raise ValueError("Agent instance not available for tool execution")
-
-        tool_start = time.perf_counter()
-
-        # Track tool call start
-        if self.progress_tracker:
-            await self.progress_tracker.emit_event(ProgressEvent(
-                event_type="tool_call",
-                timestamp=time.time(),
-                node_name="TaskExecutorNode",
-                status=NodeStatus.RUNNING,
-                task_id=task.id,
-                tool_name=task.tool_name,
-                tool_args=resolved_args,
-                metadata={
-                    "task_type": "ToolTask",
-                    "hypothesis": task.hypothesis,
-                    "validation_criteria": task.validation_criteria
-                }
-            ))
-
-        try:
-            rprint(f"Executing tool {task.tool_name} with resolved args: {resolved_args}")
-
-            # Execute tool with timeout and retry logic
-            result = await self._execute_tool_with_retries(task.tool_name, resolved_args, agent)
-
-            tool_duration = time.perf_counter() - tool_start
-
-            # Validate result before marking as success
-            is_valid_result = self._validate_tool_result(result, task)
-
-            if not is_valid_result:
-                raise ValueError(f"Tool {task.tool_name} returned invalid result: {type(result).__name__}")
-
-            # Track successful tool call
-            if self.progress_tracker:
-                await self.progress_tracker.emit_event(ProgressEvent(
-                    event_type="tool_call",
-                    timestamp=time.time(),
-                    node_name="TaskExecutorNode",
-                    task_id=task.id,
-                    status=NodeStatus.COMPLETED,
-                    tool_name=task.tool_name,
-                    tool_args=resolved_args,
-                    tool_result=result,
-                    duration=tool_duration,
-                    success=True,
-                    metadata={
-                        "task_type": "ToolTask",
-                        "result_type": type(result).__name__,
-                        "result_length": len(str(result)),
-                        "validation_passed": is_valid_result
-                    }
-                ))
-
-            # FIXED: Store in variable manager with correct path structure
-            if self.variable_manager:
-                self.variable_manager.set(f"results.{task.id}.data", result)
-                self.variable_manager.set(f"tasks.{task.id}.result", result)
-
-            return result
-
-        except Exception as e:
-            tool_duration = time.perf_counter() - tool_start
-            import traceback
-            print(traceback.format_exc())
-
-            # Detailed error tracking
-            if self.progress_tracker:
-                await self.progress_tracker.emit_event(ProgressEvent(
-                    event_type="tool_call",
-                    timestamp=time.time(),
-                    node_name="TaskExecutorNode",
-                    task_id=task.id,
-                    status=NodeStatus.FAILED,
-                    tool_name=task.tool_name,
-                    tool_args=resolved_args,
-                    duration=tool_duration,
-                    success=False,
-                    tool_error=str(e),
-                    metadata={
-                        "task_type": "ToolTask",
-                        "error_type": type(e).__name__,
-                        "retry_attempted": hasattr(self, '_retry_count')
-                    }
-                ))
-
-            eprint(f"Tool execution failed for {task.tool_name}: {e}")
-            raise
-    async def _execute_llm_via_llmtool(self, task: LLMTask) -> Any:
-        """Execute LLM task via LLMToolNode for consistency"""
-
-        # Prepare context for LLMToolNode
-        llm_shared = {
-            "current_task_description": task.description,
-            "formatted_context": {
-                "recent_interaction": f"Executing LLM task: {task.description}",
-                "session_summary": "",
-                "task_context": f"Task ID: {task.id}, Priority: {task.priority}"
-            },
-            "variable_manager": self.variable_manager,
-            "agent_instance": self.agent_instance,
-            "available_tools": self.agent_instance.shared.get("available_tools", []) if self.agent_instance else [],
-            "tool_capabilities": self.agent_instance._tool_capabilities if self.agent_instance else {},
-            "fast_llm_model": self.fast_llm_model,
-            "complex_llm_model": self.complex_llm_model,
-            "progress_tracker": self.progress_tracker,
-            "session_id": getattr(self, 'session_id', 'task_executor'),
-            "use_fast_response": task.llm_config.get("model_preference", "fast") == "fast"
-        }
-
-        # Create LLMToolNode instance
-        llm_node = LLMToolNode()
-
-        # Execute via LLMToolNode
-        try:
-            result = await llm_node.run_async(llm_shared)
-            # shared["current_response"]
-            # shared["tool_calls_made"]
-            # shared["llm_tool_conversation"]
-            # shared["synthesized_response"]
-            return llm_shared["current_response"]
-        except Exception as e:
-            eprint(f"LLMToolNode execution failed for task {task.id}: {e}")
-            # Fallback to direct execution
-            import traceback
-            print(traceback.format_exc())
-            return await self._execute_llm_task_enhanced(task)
-
-    async def _execute_llm_task_enhanced(self, task: LLMTask) -> Any:
-        """Enhanced LLM task execution with unified variable system"""
-        if not LITELLM_AVAILABLE:
-            raise Exception("LiteLLM not available for LLM tasks")
-
-        # Get model preference with variable support
-        llm_config = task.llm_config
-        model_preference = llm_config.get("model_preference", "fast")
-
-        if model_preference == "complex":
-            model_to_use = self.variable_manager.get("system.complex_llm_model", "openrouter/openai/gpt-4o")
-        else:
-            model_to_use = self.variable_manager.get("system.fast_llm_model", "openrouter/anthropic/claude-3-haiku")
-
-        # Build context for prompt
-        context_data = {}
-        for context_key in task.context_keys:
-            value = self.variable_manager.get(context_key)
-            if value is not None:
-                context_data[context_key] = value
-
-        # Resolve prompt template with full variable system
-        final_prompt = self.variable_manager.format_text(
-            task.prompt_template,
-            context=context_data
-        )
-
-        llm_start = time.perf_counter()
-
-        try:
-
-            response = await self.agent_instance.llm_handler.completion_with_rate_limiting(
-                                    litellm,
-                model=model_to_use,
-                messages=[{"role": "user", "content": final_prompt}],
-                temperature=llm_config.get("temperature", 0.7),
-                max_tokens=llm_config.get("max_tokens", 2048)
-            )
-
-            result = response
-
-
-            # Store intermediate result for other tasks
-            self.variable_manager.set(f"tasks.{task.id}.result", result)
-
-            # Output schema validation if present
-            if task.output_schema:
-                stripped = result.strip()
-
-                try:
-                    # Try JSON first if it looks like JSON
-                    if stripped.startswith('{') or stripped.startswith('['):
-                        parsed = json.loads(stripped)
-                    else:
-                        parsed = yaml.safe_load(stripped)
-
-                    # Ensure metadata is a dict before updating
-                    if not isinstance(task.metadata, dict):
-                        task.metadata = {}
-
-                    # Save parsed result
-                    task.metadata["parsed_output"] = parsed
-
-                except (json.JSONDecodeError, yaml.YAMLError):
-                    # Save info about failure without logging output
-                    if not isinstance(task.metadata, dict):
-                        task.metadata = {}
-                    task.metadata["parsed_output_error"] = "Invalid JSON/YAML format"
-
-                except Exception as e:
-                    if not isinstance(task.metadata, dict):
-                        task.metadata = {}
-                    task.metadata["parsed_output_error"] = f"Unexpected error: {str(e)}"
-
-            return result
-        except Exception as e:
-            llm_duration = time.perf_counter() - llm_start
-
-            if self.progress_tracker:
-                await self.progress_tracker.emit_event(ProgressEvent(
-                    event_type="llm_call",
-                    node_name="TaskExecutorNode",
-                    task_id=task.id,
-                    status=NodeStatus.FAILED,
-                    success=False,
-                    duration=llm_duration,
-                    llm_model=model_to_use,
-                    error_details={
-                        "message": str(e),
-                        "type": type(e).__name__
-                    }
-                ))
-
-            raise
-
-    async def _execute_generic_via_llmtool(self, task: Task) -> Any:
-        """
-        Execute a generic task by treating its description as a query for the LLMToolNode.
-        This provides a flexible fallback for undefined task types, leveraging the full
-        reasoning and tool-use capabilities of the LLMToolNode.
-        """
-        # Prepare a shared context dictionary for the LLMToolNode, treating the
-        # generic task's description as the primary query.
-        llm_shared = {
-            "current_task_description": task.description,
-            "current_query": task.description,
-            "formatted_context": {
-                "recent_interaction": f"Executing generic task: {task.description}",
-                "session_summary": f"The system needs to complete the following task: {task.description}",
-                "task_context": f"Task ID: {task.id}, Priority: {task.priority}, Type: Generic"
-            },
-            "variable_manager": self.variable_manager,
-            "agent_instance": self.agent_instance,
-            # Generic tasks might require tools, so provide full tool context.
-            "available_tools": self.agent_instance.shared.get("available_tools", []) if self.agent_instance else [],
-            "tool_capabilities": self.agent_instance._tool_capabilities if self.agent_instance else {},
-            "fast_llm_model": self.fast_llm_model,
-            "complex_llm_model": self.complex_llm_model,
-            "progress_tracker": self.progress_tracker,
-            "session_id": getattr(self, 'session_id', 'task_executor_generic'),
-            # Default to a fast model, assuming generic tasks are often straightforward.
-            "use_fast_response": True
-        }
-
-        # Instantiate the LLMToolNode for this specific execution.
-        llm_node = LLMToolNode()
-
-        try:
-            # Execute the node. It will run its internal loop for reasoning, tool calling, and response generation.
-            # The results of the execution will be populated back into the `llm_shared` dictionary.
-            await llm_node.run_async(llm_shared)
-
-            # Extract the final response from the shared context populated by the node.
-            # Prioritize the structured 'synthesized_response' but fall back to 'current_response'.
-            final_response = llm_shared.get("synthesized_response", {}).get("synthesized_response")
-            if not final_response:
-                final_response = llm_shared.get("current_response", f"Generic task '{task.id}' processed.")
-
-            return final_response
-
-        except Exception as e:
-            eprint(f"LLMToolNode execution for generic task {task.id} failed: {e}")
-            # Re-raise the exception to allow the higher-level execution loop in
-            # _execute_single_task to catch and handle it appropriately (e.g., for retries).
-            raise
-
-    async def _execute_decision_task_enhanced(self, task: DecisionTask) -> str:
-        """Enhanced DecisionTask with intelligent replan assessment"""
-
-        if not LITELLM_AVAILABLE:
-            raise Exception("LiteLLM not available for decision tasks")
-
-        # Build comprehensive context for decision
-        decision_context = self._build_decision_context(task)
-
-        # Enhanced decision prompt with full context
-        enhanced_prompt = f"""
-You are making a critical routing decision for task execution. Analyze all context carefully.
-
-## Current Situation
-{task.decision_prompt}
-
-## Execution Context
-{decision_context}
-
-## Available Routing Options
-{json.dumps(task.routing_map, indent=2)}
-
-## Decision Guidelines
-1. Only trigger "replan_from_here" if there's a genuine failure that cannot be recovered
-2. Use "route_to_task" for normal flow continuation
-3. Consider the full context, not just immediate results
-4. Be conservative with replanning - it's expensive and can cause loops
-
-Based on ALL the context above, what is your decision?
-Respond with EXACTLY one of these options: {', '.join(task.routing_map.keys())}
-
-Your decision:"""
-
-        model_to_use = self.fast_llm_model if hasattr(self, 'fast_llm_model') else "openrouter/anthropic/claude-3-haiku"
-
-        try:
-            response = await self.agent_instance.llm_handler.completion_with_rate_limiting(
-                                    litellm,
-                model=model_to_use,
-                messages=[{"role": "user", "content": enhanced_prompt}],
-                temperature=0.1,
-                max_tokens=50
-            )
-
-            decision = response.choices[0].message.content.strip().lower().split('\n')[0]
-
-            # Find matching key (case-insensitive)
-            matched_key = None
-            for key in task.routing_map:
-                if key.lower() == decision:
-                    matched_key = key
-                    break
-
-            if not matched_key:
-                wprint(f"Decision '{decision}' not in routing map, using first option")
-                matched_key = list(task.routing_map.keys())[0] if task.routing_map else "continue"
-
-            routing_instruction = task.routing_map.get(matched_key, matched_key)
-
-            # Enhanced metadata with decision reasoning
-            if not hasattr(task, 'metadata'):
-                task.metadata = {}
-
-            task.metadata.update({
-                "decision_made": matched_key,
-                "routing_instruction": routing_instruction,
-                "decision_context": decision_context,
-                "replan_justified": self._assess_replan_necessity(matched_key, routing_instruction, decision_context)
-            })
-
-            # Handle dynamic planning instructions
-            if isinstance(routing_instruction, dict) and "action" in routing_instruction:
-                action = routing_instruction["action"]
-
-                if action == "replan_from_here":
-                    # Add extensive context for replanning
-                    task.metadata["replan_context"] = {
-                        "new_goal": routing_instruction.get("new_goal", "Continue with alternative approach"),
-                        "failure_reason": f"Decision task {task.id} determined: {matched_key}",
-                        "original_task": task.id,
-                        "context": routing_instruction.get("context", ""),
-                        "execution_history": self._get_execution_history_summary(),
-                        "failed_approaches": self._identify_failed_approaches(),
-                        "success_indicators": self._identify_success_patterns()
-                    }
-
-                self.variable_manager.set(f"tasks.{task.id}.result", {
-                    "decision": matched_key,
-                    "action": action,
-                    "instruction": routing_instruction,
-                    "confidence": self._calculate_decision_confidence(decision_context)
-                })
-
-                return action
-
-            else:
-                # Traditional routing
-                next_task_id = routing_instruction if isinstance(routing_instruction, str) else str(routing_instruction)
-
-                task.metadata.update({
-                    "next_task_id": next_task_id,
-                    "routing_action": "route_to_task"
-                })
-
-                self.variable_manager.set(f"tasks.{task.id}.result", {
-                    "decision": matched_key,
-                    "next_task": next_task_id
-                })
-
-                return matched_key
-
-        except Exception as e:
-            eprint(f"Enhanced decision task failed: {e}")
-            raise
-
-    async def post_async(self, shared, prep_res, exec_res):
-        """Erweiterte Post-Processing mit dynamischer Plan-Anpassung"""
-
-        # Results store in shared state integrieren
-        shared["results"] = self.results_store
-
-        if exec_res is None or "error" in exec_res:
-            shared["executor_performance"] = {"status": "error", "last_error": exec_res.get("error")}
-            return "execution_error"
-
-        if exec_res["status"] == "waiting":
-            shared["executor_status"] = "waiting_for_dependencies"
-            return "waiting"
-
-        # Performance-Metriken speichern
-        performance_data = {
-            "execution_duration": exec_res.get("execution_duration", 0),
-            "strategy_used": exec_res.get("strategy_used", "unknown"),
-            "completed_tasks": exec_res.get("completed_tasks", 0),
-            "failed_tasks": exec_res.get("failed_tasks", 0),
-            "success_rate": exec_res.get("completed_tasks", 0) / max(len(exec_res.get("results", [])), 1),
-            "timestamp": datetime.now().isoformat()
-        }
-        shared["executor_performance"] = performance_data
-
-        # Check for dynamic planning actions
-        planning_action_detected = False
-
-        for result in exec_res.get("results", []):
-            task_id = result["task_id"]
-            if task_id in shared["tasks"]:
-                task = shared["tasks"][task_id]
-                task.status = result["status"]
-
-                if result["status"] == "completed":
-                    task.result = result["result"]
-
-                    # Check for planning actions from DecisionTasks
-                    if hasattr(task, 'metadata') and task.metadata:
-                        routing_action = task.metadata.get("routing_action")
-
-                        if routing_action == "replan_from_here":
-                            shared["needs_dynamic_replan"] = True
-                            shared["replan_context"] = task.metadata.get("replan_context", {})
-                            planning_action_detected = True
-                            rprint(f"Dynamic replan triggered by task {task_id}")
-
-                        elif routing_action == "append_plan":
-                            shared["needs_plan_append"] = True
-                            shared["append_context"] = task.metadata.get("append_context", {})
-                            planning_action_detected = True
-                            rprint(f"Plan append triggered by task {task_id}")
-
-                    # Store verification results if available
-                    if result.get("verification"):
-                        if not hasattr(task, 'metadata'):
-                            task.metadata = {}
-                        task.metadata["verification"] = result["verification"]
-
-                elif result["status"] == "failed":
-                    task.error = result.get("error", "Unknown error")
-
-        # Return appropriate status based on planning actions
-        if planning_action_detected:
-            if shared.get("needs_dynamic_replan"):
-                return "needs_dynamic_replan"  # Goes to PlanReflectorNode
-            elif shared.get("needs_plan_append"):
-                return "needs_plan_append"  # Goes to PlanReflectorNode
-
-        # Regular completion checking
-        current_plan = shared["current_plan"]
-        if current_plan:
-            all_finished = all(
-                shared["tasks"][task.id].status in ["completed", "failed"]
-                for task in current_plan.tasks
-            )
-
-            if all_finished:
-                current_plan.status = "completed"
-                shared["plan_completion_time"] = datetime.now().isoformat()
-                rprint(f"Plan {current_plan.id} finished")
-                return "plan_completed"
-            else:
-                ready_tasks = [
-                    task for task in current_plan.tasks
-                    if shared["tasks"][task.id].status == "pending"
-                ]
-
-                if ready_tasks:
-                    return "continue_execution"
-                else:
-                    return "waiting"
-
-        return "execution_complete"
-
-    def get_execution_statistics(self) -> dict[str, Any]:
-        """Erhalte detaillierte Ausführungsstatistiken"""
-        if not self.execution_history:
-            return {"message": "No execution history available"}
-
-        history = self.execution_history
-
-        return {
-            "total_executions": len(history),
-            "average_duration": sum(h["duration"] for h in history) / len(history),
-            "success_rate": sum(1 for h in history if h["success"]) / len(history),
-            "strategy_usage": {
-                strategy: sum(1 for h in history if h["strategy"] == strategy)
-                for strategy in set(h["strategy"] for h in history)
-            },
-            "total_tasks_executed": sum(h["tasks_executed"] for h in history),
-            "average_confidence": sum(h["plan_confidence"] for h in history) / len(history),
-            "recent_performance": history[-3:] if len(history) >= 3 else history
-        }
-
-    def _resolve_task_variables(self, data):
-        """Unified variable resolution for any task data"""
-        if isinstance(data, str):
-            res = self.variable_manager.format_text(data)
-            return res
-        elif isinstance(data, dict):
-            resolved = {}
-            for key, value in data.items():
-                resolved[key] = self._resolve_task_variables(value)
-            return resolved
-        elif isinstance(data, list):
-            return [self._resolve_task_variables(item) for item in data]
-        else:
-            return data
-
-    def _store_task_result(self, task_id: str, result: Any, success: bool, error: str = None):
-        """Store task result in unified variable system"""
-        result_data = {
-            "data": result,
-            "metadata": {
-                "task_type": "task",
-                "completed_at": datetime.now().isoformat(),
-                "success": success
-            }
-        }
-
-        if error:
-            result_data["error"] = error
-            result_data["metadata"]["success"] = False
-
-        # Store in results_store and update variable manager
-        self.results_store[task_id] = result_data
-        self.variable_manager.set_results_store(self.results_store)
-
-        # FIXED: Store actual result data, not the wrapper object
-        self.variable_manager.set(f"results.{task_id}.data", result)
-        self.variable_manager.set(f"results.{task_id}.metadata", result_data["metadata"])
-        if error:
-            self.variable_manager.set(f"results.{task_id}.error", error)
-
-    def _build_decision_context(self, task: DecisionTask) -> str:
-        """Build comprehensive context for decision making"""
-
-        context_parts = []
-
-        # Recent execution results
-        recent_results = []
-        for task_id, result_data in list(self.results_store.items())[-3:]:
-            success = result_data.get("metadata", {}).get("success", False)
-            status = "✓" if success else "✗"
-            data_preview = str(result_data.get("data", ""))[:100] + "..."
-            recent_results.append(f"{status} {task_id}: {data_preview}")
-
-        if recent_results:
-            context_parts.append("Recent Results:\n" + "\n".join(recent_results))
-
-        # Variable context
-        if self.variable_manager:
-            available_vars = list(self.variable_manager.get_available_variables().keys())[:10]
-            context_parts.append(f"Available Variables: {', '.join(available_vars)}")
-
-        # Execution history
-        execution_summary = self._get_execution_history_summary()
-        if execution_summary:
-            context_parts.append(f"Execution Summary: {execution_summary}")
-
-        # Current world model insights
-        world_insights = self._get_world_model_insights()
-        if world_insights:
-            context_parts.append(f"Known Facts: {world_insights}")
-
-        return "\n\n".join(context_parts)
-
-    def _assess_replan_necessity(self, decision: str, routing_instruction: Any, context: str) -> bool:
-        """Assess if replanning is truly necessary"""
-
-        if not isinstance(routing_instruction, dict):
-            return False
-
-        action = routing_instruction.get("action", "")
-        if action != "replan_from_here":
-            return False
-
-        # Check if we have genuine failures
-        genuine_failures = "error" in context.lower() or "failed" in context.lower()
-        alternative_available = len(self.results_store) > 0  # Have some results to work with
-
-        # Be conservative - only replan if really necessary
-        return genuine_failures and not alternative_available
-
-    async def _execute_tool_with_retries(self, tool_name: str, args: dict, agent, max_retries: int = 2) -> Any:
-        """Execute tool with retry logic"""
-
-        last_exception = None
-
-        for attempt in range(max_retries + 1):
-            try:
-                result = await agent.arun_function(tool_name, **args)
-
-                # Additional validation - check if result indicates success
-                if self._is_tool_result_success(result):
-                    return result
-                elif attempt < max_retries:
-                    wprint(f"Tool {tool_name} returned unclear result, retrying...")
-                    continue
-                else:
-                    return result
-
-            except Exception as e:
-                last_exception = e
-                if attempt < max_retries:
-                    wprint(f"Tool {tool_name} failed (attempt {attempt + 1}), retrying: {e}")
-                    # await asyncio.sleep(0.5 * (attempt + 1))  # Progressive delay
-                else:
-                    eprint(f"Tool {tool_name} failed after {max_retries + 1} attempts")
-
-        if last_exception:
-            raise last_exception
-        else:
-            raise RuntimeError(f"Tool {tool_name} failed without exception")
-
-    def _validate_tool_result(self, result: Any, task: ToolTask) -> bool:
-        """Validate tool result to prevent false failures"""
-
-        # Basic validation
-        if result is None:
-            return False
-
-        # Check for common error indicators
-        if isinstance(result, str):
-            error_indicators = ["error", "failed", "exception", "timeout", "not found"]
-            result_lower = result.lower()
-
-            # If result contains error indicators but also has substantial content, it might still be valid
-            has_errors = any(indicator in result_lower for indicator in error_indicators)
-            has_content = len(result.strip()) > 20
-
-            if has_errors and not has_content:
-                return False
-
-        # Check against expectation if provided
-        if hasattr(task, 'expectation') and task.expectation:
-            expectation_keywords = task.expectation.lower().split()
-            result_text = str(result).lower()
-
-            # At least one expectation keyword should be present
-            if not any(keyword in result_text for keyword in expectation_keywords):
-                wprint(f"Tool result doesn't match expectation: {task.expectation}")
-
-        return True
-
-    def _is_tool_result_success(self, result: Any) -> bool:
-        """Determine if a tool result indicates success"""
-
-        if result is None:
-            return False
-
-        if isinstance(result, bool):
-            return result
-
-        if isinstance(result, list | dict):
-            return len(result) > 0
-
-        if isinstance(result, str):
-            # Check for explicit success/failure indicators
-            result_lower = result.lower()
-
-            success_indicators = ["success", "completed", "found", "retrieved", "generated"]
-            failure_indicators = ["error", "failed", "not found", "timeout", "exception"]
-
-            has_success = any(indicator in result_lower for indicator in success_indicators)
-            has_failure = any(indicator in result_lower for indicator in failure_indicators)
-
-            if has_success and not has_failure:
-                return True
-            elif has_failure and not has_success:
-                return False
-            else:
-                # Ambiguous - assume success if there's substantial content
-                return len(result.strip()) > 10
-
-        # For other types, assume success if not None
-        return True
-
-    def _get_execution_history_summary(self) -> str:
-        """Get concise execution history summary"""
-
-        if not hasattr(self, 'execution_history') or not self.execution_history:
-            return "No execution history"
-
-        recent = self.execution_history[-3:]  # Last 3 executions
-        summaries = []
-
-        for hist in recent:
-            status = "Success" if hist.get("success", False) else "Failed"
-            duration = hist.get("duration", 0)
-            strategy = hist.get("strategy", "Unknown")
-            summaries.append(f"{strategy}: {status} ({duration:.1f}s)")
-
-        return "; ".join(summaries)
-
-    def _identify_failed_approaches(self) -> list[str]:
-        """Identify approaches that have consistently failed"""
-
-        failed_approaches = []
-
-        # Analyze failed tasks
-        for _task_id, result_data in self.results_store.items():
-            if not result_data.get("metadata", {}).get("success", True):
-                error = result_data.get("error", "")
-                if "tool" in error.lower():
-                    failed_approaches.append("direct_tool_approach")
-                elif "search" in error.lower():
-                    failed_approaches.append("search_based_approach")
-                elif "llm" in error.lower():
-                    failed_approaches.append("llm_direct_approach")
-
-        return list(set(failed_approaches))
-
-    def _identify_success_patterns(self) -> list[str]:
-        """Identify patterns that have led to success"""
-
-        success_patterns = []
-
-        # Analyze successful tasks
-        successful_results = [
-            r for r in self.results_store.values()
-            if r.get("metadata", {}).get("success", False)
-        ]
-
-        if successful_results:
-            # Identify common patterns
-            if len(successful_results) > 1:
-                success_patterns.append("multi_step_approach")
-
-            for result in successful_results:
-                data = result.get("data", "")
-                if isinstance(data, str) and len(data) > 100:
-                    success_patterns.append("detailed_information_retrieval")
-
-        return list(set(success_patterns))
-
-    def _get_world_model_insights(self) -> str:
-        """Get relevant insights from world model"""
-
-        if not self.variable_manager:
-            return ""
-
-        world_data = self.variable_manager.scopes.get("world", {})
-        if not world_data:
-            return "No world model data"
-
-        # Get most recent or relevant facts
-        recent_facts = []
-        for key, value in list(world_data.items())[:5]:  # Top 5 facts
-            recent_facts.append(f"{key}: {str(value)[:50]}...")
-
-        return "; ".join(recent_facts)
-
-    def _calculate_decision_confidence(self, context: str) -> float:
-        """Calculate confidence in decision based on context"""
-
-        # Simple heuristic based on context richness
-        base_confidence = 0.5
-
-        # Boost confidence if we have rich context
-        if len(context) > 200:
-            base_confidence += 0.2
-
-        # Boost if we have recent results
-        if "Recent Results:" in context:
-            base_confidence += 0.2
-
-        # Reduce if there are many failures
-        failure_count = context.lower().count("failed") + context.lower().count("error")
-        base_confidence -= min(failure_count * 0.1, 0.3)
-
-        return max(0.1, min(1.0, base_confidence))
 
 @with_progress_tracking
 class LLMToolNode(AsyncNode):
@@ -2516,6 +561,94 @@ class LLMToolNode(AsyncNode):
         self.model = model or os.getenv("COMPLEXMODEL", "openrouter/qwen/qwen3-code")
         self.max_tool_calls = max_tool_calls
         self.call_log = []
+
+        # Models die Function Calling unterstützen
+        self.function_calling_models = {
+            "gpt-4",
+            "gpt-4-turbo",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-3.5-turbo",
+            "gpt-3.5-turbo-16k",
+            "claude-3",
+            "claude-3-opus",
+            "claude-3-sonnet",
+            "claude-3-haiku",
+            "claude-3-5-sonnet",
+            "claude-sonnet-4",
+            "claude-opus-4",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash",
+            "gemini-pro",
+            "mistral-large",
+            "mistral-medium",
+            "mistral-small",
+            "command-r",
+            "command-r-plus",
+            "llama-3.1",
+            "llama-3.2",
+            "llama-3.3",
+        }
+
+    def _supports_function_calling(self, model: str) -> bool:
+        """Prüft ob das Model native Function Calling unterstützt."""
+        model_lower = model.lower()
+
+        # Entferne Provider-Prefix (z.B. "openrouter/openai/gpt-4o" -> "gpt-4o")
+        model_base = model_lower.split("/")[-1]
+
+        for supported in self.function_calling_models:
+            if supported in model_base:
+                return True
+
+        # Zusätzliche Checks für Provider-spezifische Modelle
+        if "openai" in model_lower or "anthropic" in model_lower:
+            return True
+        if "gemini" in model_lower or "google" in model_lower:
+            return True
+
+        res = False
+        try:
+            res = litellm.supports_function_calling(model_base)
+        except:
+            pass
+        return res
+
+    def _prepare_tools_for_litellm(self, prep_res: dict) -> list[dict]:
+        """Bereitet Tools für LiteLLM Function Calling vor."""
+        agent_instance = prep_res.get("agent_instance")
+        available_tools = prep_res.get("available_tools", [])
+
+        if not agent_instance:
+            return []
+
+        # Konvertiere nur verfügbare Tools
+        tools = get_selected_tools_litellm(
+            tool_registry=agent_instance._tool_registry,
+            tool_capabilities=agent_instance._tool_capabilities,
+            selected_tools=available_tools
+        )
+
+        # Füge direct_response als spezielles Tool hinzu
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": "direct_response",
+                "description": "Provide the final answer when the task is complete. Use this to finish and return results.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "final_answer": {
+                            "type": "string",
+                            "description": "The complete final answer to return"
+                        }
+                    },
+                    "required": ["final_answer"]
+                }
+            }
+        })
+
+        return tools
 
     async def prep_async(self, shared):
         context = shared.get("formatted_context", {})
@@ -2545,7 +678,7 @@ class LLMToolNode(AsyncNode):
             "tool_call_count": 0
         }
 
-    async def exec_async(self, prep_res):
+    async def _exec_async(self, prep_res):
         """Main execution with tool calling loop"""
         if not LITELLM_AVAILABLE:
             return await self._fallback_response(prep_res)
@@ -2658,7 +791,6 @@ class LLMToolNode(AsyncNode):
                 print(traceback.format_exc())
                 break
 
-
         return {
             "success": True,
             "final_response": final_response or "I was unable to complete the request.",
@@ -2669,9 +801,489 @@ class LLMToolNode(AsyncNode):
             "llm_statistics": {
                 "total_calls": total_llm_calls,
                 "total_cost": total_cost,
-                "total_tokens": total_tokens
-            }
+                "total_tokens": total_tokens,
+            },
         }
+
+    async def exec_async(self, prep_res):
+        """Main execution with native LiteLLM function calling or fallback."""
+        if not LITELLM_AVAILABLE:
+            return await self._fallback_response(prep_res)
+
+        progress_tracker = prep_res.get("progress_tracker")
+        model_to_use = self._select_optimal_model(prep_res["task_description"], prep_res)
+
+        # Entscheide: Native Function Calling oder Manual Parsing
+        use_native_function_calling = self._supports_function_calling(model_to_use)
+
+        if use_native_function_calling:
+            return await self._exec_with_native_function_calling(prep_res, model_to_use)
+        else:
+            return await self._exec_with_manual_parsing(prep_res, model_to_use)
+
+    async def _exec_with_native_function_calling(
+        self, prep_res: dict, model_to_use: str
+    ) -> dict:
+        """Execution mit nativem LiteLLM Function Calling."""
+        progress_tracker = prep_res.get("progress_tracker")
+        agent_instance = prep_res.get("agent_instance")
+        variable_manager = prep_res.get("variable_manager")
+
+        conversation_history = []
+        tool_call_count = 0
+        final_response = None
+        all_tool_results = {}
+
+        # System Message
+        system_message = self._build_tool_aware_system_message_native(prep_res)
+
+        # Initial User Prompt
+        initial_prompt = await self._build_context_aware_prompt(prep_res)
+        conversation_history.append(
+            {
+                "role": "user",
+                "content": variable_manager.format_text(initial_prompt)
+                if variable_manager
+                else initial_prompt,
+            }
+        )
+
+        # Tools für LiteLLM vorbereiten
+        litellm_tools = self._prepare_tools_for_litellm(prep_res)
+
+        runs = 0
+        while tool_call_count < self.max_tool_calls:
+            runs += 1
+
+            messages = [
+                {"role": "system", "content": system_message}
+            ] + conversation_history
+
+            try:
+                # LiteLLM Completion mit Tools
+                response_message = await agent_instance.a_run_llm_completion(
+                    model=model_to_use,
+                    messages=messages,
+                    tools=litellm_tools if litellm_tools else None,
+                    tool_choice="auto" if litellm_tools else None,
+                    temperature=0.7,
+                    get_response_message = True
+                )
+
+                # Check für Tool Calls
+                tool_calls = response_message.tool_calls
+
+                if not tool_calls:
+                    # Keine Tool Calls - finale Antwort
+                    final_response = response_message.content or "Task completed."
+                    conversation_history.append(
+                        {"role": "assistant", "content": final_response}
+                    )
+                    break
+
+                # Tool Calls verarbeiten
+                # Assistant Message mit Tool Calls hinzufügen
+                assistant_message = {
+                    "role": "assistant",
+                    "content": response_message.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                        for tc in tool_calls
+                    ],
+                }
+                conversation_history.append(assistant_message)
+
+                # Tool Calls ausführen
+                for tool_call in tool_calls:
+                    tool_name = tool_call.function.name
+
+                    # Check für direct_response
+                    if tool_name == "direct_response":
+                        try:
+                            args = json.loads(tool_call.function.arguments)
+                            final_response = args.get(
+                                "final_answer", "Task completed."
+                            )
+                            tool_call_count += 1
+
+                            # Tool Response hinzufügen
+                            conversation_history.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": json.dumps(
+                                        {
+                                            "status": "completed",
+                                            "response": final_response,
+                                        }
+                                    ),
+                                }
+                            )
+                            break
+                        except json.JSONDecodeError:
+                            final_response = tool_call.function.arguments
+                            break
+
+                    # Normaler Tool Call
+                    try:
+                        args = json.loads(tool_call.function.arguments)
+                    except json.JSONDecodeError as e:
+                        error_result = f"Invalid JSON arguments: {e}"
+                        conversation_history.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": json.dumps({"error": error_result}),
+                            }
+                        )
+                        continue
+
+                    # Tool ausführen
+                    tool_result = await self._execute_single_tool(
+                        tool_name, args, prep_res, progress_tracker
+                    )
+
+                    tool_call_count += 1
+                    all_tool_results[f"{runs}_{tool_name}"] = tool_result
+
+                    # Tool Response zur Conversation hinzufügen
+                    conversation_history.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps(tool_result, default=str)[
+                                :4000
+                            ],  # Truncate für Context
+                        }
+                    )
+
+                    # Variables aktualisieren
+                    if tool_result.get("success") and variable_manager:
+                        variable_manager.set(
+                            f"results.{tool_name}.data", tool_result.get("result")
+                        )
+
+                # Check ob direct_response aufgerufen wurde
+                if final_response:
+                    break
+
+            except Exception as e:
+                import traceback
+
+                traceback.print_exc()
+                eprint(f"LLM Tool execution failed: {e}")
+                final_response = f"Error during execution: {str(e)}"
+                break
+
+        return {
+            "success": True,
+            "final_response": final_response
+            or "Task completed without specific result.",
+            "tool_calls_made": tool_call_count,
+            "conversation_history": conversation_history,
+            "model_used": model_to_use,
+            "tool_results": all_tool_results,
+            "execution_mode": "native_function_calling",
+        }
+
+    async def _exec_with_manual_parsing(
+        self, prep_res: dict, model_to_use: str
+    ) -> dict:
+        """Fallback Execution mit manuellem Parsing (für Models ohne Function Calling)."""
+        progress_tracker = prep_res.get("progress_tracker")
+        agent_instance = prep_res.get("agent_instance")
+        variable_manager = prep_res.get("variable_manager")
+
+        conversation_history = []
+        tool_call_count = 0
+        final_response = None
+        all_tool_results = {}
+
+        # System Message mit manuellen Tool-Instruktionen
+        system_message = self._build_tool_aware_system_message(prep_res)
+
+        # Initial User Prompt
+        initial_prompt = await self._build_context_aware_prompt(prep_res)
+        conversation_history.append(
+            {
+                "role": "user",
+                "content": variable_manager.format_text(initial_prompt)
+                if variable_manager
+                else initial_prompt,
+            }
+        )
+
+        runs = 0
+        while tool_call_count < self.max_tool_calls:
+            runs += 1
+
+            messages = [
+                {"role": "system", "content": system_message}
+            ] + conversation_history
+
+            try:
+                # Normaler LLM Call ohne Tools
+                llm_response = await agent_instance.a_run_llm_completion(
+                    model=model_to_use,
+                    messages=messages,
+                    temperature=0.7,
+                    stream=True,
+                    node_name="LLMToolNode",
+                    task_id=f"llm_phase_{runs}",
+                )
+
+                if not llm_response and not final_response:
+                    final_response = "Error processing request."
+                    break
+
+                # Manuelles Tool Call Parsing
+                tool_calls = self._extract_tool_calls(llm_response)
+
+                llm_response = (
+                    variable_manager.format_text(llm_response)
+                    if variable_manager
+                    else llm_response
+                )
+                conversation_history.append(
+                    {"role": "assistant", "content": llm_response}
+                )
+
+                if not tool_calls:
+                    final_response = llm_response
+                    break
+
+                # Check für direct_response
+                direct_response_call = next(
+                    (
+                        call
+                        for call in tool_calls
+                        if call.get("tool_name") == "direct_response"
+                    ),
+                    None,
+                )
+                if direct_response_call:
+                    final_response = direct_response_call.get("arguments", {}).get(
+                        "final_answer", "Task completed."
+                    )
+                    tool_call_count += 1
+                    break
+
+                # Tool Calls ausführen
+                tool_results = await self._execute_tool_calls(tool_calls, prep_res)
+                tool_call_count += len(tool_calls)
+
+                # Results formatieren
+                tool_results_text = self._format_tool_results(tool_results)
+                all_tool_results[str(runs)] = tool_results_text
+                final_response = tool_results_text
+
+                # Next Prompt
+                next_prompt = f"""Tool results:
+{tool_results_text}
+
+Continue with the next step or call direct_response to finish."""
+                conversation_history.append({"role": "user", "content": next_prompt})
+
+                # Variables aktualisieren
+                self._update_variables_with_results(tool_results, variable_manager)
+
+            except Exception as e:
+                import traceback
+
+                traceback.print_exc()
+                eprint(f"LLM Tool execution failed: {e}")
+                final_response = f"Error: {str(e)}"
+                break
+
+        return {
+            "success": True,
+            "final_response": final_response or "Task completed.",
+            "tool_calls_made": tool_call_count,
+            "conversation_history": conversation_history,
+            "model_used": model_to_use,
+            "tool_results": all_tool_results,
+            "execution_mode": "manual_parsing",
+        }
+
+    async def _execute_single_tool(
+        self, tool_name: str, arguments: dict, prep_res: dict, progress_tracker
+    ) -> dict:
+        """Führt einen einzelnen Tool Call aus."""
+        agent_instance = prep_res.get("agent_instance")
+        variable_manager = prep_res.get("variable_manager")
+
+        tool_start = time.perf_counter()
+
+        if progress_tracker:
+            await progress_tracker.emit_event(
+                ProgressEvent(
+                    event_type="tool_call",
+                    timestamp=time.time(),
+                    status=NodeStatus.RUNNING,
+                    node_name="LLMToolNode",
+                    tool_name=tool_name,
+                    tool_args=arguments,
+                    session_id=prep_res.get("session_id"),
+                )
+            )
+
+        try:
+            # Variable Resolution
+            resolved_args = {}
+            for key, value in arguments.items():
+                if isinstance(value, str) and variable_manager:
+                    resolved_args[key] = variable_manager.format_text(value)
+                else:
+                    resolved_args[key] = value
+
+            # Tool ausführen
+            result = await agent_instance.arun_function(tool_name, **resolved_args)
+            tool_duration = time.perf_counter() - tool_start
+
+            if progress_tracker:
+                await progress_tracker.emit_event(
+                    ProgressEvent(
+                        event_type="tool_call",
+                        timestamp=time.time(),
+                        node_name="LLMToolNode",
+                        status=NodeStatus.COMPLETED,
+                        tool_name=tool_name,
+                        tool_result=result,
+                        duration=tool_duration,
+                        success=True,
+                        session_id=prep_res.get("session_id"),
+                    )
+                )
+
+            return {
+                "tool_name": tool_name,
+                "arguments": resolved_args,
+                "success": True,
+                "result": result,
+            }
+
+        except Exception as e:
+            tool_duration = time.perf_counter() - tool_start
+
+            if progress_tracker:
+                await progress_tracker.emit_event(
+                    ProgressEvent(
+                        event_type="tool_call",
+                        timestamp=time.time(),
+                        node_name="LLMToolNode",
+                        status=NodeStatus.FAILED,
+                        tool_name=tool_name,
+                        tool_error=str(e),
+                        duration=tool_duration,
+                        success=False,
+                        session_id=prep_res.get("session_id"),
+                    )
+                )
+
+            return {
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "success": False,
+                "error": str(e),
+            }
+
+    def _build_tool_aware_system_message_native(self, prep_res: dict) -> str:
+        """System Message für native Function Calling (kürzer, keine Tool-Syntax-Erklärung)."""
+        base_message = prep_res.get(
+            "base_system_message", "You are a helpful AI assistant."
+        )
+        variable_manager = prep_res.get("variable_manager")
+
+        system_parts = [
+            "ROLE: INTERNAL EXECUTION UNIT",
+            "You execute specific tasks using available tools.",
+            "Execute ONLY the assigned task. Be precise and efficient.",
+            "",
+            base_message,
+            "",
+            "INSTRUCTIONS:",
+            "1. Analyze the task",
+            "2. Use appropriate tools to accomplish it",
+            "3. Call direct_response with the final answer when done",
+            "4. Store important results in variables for later use",
+        ]
+
+        # Variable Context
+        if variable_manager:
+            var_context = variable_manager.get_llm_variable_context()
+            if var_context:
+                system_parts.append(f"\nVARIABLE CONTEXT:\n{var_context}")
+
+        return "\n".join(system_parts)
+
+    def _build_tool_aware_system_message(self, prep_res: dict) -> str:
+        """System Message für manuelles Parsing (mit Tool-Syntax-Erklärung)."""
+        base_message = prep_res.get("base_system_message", "You are a helpful AI assistant.")
+        available_tools = prep_res.get("available_tools", [])
+        tool_capabilities = prep_res.get("tool_capabilities", {})
+        variable_manager = prep_res.get("variable_manager")
+        agent_instance = prep_res.get("agent_instance")
+
+        system_parts = [
+            "ROLE: INTERNAL EXECUTION UNIT",
+            "You execute specific tasks using available tools.",
+            "",
+            base_message,
+            "",
+            "THINK -> PLAN -> ACT using tools!",
+            "Store progress in variables!",
+            ""
+        ]
+
+        # Tool List
+        if available_tools:
+            system_parts.append(f"## Available Tools: {', '.join(available_tools)}")
+
+            for tool_name in available_tools:
+                if tool_name in tool_capabilities:
+                    cap = tool_capabilities[tool_name]
+                    system_parts.append(f"**{tool_name}**: {cap.get('primary_function', 'No description')}")
+
+            # Tool Syntax
+            system_parts.append("""
+## Tool Usage (YAML format)
+```yaml
+TOOL_CALLS:
+  - tool: tool_name
+    args:
+      arg1: value1
+      arg2: value2
+```
+Use | for multi-line strings.""")
+
+        # Variable Context
+        if variable_manager:
+            var_context = variable_manager.get_llm_variable_context()
+            if var_context:
+                system_parts.append(f"\n## Variable Context\n{var_context}")
+
+        # Tool Analysis
+        if agent_instance and hasattr(agent_instance, '_tool_capabilities'):
+            query = prep_res.get('task_description', '').lower()
+            analysis_parts = ["\n## Tool Relevance"]
+
+            for tool_name, cap in agent_instance._tool_capabilities.items():
+                if tool_name not in available_tools:
+                    continue
+                relevance = self._calculate_tool_relevance(query, cap)
+                if relevance > 0.3:
+                    analysis_parts.append(f"- {tool_name}: {relevance:.2f} relevance")
+
+            system_parts.extend(analysis_parts)
+
+        return "\n".join(system_parts)
 
     def _build_tool_aware_system_message(self, prep_res: dict) -> str:
         """Build a unified intelligent, tool-aware system message with context and relevance analysis."""
@@ -2836,6 +1448,7 @@ You can call multiple tools in one response. Use | for multi-line strings contai
 
         tool_calls = []
 
+        print(text)
         # Pattern to find YAML blocks with TOOL_CALLS
         yaml_pattern = r'```yaml\s*\n(.*?TOOL_CALLS:.*?)\n```'
         yaml_matches = re.findall(yaml_pattern, text, re.DOTALL | re.IGNORECASE)
@@ -3233,86 +1846,6 @@ class StateSyncNode(AsyncNode):
             wprint("State synchronization failed")
             return "sync_failed"
 
-@with_progress_tracking
-class CompletionCheckerNode(AsyncNode):
-    """Breaks infinite cycles by checking actual completion status"""
-
-    def __init__(self):
-        super().__init__()
-        self.execution_count = 0
-        self.max_cycles = 5  # Prevent infinite loops
-
-    async def prep_async(self, shared):
-        current_plan = shared.get("current_plan")
-        tasks = shared.get("tasks", {})
-
-        return {
-            "current_plan": current_plan,
-            "tasks": tasks,
-            "execution_count": self.execution_count
-        }
-
-    async def exec_async(self, prep_res):
-        self.execution_count += 1
-
-        # Safety check: prevent infinite loops
-        if self.execution_count > self.max_cycles:
-            wprint(f"Max execution cycles ({self.max_cycles}) reached, terminating")
-            return {
-                "action": "force_terminate",
-                "reason": "Max cycles reached"
-            }
-
-        current_plan = prep_res["current_plan"]
-        tasks = prep_res["tasks"]
-
-        if not current_plan:
-            return {"action": "truly_complete", "reason": "No active plan"}
-
-        # Check actual completion status
-        pending_tasks = [t for t in current_plan.tasks if tasks[t.id].status == "pending"]
-        running_tasks = [t for t in current_plan.tasks if tasks[t.id].status == "running"]
-        completed_tasks = [t for t in current_plan.tasks if tasks[t.id].status == "completed"]
-        failed_tasks = [t for t in current_plan.tasks if tasks[t.id].status == "failed"]
-
-        total_tasks = len(current_plan.tasks)
-
-        # Truly complete: all tasks done
-        if len(completed_tasks) + len(failed_tasks) == total_tasks:
-            if len(failed_tasks) == 0 or len(completed_tasks) > len(failed_tasks):
-                return {"action": "truly_complete", "reason": "All tasks completed"}
-            else:
-                return {"action": "truly_complete", "reason": "Plan failed but cannot continue"}
-
-        # Has pending tasks that can run
-        if pending_tasks and not running_tasks:
-            return {"action": "continue_execution", "reason": f"{len(pending_tasks)} tasks ready"}
-
-        # Has running tasks, wait
-        if running_tasks:
-            return {"action": "continue_execution", "reason": f"{len(running_tasks)} tasks running"}
-
-        # Need reflection if tasks are stuck
-        if pending_tasks and not running_tasks:
-            return {"action": "needs_reflection", "reason": "Tasks may be blocked"}
-
-        # Default: we're done
-        return {"action": "truly_complete", "reason": "No actionable tasks"}
-
-    async def post_async(self, shared, prep_res, exec_res):
-        action = exec_res["action"]
-
-        # Reset counter on true completion
-        if action == "truly_complete":
-            self.execution_count = 0
-            shared["flow_completion_reason"] = exec_res["reason"]
-        elif action == "force_terminate":  # HINZUGEFÜGT
-            self.execution_count = 0
-            shared["flow_completion_reason"] = f"Force terminated: {exec_res['reason']}"
-            shared["force_terminated"] = True
-            wprint(f"Flow force terminated: {exec_res['reason']}")
-
-        return action
 
 # ===== FLOW COMPOSITIONS =====
 @with_progress_tracking
@@ -3327,8 +1860,6 @@ class TaskManagementFlow(AsyncFlow):
         self.llm_reasoner = LLMReasonerNode(max_reasoning_loops=max_reasoning_loops)
 
         # Create specialized sub-system nodes (now supporting nodes)
-        self.planner_node = TaskPlannerNode()
-        self.executor_node = TaskExecutorNode(max_parallel=max_parallel_tasks)
         self.sync_node = StateSyncNode()
         self.llm_tool_node = LLMToolNode(max_tool_calls=max_tool_calls)
 
@@ -3361,8 +1892,6 @@ class TaskManagementFlow(AsyncFlow):
 
         # Inject sub-system references into shared state so reasoner can access them
         shared["llm_tool_node_instance"] = self.llm_tool_node
-        shared["task_planner_instance"] = self.planner_node
-        shared["task_executor_instance"] = self.executor_node
 
         # Store tool registry access for the reasoner
         agent_instance = shared.get("agent_instance")
@@ -3373,4274 +1902,672 @@ class TaskManagementFlow(AsyncFlow):
         # Execute the flow with the reasoner as starting point
         return await super().run_async(shared)
 
+# ============================================================================
+# META-TOOL DEFINITIONS - Native Function Calling Format
+# ============================================================================
 
-@with_progress_tracking
-class ResponseGenerationFlow(AsyncFlow):
-    """Intelligente Antwortgenerierung basierend auf Task-Ergebnissen"""
-
-    def __init__(self, tools=None):
-        # Nodes für Response-Pipeline
-        self.context_aggregator = ContextAggregatorNode()
-        self.result_synthesizer = ResultSynthesizerNode()
-        self.response_formatter = ResponseFormatterNode()
-        self.quality_checker = ResponseQualityNode()
-        self.final_processor = ResponseFinalProcessorNode()
-
-        # === RESPONSE GENERATION PIPELINE ===
-
-        # Context Aggregation -> Synthesis
-        self.context_aggregator - "context_ready" >> self.result_synthesizer
-        self.context_aggregator - "no_context" >> self.response_formatter  # Fallback
-
-        # Synthesis -> Formatting
-        self.result_synthesizer - "synthesized" >> self.response_formatter
-        self.result_synthesizer - "synthesis_failed" >> self.response_formatter
-
-        # Formatting -> Quality Check
-        self.response_formatter - "formatted" >> self.quality_checker
-        self.response_formatter - "format_failed" >> self.final_processor  # Skip quality check
-
-        # Quality Check -> Final Processing oder Retry
-        self.quality_checker - "quality_good" >> self.final_processor
-        self.quality_checker - "quality_poor" >> self.result_synthesizer  # Retry synthesis
-        self.quality_checker - "quality_acceptable" >> self.final_processor
-
-        super().__init__(start=self.context_aggregator)
-
-
-# Neue spezialisierte Nodes für Response-Generation
-
-@with_progress_tracking
-class ContextAggregatorNode(AsyncNode):
-    """Vereinfachte Context-Aggregation über UnifiedContextManager"""
-
-    async def prep_async(self, shared):
-        """Simplified preparation - delegate to UnifiedContextManager"""
-        return {
-            "context_manager": shared.get("context_manager"),
-            "session_id": shared.get("session_id", "default"),
-            "original_query": shared.get("current_query", ""),
-            "tasks": shared.get("tasks", {}),
-            "current_plan": shared.get("current_plan"),
-            "world_model": shared.get("world_model", {}),
-            "results": shared.get("results", {})
-        }
-
-    async def exec_async(self, prep_res):
-        """VEREINFACHT: Get aggregated context from UnifiedContextManager"""
-
-        context_manager = prep_res.get("context_manager")
-        session_id = prep_res.get("session_id", "default")
-        query = prep_res.get("original_query", "")
-
-        if not context_manager:
-            # Fallback: Create basic aggregated context
-            return self._create_fallback_context(prep_res)
-
-        try:
-            #Get unified context from context manager
-            unified_context = await context_manager.build_unified_context(session_id, query, "full")
-
-            # Transform to expected aggregated_context format for compatibility
-            aggregated_context = {
-                "original_query": query,
-                "successful_results": self._extract_successful_results(unified_context),
-                "failed_attempts": self._extract_failed_attempts(prep_res["tasks"]),
-                "key_discoveries": self._extract_key_discoveries(unified_context),
-                "adaptation_summary": self._extract_adaptation_summary(prep_res),
-                "confidence_scores": self._calculate_confidence_scores(unified_context),
-                "unified_context": unified_context,  # Include full unified context
-                "context_source": "unified_context_manager"
-            }
-
-            return aggregated_context
-
-        except Exception as e:
-            eprint(f"UnifiedContextManager aggregation failed: {e}")
-            return self._create_fallback_context(prep_res)
-
-    def _extract_successful_results(self, unified_context: dict[str, Any]) -> dict[str, Any]:
-        """Extract successful results from unified context"""
-        successful_results = {}
-
-        try:
-            # Get from variables context
-            variables = unified_context.get("variables", {})
-            recent_results = variables.get("recent_results", [])
-
-            for result in recent_results:
-                if result.get("success"):
-                    task_id = result.get("task_id", f"result_{len(successful_results)}")
-                    successful_results[task_id] = {
-                        "task_description": f"Task {task_id}",
-                        "task_type": "unified_context_result",
-                        "result": result.get("preview", ""),
-                        "metadata": {
-                            "timestamp": result.get("timestamp"),
-                            "source": "unified_context"
-                        }
+META_TOOLS_SCHEMA = [
+    {
+        "type": "function",
+        "function": {
+            "name": "think",
+            "description": "Internal reasoning step. Use this to think through a problem before taking action. Does NOT count as progress - always follow with an action tool.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "thought": {
+                        "type": "string",
+                        "description": "Your reasoning or analysis"
                     }
-
-            # Also check execution state for completions
-            execution_state = unified_context.get("execution_state", {})
-            recent_completions = execution_state.get("recent_completions", [])
-
-            for completion in recent_completions:
-                task_id = completion.get("id", f"completion_{len(successful_results)}")
-                successful_results[task_id] = {
-                    "task_description": completion.get("description", "Completed task"),
-                    "task_type": "execution_completion",
-                    "result": f"Task completed at {completion.get('completed_at', 'unknown time')}",
-                    "metadata": {
-                        "completion_time": completion.get("completed_at"),
-                        "source": "execution_state"
-                    }
-                }
-
-            return successful_results
-
-        except Exception as e:
-            eprint(f"Error extracting successful results: {e}")
-            return {}
-
-    def _extract_failed_attempts(self, tasks: dict) -> dict[str, Any]:
-        """Extract failed attempts from tasks (existing functionality)"""
-        failed_attempts = {}
-
-        try:
-            for task_id, task in tasks.items():
-                if task.status == "failed":
-                    failed_attempts[task_id] = {
-                        "description": task.description,
-                        "error": task.error,
-                        "retry_count": task.retry_count
-                    }
-            return failed_attempts
-        except:
-            return {}
-
-    def _extract_key_discoveries(self, unified_context: dict[str, Any]) -> list[dict[str, Any]]:
-        """Extract key discoveries from unified context"""
-        discoveries = []
-
-        try:
-            # Extract from relevant facts
-            relevant_facts = unified_context.get("relevant_facts", [])
-            for key, value in relevant_facts[:3]:  # Top 3 facts
-                discoveries.append({
-                    "discovery": f"Fact discovered: {key}",
-                    "confidence": 0.8,  # Default confidence for facts
-                    "result": value
-                })
-
-            # Extract from successful results
-            variables = unified_context.get("variables", {})
-            recent_results = variables.get("recent_results", [])
-
-            for result in recent_results[:2]:  # Top 2 results
-                if result.get("success"):
-                    discoveries.append({
-                        "discovery": f"Task result: {result.get('task_id', 'unknown')}",
-                        "confidence": 0.7,
-                        "result": result.get("preview", "")
-                    })
-
-            return discoveries
-
-        except Exception as e:
-            eprint(f"Error extracting discoveries: {e}")
-            return []
-
-    def _extract_adaptation_summary(self, prep_res: dict) -> str:
-        """Extract adaptation summary"""
-        try:
-            current_plan = prep_res.get("current_plan")
-            if current_plan and hasattr(current_plan, 'metadata'):
-                adaptations = current_plan.metadata.get("adaptations", 0)
-                if adaptations > 0:
-                    return f"Plan was adapted {adaptations} times to handle unexpected results."
-            return ""
-        except:
-            return ""
-
-    def _calculate_confidence_scores(self, unified_context: dict[str, Any]) -> dict[str, float]:
-        """Calculate confidence scores based on unified context"""
-        try:
-            scores = {"overall": 0.5}
-
-            # Base confidence on available data
-            chat_history = unified_context.get("chat_history", [])
-            if chat_history:
-                scores["conversation_context"] = min(len(chat_history) / 10, 1.0)
-
-            variables = unified_context.get("variables", {})
-            recent_results = variables.get("recent_results", [])
-            successful_results = [r for r in recent_results if r.get("success")]
-
-            if recent_results:
-                scores["execution_results"] = len(successful_results) / len(recent_results)
-
-            # Calculate overall confidence
-            scores["overall"] = sum(scores.values()) / len(scores)
-
-            return scores
-
-        except:
-            return {"overall": 0.3}
-
-    def _create_fallback_context(self, prep_res: dict) -> dict[str, Any]:
-        """Create fallback context when UnifiedContextManager is unavailable"""
-        return {
-            "original_query": prep_res.get("original_query", ""),
-            "successful_results": {},
-            "failed_attempts": self._extract_failed_attempts(prep_res.get("tasks", {})),
-            "key_discoveries": [],
-            "adaptation_summary": "Fallback context - UnifiedContextManager unavailable",
-            "confidence_scores": {"overall": 0.2},
-            "context_source": "fallback"
-        }
-
-    async def post_async(self, shared, prep_res, exec_res):
-        """Store aggregated context for downstream nodes"""
-        shared["aggregated_context"] = exec_res
-
-        #Also store unified context reference for other nodes
-        if "unified_context" in exec_res:
-            shared["unified_context"] = exec_res["unified_context"]
-
-        if exec_res.get("successful_results") or exec_res.get("key_discoveries"):
-            return "context_ready"
-        else:
-            return "no_context"
-
-@with_progress_tracking
-class ResultSynthesizerNode(AsyncNode):
-    """Synthetisiere finale Antwort aus allen Ergebnissen"""
-
-    async def prep_async(self, shared):
-        return {
-            "aggregated_context": shared.get("aggregated_context", {}),
-            "fast_llm_model": shared.get("fast_llm_model"),
-            "complex_llm_model": shared.get("complex_llm_model"),
-            "agent_instance": shared.get("agent_instance")
-        }
-
-    async def exec_async(self, prep_res):
-        if not LITELLM_AVAILABLE:
-            return await self._fallback_synthesis(prep_res)
-
-        context = prep_res["aggregated_context"]
-        persona = (prep_res['agent_instance'].amd.persona.to_system_prompt_addition() if not prep_res['agent_instance'].amd.persona.should_post_process() else '') if prep_res['agent_instance'].amd.persona else None
-        prompt = f"""
-Du bist ein Experte für Informationssynthese. Erstelle eine umfassende, hilfreiche Antwort basierend auf den gesammelten Ergebnissen.
-
-## Ursprüngliche Anfrage
-{context.get('original_query', '')}
-
-## Erfolgreiche Ergebnisse
-{self._format_successful_results(context.get('successful_results', {}))}
-
-## Wichtige Entdeckungen
-{self._format_key_discoveries(context.get('key_discoveries', []))}
-
-## Plan-Adaptationen
-{context.get('adaptation_summary', 'No adaptations were needed.')}
-
-## Fehlgeschlagene Versuche
-{self._format_failed_attempts(context.get('failed_attempts', {}))}
-
-{persona}
-
-## Anweisungen
-1. Gib eine direkte, hilfreiche Antwort auf die ursprüngliche Anfrage
-2. Integriere alle relevanten gefundenen Informationen
-3. Erkläre kurz den Prozess, falls Adaptationen nötig waren
-4. Sei ehrlich über Limitationen oder fehlende Informationen
-5. Strukturiere die Antwort logisch und lesbar
-
-Erstelle eine finale Antwort:"""
-
-        try:
-            # Verwende complex model für finale Synthesis
-            model_to_use = prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
-            agent_instance = prep_res["agent_instance"]
-            synthesized_response = await agent_instance.a_run_llm_completion(
-                model=model_to_use,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=1500,
-                node_name="ResultSynthesizerNode", task_id="response_synthesis"
-            )
-
-            return {
-                "synthesized_response": synthesized_response,
-                "synthesis_method": "llm",
-                "model_used": model_to_use,
-                "confidence": self._estimate_synthesis_confidence(context)
-            }
-
-        except Exception as e:
-            eprint(f"LLM synthesis failed: {e}")
-            return await self._fallback_synthesis(prep_res)
-
-    def _format_successful_results(self, results: dict) -> str:
-        formatted = []
-        for _task_id, result_info in results.items():
-            formatted.append(f"- {result_info['task_description']}: {str(result_info['result'])[:20000]}...")
-        return "\n".join(formatted) if formatted else "No successful results to report."
-
-    def _format_key_discoveries(self, discoveries: list) -> str:
-        formatted = []
-        for discovery in discoveries:
-            confidence = discovery.get('confidence', 0.0)
-            formatted.append(f"- {discovery['discovery']} (Confidence: {confidence:.2f})")
-        return "\n".join(formatted) if formatted else "No key discoveries."
-
-    def _format_failed_attempts(self, failed: dict) -> str:
-        if not failed:
-            return "No significant failures."
-        formatted = [f"- {info['description']}: {info['error']}" for info in failed.values()]
-        return "\n".join(formatted)
-
-    async def _fallback_synthesis(self, prep_res) -> dict:
-        """Fallback synthesis ohne LLM"""
-        context = prep_res["aggregated_context"]
-
-        # Einfache Template-basierte Synthese
-        response_parts = []
-
-        if context.get("key_discoveries"):
-            response_parts.append("Based on my analysis, I found:")
-            for discovery in context["key_discoveries"][:3]:  # Top 3
-                response_parts.append(f"- {discovery['discovery']}")
-
-        if context.get("successful_results"):
-            response_parts.append("\nDetailed results:")
-            for _task_id, result in list(context["successful_results"].items())[:2]:  # Top 2
-                response_parts.append(f"- {result['task_description']}: {str(result['result'])[:150]}")
-
-        if context.get("adaptation_summary"):
-            response_parts.append(f"\n{context['adaptation_summary']}")
-
-        fallback_response = "\n".join(
-            response_parts) if response_parts else "I was unable to complete the requested task effectively."
-
-        return {
-            "synthesized_response": fallback_response,
-            "synthesis_method": "fallback",
-            "confidence": 0.3
-        }
-
-    def _estimate_synthesis_confidence(self, context: dict) -> float:
-        """Schätze Confidence der Synthese"""
-        confidence = 0.5  # Base confidence
-
-        # Boost für erfolgreiche Ergebnisse
-        successful_count = len(context.get("successful_results", {}))
-        confidence += min(successful_count * 0.15, 0.3)
-
-        # Boost für key discoveries mit hoher confidence
-        for discovery in context.get("key_discoveries", []):
-            discovery_conf = discovery.get("confidence", 0.0)
-            confidence += discovery_conf * 0.1
-
-        # Penalty für viele fehlgeschlagene Versuche
-        failed_count = len(context.get("failed_attempts", {}))
-        confidence -= min(failed_count * 0.1, 0.2)
-
-        return max(0.1, min(1.0, confidence))
-
-    async def post_async(self, shared, prep_res, exec_res):
-        shared["synthesized_response"] = exec_res
-        if exec_res.get("synthesized_response"):
-            return "synthesized"
-        else:
-            return "synthesis_failed"
-
-
-@with_progress_tracking
-class ResponseFormatterNode(AsyncNode):
-    """Formatiere finale Antwort für Benutzer"""
-
-    async def prep_async(self, shared):
-        return {
-            "synthesized_response": shared.get("synthesized_response", {}),
-            "original_query": shared.get("current_query", ""),
-            "user_preferences": shared.get("user_preferences", {})
-        }
-
-    async def exec_async(self, prep_res):
-        synthesis_data = prep_res["synthesized_response"]
-        raw_response = synthesis_data.get("synthesized_response", "")
-
-        if not raw_response:
-            return {
-                "formatted_response": "I apologize, but I was unable to generate a meaningful response to your query."}
-
-        # Basis-Formatierung
-        formatted_response = raw_response.strip()
-
-        # Füge Metadaten hinzu falls gewünscht (für debugging/transparency)
-        confidence = synthesis_data.get("confidence", 0.0)
-        if confidence < 0.4:
-            formatted_response += "\n\n*Note: This response has low confidence due to limited information.*"
-
-        adaptation_note = ""
-        synthesis_method = synthesis_data.get("synthesis_method", "unknown")
-        if synthesis_method == "fallback":
-            adaptation_note = "\n\n*Note: Response generated with limited processing capabilities.*"
-
-        return {
-            "formatted_response": formatted_response + adaptation_note,
-            "confidence": confidence,
-            "metadata": {
-                "synthesis_method": synthesis_method,
-                "response_length": len(formatted_response)
+                },
+                "required": ["thought"]
             }
         }
-
-    async def post_async(self, shared, prep_res, exec_res):
-        shared["formatted_response"] = exec_res
-        return "formatted"
-
-@with_progress_tracking
-class ResponseQualityNode(AsyncNode):
-    """Prüfe Qualität der generierten Antwort"""
-
-    async def prep_async(self, shared):
-        return {
-            "formatted_response": shared.get("formatted_response", {}),
-            "original_query": shared.get("current_query", ""),
-            "format_config": self._get_format_config(shared),
-            "fast_llm_model": shared.get("fast_llm_model"),
-            "persona_config": shared.get("persona_config"),
-            "agent_instance": shared.get("agent_instance"),
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_tools",
+            "description": "Delegate a task to the tool execution system. Use this when you need to use external tools like file operations, web search, etc.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": "Clear description of what needs to be done"
+                    },
+                    "tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of tool names to use (e.g., ['read_file', 'web_search'])"
+                    }
+                },
+                "required": ["task", "tools"]
+            }
         }
-
-    def _get_format_config(self, shared) -> FormatConfig | None:
-        """Extrahiere Format-Konfiguration"""
-        persona = shared.get("persona_config")
-        if persona and hasattr(persona, 'format_config'):
-            return persona.format_config
-        return None
-
-    async def exec_async(self, prep_res):
-        response_data = prep_res["formatted_response"]
-        response_text = response_data.get("formatted_response", "")
-        original_query = prep_res["original_query"]
-        format_config = prep_res["format_config"]
-
-        # Basis-Qualitätsprüfung
-        base_quality = self._heuristic_quality_check(response_text, original_query)
-
-        # Format-spezifische Bewertung
-        format_quality = await self._evaluate_format_adherence(response_text, format_config)
-
-        # Längen-spezifische Bewertung
-        length_quality = self._evaluate_length_adherence(response_text, format_config)
-
-        # LLM-basierte Gesamtbewertung
-        llm_quality = 0.5
-        if LITELLM_AVAILABLE and len(response_text) > 500:
-            llm_quality = await self._llm_format_quality_check(
-                response_text, original_query, format_config, prep_res
-            )
-
-        # Gewichtete Gesamtbewertung
-        total_quality = (
-            base_quality * 0.3 +
-            format_quality * 0.3 +
-            length_quality * 0.2 +
-            llm_quality * 0.2
-        )
-
-        quality_details = {
-            "total_score": total_quality,
-            "base_quality": base_quality,
-            "format_adherence": format_quality,
-            "length_adherence": length_quality,
-            "llm_assessment": llm_quality,
-            "format_config_used": format_config is not None
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "complete",
+            "description": "Finish the task and provide the final answer to the user. Call this when you have gathered all necessary information and are ready to respond.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "answer": {
+                        "type": "string",
+                        "description": "The complete, final answer for the user"
+                    }
+                },
+                "required": ["answer"]
+            }
         }
-
-        return {
-            "quality_score": total_quality,
-            "quality_assessment": self._score_to_assessment(total_quality),
-            "quality_details": quality_details,
-            "suggestions": self._generate_format_quality_suggestions(
-                total_quality, response_text, format_config, quality_details
-            )
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "store_result",
+            "description": "Store a value for later reference. Use this to save intermediate results.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Name/key for the stored value"
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "The value to store"
+                    }
+                },
+                "required": ["key", "value"]
+            }
         }
-
-    async def _evaluate_format_adherence(self, response: str, format_config: FormatConfig | None) -> float:
-        """Bewerte Format-Einhaltung"""
-        if not format_config:
-            return 0.8  # Neutral wenn kein Format vorgegeben
-
-        format_type = format_config.response_format
-        score = 0.5
-
-        # Format-spezifische Checks
-        if format_type == ResponseFormat.WITH_TABLES:
-            if '|' in response or 'Table:' in response or '| ' in response:
-                score += 0.4
-
-        elif format_type == ResponseFormat.WITH_BULLET_POINTS:
-            bullet_count = response.count('•') + response.count('-') + response.count('*')
-            if bullet_count >= 2:
-                score += 0.4
-            elif bullet_count >= 1:
-                score += 0.2
-
-        elif format_type == ResponseFormat.WITH_LISTS:
-            list_patterns = ['1.', '2.', '3.', 'a)', 'b)', 'c)']
-            list_score = sum(1 for pattern in list_patterns if pattern in response)
-            score += min(0.4, list_score * 0.1)
-
-        elif format_type == ResponseFormat.MD_TEXT:
-            md_elements = ['#', '**', '*', '`', '```', '[', ']', '(', ')']
-            md_score = sum(1 for element in md_elements if element in response)
-            score += min(0.4, md_score * 0.05)
-
-        elif format_type == ResponseFormat.YAML_TEXT:
-            if response.strip().startswith(('```yaml', '---')) or ': ' in response:
-                score += 0.4
-
-        elif format_type == ResponseFormat.JSON_TEXT:
-            if response.strip().startswith(('{', '[')):
-                try:
-                    json.loads(response)
-                    score += 0.4
-                except:
-                    score += 0.1  # Partial credit for JSON-like structure
-
-        elif format_type == ResponseFormat.TEXT_ONLY:
-            # Penalize if formatting elements are present
-            format_elements = ['#', '*', '|', '```', '1.', '•', '-']
-            format_count = sum(1 for element in format_elements if element in response)
-            score += max(0.1, 0.5 - format_count * 0.05)
-
-        elif format_type == ResponseFormat.PSEUDO_CODE:
-            code_indicators = ['if ', 'for ', 'while ', 'def ', 'return ', 'function', 'BEGIN', 'END']
-            code_score = sum(1 for indicator in code_indicators if indicator in response)
-            score += min(0.4, code_score * 0.1)
-
-        return max(0.0, min(1.0, score))
-
-    def _evaluate_length_adherence(self, response: str, format_config: FormatConfig | None) -> float:
-        """Bewerte Längen-Einhaltung"""
-        if not format_config:
-            return 0.8
-
-        word_count = len(response.split())
-        min_words, max_words = format_config.get_expected_word_range()
-
-        if min_words <= word_count <= max_words:
-            return 1.0
-        elif word_count < min_words:
-            # Zu kurz - sanfte Bestrafung
-            ratio = word_count / min_words
-            return max(0.3, ratio * 0.8)
-        else:  # word_count > max_words
-            # Zu lang - weniger Bestrafung als zu kurz
-            excess_ratio = (word_count - max_words) / max_words
-            return max(0.4, 1.0 - excess_ratio * 0.3)
-
-    async def _llm_format_quality_check(
-        self,
-        response: str,
-        query: str,
-        format_config: FormatConfig | None,
-        prep_res: dict
-    ) -> float:
-        """LLM-basierte Format- und Qualitätsbewertung"""
-        if not format_config:
-            return await self._standard_llm_quality_check(response, query, prep_res)
-
-        format_desc = format_config.get_format_instructions()
-        length_desc = format_config.get_length_instructions()
-
-        prompt = f"""
-Bewerte diese Antwort auf einer Skala von 0.0 bis 1.0 basierend auf Format-Einhaltung und Qualität:
-
-Benutzer-Anfrage: {query}
-
-Antwort: {response}
-
-Erwartetes Format: {format_desc}
-Erwartete Länge: {length_desc}
-
-Bewertungskriterien:
-1. Format-Einhaltung (40%): Entspricht die Antwort dem geforderten Format?
-2. Längen-Angemessenheit (25%): Ist die Länge angemessen?
-3. Inhaltliche Qualität (25%): Beantwortet die Anfrage vollständig?
-4. Lesbarkeit und Struktur (10%): Ist die Antwort gut strukturiert?
-
-Antworte nur mit einer Zahl zwischen 0.0 und 1.0:"""
-
-        try:
-            model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
-            agent_instance = prep_res["agent_instance"]
-            score_text = (await agent_instance.a_run_llm_completion(
-                model=model_to_use,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=10,
-                node_name="QualityAssessmentNode", task_id="format_quality_assessment"
-            )).strip()
-
-            return float(score_text)
-
-        except Exception as e:
-            wprint(f"LLM format quality check failed: {e}")
-            return 0.6  # Neutral fallback
-
-    def _generate_format_quality_suggestions(
-        self,
-        score: float,
-        response: str,
-        format_config: FormatConfig | None,
-        quality_details: dict
-    ) -> list[str]:
-        """Generiere Format-spezifische Verbesserungsvorschläge"""
-        suggestions = []
-
-        if not format_config:
-            return ["Consider defining a specific response format for better consistency"]
-
-        # Format-spezifische Vorschläge
-        if quality_details["format_adherence"] < 0.6:
-            format_type = format_config.response_format
-
-            if format_type == ResponseFormat.WITH_TABLES:
-                suggestions.append("Add tables using markdown format (| Column | Column |)")
-            elif format_type == ResponseFormat.WITH_BULLET_POINTS:
-                suggestions.append("Use bullet points (•, -, *) to structure information")
-            elif format_type == ResponseFormat.MD_TEXT:
-                suggestions.append("Use markdown formatting (headers, bold, code blocks)")
-            elif format_type == ResponseFormat.YAML_TEXT:
-                suggestions.append("Format response as valid YAML structure")
-            elif format_type == ResponseFormat.JSON_TEXT:
-                suggestions.append("Format response as valid JSON")
-
-        # Längen-spezifische Vorschläge
-        if quality_details["length_adherence"] < 0.6:
-            word_count = len(response.split())
-            min_words, max_words = format_config.get_expected_word_range()
-
-            if word_count < min_words:
-                suggestions.append(f"Response too short ({word_count} words). Aim for {min_words}-{max_words} words")
-            else:
-                suggestions.append(f"Response too long ({word_count} words). Aim for {min_words}-{max_words} words")
-
-        # Qualitäts-spezifische Vorschläge
-        if score < 0.5:
-            suggestions.append("Overall quality needs improvement - consider regenerating")
-        elif score < 0.7:
-            suggestions.append("Good response but could be enhanced with better format adherence")
-
-        return suggestions
-
-    async def _standard_llm_quality_check(self, response: str, query: str, prep_res: dict) -> float:
-        """Standard LLM-Qualitätsprüfung ohne Format-Fokus"""
-        # Bestehende Implementierung beibehalten
-        return await self._llm_quality_check(response, query, prep_res)
-
-    def _heuristic_quality_check(self, response: str, query: str) -> float:
-        """Heuristische Qualitätsprüfung"""
-        score = 0.5  # Base score
-
-        # Length check
-        if len(response) < 50:
-            score -= 0.3
-        elif len(response) > 100:
-            score += 0.2
-
-        # Query term coverage
-        query_terms = set(query.lower().split())
-        response_terms = set(response.lower().split())
-        coverage = len(query_terms.intersection(response_terms)) / max(len(query_terms), 1)
-        score += coverage * 0.3
-
-        # Structure indicators
-        if any(indicator in response for indicator in [":", "-", "1.", "•"]):
-            score += 0.1  # Structured response bonus
-
-        return max(0.0, min(1.0, score))
-
-    async def _llm_quality_check(self, response: str, query: str, prep_res: dict) -> float:
-        """LLM-basierte Qualitätsprüfung"""
-        try:
-            prompt = f"""
-Rate the quality of this response to the user's query on a scale of 0.0 to 1.0.
-
-User Query: {query}
-
-Response: {response}
-
-Consider:
-- Relevance to the query
-- Completeness of information
-- Clarity and readability
-- Accuracy (if verifiable)
-
-Respond with just a number between 0.0 and 1.0:"""
-
-            model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
-            agent_instance = prep_res["agent_instance"]
-            score_text = (await agent_instance.a_run_llm_completion(
-                model=model_to_use,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=10,
-                node_name="QualityAssessmentNode", task_id="quality_assessment"
-            )).strip()
-
-            return float(score_text)
-
-        except:
-            return 0.5  # Fallback score
-
-    def _score_to_assessment(self, score: float) -> str:
-        if score >= 0.8:
-            return "quality_good"
-        elif score >= 0.5:
-            return "quality_acceptable"
-        else:
-            return "quality_poor"
-
-    async def post_async(self, shared, prep_res, exec_res):
-        shared["quality_assessment"] = exec_res
-        return exec_res["quality_assessment"]
-
-
-@with_progress_tracking
-class ResponseFinalProcessorNode(AsyncNode):
-    """Finale Verarbeitung mit Persona-System"""
-
-    async def prep_async(self, shared):
-        return {
-            "formatted_response": shared.get("formatted_response", {}),
-            "quality_assessment": shared.get("quality_assessment", {}),
-            "conversation_history": shared.get("conversation_history", []),
-            "persona": shared.get("persona_config"),
-            "fast_llm_model": shared.get("fast_llm_model"),
-            "use_fast_response": shared.get("use_fast_response", True),
-            "agent_instance": shared.get("agent_instance"),
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_result",
+            "description": "Retrieve a previously stored value.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Name/key of the stored value to retrieve"
+                    }
+                },
+                "required": ["key"]
+            }
         }
+    }
+]
 
-    async def exec_async(self, prep_res):
-        response_data = prep_res["formatted_response"]
-        raw_response = response_data.get("formatted_response", "I apologize, but I couldn't generate a response.")
 
-        # Persona-basierte Anpassung
-        if prep_res.get("persona") and LITELLM_AVAILABLE:
-            final_response = await self._apply_persona_style(raw_response, prep_res)
-        else:
-            final_response = raw_response
+# ============================================================================
+# SYSTEM PROMPT - Klar und direkt
+# ============================================================================
 
-        # Finale Metadaten
-        processing_metadata = {
-            "response_confidence": response_data.get("confidence", 0.0),
-            "quality_score": prep_res.get("quality_assessment", {}).get("quality_score", 0.0),
-            "processing_timestamp": datetime.now().isoformat(),
-            "response_length": len(final_response),
-            "persona_applied": prep_res.get("persona") is not None
-        }
+SYSTEM_PROMPT = """You are a reasoning agent that solves tasks step by step.
 
-        return {
-            "final_response": final_response,
-            "metadata": processing_metadata,
-            "status": "completed"
-        }
+## Available Actions (use function calling):
+1. **think** - Internal reasoning (doesn't count as progress, always follow with action)
+2. **execute_tools** - Run external tools for file ops, search, etc.
+3. **store_result** - Save intermediate results
+4. **get_result** - Retrieve saved results
+5. **complete** - Finish and provide final answer
 
-    async def _apply_persona_style(self, response: str, prep_res: dict) -> str:
-        """Optimized persona styling mit Konfiguration"""
-        persona = prep_res["persona"]
+## Rules:
+1. ALWAYS use function calling - never write tool names in plain text
+2. For simple queries: think briefly → complete with answer
+3. For complex tasks: think → execute_tools → (repeat if needed) → complete
+4. NEVER get stuck - if you can answer directly, use complete immediately
+5. Maximum {max_loops} reasoning loops - plan efficiently
 
-        # Nur anwenden wenn post-processing konfiguriert
-        if not persona.should_post_process():
-            return response
+## Current Context:
+{context}
 
-        # Je nach Integration Level unterschiedliche Prompts
-        if persona.integration_level == "light":
-            style_prompt = f"Make this {persona.tone} and {persona.style}: {response}"
-            max_tokens = 400
-        elif persona.integration_level == "medium":
-            style_prompt = f"""
-    Apply {persona.name} persona (style: {persona.style}, tone: {persona.tone}) to:
-    {response}
+## Task:
+{query}
 
-    Keep the same information, adjust presentation:"""
-            max_tokens = 600
-        else:  # heavy
-            style_prompt = f"""
-Completely transform as {persona.name}:
-Style: {persona.style}, Tone: {persona.tone}
-Traits: {', '.join(persona.personality_traits)}
-Instructions: {persona.custom_instructions}
+Proceed step by step. If you can answer directly, call complete immediately."""
 
-Original: {response}
 
-As {persona.name}:"""
-            max_tokens = 1000
+# ============================================================================
+# REASONER NODE - Lean Implementation
+# ============================================================================
 
-        try:
-            model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
-            agent_instance = prep_res["agent_instance"]
-            if prep_res.get("use_fast_response", True):
-                response = await agent_instance.a_run_llm_completion(
-                    model=model_to_use,
-                    messages=[{"role": "user", "content": style_prompt}],
-                    temperature=0.5,
-                    max_tokens=max_tokens, node_name="PersonaStylingNode", task_id="persona_styling_fast"
-                )
-            else:
-                response = await agent_instance.a_run_llm_completion(
-                    model=model_to_use,
-                    messages=[{"role": "user", "content": style_prompt}],
-                    temperature=0.6,
-                    max_tokens=max_tokens + 200, node_name="PersonaStylingNode", task_id="persona_styling_ritch"
-                )
-
-            return response.strip()
-
-        except Exception as e:
-            wprint(f"Persona styling failed: {e}")
-            return response
-
-    async def post_async(self, shared, prep_res, exec_res):
-        shared["current_response"] = exec_res["final_response"]
-        shared["response_metadata"] = exec_res["metadata"]
-        return "response_ready"
+@dataclass
+class ReasoningState:
+    """Minimal state tracking"""
+    loop_count: int = 0
+    results: dict = field(default_factory=dict)
+    history: list = field(default_factory=list)
+    final_answer: Optional[str] = None
+    completed: bool = False
 
 
 @with_progress_tracking
 class LLMReasonerNode(AsyncNode):
     """
-    Enhanced strategic reasoning core with outline-driven execution,
-    context management, auto-recovery, and intensive variable system integration.
+    Lean strategic reasoning node with native function calling.
+
+    Key improvements:
+    - Uses agent_instance.a_run_llm_completion with tools parameter
+    - Clear, minimal meta-tools that LLMs understand
+    - No complex prompt engineering that confuses models
+    - Direct execution path with clear abort conditions
     """
 
-    def __init__(self, max_reasoning_loops: int = 24, **kwargs):
+    def __init__(self, max_reasoning_loops: int = 12, **kwargs):
         super().__init__(**kwargs)
-        self.max_reasoning_loops = max_reasoning_loops
-        self.reasoning_context = []
-        self.internal_task_stack = []
-        self.meta_tools_registry = {}
-        self.current_loop_count = 0
-        self.current_reasoning_count = 0
-        self.agent_instance: FlowAgent = None
-
-        # Enhanced tracking systems
-        self.outline = None
-        self.current_outline_step = 0
-        self.step_completion_tracking = {}
-        self.loop_detection_memory = []
-        self.context_summary_threshold = 15
-        self.max_context_size = 30
-        self.performance_metrics = {
-                "loop_times": [],
-                "progress_loops": 0,
-                "total_loops": 0
-            }
-        self.auto_recovery_attempts = 0
-        self.max_auto_recovery = 8
+        self.max_loops = max_reasoning_loops
+        self.state: Optional[ReasoningState] = None
+        self.agent_instance: Optional['FlowAgent'] = None
         self.variable_manager = None
 
-        # Anti-loop mechanisms
-        self.last_action_signatures = []
-        self.step_enforcement_active = True
-        self.mandatory_progress_check = True
-
-    async def prep_async(self, shared):
-        """Enhanced initialization with variable system integration"""
-        # Reset for new execution
-        self.reasoning_context = []
-        self.internal_task_stack = []
-        self.current_loop_count = 0
-        self.current_reasoning_count = 0
-        self.outline = None
-        self.current_outline_step = 0
-        self.step_completion_tracking = {}
-        self.loop_detection_memory = []
-        self.performance_metrics = {
-            "loop_times": [],
-            "progress_loops": 0,
-            "total_loops": 0
-        }
-        self.auto_recovery_attempts = 0
-        self.last_action_signatures = []
-
+    async def prep_async(self, shared: dict) -> dict:
+        """Minimal preparation - extract what we need"""
+        self.state = ReasoningState()
         self.agent_instance = shared.get("agent_instance")
+        self.variable_manager = shared.get("variable_manager")
 
-        # Enhanced variable manager integration
-        self.variable_manager = shared.get("variable_manager", self.agent_instance.variable_manager)
-        context_manager = shared.get("context_manager")
+        # Build minimal context
+        context_parts = []
 
+        # Available tools
+        available_tools = shared.get("available_tools", [])
+        if available_tools:
+            context_parts.append(f"Available tools: {', '.join(available_tools[:20])}")
+
+        # Previous results if any
         if self.variable_manager:
-            # Store reasoning session context
-            session_context = {
-                "session_id": shared.get("session_id", "default"),
-                "start_time": datetime.now().isoformat(),
-                "query": shared.get("current_query", ""),
-                "reasoning_mode": "outline_driven"
-            }
-            self.variable_manager.set("reasoning.current_session", session_context)
-            # Load previous successful patterns from variables
-            self._load_historical_patterns()
-
-        #Build comprehensive system context via UnifiedContextManager
-        system_context = await self._build_enhanced_system_context_unified(shared, context_manager)
-
-        return {
-            "original_query": shared.get("current_query", ""),
-            "session_id": shared.get("session_id", "default"),
-            "agent_instance": shared.get("agent_instance"),
-            "variable_manager": self.variable_manager,
-            "context_manager": context_manager,  #Context Manager Reference
-            "system_context": system_context,
-            "available_tools": shared.get("available_tools", []),
-            "tool_capabilities": shared.get("tool_capabilities", {}),
-            "fast_llm_model": shared.get("fast_llm_model"),
-            "complex_llm_model": shared.get("complex_llm_model"),
-            "progress_tracker": shared.get("progress_tracker"),
-            "formatted_context": shared.get("formatted_context", {}),
-            "historical_context": await self._get_historical_context_unified(context_manager, shared.get("session_id")),
-            "capabilities_summary": shared.get("capabilities_summary", ""),
-            # Sub-system references
-            "llm_tool_node": shared.get("llm_tool_node_instance"),
-            "task_planner": shared.get("task_planner_instance"),
-            "task_executor": shared.get("task_executor_instance"),
-            "fast_run": shared.get("fast_run", False),  # Das fast_run Flag übergeben
-        }
-
-    async def exec_async(self, prep_res):
-        """Enhanced main reasoning loop with outline-driven execution"""
-        if not LITELLM_AVAILABLE:
-            return await self._fallback_direct_response(prep_res)
-
-        original_query = prep_res["original_query"]
-        agent_instance = prep_res["agent_instance"]
-        progress_tracker = prep_res.get("progress_tracker")
-        fast_run = prep_res.get("fast_run", False)  # fast_run-Flag abrufen
-
-        # Initialize enhanced reasoning context
-        await self._initialize_reasoning_session(prep_res, original_query)
-
-        # STEP 1: BEDINGTE GLIEDERUNGSERSTELLUNG
-        if not self.outline:
-            # --- Neu: Bedingte Gliederungserstellung ---
-            if fast_run:
-                self.outline = self._create_generic_adaptive_outline()
-                self.reasoning_context.append({
-                    "type": "outline_created",
-                    "content": "Using generic adaptive outline for fast run.",
-                    "outline": self.outline,
-                    "timestamp": datetime.now().isoformat()
-                })
-                rprint("Fast run mode: Using generic adaptive outline")
-            else:
-                with Spinner("Creating initial outline..."):
-                    outline_result = await self._create_initial_outline(prep_res)
-                if self.outline and len(self.outline.get("steps", [])) == 1:
-                    # fast llm respose on the input metoning tis is a direct respose and evalute if the input dosent need an outline
-                    print("Fast direct response triggered")
-                    response = await self.agent_instance.a_run_llm_completion(
-                        model=prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku"),
-                        messages=[{"role": "user", "content": prep_res["original_query"]}],
-                        temperature=0.3,
-                        max_tokens=2048,
-                        node_name="LLMReasonerNode",
-                        task_id="fast_direct_response"
-                    )
-                    return {
-                            "final_result": response,
-                            "reasoning_loops": self.current_loop_count,
-                            "reasoning_context": self.reasoning_context.copy(),
-                            "internal_task_stack": self.internal_task_stack.copy(),
-                            "outline": self.outline,
-                            "outline_completion": self.current_outline_step,
-                            "performance_metrics": self.performance_metrics,
-                            "auto_recovery_attempts": self.auto_recovery_attempts
-                        }
-                elif not outline_result:
-                    return await self._fallback_direct_response(prep_res)
-            # -----------------------------------------
-
-        final_result = None
-        consecutive_no_progress = 0
-        max_no_progress = 3
-
-        # Enhanced main reasoning loop with strict progress tracking
-        while self.current_reasoning_count < self.max_reasoning_loops:
-            self.current_loop_count += 1
-            loop_start_time = time.time()
-
-            # Check for infinite loops
-            if self._detect_infinite_loop():
-                await self._trigger_auto_recovery(prep_res)
-                if self.auto_recovery_attempts >= self.max_auto_recovery:
-                    break
-
-            # Auto-context management
-            await self._manage_context_size()
-
-            # AUTO-CLEAN: Reasoning scope compression every 10 loops
-            if self.current_loop_count % 10 == 0 and self.variable_manager:
-                rprint(f"🔄 Auto-compressing reasoning scope at loop {self.current_loop_count}")
-                compression_result = await self.variable_manager.auto_compress_reasoning_scope()
-                if compression_result.get('compressed'):
-                    rprint(f"✅ Reasoning compressed: {compression_result['stats']['compression_ratio']}x reduction")
-
-            # Progress tracking
-            if progress_tracker:
-                await progress_tracker.emit_event(ProgressEvent(
-                    event_type="reasoning_loop",
-                    timestamp=time.time(),
-                    node_name="LLMReasonerNode",
-                    status=NodeStatus.RUNNING,
-                    metadata={
-                        "loop_number": self.current_loop_count,
-                        "outline_step": self.current_outline_step,
-                        "outline_total": len(self.outline.get("steps", [])) if self.outline else 0,
-                        "context_size": len(self.reasoning_context),
-                        "task_stack_size": len(self.internal_task_stack),
-                        "auto_recovery_attempts": self.auto_recovery_attempts,
-                        "performance_metrics": self.performance_metrics
-                    }
-                ))
-
-            try:
-                # Build enhanced reasoning prompt with outline context
-                reasoning_prompt = await self._build_outline_driven_prompt(prep_res)
-
-                # Force progress check if needed
-                if self.mandatory_progress_check and consecutive_no_progress >= 2:
-                    reasoning_prompt += "\n\n**MANDATORY**: You must either complete current outline step or move to next step. No more analysis without action!"
-
-                # LLM reasoning call
-                model_to_use = prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
-
-                llm_response = await agent_instance.a_run_llm_completion(
-                    model=model_to_use,
-                    messages=[{"role": "user", "content": reasoning_prompt}],
-                    temperature=0.2,  # Lower temperature for more focused execution
-                    # max_tokens=3072,
-                    node_name="LLMReasonerNode",
-                    stop="<immediate_context>",
-                    task_id=f"reasoning_loop_{self.current_loop_count}_step_{self.current_outline_step}"
+            latest = self.variable_manager.get("delegation.latest")
+            if latest:
+                context_parts.append(
+                    f"Previous result available: {latest.get('task_description', 'unknown')[:100]}"
                 )
 
-                # Add LLM response to context
-                self.reasoning_context.append({
-                    "type": "reasoning",
-                    "content": llm_response,
-                    "loop": self.current_loop_count,
-                    "outline_step": self.current_outline_step,
-                    "timestamp": datetime.now().isoformat()
-                })
-
-                # Parse and execute meta-tool calls with enhanced tracking
-                progress_made = await self._parse_and_execute_meta_tools(llm_response, prep_res)
-
-                action_taken = progress_made.get("action_taken", False)
-                actual_progress = progress_made.get("progress_made", False)
-
-                # Update performance with correct progress indication
-                self._update_performance_metrics(loop_start_time, actual_progress)
-
-                if not action_taken:
-                    self.current_reasoning_count += 1
-                    if self.current_outline_step > len(self.outline.get("steps", [])):
-                        progress_made["final_result"] = llm_response
-                        rprint("Final result reached forced by outline step count")
-                    if self.current_outline_step < len(self.outline.get("steps", [])) and self.outline.get("steps", [])[self.current_outline_step].get("is_final", False):
-                        progress_made["final_result"] = llm_response
-                        rprint("Final result reached forced by outline step count final step")
-                else:
-                    self.current_reasoning_count -= 1
-
-                # Check for final result
-                if progress_made.get("final_result"):
-                    final_result = progress_made["final_result"]
-                    await self._finalize_reasoning_session(prep_res, final_result)
-                    break
-
-                # Progress monitoring
-                if progress_made.get("action_taken"):
-                    consecutive_no_progress = 0
-                    self._update_performance_metrics(loop_start_time, True)
-                else:
-                    consecutive_no_progress += 1
-                    self._update_performance_metrics(loop_start_time, False)
-
-                # Check outline completion
-                if self.outline and self.current_outline_step >= len(self.outline.get("steps", []))+self.max_reasoning_loops:
-                    # All outline steps completed, force final response
-                    final_result = await self._create_outline_completion_response(prep_res)
-                    break
-
-                # Emergency break for excessive no-progress
-                if consecutive_no_progress >= max_no_progress:
-                    await self._trigger_auto_recovery(prep_res)
-
-            except Exception as e:
-                await self._handle_reasoning_error(e, prep_res, progress_tracker)
-                import traceback
-                print(traceback.format_exc())
-                if self.auto_recovery_attempts >= self.max_auto_recovery:
-                    final_result = await self._create_error_response(original_query, str(e))
-                    break
-
-
-        # If no final result after max loops, create a comprehensive summary
-        if not final_result:
-            final_result = await self._create_enhanced_timeout_response(original_query, prep_res)
-
         return {
-            "final_result": final_result,
-            "reasoning_loops": self.current_loop_count,
-            "reasoning_context": self.reasoning_context.copy(),
-            "internal_task_stack": self.internal_task_stack.copy(),
-            "outline": self.outline,
-            "outline_completion": self.current_outline_step,
-            "performance_metrics": self.performance_metrics,
-            "auto_recovery_attempts": self.auto_recovery_attempts
+            "query": shared.get("current_query", ""),
+            "context": "\n".join(context_parts) if context_parts else "No prior context",
+            "available_tools": available_tools,
+            "model": shared.get("complex_llm_model", "openrouter/openai/gpt-4o"),
+            "agent_instance": self.agent_instance,
+            "variable_manager": self.variable_manager,
+            "progress_tracker": shared.get("progress_tracker"),
+            "session_id": shared.get("session_id", "default"),
+            "tool_capabilities": shared.get("tool_capabilities", {}),
+            "fast_llm_model": shared.get("fast_llm_model"),
         }
 
-    async def _build_enhanced_system_context_unified(self, shared, context_manager) -> str:
-        """Build comprehensive system context mit UnifiedContextManager"""
-        context_parts = []
-
-        # Enhanced agent capabilities
-        available_tools = shared.get("available_tools", [])
-        if available_tools:
-            context_parts.append(f"Available external tools: {', '.join(available_tools)}")
-
-        #Context Manager Status
-        if context_manager:
-            session_stats = context_manager.get_session_statistics()
-            context_parts.append(f"Context System: Advanced with {session_stats['total_sessions']} active sessions")
-            context_parts.append(f"Cache Status: {session_stats['cache_entries']} cached contexts")
-
-        # Variable system context
-        if self.variable_manager:
-            var_info = self.variable_manager.get_scope_info()
-            context_parts.append(f"Variable System: {len(var_info)} scopes available")
-
-            # Recent results availability
-            results_count = len(self.variable_manager.get("results", {}))
-            if results_count:
-                context_parts.append(f"Previous results: {results_count} task results available")
-
-        #Enhanced system state mit Context-Awareness
-        session_id = shared.get("session_id", "default")
-        if context_manager and session_id in context_manager.session_managers:
-            session = context_manager.session_managers[session_id]
-            if hasattr(session, 'history'):
-                context_parts.append(f"Session History: {len(session.history)} conversation entries available")
-            elif isinstance(session, dict) and 'history' in session:
-                context_parts.append(f"Session History: {len(session['history'])} conversation entries (fallback mode)")
-
-        # System state with enhanced details
-        tasks = shared.get("tasks", {})
-        if tasks:
-            active_tasks = len([t for t in tasks.values() if t.status == "running"])
-            completed_tasks = len([t for t in tasks.values() if t.status == "completed"])
-            context_parts.append(f"Execution state: {active_tasks} active, {completed_tasks} completed tasks")
-
-        # Performance history
-        if hasattr(self, 'historical_successful_patterns'):
-            context_parts.append(
-                f"Historical patterns: {len(self.historical_successful_patterns)} successful patterns loaded")
-
-        return "\n".join(context_parts) if context_parts else "Basic system context available"
-
-    async def _get_historical_context_unified(self, context_manager, session_id: str) -> str:
-        """Get historical context from UnifiedContextManager"""
-        if not context_manager:
-            return ""
-
-        try:
-            #Get unified context for historical analysis
-            unified_context = await context_manager.build_unified_context(session_id, None, "historical")
-
-            context_parts = []
-
-            # Chat history insights
-            chat_history = unified_context.get("chat_history", [])
-            if chat_history:
-                context_parts.append(f"Conversation History: {len(chat_history)} messages available")
-
-                # Analyze conversation patterns
-                user_queries = [msg['content'] for msg in chat_history if msg.get('role') == 'user']
-                if user_queries:
-                    avg_query_length = sum(len(q) for q in user_queries) / len(user_queries)
-                    context_parts.append(f"Query patterns: Avg length {avg_query_length:.0f} chars")
-
-            # Execution history from variables
-            if self.variable_manager:
-                # Recent successful queries
-                recent_successes = self.variable_manager.get("reasoning.recent_successes", [])
-                if recent_successes:
-                    context_parts.append(f"Recent successful queries: {len(recent_successes)}")
-
-                # Performance history
-                avg_loops = self.variable_manager.get("reasoning.performance.avg_loops", 0)
-                if avg_loops:
-                    context_parts.append(f"Average reasoning loops: {avg_loops}")
-
-            # System insights from unified context
-            execution_state = unified_context.get("execution_state", {})
-            if execution_state.get("recent_completions"):
-                completions = execution_state["recent_completions"]
-                context_parts.append(f"Recent completions: {len(completions)} tasks finished")
-
-            return "\n".join(context_parts)
-
-        except Exception as e:
-            eprint(f"Failed to get historical context: {e}")
-            return "Historical context unavailable"
-
-    def _load_historical_patterns(self):
-        """Load successful patterns from previous reasoning sessions"""
-        if not self.variable_manager:
-            return
-
-        # Load successful outline patterns
-        successful_outlines = self.variable_manager.get("reasoning.successful_patterns.outlines", [])
-        failed_patterns = self.variable_manager.get("reasoning.failed_patterns", [])
-
-        self.historical_successful_patterns = successful_outlines[-5:]  # Last 5 successful
-        self.historical_failed_patterns = failed_patterns[-10:]  # Last 10 failed
-
-    def _get_historical_context(self) -> str:
-        """Get historical context from variable system"""
-        if not self.variable_manager:
-            return ""
-
-        context_parts = []
-
-        # Recent successful queries
-        recent_successes = self.variable_manager.get("reasoning.recent_successes", [])
-        if recent_successes:
-            context_parts.append(f"Recent successful queries: {len(recent_successes)}")
-
-        # Performance history
-        avg_loops = self.variable_manager.get("reasoning.performance.avg_loops", 0)
-        if avg_loops:
-            context_parts.append(f"Average reasoning loops: {avg_loops}")
-
-        # Common failure patterns to avoid
-        failure_patterns = self.variable_manager.get("reasoning.failure_patterns", [])
-        if failure_patterns:
-            context_parts.append(f"Known failure patterns: {len(failure_patterns)}")
-
-        return "\n".join(context_parts)
-
-    async def _initialize_reasoning_session(self, prep_res, original_query):
-        """Initialize enhanced reasoning session with variable tracking"""
-        # Initialize reasoning context
-        self.reasoning_context.append({
-            "type": "session_start",
-            "content": f"Enhanced reasoning session started for: {original_query}",
-            "timestamp": datetime.now().isoformat(),
-            "session_id": prep_res.get("session_id")
-        })
-
-        # Store session in variables
-        if self.variable_manager:
-            session_data = {
-                "query": original_query,
-                "start_time": datetime.now().isoformat(),
-                "max_loops": self.max_reasoning_loops,
-                "context_management": "auto_summary",
-                "outline_driven": True
-            }
-            self.variable_manager.set("reasoning.current_session.data", session_data)
-
-        # Add enhanced system context
-        self.reasoning_context.append({
-            "type": "system_context",
-            "content": prep_res["system_context"],
-            "timestamp": datetime.now().isoformat()
-        })
-
-        # Add historical context if available
-        historical = prep_res.get("historical_context")
-        if historical:
-            self.reasoning_context.append({
-                "type": "historical_context",
-                "content": historical,
-                "timestamp": datetime.now().isoformat()
-            })
-
-    async def _create_initial_outline(self, prep_res) -> bool:
-        """Create mandatory initial outline, with a fast path for simple queries."""
-        original_query = prep_res["original_query"]
-        agent_instance = prep_res["agent_instance"]
-
-        outline_prompt = f"""You MUST create an initial execution outline for this query. This is mandatory.
-
-**Query:** {original_query}
-
-**Available Resources:**
-- Tools: {', '.join(prep_res.get('available_tools', []))}
-- Sub-systems: LLM Tool Node, Task Planner, Task Executor
-
-LLM Tool Node is for all tool calls!
-LLM Tool Node is best for simple multi-step tasks like fetching data from a tool and summarizing it.
-Task Planner is best for complex tasks with multiple dependencies and complex task flows.
-
-**Historical Context:** {prep_res.get('historical_context', 'None')}
-
-**Fast Path for Simple Queries:**
-If the query is simple and can be answered directly without needing tools or complex reasoning, you MUST create a single-step outline using the `direct_response` method.
-
-Create a structured outline using this EXACT format:
-
-```outline
-OUTLINE_START
-Step 1: [Brief description of first step]
-- Method: [internal_reasoning | delegate_to_llm_tool_node | direct_response]
-- Expected outcome: [What this step should achieve]
-- Success criteria: [How to know this step is complete]
-
-[For complex queries, continue with more steps as needed.]
-
-Final Step: Synthesize results and provide comprehensive response
-- Method: direct_response
-- Expected outcome: Complete answer to user query
-- Success criteria: User query fully addressed
-OUTLINE_END
-```
-
-**Requirements:**
-1. Outline must have between 1 and 7 steps.
-2. For simple queries, a single "Final Step" using the 'direct_response' method is the correct approach.
-3. Each step must have clear success criteria and build logically toward the answer.
-4. Be specific about which meta-tools to use for each step. meta-tools ar not Tools ! avalabel meta-tools *Method* (internal_reasoning, delegate_to_llm_tool_node, direct_response) no exceptions
-
-Create the outline now:"""
-
-        try:
-            llm_response = await agent_instance.a_run_llm_completion(
-                model=prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o"),
-                messages=[{"role": "system", "content": outline_prompt}, {"role": "user", "content": original_query}],
-                temperature=0.2,  # Lower temperature for more deterministic outlining
-                node_name="LLMReasonerNode",
-                task_id="create_initial_outline",
-                stream=False,
-                auto_fallbacks=False,
-                stop=["OUTLINE_END"]
-            )
-            llm_response += "OUTLINE_END"
-
-            # Parse outline from response
-            # print(llm_response)
-            outline = self._parse_outline_from_response(llm_response)
-
-            if self.agent_instance and self.agent_instance.progress_tracker:
-                await self.agent_instance.progress_tracker.emit_event(ProgressEvent(
-                    event_type="outline_created",
-                    timestamp=time.time(),
-                    node_name="LLMReasonerNode",
-                    status=NodeStatus.COMPLETED,
-                    task_id="create_initial_outline",
-                    metadata={"outline": outline}
-                ))
-
-            if outline:
-                self.outline = outline
-                self.current_outline_step = 0
-
-                # Store outline in variables
-                if self.variable_manager:
-                    self.variable_manager.set("reasoning.current_session.outline", outline)
-
-                # Add to reasoning context
-                self.reasoning_context.append({
-                    "type": "outline_created",
-                    "content": f"Created outline with {len(outline.get('steps', []))} steps",
-                    "outline": outline,
-                    "timestamp": datetime.now().isoformat()
-                })
-
-                return True
-            else:
-                return False
-
-        except Exception as e:
-            eprint(f"Failed to create initial outline: {e}")
-            import traceback
-            print(traceback.format_exc())
-            return False
-
-    def _parse_outline_from_response(self, response: str) -> dict[str, Any]:
-        """Parse structured outline from LLM response"""
-        import re
-
-        # Find outline section
-        outline_match = re.search(r'OUTLINE_START(.*?)OUTLINE_END', response, re.DOTALL)
-        if not outline_match:
-            return None
-
-        outline_text = outline_match.group(1).strip()
-
-        # Parse steps
-        steps = []
-        current_step = None
-
-        for line in outline_text.split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-
-            # New step
-            if re.match(r'^Step \d+:', line):
-                if current_step:
-                    steps.append(current_step)
-
-                current_step = {
-                    "description": re.sub(r'^Step \d+:\s*', '', line),
-                    "method": "",
-                    "expected_outcome": "",
-                    "success_criteria": "",
-                    "status": "pending"
-                }
-            elif re.match(r'^Final Step:', line):
-                if current_step:
-                    steps.append(current_step)
-
-                current_step = {
-                    "description": re.sub(r'^Final Step:\s*', '', line),
-                    "method": "direct_response",
-                    "expected_outcome": "",
-                    "success_criteria": "",
-                    "status": "pending",
-                    "is_final": True
-                }
-            elif current_step and line.startswith('- Method:'):
-                current_step["method"] = line.replace('- Method:', '').strip()
-            elif current_step and line.startswith('- Expected outcome:'):
-                current_step["expected_outcome"] = line.replace('- Expected outcome:', '').strip()
-            elif current_step and line.startswith('- Success criteria:'):
-                current_step["success_criteria"] = line.replace('- Success criteria:', '').strip()
-
-        # Add final step if exists
-        if current_step:
-            steps.append(current_step)
-
-        if not steps:
-            return None
-
-        return {
-            "steps": steps,
-            "created_at": datetime.now().isoformat(),
-            "total_steps": len(steps)
-        }
-
-    def _create_generic_adaptive_outline(self) -> dict:
-        """Erstellt eine generische Gliederung für schnelle, werkzeugbasierte Antworten.
-
-        Diese Methode wird verwendet, wenn fast_run=True ist, um die detaillierte
-        Outline-Erstellung zu überspringen und stattdessen eine vordefinierte,
-        adaptive Gliederung zu verwenden, die sofortige Werkzeugnutzung fördert.
-
-        Returns:
-            dict: Eine generische Outline-Struktur mit 2 Schritten
-        """
-        return {
-            "steps": [
-                {
-                    "description": "Initiale Analyse und sofortige Werkzeugnutzung für eine schnelle Antwort.",
-                    "method": "delegate_to_llm_tool_node",
-                    "expected_outcome": "Eine direkte Antwort oder das Ergebnis einer einzelnen Werkzeugausführung.",
-                    "success_criteria": "Ein Werkzeug wurde aufgerufen oder eine direkte Antwort wurde formuliert.",
-                    "status": "pending"
-                },
-                {
-                    "description": "Ergebnisse zusammenfassen und eine umfassende Antwort geben.",
-                    "method": "direct_response",
-                    "expected_outcome": "Eine vollständige Antwort auf die Benutzeranfrage.",
-                    "success_criteria": "Die Benutzeranfrage ist vollständig beantwortet.",
-                    "is_final": True,
-                    "status": "pending"
-                }
-            ],
-            "created_at": datetime.now().isoformat(),
-            "total_steps": 2,
-            "fast_run_mode": True
-        }
-
-    def _build_enhanced_system_context(self, shared) -> str:
-        """Build comprehensive system context with variable system info"""
-        context_parts = []
-
-        # Enhanced agent capabilities
-        available_tools = shared.get("available_tools", [])
-        if available_tools:
-            context_parts.append(f"Available external tools: {', '.join(available_tools)}")
-
-        # Variable system context
-        if self.variable_manager:
-            var_info = self.variable_manager.get_scope_info()
-            context_parts.append(f"Variable System: {len(var_info)} scopes available")
-
-            # Recent results availability
-            results_count = len(self.variable_manager.get("results", {}))
-            if results_count:
-                context_parts.append(f"Previous results: {results_count} task results available")
-
-        # System state with enhanced details
-        tasks = shared.get("tasks", {})
-        if tasks:
-            active_tasks = len([t for t in tasks.values() if t.status == "running"])
-            completed_tasks = len([t for t in tasks.values() if t.status == "completed"])
-            context_parts.append(f"Execution state: {active_tasks} active, {completed_tasks} completed tasks")
-
-        # Session context with history
-        formatted_context = shared.get("formatted_context", {})
-        if formatted_context:
-            recent_interaction = formatted_context.get("recent_interaction", "")
-            if recent_interaction:
-                context_parts.append(f"Recent interaction: {recent_interaction[:100000]}...")
-
-        # Performance history
-        if hasattr(self, 'historical_successful_patterns'):
-            context_parts.append(
-                f"Historical patterns: {len(self.historical_successful_patterns)} successful patterns loaded")
-
-        return "\n".join(context_parts) if context_parts else "Basic system context available"
-
-    async def _manage_context_size(self):
-        """Auto-manage context size with intelligent summarization"""
-        if len(self.reasoning_context) <= self.context_summary_threshold:
-            return
-
-        # Trigger summarization
-        if len(self.reasoning_context) >= self.max_context_size:
-            # Emergency summarization
-            await self._emergency_context_summary()
-        elif len(self.reasoning_context) >= self.context_summary_threshold:
-            # Regular summarization
-            await self._regular_context_summary()
-
-    async def _regular_context_summary(self):
-        """Regular context summarization when threshold is reached"""
-        # Keep last 10 entries, summarize the rest
-        keep_recent = self.reasoning_context[-10:]
-        to_summarize = self.reasoning_context[:-10]
-
-        summary = self._create_context_summary(to_summarize, "regular")
-
-        # Replace old context with summary + recent
-        self.reasoning_context = [
-                                     {
-                                         "type": "context_summary",
-                                         "content": summary,
-                                         "summarized_entries": len(to_summarize),
-                                         "summary_type": "regular",
-                                         "timestamp": datetime.now().isoformat()
-                                     }
-                                 ] + keep_recent
-
-    async def _emergency_context_summary(self):
-        """Emergency context summarization when max size is reached"""
-        # Keep last 5 entries, summarize everything else
-        keep_recent = self.reasoning_context[-5:]
-        to_summarize = self.reasoning_context[:-5]
-
-        summary = self._create_context_summary(to_summarize, "emergency")
-
-        # Replace with emergency summary
-        self.reasoning_context = [
-                                     {
-                                         "type": "context_summary",
-                                         "content": summary,
-                                         "summarized_entries": len(to_summarize),
-                                         "summary_type": "emergency",
-                                         "timestamp": datetime.now().isoformat()
-                                     }
-                                 ] + keep_recent
-
-    def _create_context_summary(self, entries: list[dict], summary_type: str) -> str:
-        """Create intelligent context summary"""
-        if not entries:
-            return "No context to summarize"
-
-        summary_parts = []
-
-        # Group by type
-        by_type = {}
-        for entry in entries:
-            entry_type = entry.get("type", "unknown")
-            if entry_type not in by_type:
-                by_type[entry_type] = []
-            by_type[entry_type].append(entry)
-
-        # Summarize each type
-        for entry_type, type_entries in by_type.items():
-            if entry_type == "reasoning":
-                reasoning_summary = f"Completed {len(type_entries)} reasoning cycles"
-                # Extract key insights
-                insights = []
-                for entry in type_entries[-3:]:  # Last 3 reasoning entries
-                    content = entry.get("content", "")[:1000] + "..."
-                    insights.append(content)
-                if insights:
-                    reasoning_summary += f"\nKey recent reasoning: {'; '.join(insights)}"
-                summary_parts.append(reasoning_summary)
-
-            elif entry_type == "meta_tool_result":
-                results_summary = f"Executed {len(type_entries)} meta-tool operations"
-                # Extract significant results
-                significant_results = [
-                    entry.get("content", "")[:800]
-                    for entry in type_entries
-                    if len(entry.get("content", "")) > 50
-                ]
-                if significant_results:
-                    results_summary += f"\nSignificant results: {'; '.join(significant_results[-3:])}"
-                summary_parts.append(results_summary)
-
-            else:
-                summary_parts.append(f"{entry_type}: {len(type_entries)} entries")
-
-        summary = f"[{summary_type.upper()} SUMMARY] " + "; ".join(summary_parts)
-
-        # Store summary in variables for future reference
-        if self.variable_manager:
-            summary_data = {
-                "type": summary_type,
-                "entries_summarized": len(entries),
-                "summary": summary,
-                "timestamp": datetime.now().isoformat()
-            }
-            summaries = self.variable_manager.get("reasoning.context_summaries", [])
-            # Ensure summaries is a list
-            if not isinstance(summaries, list):
-                print(f"WARNING: summaries is not a list, but a {type(summaries)}", summaries)
-                summaries = [summaries]
-            summaries.append(summary_data)
-            self.variable_manager.set("reasoning.context_summaries", summaries[-10:])  # Keep last 10
-
-        return summary
-
-    def _get_pending_tasks_summary(self) -> str:
-        """Get summary of pending tasks requiring attention"""
-        if not self.internal_task_stack:
-            return "⚠️ NO TASKS IN STACK - You must create tasks from your outline immediately!"
-
-        pending_tasks = [task for task in self.internal_task_stack if task.get("status", "pending") == "pending"]
-
-        if not pending_tasks:
-            return "✅ No pending tasks - ready for next outline step or completion"
-
-        task_summaries = []
-        for i, task in enumerate(pending_tasks[:3], 1):
-            desc = task.get("description", "No description")[:150] + "..." if len(
-                task.get("description", "")) > 50 else task.get("description", "")
-            step_ref = task.get("outline_step_ref", "")
-            step_info = f" ({step_ref})" if step_ref else ""
-            task_summaries.append(f"{i}. {desc}{step_info}")
-
-        if len(pending_tasks) > 3:
-            task_summaries.append(f"... +{len(pending_tasks) - 3} more pending tasks")
-
-        return f"📋 {len(pending_tasks)} pending tasks:\n" + "\n".join(task_summaries)
-
-    async def _build_outline_driven_prompt(self, prep_res) -> str:
-        """Build outline-driven reasoning prompt mit UnifiedContextManager Integration"""
-
-        # Get current task with enhanced visibility
-        current_stack_task = self._get_current_stack_task()
-
-        #Enhanced context aus UnifiedContextManager
-        context_manager = prep_res.get("context_manager")
-        session_id = prep_res.get("session_id", "default")
-
-        # Build unified context sections
-        unified_context_summary = ""
-        recent_results_context = ""
-
-        if context_manager:
-            try:
-                # Get full unified context
-                unified_context = await  context_manager.build_unified_context(session_id, prep_res.get('original_query'))
-
-                unified_context_summary = self._format_unified_context_for_reasoning(unified_context)
-                recent_results_context = self._build_recent_results_from_unified_context(unified_context)
-            except Exception as e:
-                eprint(f"Failed to get unified context in reasoning prompt: {e}")
-                unified_context_summary = "Unified context unavailable"
-                recent_results_context = "**No recent results available**"
-
-        # Enhanced context summaries (keeping existing functionality)
-        context_summary = self._summarize_reasoning_context()
-        task_stack_summary = self._summarize_task_stack()
-        outline_status = self._get_current_step_requirements()
-        performance_context = self._get_performance_context()
-
-        # Enhanced variable system integration with better suggestions
-        variable_context = ""
-        variable_suggestions = []
-        if self.variable_manager:
-            variable_context = self.variable_manager.get_llm_variable_context()
-            query_text = prep_res.get('original_query', '')
-            if current_stack_task:
-                query_text += " " + current_stack_task.get('description', '')
-            variable_suggestions = self.variable_manager.get_variable_suggestions(query_text)
-
-        immediate_context = self._get_immediate_context_for_prompt()
-        # Detect if we're in a potential loop situation
-        loop_warning = self._generate_loop_warning()
-
-        prompt = f"""You are the enhanced strategic reasoning core operating in OUTLINE-DRIVEN MODE with MANDATORY TASK STACK enforcement.
-## ABSOLUTE REQUIREMENTS - VIOLATION = IMMEDIATE STOP:
-1. **WORK ONLY THROUGH TASK STACK** - No work outside the stack permitted
-2. **SEE CURRENT TASK DIRECTLY** - Your current task is shown below
-3. **USE VARIABLE SYSTEM** - All results are automatically stored and accessible
-4. **USE UNIFIED CONTEXT** - Rich conversation and execution history is available
-5. **MARK TASKS COMPLETE** - Every finished task must be marked complete
-6. **NO REPEATED ACTIONS** - Check variables first before re-doing work
-
-{loop_warning}
-
-## <CURRENT SITUATION>:
-**Original Query:** {prep_res['original_query']}
-
-**Unified Context Summary:**
-{unified_context_summary}
-
-**Current Context Summary:**
-{context_summary}
-
-**Current Outline Status:**
-{outline_status}
-
-** CURRENT TASK FROM STACK:**
-{current_stack_task}
-
-**Internal Task Stack:**
-{task_stack_summary}
-
-**Performance Metrics:**
-{performance_context}
-
-## ENHANCED CONTEXT INTEGRATION:
-{variable_context}
-
-** SUGGESTED VARIABLES for current task:**
-{', '.join(variable_suggestions[:10]) if variable_suggestions else 'tool_capabilities, query, model_complex, available_tools, timestamp, use_fast_response, tool_registry, name, current_query, current_session'}
-
-** UNIFIED CONTEXT RESULTS ACCESS:**
-{recent_results_context}
-
-</CURRENT SITUATION>
-
-## MANDATORY TASK STACK ENFORCEMENT:
-**CRITICAL RULE**: You MUST work exclusively through your internal task stack.
-
-**TASK STACK WORKFLOW (MANDATORY):**
-1. **CHECK CURRENT TASK**: Your current task is: {current_stack_task.get('description', 'NO CURRENT TASK - ADD TASKS FROM OUTLINE!') if current_stack_task else 'NO CURRENT TASK - VIOLATION!'}
-
-2. **WORK ONLY ON STACK TASKS**: You can ONLY work on tasks that exist in your internal task stack
-   - The task you're working on MUST be in the stack with status "pending"
-   - Before any action: Verify the task exists in your stack
-
-3. **MANDATORY TASK COMPLETION**: After completing any work, you MUST mark the task as complete
-   - Use: META_TOOL_CALL: manage_internal_task_stack(action="complete", task_description="[exact task description]", outline_step_ref="step_X")
-
-4. **CHECK UNIFIED CONTEXT FIRST**: Before any major action, focus your attention to the variable system to see if results already exist
-   - Avalabel results are automatically stored in the variable system
-   - The unified context above shows available conversation history and execution state
-
-**CURRENT TASK ANALYSIS:**
-{self._analyze_current_task(current_stack_task) if current_stack_task else "❌ NO CURRENT TASK - You must add tasks from your outline!"}
-
-## AVAILABLE META-TOOLS:
-You have access to these meta-tools to control sub-systems. Use the EXACT syntax shown:
-{self.meta_tools_registry if self.meta_tools_registry else ''}
-
-**META_TOOL_CALL: internal_reasoning(thought: str, thought_number: int, total_thoughts: int, next_thought_needed: bool, current_focus: str, key_insights: list[str], potential_issues: list[str], confidence_level: float)**
-- Purpose: Structure your thinking process explicitly
-- Use for: Any complex analysis, planning, or problem decomposition
-- Example: META_TOOL_CALL: internal_reasoning(thought="I need to break this down into steps", thought_number=1, total_thoughts=3, next_thought_needed=true, current_focus="problem analysis", key_insights=["Query requires multiple data sources"], potential_issues=["Data might not be available"], confidence_level=0.8)
-
-**META_TOOL_CALL: manage_internal_task_stack(action: str, task_description: str)**
-- Purpose: Manage your high-level to-do list
-- Actions: "add", "remove", "complete", "get_current"
-- Example: META_TOOL_CALL: manage_internal_task_stack(action="add", task_description="Research competitor analysis data")
-- ACTIONS ONL AVAILABLE ACTIONS ("add", "remove", "complete", "get_current")
-
-**META_TOOL_CALL: delegate_to_llm_tool_node(task_description: str, tools_list: list[str])**
-- Purpose: Delegate specific, self-contained tasks requiring external tools
-- Use for: Web searches, file operations, API calls, single-, two-, or three-step tool usage
-- Example: META_TOOL_CALL: delegate_to_llm_tool_node(task_description="Search for latest news about AI developments", tools_list=["search_web"])
-- Rule: always validate delegate_to_llm_tool_node result. will be available in <immediate_context> after execution!
-
-**META_TOOL_CALL: read_from_variables(scope: str, key: str, purpose: str)**
-- Unified context data is available in various scopes
-- Example: META_TOOL_CALL: read_from_variables(scope="user", key="name", purpose="Gather user information for later reference")
-
-**META_TOOL_CALL: write_to_variables(scope: str, key: str, value: any, description: str)**
-- Store important findings immediately
-- Example: META_TOOL_CALL: write_to_variables(scope="user", key="name", value="User-Name", description="The users name for later reference")
-
-**META_TOOL_CALL: advance_outline_step(step_completed: bool, completion_evidence: str, next_step_focus: str)**
-- Mark outline steps complete when all related tasks done
-
-**META_TOOL_CALL: direct_response(final_answer: str, outline_completion: bool, steps_completed: list[str])**
-- ONLY when ALL outline steps complete or no META_TOOL_CALL needed
-- final_answer must contain the full final answer for the user with all necessary context and informations ( format in persona style )
-- Purpose: End reasoning and provide final answer to user
-- Use when: Query is complete or can be answered directly
-- Example: META_TOOL_CALL: direct_response(final_answer="Based on my analysis, here are the key findings...")
-
-note: in this interaction only META_TOOL_CALL ar avalabel. for other tools use META_TOOL_CALL: delegate_to_llm_tool_node with the appropriate tool names!
-
-## REASONING STRATEGY:
-1. **Start with internal_reasoning** to understand the query and plan approach
-2. **Use manage_internal_task_stack** to track high-level steps
-3. **Choose the right delegation strategy:**
-   - Simple queries → direct_response
-   - Up to 3 tool tasks with llm action → delegate_to_llm_tool_node
-   - Complex projects → create_and_execute_plan
-4. **Monitor progress** and adapt your approach
-5. **End with direct_response** when complete
-
-## EXAMPLES OF GOOD REASONING PATTERNS:
-
-**Simple Query Pattern:**
-META_TOOL_CALL: internal_reasoning(thought="This is a straightforward question I can answer directly", thought_number=1, total_thoughts=1, next_thought_needed=false, current_focus="direct response", key_insights=["No external data needed"], potential_issues=[], confidence_level=0.9)
-META_TOOL_CALL: direct_response(final_answer="...")
-
-**Research Task Pattern:**
-META_TOOL_CALL: internal_reasoning(thought="I need to gather information from external sources", ...)
-META_TOOL_CALL: manage_internal_task_stack(action="add", task_description="Research topic X")
-META_TOOL_CALL: delegate_to_llm_tool_node(task_description="Search for information about X", tools_list=["search_web"])
-[Wait for result]
-META_TOOL_CALL: internal_reasoning(thought="I have the research data, now I can formulate response", ...)
-META_TOOL_CALL: direct_response(final_answer="Based on my research: ...")
-
-**Complex Project Pattern:**
-META_TOOL_CALL: internal_reasoning(thought="This requires multiple steps with dependencies", ...)
-META_TOOL_CALL: create_and_execute_plan(goals=["Step 1: Gather data A", "Step 2: Gather data B", "Step 3: Analyze A and B together", "Step 4: Create final report"])
-[Wait for plan completion]
-META_TOOL_CALL: direct_response(final_answer="I've completed your complex request...")
-
-## ENHANCED ANTI-LOOP ENFORCEMENT:
-- Current Loop: {self.current_loop_count}/{self.max_reasoning_loops}
-- Auto-Recovery Attempts: {getattr(self, 'auto_recovery_attempts', 0)}/{getattr(self, 'max_auto_recovery', 3)}
-- Last Actions: {', '.join(getattr(self, 'last_action_signatures', [])[-3:]) if hasattr(self, 'last_action_signatures') else 'None'}
-
-**⚠️ LOOP PREVENTION RULES:**
-1. If you just read a variable, DO NOT read the same variable again
-2. If you completed a task, DO NOT repeat the same work
-3. If results exist in unified context, DO NOT recreate them
-4. Always advance to next logical step
-
-{self._get_current_step_requirements()}
-
-## YOUR NEXT ACTION (Choose ONE):
-Based on your current task, unified context, and available variables, what is your next concrete action?
-
-**DECISION TREE:**
-1. ❓ No current task? → Add tasks from outline
-2. 📖 Current task needs data? → Check variables and unified context first (read_from_variables)
-3. 🔧 Need to execute tools and reason over up to 3 steps? → Use delegate_to_llm_tool_node
-4. ✅ Task complete? → Mark complete and advance
-5. 🎯 All outline done? → Provide direct_response
-
-Latest unified context: (note delegation results could be wrong or misleading)
-<immediate_context>
-{immediate_context}
-</immediate_context>
-
-must validate <immediate_context> output!
-- validate the <immediate_context> output! before proceeding with the outline!
-- output compleat fail -> direct_response
-- information's missing or output recovery needed -> repeat step with a different strategy
-- not enough structure -> use create_and_execute_plan meta-tool call
-- output is valid -> continue with the outline!
-- if dynamic Planing is needed, you must use the appropriate meta-tool call
-
-**Remember**:
-- work step by step max call 3 meta-tool calls in one run.
-- only use direct_response if the outline is complete and context from <immediate_context> is enough to answer the query!
-- Your job is to work systematically through your outline using your task stack, while leveraging the unified context system to avoid duplicate work and maintain context."""
-
-        return prompt
-
-    def _format_unified_context_for_reasoning(self, unified_context: dict[str, Any]) -> str:
-        """Format unified context für reasoning prompt"""
-        try:
-            context_parts = []
-
-            # Session info
-            session_stats = unified_context.get('session_stats', {})
-            context_parts.append(
-                f"Session: {unified_context.get('session_id', 'unknown')} with {session_stats.get('current_session_length', 0)} messages")
-
-            # Chat history summary
-            chat_history = unified_context.get('chat_history', [])
-            if chat_history:
-                recent_messages = len([msg for msg in chat_history if msg.get('role') == 'user'])
-                context_parts.append(f"Conversation: {recent_messages} user queries in current context")
-
-                # Show last user message for reference
-                last_user_msg = None
-                for msg in reversed(chat_history):
-                    if msg.get('role') == 'user':
-                        last_user_msg = msg.get('content', '')[:100] + "..."
-                        break
-                if last_user_msg:
-                    context_parts.append(f"Latest user query: {last_user_msg}")
-
-            # Execution state
-            execution_state = unified_context.get('execution_state', {})
-            active_tasks = execution_state.get('active_tasks', [])
-            recent_completions = execution_state.get('recent_completions', [])
-            if active_tasks or recent_completions:
-                context_parts.append(
-                    f"Execution: {len(active_tasks)} active, {len(recent_completions)} completed tasks")
-
-            # Available data
-            variables = unified_context.get('variables', {})
-            recent_results = variables.get('recent_results', [])
-            if recent_results:
-                context_parts.append(f"Available Results: {len(recent_results)} recent task results accessible")
-
-            return "\n".join(context_parts)
-
-        except Exception as e:
-            return f"Error formatting unified context: {str(e)}"
-
-    def _build_recent_results_from_unified_context(self, unified_context: dict[str, Any]) -> str:
-        """Build recent results context from unified context"""
-        try:
-            variables = unified_context.get('variables', {})
-            recent_results = variables.get('recent_results', [])
-
-            if not recent_results:
-                return "**No recent results available from unified context**"
-
-            result_context = """**🔍 RECENT RESULTS FROM UNIFIED CONTEXT:**"""
-
-            for i, result in enumerate(recent_results[:3], 1):  # Top 3 results
-                task_id = result.get('task_id', f'result_{i}')
-                preview = result.get('preview', 'No preview')
-                success = result.get('success', False)
-                status_icon = "✅" if success else "❌"
-
-                result_context += f"\n{status_icon} {task_id}: {preview}"
-
-            result_context += "\n\n**Quick Access Keys Available:**"
-            result_context += "\n- Use read_from_variables(scope='results', key='task_id.data') for specific results"
-            result_context += "\n- Check delegation.latest for most recent delegation results"
-
-            return result_context
-
-        except Exception as e:
-            return f"**Error accessing recent results: {str(e)}**"
-
-    def _generate_loop_warning(self) -> str:
-        """Generate loop warning if repetitive behavior detected"""
-        if len(self.last_action_signatures) >= 3:
-            recent_actions = self.last_action_signatures[-3:]
-            if len(set(recent_actions)) <= 2:
-                return """
-⚠️ **LOOP WARNING DETECTED** ⚠️
-You are repeating similar actions. MUST change approach:
-- If you just read variables, act on the results
-- If you delegated tasks, check the results
-- Complete current task and advance to next step
-- DO NOT repeat the same meta-tool calls
-    """
-        return ""
-
-    def _get_current_stack_task(self) -> dict[str, Any]:
-        """Get current pending task from stack for direct visibility"""
-        if not self.internal_task_stack:
-            return {}
-
-        pending_tasks = [task for task in self.internal_task_stack if task.get("status", "pending") == "pending"]
-        if pending_tasks:
-            current_task = pending_tasks[0]  # Get first pending task
-            return {
-                "description": current_task.get("description", ""),
-                "outline_step_ref": current_task.get("outline_step_ref", ""),
-                "status": current_task.get("status", "pending"),
-                "added_at": current_task.get("added_at", ""),
-                "task_index": self.internal_task_stack.index(current_task) + 1,
-                "total_tasks": len(self.internal_task_stack)
-            }
-
-        return {}
-
-    def _analyze_current_task(self, current_task: dict[str, Any]) -> str:
-        """Analyze current task and provide guidance"""
-        if not current_task:
-            return "❌ NO CURRENT TASK - Add tasks from your outline immediately!"
-
-        description = current_task.get("description", "")
-        outline_ref = current_task.get("outline_step_ref", "")
-
-        analysis = f"""CURRENT TASK IDENTIFIED:
-Task: {description}
-Outline Reference: {outline_ref}
-Position: {current_task.get('task_index', '?')}/{current_task.get('total_tasks', '?')}
-
-RECOMMENDED ACTION:"""
-
-        # Analyze task content for recommendations
-        if "read" in description.lower() or "file" in description.lower():
-            analysis += "\n1. Check if file content already exists in variables (read_from_variables)"
-            analysis += "\n2. If not found, use delegate_to_llm_tool_node with read_file tool"
-        elif "write" in description.lower() or "create" in description.lower():
-            analysis += "\n1. Check if content is ready in variables"
-            analysis += "\n2. Use delegate_to_llm_tool_node with write_file tool"
-        elif "analyze" in description.lower() or "question" in description.lower():
-            analysis += "\n1. Read existing data from variables"
-            analysis += "\n2. Process the information and provide direct_response"
-        else:
-            analysis += "\n1. Break down the task into specific actions"
-            analysis += "\n2. Verify last Task Delegation results"
-
-        return analysis
-
-    def _get_immediate_context_for_prompt(self) -> str:
-        """Get immediate context additions from recent meta-tool executions"""
-        recent_results = [
-            entry for entry in self.reasoning_context[-5:]  # Last 5 entries
-            if entry.get("type") == "meta_tool_result"
+    async def exec_async(self, prep_res: dict) -> dict:
+        """Main reasoning loop - simple and direct"""
+        query = prep_res["query"]
+        model = prep_res["model"]
+        agent = prep_res["agent_instance"]
+        progress_tracker = prep_res.get("progress_tracker")
+
+        if not agent:
+            return self._error_result("No agent instance available")
+
+        # Check if model supports function calling
+        use_function_calling = self._supports_function_calling(model)
+
+        # Build initial messages
+        system_msg = SYSTEM_PROMPT.format(
+            max_loops=self.max_loops, context=prep_res["context"], query=query
+        )
+
+        messages = [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": query},
         ]
 
-        if not recent_results:
-            return "No recent meta-tool results"
+        # Main loop
+        while self.state.loop_count < self.max_loops and not self.state.completed:
+            self.state.loop_count += 1
 
-        context_parts = ["📊 IMMEDIATE CONTEXT FROM RECENT ACTIONS:"]
+            # Emit progress event
+            if progress_tracker:
+                await progress_tracker.emit_event(
+                    ProgressEvent(
+                        event_type="reasoning_loop",
+                        timestamp=time.time(),
+                        node_name="LLMReasonerNode",
+                        status=NodeStatus.RUNNING,
+                        metadata={
+                            "loop": self.state.loop_count,
+                            "max_loops": self.max_loops,
+                            "use_function_calling": use_function_calling,
+                        },
+                    )
+                )
 
-        for result in recent_results:
-            meta_tool = result.get("meta_tool", "unknown")
-            content = result.get("content", "")
-            loop = result.get("loop", "?")
+            try:
+                if use_function_calling:
+                    # Native function calling path
+                    result = await self._execute_with_function_calling(
+                        agent, model, messages, prep_res
+                    )
+                else:
+                    # Fallback to manual parsing
+                    result = await self._execute_with_manual_parsing(
+                        agent, model, messages, prep_res
+                    )
 
-            # Format based on meta-tool type
-            if meta_tool == "delegate_to_llm_tool_node":
-                context_parts.append(f"✅ DELEGATION RESULT (Loop {loop}):")
-                context_parts.append(f"   {content}")
-            elif meta_tool == "read_from_variables":
-                context_parts.append(f"📖 VARIABLE READ (Loop {loop}):")
-                context_parts.append(f"   {content}")
-            elif meta_tool == "manage_internal_task_stack":
-                context_parts.append(f"📋 TASK UPDATE (Loop {loop}):")
-                context_parts.append(f"   {content}")
-            else:
-                context_parts.append(f"🔧 {meta_tool.upper()} (Loop {loop}):")
-                context_parts.append(f"   {content}")
+                if result.get("completed"):
+                    self.state.completed = True
+                    self.state.final_answer = result.get("answer")
+                    break
 
-        return "\n".join(context_parts)
+                # Add result to history for next iteration
+                if result.get("message"):
+                    messages.append(result["message"])
+                if result.get("tool_response"):
+                    messages.append(result["tool_response"])
 
-    def _summarize_reasoning_context(self) -> str:
-        """Enhanced reasoning context summary with immediate result visibility"""
-        if not self.reasoning_context:
-            return "No previous reasoning steps"
+            except Exception as e:
+                eprint(f"Reasoning loop {self.state.loop_count} error: {e}")
+                # Don't break - try to recover
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": f"Error occurred: {e}. Please try a different approach or complete with what you know.",
+                    }
+                )
 
-        # Separate different types of context entries
-        reasoning_entries = []
-        meta_tool_results = []
-        errors = []
-
-        for entry in self.reasoning_context:
-            entry_type = entry.get("type", "unknown")
-
-            if entry_type == "reasoning":
-                reasoning_entries.append(entry)
-            elif entry_type == "meta_tool_result":
-                meta_tool_results.append(entry)
-            elif entry_type == "error":
-                errors.append(entry)
-
-        summary_parts = []
-
-        # Show recent meta-tool results FIRST for immediate visibility
-        if meta_tool_results:
-            summary_parts.append("🔍 RECENT RESULTS:")
-            for result in meta_tool_results[-3:]:  # Last 3 results
-                meta_tool = result.get("meta_tool", "unknown")
-                content = result.get("content", "")[:3000] + "..."
-                loop = result.get("loop", "?")
-                summary_parts.append(f"  [{meta_tool}] Loop {loop}: {content}")
-
-        # Show reasoning summary
-        if reasoning_entries:
-            summary_parts.append(f"\n💭 REASONING: {len(reasoning_entries)} reasoning cycles completed")
-
-        # Show errors if any
-        if errors:
-            summary_parts.append(f"\n⚠️ ERRORS: {len(errors)} errors encountered")
-            for error in errors[-2:]:  # Last 2 errors
-                content = error.get("content", "")[:1500]
-                summary_parts.append(f"  Error: {content}")
-
-        return "\n".join(summary_parts)
-
-    def _get_current_step_requirements(self) -> str:
-        """Get requirements for current outline step"""
-        if not self.outline or not self.outline.get("steps"):
-            return "ERROR: No outline available"
-
-        steps = self.outline["steps"]
-        if self.current_outline_step >= len(steps):
-            return "All outline steps completed - must provide final response"
-
-        current_step = steps[self.current_outline_step]
-
-        requirements = f"""CURRENT STEP FOCUS:
-Description: {current_step.get('description', 'Unknown')}
-Required Method: {current_step.get('method', 'Unknown')}
-Expected Outcome: {current_step.get('expected_outcome', 'Unknown')}
-Success Criteria: {current_step.get('success_criteria', 'Unknown')}
-Current Status: {current_step.get('status', 'pending')}
-
-You MUST use the specified method and achieve the expected outcome before advancing."""
-
-        return requirements
-
-    def _get_performance_context(self) -> str:
-        """Get performance context with accurate metrics"""
-        if not self.performance_metrics:
-            return "No performance metrics available"
-
-        metrics_parts = []
-
-        # Core metrics
-        avg_time = self.performance_metrics.get("avg_loop_time", 0)
-        efficiency = self.performance_metrics.get("action_efficiency", 0)
-        total_loops = self.performance_metrics.get("total_loops", 0)
-        progress_loops = self.performance_metrics.get("progress_loops", 0)
-
-        metrics_parts.append(f"Avg Loop Time: {avg_time:.2f}s")
-        metrics_parts.append(f"Progress Rate: {efficiency:.1%}")
-        metrics_parts.append(f"Action Efficiency: {efficiency:.1%}")
-
-        # Performance warnings
-        if total_loops > 3 and efficiency < 0.5:
-            metrics_parts.append("⚠️ LOW EFFICIENCY - Need more progress actions")
-        elif total_loops > 5 and efficiency < 0.3:
-            metrics_parts.append("🔴 VERY LOW EFFICIENCY - Review approach")
-
-        # Loop detection warning based on actual metrics
-        if len(self.last_action_signatures) > 3:
-            unique_recent = len(set(self.last_action_signatures[-3:]))
-            if unique_recent <= 1:
-                metrics_parts.append("⚠️ LOOP PATTERN DETECTED - Change approach required")
-
-        return "; ".join(metrics_parts)
-
-    def _track_action_type(self, action_type: str, success: bool = True):
-        """Track specific action types for detailed performance analysis"""
-        if not hasattr(self, 'action_tracking'):
-            self.action_tracking = {}
-
-        if action_type not in self.action_tracking:
-            self.action_tracking[action_type] = {"total": 0, "successful": 0}
-
-        self.action_tracking[action_type]["total"] += 1
-        if success:
-            self.action_tracking[action_type]["successful"] += 1
-
-        # Update overall action efficiency based on all action types
-        total_actions = sum(stats["total"] for stats in self.action_tracking.values())
-        successful_actions = sum(stats["successful"] for stats in self.action_tracking.values())
-
-        if total_actions > 0:
-            self.performance_metrics["detailed_action_efficiency"] = successful_actions / total_actions
-
-
-    def _detect_infinite_loop(self) -> bool:
-        """Enhanced infinite loop detection with multiple patterns"""
-        if len(self.last_action_signatures) < 3:
-            return False
-
-        # 1. Immediate repetition (same action 3+ times)
-        recent_actions = self.last_action_signatures[-3:]
-        if len(set(recent_actions)) == 1:
-            return True
-
-        # 2. Pattern repetition (AB-AB-AB pattern)
-        if len(self.last_action_signatures) >= 6:
-            pattern1 = self.last_action_signatures[-6:-3]
-            pattern2 = self.last_action_signatures[-3:]
-            if pattern1 == pattern2:
-                return True
-
-        # 3. Variable read loops (multiple reads of same variable)
-        variable_reads = [sig for sig in self.last_action_signatures if sig.startswith("read_from_variables")]
-        if len(variable_reads) >= 3:
-            # Extract variable signatures from recent reads
-            recent_var_reads = variable_reads[-3:]
-            if len(set(recent_var_reads)) <= 2:  # Repeated variable reads
-                return True
-
-        # 4. No outline progress for extended loops
-        if self.current_loop_count > 5:
-            if not hasattr(self, '_last_step_progress_loop'):
-                self._last_step_progress_loop = {}
-
-            last_progress = self._last_step_progress_loop.get(self.current_outline_step, 0)
-            if self.current_loop_count - last_progress > 4:  # No step progress for 4+ loops
-                return True
-
-        # 5. Same task stack state for multiple loops
-        if hasattr(self, '_task_stack_states'):
-            stack_signature = hash(
-                str([(t.get('status'), t.get('description')[:20]) for t in self.internal_task_stack]))
-            if stack_signature in self._task_stack_states:
-                repetitions = self._task_stack_states[stack_signature]
-                if repetitions >= 4:
-                    return True
-                self._task_stack_states[stack_signature] = repetitions + 1
-            else:
-                self._task_stack_states[stack_signature] = 1
+        # Build final result
+        if self.state.final_answer:
+            return {
+                "final_result": self.state.final_answer,
+                "reasoning_loops": self.state.loop_count,
+                "completed": True,
+                "results": self.state.results,
+            }
         else:
-            self._task_stack_states = {}
+            # Timeout - create summary response
+            return {
+                "final_result": self._create_timeout_response(query),
+                "reasoning_loops": self.state.loop_count,
+                "completed": False,
+                "timeout": True,
+            }
+
+    async def _execute_with_function_calling(
+        self, agent: 'FlowAgent', model: str, messages: list, prep_res: dict
+    ) -> dict:
+        """Execute reasoning step with native function calling"""
+
+        # Call LLM with tools
+        response = await agent.a_run_llm_completion(
+            model=model,
+            messages=messages,
+            tools=META_TOOLS_SCHEMA,
+            tool_choice="auto",
+            temperature=0.3,
+            get_response_message=True,
+            node_name="LLMReasonerNode",
+            task_id=f"reasoning_loop_{self.state.loop_count}",
+        )
+
+        # Extract tool calls
+        tool_calls = getattr(response, "tool_calls", None)
+        content = getattr(response, "content", "") or ""
+
+        rprint(
+            f"Loop {self.state.loop_count}: {len(tool_calls or [])} tool calls, content: {content[:2000]}..."
+        )
+
+        if not tool_calls:
+            # No tool calls - LLM responded with text
+            # Check if this is a direct answer
+            if content and len(content) > 50:
+                # Treat as completion attempt
+                return {"completed": True, "answer": content}
+            else:
+                # Nudge toward using tools
+                return {
+                    "message": {"role": "assistant", "content": content},
+                    "tool_response": {
+                        "role": "user",
+                        "content": "Please use the available function tools to proceed. If you have the answer, call the 'complete' function.",
+                    },
+                }
+
+        # Process tool calls
+        tool_results = []
+        assistant_msg = {
+            "role": "assistant",
+            "content": content,
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in tool_calls
+            ],
+        }
+
+        for tool_call in tool_calls:
+            tool_name = tool_call.function.name
+            try:
+                args = json.loads(tool_call.function.arguments)
+            except json.JSONDecodeError:
+                args = {}
+
+            # Execute the meta-tool
+            result = await self._execute_meta_tool(tool_name, args, prep_res)
+
+            tool_results.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps(result, ensure_ascii=False, default=str),
+                }
+            )
+
+            # Check for completion
+            if result.get("completed"):
+                return {
+                    "completed": True,
+                    "answer": result.get("answer", "Task completed."),
+                }
+
+        # Return for next iteration
+        return {
+            "message": assistant_msg,
+            "tool_response": tool_results[0]
+            if len(tool_results) == 1
+            else {
+                "role": "user",
+                "content": f"Tool results:\n"
+                + "\n".join(f"- {tr['content']}" for tr in tool_results),
+            },
+        }
+
+    async def _execute_meta_tool(
+        self, tool_name: str, args: dict, prep_res: dict
+    ) -> dict:
+        """Execute a meta-tool and return result"""
+
+        if tool_name == "think":
+            # Internal reasoning - just acknowledge
+            thought = args.get("thought", "")
+            self.state.history.append({"type": "thought", "content": thought})
+            return {
+                "status": "ok",
+                "message": "Thought recorded. Now take action or complete.",
+            }
+
+        elif tool_name == "execute_tools":
+            # Delegate to LLMToolNode
+            return await self._delegate_to_tool_node(args, prep_res)
+
+        elif tool_name == "store_result":
+            # Store in variables
+            key = args.get("key", "")
+            value = args.get("value", "")
+            self.state.results[key] = value
+            if self.variable_manager:
+                self.variable_manager.set(f"reasoning.{key}", value)
+            return {"status": "stored", "key": key}
+
+        elif tool_name == "get_result":
+            # Retrieve from variables
+            key = args.get("key", "")
+            value = self.state.results.get(key)
+            if value is None and self.variable_manager:
+                value = self.variable_manager.get(f"reasoning.{key}")
+            return {"status": "ok", "key": key, "value": value}
+
+        elif tool_name == "complete":
+            # Task completion
+            answer = args.get("answer", "Task completed.")
+            return {"completed": True, "answer": answer}
+
+        else:
+            return {"status": "error", "message": f"Unknown tool: {tool_name}"}
+
+    async def _delegate_to_tool_node(self, args: dict, prep_res: dict) -> dict:
+        """Delegate task execution to LLMToolNode"""
+        task = args.get("task", "")
+        tools = args.get("tools", [])
+
+        if not task:
+            return {"status": "error", "message": "No task provided"}
+
+        if LLMToolNode is None:
+            return {"status": "error", "message": "LLMToolNode not available"}
+
+        # Prepare shared state for tool node
+        tool_shared = {
+            "current_query": task,
+            "current_task_description": task,
+            "agent_instance": prep_res.get("agent_instance"),
+            "variable_manager": prep_res.get("variable_manager"),
+            "available_tools": tools if tools else prep_res.get("available_tools", []),
+            "tool_capabilities": prep_res.get("tool_capabilities", {}),
+            "fast_llm_model": prep_res.get("fast_llm_model"),
+            "complex_llm_model": prep_res.get("model"),
+            "progress_tracker": prep_res.get("progress_tracker"),
+            "session_id": prep_res.get("session_id"),
+            "formatted_context": {
+                "recent_interaction": f"Reasoning delegation: {task}",
+                "task_context": f"Loop {self.state.loop_count}",
+            },
+        }
+
+        try:
+            # Execute tool node
+            tool_node = LLMToolNode()
+            await tool_node.run_async(tool_shared)
+
+            # Extract results
+            response = tool_shared.get("current_response", "No response")
+            tool_calls_made = tool_shared.get("tool_calls_made", 0)
+            results = tool_shared.get("results", {})
+
+            # Store in our state
+            self.state.results[f"delegation_{self.state.loop_count}"] = {
+                "task": task,
+                "response": response,
+                "tool_calls": tool_calls_made,
+            }
+
+            # Store in variables for persistence
+            if self.variable_manager:
+                self.variable_manager.set(
+                    f"delegation.loop_{self.state.loop_count}",
+                    {
+                        "task": task,
+                        "response": response,
+                        "results": results,
+                        "timestamp": datetime.now().isoformat(),
+                    },
+                )
+                self.variable_manager.set(
+                    "delegation.latest",
+                    {
+                        "task_description": task,
+                        "final_response": response,
+                        "results": results,
+                    },
+                )
+
+            return {
+                "status": "completed",
+                "task": task,
+                "response": response[:2000],  # Truncate for context
+                "tool_calls_made": tool_calls_made,
+            }
+
+        except Exception as e:
+            eprint(f"Tool delegation failed: {e}")
+            return {"status": "error", "message": str(e)}
+
+    async def _execute_with_manual_parsing(
+        self, agent: 'FlowAgent', model: str, messages: list, prep_res: dict
+    ) -> dict:
+        """Fallback: Manual parsing for models without function calling"""
+
+        # Add instruction for manual tool calling
+        manual_instruction = """
+Respond with ONE of these actions in EXACTLY this format:
+
+THINK: <your reasoning>
+
+EXECUTE: <task description>
+TOOLS: <tool1, tool2>
+
+COMPLETE: <your final answer>
+
+Choose ONE action and respond now."""
+
+        messages_with_instruction = messages + [
+            {"role": "user", "content": manual_instruction}
+        ]
+
+        response = await agent.a_run_llm_completion(
+            model=model,
+            messages=messages_with_instruction,
+            temperature=0.3,
+            node_name="LLMReasonerNode",
+            task_id=f"reasoning_loop_{self.state.loop_count}"
+        )
+
+        response_text = response if isinstance(response, str) else str(response)
+
+        # Parse response
+        if "COMPLETE:" in response_text:
+            answer = response_text.split("COMPLETE:")[-1].strip()
+            return {"completed": True, "answer": answer}
+
+        elif "EXECUTE:" in response_text:
+            # Extract task and tools
+            lines = response_text.split("\n")
+            task = ""
+            tools = []
+
+            for line in lines:
+                if line.startswith("EXECUTE:"):
+                    task = line.replace("EXECUTE:", "").strip()
+                elif line.startswith("TOOLS:"):
+                    tools_str = line.replace("TOOLS:", "").strip()
+                    tools = [t.strip() for t in tools_str.split(",")]
+
+            if task:
+                result = await self._delegate_to_tool_node(
+                    {"task": task, "tools": tools}, prep_res
+                )
+                return {
+                    "message": {"role": "assistant", "content": response_text},
+                    "tool_response": {
+                        "role": "user",
+                        "content": f"Execution result: {json.dumps(result, default=str)}"
+                    }
+                }
+
+        elif "THINK:" in response_text:
+            thought = response_text.split("THINK:")[-1].strip()
+            self.state.history.append({"type": "thought", "content": thought})
+            return {
+                "message": {"role": "assistant", "content": response_text},
+                "tool_response": {
+                    "role": "user",
+                    "content": "Thought noted. Now take action (EXECUTE or COMPLETE)."
+                }
+            }
+
+        # Unrecognized format - treat as potential answer
+        if len(response_text) > 100:
+            return {"completed": True, "answer": response_text}
+
+        return {
+            "message": {"role": "assistant", "content": response_text},
+            "tool_response": {
+                "role": "user",
+                "content": "Please use the specified format: THINK, EXECUTE, or COMPLETE."
+            }
+        }
+
+    def _supports_function_calling(self, model: str) -> bool:
+        """Check if model supports native function calling"""
+        model_lower = model.lower()
+        model_base = model_lower.split("/")[-1]
+
+        supported_patterns = [
+            "gpt-4", "gpt-3.5",
+            "claude-3", "claude-sonnet", "claude-opus",
+            "gemini",
+            "mistral",
+            "command-r",
+            "llama-3.1", "llama-3.2", "llama-3.3"
+        ]
+
+        for pattern in supported_patterns:
+            if pattern in model_base:
+                return True
+
+        # Check providers
+        if "openai" in model_lower or "anthropic" in model_lower:
+            return True
 
         return False
 
-
-    def _log_recovery_action(self, strategy: str, details: str):
-        """Protokolliert eine Wiederherstellungsaktion im Reasoning-Kontext für Transparenz."""
-        eprint(f"Auto-Recovery (Attempt {self.auto_recovery_attempts}): {strategy} - {details}")
-        self.reasoning_context.append({
-            "type": "auto_recovery",
-            "content": f"AUTO-RECOVERY TRIGGERED (Attempt {self.auto_recovery_attempts}). Strategy: {strategy}. Details: {details}",
-            "recovery_attempt": self.auto_recovery_attempts,
-            "strategy": strategy,
-            "timestamp": datetime.now().isoformat()
-        })
-
-    def _analyze_failure_pattern(self) -> dict:
-        """Analysiert die letzten Aktionen und Fehler, um das Fehlermuster zu bestimmen."""
-        analysis = {
-            "is_repetitive_action": False,
-            "last_error": None,
-            "is_persistent_error": False
-        }
-
-        # 1. Repetitive Aktionen prüfen
-        if len(self.last_action_signatures) >= 3:
-            recent_actions = self.last_action_signatures[-3:]
-            if len(set(recent_actions)) == 1:
-                analysis["is_repetitive_action"] = True
-                analysis["repeated_action"] = recent_actions[0]
-
-        # 2. Letzten Fehler prüfen
-        error_entries = [e for e in self.reasoning_context if e.get("type") == "error"]
-        if error_entries:
-            last_error = error_entries[-1]
-            analysis["last_error"] = {
-                "message": last_error.get("content"),
-                "type": last_error.get("error_type")
-            }
-            # Prüfen, ob derselbe Fehler mehrmals hintereinander aufgetreten ist
-            if len(error_entries) >= 2 and error_entries[-1].get("error_type") == error_entries[-2].get(
-                "error_type"):
-                analysis["is_persistent_error"] = True
-
-        return analysis
-
-    async def _trigger_auto_recovery(self, prep_res: dict):
-        """
-        Mehrstufige Auto-Recovery, um aus Endlosschleifen oder Sackgassen auszubrechen.
-        Eskaliert von sanften Eingriffen bis hin zu drastischen Maßnahmen.
-        """
-        self.auto_recovery_attempts += 1
-        failure_analysis = self._analyze_failure_pattern()
-
-        strategy = "None"
-        details = "Starting recovery process..."
-
-        # Strategie 1 & 2: Sanfter Eingriff - Kontext-Injektion
-        if self.auto_recovery_attempts <= 2:
-            strategy = "Context Injection"
-            details = "Injecting a strong warning into the context to force a change in LLM strategy."
-            self._log_recovery_action(strategy, details)
-
-            error_info = f"Last error was: {failure_analysis['last_error']['message']}" if failure_analysis[
-                'last_error'] else "Repetitive actions were detected."
-
-            self.reasoning_context.append({
-                "type": "system_warning",
-                "content": f"CRITICAL WARNING: Loop detected. {error_info} You MUST change your approach now. Do not repeat the last action. Try a different meta-tool or analyze the problem from a new perspective.",
-                "timestamp": datetime.now().isoformat()
-            })
-            # Gibt dem Loop-Detektor eine neue Chance
-            self.last_action_signatures.clear()
-
-        # Strategie 3 & 4: Mittlerer Eingriff - Task-Stack bereinigen
-        elif self.auto_recovery_attempts <= 4:
-            strategy = "Task Stack Cleanup"
-            current_task = self._get_current_stack_task()
-            if current_task and current_task.get("description"):
-                details = f"The current task '{current_task['description'][:50]}...' seems to be causing a loop. Marking it as failed and skipping."
-                self._log_recovery_action(strategy, details)
-                # Finde und aktualisiere die Aufgabe im Stack
-                for task in self.internal_task_stack:
-                    if task.get("status") == "pending":
-                        task["status"] = "failed_and_skipped"
-                        task["error"] = "Skipped by auto-recovery due to persistent failure."
-                        break
-            else:
-                details = "No pending task found to clean up. Proceeding to next recovery level."
-                self._log_recovery_action(strategy, details)
-                # Wenn kein Task da ist, direkt zur nächsten Stufe
-                self.auto_recovery_attempts = 5
-                await self._trigger_auto_recovery(prep_res)  # Ruft sich selbst für die nächste Stufe auf
-
-        # Strategie 5 & 6: Harter Eingriff - Outline-Schritt überspringen
-        elif self.auto_recovery_attempts <= 6:
-            strategy = "Skip Outline Step"
-            if self.outline and self.current_outline_step < len(self.outline["steps"]):
-                current_step_desc = self.outline["steps"][self.current_outline_step].get("description", "N/A")
-                details = f"Skipping the entire outline step '{current_step_desc[:50]}...' as it seems fundamentally flawed."
-                self._log_recovery_action(strategy, details)
-                await self._emergency_step_skip(prep_res)
-            else:
-                details = "Cannot skip step, already at the end of the outline."
-                self._log_recovery_action(strategy, details)
-                self.auto_recovery_attempts = 7
-                await self._trigger_auto_recovery(prep_res)
-
-        # Strategie 7: Drastischer Eingriff - Komplette Neuplanung
-        elif self.auto_recovery_attempts == 7:
-            strategy = "Full Re-Plan"
-            details = "The current plan seems unrecoverable. Attempting to create a new outline from scratch with failure context."
-            self._log_recovery_action(strategy, details)
-
-            # Füge expliziten Fehlerkontext für die Neuplanung hinzu
-            self.reasoning_context.append({
-                "type": "system_event",
-                "content": "REPLANNING INITIATED. The previous plan failed repeatedly. You must create a different plan to achieve the original query.",
-                "timestamp": datetime.now().isoformat()
-            })
-            self.outline = None  # Erzwingt die Neuerstellung
-            self.internal_task_stack.clear()  # Leert den alten Task-Stack
-            await self._create_initial_outline(prep_res)
-
-        # Letzter Ausweg: Notfall-Abschluss
-        else:
-            strategy = "Emergency Completion"
-            details = "Maximum recovery attempts reached. Forcing termination and generating a summary of the partial progress."
-            self._log_recovery_action(strategy, details)
-            await self._emergency_completion(prep_res)
-
-        # Speichere das Fehlermuster für zukünftiges Lernen
-        if self.variable_manager:
-            failure_data = {
-                "timestamp": datetime.now().isoformat(),
-                "loop_count": self.current_loop_count,
-                "outline_step": self.current_outline_step,
-                "last_actions": self.last_action_signatures[-5:],
-                "recovery_attempt": self.auto_recovery_attempts,
-                "recovery_strategy": strategy,
-                "failure_analysis": failure_analysis
-            }
-            failures = self.variable_manager.get("reasoning.failure_patterns", [])
-            if not isinstance(failures, list): failures = []  # Sicherheitsabfrage
-            failures.append(failure_data)
-            self.variable_manager.set("reasoning.failure_patterns", failures[-20:])
-
-    async def _force_outline_advancement(self, prep_res):
-        """Force advancement to next outline step"""
-        if self.outline and self.current_outline_step < len(self.outline["steps"]):
-            current_step = self.outline["steps"][self.current_outline_step]
-            current_step["status"] = "force_completed"
-            current_step["completion_method"] = "auto_recovery"
-
-            self.current_outline_step += 1
-
-            # Add to context
-            self.reasoning_context.append({
-                "type": "auto_recovery",
-                "content": f"Force advanced to step {self.current_outline_step + 1} due to loop detection",
-                "recovery_attempt": self.auto_recovery_attempts,
-                "timestamp": datetime.now().isoformat()
-            })
-
-    async def _emergency_step_skip(self, prep_res):
-        """Emergency skip of problematic step"""
-        if self.outline and self.current_outline_step < len(self.outline["steps"]) - 1:
-            current_step = self.outline["steps"][self.current_outline_step]
-            current_step["status"] = "emergency_skipped"
-            current_step["skip_reason"] = "loop_recovery"
-
-            self.current_outline_step += 1
-
-            # Add to context
-            self.reasoning_context.append({
-                "type": "emergency_skip",
-                "content": f"Emergency skipped step {self.current_outline_step} and advanced to step {self.current_outline_step + 1}",
-                "recovery_attempt": self.auto_recovery_attempts,
-                "timestamp": datetime.now().isoformat()
-            })
-
-    async def _emergency_completion(self, prep_res):
-        """Emergency completion of reasoning"""
-        # Mark all remaining steps as emergency completed
-        if self.outline:
-            for i in range(self.current_outline_step, len(self.outline["steps"])):
-                self.outline["steps"][i]["status"] = "emergency_completed"
-
-            self.current_outline_step = len(self.outline["steps"])
-
-        # Add to context
-        self.reasoning_context.append({
-            "type": "emergency_completion",
-            "content": "Emergency completion triggered due to excessive recovery attempts",
-            "recovery_attempt": self.auto_recovery_attempts,
-            "timestamp": datetime.now().isoformat()
-        })
-
-    def _update_performance_metrics(self, loop_start_time: float, progress_made: bool):
-        """Update performance metrics with accurate action efficiency tracking"""
-        loop_duration = time.time() - loop_start_time
-
-        # Initialize metrics if needed
-        if not hasattr(self, 'performance_metrics') or not self.performance_metrics:
-            self.performance_metrics = {
-                "loop_times": [],
-                "progress_loops": 0,
-                "total_loops": 0
-            }
-
-        # Update core metrics
-        self.performance_metrics["loop_times"].append(loop_duration)
-        self.performance_metrics["total_loops"] += 1
-
-        if progress_made:
-            self.performance_metrics["progress_loops"] += 1
-
-        # Calculate derived metrics
-        total = self.performance_metrics["total_loops"]
-        progress = self.performance_metrics["progress_loops"]
-
-        self.performance_metrics["avg_loop_time"] = sum(self.performance_metrics["loop_times"]) / len(
-            self.performance_metrics["loop_times"])
-        self.performance_metrics["action_efficiency"] = progress / total if total > 0 else 0.0
-        self.performance_metrics["progress_rate"] = self.performance_metrics["action_efficiency"]  # Same metric
-
-        # Keep only recent loop times for memory efficiency
-        if len(self.performance_metrics["loop_times"]) > 10:
-            self.performance_metrics["loop_times"] = self.performance_metrics["loop_times"][-10:]
-
-    def _add_context_to_reasoning(self, context_addition: str, meta_tool_name: str,
-                                  execution_details: dict = None) -> None:
-        """Add context addition to reasoning context for immediate visibility in next LLM prompt"""
-        if not context_addition:
-            return
-
-        # Create structured context entry
-        context_entry = {
-            "type": "meta_tool_result",
-            "content": context_addition,
-            "meta_tool": meta_tool_name,
-            "loop": self.current_loop_count,
-            "outline_step": getattr(self, 'current_outline_step', 0),
-            "timestamp": datetime.now().isoformat()
-        }
-
-        # Add execution details if provided
-        if execution_details:
-            context_entry["execution_details"] = {
-                "duration": execution_details.get("execution_duration", 0),
-                "success": execution_details.get("execution_success", False),
-                "tool_category": execution_details.get("tool_category", "unknown")
-            }
-
-        # Add to reasoning context for immediate visibility
-        self.reasoning_context.append(context_entry)
-
-        # Store in variables for persistent access
-        if self.agent_instance:
-            if not self.agent_instance.shared.get("system_context"):
-                self.agent_instance.shared["system_context"] = {}
-            if not self.agent_instance.shared["system_context"].get("reasoning_context"):
-                self.agent_instance.shared["system_context"]["reasoning_context"] = {}
-
-            result_key = f"reasoning.loop_{self.current_loop_count}_{meta_tool_name}"
-            self.agent_instance.shared["system_context"]["reasoning_context"][result_key] = {
-                "context_addition": context_addition,
-                "meta_tool": meta_tool_name,
-                "timestamp": datetime.now().isoformat(),
-                "loop": self.current_loop_count
-            }
-
-    async def _parse_and_execute_meta_tools(self, llm_response: str, prep_res: dict) -> dict[str, Any]:
-        """Enhanced meta-tool parsing with comprehensive progress tracking"""
-
-        result = {
-            "final_result": None,
-            "action_taken": None,
-            "progress_made": False,
-            "context_addition": None
-        }
-
-        progress_tracker = prep_res.get("progress_tracker")
-        session_id = prep_res.get("session_id")
-
-        # Pattern to match META_TOOL_CALL: tool_name(args...)
-        pattern = r'META_TOOL_CALL:'
-        matches = _extract_meta_tool_calls(llm_response, pattern)
-
-        if not matches and progress_tracker:
-            # No meta-tools found in response
-            await progress_tracker.emit_event(ProgressEvent(
-                event_type="meta_tool_analysis",
-                node_name="LLMReasonerNode",
-                session_id=session_id,
-                status=NodeStatus.COMPLETED,
-                success=True,  # Die Analyse selbst war erfolgreich
-                node_phase="analysis_complete",  # Verwendung des dedizierten Feldes
-                llm_output=llm_response,  # Speichert die vollständige analysierte Antwort
-                metadata={
-                    "analysis_result": "no_meta_tools_detected",
-                    "reasoning_loop": self.current_loop_count,
-                    "outline_step": self.current_outline_step if hasattr(self, 'current_outline_step') else 0,
-                    "context_size": len(self.reasoning_context),
-                    "performance_warning": len(self.reasoning_context) > 10 and self.current_loop_count > 5
-                }
-            ))
-            result["context_addition"] = "No action taken - this violates outline-driven execution requirements"
-            self._add_context_to_reasoning(result["context_addition"], "invalid", {})
-
-            return result
-
-        for i, (tool_name, args_str) in enumerate(matches):
-            meta_tool_start = time.perf_counter()
-
-            # Track action signature for loop detection
-            action_signature = f"{tool_name}:{hash(args_str) % 1000}"
-            self.last_action_signatures.append(action_signature)
-            if len(self.last_action_signatures) > 10:
-                self.last_action_signatures = self.last_action_signatures[-10:]
-
-            try:
-                # Parse arguments with enhanced error handling
-                args = _parse_tool_args(args_str)
-                if progress_tracker:
-                    await progress_tracker.emit_event(ProgressEvent(
-                        event_type="tool_call",  # Vereinheitlicht auf "tool_call"
-                        node_name="LLMReasonerNode",
-                        session_id=session_id,
-                        status=NodeStatus.RUNNING,
-                        tool_name=tool_name,
-                        is_meta_tool=True,  # Klares Flag für Meta-Tools
-                        tool_args=args,
-                        task_id=f"meta_tool_{tool_name}_{i + 1}",
-                        metadata={
-                            "reasoning_loop": self.current_loop_count,
-                            "outline_step": self.current_outline_step if hasattr(self, 'current_outline_step') else 0
-                        }
-                    ))
-                rprint(f"Parsed args: {args}")
-
-                # Execute meta-tool with detailed tracking
-                meta_result = None
-                execution_details = {
-                    "meta_tool_name": tool_name,
-                    "parsed_args": args,
-                    "execution_success": False,
-                    "execution_duration": 0.0,
-                    "reasoning_loop": self.current_loop_count,
-                    "outline_step": self.current_outline_step if hasattr(self, 'current_outline_step') else 0,
-                    "context_before_size": len(self.reasoning_context),
-                    "task_stack_before_size": len(self.internal_task_stack),
-                    "tool_category": self._get_tool_category(tool_name),
-                    "execution_phase": "executing"
-                }
-
-                if tool_name == "internal_reasoning":
-                    meta_result = await self._execute_enhanced_internal_reasoning(args, prep_res)
-                    execution_details.update({
-                        "thought_number": args.get("thought_number", 1),
-                        "total_thoughts": args.get("total_thoughts", 1),
-                        "current_focus": args.get("current_focus", ""),
-                        "confidence_level": args.get("confidence_level", 0.5),
-                        "key_insights": args.get("key_insights", []),
-                        "key_insights_count": len(args.get("key_insights", [])),
-                        "potential_issues_count": len(args.get("potential_issues", [])),
-                        "next_thought_needed": args.get("next_thought_needed", False),
-                        "internal_reasoning_log_size": len(getattr(self, 'internal_reasoning_log', [])),
-                        "reasoning_depth": self._calculate_reasoning_depth(),
-                        "outline_step_progress": args.get("outline_step_progress", "")
-                    })
-                    result["action_taken"] = False
-
-                elif tool_name == "manage_internal_task_stack":
-                    meta_result = await self._execute_enhanced_task_stack(args, prep_res)
-                    execution_details.update({
-                        "stack_action": args.get("action", "unknown"),
-                        "task_description": args.get("task_description", ""),
-                        "outline_step_ref": args.get("outline_step_ref", ""),
-                        "stack_size_before": len(self.internal_task_stack),
-                        "stack_size_after": 0  # Will be updated below
-                    })
-                    execution_details["stack_size_after"] = len(self.internal_task_stack)
-                    execution_details["stack_change"] = execution_details["stack_size_after"] - execution_details[
-                        "stack_size_before"]
-                    result["action_taken"] = True
-
-                elif tool_name == "delegate_to_llm_tool_node":
-                    meta_result = await self._execute_enhanced_delegate_llm_tool(args, prep_res)
-                    execution_details.update({
-                        "delegated_task_description": args.get("task_description", ""),
-                        "tools_list": args.get("tools_list", []),
-                        "tools_count": len(args.get("tools_list", [])),
-                        "delegation_target": "LLMToolNode",
-                        "sub_system_execution": True,
-                        "delegation_complexity": self._assess_delegation_complexity(args),
-                        "outline_step_completion": args.get("outline_step_completion", False)
-                    })
-                    result["action_taken"] = True
-                    result["progress_made"] = True
-
-                elif False and tool_name == "create_and_execute_plan":
-                    meta_result = await self._execute_enhanced_create_plan(args, prep_res)
-                    execution_details.update({
-                        "goals_list": args.get("goals", []),
-                        "goals_count": len(args.get("goals", [])),
-                        "plan_execution_target": "TaskPlanner_TaskExecutor",
-                        "sub_system_execution": True,
-                        "complex_workflow": True,
-                        "estimated_complexity": self._estimate_plan_complexity(args.get("goals", [])),
-                        "outline_step_completion": args.get("outline_step_completion", False)
-                    })
-                    result["action_taken"] = True
-                    result["progress_made"] = True
-
-                elif False and tool_name == "create_and_run_micro_plan":
-                    meta_result = await self._execute_create_and_run_micro_plan(args, prep_res)
-                    execution_details.update({
-                        "plan_data": args.get("plan_data", {}),
-                        "plan_tasks_count": len(args.get("plan_data", {}).get("tasks", [])),
-                        "sub_system_execution": True,
-                        "delegation_target": "TaskExecutorNode"
-                    })
-                    result["action_taken"] = True
-                    result["progress_made"] = True
-
-                elif tool_name == "advance_outline_step":
-                    meta_result = await self._execute_advance_outline_step(args, prep_res)
-                    execution_details.update({
-                        "step_completed": args.get("step_completed", False),
-                        "completion_evidence": args.get("completion_evidence", ""),
-                        "next_step_focus": args.get("next_step_focus", ""),
-                        "outline_advancement": True,
-                        "step_progression": f"{self.current_outline_step}/{len(self.outline.get('steps', [])) if self.outline else 0}"
-                    })
-                    result["action_taken"] = True
-                    result["progress_made"] = True
-
-                elif tool_name == "write_to_variables":
-                    meta_result = await self._execute_write_to_variables(args)
-                    execution_details.update({
-                        "variable_scope": args.get("scope", "reasoning"),
-                        "variable_key": args.get("key", ""),
-                        "variable_description": args.get("description", ""),
-                        "data_persistence": True,
-                        "variable_system_operation": "write"
-                    })
-                    result["action_taken"] = True
-
-                elif tool_name == "read_from_variables":
-                    meta_result = await self._execute_read_from_variables(args)
-                    execution_details.update({
-                        "variable_scope": args.get("scope", "reasoning"),
-                        "variable_key": args.get("key", ""),
-                        "read_purpose": args.get("purpose", ""),
-                        "variable_system_operation": "read",
-                        "data_retrieval": True
-                    })
-                    result["action_taken"] = True
-
-                elif tool_name == "direct_response":
-
-                    final_answer = args.get("final_answer", "Task completed.").replace('\\n', '\n').replace('\\t', '\t')
-                    execution_details.update({
-                        "final_answer": final_answer,
-                        "final_answer_length": len(final_answer),
-                        "reasoning_complete": True,
-                        "flow_termination": True,
-                        "reasoning_summary": self._create_reasoning_summary(),
-                        "total_reasoning_steps": len(self.reasoning_context),
-                        "outline_completion": True,
-                        "steps_completed": args.get("steps_completed", []),
-                        "session_completion": True
-                    })
-
-                    completion_context = f"✅ REASONING COMPLETE: {final_answer}"
-                    self._add_context_to_reasoning(completion_context, tool_name, execution_details)
-
-                    # Store successful completion
-                    await self._store_successful_completion(prep_res, final_answer)
-
-                    if progress_tracker:
-                        meta_tool_duration = time.perf_counter() - meta_tool_start
-                        execution_details["execution_duration"] = meta_tool_duration
-                        execution_details["execution_success"] = True
-
-                        await progress_tracker.emit_event(ProgressEvent(
-                            event_type="meta_tool_call",
-                            timestamp=time.time(),
-                            node_name="LLMReasonerNode",
-                            status=NodeStatus.COMPLETED,
-                            session_id=session_id,
-                            task_id=f"meta_tool_{tool_name}_{i + 1}",
-                            node_duration=meta_tool_duration,
-                            success=True,
-                            metadata=execution_details
-                        ))
-
-                    result["final_result"] = final_answer
-                    result["action_taken"] = True
-                    result["progress_made"] = True
-                    return result
-
-                # test if tool name is meta_tools_registry if so try to run it
-                elif tool_name in self.meta_tools_registry:
-                    function = self.meta_tools_registry[tool_name]
-                    meta_result = await function(**args)
-                    result["action_taken"] = True
-                    result["progress_made"] = True
-                    execution_details.update({
-                        "tool_name": tool_name,
-                        "tool_args": args,
-                        "tool_result": meta_result
-                    })
-
-                # test if tool name is in agent tools if so try to run it
-                elif tool_name in self.agent_instance.tool_registry:
-                    meta_result = await self.agent_instance.arun_function(tool_name, **args)
-                    result["action_taken"] = True
-                    result["progress_made"] = True
-                    execution_details.update({
-                        "tool_name": tool_name,
-                        "tool_args": args,
-                        "tool_result": meta_result
-                    })
-
+    def _create_timeout_response(self, query: str) -> str:
+        """Create response when max loops reached"""
+        parts = [f"I worked on your request but reached my reasoning limit ({self.max_loops} steps)."]
+
+        if self.state.results:
+            parts.append("\nPartial results gathered:")
+            for key, value in list(self.state.results.items())[:5]:
+                if isinstance(value, dict) and "response" in value:
+                    parts.append(f"- {key}: {value['response'][:200]}...")
                 else:
-                    execution_details.update({
-                        "error_type": "unknown_meta_tool",
-                        "error_message": f"Unknown meta-tool: {tool_name}",
-                        "execution_success": False,
-                        "available_meta_tools": ["internal_reasoning", "manage_internal_task_stack",
-                                            "delegate_to_llm_tool_node", "create_and_execute_plan",
-                                            "advance_outline_step", "write_to_variables", "read_from_variables",
-                                            "direct_response"]
-                    })
+                    parts.append(f"- {key}: {str(value)[:200]}...")
 
-                    if progress_tracker:
-                        meta_tool_duration = time.perf_counter() - meta_tool_start
-                        await progress_tracker.emit_event(ProgressEvent(
-                            event_type="meta_tool_call",
-                            timestamp=time.time(),
-                            node_name="LLMReasonerNode",
-                            status=NodeStatus.FAILED,
-                            session_id=session_id,
-                            task_id=f"meta_tool_{tool_name}_{i + 1}",
-                            node_duration=meta_tool_duration,
-                            success=False,
-                            metadata=execution_details
-                        ))
+        parts.append(f"\nOriginal query: {query}")
+        return "\n".join(parts)
 
-                    error_context = f"❌ Unknown meta-tool: {tool_name}"
-                    self._add_context_to_reasoning(error_context, tool_name, execution_details)
-                    wprint(f"Unknown meta-tool: {tool_name}")
-                    continue
-
-                # Update execution details with results
-                meta_tool_duration = time.perf_counter() - meta_tool_start
-                execution_details.update({
-                    "execution_duration": meta_tool_duration,
-                    "execution_success": True,
-                    "context_after_size": len(self.reasoning_context),
-                    "task_stack_after_size": len(self.internal_task_stack),
-                    "performance_score": self._calculate_tool_performance_score(meta_tool_duration, tool_name),
-                    "execution_phase": "completed"
-                })
-                self._track_action_type(tool_name, success=True)
-
-                # Add result to context
-                if meta_result and meta_result.get("context_addition"):
-                    result["context_addition"] = meta_result["context_addition"]
-                    execution_details["context_addition_length"] = len(meta_result["context_addition"])
-
-                    self._add_context_to_reasoning(meta_result["context_addition"], tool_name, execution_details)
-
-                # Emit success event
-                if progress_tracker:
-                    await progress_tracker.emit_event(ProgressEvent(
-                        event_type="meta_tool_call",
-                        timestamp=time.time(),
-                        node_name="LLMReasonerNode",
-                        status=NodeStatus.COMPLETED,
-                        session_id=session_id,
-                        task_id=f"meta_tool_{tool_name}_{i + 1}",
-                        node_duration=meta_tool_duration,
-                        success=True,
-                        metadata=execution_details
-                    ))
-
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                self._track_action_type(tool_name, success=False)
-                meta_tool_duration = time.perf_counter() - meta_tool_start
-                error_details = {
-                    "meta_tool_name": tool_name,
-                    "execution_success": False,
-                    "execution_duration": meta_tool_duration,
-                    "error_type": type(e).__name__,
-                    "error_message": str(e),
-                    "reasoning_loop": self.current_loop_count,
-                    "outline_step": self.current_outline_step if hasattr(self, 'current_outline_step') else 0,
-                    "parsed_args": args if 'args' in locals() else None,
-                    "raw_args_string": args_str,
-                    "execution_phase": "meta_tool_error",
-                    "context_size_at_error": len(self.reasoning_context),
-                    "task_stack_size_at_error": len(self.internal_task_stack),
-                    "tool_category": self._get_tool_category(tool_name),
-                    "error_context": self._get_error_context(e),
-                    "recovery_recommended": self.auto_recovery_attempts < getattr(self, 'max_auto_recovery', 3)
-                }
-
-                if progress_tracker:
-                    await progress_tracker.emit_event(ProgressEvent(
-                        event_type="meta_tool_call",
-                        timestamp=time.time(),
-                        node_name="LLMReasonerNode",
-                        status=NodeStatus.FAILED,
-                        session_id=session_id,
-                        task_id=f"meta_tool_{tool_name}_{i + 1}",
-                        node_duration=meta_tool_duration,
-                        success=False,
-                        metadata=error_details
-                    ))
-
-                eprint(f"Meta-tool execution failed for {tool_name}: {e}")
-                result["context_addition"] = f"Error executing {tool_name}: {str(e)}"
-
-                self._add_context_to_reasoning(result["context_addition"], tool_name, execution_details)
-
-        # Final summary event if multiple meta-tools were processed
-        if len(matches) > 1 and progress_tracker:
-            batch_performance = self._calculate_batch_performance(matches)
-            reasoning_progress = self._assess_reasoning_progress()
-
-            await progress_tracker.emit_event(
-                ProgressEvent(
-                    event_type="meta_tool_batch_complete",
-                    timestamp=time.time(),
-                    node_name="LLMReasonerNode",
-                    status=NodeStatus.COMPLETED,
-                    session_id=session_id,
-                    metadata={
-                        "total_meta_tools_processed": len(matches),
-                        "reasoning_loop": self.current_loop_count,
-                        "outline_step": self.current_outline_step
-                        if hasattr(self, "current_outline_step")
-                        else 0,
-                        "batch_execution_complete": True,
-                        "final_context_size": len(self.reasoning_context),
-                        "final_task_stack_size": len(self.internal_task_stack),
-                        "meta_tools_executed": [match[0] for match in matches],
-                        "execution_phase": "meta_tool_batch_summary",
-                        "batch_performance": batch_performance,
-                        "reasoning_progress": reasoning_progress,
-                        "progress_made": result["progress_made"],
-                        "action_taken": result["action_taken"],
-                        "outline_status": {
-                            "current_step": self.current_outline_step
-                            if hasattr(self, "current_outline_step")
-                            else 0,
-                            "total_steps": len(self.outline.get("steps", []))
-                            if self.outline
-                            else 0,
-                            "completion_ratio": (
-                                self.current_outline_step
-                                / len(self.outline.get("steps", [1]))
-                            )
-                            if self.outline
-                            else 0,
-                        },
-                        "performance_summary": {
-                            "loop_efficiency": self.performance_metrics.get(
-                                "action_efficiency", 0
-                            )
-                            if hasattr(self, "performance_metrics")
-                            else 0,
-                            "recovery_attempts": getattr(
-                                self, "auto_recovery_attempts", 0
-                            ),
-                            "context_management_active": len(self.reasoning_context)
-                            >= getattr(self, "context_summary_threshold", 15),
-                        },
-                    },
-                )
-            )
-
-        return result
-
-    async def _execute_enhanced_internal_reasoning(self, args: dict, prep_res: dict) -> dict[str, Any]:
-        """Enhanced internal reasoning with outline step tracking"""
-        # Standard internal reasoning execution
-        result = await self._execute_internal_reasoning(args, prep_res)
-
-        # Enhanced with outline step progress
-        outline_step_progress = args.get("outline_step_progress", "")
-        if outline_step_progress and result:
-            result["context_addition"] += f"\nOutline Step Progress: {outline_step_progress}"
-
-        # Track reasoning depth for current step
-        if not hasattr(self, '_step_reasoning_depth'):
-            self._step_reasoning_depth = {}
-
-        current_step = self.current_outline_step
-        self._step_reasoning_depth[current_step] = self._step_reasoning_depth.get(current_step, 0) + 1
-
-        # Warn if too much reasoning without action
-        if self._step_reasoning_depth[current_step] > 3:
-            result["context_addition"] += "\n⚠️ WARNING: Too much reasoning without concrete action for current step"
-
-        return result
-
-    async def _execute_enhanced_task_stack(self, args: dict, prep_res: dict) -> dict[str, Any]:
-        """Enhanced task stack management with outline step tracking"""
-        # Get outline step reference
-        outline_step_ref = args.get("outline_step_ref", f"step_{self.current_outline_step}")
-
-        # Execute standard task stack management
-        result = await self._execute_manage_task_stack(args, prep_res)
-
-        # Enhanced with outline step reference
-        if result:
-            result["context_addition"] += f"\n[Linked to: {outline_step_ref}]"
-
-        return result
-
-    async def _execute_enhanced_delegate_llm_tool(self, args: dict, prep_res: dict) -> dict[str, Any]:
-        """Enhanced delegation with immediate result visibility and guaranteed storage"""
-        task_description = args.get("task_description", "")
-        tools_list = args.get("tools_list", [])
-        outline_step_completion = args.get("outline_step_completion", False)
-
-        # Generate unique delegation ID for this execution
-        delegation_id = f"delegation_loop_{self.current_loop_count}"
-
-        # Prepare shared state for LLMToolNode with enhanced result capture
-        llm_tool_shared = {
-            "current_task_description": task_description,
-            "current_query": task_description,
-            "formatted_context": {
-                "recent_interaction": f"Reasoner delegating task: {task_description}",
-                "session_summary": self._get_reasoning_summary(),
-                "task_context": f"Loop {self.current_loop_count} delegation - CAPTURE ALL RESULTS"
-            },
-            "variable_manager": prep_res.get("variable_manager"),
-            "agent_instance": prep_res.get("agent_instance"),
-            "available_tools": tools_list,
-            "tool_capabilities": prep_res.get("tool_capabilities", {}),
-            "fast_llm_model": prep_res.get("fast_llm_model"),
-            "complex_llm_model": prep_res.get("complex_llm_model"),
-            "progress_tracker": prep_res.get("progress_tracker"),
-            "session_id": prep_res.get("session_id"),
-            "use_fast_response": True
+    def _error_result(self, message: str) -> dict:
+        """Create error result"""
+        return {
+            "final_result": f"Error: {message}",
+            "reasoning_loops": 0,
+            "completed": False,
+            "error": message
         }
 
-        try:
-            # Execute LLMToolNode
-            llm_tool_node = LLMToolNode()
-            await llm_tool_node.run_async(llm_tool_shared)
-
-            # IMMEDIATE RESULT EXTRACTION - Critical for visibility
-            final_response = llm_tool_shared.get("current_response", "No response captured")
-            tool_calls_made = llm_tool_shared.get("tool_calls_made", 0)
-            tool_results = llm_tool_shared.get("results", {})
-
-            # GUARANTEED STORAGE - Multiple storage patterns for reliability
-            delegation_result = {
-                "task_description": task_description,
-                "tools_used": tools_list,
-                "tool_calls_made": tool_calls_made,
-                "final_response": final_response,
-                "results": tool_results,
-                "timestamp": datetime.now().isoformat(),
-                "delegation_id": delegation_id,
-                "outline_step": self.current_outline_step,
-                "reasoning_loop": self.current_loop_count,
-                "success": True
-            }
-
-            # CRITICAL: Store immediately with multiple access patterns
-            if self.variable_manager:
-                # 1. Primary delegation storage
-                self.variable_manager.set(f"delegation.loop_{self.current_loop_count}", delegation_result)
-
-                # 2. Latest results quick access
-                self.variable_manager.set("delegation.latest", delegation_result)
-
-                # 3. Store individual tool results with direct access
-                for result_id, result_data in tool_results.items():
-                    result_id = f"delegation.loop_{self.current_loop_count}.result_{result_id}"
-                    self.variable_manager.set(f"results.{result_id}.data", result_data.get("data") if isinstance(result_data, dict) else result_data)
-
-                # 4. Create smart access keys for common patterns
-                if "read_file" in tools_list and tool_results:
-                    file_content = next((res.get("data") if isinstance(res, dict) else res for res in tool_results.values()
-                                         if (res.get("data") if isinstance(res, dict) else res) and isinstance(res.get("data") if isinstance(res, dict) else res, str)), None)
-                    if file_content:
-                        self.variable_manager.set("var.file_content", file_content)
-                        self.variable_manager.set("latest_file_content", file_content)
-
-                # 5. Update delegation index for discovery
-                index = self.variable_manager.get("delegation.index", [])
-                index.append({
-                    "loop": self.current_loop_count,
-                    "task": task_description[:100],
-                    "tools": tools_list,
-                    "timestamp": datetime.now().isoformat(),
-                    "results_available": len(tool_results) > 0
-                })
-                self.variable_manager.set("delegation.index", index[-20:])
-
-            # Create comprehensive context addition with IMMEDIATE VISIBILITY
-            context_addition = f"""DELEGATION COMPLETED (Loop {self.current_loop_count}):
-Task: {task_description}
-Tools: {', '.join(tools_list)}
-Calls Made: {tool_calls_made}
-Results Captured: {len(tool_results)} items
-
-FINAL RESULT: {final_response}
-
-- reference variable: delegation.loop_{self.current_loop_count}
-DELEGATION END
-"""
-
-            # Mark outline step completion if specified
-            if outline_step_completion:
-                await self._mark_step_completion(prep_res, "delegation_complete", context_addition)
-
-            # AUTO-CLEAN: Deduplicate results and archive large variables after delegation
-            if self.variable_manager:
-                rprint("🔄 Auto-cleaning after delegation...")
-
-                # 1. Deduplicate file operations
-                dedup_result = await self.variable_manager.auto_deduplicate_results_scope()
-                if dedup_result.get('deduplicated') and dedup_result['stats']['files_deduplicated'] > 0:
-                    rprint(f"✅ Deduplicated {dedup_result['stats']['files_deduplicated']} files")
-
-            return {"context_addition": context_addition}
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            error_msg = f"❌ DELEGATION FAILED: {str(e)}"
-            # Store error for debugging
-            if self.variable_manager:
-                error_data = {
-                    "task": task_description,
-                    "error": str(e),
-                    "timestamp": datetime.now().isoformat(),
-                    "loop": self.current_loop_count
-                }
-                self.variable_manager.set(f"delegation.error.loop_{self.current_loop_count}", error_data)
-
-            return {"context_addition": error_msg}
-
-    async def _execute_enhanced_create_plan(self, args: dict, prep_res: dict) -> dict[str, Any]:
-        """Enhanced plan creation with outline step completion tracking"""
-        # Check if this completes the outline step
-        outline_step_completion = args.get("outline_step_completion", False)
-
-        # Execute standard plan creation
-        result = await self._execute_create_plan(args, prep_res)
-
-        # Enhanced with step completion tracking
-        if outline_step_completion and result:
-            await self._mark_step_completion(prep_res, "create_and_execute_plan", result["context_addition"])
-            result["context_addition"] += f"\n✓ OUTLINE STEP {self.current_outline_step + 1} COMPLETED"
-
-        return result
-
-    # Fügen Sie dies innerhalb der Klasse LLMReasonerNode hinzu
-
-    async def _execute_create_and_run_micro_plan(self, args: dict, prep_res: dict) -> dict[str, Any]:
-        """
-        Erstellt einen kleinen, dynamischen TaskPlan aus den LLM-Daten und führt ihn sofort
-        mit dem TaskExecutorNode aus.
-        """
-        plan_data = args.get("plan_data", {})
-
-        # Validierung der Eingabe
-        if not isinstance(plan_data, dict) or "tasks" not in plan_data:
-            error_msg = "❌ Micro-Plan-Fehler: Ungültiges `plan_data`-Format. Es muss ein Dictionary mit einem 'tasks'-Schlüssel sein."
-            eprint(error_msg)
-            return {"context_addition": error_msg}
-
-        try:
-            # 1. Task-Objekte aus den Rohdaten erstellen
-            tasks = []
-            for task_data in plan_data.get("tasks", []):
-                task_type = task_data.pop("type", "generic")  # 'type' entfernen, da es kein Task-Argument ist
-                task_class = {"LLMTask": LLMTask, "ToolTask": ToolTask, "DecisionTask": DecisionTask}.get(task_type,
-                                                                                                          Task)
-                tasks.append(task_class(**task_data))
-
-            # 2. TaskPlan-Objekt erstellen
-            plan = TaskPlan(
-                id=f"micro_plan_{str(uuid.uuid4())[:8]}",
-                name=plan_data.get("plan_name", "Dynamischer Micro-Plan"),
-                description=plan_data.get("description", "Vom LLMReasoner on-the-fly erstellter Plan"),
-                tasks=tasks,
-                execution_strategy=plan_data.get("execution_strategy", "sequential")
-            )
-
-            # 3. Den TaskExecutorNode vorbereiten und ausführen
-            task_executor_instance = prep_res.get("task_executor")
-            if not task_executor_instance:
-                return {"context_addition": "❌ Micro-Plan-Fehler: TaskExecutorNode-Instanz nicht gefunden."}
-
-            # Shared-State für den Executor-Lauf vorbereiten
-            executor_shared = {
-                "current_plan": plan,
-                "tasks": {task.id: task for task in tasks},
-                "variable_manager": self.variable_manager,
-                "agent_instance": self.agent_instance,
-                "progress_tracker": prep_res.get("progress_tracker"),
-                "fast_llm_model": prep_res.get("fast_llm_model"),
-                "complex_llm_model": prep_res.get("complex_llm_model"),
-                "available_tools": prep_res.get("available_tools", []),
-            }
-
-            # 4. Ausführungsschleife für den Executor
-            max_cycles = 10
-            for i in range(max_cycles):
-                result_status = await task_executor_instance.run_async(executor_shared)
-                if result_status in ["plan_completed", "execution_error", "needs_dynamic_replan"]:
-                    break
-
-            # 5. Ergebnisse zusammenfassen für den Reasoner-Kontext
-            final_results = executor_shared.get("results", {})
-            completed_tasks = [t for t in tasks if t.status == "completed"]
-            failed_tasks = [t for t in tasks if t.status == "failed"]
-
-            summary = f"""✅ Micro-Plan ausgeführt:
-    - Plan: '{plan.name}'
-    - Status: {len(completed_tasks)} erfolgreich, {len(failed_tasks)} fehlgeschlagen.
-    - Ergebnisse sind jetzt in den `results`-Variablen verfügbar (z.B. `{{{{ results.{tasks[0].id}.data }}}}`)."""
-
-            return {"context_addition": summary}
-
-        except Exception as e:
-            import traceback
-            eprint(f"Fehler bei der Ausführung des Micro-Plans: {e}")
-            print(traceback.format_exc())
-            return {"context_addition": f"❌ Micro-Plan-Fehler: {str(e)}"}
-
-    async def _execute_advance_outline_step(self, args: dict, prep_res: dict) -> dict[str, Any]:
-        """Execute outline step advancement"""
-        step_completed = args.get("step_completed", False)
-        completion_evidence = args.get("completion_evidence", "")
-        next_step_focus = args.get("next_step_focus", "")
-
-        if not self.outline or not self.outline.get("steps"):
-            return {"context_addition": "Cannot advance: No outline available"}
-
-        steps = self.outline["steps"]
-
-        if self.current_outline_step >= len(steps):
-            return {"context_addition": "Cannot advance: Already at final step"}
-
-        if step_completed:
-            # Mark current step as completed
-            if self.current_outline_step < len(steps):
-                current_step = steps[self.current_outline_step]
-                current_step["status"] = "completed"
-                current_step["completion_evidence"] = completion_evidence
-                current_step["completed_at"] = datetime.now().isoformat()
-
-            # Advance to next step
-            self.current_outline_step += 1
-
-            # Store advancement in variables
-            if self.variable_manager:
-                advancement_data = {
-                    "step_completed": self.current_outline_step,
-                    "completion_evidence": completion_evidence,
-                    "next_step_focus": next_step_focus,
-                    "timestamp": datetime.now().isoformat()
-                }
-                self.variable_manager.set(f"reasoning.step_completions.{self.current_outline_step - 1}",
-                                          advancement_data)
-
-            context_addition = f"""✓ STEP {self.current_outline_step} COMPLETED
-Evidence: {completion_evidence}
-Advanced to Step {self.current_outline_step + 1}/{len(steps)}"""
-
-            if next_step_focus:
-                context_addition += f"\nNext Step Focus: {next_step_focus}"
-
-            if self.current_outline_step >= len(steps):
-                context_addition += "\n🎯 ALL OUTLINE STEPS COMPLETED - Ready for direct_response"
-
-        else:
-            context_addition = f"Step {self.current_outline_step + 1} not yet completed - continue working on current step"
-
-        return {"context_addition": context_addition}
-
-    async def _execute_read_from_variables(self, args: dict) -> dict[str, Any]:
-        """Enhanced variable reading with intelligent discovery and loop prevention"""
-        if not self.variable_manager:
-            return {"context_addition": "❌ Variable system not available"}
-
-        scope = args.get("scope", args.get("query", "reasoning"))
-        key = args.get("key", "")
-        purpose = args.get("purpose", "")
-
-        # CRITICAL: Check for repeated reads - prevent infinite loops
-        read_signature = f"{scope}.{key}"
-        if not hasattr(self, '_variable_read_history'):
-            self._variable_read_history = []
-
-        # Prevent reading same variable multiple times in short succession
-        recent_reads = [r for r in self._variable_read_history if r['signature'] == read_signature]
-        if len(recent_reads) >= 2:
-            self._variable_read_history.append({
-                'signature': read_signature,
-                'timestamp': time.time(),
-                'loop': self.current_loop_count
-            })
-            return {
-                "context_addition": f"⚠️ LOOP PREVENTION: Already read {read_signature} {len(recent_reads)} times. Try different approach or advance to next task."
-            }
-
-        # Record this read attempt
-        self._variable_read_history.append({
-            'signature': read_signature,
-            'timestamp': time.time(),
-            'loop': self.current_loop_count
-        })
-
-        # Clean old read history (keep last 10)
-        if len(self._variable_read_history) > 10:
-            self._variable_read_history = self._variable_read_history[-10:]
-
-        if not key:
-            return {"context_addition": "❌ Cannot read: No key provided"}
-
-        try:
-            # Smart key resolution for common patterns
-            resolved_key = self._resolve_smart_key(scope, key)
-
-            # Try direct access first
-            value = self.variable_manager.get(resolved_key)
-
-            if value is not None:
-                # Format value for display
-                value_display = self._format_variable_value(value)
-
-                context_addition = f"""{resolved_key}={value_display}
-Access: Successfully retrieved from variable system"""
-
-                return {"context_addition": context_addition}
-
-            else:
-                # Enhanced discovery when not found
-                discovery_result = self._perform_smart_variable_discovery(scope, key, purpose)
-                return {"context_addition": discovery_result}
-
-        except Exception as e:
-            return {"context_addition": f"❌ Variable read error: {str(e)}"}
-
-    def _resolve_smart_key(self, scope: str, key: str) -> str:
-        """Resolve smart key patterns for common access cases"""
-        # Handle delegation results specially
-        if scope == "delegation" and "loop_" in key:
-            return f"delegation.{key}"
-        elif scope == "results" and key.endswith(".data"):
-            return f"results.{key}"
-        elif scope == "var" or key.startswith("var."):
-            return key if key.startswith("var.") else f"var.{key}"
-        else:
-            return f"{scope}.{key}" if scope != "reasoning" else f"reasoning.{key}"
-
-    def _format_variable_value(self, value: any) -> str:
-        """Format variable value for display with intelligent truncation"""
-        if isinstance(value, dict | list):
-            value_str = json.dumps(value, default=str, indent=2)
-        else:
-            value_str = str(value)
-
-        # Smart truncation based on content type
-        if len(value_str) > 200000:
-            if isinstance(value, dict) and "results" in str(value):
-                # For result dicts, show structure
-                return f"RESULTS DICT ({len(value)} keys):\n" + value_str[:150000] + "\n... [TRUNCATED]"
-            elif isinstance(value, str) and (value.startswith("# ") or "markdown" in value.lower()):
-                # For file content, show beginning
-                return f"FILE CONTENT ({len(value_str)} chars):\n" + value_str[:100000] + "\n... [FULL CONTENT AVAILABLE]"
-            else:
-                return value_str[:100000] + f"\n... [TRUNCATED - {len(value_str)} total chars]"
-
-        return value_str
-
-    def _perform_smart_variable_discovery(self, scope: str, key: str, purpose: str) -> str:
-        """Perform intelligent variable discovery when key not found"""
-        # Check latest delegation results first
-        latest = self.variable_manager.get("delegation.latest")
-        if latest:
-            discovery_msg = f"❌ Variable not found: {scope}.{key}\n\n✨ LATEST DELEGATION RESULTS AVAILABLE:"
-            discovery_msg += f"\nTask: {latest.get('task_description', 'Unknown')[:100]}"
-            discovery_msg += f"\nResults: {len(latest.get('results', {}))} items available"
-            discovery_msg += "\nAccess with: delegation.latest"
-
-            # Show actual keys available
-            if latest.get('results'):
-                discovery_msg += "\n\n🔍 Available result keys:"
-                for result_id in latest['results']:
-                    discovery_msg += f"\n• results.{result_id}.data"
-
-            return discovery_msg
-
-        # Check delegation index for recent activity
-        index = self.variable_manager.get("delegation.index", [])
-        if index:
-            recent = index[-3:]  # Last 3 delegations
-            discovery_msg = f"❌ Variable not found: {scope}.{key}\n\n📚 RECENT DELEGATIONS:"
-            for entry in recent:
-                discovery_msg += f"\n• Loop {entry['loop']}: {entry['task'][:50]}..."
-                discovery_msg += f"  Access: delegation.loop_{entry['loop']}"
-            return discovery_msg
-
-        # Fallback: show available scopes
-        available_vars = self.variable_manager.get_available_variables()
-        return f"❌ Variable not found: {scope}.{key}\n\n📋 Available scopes: {', '.join(available_vars.keys())}"
-
-    async def _execute_write_to_variables(self, args: dict) -> dict[str, Any]:
-        """Enhanced variable writing with automatic result storage"""
-        if not self.variable_manager:
-            return {"context_addition": "❌ Variable system not available"}
-
-        scope = args.get("scope", "reasoning")
-        key = args.get("key", "")
-        value = args.get("value", "")
-        description = args.get("description", "")
-
-        if not key:
-            return {"context_addition": "❌ Cannot write to variables: No key provided"}
-
-        try:
-            # Create scoped key
-            full_key = f"{scope}.{key}" if scope != "reasoning" else f"reasoning.{key}"
-
-            # Write to variables
-            self.variable_manager.set(full_key, value)
-
-            # Store enhanced metadata
-            metadata = {
-                "description": description,
-                "written_at": datetime.now().isoformat(),
-                "outline_step": getattr(self, 'current_outline_step', 0),
-                "reasoning_loop": self.current_loop_count,
-                "value_type": type(value).__name__,
-                "value_size": len(str(value)) if value else 0,
-                "auto_stored": False  # Manual storage
-            }
-            self.variable_manager.set(f"{full_key}_metadata", metadata)
-
-            # Update storage index for easy discovery
-            storage_index = self.variable_manager.get("reasoning.storage_index", [])
-            storage_entry = {
-                "key": full_key,
-                "description": description,
-                "timestamp": datetime.now().isoformat(),
-                "loop": self.current_loop_count
-            }
-            storage_index.append(storage_entry)
-            self.variable_manager.set("reasoning.storage_index", storage_index[-20:])  # Keep last 20
-
-            context_addition = f"✅ Stored in variables: {full_key}"
-            if description:
-                context_addition += f"\n📄 Description: {description}"
-
-            # Show how to access it
-            context_addition += f"\n🔍 Access with: read_from_variables(scope=\"{scope}\", key=\"{key}\", purpose=\"...\")"
-
-            return {"context_addition": context_addition}
-
-        except Exception as e:
-            return {"context_addition": f"❌ Failed to write to variables: {str(e)}"}
-
-    def _auto_store_delegation_results(self, delegation_result: dict, task_description: str) -> str:
-        """Automatically store delegation results with smart naming and comprehensive indexing"""
-        if not self.variable_manager:
-            return "\n❌ Variable system not available for auto-storage"
-
-        storage_summary = []
-
-        try:
-            # Store main delegation result with loop reference
-            main_key = f"delegation.loop_{self.current_loop_count}"
-            self.variable_manager.set(main_key, delegation_result)
-            storage_summary.append(f"• {main_key}")
-
-            # Store individual tool results with smart naming
-            results = delegation_result.get("results", {})
-            smart_keys_created = []
-
-            for result_id, result_data in results.items():
-                # Smart naming based on task content and result type
-                smart_key = self._generate_smart_key(task_description, result_id, result_data)
-
-                # Store full result
-                self.variable_manager.set(smart_key, result_data)
-                storage_summary.append(f"• {smart_key}")
-                smart_keys_created.append(smart_key)
-
-                # Store data separately for direct access
-                if result_data.get("data"):
-                    data_key = f"{smart_key}.data"
-                    self.variable_manager.set(data_key, result_data["data"])
-                    storage_summary.append(f"• {data_key} (direct access)")
-
-                    # Store with generic access pattern
-                    generic_data_key = f"results.{result_id}.data"
-                    self.variable_manager.set(generic_data_key, result_data["data"])
-                    storage_summary.append(f"• {generic_data_key} (standard access)")
-
-            # Update comprehensive quick access index
-            quick_access = {
-                "latest_delegation": main_key,
-                "latest_task": task_description,
-                "timestamp": datetime.now().isoformat(),
-                "loop": self.current_loop_count,
-                "outline_step": getattr(self, 'current_outline_step', 0),
-                "stored_keys": [item.replace("• ", "") for item in storage_summary],
-                "smart_keys": smart_keys_created,
-                "access_patterns": {
-                    "main_result": main_key,
-                    "by_loop": f"delegation.loop_{self.current_loop_count}",
-                    "latest": "reasoning.latest_results",
-                    "data_direct": [key for key in storage_summary if ".data" in key]
-                }
-            }
-            self.variable_manager.set("reasoning.latest_results", quick_access)
-
-            # Update global delegation index for easy discovery
-            delegation_index = self.variable_manager.get("delegation.index", [])
-            index_entry = {
-                "loop": self.current_loop_count,
-                "task": task_description[:100] + ("..." if len(task_description) > 100 else ""),
-                "keys_created": len(storage_summary),
-                "timestamp": datetime.now().isoformat(),
-                "main_key": main_key,
-                "smart_keys": smart_keys_created
-            }
-            delegation_index.append(index_entry)
-            self.variable_manager.set("delegation.index", delegation_index[-50:])  # Keep last 50
-
-            # Store task-specific quick access
-            task_hash = hash(task_description) % 10000
-            self.variable_manager.set(f"delegation.by_task.{task_hash}", {
-                "task_description": task_description,
-                "results": quick_access,
-                "created_at": datetime.now().isoformat()
-            })
-
-            return f"\n📊 Auto-stored results ({len(storage_summary)} entries):\n" + "\n".join(storage_summary[:8]) + (
-                f"\n... +{len(storage_summary) - 8} more" if len(storage_summary) > 8 else "")
-
-        except Exception as e:
-            return f"\n❌ Auto-storage failed: {str(e)}"
-
-    def _generate_smart_key(self, task_description: str, result_id: str, result_data: dict) -> str:
-        """Generate intelligent storage keys based on task content and result type"""
-        task_lower = task_description.lower()
-
-        # Analyze task type
-        if "read" in task_lower and "file" in task_lower:
-            prefix = "file_content"
-        elif "write" in task_lower and "file" in task_lower:
-            prefix = "file_written"
-        elif "create" in task_lower and "file" in task_lower:
-            prefix = "file_created"
-        elif "search" in task_lower or "find" in task_lower:
-            prefix = "search_results"
-        elif "analyze" in task_lower or "analysis" in task_lower:
-            prefix = "analysis_results"
-        elif "list" in task_lower or "directory" in task_lower:
-            prefix = "directory_listing"
-        elif "download" in task_lower or "fetch" in task_lower:
-            prefix = "downloaded_content"
-        else:
-            # Analyze result data for hints
-            result_str = str(result_data).lower()
-            if "file" in result_str and "content" in result_str:
-                prefix = "file_content"
-            elif "search" in result_str or "results" in result_str:
-                prefix = "search_results"
-            elif "data" in result_str:
-                prefix = "task_data"
-            else:
-                prefix = "task_result"
-
-        # Create unique key with loop and result ID
-        return f"{prefix}.loop_{self.current_loop_count}_{result_id}"
-
-    async def _mark_step_completion(self, prep_res: dict, method: str, evidence: str):
-        """Mark current outline step as completed"""
-        if not self.outline or not self.outline.get("steps"):
-            return
-
-        steps = self.outline["steps"]
-        if self.current_outline_step < len(steps):
-            current_step = steps[self.current_outline_step]
-            current_step["status"] = "completed"
-            current_step["completion_method"] = method
-            current_step["completion_evidence"] = evidence
-            current_step["completed_at"] = datetime.now().isoformat()
-
-            # Store in variables
-            if self.variable_manager:
-                completion_data = {
-                    "step_number": self.current_outline_step,
-                    "description": current_step.get("description", ""),
-                    "method": method,
-                    "evidence": evidence,
-                    "timestamp": datetime.now().isoformat()
-                }
-                self.variable_manager.set(f"reasoning.step_completions.{self.current_outline_step}", completion_data)
-
-    async def _store_successful_completion(self, prep_res: dict, final_answer: str):
-        """Store successful completion data for future learning"""
-        if not self.variable_manager:
-            return
-
-        success_data = {
-            "query": prep_res["original_query"],
-            "final_answer": final_answer,
-            "reasoning_loops": self.current_loop_count,
-            "outline": self.outline,
-            "performance_metrics": self.performance_metrics,
-            "auto_recovery_attempts": self.auto_recovery_attempts,
-            "completion_timestamp": datetime.now().isoformat(),
-            "session_id": prep_res.get("session_id", "default")
-        }
-
-        # Store in successful patterns
-        successes = self.variable_manager.get("reasoning.successful_patterns", [])
-        successes.append(success_data)
-        self.variable_manager.set("reasoning.successful_patterns", successes[-20:])  # Keep last 20
-
-        # Update performance statistics
-        self._update_success_statistics()
-
-    def _update_success_statistics(self):
-        """Update success statistics in variables"""
-        if not self.variable_manager:
-            return
-
-        # Get current stats
-        current_stats = self.variable_manager.get("reasoning.performance.statistics", {})
-
-        # Update stats
-        current_stats["total_successful_sessions"] = current_stats.get("total_successful_sessions", 0) + 1
-        current_stats["avg_loops_per_success"] = current_stats.get("avg_loops_per_success", 0)
-
-        # Calculate new average
-        total_sessions = current_stats["total_successful_sessions"]
-        old_avg = current_stats["avg_loops_per_success"] * (total_sessions - 1)
-        current_stats["avg_loops_per_success"] = (old_avg + self.current_loop_count) / total_sessions
-
-        # Store updated stats
-        self.variable_manager.set("reasoning.performance.statistics", current_stats)
-
-    async def _create_outline_completion_response(self, prep_res: dict) -> str:
-        """Create response when outline is completed"""
-        if not self.outline:
-            return "Outline completion response requested but no outline available"
-
-        steps = self.outline.get("steps", [])
-        completed_steps = [s for s in steps if
-                           s.get("status") in ["completed", "force_completed", "emergency_completed"]]
-
-        response_parts = []
-        response_parts.append("I have completed the structured approach outlined for your request:")
-
-        # Summarize completed steps
-        for i, step in enumerate(completed_steps):
-            status_indicator = "✓" if step.get("status") == "completed" else "⚠️"
-            response_parts.append(f"{status_indicator} Step {i + 1}: {step.get('description', 'Unknown step')}")
-
-            # Add evidence if available
-            evidence = step.get("completion_evidence", "")
-            if evidence and len(evidence) < 200:
-                response_parts.append(f"   Result: {evidence}")
-
-        # Get final results from variables if available
-        if self.variable_manager:
-            final_results = self.variable_manager.get("reasoning.final_results", {})
-            if final_results:
-                response_parts.append("\nKey findings:")
-                for key, value in final_results.items():
-                    if isinstance(value, str) and len(value) < 300:
-                        response_parts.append(f"- {key}: {value}")
-
-        response_parts.append(
-            f"\nCompleted in {self.current_loop_count} reasoning cycles using outline-driven execution.")
-
-        return "\n".join(response_parts)
-
-    async def _create_enhanced_timeout_response(self, query: str, prep_res: dict) -> str:
-        """Create enhanced timeout response with comprehensive progress summary"""
-        response_parts = []
-        response_parts.append(
-            f"I reached my reasoning limit of {self.max_reasoning_loops} steps while working on: {query}")
-
-        # Outline progress
-        if self.outline:
-            steps = self.outline.get("steps", [])
-            completed_steps = [s for s in steps if
-                               s.get("status") in ["completed", "force_completed", "emergency_completed"]]
-            unfinished_steps = [s for s in steps if s not in completed_steps]
-
-            response_parts.append(f"\nOutline Progress: {len(completed_steps)}/{len(steps)} steps completed")
-
-            if completed_steps:
-                response_parts.append("Completed steps:")
-                for i, step in enumerate(completed_steps):
-                    response_parts.append(f"✓ {step.get('description', f'Step {i + 1}')}")
-
-            if unfinished_steps:
-                response_parts.append("Unfinished steps:")
-                for i, step in enumerate(unfinished_steps):
-                    response_parts.append(f"✗ {step.get('description', f'Step {i + 1}')}")
-
-        # Task stack progress
-        if self.internal_task_stack:
-            completed_tasks = [t for t in self.internal_task_stack if t.get("status") == "completed"]
-            pending_tasks = [t for t in self.internal_task_stack if t.get("status") == "pending"]
-
-            response_parts.append(f"\nTask Progress: {len(completed_tasks)} completed, {len(pending_tasks)} pending")
-
-        # Performance metrics
-        if self.performance_metrics:
-            response_parts.append(
-                f"\nPerformance: {self.performance_metrics.get('action_efficiency', 0):.1%} efficiency, {self.auto_recovery_attempts} recovery attempts")
-
-        # Available results from variables
-        if self.variable_manager:
-            reasoning_results = self.variable_manager.get("reasoning", {})
-            if reasoning_results:
-                response_parts.append(f"\nStored findings: {len(reasoning_results)} entries in reasoning variables")
-
-        return "\n".join(response_parts)
-
-    async def _finalize_reasoning_session(self, prep_res: dict, final_result: str):
-        """Finalize reasoning session with comprehensive data storage"""
-        if not self.variable_manager:
-            return
-
-        # Store session completion data
-        session_data = {
-            "query": prep_res["original_query"],
-            "final_result": final_result,
-            "reasoning_loops": self.current_loop_count,
-            "outline_completion": self.current_outline_step,
-            "performance_metrics": self.performance_metrics,
-            "auto_recovery_attempts": self.auto_recovery_attempts,
-            "context_summaries": len([c for c in self.reasoning_context if c.get("type") == "context_summary"]),
-            "completion_timestamp": datetime.now().isoformat(),
-            "session_duration": time.time() - time.mktime(datetime.now().timetuple()),
-            "success": True
-        }
-
-        # Store in session history
-        session_history = self.variable_manager.get("reasoning.session_history", [])
-        session_history.append(session_data)
-        self.variable_manager.set("reasoning.session_history", session_history[-50:])  # Keep last 50 sessions
-
-        # Store outline pattern for reuse
-        if self.outline:
-            outline_pattern = {
-                "query_type": self._classify_query_type(prep_res["original_query"]),
-                "outline": self.outline,
-                "success": True,
-                "loops_used": self.current_loop_count,
-                "timestamp": datetime.now().isoformat()
-            }
-            patterns = self.variable_manager.get("reasoning.successful_patterns.outlines", [])
-            patterns.append(outline_pattern)
-            self.variable_manager.set("reasoning.successful_patterns.outlines", patterns[-10:])
-
-    def _classify_query_type(self, query: str) -> str:
-        """Classify query type for pattern matching"""
-        query_lower = query.lower()
-
-        if any(word in query_lower for word in ["search", "find", "look up", "research"]):
-            return "research"
-        elif any(word in query_lower for word in ["analyze", "compare", "evaluate"]):
-            return "analysis"
-        elif any(word in query_lower for word in ["create", "generate", "write", "build"]):
-            return "creation"
-        elif any(word in query_lower for word in ["plan", "strategy", "approach"]):
-            return "planning"
-        else:
-            return "general"
-
-    async def _handle_reasoning_error(self, error: Exception, prep_res: dict, progress_tracker):
-        """Enhanced error handling with auto-recovery"""
-        eprint(f"Reasoning loop {self.current_loop_count} failed: {error}")
-
-        # Store error in context
-        self.reasoning_context.append({
-            "type": "error",
-            "content": f"Error in loop {self.current_loop_count}: {str(error)}",
-            "error_type": type(error).__name__,
-            "outline_step": self.current_outline_step,
-            "timestamp": datetime.now().isoformat()
-        })
-
-        # Store in variables for learning
-        if self.variable_manager:
-            error_data = {
-                "error": str(error),
-                "error_type": type(error).__name__,
-                "loop": self.current_loop_count,
-                "outline_step": self.current_outline_step,
-                "timestamp": datetime.now().isoformat(),
-                "query": prep_res["original_query"]
-            }
-            errors = self.variable_manager.get("reasoning.error_log", [])
-            errors.append(error_data)
-            self.variable_manager.set("reasoning.error_log", errors[-100:])  # Keep last 100 errors
-
-        # Trigger auto-recovery if not already in recovery
-        if self.auto_recovery_attempts < self.max_auto_recovery:
-            await self._trigger_auto_recovery(prep_res)
-
-    # Keep all existing helper methods like _execute_internal_reasoning, etc.
-    # but update them to use the enhanced variable system...
-
-    async def post_async(self, shared, prep_res, exec_res):
-        """Enhanced post-processing with comprehensive data storage"""
-        final_result = exec_res.get("final_result", "Task processing incomplete")
-
-        # Store comprehensive reasoning artifacts
-        shared["reasoning_artifacts"] = {
-            "reasoning_loops": exec_res.get("reasoning_loops", 0),
-            "reasoning_context": exec_res.get("reasoning_context", []),
-            "internal_task_stack": exec_res.get("internal_task_stack", []),
-            "outline": exec_res.get("outline"),
-            "outline_completion": exec_res.get("outline_completion", 0),
-            "performance_metrics": exec_res.get("performance_metrics", {}),
-            "auto_recovery_attempts": exec_res.get("auto_recovery_attempts", 0)
-        }
-
-        # Enhanced variable system updates
-        if self.variable_manager:
-            # Store final session results
-            final_session_data = {
-                "final_result": final_result,
-                "completion_timestamp": datetime.now().isoformat(),
-                "total_loops": exec_res.get("reasoning_loops", 0),
-                "session_success": final_result != "Task processing incomplete",
-                "outline_driven_execution": True
-            }
-            self.variable_manager.set("reasoning.current_session.final_data", final_session_data)
-
-            # Update global performance statistics
-            self._update_global_performance_stats(exec_res)
-
-        # Set enhanced response data
+    async def post_async(self, shared: dict, prep_res: dict, exec_res: dict) -> str:
+        """Store results and update shared state"""
+        final_result = exec_res.get("final_result", "No result")
+
+        # Update shared state
         shared["llm_reasoner_result"] = final_result
         shared["current_response"] = final_result
-
-        # Provide enhanced synthesis metadata
-        shared["synthesized_response"] = {
-            "synthesized_response": final_result,
-            "confidence": self._calculate_confidence(exec_res),
-            "metadata": {
-                "synthesis_method": "outline_driven_reasoner",
-                "reasoning_loops": exec_res.get("reasoning_loops", 0),
-                "outline_completion": exec_res.get("outline_completion", 0),
-                "performance_score": self._calculate_performance_score(exec_res),
-                "auto_recovery_used": exec_res.get("auto_recovery_attempts", 0) > 0
-            }
+        shared["reasoning_artifacts"] = {
+            "loops": exec_res.get("reasoning_loops", 0),
+            "completed": exec_res.get("completed", False),
+            "results": exec_res.get("results", {})
         }
+
+        # Store in variables
+        if self.variable_manager:
+            self.variable_manager.set("reasoning.final_result", final_result)
+            self.variable_manager.set("reasoning.session_complete", {
+                "timestamp": datetime.now().isoformat(),
+                "loops": exec_res.get("reasoning_loops", 0),
+                "success": exec_res.get("completed", False)
+            })
 
         return "reasoner_complete"
 
-    def _update_global_performance_stats(self, exec_res: dict):
-        """Update global performance statistics in variables"""
-        if not self.variable_manager:
-            return
 
-        stats = self.variable_manager.get("reasoning.global_performance", {})
-
-        # Update counters
-        stats["total_sessions"] = stats.get("total_sessions", 0) + 1
-        stats["total_loops"] = stats.get("total_loops", 0) + exec_res.get("reasoning_loops", 0)
-        stats["total_recoveries"] = stats.get("total_recoveries", 0) + exec_res.get("auto_recovery_attempts", 0)
-
-        # Calculate averages
-        stats["avg_loops_per_session"] = stats["total_loops"] / stats["total_sessions"]
-        stats["recovery_rate"] = stats["total_recoveries"] / stats["total_sessions"]
-
-        # Success tracking
-        if exec_res.get("final_result") != "Task processing incomplete":
-            stats["successful_sessions"] = stats.get("successful_sessions", 0) + 1
-            stats["success_rate"] = stats["successful_sessions"] / stats["total_sessions"]
-
-        self.variable_manager.set("reasoning.global_performance", stats)
-
-    def _calculate_confidence(self, exec_res: dict) -> float:
-        """Calculate confidence score based on execution results"""
-        base_confidence = 0.5
-
-        # Outline completion boosts confidence
-        outline = exec_res.get("outline")
-        if outline:
-            completion_ratio = exec_res.get("outline_completion", 0) / len(outline.get("steps", [1]))
-            base_confidence += 0.3 * completion_ratio
-
-        # Low recovery attempts boost confidence
-        recovery_attempts = exec_res.get("auto_recovery_attempts", 0)
-        if recovery_attempts == 0:
-            base_confidence += 0.15
-        elif recovery_attempts == 1:
-            base_confidence += 0.05
-
-        # Reasonable loop count boosts confidence
-        loops = exec_res.get("reasoning_loops", 0)
-        if 3 <= loops <= 15:
-            base_confidence += 0.1
-
-        # Performance metrics
-        performance = exec_res.get("performance_metrics", {})
-        if performance.get("action_efficiency", 0) > 0.7:
-            base_confidence += 0.1
-
-        return min(1.0, max(0.0, base_confidence))
-
-    def _calculate_performance_score(self, exec_res: dict) -> float:
-        """Calculate overall performance score"""
-        score = 0.5
-
-        # Efficiency score
-        performance = exec_res.get("performance_metrics", {})
-        action_efficiency = performance.get("action_efficiency", 0)
-        score += 0.3 * action_efficiency
-
-        # Completion score
-        outline = exec_res.get("outline")
-        if outline:
-            completion_ratio = exec_res.get("outline_completion", 0) / len(outline.get("steps", [1]))
-            score += 0.4 * completion_ratio
-
-        # Recovery penalty
-        recovery_attempts = exec_res.get("auto_recovery_attempts", 0)
-        score -= 0.1 * recovery_attempts
-
-        return min(1.0, max(0.0, score))
-
-    def _summarize_reasoning_context(self) -> str:
-        """Summarize the current reasoning context"""
-        if not self.reasoning_context:
-            return "No previous reasoning steps"
-
-        summary_parts = []
-        for entry in self.reasoning_context[-5:]:  # Last 5 entries
-            entry_type = entry.get("type", "unknown")
-            content = entry.get("content", "")
-
-            if entry_type == "reasoning":
-                # Truncate long reasoning content
-                content_preview = content[:20000] + "..." if len(content) > 20000 else content
-                summary_parts.append(f"Loop {entry.get('loop', '?')}: {content_preview}")
-            elif entry_type == "meta_tool_result":
-                summary_parts.append(f"Result: {content[:150]}...")
-            elif entry_type == "error":
-                summary_parts.append(f"Error: {content}")
-
-        return "\n".join(summary_parts)
-
-    def _summarize_task_stack(self) -> str:
-        """Summarize the internal task stack"""
-        if not self.internal_task_stack:
-            return "No tasks in stack"
-
-        summary_parts = []
-        for i, task in enumerate(self.internal_task_stack):
-            status = task.get("status", "pending")
-            description = task.get("description", "No description")
-            summary_parts.append(f"{i + 1}. [{status.upper()}] {description}")
-
-        return "\n".join(summary_parts)
-
-    def _get_tool_category(self, tool_name: str) -> str:
-        """Get category for meta-tool"""
-        categories = {
-            "internal_reasoning": "thinking",
-            "manage_internal_task_stack": "planning",
-            "delegate_to_llm_tool_node": "delegation",
-            "create_and_execute_plan": "orchestration",
-            "direct_response": "completion"
-        }
-        return categories.get(tool_name, "unknown")
-
-    def _calculate_reasoning_depth(self) -> int:
-        """Calculate current reasoning depth"""
-        reasoning_entries = [entry for entry in self.reasoning_context if entry.get("type") == "reasoning"]
-        return len(reasoning_entries)
-
-    def _assess_delegation_complexity(self, args: dict) -> str:
-        """Assess complexity of delegation task"""
-        task_desc = args.get("task_description", "")
-        tools_count = len(args.get("tools_list", []))
-
-        if tools_count > 3 or len(task_desc) > 100:
-            return "high"
-        elif tools_count > 1 or len(task_desc) > 50:
-            return "medium"
-        else:
-            return "low"
-
-    def _estimate_plan_complexity(self, goals: list) -> str:
-        """Estimate complexity of plan"""
-        goal_count = len(goals)
-        total_text = sum(len(str(goal)) for goal in goals)
-
-        if goal_count > 5 or total_text > 500:
-            return "high"
-        elif goal_count > 2 or total_text > 200:
-            return "medium"
-        else:
-            return "low"
-
-    def _calculate_tool_performance_score(self, duration: float, tool_name: str) -> float:
-        """Calculate performance score for tool execution"""
-        # Expected durations by tool type
-        expected_durations = {
-            "internal_reasoning": 0.1,
-            "manage_internal_task_stack": 0.05,
-            "delegate_to_llm_tool_node": 3.0,
-            "create_and_execute_plan": 10.0,
-            "direct_response": 0.1
-        }
-
-        expected = expected_durations.get(tool_name, 1.0)
-        if duration <= expected:
-            return 1.0
-        else:
-            return max(0.0, expected / duration)
-
-    def _create_reasoning_summary(self) -> str:
-        """Create summary of reasoning process"""
-        reasoning_entries = [entry for entry in self.reasoning_context if entry.get("type") == "reasoning"]
-        task_entries = len(self.internal_task_stack)
-
-        return f"Completed {len(reasoning_entries)} reasoning steps with {task_entries} tasks tracked"
-
-    def _calculate_batch_performance(self, matches: list) -> dict[str, Any]:
-        """Calculate performance metrics for batch execution"""
-        tool_types = [match[0] for match in matches]
-        return {
-            "total_tools": len(matches),
-            "tool_diversity": len(set(tool_types)),
-            "most_used_tool": max(set(tool_types), key=tool_types.count) if tool_types else "none"
-        }
-
-    def _assess_reasoning_progress(self) -> str:
-        """Assess overall reasoning progress"""
-        if len(self.reasoning_context) < 3:
-            return "early_stage"
-        elif len(self.reasoning_context) < 8:
-            return "developing"
-        elif len(self.reasoning_context) < 15:
-            return "mature"
-        else:
-            return "extensive"
-
-    def _get_error_context(self, error: Exception) -> dict[str, Any]:
-        """Get contextual information about an error"""
-        return {
-            "error_class": type(error).__name__,
-            "reasoning_stage": f"loop_{self.current_loop_count}",
-            "context_available": len(self.reasoning_context) > 0,
-            "stack_state": "populated" if self.internal_task_stack else "empty"
-        }
-
-    async def _execute_internal_reasoning(self, args: dict, prep_res: dict) -> dict[str, Any]:
-        """Execute internal reasoning meta-tool"""
-        thought = args.get("thought", "")
-        thought_number = args.get("thought_number", 1)
-        total_thoughts = args.get("total_thoughts", 1)
-        next_thought_needed = args.get("next_thought_needed", False)
-        current_focus = args.get("current_focus", "")
-        key_insights = args.get("key_insights", [])
-        potential_issues = args.get("potential_issues", [])
-        confidence_level = args.get("confidence_level", 0.5)
-
-        # Structure the reasoning entry
-        reasoning_entry = {
-            "thought": thought,
-            "thought_number": thought_number,
-            "total_thoughts": total_thoughts,
-            "next_thought_needed": next_thought_needed,
-            "current_focus": current_focus,
-            "key_insights": key_insights,
-            "potential_issues": potential_issues,
-            "confidence_level": confidence_level,
-            "timestamp": datetime.now().isoformat()
-        }
-
-        # Add to internal reasoning log
-        if not hasattr(self, 'internal_reasoning_log'):
-            self.internal_reasoning_log = []
-        self.internal_reasoning_log.append(reasoning_entry)
-
-        # Format for context
-        context_addition = f"""Internal Reasoning Step {thought_number}/{total_thoughts}:
-Thought: {thought}
-Focus: {current_focus}
-Key Insights: {', '.join(key_insights) if key_insights else 'None'}
-Potential Issues: {', '.join(potential_issues) if potential_issues else 'None'}
-Confidence: {confidence_level}
-Next Thought Needed: {next_thought_needed}"""
-
-        return {"context_addition": context_addition}
-
-    async def _execute_manage_task_stack(self, args: dict, prep_res: dict) -> dict[str, Any]:
-        """Execute task stack management meta-tool"""
-        action = args.get("action", "get_current").lower()
-        task_description = args.get("task_description", "")
-
-        if action == "add":
-            self.internal_task_stack.append({
-                "description": task_description,
-                "status": "pending",
-                "added_at": datetime.now().isoformat()
-            })
-            context_addition = f"Added to task stack: {task_description}"
-
-        elif action == "remove":
-            # Remove task by description match
-            original_count = len(self.internal_task_stack)
-            self.internal_task_stack = [
-                task for task in self.internal_task_stack
-                if task_description.lower() not in task["description"].lower()
-            ]
-            removed_count = original_count - len(self.internal_task_stack)
-            context_addition = f"Removed {removed_count} task(s) matching: {task_description}"
-
-        elif action == "complete":
-            # Mark task as completed
-            for task in self.internal_task_stack:
-                if task_description.lower() in task["description"].lower():
-                    task["status"] = "completed"
-                    task["completed_at"] = datetime.now().isoformat()
-            context_addition = f"Marked as completed: {task_description}"
-
-        elif action == "get_current":
-            if self.internal_task_stack:
-                stack_summary = []
-                for i, task in enumerate(self.internal_task_stack):
-                    status = task["status"]
-                    desc = task["description"]
-                    stack_summary.append(f"{i + 1}. [{status.upper()}] {desc}")
-                context_addition = "Current task stack:\n" + "\n".join(stack_summary)
-            else:
-                context_addition = "Task stack is empty"
-
-        else:
-            context_addition = f"Unknown task stack action: {action}"
-
-        return {"context_addition": context_addition}
-
-    async def _execute_delegate_llm_tool(self, args: dict, prep_res: dict) -> dict[str, Any]:
-        """Execute delegation to LLMToolNode"""
-        task_description = args.get("task_description", "")
-        tools_list = args.get("tools_list", [])
-
-        # Prepare shared state for LLMToolNode
-        llm_tool_shared = {
-            "current_task_description": task_description + '\nreturn all results in the final answer!',
-            "current_query": task_description,
-            "formatted_context": {
-                "recent_interaction": f"Reasoner delegating task: {task_description}",
-                "session_summary": self._get_reasoning_summary(),
-                "task_context": f"Reasoning loop {self.current_loop_count}, delegated task. return all results!"
-            },
-            "variable_manager": prep_res.get("variable_manager"),
-            "agent_instance": prep_res.get("agent_instance"),
-            "available_tools": tools_list,  # Restrict to specific tools
-            "tool_capabilities": prep_res.get("tool_capabilities", {}),
-            "fast_llm_model": prep_res.get("fast_llm_model"),
-            "complex_llm_model": prep_res.get("complex_llm_model"),
-            "progress_tracker": prep_res.get("progress_tracker"),
-            "session_id": prep_res.get("session_id"),
-            "use_fast_response": True  # Use fast model for delegated tasks
-        }
-
-        # Execute LLMToolNode
-        try:
-            llm_tool_node = LLMToolNode()
-            await llm_tool_node.run_async(llm_tool_shared)
-
-            # Get results
-            final_response = llm_tool_shared.get("current_response", "Task completed without specific result")
-            tool_calls_made = llm_tool_shared.get("tool_calls_made", 0)
-
-            context_addition = f"""Delegated Task Completed:
-Task: {task_description}
-Tools Available: {', '.join(tools_list)}
-Tools Used: {tool_calls_made} tool calls made
-Result: {final_response}"""
-
-            return {"context_addition": context_addition}
-
-        except Exception as e:
-            context_addition = f"Delegation failed for task '{task_description}': {str(e)}"
-            return {"context_addition": context_addition}
-
-    async def _execute_create_plan(self, args: dict, prep_res: dict) -> dict[str, Any]:
-        """Execute plan creation and execution"""
-        goals = args.get("goals", [])
-
-        if not goals:
-            return {"context_addition": "No goals provided for plan creation"}
-
-        try:
-            # Prepare shared state for TaskPlanner
-            planning_shared = prep_res.copy()
-            planning_shared.update({
-                "replan_context": {
-                    "goals": goals,
-                    "triggered_by": "llm_reasoner",
-                    "reasoning_context": self._get_reasoning_summary()
-                },
-                "current_task_description": f"Execute plan with {len(goals)} goals",
-                "current_query": f"Complex task: {'; '.join(goals)}"
-            })
-
-            # Execute TaskPlanner
-            planner_node = TaskPlannerNode()
-            plan_info = await planner_node.run_async(planning_shared)
-
-            if plan_info == "planning_failed":
-                return {"context_addition": f"Plan creation failed: {planning_shared.get('planning_error', 'Unknown error')}"}
-
-            plan = planning_shared.get("current_plan")
-            # Execute the plan using TaskExecutor
-            executor_shared = planning_shared.copy()
-            executor_node = TaskExecutorNode()
-
-            # Execute plan to completion
-            max_execution_cycles = 10
-            execution_cycle = 0
-
-            while execution_cycle < max_execution_cycles:
-                execution_cycle += 1
-
-                result = await executor_node.run_async(executor_shared)
-
-                # Check completion status
-                if result == "plan_completed" or result == "execution_error":
-                    break
-                elif result in ["continue_execution", "waiting"]:
-                    continue
-                else:
-                    # Handle other results like reflection needs
-                    if result in ["needs_dynamic_replan", "needs_plan_append"]:
-                        # For now, just continue - could add reflection logic here
-                        continue
-                    break
-
-            # Collect results
-            completed_tasks = [
-                task for task in plan.tasks
-                if executor_shared["tasks"][task.id].status == "completed"
-            ]
-
-            failed_tasks = [
-                task for task in plan.tasks
-                if executor_shared["tasks"][task.id].status == "failed"
-            ]
-
-            # Build context addition with results
-            results_summary = []
-            results_store = executor_shared.get("results", {})
-
-            for task in completed_tasks:
-                task_result = results_store.get(task.id, {})
-                if task_result.get("data"):
-                    result_preview = str(task_result["data"])[:150] + "..."
-                    results_summary.append(f"- {task.description}: {result_preview}")
-
-            context_addition = f"""Plan Execution Completed:
-Goals: {len(goals)} goals processed
-Tasks Created: {len(plan.tasks)}
-Tasks Completed: {len(completed_tasks)}
-Tasks Failed: {len(failed_tasks)}
-Execution Cycles: {execution_cycle}
-
-Results Summary:
-{chr(10).join(results_summary) if results_summary else 'No specific results captured'}"""
-
-            return {"context_addition": context_addition}
-
-        except Exception as e:
-            import traceback
-            print(traceback.format_exc())
-            context_addition = f"Plan execution failed: {str(e)}"
-            return {"context_addition": context_addition}
-
-    def _get_reasoning_summary(self) -> str:
-        """Get a summary of the reasoning process so far"""
-        if not self.reasoning_context:
-            return "No reasoning context available"
-
-        summary_parts = []
-        reasoning_entries = [entry for entry in self.reasoning_context if entry.get("type") == "reasoning"]
-
-        for entry in reasoning_entries[-3:]:  # Last 3 reasoning steps
-            content = entry.get("content", "")[:50000] + "..."
-            loop_num = entry.get("loop", "?")
-            summary_parts.append(f"Loop {loop_num}: {content}")
-
-        return "\n".join(summary_parts)
-
-    async def _create_error_response(self, query: str, error: str) -> str:
-        """Create an error response"""
-        return f"I encountered an error while processing your request: {error}. I was working on: {query}"
-
-    async def _fallback_direct_response(self, prep_res: dict) -> dict[str, Any]:
-        """Fallback when LLM is not available"""
-        query = prep_res["original_query"]
-        fallback_response = f"I received your request: {query}. However, I'm currently unable to process complex requests due to limited capabilities."
-
-        return {
-            "final_result": fallback_response,
-            "reasoning_loops": 0,
-            "reasoning_context": [{"type": "fallback", "content": "LLM unavailable"}],
-            "internal_task_stack": []
-        }
 
 # ===== Foramt Helper =====
 class VariableManager:
@@ -7650,18 +2577,26 @@ class VariableManager:
         self.world_model = world_model
         self.shared_state = shared_state or {}
         self.scopes = {
-            'world': world_model,
-            'shared': self.shared_state,
-            'results': {},
-            'tasks': {},
-            'user': {},
-            'system': {},
-            'reasoning': {},  # For reasoning scope compression
-            'files': {},  # For file operation deduplication
-            'session_archive': {}  # For large data archiving
+            "world": world_model,
+            "shared": self.shared_state,
+            "results": {},
+            "tasks": {},
+            "user": {},
+            "system": {},
+            "reasoning": {},  # For reasoning scope compression
+            "files": {},  # For file operation deduplication
+            "session_archive": {},  # For large data archiving
         }
         self._cache = {}
         self.agent_instance = None  # Will be set by FlowAgent
+        # Optimiertes Caching
+        self._path_cache = {}           # path -> (timestamp, value)
+        self._scope_hashes = {}         # scope_name -> hash
+        self._cache_invalidations = 0   # Für Monitoring
+        self.PATH_CACHE_TTL = 5         # 5 Sekunden für path cache
+
+        # LLM Context Cache (falls nicht schon vorhanden)
+        self._llm_ctx_cache = {'hash': None, 'content': None}
 
     def register_scope(self, name: str, data: dict):
         """Register a new variable scope"""
@@ -7717,31 +2652,57 @@ class VariableManager:
 
         return current
 
+
     def get(self, path: str, default=None, use_cache: bool = True):
-        """Get variable with dot notation path support for dicts and lists."""
+        """
+        OPTIMIERTE Version - Mit TTL-basiertem Path-Cache.
+
+        Änderung: Cache-Einträge haben TTL, werden nicht sofort invalidiert.
+        """
+        # Quick check: Einfacher Key ohne Punkt
+        if '.' not in path:
+            return self.world_model.get(path, default)
+
+        # Cache-Check mit TTL
+        if use_cache and hasattr(self, '_path_cache') and path in self._path_cache:
+            timestamp, cached_value = self._path_cache[path]
+            if time.time() - timestamp < getattr(self, 'PATH_CACHE_TTL', 5):
+                return cached_value
+
+        # Auch alten Cache prüfen für Kompatibilität
         if use_cache and path in self._cache:
             return self._cache[path]
 
         try:
             value = self._resolve_path(path)
+
+            # In beiden Caches speichern
             if use_cache:
                 self._cache[path] = value
+                if hasattr(self, '_path_cache'):
+                    self._path_cache[path] = (time.time(), value)
+
             return value
         except (KeyError, IndexError):
-            # A KeyError or IndexError during resolution means the path is invalid
             return default
 
-    def set(self, path: str, value, create_scope: bool = True):
-        """Set variable with dot notation path support for dicts and lists."""
-        # Invalidate cache for this path
-        if path in self._cache:
-            del self._cache[path]
 
+    def set(self, path: str, value, create_scope: bool = True):
+        """
+        OPTIMIERTE Version - Gezieltes Cache-Invalidieren statt clear().
+
+        Vorher: self._cache.clear() bei JEDEM set() → Alle Cache-Einträge weg
+        Nachher: Nur betroffene Paths invalidieren
+        """
         parts = path.split('.')
 
+        # 1. Betroffene Cache-Einträge invalidieren (NICHT alles!)
+        self._invalidate_affected_paths(path)
+
+        # 2. Original Set-Logik
         if len(parts) == 1:
-            # Simple key in world_model
             self.world_model[path] = value
+            self._update_scope_hash('world')
             return
 
         scope_name = parts[0]
@@ -7753,64 +2714,95 @@ class VariableManager:
 
         current = self.scopes[scope_name]
 
-        # Iterate to the second-to-last part to get the container
+        # Navigate to parent container
         for i, part in enumerate(parts[1:-1]):
-            next_part = parts[i + 2]  # Look ahead to the next part in the path
+            next_part = parts[i + 2]
 
-            # Determine if the current part is a dictionary key or a list index
             try:
-                # Try to treat it as a list index
                 key = int(part)
                 if not isinstance(current, list):
-                    # If current is not a list, we can't use an integer index
-                    raise TypeError(f"Attempted to use integer index '{key}' on non-list for path '{path}'")
-
-                # Ensure list is long enough
+                    raise TypeError(f"Integer index on non-list: {path}")
                 while len(current) <= key:
-                    current.append(None)  # Pad with None
-
-                # If the next level doesn't exist, create it based on the next part
+                    current.append(None)
                 if current[key] is None:
                     current[key] = [] if next_part.isdigit() else {}
-
                 current = current[key]
-
             except ValueError:
-                # It's a dictionary key
                 key = part
                 if not isinstance(current, dict):
-                    raise TypeError(f"Attempted to use string key '{key}' on non-dict for path '{path}'")
-
+                    raise TypeError(f"String key on non-dict: {path}")
                 if key not in current:
-                    # Create the next level: a list if the next part is a number, else a dict
                     current[key] = [] if next_part.isdigit() else {}
-
                 current = current[key]
 
-        # Handle the final part (the actual assignment)
+        # Final assignment
         last_part = parts[-1]
 
         if isinstance(current, list):
             try:
                 key = int(last_part)
                 if key >= len(current):
-                    raise ValueError(f"Index '{key}' out of range for path '{path}'")
-                current[key] = value
-            except ValueError as e:
+                    current.append(value)
+                else:
+                    current[key] = value
+            except ValueError:
                 current.append(value)
-
         elif isinstance(current, dict):
             current[last_part] = value
-        elif scope_name == 'tasks' and hasattr(current, 'task_identification_attr'):# from tasks like Tooltask ... model dump and acces
-            dict_data = asdict(current)
-            dict_data[last_part] = value
-            current = dict_data
-            # update self.scopes['tasks'] with the updated task
-            self.scopes['tasks'][parts[1]][last_part] = current
         else:
-            raise TypeError(f"Final container is not a list or dictionary for path '{path}' its a {type(current)}")
+            raise TypeError(f"Cannot set on {type(current)}: {path}")
 
-        self._cache.clear()
+        # 3. Scope-Hash aktualisieren für LLM Context Cache
+        self._update_scope_hash(scope_name)
+
+        # 4. LLM Context invalidieren NUR bei wichtigen Scopes
+        if scope_name in ['results', 'delegation', 'reasoning', 'files', 'user']:
+            self._llm_ctx_cache = {'hash': None, 'content': None}
+
+
+    def _invalidate_affected_paths(self, changed_path: str):
+        """
+        Invalidiert nur Cache-Einträge die vom geänderten Path betroffen sind.
+
+        Beispiel: Bei Änderung von "results.task_1.data"
+        - Invalidiert: "results.task_1.data", "results.task_1", "results"
+        - Behält: "delegation.latest", "user.name", etc.
+        """
+        if not hasattr(self, '_cache'):
+            self._cache = {}
+
+        keys_to_remove = []
+        changed_parts = changed_path.split('.')
+
+        for cached_path in self._cache:
+            cached_parts = cached_path.split('.')
+
+            # Prüfe ob Paths sich überschneiden
+            # 1. Geänderter Path ist Prefix von cached: "results" → "results.task_1"
+            # 2. Cached Path ist Prefix von geändertem: "results.task_1" → "results.task_1.data"
+            min_len = min(len(changed_parts), len(cached_parts))
+
+            if changed_parts[:min_len] == cached_parts[:min_len]:
+                keys_to_remove.append(cached_path)
+
+        for key in keys_to_remove:
+            del self._cache[key]
+
+        # Tracking für Monitoring
+        if hasattr(self, '_cache_invalidations'):
+            self._cache_invalidations += len(keys_to_remove)
+
+
+    def _update_scope_hash(self, scope_name: str):
+        """Aktualisiert den Hash eines Scopes für Change-Detection"""
+        if not hasattr(self, '_scope_hashes'):
+            self._scope_hashes = {}
+
+        scope = self.scopes.get(scope_name, {})
+        if isinstance(scope, dict):
+            # Schneller Hash: Nur Anzahl Keys und erste 3 Key-Namen
+            keys = list(scope.keys())[:3]
+            self._scope_hashes[scope_name] = hash((len(scope), tuple(keys)))
 
     def format_text(self, text: str, context: dict = None) -> str:
         """Enhanced text formatting with multiple syntaxes"""
@@ -7883,7 +2875,7 @@ class VariableManager:
             value = self.get(var_name)
             return self._value_to_string(value) if value is not None else match.group(0)
 
-        return re.sub(r'\$([a-zA-Z_][a-zA-Z0-9_]*)', replace_var, text)
+        return re.sub(r"\$([a-zA-Z_][a-zA-Z0-9_]*)", replace_var, text)
 
     def _value_to_string(self, value) -> str:
         """Convert value to string representation"""
@@ -7901,18 +2893,18 @@ class VariableManager:
         references = {}
 
         # Find all {{ }} references
-        double_brace_refs = re.findall(r'\{\{\s*([^}]+)\s*\}\}', text)
+        double_brace_refs = re.findall(r"\{\{\s*([^}]+)\s*\}\}", text)
         for ref in double_brace_refs:
-            references["{{"+ref+"}}"] = self.get(ref.strip()) is not None
+            references["{{" + ref + "}}"] = self.get(ref.strip()) is not None
 
         # Find all {} references
-        single_brace_refs = re.findall(r'\{([^{}\s]+)\}', text)
+        single_brace_refs = re.findall(r"\{([^{}\s]+)\}", text)
         for ref in single_brace_refs:
-            if '.' not in ref:  # Only simple vars
-                references["{"+ref+"}"] = self.get(ref.strip()) is not None
+            if "." not in ref:  # Only simple vars
+                references["{" + ref + "}"] = self.get(ref.strip()) is not None
 
         # Find all $ references
-        dollar_refs = re.findall(r'\$([a-zA-Z_][a-zA-Z0-9_]*)', text)
+        dollar_refs = re.findall(r"\$([a-zA-Z_][a-zA-Z0-9_]*)", text)
         for ref in dollar_refs:
             references[f"${ref}"] = self.get(ref) is not None
 
@@ -7937,11 +2929,7 @@ class VariableManager:
 
     def _validate_task_references(self, task: Task) -> dict[str, Any]:
         """Validate all variable references in a task"""
-        validation_results = {
-            'valid': True,
-            'errors': [],
-            'warnings': []
-        }
+        validation_results = {"valid": True, "errors": [], "warnings": []}
 
         # Check different task types
         if isinstance(task, LLMTask):
@@ -7949,8 +2937,10 @@ class VariableManager:
                 refs = self.validate_references(task.prompt_template)
                 for ref, is_valid in refs.items():
                     if not is_valid:
-                        validation_results['errors'].append(f"Invalid reference in prompt: {ref}")
-                        validation_results['valid'] = False
+                        validation_results["errors"].append(
+                            f"Invalid reference in prompt: {ref}"
+                        )
+                        validation_results["valid"] = False
 
         elif isinstance(task, ToolTask):
             for key, value in task.arguments.items():
@@ -7958,7 +2948,9 @@ class VariableManager:
                     refs = self.validate_references(value)
                     for ref, is_valid in refs.items():
                         if not is_valid:
-                            validation_results['warnings'].append(f"Invalid reference in {key}: {ref}")
+                            validation_results["warnings"].append(
+                                f"Invalid reference in {key}: {ref}"
+                            )
 
         return validation_results
 
@@ -7971,8 +2963,12 @@ class VariableManager:
         # Check all variables for relevance
         for scope in self.scopes.values():
             for name, var_def in scope.items():
-                if name in ["system_context", "task_executor_instance",
-                            "index", "tool_capabilities", "use_fast_response", "task_planner_instance"]:
+                if name in [
+                    "system_context",
+                    "index",
+                    "tool_capabilities",
+                    "use_fast_response",
+                ]:
                     continue
                 # Name similarity
                 if any(word in name.lower() for word in query_lower.split()):
@@ -7980,7 +2976,13 @@ class VariableManager:
                     continue
 
                 # Description similarity
-                if var_def and any(word in str(var_def).lower() for word in query_lower.split()):
+                if isinstance(var_def, pd.DataFrame):
+                    var_def_bool = not var_def.empty
+                else:
+                    var_def_bool = bool(var_def)
+                if var_def_bool and any(
+                    word in str(var_def).lower() for word in query_lower.split()
+                ):
                     suggestions.append(name)
                     continue
 
@@ -8071,53 +3073,142 @@ class VariableManager:
 
     def get_llm_variable_context(self) -> str:
         """
-        Generates a detailed variable context formatted for LLM consumption,
-        explaining structure, access patterns, and listing all available variables.
+           Ersetzt get_llm_variable_context() im VariableManager.
+
+           Optimierungen:
+           1. Cache mit Change-Detection
+           2. Nur wichtige Scopes
+           3. Keine vollständigen Werte, nur Keys
+
+           Token-Einsparung: 80% (von ~1000 auf ~200 Tokens)
+           """
+
+        # Change Detection
+        if not hasattr(self, '_llm_ctx_cache'):
+            self._llm_ctx_cache = {'hash': None, 'content': None}
+
+        # Hash über Scope-Größen (schnell zu berechnen)
+        current_hash = hash(tuple(
+            (name, len(data) if isinstance(data, dict) else 0)
+            for name, data in self.scopes.items()
+            if name not in ['shared', 'system_context']
+        ))
+
+        if self._llm_ctx_cache['hash'] == current_hash:
+            return self._llm_ctx_cache['content']
+
+        # Minimaler Context
+        lines = ["## Variables (access: {{ scope.key }})"]
+
+        priority_scopes = ['results', 'delegation', 'files', 'user', 'reasoning']
+
+        for scope_name in priority_scopes:
+            scope = self.scopes.get(scope_name, {})
+            if isinstance(scope, dict) and scope:
+                keys = list(scope.keys())[:4]
+                extra = f" +{len(scope)-4}" if len(scope) > 4 else ""
+                lines.append(f"- {scope_name}: {', '.join(keys)}{extra}")
+
+        content = "\n".join(lines)
+
+        self._llm_ctx_cache = {'hash': current_hash, 'content': content}
+        return content
+
+
+    def has_recent_data(self, scope_name: str, key_prefix: str = None) -> bool:
         """
-        context_parts = [
-            "## Variable System Reference",
-            "You can access a state management system to retrieve data using dot notation.",
-            "Syntax: `{{ path.to.variable }}` or `$path.to.variable`.",
-            "",
-            "### How to Access Data",
-            "The system contains nested objects (dictionaries) and lists (arrays).",
-            "",
-            "**1. Object (Dictionary) Access (Primary Usage):**",
-            "Use a dot (`.`) to access values inside an object. This is the most common way to get data.",
-            "Example: If a `user` object exists with a `profile`, you can get the name with `{{ user.profile.name }}`.",
-            "",
-            "**2. List (Array) Access:**",
-            "If a variable is a list, use a dot (`.`) followed by a zero-based number (index) to access a specific item.",
-            "Example: To get the first email from a user's email list, use `{{ user.emails.0 }}`.",
-            "You can chain these access methods: `{{ user.emails.0.address }}`.",
-            "",
-            "### Available Variables",
-            "Below is a list of all currently available variable paths, their type, and a preview of their content. (Note: Previews may be truncated).",
-        ]
+        NEUE METHODE - Schnelle Prüfung ob relevante Daten vorhanden sind.
 
-        variables = self.get_available_variables()
-        if not variables:
-            context_parts.append("- No variables are currently set.")
-            return "\n".join(context_parts)
+        Verwendung: Vor teuren Lookups prüfen ob sich der Aufwand lohnt.
+        """
+        scope = self.scopes.get(scope_name, {})
+        if not isinstance(scope, dict) or not scope:
+            return False
 
-        if "shared" in variables:
-            variables["shared"] = {'preview': "Shared state variables", 'type': "dict"}
+        if key_prefix:
+            return any(k.startswith(key_prefix) for k in scope.keys())
 
-        # yaml dump preview
-        context_parts.append("```yaml")
-        safe_variables = safe_for_yaml(variables)
-        context_parts.append(yaml.dump(safe_variables, default_flow_style=False, sort_keys=False))
-        context_parts.append("```")
+        return True
 
-        # Add any final complex examples or notes
-        context_parts.extend([
-            "",
-            "**Note on Task Results:**",
-            "All task results are stored in the `results` scope. To access the data from a task, append `.data`.",
-            "Example: `{{ results.'task-id-123'.data }}`"
-        ])
+    def get_latest_delegation(self) -> dict | None:
+        """
+        NEUE METHODE - Direkter Zugriff auf neueste Delegation.
 
-        return "\n".join(context_parts)
+        Häufigster Lookup - deshalb optimiert.
+        """
+        # Erst im dedizierten Key schauen
+        latest = self.get('delegation.latest')
+        if latest:
+            return latest
+
+        # Fallback: Suche nach loop_X keys
+        delegation_scope = self.scopes.get('delegation', {})
+        if not delegation_scope:
+            return None
+
+        # Finde höchste Loop-Nummer
+        loop_keys = [k for k in delegation_scope.keys() if k.startswith('loop_')]
+        if not loop_keys:
+            return None
+
+        # Sortiere und nimm neueste
+        loop_keys.sort(key=lambda x: int(x.split('_')[1]) if x.split('_')[1].isdigit() else 0, reverse=True)
+        return delegation_scope.get(loop_keys[0])
+
+
+    def cleanup_old_entries(self, max_entries_per_scope: int = 20):
+        """
+        NEUE METHODE - Bereinigt alte Einträge um Memory zu sparen.
+
+        Aufruf: Nach jeder 5. Delegation oder bei Memory-Druck.
+        """
+        cleaned = 0
+
+        for scope_name in ['results', 'delegation', 'reasoning']:
+            scope = self.scopes.get(scope_name, {})
+            if not isinstance(scope, dict):
+                continue
+
+            if len(scope) > max_entries_per_scope:
+                # Sortiere nach Key (neuere haben höhere loop-Nummern)
+                keys = list(scope.keys())
+
+                # Behalte 'latest' immer
+                if 'latest' in keys:
+                    keys.remove('latest')
+
+                # Entferne älteste
+                keys_to_remove = keys[:-max_entries_per_scope]
+                for key in keys_to_remove:
+                    # Archiviere vor dem Löschen
+                    archive_key = f"cleaned_{scope_name}_{key}"
+                    self.scopes['session_archive'][archive_key] = scope[key]
+                    del scope[key]
+                    cleaned += 1
+
+        if cleaned > 0:
+            # Cache invalidieren
+            self._cache.clear()
+            if hasattr(self, '_path_cache'):
+                self._path_cache.clear()
+
+        return cleaned
+
+    def get_quick_summary(self) -> str:
+        """
+        NEUE METHODE - Ultra-schnelle Zusammenfassung für Status-Checks.
+
+        Verwendung: Wenn nur ein schneller Überblick gebraucht wird.
+        ~20-30 Tokens.
+        """
+        summary = []
+
+        for scope_name in ['results', 'delegation', 'files']:
+            scope = self.scopes.get(scope_name, {})
+            if isinstance(scope, dict) and scope:
+                summary.append(f"{scope_name[0].upper()}:{len(scope)}")
+
+        return " | ".join(summary) if summary else "Empty"
 
     # ===== AUTO-CLEAN FUNCTIONS =====
 
@@ -8280,10 +3371,12 @@ Format as JSON:
         }
 
     async def auto_clean(self):
-        await asyncio.gather(*
-                       [asyncio.create_task(self.auto_compress_reasoning_scope()),
-                        asyncio.create_task(self.auto_deduplicate_results_scope())]
-                    )
+        await asyncio.gather(
+            *[
+                asyncio.create_task(self.auto_compress_reasoning_scope()),
+                asyncio.create_task(self.auto_deduplicate_results_scope()),
+            ]
+        )
 
     async def auto_deduplicate_results_scope(self) -> dict[str, Any]:
         """
@@ -8299,17 +3392,17 @@ Format as JSON:
             dict mit deduplication_stats
         """
         try:
-            results_scope = self.scopes.get('results', {})
-            files_scope = self.scopes.get('files', {})
+            results_scope = self.scopes.get("results", {})
+            files_scope = self.scopes.get("files", {})
 
             if not results_scope:
                 return {"deduplicated": False, "reason": "no_results"}
 
             # Tracking für File-Operationen
             file_operations = {
-                'read': {},  # filepath -> [result_ids]
-                'write': {},  # filepath -> [result_ids]
-                'list': {}   # dirpath -> [result_ids]
+                "read": {},  # filepath -> [result_ids]
+                "write": {},  # filepath -> [result_ids]
+                "list": {},  # dirpath -> [result_ids]
             }
 
             # Analysiere alle Results nach File-Operationen
@@ -8318,31 +3411,35 @@ Format as JSON:
                     continue
 
                 # Erkenne File-Operationen
-                data = result_data.get('data', {})
+                data = result_data.get("data", {})
                 if isinstance(data, dict):
                     # read_file detection
-                    if 'content' in data and 'path' in data:
-                        filepath = data.get('path', '')
+                    if "content" in data and "path" in data:
+                        filepath = data.get("path", "")
                         if filepath:
-                            if filepath not in file_operations['read']:
-                                file_operations['read'][filepath] = []
-                            file_operations['read'][filepath].append({
-                                'result_id': result_id,
-                                'timestamp': result_data.get('timestamp', ''),
-                                'data': data
-                            })
+                            if filepath not in file_operations["read"]:
+                                file_operations["read"][filepath] = []
+                            file_operations["read"][filepath].append(
+                                {
+                                    "result_id": result_id,
+                                    "timestamp": result_data.get("timestamp", ""),
+                                    "data": data,
+                                }
+                            )
 
                     # write_file detection
-                    elif 'written' in data or 'file_path' in data:
-                        filepath = data.get('file_path', data.get('path', ''))
+                    elif "written" in data or "file_path" in data:
+                        filepath = data.get("file_path", data.get("path", ""))
                         if filepath:
-                            if filepath not in file_operations['write']:
-                                file_operations['write'][filepath] = []
-                            file_operations['write'][filepath].append({
-                                'result_id': result_id,
-                                'timestamp': result_data.get('timestamp', ''),
-                                'data': data
-                            })
+                            if filepath not in file_operations["write"]:
+                                file_operations["write"][filepath] = []
+                            file_operations["write"][filepath].append(
+                                {
+                                    "result_id": result_id,
+                                    "timestamp": result_data.get("timestamp", ""),
+                                    "data": data,
+                                }
+                            )
 
                     # list_dir detection
                     elif 'files' in data or 'directories' in data:
@@ -8350,24 +3447,26 @@ Format as JSON:
                         if dirpath:
                             if dirpath not in file_operations['list']:
                                 file_operations['list'][dirpath] = []
-                            file_operations['list'][dirpath].append({
-                                'result_id': result_id,
-                                'timestamp': result_data.get('timestamp', ''),
-                                'data': data
-                            })
+                            file_operations["list"][dirpath].append(
+                                {
+                                    "result_id": result_id,
+                                    "timestamp": result_data.get("timestamp", ""),
+                                    "data": data,
+                                }
+                            )
 
             # Deduplizierung: Nur aktuellste Version behalten
             dedup_stats = {
-                'files_deduplicated': 0,
-                'results_removed': 0,
-                'files_unified': 0
+                "files_deduplicated": 0,
+                "results_removed": 0,
+                "files_unified": 0,
             }
 
             # Dedupliziere read operations
-            for filepath, operations in file_operations['read'].items():
+            for filepath, operations in file_operations["read"].items():
                 if len(operations) > 1:
                     # Sortiere nach Timestamp, behalte neueste
-                    operations.sort(key=lambda x: x['timestamp'], reverse=True)
+                    operations.sort(key=lambda x: x["timestamp"], reverse=True)
                     latest = operations[0]
 
                     # Speichere im files scope
@@ -8464,6 +3563,94 @@ Format as JSON:
         return archived
 
 
+
+# ============================================================================
+# OPTIMIERTES CACHING FÜR UNIFIED CONTEXT MANAGER
+# ============================================================================
+
+class OptimizedUnifiedContextCache:
+    """
+    Verbesserte Cache-Strategie für UnifiedContextManager.
+
+    Integrieren in __init__:
+        self._opt_cache = OptimizedUnifiedContextCache()
+
+    In build_unified_context:
+        return await self._opt_cache.get_or_build(session_id, self._build_context_internal)
+    """
+
+    def __init__(self):
+        self._cache = {}
+        self._ttl = {
+            "history": 30,  # Chat history
+            "variables": 10,  # Variables ändern sich oft
+            "execution": 5,  # Execution state sehr dynamisch
+        }
+
+    async def get_or_build(
+        self, session_id: str, builder_func, context_type: str = "full"
+    ) -> dict:
+        """
+        Intelligentes Caching mit Komponenten-TTLs.
+        """
+
+        now = time.time()
+        cache_key = f"{session_id}_{context_type}"
+
+        if cache_key in self._cache:
+            cached = self._cache[cache_key]
+            age = now - cached["timestamp"]
+
+            # Wenn innerhalb kürzester TTL, vollständig aus Cache
+            if age < min(self._ttl.values()):
+                return cached["data"]
+
+            # Partielles Rebuild basierend auf TTLs
+            partial_rebuild = await self._partial_rebuild(
+                cached["data"], builder_func, age
+            )
+
+            if partial_rebuild:
+                self._cache[cache_key] = {"timestamp": now, "data": partial_rebuild}
+                return partial_rebuild
+
+        # Vollständiger Build
+        data = await builder_func(session_id, context_type)
+        self._cache[cache_key] = {"timestamp": now, "data": data}
+
+        return data
+
+    async def _partial_rebuild(
+        self, cached_data: dict, builder_func, age: float
+    ) -> dict | None:
+        """
+        Baut nur abgelaufene Komponenten neu.
+        """
+
+        rebuilt = cached_data.copy()
+        needs_rebuild = []
+
+        for component, ttl in self._ttl.items():
+            if age > ttl:
+                needs_rebuild.append(component)
+
+        if not needs_rebuild:
+            return cached_data
+
+        # Nur spezifische Komponenten neu bauen
+        # (Hier würde die Logik pro Komponente kommen)
+        return None  # Fallback zu vollständigem Rebuild
+
+    def invalidate(self, session_id: str = None):
+        """Gezieltes Invalidieren"""
+        if session_id:
+            keys_to_remove = [k for k in self._cache if k.startswith(session_id)]
+            for k in keys_to_remove:
+                del self._cache[k]
+        else:
+            self._cache.clear()
+
+
 class UnifiedContextManager:
     """
     Zentrale Orchestrierung aller Context-Quellen für einheitlichen und effizienten Datenzugriff.
@@ -8479,6 +3666,19 @@ class UnifiedContextManager:
         self.cache_ttl = 300  # 5 minutes
         self._memory_instance = None
 
+        # Granulare Caches mit unterschiedlichen TTLs
+        self._history_cache = {}  # session_id -> (timestamp, data)
+        self._variables_cache = {}  # session_id -> (timestamp, data)
+        self._execution_cache = {}  # session_id -> (timestamp, data)
+
+        # Adaptive TTLs basierend auf Änderungsfrequenz
+        self.HISTORY_TTL = 30  # Chat history - relativ stabil
+        self.VARIABLES_TTL = 10  # Variables - ändern sich öfter
+        self.EXECUTION_TTL = 5  # Execution state - sehr dynamisch
+
+        # Cache-Statistiken für Monitoring
+        self._cache_stats = {"hits": 0, "misses": 0}
+
     async def initialize_session(self, session_id: str, max_history: int = 200):
         """Initialisiere oder lade existierende ChatSession als primäre Context-Quelle"""
         if session_id not in self.session_managers:
@@ -8486,24 +3686,29 @@ class UnifiedContextManager:
                 # Get memory instance
                 if not self._memory_instance:
                     from toolboxv2 import get_app
+
                     self._memory_instance = get_app().get_mod("isaa").get_memory()
                 from toolboxv2.mods.isaa.extras.session import ChatSession
+
                 # Create ChatSession as PRIMARY memory source
                 session = ChatSession(
                     self._memory_instance,
                     max_length=max_history,
-                    space_name=f"ChatSession/{self.agent.amd.name}.{session_id}.unified"
+                    space_name=f"ChatSession/{self.agent.amd.name}.{session_id}.unified",
                 )
                 self.session_managers[session_id] = session
 
                 # Integration mit VariableManager wenn verfügbar
                 if self.variable_manager:
-                    self.variable_manager.register_scope(f'session_{session_id}', {
-                        'chat_session_active': True,
-                        'history_length': len(session.history),
-                        'last_interaction': None,
-                        'session_id': session_id
-                    })
+                    self.variable_manager.register_scope(
+                        f"session_{session_id}",
+                        {
+                            "chat_session_active": True,
+                            "history_length": len(session.history),
+                            "last_interaction": None,
+                            "session_id": session_id,
+                        },
+                    )
 
                 rprint(f"Unified session context initialized for {session_id}")
                 return session
@@ -8512,50 +3717,60 @@ class UnifiedContextManager:
                 eprint(f"Failed to create ChatSession for {session_id}: {e}")
                 # Fallback: Create minimal session manager
                 self.session_managers[session_id] = {
-                    'history': [],
-                    'session_id': session_id,
-                    'fallback_mode': True
+                    "history": [],
+                    "session_id": session_id,
+                    "fallback_mode": True,
                 }
                 return self.session_managers[session_id]
 
         return self.session_managers[session_id]
 
-    async def add_interaction(self, session_id: str, role: str, content: str, metadata: dict = None) -> None:
+    async def add_interaction(
+        self, session_id: str, role: str, content: str, metadata: dict = None
+    ) -> None:
         """Einheitlicher Weg um Interaktionen in ChatSession zu speichern"""
         session = await self.initialize_session(session_id)
 
         message = {
-            'role': role,
-            'content': content,
-            'timestamp': datetime.now().isoformat(),
-            'session_id': session_id,
-            'metadata': metadata or {}
+            "role": role,
+            "content": content,
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,
+            "metadata": metadata or {},
         }
 
         # PRIMARY: Store in ChatSession
-        if hasattr(session, 'add_message'):
+        if hasattr(session, "add_message"):
             from toolboxv2 import get_app
+
             get_app().run_bg_task_advanced(session.add_message, message, direct=False)
-        elif isinstance(session, dict) and 'history' in session:
+        elif isinstance(session, dict) and "history" in session:
             # Fallback mode
-            session['history'].append(message)
+            session["history"].append(message)
             # Keep max length
             max_len = 200
-            if len(session['history']) > max_len:
-                session['history'] = session['history'][-max_len:]
+            if len(session["history"]) > max_len:
+                session["history"] = session["history"][-max_len:]
 
         # SECONDARY: Update VariableManager
         if self.variable_manager:
-            self.variable_manager.set(f'session_{session_id}.last_interaction', message)
-            if hasattr(session, 'history'):
-                self.variable_manager.set(f'session_{session_id}.history_length', len(session.history))
+            self.variable_manager.set(f"session_{session_id}.last_interaction", message)
+            if hasattr(session, "history"):
+                self.variable_manager.set(
+                    f"session_{session_id}.history_length", len(session.history)
+                )
             elif isinstance(session, dict):
-                self.variable_manager.set(f'session_{session_id}.history_length', len(session.get('history', [])))
+                self.variable_manager.set(
+                    f"session_{session_id}.history_length",
+                    len(session.get("history", [])),
+                )
 
         # Clear context cache for this session
         self._invalidate_cache(session_id)
 
-    async def get_contextual_history(self, session_id: str, query: str = "", max_entries: int = 10) -> list[dict]:
+    async def get_contextual_history(
+        self, session_id: str, query: str = "", max_entries: int = 10
+    ) -> list[dict]:
         """Intelligente Auswahl relevanter Geschichte aus ChatSession"""
         session = self.session_managers.get(session_id)
         if not session:
@@ -8585,244 +3800,193 @@ class UnifiedContextManager:
 
         return []
 
-    async def build_unified_context(self, session_id: str, query: str = None, context_type: str = "full") -> dict[
-        str, Any]:
-        """ZENTRALE Methode für vollständigen Context-Aufbau aus allen Quellen"""
 
-        # Cache check
-        cache_key = f"{session_id}_{hash(query or '')}_{context_type}"
+    async def build_unified_context(self, session_id: str, query: str = None, context_type: str = "full") -> dict[str, Any]:
+        """
+        OPTIMIERTE Version - ersetzt die originale Methode.
+
+        Änderungen:
+        1. Query NICHT im Cache-Key (mehr Cache-Hits)
+        2. Granulare Caches pro Komponente
+        3. Schnellere Execution für häufige Aufrufe
+        """
+
+        # Cache-Key OHNE Query für bessere Hit-Rate
+        cache_key = f"{session_id}_{context_type}"
+
+        # Vollständiger Cache-Check (kurze TTL für aktive Sessions)
         cached = self._get_cached_context(cache_key)
         if cached:
+            self._cache_stats["hits"] = self._cache_stats.get("hits", 0) + 1
             return cached
 
+        self._cache_stats["misses"] = self._cache_stats.get("misses", 0) + 1
+
         context: dict[str, Any] = {
-            'timestamp': datetime.now().isoformat(),
-            'session_id': session_id,
-            'query': query,
-            'context_type': context_type
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,
+            "query": query,
+            "context_type": context_type,
         }
 
+        current_time = time.time()
+
         try:
-            # 1. CHAT HISTORY (Primary - from ChatSession)
-            with Spinner("Building unified context..."):
-                context['chat_history'] = await self.get_contextual_history(
-                    session_id, query or "", max_entries=15
-                )
-
-            # 2. VARIABLE SYSTEM STATE
-            if self.variable_manager:
-                context['variables'] = {
-                    'available_scopes': list(self.variable_manager.scopes.keys()),
-                    'total_variables': len(self.variable_manager.get_available_variables()),
-                    'recent_results': self._get_recent_results(5)
-                }
+            # 1. CHAT HISTORY - Mit eigenem Cache
+            if self._is_component_cache_valid("history", session_id, self.HISTORY_TTL):
+                context["chat_history"] = self._history_cache[session_id][1]
             else:
-                context['variables'] = {'status': 'variable_manager_not_available'}
+                # Reduziert auf 10 statt 15 für schnellere Builds
+                context["chat_history"] = await self.get_contextual_history(
+                    session_id, query or "", max_entries=10
+                )
+                self._history_cache[session_id] = (current_time, context["chat_history"])
 
-            # 3. WORLD MODEL FACTS
-            if self.variable_manager:
-                world_model = self.variable_manager.get('world', {})
-                if world_model and query:
-                    context['relevant_facts'] = self._extract_relevant_facts(world_model, query)
-                else:
-                    context['relevant_facts'] = list(world_model.items())[:5]  # Top 5 facts
+            # 2. VARIABLE SYSTEM - Minimal, nur Struktur
+            if self._is_component_cache_valid(
+                "variables", session_id, self.VARIABLES_TTL
+            ):
+                context["variables"] = self._variables_cache[session_id][1]
+            else:
+                context["variables"] = self._build_minimal_variables_snapshot()
+                self._variables_cache[session_id] = (current_time, context["variables"])
 
-            # 4. EXECUTION STATE
-            context['execution_state'] = {
-                'active_tasks': self._get_active_tasks(),
-                'recent_completions': self._get_recent_completions(3),
-                'system_status': self.agent.shared.get('system_status', 'idle')
+            # 3. WORLD MODEL - Nur bei Bedarf und Query
+            if query and self.variable_manager:
+                world_model = self.variable_manager.get("world", {})
+                if world_model:
+                    # Maximal 3 relevante Facts statt 5
+                    context["relevant_facts"] = self._extract_relevant_facts(
+                        world_model, query
+                    )[:3]
+
+            # 4. EXECUTION STATE - Immer frisch (zu dynamisch für Cache)
+            context["execution_state"] = {
+                "active_tasks": len(
+                    self._get_active_tasks()
+                ),  # Nur Anzahl, nicht Details
+                "recent_completions": len(self._get_recent_completions(2)),
+                "recent_results": self._get_recent_results(2),
+                "system_status": self.agent.shared.get("system_status", "idle"),
             }
 
-            # 5. SESSION STATISTICS
-            context['session_stats'] = {
-                'total_sessions': len(self.session_managers),
-                'current_session_length': len(context['chat_history']),
-                'cache_enabled': bool(self._context_cache)
+            # 5. SESSION STATS - Minimal
+            context["session_stats"] = {
+                "history_length": len(context.get("chat_history", [])),
+                "cache_hit_rate": self._get_cache_hit_rate(),
             }
 
         except Exception as e:
-            eprint(f"Error building unified context: {e}")
-            context['error'] = str(e)
-            context['fallback_mode'] = True
+            context["error"] = str(e)
+            context["fallback_mode"] = True
 
-        # Cache result
+        # Cache mit reduzierter TTL für aktive Sessions
         self._cache_context(cache_key, context)
         return context
 
+
+    def _is_component_cache_valid(self, component: str, session_id: str, ttl: float) -> bool:
+        """Prüft ob ein Komponenten-Cache noch gültig ist"""
+        cache_map = {
+            'history': self._history_cache,
+            'variables': self._variables_cache,
+            'execution': self._execution_cache
+        }
+
+        cache = cache_map.get(component, {})
+        if session_id not in cache:
+            return False
+
+        timestamp, _ = cache[session_id]
+        return time.time() - timestamp < ttl
+
+
+    def _build_minimal_variables_snapshot(self) -> dict:
+        """
+        Minimaler Variable-Snapshot - nur Struktur, keine Werte.
+
+        Vorher: Vollständiger YAML-Dump aller Variablen (~1000 Tokens)
+        Nachher: Nur Scope-Namen und Key-Counts (~50 Tokens)
+        """
+        if not self.variable_manager:
+            return {'status': 'unavailable'}
+
+        snapshot = {}
+        priority_scopes = ['results', 'delegation', 'files', 'user']
+
+        for scope_name in priority_scopes:
+            scope = self.variable_manager.scopes.get(scope_name, {})
+            if isinstance(scope, dict) and scope:
+                snapshot[scope_name] = {
+                    'count': len(scope),
+                    'keys': list(scope.keys())[:3]  # Nur erste 3 Keys
+                }
+
+        return snapshot
+
+
+    def _get_cache_hit_rate(self) -> float:
+        """Berechnet Cache-Hit-Rate für Monitoring"""
+        hits = self._cache_stats.get('hits', 0)
+        misses = self._cache_stats.get('misses', 0)
+        total = hits + misses
+        return round(hits / total, 2) if total > 0 else 0.0
+
+
     def get_formatted_context_for_llm(self, unified_context: dict[str, Any]) -> str:
-        """Formatiere unified context für LLM consumption"""
+        """
+        OPTIMIERTE Version - Schärferer, minimaler Context für LLM.
+
+        Vorher: ~800-1500 Tokens mit redundanten Infos
+        Nachher: ~200-400 Tokens, nur essentielles
+        """
         try:
             parts = []
 
-            # Header with session info
-            session_id = unified_context.get('session_id', 'unknown')
-            query = unified_context.get('query', '')
-            context_type = unified_context.get('context_type', 'full')
-            parts.append(f"## Session Context ({context_type})")
-            parts.append(f"Session: {session_id}")
-            if query:
-                parts.append(f"Query: {query}")
+            # 1. HEADER - Minimal
+            session_id = unified_context.get('session_id', '?')[:20]
+            parts.append(f"## Context [{session_id}]")
 
-            # Recent Chat History
+            # 2. CHAT HISTORY - Nur letzte 3 Messages, stark gekürzt
             chat_history = unified_context.get('chat_history', [])
             if chat_history:
-                parts.append("\n## Recent Conversation")
-                for msg in chat_history[-5:]:  # Last 5 messages
-                    timestamp = msg.get('timestamp', '')[:19]  # Remove microseconds
-                    role = msg.get('role', 'unknown')
+                parts.append("\n### Recent")
+                for msg in chat_history[-3:]:  # Nur letzte 3 statt 5
+                    role = msg.get('role', '?')[0].upper()  # U/A/S
                     content = msg.get('content', '')
-                    content_preview = content[:500] + ("..." if len(content) > 500 else "")
-                    parts.append(f"[{timestamp}] {role}: {content_preview}")
+                    # Stark kürzen
+                    preview = content[:150] + "..." if len(content) > 150 else content
+                    parts.append(f"{role}: {preview}")
 
-            # Variable System State
+            # 3. VARIABLES - Nur wenn vorhanden, ultra-kompakt
             variables = unified_context.get('variables', {})
-            if variables and variables != {'status': 'variable_manager_not_available'}:
-                parts.append("\n## Variable System")
+            if variables and variables.get('status') != 'unavailable':
+                var_info = []
+                for scope, data in variables.items():
+                    if isinstance(data, dict) and 'count' in data:
+                        var_info.append(f"{scope}({data['count']})")
+                if var_info:
+                    parts.append(f"\n### Vars: {', '.join(var_info)}")
 
-                # Available scopes
-                scopes = variables.get('available_scopes', [])
-                if scopes:
-                    parts.append(f"Available Scopes: {', '.join(scopes)}")
+            # 4. EXECUTION - Nur wenn aktive Tasks
+            execution = unified_context.get('execution_state', {})
+            active = execution.get('active_tasks', 0)
+            if active > 0:
+                parts.append(f"\n### Active: {active} tasks")
 
-                # Total variables count
-                total_vars = variables.get('total_variables', 0)
-                if total_vars > 0:
-                    parts.append(f"Total Variables: {total_vars}")
-                    parts.append(f"Total Variables Values: \n{yaml.dump(safe_for_yaml(self.variable_manager.get_available_variables()))}")
-
-                # Recent results
-                recent_results = variables.get('recent_results', [])
-                if recent_results:
-                    parts.append(f"Recent Results ({len(recent_results)}):")
-                    for result in recent_results[:3]:  # Top 3 results
-                        task_id = result.get('task_id', 'unknown')
-                        preview = str(result.get('preview', ''))[:100]
-                        preview += "..." if len(str(result.get('preview', ''))) > 100 else ""
-                        parts.append(f"  - {task_id}: {preview}")
-            elif variables.get('status') == 'variable_manager_not_available':
-                parts.append("\n## Variable System: Not Available")
-
-            # World Model Facts (Relevant Facts)
-            relevant_facts = unified_context.get('relevant_facts', [])
-            if relevant_facts:
-                parts.append("\n## World Model Facts")
-                for fact in relevant_facts[:5]:  # Top 5 facts
+            # 5. RELEVANT FACTS - Nur wenn vorhanden
+            facts = unified_context.get('relevant_facts', [])
+            if facts:
+                parts.append("\n### Facts")
+                for fact in facts[:2]:  # Max 2 Facts
                     if isinstance(fact, (list, tuple)) and len(fact) >= 2:
-                        # Handle (key, value) tuple format
-                        key, value = fact[0], fact[1]
-                        fact_preview = str(value)[:100] + ("..." if len(str(value)) > 100 else "")
-                        parts.append(f"- {key}: {fact_preview}")
-                    elif isinstance(fact, dict):
-                        # Handle dict format
-                        for key, value in list(fact.items())[:1]:  # Just first item
-                            fact_preview = str(value)[:100] + ("..." if len(str(value)) > 100 else "")
-                            parts.append(f"- {key}: {fact_preview}")
-
-            # Execution State
-            execution_state = unified_context.get('execution_state', {})
-            if execution_state:
-                parts.append("\n## System Status")
-
-                system_status = execution_state.get('system_status', 'unknown')
-                parts.append(f"Status: {system_status}")
-
-                active_tasks = execution_state.get('active_tasks', [])
-                if active_tasks:
-                    parts.append(f"Active Tasks: {len(active_tasks)}")
-                    # Show task previews if available
-                    for task in active_tasks[:2]:  # Show first 2 tasks
-                        task_str = str(task)[:80] + ("..." if len(str(task)) > 80 else "")
-                        parts.append(f"  - {task_str}")
-
-                recent_completions = execution_state.get('recent_completions', [])
-                if recent_completions:
-                    parts.append(f"Recent Completions: {len(recent_completions)}")
-                    # Show completion previews if available
-                    for completion in recent_completions[:2]:  # Show first 2 completions
-                        comp_str = str(completion)[:80] + ("..." if len(str(completion)) > 80 else "")
-                        parts.append(f"  - {comp_str}")
-
-            # Session Statistics
-            session_stats = unified_context.get('session_stats', {})
-            if session_stats:
-                parts.append("\n## Session Statistics")
-
-                total_sessions = session_stats.get('total_sessions', 0)
-                if total_sessions > 0:
-                    parts.append(f"Total Sessions: {total_sessions}")
-
-                current_length = session_stats.get('current_session_length', 0)
-                if current_length > 0:
-                    parts.append(f"Current Session Length: {current_length} messages")
-
-                cache_enabled = session_stats.get('cache_enabled', False)
-                parts.append(f"Cache Enabled: {cache_enabled}")
-
-            # Error handling
-            if unified_context.get('error'):
-                parts.append(f"\n## Error")
-                parts.append(f"Error: {unified_context['error']}")
-
-            if unified_context.get('fallback_mode'):
-                parts.append("⚠️  Running in fallback mode")
-
-            # Footer with timestamp
-            timestamp = unified_context.get('timestamp', 'unknown')
-            parts.append(f"\n---\nContext generated at: {timestamp}")
+                        key, value = fact[0], str(fact[1])[:80]
+                        parts.append(f"- {key}: {value}")
 
             return "\n".join(parts)
 
         except Exception as e:
-            eprint(f"Error formatting context for LLM: {e}")
-            import traceback
-            print(traceback.format_exc())
-            return f"Context formatting error: {str(e)}"
-
-    def _merge_and_dedupe_history(self, recent_history: list[dict], relevant_refs: list) -> list[dict]:
-        """Merge und dedupliziere History-Einträge"""
-        try:
-            merged = recent_history.copy()
-
-            # Add relevant references if they're not already in recent history
-            for ref in relevant_refs:
-                # Convert ref to message format if needed
-                if isinstance(ref, dict) and 'content' in ref:
-                    # Check if not already in recent_history
-                    is_duplicate = any(
-                        msg.get('content', '') == ref.get('content', '') and
-                        msg.get('timestamp', '') == ref.get('timestamp', '')
-                        for msg in merged
-                    )
-                    if not is_duplicate:
-                        merged.append(ref)
-
-            # Sort by timestamp
-            merged.sort(key=lambda x: x.get('timestamp', ''))
-
-            return merged
-        except:
-            return recent_history
-
-    def _get_recent_results(self, limit: int = 5) -> list[dict]:
-        """Hole recent results aus dem shared state"""
-        try:
-            results_store = self.agent.shared.get("results", {})
-            recent_results = []
-
-            for task_id, result_data in list(results_store.items())[-limit:]:
-                if result_data and result_data.get("data"):
-                    preview = str(result_data["data"])[:150] + "..."
-                    recent_results.append({
-                        "task_id": task_id,
-                        "preview": preview,
-                        "success": result_data.get("metadata", {}).get("success", False),
-                        "timestamp": result_data.get("metadata", {}).get("completed_at")
-                    })
-
-            return recent_results
-        except:
-            return []
+            return f"Context error: {str(e)}"
 
     def _extract_relevant_facts(self, world_model: dict, query: str) -> list[tuple[str, Any]]:
         """Extrahiere relevante Facts basierend auf Query"""
@@ -8860,6 +4024,81 @@ class UnifiedContextManager:
             ]
         except:
             return []
+    def _get_recent_results(self, limit: int = 3) -> list[dict]:
+        """
+        OPTIMIERTE Version - Weniger Results, kompaktere Previews.
+
+        Vorher: 5 Results mit 150 Char Previews
+        Nachher: 3 Results mit 80 Char Previews
+        """
+        try:
+            results_store = self.agent.shared.get("results", {})
+            if not results_store:
+                return []
+
+            recent_results = []
+            # Nur letzte 'limit' Results
+            for task_id, result_data in list(results_store.items())[-limit:]:
+                if result_data and result_data.get("data"):
+                    data = result_data["data"]
+                    # Kürzere Preview
+                    if isinstance(data, str):
+                        preview = data[:80] + "..." if len(data) > 80 else data
+                    elif isinstance(data, dict):
+                        preview = f"Dict({len(data)} keys)"
+                    else:
+                        preview = str(data)[:80]
+
+                    recent_results.append({
+                        "task_id": task_id[:30],  # Task-ID auch kürzen
+                        "preview": preview,
+                        "success": result_data.get("metadata", {}).get("success", False)
+                    })
+
+            return recent_results
+        except:
+            return []
+
+    def get_minimal_context_for_reasoning(self, session_id: str) -> str:
+        """
+        NEUE METHODE - Ultra-minimaler Context speziell für Reasoning Loops.
+
+        Verwendet wenn der Reasoner nur einen kurzen Status braucht.
+        ~50-100 Tokens statt ~400-800.
+        """
+        try:
+            parts = []
+
+            # History-Länge
+            session = self.session_managers.get(session_id)
+            if session:
+                if hasattr(session, 'history'):
+                    history_len = len(session.history)
+                elif isinstance(session, dict):
+                    history_len = len(session.get('history', []))
+                else:
+                    history_len = 0
+                parts.append(f"History: {history_len} msgs")
+
+            # Variable Scopes mit Daten
+            if self.variable_manager:
+                non_empty = []
+                for name in ['results', 'delegation', 'files']:
+                    scope = self.variable_manager.scopes.get(name, {})
+                    if isinstance(scope, dict) and scope:
+                        non_empty.append(f"{name}({len(scope)})")
+                if non_empty:
+                    parts.append(f"Data: {', '.join(non_empty)}")
+
+            # Aktive Tasks
+            active_count = len(self._get_active_tasks())
+            if active_count > 0:
+                parts.append(f"Active: {active_count}")
+
+            return " | ".join(parts) if parts else "No context"
+
+        except:
+            return "Context unavailable"
 
     def _get_recent_completions(self, limit: int = 3) -> list[dict]:
         """Hole recent completions"""
@@ -8897,14 +4136,22 @@ class UnifiedContextManager:
             del self._context_cache[oldest_key]
 
     def _invalidate_cache(self, session_id: str = None):
-        """Invalidate cache for specific session or all"""
+        """
+        OPTIMIERTE Version - Gezieltes Invalidieren statt alles löschen.
+        """
         if session_id:
-            # Remove all cache entries for this session
-            keys_to_remove = [k for k in self._context_cache if session_id in k]
-            for key in keys_to_remove:
-                del self._context_cache[key]
+            # Nur spezifische Session invalidieren
+            for cache in [self._context_cache, self._history_cache,
+                          self._variables_cache, self._execution_cache]:
+                keys_to_remove = [k for k in cache if session_id in str(k)]
+                for key in keys_to_remove:
+                    del cache[key]
         else:
+            # Alles invalidieren (selten nötig)
             self._context_cache.clear()
+            self._history_cache.clear()
+            self._variables_cache.clear()
+            self._execution_cache.clear()
 
     def get_session_statistics(self) -> dict[str, Any]:
         """Hole Statistiken über alle Sessions"""
@@ -9094,20 +4341,23 @@ class FlowAgent:
             "performance_metrics": {},
             "conversation_history": [],
             "available_tools": [],
-            "progress_tracker": self.progress_tracker
+            "progress_tracker": self.progress_tracker,
         }
         self.context_manager = UnifiedContextManager(self)
         self.variable_manager = VariableManager(self.shared["world_model"], self.shared)
-        self.variable_manager.agent_instance = self  # Set agent reference for auto-clean functions
-        self.context_manager.variable_manager = self.variable_manager# Register default scopes
+        self.variable_manager.agent_instance = (
+            self  # Set agent reference for auto-clean functions
+        )
+        self.context_manager.variable_manager = (
+            self.variable_manager
+        )  # Register default scopes
 
         self.shared["context_manager"] = self.context_manager
         self.shared["variable_manager"] = self.variable_manager
         # Flows
         self.task_flow = TaskManagementFlow(max_parallel_tasks=self.max_parallel_tasks)
-        self.response_flow = ResponseGenerationFlow()
 
-        if hasattr(self.task_flow, 'executor_node'):
+        if hasattr(self.task_flow, "executor_node"):
             self.task_flow.executor_node.agent_instance = self
 
         # Agent state
@@ -9239,7 +4489,7 @@ class FlowAgent:
                 processed_messages.append(msg)
         return processed_messages
 
-    async def a_run_llm_completion(self, node_name="FlowAgentLLMCall",task_id="unknown",model_preference="fast", with_context=True, auto_fallbacks=False, llm_kwargs=None, **kwargs) -> str:
+    async def a_run_llm_completion(self, node_name="FlowAgentLLMCall",task_id="unknown",model_preference="fast", with_context=True, auto_fallbacks=False, llm_kwargs=None, get_response_message=False,**kwargs) -> str:
         """
         Run LLM completion with support for media inputs and custom kwargs
 
@@ -9272,19 +4522,21 @@ class FlowAgent:
         llm_start = time.perf_counter()
 
         if self.progress_tracker:
-            await self.progress_tracker.emit_event(ProgressEvent(
-                event_type="llm_call",
-                node_name=node_name,
-                session_id=self.active_session,
-                task_id=task_id,
-                status=NodeStatus.RUNNING,
-                llm_model=kwargs["model"],
-                llm_temperature=kwargs.get("temperature", 0.7),
-                llm_input=kwargs.get("messages", [{}])[-1].get("content", ""),  # Prompt direkt erfassen
-                metadata={
-                    "model_preference": kwargs.get("model_preference", "fast")
-                }
-            ))
+            await self.progress_tracker.emit_event(
+                ProgressEvent(
+                    event_type="llm_call",
+                    node_name=node_name,
+                    session_id=self.active_session,
+                    task_id=task_id,
+                    status=NodeStatus.RUNNING,
+                    llm_model=kwargs["model"],
+                    llm_temperature=kwargs.get("temperature", 0.7),
+                    llm_input=kwargs.get("messages", [{}])[-1].get(
+                        "content", ""
+                    ),  # Prompt direkt erfassen
+                    metadata={"model_preference": kwargs.get("model_preference", "fast")},
+                )
+            )
 
         # auto api key addition supports (google, openrouter, openai, anthropic, azure, aws, huggingface, replicate, togetherai, groq)
         if "api_key" not in kwargs:
@@ -9305,8 +4557,48 @@ class FlowAgent:
 
         if self.active_session and with_context:
             # Add context to fist messages as system message
-            context_ = await self.get_context(self.active_session)
-            kwargs["messages"] = [{"role": "system", "content": self.amd.get_system_message_with_persona()+'\n\nContext:\n\n'+context_}] + kwargs.get("messages", [])
+            # OPTIMIZED: Conditional context injection
+            context_mode = kwargs.pop("context_mode", "auto" if with_context else "none")
+
+            if context_mode == "full" and self.active_session:
+                # Full context (original behavior)
+                context_ = await self.get_context(self.active_session)
+                kwargs["messages"] = [
+                    {
+                        "role": "system",
+                        "content": self.amd.get_system_message_with_persona()
+                        + "\n\nContext:\n\n"
+                        + str(context_),
+                    }
+                ] + kwargs.get("messages", [])
+
+            elif context_mode == "minimal" and self.active_session:
+                # Minimal: Only persona + last interaction
+                last = (
+                    await self.context_manager.get_contextual_history(self.active_session)
+                    if self.context_manager
+                    else ""
+                )
+                kwargs["messages"] = [
+                    {
+                        "role": "system",
+                        "content": self.amd.get_system_message_with_persona()
+                        + f"\n\nLast: {str(last)[:300]}",
+                    }
+                ] + kwargs.get("messages", [])
+
+            elif context_mode == "persona" and self.active_session:
+                # Persona only, no context
+                kwargs["messages"] = [{"role": "system", "content": self.amd.get_system_message_with_persona()}] + kwargs.get("messages", [])
+
+            # "none" or "auto" with format_ task = no context injection
+
+            elif context_mode == "auto" and with_context and self.active_session:
+                task_id = kwargs.get("task_id", "")
+                if not task_id.startswith("format_") and not task_id.startswith("lean_"):
+                    # Only inject for non-formatting tasks
+                    context_ = await self.get_context(self.active_session)
+                    kwargs["messages"] = [{"role": "system", "content": self.amd.get_system_message_with_persona()+'\n\nContext:\n\n'+context_}] + kwargs.get("messages", [])
 
         # build fallback dict using FALLBACKS_MODELS/PREM and _KEYS
 
@@ -9335,6 +4627,7 @@ class FlowAgent:
 
             if not kwargs.get("stream", False):
                 result = response.choices[0].message.content
+                result_to_retun = result if not get_response_message else response.choices[0].message
                 usage = response.usage
                 input_tokens = usage.prompt_tokens if usage else 0
                 output_tokens = usage.completion_tokens if usage else 0
@@ -9343,9 +4636,19 @@ class FlowAgent:
             else:
                 result = ""
                 final_chunk = None
+                from litellm.types.utils import (
+                    Message,
+                    ChatCompletionMessageToolCall,
+                    Function
+                )
+                tool_calls_acc = {}
                 async for chunk in response:
-                    content = chunk.choices[0].delta.content or ""
+                    delta = chunk.choices[0].delta
+
+                    # 1. Text sammeln
+                    content = delta.content or ""
                     result += content
+
                     if self.progress_tracker and content:
                         await self.progress_tracker.emit_event(ProgressEvent(
                             event_type="llm_stream_chunk",
@@ -9353,17 +4656,46 @@ class FlowAgent:
                             task_id=task_id,
                             session_id=self.active_session,
                             status=NodeStatus.RUNNING,
-                            # weitere Felder wie model, tokens wenn verfügbar
                             llm_model=kwargs["model"],
                             llm_output=content,
-                            # optional: llm_tokens so far? usage in chunk?
                         ))
+
+                    # 2. Tool Calls sammeln
+                    if getattr(delta, "tool_calls", None):
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+
+                            if idx not in tool_calls_acc:
+                                tool_calls_acc[idx] = ChatCompletionMessageToolCall(
+                                    id=tc.id,
+                                    type="function",
+                                    function=Function(
+                                        name="",
+                                        arguments=""
+                                    )
+                                )
+
+                            if tc.function:
+                                if tc.function.name:
+                                    tool_calls_acc[idx].function.name = tc.function.name
+
+                                if tc.function.arguments:
+                                    tool_calls_acc[idx].function.arguments += tc.function.arguments
+
                     final_chunk = chunk
 
                 usage = final_chunk.usage if hasattr(final_chunk, "usage") else None
                 output_tokens = usage.completion_tokens if usage else 0
                 input_tokens = usage.prompt_tokens if usage else 0
                 total_tokens = usage.total_tokens if usage else 0
+                result_to_retun = result
+                if get_response_message:
+                    result_to_retun = Message(
+                        role="assistant",
+                        content=result or None,
+                        tool_calls=list(tool_calls_acc.values()) if tool_calls_acc else []
+                    )
+
             llm_duration = time.perf_counter() - llm_start
 
             if AGENT_VERBOSE and self.verbose:
@@ -9404,7 +4736,7 @@ class FlowAgent:
                     llm_input="",
                 ))
 
-            return result
+            return result_to_retun
         except Exception as e:
             llm_duration = time.perf_counter() - llm_start
             import traceback
@@ -10086,10 +5418,6 @@ class FlowAgent:
             self.shared["current_response"] = error_response
             return error_response
 
-        final_response = self.shared.get("current_response", "Task completed successfully.")
-        # Execute ResponseGenerationFlow for persona application and formatting
-        response_result = await self.response_flow.run_async(self.shared)
-
         # The reasoner provides the final response
         final_response = self.shared.get("current_response", "Task completed successfully.")
 
@@ -10570,10 +5898,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
                 self.shared["agent_instance"] = self
                 self.shared["progress_tracker"] = self.progress_tracker
                 self.shared["llm_tool_node_instance"] = self.task_flow.llm_tool_node
-                self.shared["task_planner_instance"] = self.task_flow.planner_node
-                self.shared["task_executor_instance"] = self.task_flow.executor_node
                 # Verbinde den Executor wieder mit der Agent-Instanz
-                self.task_flow.executor_node.agent_instance = self
 
                 rprint("Variablen-System aus Daten wiederhergestellt und Laufzeitobjekte neu verknüpft.")
 
@@ -11225,9 +6550,11 @@ tool_complexity: low/medium/high
             self.session_tool_restrictions[tool_name] = {}
 
         self.session_tool_restrictions[tool_name][session_id] = allowed
-        rprint(f"Tool restriction set: {tool_name} in session '{session_id}' -> {'allowed' if allowed else 'restricted'}")
+        rprint(
+            f"Tool restriction set: {tool_name} in session '{session_id}' -> {'allowed' if allowed else 'restricted'}"
+        )
 
-    def get_tool_restriction(self, tool_name: str, session_id: str = '*') -> bool:
+    def get_tool_restriction(self, tool_name: str, session_id: str = "*") -> bool:
         """
         Get tool restriction status for a session.
 
@@ -11270,7 +6597,9 @@ tool_complexity: low/medium/high
         Asynchronously finds a function by its string name, executes it with
         the given arguments, and returns the result.
         """
-        rprint(f"Attempting to run function: {function_name} with args: {args}, kwargs: {kwargs}")
+        rprint(
+            f"Attempting to run function: {function_name} with args: {args}, kwargs: {kwargs}"
+        )
 
         # Check session-based tool restrictions
         if self.active_session:
@@ -11284,7 +6613,9 @@ tool_complexity: low/medium/high
 
         start_time = time.perf_counter()
         if not target_function:
-            raise ValueError(f"Function '{function_name}' not found in the {self.amd.name}'s registered tools.")
+            raise ValueError(
+                f"Function '{function_name}' not found in the {self.amd.name}'s registered tools."
+            )
         result = None
         try:
             if asyncio.iscoroutinefunction(target_function):
@@ -11292,28 +6623,34 @@ tool_complexity: low/medium/high
             else:
                 # If the function is not async, run it in a thread pool
                 loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(None, lambda: target_function(*args, **kwargs))
+                result = await loop.run_in_executor(
+                    None, lambda: target_function(*args, **kwargs)
+                )
 
             if asyncio.iscoroutine(result):
                 result = await result
 
             if self.progress_tracker:
-                await self.progress_tracker.emit_event(ProgressEvent(
-                    event_type="tool_call",  # Vereinheitlicht zu tool_call
-                    node_name="FlowAgent",
-                    status=NodeStatus.COMPLETED,
-                    success=True,
-                    duration=time.perf_counter() - start_time,
-                    tool_name=function_name,
-                    tool_args=kwargs,
-                    tool_result=result,
-                    is_meta_tool=False,  # Klarstellen, dass es kein Meta-Tool ist
-                    metadata={
-                        "result_type": type(result).__name__,
-                        "result_length": len(str(result))
-                    }
-                ))
-            rprint(f"Function {function_name} completed successfully with result: {result}")
+                await self.progress_tracker.emit_event(
+                    ProgressEvent(
+                        event_type="tool_call",  # Vereinheitlicht zu tool_call
+                        node_name="FlowAgent",
+                        status=NodeStatus.COMPLETED,
+                        success=True,
+                        duration=time.perf_counter() - start_time,
+                        tool_name=function_name,
+                        tool_args=kwargs,
+                        tool_result=result,
+                        is_meta_tool=False,  # Klarstellen, dass es kein Meta-Tool ist
+                        metadata={
+                            "result_type": type(result).__name__,
+                            "result_length": len(str(result)),
+                        },
+                    )
+                )
+            rprint(
+                f"Function {function_name} completed successfully with result: {result}"
+            )
             return result
 
         except Exception as e:
@@ -11325,7 +6662,7 @@ tool_complexity: low/medium/high
 
     # ===== FORMATTING =====
 
-    async def a_format_class(self,
+    async def a_format_class_leg(self,
                              pydantic_model: type[BaseModel],
                              prompt: str,
                              message_context: list[dict] = None,
@@ -11475,6 +6812,111 @@ Respond in YAML format only:
 
         # All attempts failed
         raise RuntimeError(f"Failed to format {model_name} after {max_retries + 1} attempts. Last error: {last_error}")
+
+    async def a_format_class(self,
+                             pydantic_model: type[BaseModel],
+                             prompt: str,
+                             message_context: list[dict] = None,
+                             max_retries: int = 1,  # Reduced from 2
+                             auto_context=False,    # Changed default to False
+                             session_id: str = None,
+                             llm_kwargs=None,
+                             model_preference="fast",  # Changed default to fast
+                             lean_mode=True,  # NEW: Enable lean mode by default
+                             **kwargs) -> dict[str, Any]:
+        """
+        Optimized LLM-based structured data formatting.
+        lean_mode=True uses ~80% fewer tokens.
+        """
+        if not LITELLM_AVAILABLE:
+            raise RuntimeError("LiteLLM required")
+
+        if session_id and self.active_session != session_id:
+            self.active_session = session_id
+
+        schema = pydantic_model.model_json_schema()
+        model_name = pydantic_model.__name__
+
+        if lean_mode:
+            # LEAN MODE: Minimal schema, no examples
+            props = schema.get("properties", {})
+            required = set(schema.get("required", []))
+
+            fields_desc = []
+            for name, info in props.items():
+                ftype = info.get("type", "string")
+                req = "*" if name in required else ""
+                fields_desc.append(f"  {name}{req}: {ftype}")
+
+            enhanced_prompt = f"""{prompt}
+
+Return YAML with fields:
+{chr(10).join(fields_desc)}
+"""
+        else:
+            # ORIGINAL: Full schema (fallback)
+            enhanced_prompt = f"""
+{prompt}
+
+SCHEMA FOR {model_name}:
+{yaml.dump(safe_for_yaml(schema), default_flow_style=False, indent=2)}
+
+Respond in YAML format only:
+"""
+
+        messages = []
+        if message_context:
+            messages.extend(message_context)
+        messages.append({"role": "user", "content": enhanced_prompt})
+
+        last_error = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                temperature = 0.1 + (attempt * 0.1)
+                max_tokens = 500 if lean_mode else min(2000 + (attempt * 500), 4000)
+
+                response = await self.a_run_llm_completion(
+                    model_preference=model_preference,
+                    messages=messages,
+                    stream=False,
+                    with_context=auto_context,  # Respect auto_context setting
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    task_id=f"format_{model_name.lower()}_{attempt}",
+                    llm_kwargs=llm_kwargs
+                )
+
+                if not response or not response.strip():
+                    raise ValueError("Empty response")
+
+                yaml_content = self._extract_yaml_content(response)
+                if not yaml_content:
+                    raise ValueError("No YAML found")
+
+                try:
+                    parsed_data = yaml.safe_load(yaml_content)
+                except yaml.YAMLError as e:
+                    raise ValueError(f"Invalid YAML: {e}")
+
+                if not isinstance(parsed_data, dict):
+                    raise ValueError(f"Expected dict, got {type(parsed_data)}")
+
+                try:
+                    validated_instance = pydantic_model.model_validate(parsed_data)
+                    return validated_instance.model_dump()
+                except ValidationError as e:
+                    errors = [f"{' -> '.join(str(x) for x in err['loc'])}: {err['msg']}"
+                              for err in e.errors()]
+                    raise ValueError("Validation failed: " + "; ".join(errors))
+
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    messages[-1]["content"] = enhanced_prompt + f"\\n\\nFix error: {str(e)}"
+
+        raise RuntimeError(f"Failed after {max_retries + 1} attempts: {last_error}")
+
 
     def _extract_yaml_content(self, response: str) -> str:
         """Extract YAML content from LLM response with multiple strategies"""
@@ -11719,11 +7161,6 @@ Respond in YAML format only:
             # Clean checkpoint data
             self.checkpoint_data = {}
             self.last_checkpoint = None
-
-            # Clean execution history
-            if hasattr(self.task_flow, 'executor_node'):
-                self.task_flow.executor_node.execution_history = []
-                self.task_flow.executor_node.results_store = {}
 
             # Clean context manager sessions
             if hasattr(self.task_flow, 'context_manager'):
@@ -13318,41 +8755,49 @@ Returns:
             remaining_agents = [agent for agent in bound_agents if agent != self]
             if remaining_agents:
                 # Update binding config for remaining agents
-                binding_config['agents'] = remaining_agents
+                binding_config["agents"] = remaining_agents
                 for agent in remaining_agents:
-                    if hasattr(agent, 'shared') and agent.shared.get('is_bound'):
-                        agent.shared['bound_agents'] = [a.amd.name for a in remaining_agents]
+                    if hasattr(agent, "shared") and agent.shared.get("is_bound"):
+                        agent.shared["bound_agents"] = [
+                            a.amd.name for a in remaining_agents
+                        ]
 
-            unbind_stats['agents_affected'] = [agent.amd.name for agent in bound_agents]
+            unbind_stats["agents_affected"] = [agent.amd.name for agent in bound_agents]
 
             # Clean up sync handler if this was the last agent
             if len(remaining_agents) <= 1:
-                sync_handler = binding_config.get('sync_handler')
-                if sync_handler and hasattr(sync_handler, 'cleanup'):
+                sync_handler = binding_config.get("sync_handler")
+                if sync_handler and hasattr(sync_handler, "cleanup"):
                     sync_handler.cleanup()
 
-            rprint(f"Agent {self.amd.name} successfully unbound from binding {binding_id}")
+            rprint(
+                f"Agent {self.amd.name} successfully unbound from binding {binding_id}"
+            )
             rprint(f"Shared data preserved: {preserve_shared_data}")
 
             return {
-                'success': True,
-                'stats': unbind_stats,
-                'message': f"Agent {self.amd.name} unbound successfully"
+                "success": True,
+                "stats": unbind_stats,
+                "message": f"Agent {self.amd.name} unbound successfully",
             }
 
         except Exception as e:
             eprint(f"Error during unbinding: {e}")
-            return {
-                'success': False,
-                'error': str(e),
-                'stats': unbind_stats
-            }
+            return {"success": False, "error": str(e), "stats": unbind_stats}
+
 
 class UnifiedBindingManager:
     """Unified manager that handles both shared and private variable scopes for bound agents"""
 
-    def __init__(self, shared_manager: VariableManager, private_manager: VariableManager,
-                 agent_name: str, shared_scopes: list[str], auto_sync: bool, binding_config: dict):
+    def __init__(
+        self,
+        shared_manager: VariableManager,
+        private_manager: VariableManager,
+        agent_name: str,
+        shared_scopes: list[str],
+        auto_sync: bool,
+        binding_config: dict,
+    ):
         self.shared_manager = shared_manager
         self.private_manager = private_manager
         self.agent_name = agent_name
@@ -13362,7 +8807,7 @@ class UnifiedBindingManager:
 
     def get(self, path: str, default=None, use_cache: bool = True):
         """Get variable from appropriate manager (shared or private)"""
-        scope = path.split('.')[0] if '.' in path else path
+        scope = path.split(".")[0] if "." in path else path
 
         if scope in self.shared_scopes:
             return self.shared_manager.get(path, default, use_cache)
@@ -13375,7 +8820,7 @@ class UnifiedBindingManager:
 
     def set(self, path: str, value, create_scope: bool = True):
         """Set variable in appropriate manager (shared or private)"""
-        scope = path.split('.')[0] if '.' in path else path
+        scope = path.split(".")[0] if "." in path else path
 
         if scope in self.shared_scopes:
             self.shared_manager.set(path, value, create_scope)
@@ -13384,18 +8829,26 @@ class UnifiedBindingManager:
                 self._sync_to_bound_agents(path, value)
         else:
             # Private scope - add agent identifier
-            private_path = f"{path}_{self.agent_name}" if not path.endswith(f"_{self.agent_name}") else path
+            private_path = (
+                f"{path}_{self.agent_name}"
+                if not path.endswith(f"_{self.agent_name}")
+                else path
+            )
             self.private_manager.set(private_path, value, create_scope)
 
     def _sync_to_bound_agents(self, path: str, value):
         """Sync shared variable changes to all bound agents"""
         try:
-            bound_agents = self.binding_config.get('agents', [])
+            bound_agents = self.binding_config.get("agents", [])
             for agent in bound_agents:
-                if (agent.amd.name != self.agent_name and
-                    hasattr(agent, 'variable_manager') and
-                    isinstance(agent.variable_manager, UnifiedBindingManager)):
-                    agent.variable_manager.shared_manager.set(path, value, create_scope=True)
+                if (
+                    agent.amd.name != self.agent_name
+                    and hasattr(agent, "variable_manager")
+                    and isinstance(agent.variable_manager, UnifiedBindingManager)
+                ):
+                    agent.variable_manager.shared_manager.set(
+                        path, value, create_scope=True
+                    )
         except Exception as e:
             wprint(f"Auto-sync failed for path {path}: {e}")
 
@@ -13426,18 +8879,19 @@ class UnifiedBindingManager:
         private_info = self.private_manager.get_scope_info()
 
         return {
-            'shared_scopes': shared_info,
-            'private_scopes': private_info,
-            'binding_info': {
-                'agent_name': self.agent_name,
-                'binding_id': self.binding_config.get('binding_id'),
-                'auto_sync': self.auto_sync
-            }
+            "shared_scopes": shared_info,
+            "private_scopes": private_info,
+            "binding_info": {
+                "agent_name": self.agent_name,
+                "binding_id": self.binding_config.get("binding_id"),
+                "auto_sync": self.auto_sync,
+            },
         }
 
     # Delegate other methods to shared manager by default
     def __getattr__(self, name):
         return getattr(self.shared_manager, name)
+
 
 class BindingSyncHandler:
     """Handles automatic synchronization between bound agents"""
@@ -13455,9 +8909,10 @@ class BindingSyncHandler:
 
 def get_progress_summary(self) -> dict[str, Any]:
     """Get comprehensive progress summary from the agent"""
-    if hasattr(self, 'progress_tracker'):
+    if hasattr(self, "progress_tracker"):
         return self.progress_tracker.get_summary()
     return {"error": "No progress tracker available"}
+
 
 import inspect
 import typing
@@ -13492,6 +8947,7 @@ def get_args_schema(func: Callable) -> str:
 
     return f"({', '.join(parts)})"
 
+
 def _annotation_to_str(annotation: Any) -> str:
     """
     Convert any annotation to a nice string, including | union syntax (PEP 604),
@@ -13509,7 +8965,11 @@ def _annotation_to_str(annotation: Any) -> str:
         return " | ".join(_annotation_to_str(a) for a in args)
 
     # Handle built-in Union syntax (PEP 604)
-    if hasattr(annotation, "__args__") and getattr(annotation, "__origin__", None) is None and "|" in str(annotation):
+    if (
+        hasattr(annotation, "__args__")
+        and getattr(annotation, "__origin__", None) is None
+        and "|" in str(annotation)
+    ):
         return str(annotation)
 
     # Handle generics like list[int], dict[str, Any]
@@ -13530,12 +8990,18 @@ def _annotation_to_str(annotation: Any) -> str:
 from typing import Any
 
 
-def _extract_meta_tool_calls(text: str, prefix="META_TOOL_CALL:") -> list[tuple[str, str]]:
+def _extract_meta_tool_calls(
+    text: str, prefix="META_TOOL_CALL:"
+) -> list[tuple[str, str]]:
     """Extract META_TOOL_CALL with proper bracket balance handling"""
     import re
 
     matches = []
-    pattern = r'META_TOOL_CALL:\s*(\w+)\(' if prefix == "META_TOOL_CALL:" else r'TOOL_CALL:\s*(\w+)\('
+    pattern = (
+        r"META_TOOL_CALL:\s*(\w+)\("
+        if prefix == "META_TOOL_CALL:"
+        else r"TOOL_CALL:\s*(\w+)\("
+    )
 
     for match in re.finditer(pattern, text):
         tool_name = match.group(1)
@@ -13553,19 +9019,19 @@ def _extract_meta_tool_calls(text: str, prefix="META_TOOL_CALL:") -> list[tuple[
 
             if escape_next:
                 escape_next = False
-            elif char == '\\':
+            elif char == "\\":
                 escape_next = True
             elif not in_string:
                 if char in ['"', "'"]:
                     in_string = True
                     string_char = char
-                elif char == '(':
+                elif char == "(":
                     paren_count += 1
-                elif char == ')':
+                elif char == ")":
                     paren_count -= 1
                     if paren_count == 0:
                         # Found matching closing parenthesis
-                        args_str = text[start_pos + 1:pos]
+                        args_str = text[start_pos + 1 : pos]
                         matches.append((tool_name, args_str))
                         break
             else:  # in_string is True
@@ -13583,7 +9049,7 @@ def _parse_tool_args(args_str: str) -> dict[str, Any]:
     import ast
 
     # Handle simple key=value format
-    if '=' in args_str and not args_str.strip().startswith('{'):
+    if "=" in args_str and not args_str.strip().startswith("{"):
         args = {}
         # Split by commas but handle nested structures
         parts = []
@@ -13599,11 +9065,11 @@ def _parse_tool_args(args_str: str) -> dict[str, Any]:
             elif char == quote_char and in_quotes:
                 in_quotes = False
                 quote_char = None
-            elif char in ['[', '{'] and not in_quotes:
+            elif char in ["[", "{"] and not in_quotes:
                 bracket_count += 1
-            elif char in [']', '}'] and not in_quotes:
+            elif char in ["]", "}"] and not in_quotes:
                 bracket_count -= 1
-            elif char == ',' and bracket_count == 0 and not in_quotes:
+            elif char == "," and bracket_count == 0 and not in_quotes:
                 parts.append(current_part.strip())
                 current_part = ""
                 continue
@@ -13614,19 +9080,19 @@ def _parse_tool_args(args_str: str) -> dict[str, Any]:
             parts.append(current_part.strip())
 
         for part in parts:
-            if '=' in part:
-                key, value = part.split('=', 1)
+            if "=" in part:
+                key, value = part.split("=", 1)
                 key = key.strip().strip('"').strip("'")
                 value = value.strip()
 
                 # Try to evaluate the value
                 try:
-                    if value.startswith('[') or value.startswith('{'):
+                    if value.startswith("[") or value.startswith("{"):
                         args[key] = ast.literal_eval(value)
-                    elif value.lower() in ['true', 'false']:
-                        args[key] = value.lower() == 'true'
-                    elif value.replace('.', '').replace('-', '').isdigit():
-                        args[key] = float(value) if '.' in value else int(value)
+                    elif value.lower() in ["true", "false"]:
+                        args[key] = value.lower() == "true"
+                    elif value.replace(".", "").replace("-", "").isdigit():
+                        args[key] = float(value) if "." in value else int(value)
                     else:
                         # Remove quotes if present
                         args[key] = value.strip('"').strip("'")
@@ -13648,13 +9114,19 @@ def unescape_string(text: str) -> str:
         return text
 
     # Remove outer quotes if wrapped
-    if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
+    if (text.startswith('"') and text.endswith('"')) or (
+        text.startswith("'") and text.endswith("'")
+    ):
         text = text[1:-1]
 
     # Universal escape sequences
     escapes = {
-        '\\n': '\n', '\\t': '\t', '\\r': '\r',
-        '\\"': '"', "\\'": "'", '\\\\': '\\'
+        "\\n": "\n",
+        "\\t": "\t",
+        "\\r": "\r",
+        '\\"': '"',
+        "\\'": "'",
+        "\\\\": "\\",
     }
 
     for escaped, unescaped in escapes.items():
@@ -13691,6 +9163,350 @@ def auto_unescape(args: Any) -> Any:
     return process_nested(args)
 
 
+from typing import Any, Callable
+import inspect
+import json
+
+
+def convert_tool_to_litellm_format(
+    tool_name: str,
+    tool_func: Callable,
+    description: str = None,
+    tool_capabilities: dict = None
+) -> dict:
+    """
+    Konvertiert ein einzelnes Tool in das LiteLLM/OpenAI Function Calling Format.
+
+    Args:
+        tool_name: Name des Tools
+        tool_func: Die Tool-Funktion
+        description: Optionale Beschreibung (überschreibt auto-generierte)
+        tool_capabilities: Optionale erweiterte Capabilities aus der Analyse
+
+    Returns:
+        dict: Tool im LiteLLM Format
+    """
+    # Hole Signatur und Docstring
+    sig = inspect.signature(tool_func)
+    docstring = tool_func.__doc__ or ""
+
+    # Beschreibung priorisieren
+    final_description = description
+    if not final_description and tool_capabilities:
+        final_description = tool_capabilities.get("primary_function", "")
+    if not final_description:
+        final_description = docstring.split("\n")[0] if docstring else f"Execute {tool_name}"
+
+    # Parameter extrahieren
+    properties = {}
+    required = []
+
+    for param_name, param in sig.parameters.items():
+        if param_name in ("self", "cls", "kwargs", "args"):
+            continue
+
+        # Type annotation verarbeiten
+        param_type = "string"  # Default
+        param_description = f"Parameter {param_name}"
+
+        if param.annotation != inspect.Parameter.empty:
+            annotation = param.annotation
+
+            # Type mapping
+            type_mapping = {
+                str: "string",
+                int: "integer",
+                float: "number",
+                bool: "boolean",
+                list: "array",
+                dict: "object",
+            }
+
+            # Handle Optional, Union, etc.
+            origin = getattr(annotation, "__origin__", None)
+            if origin is not None:
+                # z.B. Optional[str], List[int]
+                args = getattr(annotation, "__args__", ())
+                if origin in (list, List):
+                    param_type = "array"
+                elif origin in (dict, Dict):
+                    param_type = "object"
+                elif args:
+                    # Nimm ersten non-None Typ
+                    for arg in args:
+                        if arg is not type(None):
+                            param_type = type_mapping.get(arg, "string")
+                            break
+            else:
+                param_type = type_mapping.get(annotation, "string")
+
+        # Parameter-Beschreibung aus Docstring extrahieren (wenn vorhanden)
+        if docstring:
+            # Suche nach ":param param_name:" oder "Args:\n    param_name:" Pattern
+            import re
+            param_doc_match = re.search(
+                rf":param {param_name}:\s*(.+?)(?=:param|:return|$)",
+                docstring,
+                re.DOTALL
+            )
+            if param_doc_match:
+                param_description = param_doc_match.group(1).strip()
+            else:
+                # Google-style docstring
+                param_doc_match = re.search(
+                    rf"{param_name}[:\s]+(.+?)(?=\n\s*\w+[:\s]|\n\n|$)",
+                    docstring,
+                    re.DOTALL
+                )
+                if param_doc_match:
+                    param_description = param_doc_match.group(1).strip()
+
+        properties[param_name] = {
+            "type": param_type,
+            "description": param_description
+        }
+
+        # Required wenn kein Default
+        if param.default == inspect.Parameter.empty:
+            required.append(param_name)
+
+    # LiteLLM Tool Format
+    return {
+        "type": "function",
+        "function": {
+            "name": tool_name,
+            "description": final_description[:1024],  # Max 1024 chars für OpenAI
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required
+            }
+        }
+    }
+
+
+def convert_registry_to_litellm_tools(
+    tool_registry: dict[str, dict],
+    tool_capabilities: dict[str, dict] = None,
+    filter_tools: list[str] = None
+) -> list[dict]:
+    """
+    Konvertiert die gesamte Tool Registry in LiteLLM-kompatibles Format.
+
+    Args:
+        tool_registry: Die _tool_registry des Agents
+        tool_capabilities: Die _tool_capabilities des Agents
+        filter_tools: Optional - nur diese Tools konvertieren
+
+    Returns:
+        list[dict]: Liste von Tools im LiteLLM Format
+    """
+    tools = []
+    tool_capabilities = tool_capabilities or {}
+
+    for tool_name, tool_info in tool_registry.items():
+        # Filter anwenden
+        if filter_tools is not None and tool_name not in filter_tools:
+            continue
+
+        tool_func = tool_info.get("function")
+        description = tool_info.get("description", "")
+        capabilities = tool_capabilities.get(tool_name, {})
+
+        if tool_func is None:
+            continue
+
+        try:
+            litellm_tool = convert_tool_to_litellm_format(
+                tool_name=tool_name,
+                tool_func=tool_func,
+                description=description,
+                tool_capabilities=capabilities
+            )
+            tools.append(litellm_tool)
+        except Exception as e:
+            wprint(f"Failed to convert tool {tool_name}: {e}")
+
+    return tools
+
+
+def convert_meta_tools_to_litellm_format(
+    meta_tools_registry: dict[str, dict] = None,
+    include_standard: bool = True
+) -> list[dict]:
+    """
+    Konvertiert Meta-Tools in LiteLLM-kompatibles Format.
+
+    Args:
+        meta_tools_registry: Custom Meta-Tools Registry
+        include_standard: Standard Meta-Tools einschließen
+
+    Returns:
+        list[dict]: Liste von Meta-Tools im LiteLLM Format
+    """
+    tools = []
+
+    # Standard Meta-Tools Definitionen
+    standard_meta_tools = {
+        "internal_reasoning": {
+            "description": "Structure your thinking process with numbered thoughts, insights, and confidence levels.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "thought": {"type": "string", "description": "Your current thought or analysis"},
+                    "thought_number": {"type": "integer", "description": "Current thought number in sequence"},
+                    "total_thoughts": {"type": "integer", "description": "Estimated total thoughts needed"},
+                    "next_thought_needed": {"type": "boolean", "description": "Whether another thought is needed"},
+                    "current_focus": {"type": "string", "description": "What aspect you're focusing on"},
+                    "key_insights": {"type": "array", "items": {"type": "string"}, "description": "Key insights discovered"},
+                    "potential_issues": {"type": "array", "items": {"type": "string"}, "description": "Potential issues identified"},
+                    "confidence_level": {"type": "number", "description": "Confidence level 0.0-1.0"}
+                },
+                "required": ["thought", "thought_number", "total_thoughts", "next_thought_needed"]
+            }
+        },
+        "manage_internal_task_stack": {
+            "description": "Manage the internal task stack - add, complete, remove, or get current tasks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["add", "complete", "remove", "get_current"],
+                        "description": "Action to perform on task stack"
+                    },
+                    "task_description": {"type": "string", "description": "Description of the task"},
+                    "outline_step_ref": {"type": "string", "description": "Reference to outline step"}
+                },
+                "required": ["action"]
+            }
+        },
+        "delegate_to_llm_tool_node": {
+            "description": "Delegate a task to the LLM Tool Node for external tool execution.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_description": {"type": "string", "description": "Description of what to accomplish"},
+                    "tools_list": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of tool names to use"
+                    }
+                },
+                "required": ["task_description", "tools_list"]
+            }
+        },
+        "advance_outline_step": {
+            "description": "Mark current outline step as complete and advance to next step.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "step_completed": {"type": "boolean", "description": "Whether current step is completed"},
+                    "completion_evidence": {"type": "string", "description": "Evidence of completion"},
+                    "next_step_focus": {"type": "string", "description": "Focus for the next step"}
+                },
+                "required": ["step_completed", "completion_evidence"]
+            }
+        },
+        "write_to_variables": {
+            "description": "Store data in the variable system for later use.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "scope": {"type": "string", "description": "Variable scope (results, delegation, user, files, reasoning)"},
+                    "key": {"type": "string", "description": "Variable key/path"},
+                    "value": {"type": "string", "description": "Value to store"},
+                    "description": {"type": "string", "description": "Description of what this variable contains"}
+                },
+                "required": ["scope", "key", "value"]
+            }
+        },
+        "read_from_variables": {
+            "description": "Read data from the variable system.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "scope": {"type": "string", "description": "Variable scope to read from"},
+                    "key": {"type": "string", "description": "Variable key/path to read"},
+                    "purpose": {"type": "string", "description": "Why you need this data"}
+                },
+                "required": ["scope", "key"]
+            }
+        },
+        "direct_response": {
+            "description": "Provide the final answer when all outline steps are completed. ONLY use when finished.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "final_answer": {"type": "string", "description": "The complete final answer to the user's query"},
+                    "outline_completion": {"type": "boolean", "description": "Confirm outline is complete"},
+                    "steps_completed": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of completed steps"
+                    }
+                },
+                "required": ["final_answer", "outline_completion"]
+            }
+        }
+    }
+
+    # Standard Meta-Tools hinzufügen
+    if include_standard:
+        for tool_name, tool_def in standard_meta_tools.items():
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "description": tool_def["description"],
+                    "parameters": tool_def["parameters"]
+                }
+            })
+
+    # Custom Meta-Tools hinzufügen
+    if meta_tools_registry:
+        for tool_name, tool_info in meta_tools_registry.items():
+            if tool_name in standard_meta_tools:
+                continue  # Bereits hinzugefügt
+
+            tool_func = tool_info.get("function")
+            description = tool_info.get("description", f"Custom meta-tool: {tool_name}")
+
+            if tool_func:
+                try:
+                    litellm_tool = convert_tool_to_litellm_format(
+                        tool_name=tool_name,
+                        tool_func=tool_func,
+                        description=description
+                    )
+                    tools.append(litellm_tool)
+                except Exception as e:
+                    wprint(f"Failed to convert meta-tool {tool_name}: {e}")
+
+    return tools
+
+
+def get_selected_tools_litellm(
+    tool_registry: dict[str, dict],
+    tool_capabilities: dict[str, dict],
+    selected_tools: list[str]
+) -> list[dict]:
+    """
+    Gibt nur ausgewählte Tools im LiteLLM Format zurück.
+
+    Args:
+        tool_registry: Die _tool_registry des Agents
+        tool_capabilities: Die _tool_capabilities des Agents
+        selected_tools: Liste der Tool-Namen die konvertiert werden sollen
+
+    Returns:
+        list[dict]: Gefilterte Tools im LiteLLM Format
+    """
+    return convert_registry_to_litellm_tools(
+        tool_registry=tool_registry,
+        tool_capabilities=tool_capabilities,
+        filter_tools=selected_tools
+    )
 
 # Add this method to FlowAgent class
 FlowAgent.get_progress_summary = get_progress_summary
@@ -13978,5 +9794,4 @@ if __name__ == "__main__2":
         await agent.close()
 
     asyncio.run(_agent())
-
 
