@@ -1224,173 +1224,22 @@ Continue with the next step or call direct_response to finish."""
         return "\n".join(system_parts)
 
     def _build_tool_aware_system_message(self, prep_res: dict) -> str:
-        """System Message für manuelles Parsing (mit Tool-Syntax-Erklärung)."""
-        base_message = prep_res.get("base_system_message", "You are a helpful AI assistant.")
+        base_message = prep_res.get("base_system_message", "")
         available_tools = prep_res.get("available_tools", [])
-        tool_capabilities = prep_res.get("tool_capabilities", {})
-        variable_manager = prep_res.get("variable_manager")
-        agent_instance = prep_res.get("agent_instance")
 
         system_parts = [
-            "ROLE: INTERNAL EXECUTION UNIT",
-            "You execute specific tasks using available tools.",
-            "",
-            base_message,
-            "",
-            "THINK -> PLAN -> ACT using tools!",
-            "Store progress in variables!",
-            ""
+            "ROLE: Precise Execution Unit",
+            "You provide answers based ONLY on available data and tool results.",
+            "\nSTRICT ADHERENCE RULES:",
+            "- If a variable or entity is not mentioned in the context, do NOT assign it a default value (like 0).",
+            "- Explicitly report missing information as 'Information not available'.",
+            "- If the user prompt contains a logical trap or asks for unstated details, point this out clearly.",
+            "\n" + base_message,
+            "\n## Available Tools: " + ", ".join(available_tools),
+            "\nUse YAML for TOOL_CALLS. Use direct_response only when the task is fully resolved or proven unresolvable with given data."
         ]
 
-        # Tool List
-        if available_tools:
-            system_parts.append(f"## Available Tools: {', '.join(available_tools)}")
-
-            for tool_name in available_tools:
-                if tool_name in tool_capabilities:
-                    cap = tool_capabilities[tool_name]
-                    system_parts.append(f"**{tool_name}**: {cap.get('primary_function', 'No description')}")
-
-            # Tool Syntax
-            system_parts.append("""
-## Tool Usage (YAML format)
-```yaml
-TOOL_CALLS:
-  - tool: tool_name
-    args:
-      arg1: value1
-      arg2: value2
-```
-Use | for multi-line strings.""")
-
-        # Variable Context
-        if variable_manager:
-            var_context = variable_manager.get_llm_variable_context()
-            if var_context:
-                system_parts.append(f"\n## Variable Context\n{var_context}")
-
-        # Tool Analysis
-        if agent_instance and hasattr(agent_instance, '_tool_capabilities'):
-            query = prep_res.get('task_description', '').lower()
-            analysis_parts = ["\n## Tool Relevance"]
-
-            for tool_name, cap in agent_instance._tool_capabilities.items():
-                if tool_name not in available_tools:
-                    continue
-                relevance = self._calculate_tool_relevance(query, cap)
-                if relevance > 0.3:
-                    analysis_parts.append(f"- {tool_name}: {relevance:.2f} relevance")
-
-            system_parts.extend(analysis_parts)
-
         return "\n".join(system_parts)
-
-    def _build_tool_aware_system_message(self, prep_res: dict) -> str:
-        """Build a unified intelligent, tool-aware system message with context and relevance analysis."""
-
-        # Base system message
-        base_message = prep_res.get("base_system_message", "You are a helpful AI assistant.")
-        available_tools = prep_res.get("available_tools", [])
-        tool_capabilities = prep_res.get("tool_capabilities", {})
-        variable_manager = prep_res.get("variable_manager")
-        context = prep_res.get("context", {})
-        agent_instance = prep_res.get("agent_instance")
-        query = prep_res.get('task_description', '').lower()
-
-        internal_worker_prompt = (
-            "ROLE: INTERNAL EXECUTION UNIT\n"
-            "You are a specialized internal sub-agent working for a Supervisor Agent, NOT a human user.\n"
-            "Your inputs come from a larger reasoning loop, and your outputs will be parsed programmatically.\n\n"
-
-            "COMMANDMENTS:\n"
-            "1. NO CHITCHAT: Do not use conversational filler (e.g., 'Sure', 'I will do this', 'Here is the result').\n"
-            "2. PRECISE EXECUTION: Execute ONLY the specific task or step assigned in the 'Current Request'.\n"
-            "3. FINAL REPORT: Your final answer via 'direct_response' must be a structured result summary.\n"
-            "   - State clearly what was done.\n"
-            "   - List any data or facts found.\n"
-            "   - If a file was written, confirm the path.\n"
-            "4. NO SCOPE CREEP: Do not try to solve the entire project; focus only on the current atomic step.\n"
-            "\n"
-            "CONTEXT:\n"
-        )
-        base_message = internal_worker_prompt + base_message
-        base_message += ("\n\nAlways follow this action pattern"
-                         "**THINK** -> **PLAN** -> **ACT** using tools!\n"
-                         "all progress must be stored to ( variable system, memory, external services )!\n"
-                         "if working on code or file based tasks, update and crate the files! sve result in file!\n"
-                         "use tools with TOOL_CALL: tool_name(arg1='value1', arg2='value2')! or in yaml format nothing else!\n")
-
-        # --- Part 1: List available tools & capabilities ---
-        if available_tools:
-            base_message += f"\n\n## Available Tools\nYou have access to these tools: {', '.join(available_tools)}\n"
-            base_message += "Results will be stored to results.{tool_name}.data"
-
-            for tool_name in available_tools:
-                if tool_name in tool_capabilities:
-                    cap = tool_capabilities[tool_name]
-                    base_message += f"\n**{tool_name}**: {cap.get('primary_function', 'No description')}"
-                    use_cases = cap.get('use_cases', [])
-                    if use_cases:
-                        base_message += f"\n  Use cases: {', '.join(use_cases[:3])}"
-
-            # base_message += "\n\n## Tool Usage\nTo use tools, respond with:\nTOOL_CALL: tool_name(arg1='value1', arg2='value2')\nYou can make multiple tool calls in one response."
-            base_message += """
-## Tool Usage in yaml format nothing else !!
-To use tools, respond with a YAML block:
-```yaml
-TOOL_CALLS:
-  - tool: tool_name
-    args:
-      arg1: value1
-      arg2: value2
-  - tool: another_tool
-    args:
-      code: |
-        def example():
-            return "multi-line code"
-      text: |
-        Multi-line text
-        with arbitrary content
-```
-You can call multiple tools in one response. Use | for multi-line strings containing code or complex text."""
-
-        # --- Part 2: Add variable context ---
-        if variable_manager:
-            var_context = variable_manager.get_llm_variable_context()
-            if var_context:
-                base_message += f"\n\n## Variable Context\n{var_context}"
-
-        # --- Part 3: Intelligent tool analysis ---
-        if not agent_instance or not hasattr(agent_instance, '_tool_capabilities'):
-            return base_message + "\n\n⚠ No intelligent tool analysis available."
-
-        capabilities = agent_instance._tool_capabilities
-        analysis_parts = ["\n\n## Intelligent Tool Analysis"]
-
-        for tool_name, cap in capabilities.items():
-            analysis_parts.append(f"\n{tool_name}{cap.get('args_schema', '()')}:")
-            analysis_parts.append(f"- Function: {cap.get('primary_function', 'Unknown')}")
-
-            # Calculate relevance score
-            relevance_score = self._calculate_tool_relevance(query, cap)
-            analysis_parts.append(f"- Query relevance: {relevance_score:.2f}")
-
-            if relevance_score > 0.65:
-                analysis_parts.append("- ⭐ HIGHLY RELEVANT - SHOULD USE THIS TOOL!")
-
-            # Trigger phrase matching
-            triggers = cap.get('trigger_phrases', [])
-            matched_triggers = [t for t in triggers if t.lower() in query]
-            if matched_triggers:
-                analysis_parts.append(f"- Matched triggers: {matched_triggers}")
-
-            # Show top use cases
-            use_cases = cap.get('use_cases', [])[:3]
-            if use_cases:
-                analysis_parts.append(f"- Use cases: {', '.join(use_cases)}")
-
-        # Combine everything into a final message
-        return base_message + "\n"+ "\n".join(analysis_parts)
 
     def _calculate_tool_relevance(self, query: str, capabilities: dict) -> float:
         """Calculate how relevant a tool is to the current query"""
@@ -1576,66 +1425,71 @@ You can call multiple tools in one response. Use | for multi-line strings contai
                 error_message = str(e)
                 error_type = type(e).__name__
                 import traceback
+
                 print(traceback.format_exc())
 
-
                 if progress_tracker:
-                    await progress_tracker.emit_event(ProgressEvent(
-                        event_type="tool_call",
-                        timestamp=time.time(),
-                        node_name="LLMToolNode",
-                        status=NodeStatus.FAILED,
-                        tool_name=tool_name,
-                        tool_args=arguments,
-                        duration=tool_duration,
-                        success=False,
-                        tool_error=error_message,
-                        session_id=prep_res.get("session_id"),
-                        metadata={
-                            "error": error_message,
-                            "error_message": error_message,
-                            "error_type": error_type
-                        }
-                    ))
+                    await progress_tracker.emit_event(
+                        ProgressEvent(
+                            event_type="tool_call",
+                            timestamp=time.time(),
+                            node_name="LLMToolNode",
+                            status=NodeStatus.FAILED,
+                            tool_name=tool_name,
+                            tool_args=arguments,
+                            duration=tool_duration,
+                            success=False,
+                            tool_error=error_message,
+                            session_id=prep_res.get("session_id"),
+                            metadata={
+                                "error": error_message,
+                                "error_message": error_message,
+                                "error_type": error_type,
+                            },
+                        )
+                    )
 
                     # FIXED: Also send generic error event for error log
-                    await progress_tracker.emit_event(ProgressEvent(
-                        event_type="error",
-                        timestamp=time.time(),
-                        node_name="LLMToolNode",
-                        status=NodeStatus.FAILED,
-                        success=False,
-                        tool_name=tool_name,
-                        metadata={
-                            "error": error_message,
-                            "error_message": error_message,
-                            "error_type": error_type,
-                            "source": "tool_execution",
-                            "tool_name": tool_name,
-                            "tool_args": arguments
-                        }
-                    ))
+                    await progress_tracker.emit_event(
+                        ProgressEvent(
+                            event_type="error",
+                            timestamp=time.time(),
+                            node_name="LLMToolNode",
+                            status=NodeStatus.FAILED,
+                            success=False,
+                            tool_name=tool_name,
+                            metadata={
+                                "error": error_message,
+                                "error_message": error_message,
+                                "error_type": error_type,
+                                "source": "tool_execution",
+                                "tool_name": tool_name,
+                                "tool_args": arguments,
+                            },
+                        )
+                    )
                 eprint(f"Tool execution failed {tool_name}: {e}")
-                results.append({
-                    "tool_name": tool_name,
-                    "arguments": arguments,
-                    "success": False,
-                    "error": str(e)
-                })
+                results.append(
+                    {
+                        "tool_name": tool_name,
+                        "arguments": arguments,
+                        "success": False,
+                        "error": str(e),
+                    }
+                )
 
         return results
 
     def _format_tool_results(self, results: list[dict]) -> str:
-        """Format tool results for LLM"""
         formatted = []
-
         for result in results:
             if result["success"]:
-                formatted.append(f"✓ {result['tool_name']}: {result['result']}")
+                # Nur der reine Output, kein technisches Rauschen
+                formatted.append(f"Result from {result['tool_name']}:\n{result['result']}")
             else:
-                formatted.append(f"✗ {result['tool_name']}: ERROR - {result['error']}")
-
-        return "\n".join(formatted)
+                # Klarer Fehlerbericht
+                formatted.append(f"Notice: Tool {result['tool_name']} failed. Reason: {result['error']}")
+        return "\n---\n".join(formatted)
 
     def _update_variables_with_results(self, results: list[dict], variable_manager):
         """Update variable manager with tool results"""
@@ -1644,8 +1498,8 @@ You can call multiple tools in one response. Use | for multi-line strings contai
 
         for i, result in enumerate(results):
             if result["success"]:
-                tool_name = result['tool_name']
-                result_data = result['result']
+                tool_name = result["tool_name"]
+                result_data = result["result"]
 
                 # FIXED: Store result in proper variable paths
                 variable_manager.set(f"results.{tool_name}.data", result_data)
@@ -1656,112 +1510,34 @@ You can call multiple tools in one response. Use | for multi-line strings contai
                 variable_manager.set(var_key, result_data)
 
     async def _build_context_aware_prompt(self, prep_res: dict) -> str:
-        """Build context-aware prompt mit UnifiedContextManager Integration"""
         variable_manager = prep_res.get("variable_manager")
-        agent_instance = prep_res.get("agent_instance")
-        context = prep_res.get("context", {})
-
-        #Get unified context if available
         context_manager = prep_res.get("context_manager")
         session_id = prep_res.get("session_id", "default")
+        task_description = prep_res.get("task_description", "")
 
-        unified_context_parts = []
+        prompt_parts = ["## Context and Task Information"]
 
         if context_manager:
             try:
-                # Get unified context für LLM Tool usage
-                unified_context = await context_manager.build_unified_context(session_id, prep_res.get("task_description", ""))
+                unified_context = await context_manager.build_unified_context(session_id, task_description)
+                formatted = context_manager.get_formatted_context_for_llm(unified_context)
+                prompt_parts.append(formatted)
+            except: pass
 
-                # Format unified context for LLM consumption
-                chat_history = unified_context.get("chat_history", [])
-                if chat_history:
-                    unified_context_parts.append("## Recent Conversation from Session")
-                    for msg in chat_history[-5:]:  # Last 5 messages
-                        timestamp = msg.get('timestamp', '')[:19]
-                        role = msg.get('role', 'unknown')
-                        content = msg.get('content', '')[:300] + ("..." if len(msg.get('content', '')) > 300 else "")
-                        unified_context_parts.append(f"[{timestamp}] {role}: {content}")
+        prompt_parts.append(f"\n## Current Request\n{task_description}")
 
-                # Execution state from unified context
-                execution_state = unified_context.get("execution_state", {})
-                if execution_state:
-                    system_status = execution_state.get('system_status', 'unknown')
-                    active_tasks = execution_state.get('active_tasks', [])
-                    recent_completions = execution_state.get('recent_completions', [])
-
-                    unified_context_parts.append("\n## Current System State")
-                    unified_context_parts.append(f"Status: {system_status}")
-                    if active_tasks:
-                        unified_context_parts.append(f"Active Tasks: {len(active_tasks)}")
-                    if recent_completions:
-                        unified_context_parts.append(
-                            f"Recent Completions: {len(recent_completions)}"
-                        )
-
-                # Available results from unified context
-                variables_context = unified_context.get("variables", {})
-                recent_results = variables_context.get("recent_results", [])
-                if recent_results:
-                    unified_context_parts.append("\n## Available Results")
-                    for result in recent_results[:3]:  # Top 3 results
-                        task_id = result.get("task_id", "unknown")
-                        preview = result.get("preview", "")[:100] + "..."
-                        success = "✅" if result.get("success") else "❌"
-                        unified_context_parts.append(f"{success=} {task_id}: {preview=}")
-
-                # World model facts from unified context
-                relevant_facts = unified_context.get("relevant_facts", [])
-                if relevant_facts:
-                    unified_context_parts.append("\n## Relevant Known Facts")
-                    for key, value in relevant_facts:  # Top 3 facts
-                        fact_preview = str(value)
-                        unified_context_parts.append(f"- {key}: {fact_preview}")
-
-            except Exception as e:
-                unified_context_parts.append(f"## Context Error\nUnified context unavailable: {str(e)}")
-
-        # EXISTIEREND: Keep existing context building (backwards compatibility)
-        prompt_parts = []
-
-        # Add unified context first (primary)
-        if unified_context_parts:
-            prompt_parts.extend(unified_context_parts)
-
-        # Add existing context sections (secondary)
-        recent_interaction = prep_res.get("recent_interaction", "")
-        session_summary = prep_res.get("session_summary", "")
-        task_context = prep_res.get("task_context", "")
-
-        if recent_interaction:
-            prompt_parts.append(f"\n## Recent Interaction Context\n{recent_interaction}")
-            prompt_parts.append("\n**Important**: NO META_TOOL_CALLs needed in this section! and not avalabel\n use tools from Intelligent Tool Analysis only!")
-        if session_summary:
-            prompt_parts.append(f"\n## Session Summary\n{session_summary}")
-        if task_context:
-            prompt_parts.append(f"\n## Task Context\n{task_context}")
-
-        # Add main task
-        task_description = prep_res.get("task_description", "")
-        if task_description:
-            prompt_parts.append(f"\n## Current Request\n{task_description}")
-
-        # Variable suggestions (existing functionality)
-        if variable_manager and task_description:
+        if variable_manager:
             suggestions = variable_manager.get_variable_suggestions(task_description)
             if suggestions:
-                prompt_parts.append(f"\n## Available Variables\nYou can use: {', '.join(suggestions)}")
+                prompt_parts.append(f"\n## Data References\nAvailable variables: {', '.join(suggestions)}")
 
-        # Final variable resolution
         final_prompt = "\n".join(prompt_parts)
-        reminder_footer = (
-            "\n\n--- INTERNAL INSTRUCTION ---\n"
-            "Perform this specific step efficiently.\n"
-            "Return a REPORT summarizing the outcome. Do not ask follow-up questions."
-        )
-        final_prompt += reminder_footer
+
+        # Entfernt: "Return a REPORT summarizing the outcome." -> Ersetzt durch natürliche Instruktion
+        final_prompt += "\n\nPlease complete this task efficiently. Provide a clear and helpful response."
+
         if variable_manager:
             final_prompt = variable_manager.format_text(final_prompt)
-
         return final_prompt
 
     async def post_async(self, shared, prep_res, exec_res):
@@ -1902,144 +1678,142 @@ class TaskManagementFlow(AsyncFlow):
         # Execute the flow with the reasoner as starting point
         return await super().run_async(shared)
 
+
 # ============================================================================
 # META-TOOL DEFINITIONS - Native Function Calling Format
 # ============================================================================
 
-META_TOOLS_SCHEMA = [
-    {
-        "type": "function",
-        "function": {
-            "name": "think",
-            "description": "Internal reasoning step. Use this to think through a problem before taking action. Does NOT count as progress - always follow with an action tool.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "thought": {
-                        "type": "string",
-                        "description": "Your reasoning or analysis"
-                    }
-                },
-                "required": ["thought"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "execute_tools",
-            "description": "Delegate a task to the tool execution system. Use this when you need to use external tools like file operations, web search, etc.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task": {
-                        "type": "string",
-                        "description": "Clear description of what needs to be done"
+def get_meta_tools_schema(available_tools: list[str] = None) -> list[dict]:
+    """
+    Generate meta-tools schema dynamically.
+    This prevents tool name confusion by being explicit.
+    """
+    tools_hint = ""
+    if available_tools:
+        tools_hint = f" Available: {', '.join(available_tools[:15])}"
+
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "reason",
+                "description": "Think through a problem step by step. Use this before taking action. Always follow with 'run_tools' or 'finish'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "thought": {
+                            "type": "string",
+                            "description": "Your step-by-step reasoning",
+                        }
                     },
-                    "tools": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of tool names to use (e.g., ['read_file', 'web_search'])"
-                    }
+                    "required": ["thought"],
                 },
-                "required": ["task", "tools"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "complete",
-            "description": "Finish the task and provide the final answer to the user. Call this when you have gathered all necessary information and are ready to respond.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "answer": {
-                        "type": "string",
-                        "description": "The complete, final answer for the user"
-                    }
-                },
-                "required": ["answer"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "store_result",
-            "description": "Store a value for later reference. Use this to save intermediate results.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "key": {
-                        "type": "string",
-                        "description": "Name/key for the stored value"
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "run_tools",
+                "description": f"Execute external tools to accomplish a task.{tools_hint}",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task_description": {
+                            "type": "string",
+                            "description": "What needs to be done (be specific)",
+                        },
+                        "tool_names": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Which tools to use for this task",
+                        },
                     },
-                    "value": {
-                        "type": "string",
-                        "description": "The value to store"
-                    }
+                    "required": ["task_description"],
                 },
-                "required": ["key", "value"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_result",
-            "description": "Retrieve a previously stored value.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "key": {
-                        "type": "string",
-                        "description": "Name/key of the stored value to retrieve"
-                    }
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "finish",
+                "description": "Complete the task with a final answer. Call this when you have all information needed to respond to the user.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "final_answer": {
+                            "type": "string",
+                            "description": "Your complete response to the user",
+                        }
+                    },
+                    "required": ["final_answer"],
                 },
-                "required": ["key"]
-            }
-        }
-    }
-]
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "save",
+                "description": "Save a value for later use.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Key name"},
+                        "data": {"type": "string", "description": "Value to save"},
+                    },
+                    "required": ["name", "data"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "load",
+                "description": "Load a previously saved value.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Key name to load"}
+                    },
+                    "required": ["name"],
+                },
+            },
+        },
+    ]
+
+
+# Legacy constant for backwards compatibility
+META_TOOLS_SCHEMA = get_meta_tools_schema()
 
 
 # ============================================================================
 # SYSTEM PROMPT - Klar und direkt
 # ============================================================================
 
-SYSTEM_PROMPT = """You are a reasoning agent that solves tasks step by step.
+SYSTEM_PROMPT =  """You are an intellectually honest and precise assistant. Your primary loyalty is to the TRUTH.
 
-## Available Actions (use function calling):
-1. **think** - Internal reasoning (doesn't count as progress, always follow with action)
-2. **execute_tools** - Run external tools for file ops, search, etc.
-3. **store_result** - Save intermediate results
-4. **get_result** - Retrieve saved results
-5. **complete** - Finish and provide final answer
+## Operational Modes:
+1. DIRECT ANSWER: If you can solve the task purely with logic or your internal knowledge (e.g., riddles, math, general questions), provide the final answer immediately using `finish`.
+2. TOOL USAGE: Only use `run_tools` if the task REQUIRES external data (web search, file access, specific calculations your internal logic cannot handle).
+3. ERROR RECOVERY: If a tool fails, do not give up. Analyze the error and try to provide the best possible answer from your internal knowledge.
 
-## Rules:
-1. ALWAYS use function calling - never write tool names in plain text
-2. For simple queries: think briefly → complete with answer
-3. For complex tasks: think → execute_tools → (repeat if needed) → complete
-4. NEVER get stuck - if you can answer directly, use complete immediately
-5. Maximum {max_loops} reasoning loops - plan efficiently
+## Core Rules:
+- NO ASSUMPTIONS: If information is truly missing, state it. Do not assume '0'.
+- CLEAN OUTPUT: Your final answer via `finish` must be a natural, helpful response. Remove all technical artifacts like YAML or thought-processes.
 
-## Current Context:
 {context}
 
-## Task:
-{query}
-
-Proceed step by step. If you can answer directly, call complete immediately."""
+Now, help with: {query}"""
 
 
 # ============================================================================
 # REASONER NODE - Lean Implementation
 # ============================================================================
 
+
 @dataclass
 class ReasoningState:
     """Minimal state tracking"""
+
     loop_count: int = 0
     results: dict = field(default_factory=dict)
     history: list = field(default_factory=list)
@@ -2063,7 +1837,7 @@ class LLMReasonerNode(AsyncNode):
         super().__init__(**kwargs)
         self.max_loops = max_reasoning_loops
         self.state: Optional[ReasoningState] = None
-        self.agent_instance: Optional['FlowAgent'] = None
+        self.agent_instance: Optional[FlowAgent] = None
         self.variable_manager = None
 
     async def prep_async(self, shared: dict) -> dict:
@@ -2087,6 +1861,12 @@ class LLMReasonerNode(AsyncNode):
                 context_parts.append(
                     f"Previous result available: {latest.get('task_description', 'unknown')[:100]}"
                 )
+
+        if "query" in shared:
+            q = shared["current_query"].lower()
+            # Erkennt suggestive Fragen, die auf fehlende Infos abzielen
+            if any(word in q for word in ["wie viele", "wann", "wer", "how many", "when", "who"]) and len(shared.get("available_tools", [])) > 0:
+                context_parts.append("\nNote: Validate if the subjects in the question actually exist in the context before calculating.")
 
         return {
             "query": shared.get("current_query", ""),
@@ -2124,8 +1904,9 @@ class LLMReasonerNode(AsyncNode):
             {"role": "user", "content": query},
         ]
 
+        do = True
         # Main loop
-        while self.state.loop_count < self.max_loops and not self.state.completed:
+        while do and self.state.loop_count < self.max_loops and not self.state.completed:
             self.state.loop_count += 1
 
             # Emit progress event
@@ -2134,7 +1915,7 @@ class LLMReasonerNode(AsyncNode):
                     ProgressEvent(
                         event_type="reasoning_loop",
                         timestamp=time.time(),
-                        node_name="LLMReasonerNode",
+                        node_name="LLMReasonerNodeV2",
                         status=NodeStatus.RUNNING,
                         metadata={
                             "loop": self.state.loop_count,
@@ -2159,6 +1940,7 @@ class LLMReasonerNode(AsyncNode):
                 if result.get("completed"):
                     self.state.completed = True
                     self.state.final_answer = result.get("answer")
+                    do = False
                     break
 
                 # Add result to history for next iteration
@@ -2199,24 +1981,47 @@ class LLMReasonerNode(AsyncNode):
     ) -> dict:
         """Execute reasoning step with native function calling"""
 
-        # Call LLM with tools
-        response = await agent.a_run_llm_completion(
-            model=model,
-            messages=messages,
-            tools=META_TOOLS_SCHEMA,
-            tool_choice="auto",
-            temperature=0.3,
-            get_response_message=True,
-            node_name="LLMReasonerNode",
-            task_id=f"reasoning_loop_{self.state.loop_count}",
-        )
+        # Get dynamic schema with available tools hint
+        available_tools = prep_res.get("available_tools", [])
+        meta_tools = get_meta_tools_schema(available_tools)
+
+        try:
+            # Call LLM with tools - disable streaming for tool calls
+            response = await agent.a_run_llm_completion(
+                model=model,
+                messages=messages,
+                tools=meta_tools,
+                tool_choice="auto",
+                temperature=0.2,
+                get_response_message=True,
+                node_name="LLMReasonerNode",
+                task_id=f"reasoning_loop_{self.state.loop_count}",
+                stream=False,  # Important: disable streaming for function calls
+            )
+        except Exception as e:
+            error_msg = str(e)
+            # Handle malformed function call error
+            if "Malformed function call" in error_msg or "MidStreamFallback" in error_msg:
+                wprint(f"Malformed function call detected, retrying with guidance...")
+                return {
+                    "message": {"role": "assistant", "content": ""},
+                    "tool_response": {
+                        "role": "user",
+                        "content": "Error: Your function call was malformed. Call functions like this:\n"
+                        '- finish(final_answer="your answer here")\n'
+                        '- run_tools(task_description="what to do", tool_names=["tool1"])\n'
+                        '- reason(thought="your thinking")\n'
+                        "Try again with correct syntax.",
+                    },
+                }
+            raise
 
         # Extract tool calls
         tool_calls = getattr(response, "tool_calls", None)
         content = getattr(response, "content", "") or ""
 
         rprint(
-            f"Loop {self.state.loop_count}: {len(tool_calls or [])} tool calls, content: {content[:2000]}..."
+            f"Loop {self.state.loop_count}: {len(tool_calls or [])} tool calls, content: {content[:100]}..."
         )
 
         if not tool_calls:
@@ -2231,7 +2036,7 @@ class LLMReasonerNode(AsyncNode):
                     "message": {"role": "assistant", "content": content},
                     "tool_response": {
                         "role": "user",
-                        "content": "Please use the available function tools to proceed. If you have the answer, call the 'complete' function.",
+                        "content": 'Use function calling: finish(final_answer="...") for answer, or run_tools(...) for tools.',
                     },
                 }
 
@@ -2255,9 +2060,18 @@ class LLMReasonerNode(AsyncNode):
 
         for tool_call in tool_calls:
             tool_name = tool_call.function.name
+
+            # Parse arguments with error handling
             try:
-                args = json.loads(tool_call.function.arguments)
-            except json.JSONDecodeError:
+                raw_args = tool_call.function.arguments
+                if not raw_args or raw_args.strip() == "":
+                    args = {}
+                else:
+                    args = json.loads(raw_args)
+            except json.JSONDecodeError as e:
+                wprint(
+                    f"Failed to parse tool args: {tool_call.function.arguments}, error: {e}"
+                )
                 args = {}
 
             # Execute the meta-tool
@@ -2295,54 +2109,120 @@ class LLMReasonerNode(AsyncNode):
     ) -> dict:
         """Execute a meta-tool and return result"""
 
-        if tool_name == "think":
+        # Normalize tool name (remove any prefixes the LLM might add)
+        tool_name = tool_name.lower().strip()
+        if tool_name.startswith("tool_"):
+            tool_name = tool_name[5:]
+        if tool_name.startswith("function_"):
+            tool_name = tool_name[9:]
+
+        # Map old names to new for compatibility
+        name_mapping = {
+            "think": "reason",
+            "execute_tools": "run_tools",
+            "complete": "finish",
+            "store_result": "save",
+            "get_result": "load",
+        }
+        tool_name = name_mapping.get(tool_name, tool_name)
+
+        rprint(f"Executing meta-tool: {tool_name} with args: {args}")
+
+        if tool_name == "reason":
             # Internal reasoning - just acknowledge
             thought = args.get("thought", "")
+            if not thought:
+                return {"status": "error", "message": "No thought provided"}
             self.state.history.append({"type": "thought", "content": thought})
             return {
                 "status": "ok",
-                "message": "Thought recorded. Now take action or complete.",
+                "message": "Reasoning noted. Now take action: run_tools or finish.",
             }
 
-        elif tool_name == "execute_tools":
+        elif tool_name == "run_tools":
             # Delegate to LLMToolNode
-            return await self._delegate_to_tool_node(args, prep_res)
+            task = args.get("task_description", args.get("task", ""))
+            tools = args.get("tool_names", args.get("tools", []))
+            if not task:
+                return {"status": "error", "message": "No task_description provided"}
+            return await self._delegate_to_tool_node(
+                {"task": task, "tools": tools}, prep_res
+            )
 
-        elif tool_name == "store_result":
+        elif tool_name == "finish":
+            # Task completion
+            answer = args.get("final_answer", args.get("answer", ""))
+            if not answer:
+                return {"status": "error", "message": "No final_answer provided"}
+            return {"completed": True, "answer": answer}
+
+        elif tool_name == "save":
             # Store in variables
-            key = args.get("key", "")
-            value = args.get("value", "")
+            key = args.get("name", args.get("key", ""))
+            value = args.get("data", args.get("value", ""))
+            if not key:
+                return {"status": "error", "message": "No name/key provided"}
             self.state.results[key] = value
             if self.variable_manager:
                 self.variable_manager.set(f"reasoning.{key}", value)
-            return {"status": "stored", "key": key}
+            return {"status": "saved", "name": key}
 
-        elif tool_name == "get_result":
+        elif tool_name == "load":
             # Retrieve from variables
-            key = args.get("key", "")
+            key = args.get("name", args.get("key", ""))
+            if not key:
+                return {"status": "error", "message": "No name/key provided"}
             value = self.state.results.get(key)
             if value is None and self.variable_manager:
                 value = self.variable_manager.get(f"reasoning.{key}")
-            return {"status": "ok", "key": key, "value": value}
-
-        elif tool_name == "complete":
-            # Task completion
-            answer = args.get("answer", "Task completed.")
-            return {"completed": True, "answer": answer}
+            if value is None:
+                return {"status": "not_found", "name": key, "value": None}
+            return {"status": "ok", "name": key, "value": value}
 
         else:
-            return {"status": "error", "message": f"Unknown tool: {tool_name}"}
+            # Unknown tool - try to guess intent
+            wprint(f"Unknown meta-tool: {tool_name}, args: {args}")
+
+            # Check if it looks like a finish attempt
+            if any(k in args for k in ["answer", "response", "result", "final_answer"]):
+                answer = (
+                    args.get("answer")
+                    or args.get("response")
+                    or args.get("result")
+                    or args.get("final_answer")
+                )
+                if answer:
+                    return {"completed": True, "answer": str(answer)}
+
+            return {
+                "status": "error",
+                "message": f"Unknown tool '{tool_name}'. Use: reason, run_tools, finish, save, or load",
+            }
 
     async def _delegate_to_tool_node(self, args: dict, prep_res: dict) -> dict:
         """Delegate task execution to LLMToolNode"""
-        task = args.get("task", "")
-        tools = args.get("tools", [])
+        task = args.get("task", args.get("task_description", ""))
+        tools = args.get("tools", args.get("tool_names", []))
+
+        # Ensure tools is a list
+        if isinstance(tools, str):
+            tools = [t.strip() for t in tools.split(",")]
 
         if not task:
-            return {"status": "error", "message": "No task provided"}
+            return {
+                "status": "error",
+                "message": "No task provided. Use task_description parameter.",
+            }
 
         if LLMToolNode is None:
             return {"status": "error", "message": "LLMToolNode not available"}
+
+        # If no specific tools requested, use all available
+        available_tools = prep_res.get("available_tools", [])
+        if not tools:
+            tools = available_tools
+
+        rprint(f"Delegating to LLMToolNode: task='{task[:80]}...', tools={tools[:5]}")
 
         # Prepare shared state for tool node
         tool_shared = {
@@ -2350,7 +2230,7 @@ class LLMReasonerNode(AsyncNode):
             "current_task_description": task,
             "agent_instance": prep_res.get("agent_instance"),
             "variable_manager": prep_res.get("variable_manager"),
-            "available_tools": tools if tools else prep_res.get("available_tools", []),
+            "available_tools": tools if tools else available_tools,
             "tool_capabilities": prep_res.get("tool_capabilities", {}),
             "fast_llm_model": prep_res.get("fast_llm_model"),
             "complex_llm_model": prep_res.get("model"),
@@ -2373,7 +2253,8 @@ class LLMReasonerNode(AsyncNode):
             results = tool_shared.get("results", {})
 
             # Store in our state
-            self.state.results[f"delegation_{self.state.loop_count}"] = {
+            delegation_key = f"delegation_{self.state.loop_count}"
+            self.state.results[delegation_key] = {
                 "task": task,
                 "response": response,
                 "tool_calls": tool_calls_made,
@@ -2399,16 +2280,37 @@ class LLMReasonerNode(AsyncNode):
                     },
                 )
 
+            # Truncate response for context but keep it useful
+            truncated_response = response[:3000] if len(response) > 3000 else response
+
             return {
                 "status": "completed",
                 "task": task,
-                "response": response[:2000],  # Truncate for context
+                "response": truncated_response,
                 "tool_calls_made": tool_calls_made,
+                "message": f"Task completed with {tool_calls_made} tool calls.",
             }
 
         except Exception as e:
-            eprint(f"Tool delegation failed: {e}")
-            return {"status": "error", "message": str(e)}
+            error_msg = str(e)
+            eprint(f"Tool delegation failed: {error_msg}")
+
+            # Store error for debugging
+            if self.variable_manager:
+                self.variable_manager.set(
+                    f"delegation.error.loop_{self.state.loop_count}",
+                    {
+                        "task": task,
+                        "error": error_msg,
+                        "timestamp": datetime.now().isoformat(),
+                    },
+                )
+
+            return {
+                "status": "error",
+                "message": f"Tools unavailable or failed: {str(e)}. Use your internal knowledge to answer or explain why it's not possible.",
+                "task": task,
+            }
 
     async def _execute_with_manual_parsing(
         self, agent: 'FlowAgent', model: str, messages: list, prep_res: dict
@@ -2437,7 +2339,7 @@ Choose ONE action and respond now."""
             messages=messages_with_instruction,
             temperature=0.3,
             node_name="LLMReasonerNode",
-            task_id=f"reasoning_loop_{self.state.loop_count}"
+            task_id=f"reasoning_loop_{self.state.loop_count}",
         )
 
         response_text = response if isinstance(response, str) else str(response)
@@ -2468,8 +2370,8 @@ Choose ONE action and respond now."""
                     "message": {"role": "assistant", "content": response_text},
                     "tool_response": {
                         "role": "user",
-                        "content": f"Execution result: {json.dumps(result, default=str)}"
-                    }
+                        "content": f"Execution result: {json.dumps(result, default=str)}",
+                    },
                 }
 
         elif "THINK:" in response_text:
@@ -2479,8 +2381,8 @@ Choose ONE action and respond now."""
                 "message": {"role": "assistant", "content": response_text},
                 "tool_response": {
                     "role": "user",
-                    "content": "Thought noted. Now take action (EXECUTE or COMPLETE)."
-                }
+                    "content": "Thought noted. Now take action (EXECUTE or COMPLETE).",
+                },
             }
 
         # Unrecognized format - treat as potential answer
@@ -2491,8 +2393,8 @@ Choose ONE action and respond now."""
             "message": {"role": "assistant", "content": response_text},
             "tool_response": {
                 "role": "user",
-                "content": "Please use the specified format: THINK, EXECUTE, or COMPLETE."
-            }
+                "content": "Please use the specified format: THINK, EXECUTE, or COMPLETE.",
+            },
         }
 
     def _supports_function_calling(self, model: str) -> bool:
@@ -2517,7 +2419,12 @@ Choose ONE action and respond now."""
         if "openai" in model_lower or "anthropic" in model_lower:
             return True
 
-        return False
+        res = False
+        try:
+            res = litellm.supports_function_calling(model_base)
+        except:
+            pass
+        return res
 
     def _create_timeout_response(self, query: str) -> str:
         """Create response when max loops reached"""
@@ -2566,7 +2473,6 @@ Choose ONE action and respond now."""
             })
 
         return "reasoner_complete"
-
 
 
 # ===== Foramt Helper =====

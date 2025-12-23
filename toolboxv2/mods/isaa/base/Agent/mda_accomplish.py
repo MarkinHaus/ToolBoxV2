@@ -578,7 +578,12 @@ def with_progress_tracking(cls):
 
     return cls
 
-
+COMPLEXITY_PATTERNS = {
+    r"berechne|calculate": 2,      # Mathematik = niedrig
+    r"liste|list|aufzählen": 3,    # Aufzählung = einfach
+    r"analysiere|analyze": 6,       # Analyse = mittel
+    r"erstelle.*plan|design": 7,   # Planung = komplex
+}
 @with_progress_tracking
 class DivideNode(AsyncNode):
     """
@@ -675,30 +680,34 @@ class DivideNode(AsyncNode):
 
     async def _estimate_complexity(self, task: str, context: str,
                                     agent, session_id: str,
+                                    available_tools: list
+    ) -> TaskComplexity:
+        # Schneller Pattern-Check zuerst
+        for pattern, score in COMPLEXITY_PATTERNS.items():
+            if re.search(pattern, task, re.IGNORECASE):
+                return TaskComplexity(
+                    score=score,
+                    reasoning="Pattern-matched",
+                    is_atomic=score <= self.min_complexity,
+                    estimated_steps=max(1, score // 2),
+                )
+
+        # Nur bei unklaren Fällen: LLM fragen
+        return await self._llm_estimate_complexity(task, context, agent, session_id, available_tools)
+
+    async def _llm_estimate_complexity(self, task: str, context: str,
+                                    agent, session_id: str,
                                     available_tools: list) -> TaskComplexity:
         """Estimate task complexity using LLM"""
         # Include tool info for better estimation
         tools_hint = ""
         if available_tools:
-            tools_hint = f"\n\nVERFÜGBARE TOOLS (können Komplexität reduzieren): {', '.join(available_tools[:10])}"
+            tools_hint = f"\nVERFÜGBARE TOOLS (können Komplexität reduzieren): {', '.join(available_tools[:10])}"
 
-        prompt = f"""Bewerte die Komplexität dieser Aufgabe auf einer Skala von 0-10:
-
-AUFGABE: {task}
-
-KONTEXT: {context[:800]}{tools_hint}
-
-BEWERTUNGSKRITERIEN:
-- 0-2: Trivial, kann direkt mit einer Antwort gelöst werden
-- 3-4: Einfach, erfordert 1-2 logische Schritte
-- 5-6: Mittel, erfordert mehrere Schritte oder Informationssammlung
-- 7-8: Komplex, viele abhängige Schritte erforderlich
-- 9-10: Sehr komplex, erfordert umfangreiche Zerlegung
-
-WICHTIG:
-- is_atomic = true wenn die Aufgabe NICHT weiter sinnvoll zerlegbar ist
-- estimated_steps = geschätzte Anzahl atomarer Ausführungsschritte
-- Wenn ein Tool die Aufgabe direkt lösen kann, ist sie oft atomar"""
+        prompt = f"""Rate 0-10: {task[:200]}
+Context: {context[:200]}{tools_hint}
+0-2=trivial, 3-4=simple, 5-6=medium, 7+=complex
+is_atomic=true if not divisible"""
 
         try:
             result = await agent.a_format_class(
@@ -966,41 +975,36 @@ class TaskTreeBuilderNode(AsyncNode):
 
 @with_progress_tracking
 class AtomicConquerNode(AsyncNode):
-    """
-    Executes atomic tasks with k-voting and red-flagging.
-    Implements error correction from MAKER paper.
+    """Executes atomic tasks with optional k-voting"""
 
-    NEW: Supports external tool calls and context fetching
-    for tasks that require interaction with the outside world.
-    """
-
-    def __init__(self,
-                 num_attempts: int = 3,
-                 k_margin: int = 2,
-                 max_response_tokens: int = 750,
-                 red_flag_patterns: list[str] = None,
-                 enable_tools: bool = True,
-                 enable_context_fetch: bool = True):
+    def __init__(
+        self,
+        num_attempts: int = 3,
+        k_margin: int = 2,
+        max_response_tokens: int = 750,
+        red_flag_patterns: list[str] = None,
+        enable_tools: bool = True,
+        enable_context_fetch: bool = True,
+        benchmark_mode: bool = False,
+    ):  # NEW
         super().__init__()
-        self.num_attempts = num_attempts
-        self.k_margin = k_margin
+
+        # OPTIMIZED: Benchmark mode disables voting
+        if benchmark_mode:
+            self.num_attempts = 1
+            self.k_margin = 1
+        else:
+            self.num_attempts = num_attempts
+            self.k_margin = k_margin
+
+        self.benchmark_mode = benchmark_mode
         self.max_response_tokens = max_response_tokens
         self.enable_tools = enable_tools
         self.enable_context_fetch = enable_context_fetch
         self.red_flag_patterns = red_flag_patterns or [
             r"(?i)ich bin (mir )?nicht sicher",
-            r"(?i)das ist (sehr )?komplex",
-            r"(?i)ich kann (das )?nicht",
-            r"(?i)es ist schwierig",
-            r"(?i)möglicherweise",
-            r"(?i)vielleicht",
             r"(?i)i('m| am) not sure",
-            r"(?i)that is (very )?complex",
-            r"(?i)i can('t|not)( do this)?",
-            r"(?i)it('s| is) difficult",
-            r"(?i)possibly",
-            r"(?i)maybe"
-        ]
+        ]  # Reduced pattern list
 
     async def prep_async(self, shared) -> dict:
         mda_state: MDAState = shared.get("mda_state")

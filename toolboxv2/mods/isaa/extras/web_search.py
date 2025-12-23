@@ -595,9 +595,71 @@ def web_search_robust(query: str, max_results: int = 5, max_attempts: int = 15) 
     print(f"\n🎉 Final results: {len(good_results)} good results out of {processed_count} attempted")
     return good_results
 
+import datetime
+import litellm
+from typing import Optional
+
+def web_search(query: str, max_results: int = 5) -> str:
+    """
+    Führt eine aktuelle Websuche über Perplexity (OpenRouter) aus.
+    Robuste Fallbacks, komprimierte Antwort, heutiges Datum.
+    """
+
+    today = datetime.date.today().isoformat()
+
+    system_prompt = (
+        "Du bist eine Web-Suchmaschine.\n"
+        "Liefere aktuelle, faktenbasierte Informationen.\n"
+        "Antworte kurz, präzise und strukturiert.\n"
+        "Nutze das heutige Datum: " + today
+    )
+
+    user_prompt = (
+        f"Suche im Web nach:\n"
+        f"'{query}'\n\n"
+        f"Regeln:\n"
+        f"- Maximal {max_results} Ergebnisse\n"
+        f"- Nur aktuelle Informationen\n"
+        f"- Stichpunkte\n"
+        f"- Quellen wenn möglich\n"
+        f"- Keine Einleitung, kein Fazit"
+    )
+
+    models = [
+        "openrouter/perplexity/sonar-online",
+        "openrouter/perplexity/sonar-medium-online",
+        "openrouter/perplexity/sonar",
+        "openrouter/perplexity/sonar-pro",
+    ]
+
+    last_error: Optional[Exception] = None
+
+    for model in models:
+        try:
+            response = litellm.completion(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.2,
+                max_tokens=700,
+                extra_headers={
+                    "HTTP-Referer": "https://your-app-name.com",
+                    "X-Title": "web_search_function",
+                },
+            )
+
+            return response.choices[0].message.content.strip()
+
+        except Exception as e:
+            last_error = e
+            continue
+
+    return f"❌ Websuche fehlgeschlagen. Letzter Fehler: {last_error}"
 
 # Main search function
-def web_search(query: str, max_results: int = 5) -> list[dict[str, str]]:
+def _web_search(query: str, max_results: int = 5) -> str:
     """
     Main search function with robust fallbacks
     """
@@ -640,18 +702,8 @@ def robust_search():
     print(f"\n{'=' * 60}")
     print(f"FINAL RESULTS FOR: '{query}'")
     print(f"{'=' * 60}")
+    print(f"Found {results} results")
 
-    for i, result in enumerate(results, 1):
-        print(f"\n{i}. {result['title']}")
-        print(f"URL: {result['url']}")
-        print(f"Content length: {len(result['content'])} characters")
-        print(f"First 300 chars: {result['content'][:300]}...")
-
-        # Show parseability stats
-        content = result['content']
-        ascii_ratio = sum(1 for c in content if ord(c) < 128) / len(content)
-        print(f"ASCII ratio: {ascii_ratio:.1%}")
-        print("-" * 80)
 
 
 if __name__ == "__main__":

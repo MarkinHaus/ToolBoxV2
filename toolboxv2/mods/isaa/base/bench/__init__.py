@@ -20,7 +20,7 @@ from typing import Dict, List, Any
 from benchmark import Benchmark, Report, RowModelAdapter, MAKERAdapter, AgentAdapter
 from dashboard import Dashboard
 
-filepath_ = r"reports5.json"
+filepath_ = r"reports6.json"
 
 def load_reports_from_file(filepath: str) -> Dict[str,List[Report]]:
     if not os.path.exists(filepath):
@@ -47,7 +47,6 @@ async def main():
         # Mistral
         "mistral-8b": "openrouter/mistralai/ministral-8b-2512",
         "mistral-3b": "openrouter/mistralai/ministral-3b-2512",
-        "mistral-large":"openrouter/mistralai/mistral-large-2512",
         "devstral":"openrouter/mistralai/devstral-2512:free",
         "mistral-c": "openrouter/mistralai/mistral-small-creative",
         # # kimi
@@ -56,7 +55,7 @@ async def main():
         "llama-3.1-8b": "openrouter/meta-llama/llama-3.1-8b-instruct",
         "llama-3.1-70b": "openrouter/meta-llama/llama-3.3-70b-instruct",
         # glm-4.6
-        "glm-4.6": "openrouter/z-ai/glm-4.6",
+        # "glm-4.6": "openrouter/z-ai/glm-4.6", way to slow 892s
         # # olmo
         "olmo-7b": "openrouter/allenai/olmo-3-7b-instruct",
         # # gemma
@@ -71,12 +70,12 @@ async def main():
         # # Grok
         "grok-code-fast-1": "openrouter/x-ai/grok-code-fast-1",
         "grok-fast-4": "openrouter/x-ai/grok-4-fast",
-        # # deepseek
+        # # deepseek to slow
         # "deepseek-v3.2-s": "openrouter/deepseek/deepseek-v3.2-speciale",
-        "deepseek-v3.2": "openrouter/deepseek/deepseek-v3.2",
+        # "deepseek-v3.2": "openrouter/deepseek/deepseek-v3.2",
         # # qwen
         "qwen-3-vl-32b": "openrouter/qwen/qwen3-vl-32b-instruct",
-        "qwen3-vl-8b-thinking": "openrouter/qwen/qwen3-vl-8b-thinking",
+        # "qwen3-vl-8b-thinking": "openrouter/qwen/qwen3-vl-8b-thinking", # to slow
         "qwen3-plus": "openrouter/qwen/qwen3-coder-plus",
         "qwen3-flash": "openrouter/qwen/qwen3-coder-flash",
         # Flagship
@@ -84,22 +83,36 @@ async def main():
         #"gpt-5.2": "openrouter/openai/gpt-5.2",
         "claude-4.5-opus": "openrouter/anthropic/claude-opus-4.5",
         # "gemini-3-pro": "openrouter/google/gemini-3-pro-preview",
-        "Mistral-Large": "openrouter/mistralai/mistral-large-2512",
+        # "Mistral-Large": "openrouter/mistralai/mistral-large-2512",
 
     }
     models = {
-        "gemma-3-27b": "openrouter/google/gemma-3-27b-it",
-        "qwen3-vl-8b-thinking": "openrouter/qwen/qwen3-vl-8b-thinking",
+        # "gemma-3-27b": "openrouter/google/gemma-3-27b-it",
+        #"qwen3-vl-8b-thinking": "openrouter/qwen/qwen3-vl-8b-thinking",
         "qwen-3-vl-32b": "openrouter/qwen/qwen3-vl-32b-instruct",
-        "gemini-2.5-flash": "openrouter/google/gemini-2.5-flash",
-        "gemini-2.5-flash-lite": "openrouter/google/gemini-2.5-flash-lite",
-        # "olmo-7b": "openrouter/allenai/olmo-3-7b-instruct",
+        # "gemini-2.5-flash": "openrouter/google/gemini-2.5-flash",
+        # "gemini-2.5-flash-lite": "openrouter/google/gemini-2.5-flash-lite",
+        "olmo-7b": "openrouter/allenai/olmo-3-7b-instruct",
+        "nemotron-3": "openrouter/nvidia/nemotron-3-nano-30b-a3b",
+        "gemma-3n-e4b": "openrouter/google/gemma-3n-e4b-it",
+        "gemini-3-flash": "openrouter/google/gemini-3-flash-preview",
+        "mixtral-8x22b": "openrouter/mistralai/mixtral-8x22b-instruct",
+        "mixtral-8x7b": "openrouter/mistralai/mixtral-8x7b-instruct",
     }
+    models_ = {
+        "grok-code-fast-1": "openrouter/x-ai/grok-code-fast-1",
+        "grok-fast-4": "openrouter/x-ai/grok-4-fast",
+        "gemini-2.5-flash": "openrouter/google/gemini-2.5-flash",
+        "claude-haiku-4.5": "openrouter/anthropic/claude-haiku-4.5",
+        "qwen3-plus": "openrouter/qwen/qwen3-coder-plus",
+        "mistral-8b": "openrouter/mistralai/ministral-8b-2512",
+    }
+
     from toolboxv2 import get_app
     app = get_app()
     isaa = app.get_mod("isaa")
     agent = await isaa.get_agent("self")
-    seed = 42
+    seed = 7645
     # run all row test in parallel
 
     async def run_row(m_id:str, model_name:str):
@@ -111,7 +124,7 @@ async def main():
         agent.amd.fast_llm_model = model_name
         agent.amd.complex_llm_model = model_name
         adapter = MAKERAdapter(agent)
-        res = await adapter.benchmark(m_id+'MADAP', mode='quick', seed=seed)
+        res = await adapter.benchmark(m_id+'MADAP', mode='full', seed=seed)
         return res, 'MADAP'
 
     async def run_agent(m_id:str, model_name:str):
@@ -133,8 +146,9 @@ async def main():
                 break
         if not do:
             continue
-        tasks.append(asyncio.create_task(run_row(model_id, model_sig)))
         tasks.append(asyncio.create_task(run_agent(model_id, model_sig)))
+        tasks.append(asyncio.create_task(run_row(model_id, model_sig)))
+        tasks.append(asyncio.create_task(run_maker(model_id, model_sig)))
     # wait for all tasks to complete
     import tqdm
     for task in tqdm.tqdm(asyncio.as_completed(tasks), total=len(tasks)):
@@ -145,8 +159,8 @@ async def main():
 
     # Dashboard generieren
     # Dashboard.save(reports["MADAP"], "MADAP_comparison.html")
-    Dashboard.save(reports["all"], "comparison5.html")
-    Dashboard.save(reports["Agent"], "comparisonAgent.html")
+    Dashboard.save(reports["all"], "comparisonALLMo7.html")
+    # Dashboard.save(reports["Agent"], "comparisonAgent.html")
 
 if __name__ == "__main__":
     asyncio.run(main())

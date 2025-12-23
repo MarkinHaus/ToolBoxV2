@@ -55,7 +55,20 @@ class Dashboard:
             for f, _ in d.get('flags', []):
                 all_flags.add(f)
 
-        html = f'''<!DOCTYPE html>
+        DIM_ORDER = [
+            "logic",
+            "extraction",
+            "honesty",
+            "context",
+            "mirror",
+            "agency",
+            "robustness",
+            "compliance",
+        ]
+        ordered_dims = [d for d in DIM_ORDER if d in all_dims]
+        ordered_dims.extend(sorted(d for d in all_dims if d not in DIM_ORDER))
+
+        html = f"""<!DOCTYPE html>
 <html lang="de">
 <head>
     <meta charset="UTF-8">
@@ -501,7 +514,7 @@ class Dashboard:
     <div class="container">
         <header>
             <h1>🔬 {title}</h1>
-            <span class="timestamp">Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}</span>
+            <span class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}</span>
         </header>
 
         <!-- Filters -->
@@ -554,7 +567,7 @@ class Dashboard:
                         <th data-sort="rank">#</th>
                         <th data-sort="model">Model</th>
                         <th data-sort="total">Total</th>
-                        {Dashboard._gen_dim_headers(all_dims)}
+                        {Dashboard._gen_dim_headers(ordered_dims)}
                         <th data-sort="flags">Flags</th>
                         <th data-sort="cost">💰 Cost</th>
                         <th data-sort="time">⏱️ Time</th>
@@ -601,6 +614,19 @@ class Dashboard:
             </div>
         </div>
 
+        <!-- Probe Details -->
+        <div class="card full-width">
+            <h2>🔍 Probe Details (I/O)</h2>
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 15px;">
+                <span style="color: var(--success);">✅ Positiv (Score ≥1)</span> |
+                <span style="color: var(--warning);">⚠️ Neutral (0 ≤ Score < 1)</span> |
+                <span style="color: var(--danger);">❌ Negativ (Score < 0)</span>
+            </p>
+            <div id="probeDetails">
+                {Dashboard._gen_probe_details(data)}
+            </div>
+        </div>
+
         <!-- Selected Model Details -->
         <div class="card full-width" id="detailsCard" style="display: none;">
             <h2>📋 Model Details: <span id="detailsModelName"></span></h2>
@@ -631,7 +657,7 @@ class Dashboard:
     <script>
         // Data
         const reportData = {json.dumps(data)};
-        const dimensions = {json.dumps(list(all_dims))};
+        const dimensions = {json.dumps(ordered_dims)};
 
         // Complete Flag Information Registry
         const FLAG_INFO = {{
@@ -915,6 +941,20 @@ class Dashboard:
                 `;
             }}).join('');
 
+            if (selectedModel) {{
+                const stillVisible = data.some(d => d.model === selectedModel);
+                if (stillVisible) {{
+                    renderProbeDetails(selectedModel);
+                }} else {{
+                    // Modell nicht mehr sichtbar - zeige Placeholder
+                    document.getElementById('probeDetailsContent').innerHTML = `
+                        <div class="no-data" style="padding: 40px; text-align: center; color: var(--text-muted);">
+                            ⚠️ Das ausgewählte Modell "${{selectedModel}}" ist durch den Filter nicht mehr sichtbar
+                        </div>
+                    `;
+                }}
+            }}
+
             // Update charts
             updateCharts(data);
         }}
@@ -1108,10 +1148,13 @@ class Dashboard:
                     </div>
                 `;
             }}
-
+            selectedModel = modelName;
+            renderProbeDetails(modelName);
             // Scroll to details
             document.getElementById('detailsCard').scrollIntoView({{ behavior: 'smooth' }});
         }}
+
+        XOXO
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {{
@@ -1125,16 +1168,198 @@ class Dashboard:
         }});
     </script>
 </body>
-</html>'''
+</html>""".replace(
+            "XOXO",
+            """function renderProbeDetails(modelName) {
+    const container = document.getElementById('probeDetailsContent');
+    const model = reportData.find(d => d.model === modelName);
+
+    if (!model) {
+        container.innerHTML = `
+            <div class="no-data" style="padding: 40px; text-align: center; color: var(--text-muted);">
+                👆 Klicke auf ein Modell im Leaderboard um dessen Probes zu sehen
+            </div>
+        `;
+        return;
+    }
+
+    const probes = model.probe_details || [];
+
+    if (probes.length === 0) {
+        container.innerHTML = `
+            <div class="no-data" style="padding: 40px; text-align: center; color: var(--text-muted);">
+                ⚠️ Keine Probe-Details für ${modelName} verfügbar
+            </div>
+        `;
+        return;
+    }
+
+    // Header mit Modellname
+    let html = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid var(--border);">
+            <h3 style="color: var(--accent); margin: 0; display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 1.1rem;">🔍 ${modelName}</span>
+                <span style="font-size: 0.8rem; color: var(--text-muted);">(${probes.length} Probes)</span>
+            </h3>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <input type="text" id="probeSearch" placeholder="Probe filtern..."
+                       oninput="filterProbes()"
+                       style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 6px; font-size: 0.85rem; width: 150px;">
+                <select id="probeFilter" onchange="filterProbes()" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 6px; font-size: 0.85rem;">
+                    <option value="all">Alle</option>
+                    <option value="positive">✅ Positiv</option>
+                    <option value="neutral">⚠️ Neutral</option>
+                    <option value="negative">❌ Negativ</option>
+                    <option value="flagged">🚩 Mit Flags</option>
+                </select>
+            </div>
+        </div>
+        <div id="probesList" style="display: flex; flex-direction: column; gap: 10px;">
+    `;
+
+    probes.forEach((probe, i) => {
+        const probeId = probe.probe_id || `probe_${i}`;
+        const prompt = (probe.prompt || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const response = (probe.response || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const scores = probe.scores || {};
+        const flags = probe.flags || [];
+        const latency = probe.latency_ms || 0;
+        const tokensIn = probe.tokens_in || 0;
+        const tokensOut = probe.tokens_out || 0;
+
+        // Score-Kategorie bestimmen
+        const totalScore = Object.values(scores).reduce((a, b) => a + b, 0);
+        let scoreClass, scoreIcon, scoreCategory;
+        if (totalScore >= 1) {
+            scoreClass = 'high'; scoreIcon = '✅'; scoreCategory = 'positive';
+        } else if (totalScore >= 0) {
+            scoreClass = 'medium'; scoreIcon = '⚠️'; scoreCategory = 'neutral';
+        } else {
+            scoreClass = 'low'; scoreIcon = '❌'; scoreCategory = 'negative';
+        }
+
+        // Flag-Badges
+        let flagHtml = '';
+        flags.forEach(f => {
+            let severity = 'warning';
+            if (['hallucination', 'injection_vulnerable'].includes(f)) severity = 'critical';
+            else if (f === 'truth_focused') severity = 'info';
+            flagHtml += `<span class="flag ${severity}" style="font-size: 0.7rem; padding: 2px 6px;">${f}</span> `;
+        });
+
+        // Scores-Anzeige
+        const scoresHtml = Object.entries(scores).map(([k, v]) => `${k}: ${v >= 0 ? '+' : ''}${v.toFixed(1)}`).join(' | ') || 'keine Scores';
+
+        html += `
+        <details class="probe-card" data-probe-id="${probeId}" data-category="${scoreCategory}" data-flagged="${flags.length > 0}"
+                 style="background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden;">
+            <summary style="padding: 12px 15px; cursor: pointer; display: flex; align-items: center; gap: 10px; user-select: none;">
+                <span style="font-size: 1.1rem;">${scoreIcon}</span>
+                <span style="font-weight: 600; color: var(--text);">${probeId}</span>
+                <span style="font-size: 0.8rem; color: var(--text-muted);">${latency}ms | ${tokensIn}→${tokensOut} tok</span>
+                <span style="margin-left: auto; display: flex; gap: 4px;">${flagHtml}</span>
+            </summary>
+            <div style="padding: 15px; border-top: 1px solid var(--border);">
+                <div style="margin-bottom: 12px;">
+                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">📝 Prompt</div>
+                    <div style="background: var(--surface); padding: 10px 12px; border-radius: 6px; font-family: monospace; font-size: 0.85rem; white-space: pre-wrap; max-height: 200px; overflow-y: auto;">${prompt}</div>
+                </div>
+                <div style="margin-bottom: 12px;">
+                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">🤖 Response</div>
+                    <div style="background: var(--surface); padding: 10px 12px; border-radius: 6px; font-family: monospace; font-size: 0.85rem; white-space: pre-wrap; max-height: 300px; overflow-y: auto; border-left: 3px solid var(--${scoreClass});">${response}</div>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: var(--text-muted);">
+                    <span>Scores: ${scoresHtml}</span>
+                </div>
+            </div>
+        </details>
+        `;
+    });
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function filterProbes() {
+    const search = (document.getElementById('probeSearch')?.value || '').toLowerCase();
+    const filter = document.getElementById('probeFilter')?.value || 'all';
+
+    document.querySelectorAll('.probe-card').forEach(card => {
+        const probeId = card.dataset.probeId.toLowerCase();
+        const category = card.dataset.category;
+        const flagged = card.dataset.flagged === 'true';
+
+        let show = true;
+
+        // Textsuche
+        if (search && !probeId.includes(search)) {
+            show = false;
+        }
+
+        // Kategorie-Filter
+        if (filter !== 'all') {
+            if (filter === 'flagged' && !flagged) show = false;
+            else if (filter === 'positive' && category !== 'positive') show = false;
+            else if (filter === 'neutral' && category !== 'neutral') show = false;
+            else if (filter === 'negative' && category !== 'negative') show = false;
+        }
+
+        card.style.display = show ? 'block' : 'none';
+    });
+}
+
+// Aktuell ausgewähltes Modell tracken
+let selectedModel = null;""",
+        )
         return html
 
     @staticmethod
-    def _gen_sort_options(dims: set) -> str:
-        return '\n'.join(f'<option value="{d}">{d.title()}</option>' for d in sorted(dims))
+    def _gen_probe_details(data: List[Dict]) -> str:
+        """Generate empty container - JS will populate based on selection"""
+        return """
+        <div id="probeDetailsContent" style="display: flex; flex-direction: column; gap: 12px;">
+            <div class="no-data" style="padding: 40px; text-align: center; color: var(--text-muted);">
+                👆 Klicke auf ein Modell im Leaderboard um dessen Probes zu sehen
+            </div>
+        </div>
+        """
 
     @staticmethod
-    def _gen_dim_headers(dims: set) -> str:
-        return '\n'.join(f'<th data-sort="{d}">{d[:4].title()}</th>' for d in sorted(dims))
+    def _gen_sort_options(dims: set) -> str:
+        """Generate sort options with consistent dimension order"""
+        # Feste Reihenfolge für Dimensionen
+        DIM_ORDER = [
+            "logic",
+            "extraction",
+            "honesty",
+            "context",
+            "mirror",
+            "agency",
+            "robustness",
+            "compliance",
+        ]
+        ordered = [d for d in DIM_ORDER if d in dims]
+        # Falls unbekannte Dimensionen, am Ende hinzufügen
+        ordered.extend(sorted(d for d in dims if d not in DIM_ORDER))
+        return "\n".join(f'<option value="{d}">{d.title()}</option>' for d in ordered)
+
+    @staticmethod
+    def _gen_dim_headers(dims: list) -> str:
+        """Generate dimension headers with consistent order"""
+        # Feste Reihenfolge für Dimensionen
+        DIM_ORDER = [
+            "logic",
+            "extraction",
+            "honesty",
+            "context",
+            "mirror",
+            "agency",
+            "robustness",
+            "compliance",
+        ]
+        ordered = [d for d in DIM_ORDER if d in dims]
+        ordered.extend(sorted(d for d in dims if d not in DIM_ORDER))
+        return "\n".join(f'<th data-sort="{d}">{d[:4].title()}</th>' for d in ordered)
 
     @staticmethod
     def _gen_leaderboard_rows(data: List[dict]) -> str:
