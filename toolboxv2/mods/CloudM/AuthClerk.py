@@ -272,6 +272,10 @@ def verify_session_token(token: str, authorized_parties: list = None) -> TokenVe
                 "http://localhost:8080",
                 "http://localhost:3000",
                 "http://127.0.0.1:8080",
+                # Tauri Desktop App origins
+                "https://tauri.localhost",
+                "http://tauri.localhost",
+                "tauri://localhost",
             ]
             # Füge Produktions-Domain hinzu falls konfiguriert
             prod_domain = os.getenv('APP_BASE_URL')
@@ -425,7 +429,7 @@ async def verify_session(app: App = None, request=None, session_token: str = Non
             )
             save_local_user_data(local_data)
             _db_save_user_sync_data(app, user_id, local_data.to_dict())
-            logger.info(f"[{Name}] Created local user data for {user_id}")
+            logger.info(f"[{Name}] Created local user data for {user_id} with level={local_data.level}")
         else:
             local_data.session_token = token
             local_data.last_sync = time.time()
@@ -433,7 +437,12 @@ async def verify_session(app: App = None, request=None, session_token: str = Non
                 local_data.username = user.username
             if email:
                 local_data.email = email
+            # Ensure level is at least 1 for authenticated users
+            if local_data.level < 1:
+                logger.warning(f"[{Name}] User {user_id} has level={local_data.level}, upgrading to 1")
+                local_data.level = 1
             save_local_user_data(local_data)
+            logger.info(f"[{Name}] Loaded local user data for {user_id} with level={local_data.level}")
 
         return Result.ok({
             "authenticated": True,

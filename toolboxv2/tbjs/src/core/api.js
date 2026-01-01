@@ -62,8 +62,42 @@ const Api = {
             headers['Content-Type'] = 'application/json';
         }
 
-        // Add Auth token if available
+        // Add Auth token if available (sync version uses stored token)
         const token = TB.state.get('user.token');
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
+        return headers;
+    },
+
+    /**
+     * Async version that gets fresh token from Clerk if available.
+     * Use this for API calls that need the most current token.
+     */
+    _getRequestHeadersAsync: async (isJson = true) => {
+        const headers = {
+            'Accept': isJson ? 'application/json' : 'text/html',
+        };
+        if (isJson) {
+            headers['Content-Type'] = 'application/json';
+        }
+
+        // Try to get fresh token from Clerk, fallback to stored token
+        let token = null;
+        if (TB.user?.getSessionToken) {
+            try {
+                token = await TB.user.getSessionToken();
+            } catch (e) {
+                logger.debug('[API] Could not get fresh token, using stored:', e);
+            }
+        }
+
+        // Fallback to stored token
+        if (!token) {
+            token = TB.state.get('user.token');
+        }
+
         if (token) {
             headers['Authorization'] = `Bearer ${token}`;
         }
@@ -86,12 +120,13 @@ const Api = {
         let isFullPath = moduleName.startsWith('/');
         const isFormDataPayload = payload instanceof FormData;
 
-        // _getRequestHeaders() likely sets 'Accept' and 'Authorization'.
-        // It might also set a default 'Content-Type', which we'll need to override or remove for FormData.
-        const baseHeaders = Api._getRequestHeaders();
+        // Get headers with fresh token from Clerk (async version)
+        // This ensures we always have the most current token for API calls
+        const baseHeaders = await Api._getRequestHeadersAsync();
         const options = {
             method,
             headers: { ...baseHeaders }, // Start with base headers
+            credentials: 'include', // Include cookies for session management
         };
 
         if (!isFullPath && (useTauri === 'auto' || useTauri === 'force') && env.isTauri()) {

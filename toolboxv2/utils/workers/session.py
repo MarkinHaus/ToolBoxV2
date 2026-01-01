@@ -472,24 +472,35 @@ class ClerkSessionVerifier:
 
             data = result.get()
 
-            if not data or not data.get("valid", False):
+            # Check for 'authenticated' key (returned by verify_session)
+            # Also support legacy 'valid' key for backwards compatibility
+            if not data:
                 return False, None
 
+            is_authenticated = data.get('authenticated', data.get('valid', False))
+            if not is_authenticated:
+                logger.debug(f"Clerk verification: not authenticated, data={data}")
+                return False, None
+
+            # Extract user_id - could be clerk_user_id or user_id
+            user_id = data.get("user_id", "")
+            clerk_user_id = data.get("clerk_user_id", user_id)  # Fallback to user_id
+
             session = SessionData(
-                user_id=data.get("user_id", ""),
+                user_id=user_id,
                 session_id=data.get("session_id", str(uuid.uuid4())),
                 user_name=data.get("user_name", data.get("username", "anonymous")),
                 level=data.get("level", AccessLevel.LOGGED_IN),
                 spec=data.get("spec", ""),
                 exp=data.get("exp", 0),
-                clerk_user_id=data.get("clerk_user_id", ""),
+                clerk_user_id=clerk_user_id,
                 validated=True,
                 anonymous=False,
                 extra={
                     "email": data.get("email"),
                 },
                 live_data={
-                    "clerk_user_id": data.get("clerk_user_id", ""),
+                    "clerk_user_id": clerk_user_id,
                     "level": str(data.get("level", AccessLevel.LOGGED_IN)),
                 },
             )
@@ -750,9 +761,12 @@ class SessionManager:
         auth_header = headers.get(self.bearer_header) or headers.get(
             self.bearer_header.lower()
         )
+        logger.debug(f"[SessionManager] Bearer header check: auth_header={auth_header[:50] if auth_header else None}..., clerk_verifier={self.clerk_verifier is not None}")
         if auth_header and auth_header.startswith("Bearer ") and self.clerk_verifier:
             token = auth_header[7:]
+            logger.debug(f"[SessionManager] Verifying Bearer token (length: {len(token)})")
             is_valid, session = self.clerk_verifier.verify_session_sync(token)
+            logger.debug(f"[SessionManager] Bearer verification result: is_valid={is_valid}, session_level={session.level if session else None}")
             if is_valid and session:
                 return session
 

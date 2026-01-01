@@ -8,8 +8,30 @@ const HtmxIntegration = {
     init: () => {
         document.body.addEventListener('htmx:afterRequest', HtmxIntegration.handleAfterRequest);
         document.body.addEventListener('htmx:afterSwap', HtmxIntegration.handleAfterSwap);
-        // Potentially listen to other HTMX events like htmx:beforeRequest, htmx:sendError etc.
+        document.body.addEventListener('htmx:configRequest', HtmxIntegration.handleConfigRequest);
         TB.logger.log('[HTMX] Integration initialized.');
+    },
+
+    /**
+     * Inject auth token into HTMX requests.
+     * Note: htmx:configRequest must be synchronous, so we use the stored token.
+     * The stored token is kept in sync by getSessionToken() which updates it
+     * whenever a fresh token is fetched from Clerk.
+     */
+    handleConfigRequest: (event) => {
+        try {
+            // Use stored token (kept in sync by getSessionToken())
+            // HTMX events are synchronous, so we can't await getSessionToken() here
+            const token = TB.state?.get('user.token');
+
+            if (token) {
+                // Always set Authorization header (override any stale token from HTML attributes)
+                event.detail.headers['Authorization'] = `Bearer ${token}`;
+                TB.logger.debug('[HTMX] Injected auth token from state');
+            }
+        } catch (e) {
+            TB.logger.warn('[HTMX] Failed to inject auth token:', e);
+        }
     },
 
     handleAfterSwap: (event) => {

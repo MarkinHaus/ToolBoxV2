@@ -8,7 +8,7 @@
 mod worker_manager;
 
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 use worker_manager::WorkerManager;
 
 /// Application state containing the worker manager
@@ -140,6 +140,35 @@ pub fn run() {
             load_settings
         ])
         .setup(|app| {
+            // Create main window programmatically
+            // On Windows: use HTTPS scheme for persistent localStorage/cookies (required for Clerk auth)
+            // On other platforms: use default scheme
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            {
+                let mut builder = WebviewWindowBuilder::new(
+                    app,
+                    "main",
+                    WebviewUrl::App("index.html".into())
+                )
+                .title("SimpleCore - ToolBoxV2")
+                .inner_size(1200.0, 800.0)
+                .min_inner_size(800.0, 600.0)
+                .center()
+                .decorations(true)
+                .resizable(true);
+
+                // On Windows, use HTTPS scheme for localStorage persistence
+                #[cfg(target_os = "windows")]
+                {
+                    builder = builder.use_https_scheme(true);
+                }
+
+                match builder.build() {
+                    Ok(_) => println!("Main window created successfully"),
+                    Err(e) => eprintln!("Failed to create main window: {}", e),
+                }
+            }
+
             // Auto-start worker on desktop platforms
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {

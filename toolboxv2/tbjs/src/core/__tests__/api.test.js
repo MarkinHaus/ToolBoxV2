@@ -3,7 +3,7 @@
 import Api, { Result, ToolBoxError, ToolBoxInterfaces, ToolBoxResult, ToolBoxInfo } from '../api.js';
 import TB from '../../index.js'; // Still needed for TB.state mock
 
-// Mock Tauri API
+// Mock Tauri 2.x API
 const mockTauriInvoke = jest.fn();
 jest.mock('@tauri-apps/api/core', () => ({
   invoke: mockTauriInvoke,
@@ -63,9 +63,10 @@ describe('API Module', () => {
     // Default mock for env.isTauri()
     env.isTauri.mockReturnValue(false);
 
+    // Clear Tauri mock
+    mockTauriInvoke.mockClear();
 
     global.fetch.mockClear();
-    mockTauriInvoke.mockClear();
   });
 
   describe('Result Classes', () => {

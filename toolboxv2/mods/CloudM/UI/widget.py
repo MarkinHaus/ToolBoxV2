@@ -43,7 +43,7 @@ async def test_get_widget(app: App | None = None, **kwargs):
 # The primary entry point `get_widget` will now delegate to the AdminDashboard's main page.
 # toolboxv2/mods/CloudM/UI/widget.py
 # ... (imports) ...
-@export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="get_widget")
+@export(mod_name=Name, version=version, request_as_kwarg=True, level=0, api=True, name="get_widget")
 async def get_widget(app: App | None = None, request: RequestData = None, **kwargs):
     if app is None: app = get_app(from_=Name + ".get_widget")
 

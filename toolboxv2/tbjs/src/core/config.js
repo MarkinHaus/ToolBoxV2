@@ -168,6 +168,7 @@ const Config = {
 
         // Override global fetch in Tauri to redirect API/Auth requests to the worker backend
         // Static assets (HTML, CSS, JS, images) are served by Tauri from frontendDist
+        // Also injects Authorization headers for authenticated requests
         if (_config.isTauri && typeof window !== 'undefined') {
             const originalFetch = window.fetch;
 
@@ -192,7 +193,47 @@ const Config = {
                 return STATIC_EXTENSIONS.some(ext => lowerPath.endsWith(ext));
             };
 
-            window.fetch = function(input, init) {
+            // Get fresh auth token from Clerk or stored state
+            const getAuthToken = async () => {
+                try {
+                    // Try to get fresh token from Clerk via TB.user
+                    if (window.TB?.user?.getSessionToken) {
+                        const token = await window.TB.user.getSessionToken();
+                        if (token) return token;
+                    }
+                    // Fallback to stored token
+                    if (window.TB?.state?.get) {
+                        return window.TB.state.get('user.token');
+                    }
+                } catch (e) {
+                    console.debug('[Config] Could not get auth token:', e);
+                }
+                return null;
+            };
+
+            // Merge auth headers into init options
+            const mergeAuthHeaders = async (init, needsAuth) => {
+                if (!needsAuth) return init;
+
+                const token = await getAuthToken();
+                if (!token) return init;
+
+                const newInit = { ...init };
+                newInit.headers = new Headers(init?.headers || {});
+
+                // ALWAYS set fresh Authorization token (override any stale token)
+                // This ensures we always use the latest token from Clerk
+                newInit.headers.set('Authorization', `Bearer ${token}`);
+
+                // Ensure credentials are included
+                if (!newInit.credentials) {
+                    newInit.credentials = 'include';
+                }
+
+                return newInit;
+            };
+
+            window.fetch = async function(input, init) {
                 let url = input;
 
                 // Handle Request objects
@@ -224,29 +265,31 @@ const Config = {
                 const isAuthEndpoint = AUTH_ENDPOINTS.some(ep => path === ep || path.startsWith(ep + '?'));
                 if (isAuthEndpoint) {
                     const newUrl = getBaseUrl() + path;
+                    const authInit = await mergeAuthHeaders(init, true);
                     console.log('[Config] Fetch redirect (auth):', urlStr, '->', newUrl);
 
                     if (input instanceof Request) {
-                        return originalFetch.call(this, new Request(newUrl, input), init);
+                        return originalFetch.call(this, new Request(newUrl, input), authInit);
                     }
-                    return originalFetch.call(this, newUrl, init);
+                    return originalFetch.call(this, newUrl, authInit);
                 }
 
                 // Check if it's an /api/ request
                 if (path.startsWith('/api/') || path === '/api') {
                     const newUrl = getBaseUrl() + path;
+                    const authInit = await mergeAuthHeaders(init, true);
                     console.log('[Config] Fetch redirect (api):', urlStr, '->', newUrl);
 
                     if (input instanceof Request) {
-                        return originalFetch.call(this, new Request(newUrl, input), init);
+                        return originalFetch.call(this, new Request(newUrl, input), authInit);
                     }
-                    return originalFetch.call(this, newUrl, init);
+                    return originalFetch.call(this, newUrl, authInit);
                 }
 
                 // Pass through all other requests (static assets, external URLs, etc.)
                 return originalFetch.call(this, input, init);
             };
-            console.log('[Config] Global fetch override installed for Tauri (API + Auth only, static assets pass through)');
+            console.log('[Config] Global fetch override installed for Tauri (API + Auth with auto-injection)');
         }
 
         // After logger is initialized in TB.init, this can be moved there or use a preliminary log.

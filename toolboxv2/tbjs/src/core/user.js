@@ -23,6 +23,7 @@ const defaultUserState = {
 let clerkInstance = null;
 let clerkConfig = null;
 let clerkInitPromise = null;
+let clerkFullyInitialized = false; // Flag to prevent logout during initialization
 
 const user = {
     _lastActivityTimestamp: Date.now(),
@@ -189,20 +190,54 @@ const user = {
 
             TB.logger.info('[User] Clerk loaded successfully.');
 
-            // Check if already signed in
-            if (clerkInstance.user) {
-                TB.logger.info('[User] User already signed in:', clerkInstance.user.id);
-                await this._onClerkSignIn(clerkInstance.user);
-            }
+            // Listen for Clerk events FIRST (before checking current state)
+            // Clerk's addListener receives the full Clerk state object
+            clerkInstance.addListener((clerkState) => {
+                TB.logger.debug('[User] Clerk state changed:', {
+                    hasUser: !!clerkState?.user,
+                    hasSession: !!clerkState?.session,
+                    userId: clerkState?.user?.id,
+                    clerkFullyInitialized
+                });
 
-            // Listen for Clerk events
-            clerkInstance.addListener((event) => {
-                if (event.user) {
-                    this._onClerkSignIn(event.user);
-                } else if (event.session === null) {
-                    this._onClerkSignOut();
+                if (clerkState?.user && clerkState?.session) {
+                    // User is signed in with active session
+                    clerkFullyInitialized = true; // Mark as initialized once we have a valid session
+                    this._onClerkSignIn(clerkState.user);
+                } else if (!clerkState?.session) {
+                    // No active session - user signed out
+                    // IMPORTANT: Only trigger logout if Clerk is fully initialized
+                    // This prevents false logouts during page load when session hasn't loaded yet
+                    if (!clerkFullyInitialized) {
+                        TB.logger.debug('[User] Ignoring sign-out event during initialization');
+                        return;
+                    }
+                    const currentState = TB.state.get('user');
+                    if (currentState?.isAuthenticated) {
+                        this._onClerkSignOut();
+                    }
                 }
             });
+
+            // Check if already signed in (after page reload)
+            if (clerkInstance.user && clerkInstance.session) {
+                TB.logger.info('[User] User already signed in after reload:', clerkInstance.user.id);
+                clerkFullyInitialized = true;
+                await this._onClerkSignIn(clerkInstance.user);
+            } else if (clerkInstance.user && !clerkInstance.session) {
+                // User exists but no session - stale state
+                TB.logger.warn('[User] Clerk has user but no session, clearing state');
+                this._updateUserState({}, true);
+            }
+
+            // Mark as initialized after initial check
+            // Give Clerk a moment to restore session from storage
+            setTimeout(() => {
+                if (!clerkFullyInitialized) {
+                    TB.logger.debug('[User] Clerk initialization timeout - marking as initialized');
+                    clerkFullyInitialized = true;
+                }
+            }, 2000);
 
             TB.logger.info('[User] Clerk initialized successfully.');
             return true;
@@ -332,7 +367,27 @@ const user = {
 
     // =================== Clerk Event Handlers ===================
 
+    // Track if we're currently processing a sign-in to prevent duplicate calls
+    _signInInProgress: false,
+    _lastSignInUserId: null,
+
     async _onClerkSignIn(clerkUser) {
+        // Prevent duplicate sign-in processing
+        if (this._signInInProgress) {
+            TB.logger.debug('[User] Sign-in already in progress, skipping');
+            return;
+        }
+
+        // Check if we already processed this user
+        const currentState = TB.state.get('user');
+        if (currentState?.isAuthenticated && currentState?.userId === clerkUser.id) {
+            TB.logger.debug('[User] User already authenticated with same ID, skipping');
+            return;
+        }
+
+        this._signInInProgress = true;
+        this._lastSignInUserId = clerkUser.id;
+
         TB.logger.info('[User] Clerk sign-in detected:', clerkUser.id);
 
         const email = clerkUser.emailAddresses?.[0]?.emailAddress || '';
@@ -345,12 +400,14 @@ const user = {
                 token = await clerkInstance.session.getToken();
             } catch (e) {
                 TB.logger.error('[User] Failed to get token:', e);
+                this._signInInProgress = false;
                 await this._handleAuthFailure('Failed to get authentication token');
                 return;
             }
         }
 
         if (!token) {
+            this._signInInProgress = false;
             await this._handleAuthFailure('No authentication token available');
             return;
         }
@@ -373,13 +430,7 @@ const user = {
                 })
             });
 
-            // 3. Validate Session (Consolidated Logic)
-            // We temporarily set variables needed for validateBackendSession if they aren't in state yet
-            // But getting the token directly passed is safer here, so we use the token we just got.
-            // Since validateBackendSession fetches from state/clerk, let's call the endpoint logic directly
-            // OR ensure getSessionToken returns this token.
-
-            // To ensure validateBackendSession works before state is set, we rely on ClerkInstance having the session.
+            // 3. Validate Session with Backend
             const isValid = await this.validateBackendSession();
 
             if (!isValid) {
@@ -427,12 +478,17 @@ const user = {
                 }
             });
 
+            this._signInInProgress = false;
             TB.logger.info('[User] ✓ Login successful, user authenticated');
             TB.events.emit('user:signedIn', { username, userId: clerkUser.id });
+
+            // Start token refresh timer to keep token in sync
+            this._startTokenRefreshTimer();
 
             this._handlePostAuthRedirect();
 
         } catch (error) {
+            this._signInInProgress = false;
             TB.logger.error('[User] ✗ Authentication failed:', error);
             await this._handleAuthFailure(error.message);
         }
@@ -536,6 +592,9 @@ const user = {
     async _onClerkSignOut() {
         TB.logger.info('[User] Clerk sign-out detected.');
 
+        // Stop token refresh timer
+        this._stopTokenRefreshTimer();
+
         const userId = this.getUserId();
         if (userId) {
             try {
@@ -567,8 +626,7 @@ const user = {
 
         try {
             await clerkInstance.openSignIn({
-                afterSignInUrl: window.location.href,
-                afterSignUpUrl: window.location.href
+                fallbackRedirectUrl: window.location.href
             });
             return { success: true };
         } catch (e) {
@@ -589,8 +647,7 @@ const user = {
 
         try {
             await clerkInstance.openSignUp({
-                afterSignInUrl: window.location.href,
-                afterSignUpUrl: window.location.href
+                fallbackRedirectUrl: window.location.href
             });
             return { success: true };
         } catch (e) {
@@ -806,12 +863,100 @@ const user = {
     async getSessionToken() {
         if (clerkInstance?.session) {
             try {
-                return await clerkInstance.session.getToken();
+                const freshToken = await clerkInstance.session.getToken();
+                if (freshToken) {
+                    // Update stored token to keep it in sync
+                    const storedToken = this.getToken();
+                    if (freshToken !== storedToken) {
+                        this._updateUserState({ token: freshToken });
+                        TB.logger.debug('[User] Token updated from Clerk session');
+                    }
+                    return freshToken;
+                }
             } catch (e) {
                 TB.logger.warn('[User] Failed to get session token:', e);
             }
         }
         return this.getToken();
+    },
+
+    /**
+     * Refreshes the session token from Clerk and updates the state.
+     * Called by API when receiving 401 responses.
+     * @returns {Promise<void>}
+     * @throws {Error} If token refresh fails
+     */
+    async _refreshToken() {
+        TB.logger.debug('[User] Refreshing session token...');
+
+        if (!clerkInstance?.session) {
+            TB.logger.warn('[User] No Clerk session available for token refresh');
+            throw new Error('No active session');
+        }
+
+        try {
+            // Force refresh the token from Clerk
+            const newToken = await clerkInstance.session.getToken({ skipCache: true });
+
+            if (!newToken) {
+                throw new Error('Failed to get new token');
+            }
+
+            // Update the stored token
+            this._updateUserState({ token: newToken });
+            TB.logger.info('[User] ✓ Session token refreshed');
+
+        } catch (e) {
+            TB.logger.error('[User] Token refresh failed:', e);
+            // If refresh fails, user needs to re-authenticate
+            await this.signOut();
+            throw e;
+        }
+    },
+
+    // Token refresh timer ID
+    _tokenRefreshTimerId: null,
+
+    /**
+     * Start a timer to periodically refresh the token.
+     * Clerk tokens expire after ~60 seconds, so we refresh every 50 seconds.
+     */
+    _startTokenRefreshTimer() {
+        // Clear any existing timer
+        this._stopTokenRefreshTimer();
+
+        // Refresh token every 50 seconds (Clerk tokens expire after ~60s)
+        const REFRESH_INTERVAL = 50 * 1000;
+
+        this._tokenRefreshTimerId = setInterval(async () => {
+            try {
+                if (clerkInstance?.session) {
+                    const freshToken = await clerkInstance.session.getToken();
+                    if (freshToken) {
+                        const storedToken = this.getToken();
+                        if (freshToken !== storedToken) {
+                            this._updateUserState({ token: freshToken });
+                            TB.logger.debug('[User] Token auto-refreshed');
+                        }
+                    }
+                }
+            } catch (e) {
+                TB.logger.warn('[User] Token auto-refresh failed:', e);
+            }
+        }, REFRESH_INTERVAL);
+
+        TB.logger.debug('[User] Token refresh timer started');
+    },
+
+    /**
+     * Stop the token refresh timer.
+     */
+    _stopTokenRefreshTimer() {
+        if (this._tokenRefreshTimerId) {
+            clearInterval(this._tokenRefreshTimerId);
+            this._tokenRefreshTimerId = null;
+            TB.logger.debug('[User] Token refresh timer stopped');
+        }
     },
 
     isClerkReady() {
@@ -996,7 +1141,7 @@ const user = {
 
     // Mount mit dynamischem Theme
     clerkInstance.mountSignIn(element, {
-        afterSignUpUrl: window.location.pathname + '?next=' + encodeURIComponent(redirectUrl),
+        fallbackRedirectUrl: redirectUrl,
         signUpUrl: options.signUpUrl || clerkConfig?.sign_up_url || '/web/assets/signup.html',
         appearance: this._getClerkAppearance(),
         ...options
@@ -1042,12 +1187,11 @@ const user = {
 
     // Get redirect URL
     const urlParams = new URLSearchParams(window.location.search);
-    const redirectUrl = options.afterSignUpUrl || urlParams.get('next') || '/web/mainContent.html';
+    const redirectUrl = options.fallbackRedirectUrl || options.afterSignUpUrl || urlParams.get('next') || '/web/mainContent.html';
 
     // Mount mit dynamischem Theme
     clerkInstance.mountSignUp(element, {
-        afterSignUpUrl: redirectUrl,
-        afterSignInUrl: redirectUrl,
+        fallbackRedirectUrl: redirectUrl,
         signInUrl: options.signInUrl || clerkConfig?.sign_in_url || '/web/assets/login.html',
         appearance: this._getClerkAppearance(),
         ...options

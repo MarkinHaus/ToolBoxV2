@@ -66,8 +66,7 @@ async function initClerkSignUp(container) {
         const nextUrl = urlParams.get('next') || '/web/mainContent.html';
 
         await window.TB.user.mountSignUp(container, {
-            afterSignUpUrl: nextUrl,
-            afterSignInUrl: nextUrl
+            fallbackRedirectUrl: nextUrl
         });
 
         // Listen for sign-up events

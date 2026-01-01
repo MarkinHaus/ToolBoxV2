@@ -565,19 +565,10 @@
 
                 async function fetchCloudMApps() {
                     try {
-                        let response;
-
-                        // Try TB API first if available
-                        if (window.TB?.api?.httpPostUrl) {
-                            const result = await window.TB.api.httpPostUrl('CloudM', 'openui');
-                            const data = typeof result.json === 'function' ? await result.json() : result;
-                            return data?.result?.data || data?.data || data || [];
-                        }
-
-                        // Fallback to fetch
-                        response = await fetch(CONFIG.cloudmEndpoint, {
+                        // Global fetch override in Tauri automatically adds auth headers
+                        const response = await fetch(CONFIG.cloudmEndpoint, {
                             method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
+                            headers: { 'Content-Type': 'application/json' },
                             credentials: 'include'
                         });
 
@@ -595,6 +586,7 @@
 
                 async function fetchMinuFlows() {
                     try {
+                        // Global fetch override in Tauri automatically adds auth headers
                         const response = await fetch(CONFIG.minuFlowsEndpoint, {
                             method: 'GET',
                             credentials: 'include'
