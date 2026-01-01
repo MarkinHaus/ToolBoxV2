@@ -296,27 +296,14 @@ class NginxManager:
 
         http_servers, ws_server_list = [], []
 
-        # Unix sockets on Linux/macOS (preferred for performance)
-        if (IS_LINUX or IS_MACOS) and http_sockets:
-            for sock in http_sockets:
-                if sock:
-                    http_servers.append(
-                        f"server unix:{sock} weight=1 max_fails=3 fail_timeout=80s;"
-                    )
-        if (IS_LINUX or IS_MACOS) and ws_sockets:
-            for sock in ws_sockets:
-                if sock:
-                    ws_server_list.append(f"server unix:{sock};")
-
-        # TCP fallback / Windows
+        # Always use TCP ports on all platforms (Unix sockets disabled)
+        # This ensures consistent behavior across Windows, Linux, and macOS
         for port in http_ports:
-            if not http_sockets or IS_WINDOWS:
-                http_servers.append(
-                    f"server 127.0.0.1:{port} weight=1 max_fails=3 fail_timeout=80s;"
-                )
+            http_servers.append(
+                f"server 127.0.0.1:{port} weight=1 max_fails=3 fail_timeout=80s;"
+            )
         for port in ws_ports:
-            if not ws_sockets or IS_WINDOWS:
-                ws_server_list.append(f"server 127.0.0.1:{port};")
+            ws_server_list.append(f"server 127.0.0.1:{port};")
 
         # Remote nodes (backup servers)
         for host, port in remote_nodes:
@@ -1963,9 +1950,9 @@ class WorkerManager:
         self._cluster = ClusterManager()
 
     def _get_socket_path(self, worker_id: str) -> str | None:
-        if IS_WINDOWS or not SOCKET_PREFIX:
-            return None
-        return os.path.join(SOCKET_PREFIX, f"tbv2_{worker_id}.sock")
+        # Unix sockets disabled on all platforms - use TCP ports only
+        # This ensures consistent behavior across Windows, Linux, and macOS
+        return None
 
     def start_broker(self) -> bool:
         if self._broker_process and self._broker_process.is_alive():

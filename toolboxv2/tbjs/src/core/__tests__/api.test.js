@@ -3,6 +3,12 @@
 import Api, { Result, ToolBoxError, ToolBoxInterfaces, ToolBoxResult, ToolBoxInfo } from '../api.js';
 import TB from '../../index.js'; // Still needed for TB.state mock
 
+// Mock Tauri API
+const mockTauriInvoke = jest.fn();
+jest.mock('@tauri-apps/api/core', () => ({
+  invoke: mockTauriInvoke,
+}));
+
 // Mock direct dependencies of api.js
 jest.mock('../config.js', () => ({
   get: jest.fn(),
@@ -59,9 +65,7 @@ describe('API Module', () => {
 
 
     global.fetch.mockClear();
-    if (global.window && global.window.__TAURI__ && global.window.__TAURI__.invoke) {
-        global.window.__TAURI__.invoke.mockClear();
-    }
+    mockTauriInvoke.mockClear();
   });
 
   describe('Result Classes', () => {
@@ -278,11 +282,7 @@ describe('API Module', () => {
   describe('request - Tauri Invoke', () => {
     beforeEach(() => {
       env.isTauri.mockReturnValue(true);
-      // Ensure __TAURI__ is on window for these tests if not globally set up by Jest
-      if (!global.window.__TAURI__) {
-        global.window.__TAURI__ = { invoke: jest.fn() };
-      }
-      global.window.__TAURI__.invoke.mockClear();
+      mockTauriInvoke.mockClear();
     });
 
     afterEach(() => {
@@ -290,20 +290,20 @@ describe('API Module', () => {
     });
 
     it('should use Tauri invoke if available and useTauri is "auto" or "force"', async () => {
-      global.window.__TAURI__.invoke.mockResolvedValueOnce({
+      mockTauriInvoke.mockResolvedValueOnce({
         error: ToolBoxError.none, result: { data: 'tauri_response' }, info: { exec_code: 0 }
       });
       const payload = { id: 1 };
       const result = await Api.request('TauriModule', 'tauriFunc', payload, 'POST', 'auto');
 
-      expect(global.window.__TAURI__.invoke).toHaveBeenCalledWith('TauriModule.tauriFunc', payload);
+      expect(mockTauriInvoke).toHaveBeenCalledWith('TauriModule.tauriFunc', payload);
       expect(global.fetch).not.toHaveBeenCalled();
       expect(result.get()).toBe('tauri_response');
       expect(result.origin).toEqual(['tauri']);
     });
 
     it('should fallback to HTTP if Tauri invoke fails and useTauri is "auto"', async () => {
-      global.window.__TAURI__.invoke.mockRejectedValueOnce(new Error('Tauri error'));
+      mockTauriInvoke.mockRejectedValueOnce(new Error('Tauri error'));
       global.fetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ error: ToolBoxError.none, result: { data: 'http_fallback' }, info: { exec_code: 0 } }),
@@ -312,24 +312,24 @@ describe('API Module', () => {
 
       const result = await Api.request('TauriModule', 'tauriFunc', {}, 'POST', 'auto');
 
-      expect(global.window.__TAURI__.invoke).toHaveBeenCalled();
+      expect(mockTauriInvoke).toHaveBeenCalled();
       expect(logger.warn).toHaveBeenCalledWith('[API] Tauri invoke failed for TauriModule.tauriFunc:', new Error('Tauri error'));
       expect(global.fetch).toHaveBeenCalled();
       expect(result.get()).toBe('http_fallback');
     });
 
     it('should return an error if Tauri invoke fails and useTauri is "force"', async () => {
-      global.window.__TAURI__.invoke.mockRejectedValueOnce(new Error('Forced Tauri error'));
+      mockTauriInvoke.mockRejectedValueOnce(new Error('Forced Tauri error'));
       const result = await Api.request('TauriModule', 'tauriFunc', {}, 'POST', 'force');
 
-      expect(global.window.__TAURI__.invoke).toHaveBeenCalled();
+      expect(mockTauriInvoke).toHaveBeenCalled();
       expect(global.fetch).not.toHaveBeenCalled();
       expect(result.error).toBe(ToolBoxError.internal_error);
       expect(result.info.help_text).toContain('Tauri invoke TauriModule.tauriFunc failed: Forced Tauri error');
     });
 
     it('should parse string payload to object for Tauri invoke', async () => {
-        global.window.__TAURI__.invoke.mockResolvedValueOnce({
+        mockTauriInvoke.mockResolvedValueOnce({
             error: ToolBoxError.none, result: { data: 'tauri_response_parsed' }, info: { exec_code: 0 }
         });
         // Corrected payload string with '&'
@@ -337,7 +337,7 @@ describe('API Module', () => {
         const expectedTauriPayload = { param1: 'value1', param2: 'value2' };
 
         await Api.request('TauriParseModule', 'parseFunc', payloadString, 'POST', 'force');
-        expect(global.window.__TAURI__.invoke).toHaveBeenCalledWith('TauriParseModule.parseFunc', expectedTauriPayload);
+        expect(mockTauriInvoke).toHaveBeenCalledWith('TauriParseModule.parseFunc', expectedTauriPayload);
     });
   });
 

@@ -148,6 +148,29 @@ const TB = {
     // This test call will now be correctly queued by the new TB.once() method.
     this.once(() => { console.log("Once Online"); });
 
+    // Initialize platform-specific UI (Desktop status bar, Mobile bottom nav, etc.)
+    if (this.env.isTauri()) {
+        this.platformComponents = this.ui.initPlatformUI({
+            onCapture: async ({ text, tags }) => {
+                try {
+                    const response = await fetch(`${this.config.get('baseApiUrl')}/vault/capture`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text, tags })
+                    });
+                    if (!response.ok) throw new Error('Capture failed');
+                    this.logger.log('[Platform] Quick capture saved');
+                } catch (error) {
+                    this.logger.error('[Platform] Capture error:', error);
+                }
+            },
+            onNavigate: (route) => {
+                this.router.navigateTo(route);
+            }
+        });
+        this.logger.log('[Platform] Platform UI initialized');
+    }
+
     // Set the initialization flag to true.
     this.isInit = true;
 

@@ -122,68 +122,213 @@ def safe_for_yaml(obj):
 
 
 # ===== MEDIA PARSING UTILITIES =====
-def parse_media_from_query(query: str) -> tuple[str, list[dict]]:
+
+# Supported media prefixes and their types
+MEDIA_PREFIXES = {
+    'media': 'auto',           # Auto-detect from extension
+    'image': 'image',          # Explicit image
+    'audio': 'audio',          # Explicit audio
+    'video': 'video',          # Explicit video
+    'file': 'file',            # Generic file
+    'pdf': 'pdf',              # PDF document
+    'voice_message_transcription': 'transcription',  # Voice message transcription (text)
+}
+
+
+def parse_media_from_query(query: str, model: str | None = None) -> tuple[str, list[dict]]:
     """
-    Parse [media:(path/url)] tags from query and convert to litellm vision format
+    Parse [prefix:(path/url/content)] tags from query and convert to litellm vision format
+
+    Supports multiple prefixes:
+        - [media:path] - Auto-detect type from extension
+        - [image:url] - Explicit image
+        - [audio:url] - Explicit audio file
+        - [video:url] - Explicit video file
+        - [file:url] - Generic file attachment
+        - [pdf:url] - PDF document
+        - [voice_message_transcription: text] - Transcribed voice message (kept as text)
 
     Args:
-        query: Text query that may contain [media:(path/url)] tags
+        query: Text query that may contain [prefix:(path/url)] tags
+        model: Optional model name for capability checks (e.g., "gpt-4-vision-preview")
 
     Returns:
         tuple: (cleaned_query, media_list)
-            - cleaned_query: Query with media tags removed
+            - cleaned_query: Query with media tags removed (transcriptions kept inline)
             - media_list: List of dicts in litellm vision format
 
     Examples:
-        >>> parse_media_from_query("Analyze [media:image.jpg] this image")
-        ("Analyze  this image", [{"type": "image_url", "image_url": {"url": "image.jpg", "format": "image/jpeg"}}])
+        >>> parse_media_from_query("Analyze [image:photo.jpg] this image")
+        ("Analyze  this image", [{"type": "image_url", "image_url": {"url": "photo.jpg", "format": "image/jpeg"}}])
+
+        >>> parse_media_from_query("User said: [voice_message_transcription: Hello world]")
+        ("User said: Hello world", [])
 
     Note:
         litellm uses the OpenAI vision format: {"type": "image_url", "image_url": {"url": "...", "format": "..."}}
         The "format" field is optional but recommended for explicit MIME type specification.
     """
-    media_pattern = r'\[media:([^\]]+)\]'
-    media_matches = re.findall(media_pattern, query)
-
     media_list = []
-    for media_path in media_matches:
-        media_path = media_path.strip()
+    cleaned_query = query
 
-        # Determine media type from extension or URL
-        media_type = _detect_media_type(media_path)
+    # Check model capabilities if model is provided
+    model_capabilities = _get_model_capabilities(model) if model else {}
 
-        # litellm uses image_url format for vision models
-        # Format: {"type": "image_url", "image_url": {"url": "...", "format": "image/jpeg"}}
-        if media_type == "image":
-            # Detect image format for explicit MIME type
-            mime_type = _get_image_mime_type(media_path)
-            image_obj = {"url": media_path}
-            if mime_type:
-                image_obj["format"] = mime_type
+    # Process each prefix type
+    for prefix, prefix_type in MEDIA_PREFIXES.items():
+        # Pattern for this prefix: [prefix:content]
+        pattern = rf'\[{prefix}:\s*([^\]]+)\]'
+        matches = re.findall(pattern, cleaned_query, re.IGNORECASE)
 
-            media_list.append({
-                "type": "image_url",
-                "image_url": image_obj
-            })
-        elif media_type in ["audio", "video", "pdf"]:
-            # For non-image media, some models may support them
-            # but we use image_url as the standard format
-            # The model will handle or reject based on its capabilities
-            wprint(f"Warning: Media type '{media_type}' detected. Not all models support non-image media.")
-            media_list.append({
-                "type": "image_url",
-                "image_url": {"url": media_path}
-            })
-        else:
-            # Unknown type - try as image
-            media_list.append({
-                "type": "image_url",
-                "image_url": {"url": media_path}
-            })
+        for content in matches:
+            content = content.strip()
 
-    # Remove media tags from query
-    cleaned_query = re.sub(media_pattern, '', query).strip()
+            if prefix_type == 'transcription':
+                # Voice message transcription - replace tag with the transcribed text inline
+                # This keeps the transcription as part of the text, not as media
+                tag_pattern = rf'\[{prefix}:\s*{re.escape(content)}\]'
+                cleaned_query = re.sub(tag_pattern, content, cleaned_query, flags=re.IGNORECASE)
+                continue
+
+            # Determine actual media type
+            if prefix_type == 'auto':
+                media_type = _detect_media_type(content)
+            else:
+                media_type = prefix_type
+
+            # Check model capability for this media type
+            if model_capabilities:
+                if media_type == 'image' and not model_capabilities.get('supports_vision', True):
+                    wprint(f"Warning: Model '{model}' may not support vision/images.")
+                elif media_type == 'audio' and not model_capabilities.get('supports_audio', False):
+                    wprint(f"Warning: Model '{model}' may not support audio input.")
+                elif media_type == 'video' and not model_capabilities.get('supports_video', False):
+                    wprint(f"Warning: Model '{model}' may not support video input.")
+                elif media_type == 'pdf' and not model_capabilities.get('supports_pdf', False):
+                    wprint(f"Warning: Model '{model}' may not support PDF input.")
+
+            # Build media entry in litellm format
+            if media_type == "image":
+                mime_type = _get_image_mime_type(content)
+                image_obj = {"url": content}
+                if mime_type:
+                    image_obj["format"] = mime_type
+                media_list.append({
+                    "type": "image_url",
+                    "image_url": image_obj
+                })
+            elif media_type == "audio":
+                # Audio - some models support this via input_audio
+                media_list.append({
+                    "type": "input_audio",
+                    "input_audio": {"url": content, "format": _get_audio_format(content)}
+                })
+            elif media_type == "video":
+                # Video - limited model support
+                media_list.append({
+                    "type": "video_url",
+                    "video_url": {"url": content}
+                })
+            elif media_type == "pdf":
+                # PDF - some models support document input
+                media_list.append({
+                    "type": "document_url",
+                    "document_url": {"url": content, "format": "application/pdf"}
+                })
+            elif media_type == "file":
+                # Generic file - try to detect type
+                detected = _detect_media_type(content)
+                if detected == "image":
+                    mime_type = _get_image_mime_type(content)
+                    image_obj = {"url": content}
+                    if mime_type:
+                        image_obj["format"] = mime_type
+                    media_list.append({"type": "image_url", "image_url": image_obj})
+                else:
+                    # Unknown file type - add as generic
+                    media_list.append({
+                        "type": "file_url",
+                        "file_url": {"url": content}
+                    })
+            else:
+                # Unknown type - try as image (most compatible)
+                media_list.append({
+                    "type": "image_url",
+                    "image_url": {"url": content}
+                })
+
+        # Remove processed tags from query (except transcriptions which are already handled)
+        if prefix_type != 'transcription':
+            cleaned_query = re.sub(pattern, '', cleaned_query, flags=re.IGNORECASE)
+
+    # Clean up extra whitespace
+    cleaned_query = re.sub(r'\s+', ' ', cleaned_query).strip()
     return cleaned_query, media_list
+
+
+def _get_model_capabilities(model: str) -> dict:
+    """
+    Get capability flags for a model
+
+    Args:
+        model: Model name (e.g., "gpt-4-vision-preview", "gemini-1.5-pro")
+
+    Returns:
+        dict with capability flags:
+            - supports_vision: bool
+            - supports_audio: bool
+            - supports_video: bool
+            - supports_pdf: bool
+    """
+    model_lower = model.lower() if model else ""
+
+    # Default capabilities
+    capabilities = {
+        'supports_vision': False,
+        'supports_audio': False,
+        'supports_video': False,
+        'supports_pdf': False,
+    }
+
+    # Vision models
+    vision_models = ['vision', 'gpt-4o', 'gpt-4-turbo', 'claude-3', 'gemini', 'llava', 'cogvlm']
+    if any(vm in model_lower for vm in vision_models):
+        capabilities['supports_vision'] = True
+
+    # Audio models (Gemini 1.5+, GPT-4o audio)
+    audio_models = ['gemini-1.5', 'gemini-2', 'gpt-4o-audio', 'whisper']
+    if any(am in model_lower for am in audio_models):
+        capabilities['supports_audio'] = True
+
+    # Video models (Gemini 1.5+)
+    video_models = ['gemini-1.5', 'gemini-2']
+    if any(vm in model_lower for vm in video_models):
+        capabilities['supports_video'] = True
+
+    # PDF models (Claude 3, Gemini)
+    pdf_models = ['claude-3', 'gemini']
+    if any(pm in model_lower for pm in pdf_models):
+        capabilities['supports_pdf'] = True
+
+    return capabilities
+
+
+def _get_audio_format(path: str) -> str:
+    """Get audio format from file extension"""
+    path_lower = path.lower()
+    format_map = {
+        '.mp3': 'mp3',
+        '.wav': 'wav',
+        '.ogg': 'ogg',
+        '.m4a': 'm4a',
+        '.flac': 'flac',
+        '.aac': 'aac',
+        '.webm': 'webm',
+    }
+    for ext, fmt in format_map.items():
+        if path_lower.endswith(ext):
+            return fmt
+    return 'wav'  # Default
 
 
 def _detect_media_type(path: str) -> str:
@@ -4341,6 +4486,77 @@ class FlowAgent:
     def set_progress_callback(self, progress_callback: callable = None):
         self.progress_callback = progress_callback
 
+    def sanitize_message_history(self, messages: list[dict]) -> list[dict]:
+        """
+        Sanitize message history to ensure tool call/response pairs are complete.
+
+        This prevents LiteLLM errors like:
+        "Missing corresponding tool call for tool response message"
+
+        Rules:
+        1. Every 'role: tool' message MUST have a preceding 'role: assistant' message
+           with tool_calls containing the matching tool_call_id
+        2. If orphaned tool response found → remove it
+        3. If assistant has tool_calls but no tool responses follow → remove the tool_calls
+
+        Returns:
+            Sanitized message list safe for all LLM providers
+        """
+        if not messages:
+            return messages
+
+        sanitized = []
+        pending_tool_calls = {}  # tool_call_id -> assistant_message_index
+
+        for msg in messages:
+            role = msg.get('role', '')
+
+            if role == 'assistant':
+                # Track tool_calls if present
+                tool_calls = msg.get('tool_calls', [])
+                if tool_calls:
+                    for tc in tool_calls:
+                        tc_id = tc.get('id') or tc.get('tool_call_id')
+                        if tc_id:
+                            pending_tool_calls[tc_id] = len(sanitized)
+                sanitized.append(msg)
+
+            elif role == 'tool':
+                # Check if we have the corresponding tool_call
+                tool_call_id = msg.get('tool_call_id')
+                if tool_call_id and tool_call_id in pending_tool_calls:
+                    sanitized.append(msg)
+                    del pending_tool_calls[tool_call_id]
+                else:
+                    # ORPHANED TOOL RESPONSE - skip it
+                    print(f"⚠️ [SANITIZE] Removing orphaned tool response: {tool_call_id}")
+                    continue
+            else:
+                sanitized.append(msg)
+
+        # Clean up assistant messages with unmatched tool_calls at the end
+        # (tool_calls that never got responses)
+        if pending_tool_calls:
+            indices_to_clean = set(pending_tool_calls.values())
+            for idx in indices_to_clean:
+                if idx < len(sanitized):
+                    msg = sanitized[idx]
+                    if msg.get('tool_calls'):
+                        # Remove tool_calls from this message or convert to regular assistant
+                        print(f"⚠️ [SANITIZE] Removing unmatched tool_calls from assistant message at index {idx}")
+                        msg_copy = msg.copy()
+                        del msg_copy['tool_calls']
+                        if msg_copy.get('content'):
+                            sanitized[idx] = msg_copy
+                        else:
+                            # Mark for removal if no content
+                            sanitized[idx] = None
+
+            # Remove None entries (empty assistant messages)
+            sanitized = [m for m in sanitized if m is not None]
+
+        return sanitized
+
     def _process_media_in_messages(self, messages: list[dict]) -> list[dict]:
         """
         Process messages to extract and convert [media:(path/url)] tags to litellm format
@@ -4365,33 +4581,29 @@ class FlowAgent:
                 continue
 
             # Check if content contains media tags
-            if "[media:" in content:
-                cleaned_content, media_list = parse_media_from_query(content)
+            cleaned_content, media_list = parse_media_from_query(content, self.amd.complex_llm_model)
 
-                if media_list:
-                    # Convert to multi-modal message format for litellm
-                    # Format: content becomes a list with text and media items
-                    content_parts = []
+            if media_list:
+                # Convert to multi-modal message format for litellm
+                # Format: content becomes a list with text and media items
+                content_parts = []
 
-                    # Add text part if there's any text left
-                    if cleaned_content.strip():
-                        content_parts.append({
-                            "type": "text",
-                            "text": cleaned_content
-                        })
-
-                    # Add media parts
-                    content_parts.extend(media_list)
-
-                    processed_messages.append({
-                        "role": msg["role"],
-                        "content": content_parts
+                # Add text part if there's any text left
+                if cleaned_content.strip():
+                    content_parts.append({
+                        "type": "text",
+                        "text": cleaned_content
                     })
-                else:
-                    # No valid media found, keep original
-                    processed_messages.append(msg)
+
+                # Add media parts
+                content_parts.extend(media_list)
+
+                processed_messages.append({
+                    "role": msg["role"],
+                    "content": content_parts
+                })
             else:
-                # No media tags, keep original
+                # No valid media found, keep original
                 processed_messages.append(msg)
         return processed_messages
 
@@ -4424,6 +4636,8 @@ class FlowAgent:
         # Parse media from messages if present
         if "messages" in kwargs:
             kwargs["messages"] = self._process_media_in_messages(kwargs["messages"])
+            # Sanitize message history to prevent tool call/response pair corruption
+            kwargs["messages"] = self.sanitize_message_history(kwargs["messages"])
 
         llm_start = time.perf_counter()
 

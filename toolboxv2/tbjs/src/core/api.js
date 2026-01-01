@@ -144,7 +144,9 @@ const Api = {
                 }
 
                 logger.debug(`[API] Tauri invoke payload for ${command}:`, tauriInvokePayloadArgs);
-                const response = await window.__TAURI__.invoke(command, tauriInvokePayloadArgs);
+                // Use @tauri-apps/api/core for Tauri 2.x
+                const { invoke } = await import('@tauri-apps/api/core');
+                const response = await invoke(command, tauriInvokePayloadArgs);
                 logger.debug(`[API] Tauri invoke success for ${command}:`, response);
                 return wrapApiResponse(response, 'tauri');
             } catch (error) {

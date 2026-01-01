@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Desktop Components Visual Test</title>
+    <link rel="stylesheet" href="../Desktop.css">
+    <style>
+        :root {
+            --tb-bg: #121212;
+            --tb-bg-secondary: #1e1e1e;
+            --tb-border: #333;
+            --tb-text: #fff;
+            --tb-text-secondary: #888;
+            --tb-primary: #6366f1;
+            --tb-primary-hover: #5558e3;
+            --tb-bg-hover: #333;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--tb-bg);
+            color: var(--tb-text);
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        h1, h2 { margin-top: 40px; }
+        .demo-section { margin: 20px 0; padding: 20px; border: 1px solid var(--tb-border); border-radius: 8px; }
+        button { margin: 5px; padding: 8px 16px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>🖥️ Desktop Components Visual Test</h1>
+
+    <div class="demo-section">
+        <h2>Quick Capture Popup</h2>
+        <button onclick="toggleCapture()">Toggle Quick Capture (Ctrl+Shift+C)</button>
+        <div class="tb-quick-capture visible" style="position: relative; transform: none; top: auto; left: auto; margin-top: 20px;">
+            <div class="tb-quick-capture-header">
+                <span>⚡ Quick Capture</span>
+                <button class="tb-quick-capture-close">×</button>
+            </div>
+            <div class="tb-quick-capture-body">
+                <textarea rows="4" placeholder="Capture a thought... Use #tags"></textarea>
+                <div class="tb-quick-capture-actions">
+                    <span class="tb-quick-capture-hint">Ctrl+Enter to save</span>
+                    <button class="tb-quick-capture-save">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="demo-section">
+        <h2>Desktop Status Bar</h2>
+        <div class="tb-status-bar" style="position: relative;">
+            <div class="tb-status-bar-left">
+                <span class="tb-status-item" data-id="worker">
+                    <span class="tb-status-dot online"></span>
+                    <span class="tb-status-label">Worker</span>
+                </span>
+            </div>
+            <div class="tb-status-bar-center"></div>
+            <div class="tb-status-bar-right">
+                <span class="tb-status-item">Ctrl+Shift+C: Capture</span>
+            </div>
+        </div>
+        <div style="margin-top: 20px;">
+            <button onclick="setStatus('online')">Set Online</button>
+            <button onclick="setStatus('offline')">Set Offline</button>
+            <button onclick="setStatus('warning')">Set Warning</button>
+        </div>
+    </div>
+
+    <div class="demo-section">
+        <h2>Mobile Bottom Navigation</h2>
+        <nav class="tb-bottom-nav" style="position: relative;">
+            <button class="tb-bottom-nav-item active" data-route="/">
+                <span class="tb-bottom-nav-icon">🏠</span>
+                <span class="tb-bottom-nav-label">Home</span>
+            </button>
+            <button class="tb-bottom-nav-item" data-route="/vault">
+                <span class="tb-bottom-nav-icon">📝</span>
+                <span class="tb-bottom-nav-label">Notes</span>
+            </button>
+            <button class="tb-bottom-nav-item" data-route="/capture">
+                <span class="tb-bottom-nav-icon">⚡</span>
+                <span class="tb-bottom-nav-label">Capture</span>
+            </button>
+            <button class="tb-bottom-nav-item" data-route="/bots">
+                <span class="tb-bottom-nav-icon">🤖</span>
+                <span class="tb-bottom-nav-label">Bots</span>
+            </button>
+            <button class="tb-bottom-nav-item" data-route="/settings">
+                <span class="tb-bottom-nav-icon">⚙️</span>
+                <span class="tb-bottom-nav-label">Settings</span>
+            </button>
+        </nav>
+    </div>
+
+    <div class="demo-section">
+        <h2>Status Dots</h2>
+        <div style="display: flex; gap: 20px; align-items: center;">
+            <span class="tb-status-item">
+                <span class="tb-status-dot online"></span>
+                <span>Online</span>
+            </span>
+            <span class="tb-status-item">
+                <span class="tb-status-dot offline"></span>
+                <span>Offline</span>
+            </span>
+            <span class="tb-status-item">
+                <span class="tb-status-dot warning"></span>
+                <span>Warning</span>
+            </span>
+        </div>
+    </div>
+
+    <script>
+        function toggleCapture() {
+            const popup = document.querySelector('.tb-quick-capture');
+            popup.classList.toggle('visible');
+        }
+        function setStatus(status) {
+            const dot = document.querySelector('[data-id="worker"] .tb-status-dot');
+            dot.className = 'tb-status-dot ' + status;
+        }
+        // Make nav items clickable
+        document.querySelectorAll('.tb-bottom-nav-item').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tb-bottom-nav-item').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+    </script>
+</body>
+</html>
+

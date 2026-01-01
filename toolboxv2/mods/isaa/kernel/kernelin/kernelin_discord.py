@@ -115,6 +115,14 @@ from toolboxv2.mods.isaa.kernel.types import Signal as KernelSignal, SignalType,
 from toolboxv2.mods.isaa.kernel.kernelin.tools.discord_tools import DiscordKernelTools
 from toolboxv2.mods.isaa.base.Agent.types import ProgressEvent, NodeStatus
 import io
+
+# Check for Obsidian tools
+OBSIDIAN_SUPPORT = False
+try:
+    from toolboxv2.mods.isaa.kernel.kernelin.tools.obsidian_tools import ObsidianKernelTools
+    OBSIDIAN_SUPPORT = True
+except ImportError:
+    print("⚠️ Obsidian tools not available")
 import wave
 import tempfile
 import os
@@ -2204,8 +2212,28 @@ class DiscordKernel:
             output_router=self.output_router
         )
 
+        # Initialize Obsidian tools if vault path configured
+        self.obsidian_tools = None
+        vault_path = os.getenv("OBSIDIAN_VAULT_PATH")
+        if vault_path and OBSIDIAN_SUPPORT:
+            vault_path_obj = Path(vault_path)
+            if vault_path_obj.exists():
+                self.obsidian_tools = ObsidianKernelTools(vault_path, agent_id="discord")
+                print(f"✓ Obsidian vault connected: {vault_path}")
+            else:
+                print(f"⚠️ Obsidian vault path does not exist: {vault_path}")
+        elif vault_path and not OBSIDIAN_SUPPORT:
+            print(f"⚠️ OBSIDIAN_VAULT_PATH set but Obsidian tools not available")
+
         # Progress printers per user
         self.progress_printers: Dict[str, DiscordProgressPrinter] = {}
+
+        # Cross-platform agent switching: user_id -> agent_name
+        self.user_active_agents: Dict[str, str] = {}
+
+        # Telegram linking: discord_user_id -> {telegram_id, agent_name}
+        self.user_telegram_links: Dict[str, Dict[str, str]] = {}
+        self._load_telegram_links()
 
         # Setup bot events
         self._setup_bot_events()
@@ -2260,6 +2288,157 @@ class DiscordKernel:
         save_dir = Path(self.app.data_dir) / 'Agents' / 'kernel' / self.agent.amd.name / 'discord'
         save_dir.mkdir(parents=True, exist_ok=True)
         return save_dir / f"discord_kernel_{self.instance_id}.pkl"
+
+    async def _get_available_agents(self) -> list[str]:
+        """Get list of available agents from ISAA"""
+        try:
+            isaa = self.app.get_mod("isaa")
+            if isaa and hasattr(isaa, 'agents'):
+                return list(isaa.agents.keys())
+            # Fallback: scan agent directories
+            agents_dir = Path(self.app.data_dir) / 'Agents'
+            if agents_dir.exists():
+                return [d.name for d in agents_dir.iterdir() if d.is_dir() and not d.name.startswith('.')]
+        except Exception as e:
+            print(f"⚠️ Error getting available agents: {e}")
+        return [self.agent.amd.name]
+
+    async def _resolve_telegram_agent(self, user_id: str) -> str | None:
+        """
+        Resolve the Telegram agent name for a Discord user.
+
+        This looks for agents with 'telegram' in the name or checks
+        a shared user mapping file.
+        """
+        try:
+            # Check shared user mappings
+            mapping_path = Path(self.app.data_dir) / 'Agents' / 'kernel' / 'shared' / 'user_mappings.json'
+            if mapping_path.exists():
+                import json
+                with open(mapping_path, 'r') as f:
+                    mappings = json.load(f)
+                    # Look for Discord user -> Telegram agent mapping
+                    if user_id in mappings.get('discord_to_telegram', {}):
+                        return mappings['discord_to_telegram'][user_id]
+
+            # Fallback: look for agents with 'telegram' in name
+            available = await self._get_available_agents()
+            telegram_agents = [a for a in available if 'telegram' in a.lower()]
+            if telegram_agents:
+                # Prefer user-specific agent (e.g., "self-markin-telegram")
+                for agent in telegram_agents:
+                    if 'self' in agent.lower() or 'markin' in agent.lower():
+                        return agent
+                return telegram_agents[0]
+
+        except Exception as e:
+            print(f"⚠️ Error resolving Telegram agent: {e}")
+
+        return None
+
+    def _get_telegram_links_path(self) -> Path:
+        """Get path for storing Telegram links"""
+        save_dir = Path(self.app.data_dir) / 'Agents' / 'kernel' / 'discord'
+        save_dir.mkdir(parents=True, exist_ok=True)
+        return save_dir / f"telegram_links_{self.instance_id}.json"
+
+    def _load_telegram_links(self):
+        """Load Telegram links from file"""
+        try:
+            path = self._get_telegram_links_path()
+            if path.exists():
+                with open(path, 'r') as f:
+                    self.user_telegram_links = json.load(f)
+                print(f"✓ Loaded {len(self.user_telegram_links)} Telegram links")
+        except Exception as e:
+            print(f"⚠️ Error loading Telegram links: {e}")
+            self.user_telegram_links = {}
+
+    def _save_telegram_links(self):
+        """Save Telegram links to file"""
+        try:
+            path = self._get_telegram_links_path()
+            with open(path, 'w') as f:
+                json.dump(self.user_telegram_links, f, indent=2)
+        except Exception as e:
+            print(f"⚠️ Error saving Telegram links: {e}")
+
+    async def _verify_and_link_telegram(
+        self,
+        discord_user_id: str,
+        discord_username: str,
+        telegram_id: str
+    ) -> str | None:
+        """
+        Verify Telegram ID and link to Discord user.
+
+        Security: ID-based verification
+        - Telegram ID must exist in user mappings (proves ownership)
+        - The user who registered with Telegram owns that agent
+
+        Returns the agent name if verified, None otherwise.
+        """
+        try:
+            # Search for user_mappings.json in all agent telegram directories
+            # Path format: {data_dir}/Agents/kernel/{agent_name}/telegram/user_mappings.json
+            kernel_dir = Path(self.app.data_dir) / 'Agents' / 'kernel'
+
+            if kernel_dir.exists():
+                # Search all agent directories for telegram user mappings
+                for agent_dir in kernel_dir.iterdir():
+                    if not agent_dir.is_dir() or agent_dir.name in ['shared', 'discord']:
+                        continue
+
+                    telegram_dir = agent_dir / 'telegram'
+                    mapping_file = telegram_dir / 'user_mappings.json'
+
+                    if mapping_file.exists():
+                        try:
+                            with open(mapping_file, 'r') as f:
+                                mappings = json.load(f)
+
+                            # Check if telegram_id exists in mappings
+                            if telegram_id in mappings.get('mappings', {}):
+                                mapping = mappings['mappings'][telegram_id]
+                                agent_name = mapping.get('agent_name', '')
+
+                                if agent_name:
+                                    # Verified by Telegram ID! Save the link
+                                    self.user_telegram_links[discord_user_id] = {
+                                        'telegram_id': telegram_id,
+                                        'agent_name': agent_name,
+                                        'discord_username': discord_username,
+                                        'linked_at': time.time()
+                                    }
+                                    self._save_telegram_links()
+                                    print(f"✓ Linked Discord {discord_username} (ID: {discord_user_id}) to Telegram agent {agent_name}")
+                                    return agent_name
+                        except Exception as e:
+                            print(f"⚠️ Error reading {mapping_file}: {e}")
+
+            # Also check shared mappings as fallback
+            shared_mapping = kernel_dir / 'shared' / 'user_mappings.json'
+            if shared_mapping.exists():
+                with open(shared_mapping, 'r') as f:
+                    mappings = json.load(f)
+                if telegram_id in mappings.get('mappings', {}):
+                    mapping = mappings['mappings'][telegram_id]
+                    agent_name = mapping.get('agent_name', '')
+                    if agent_name:
+                        self.user_telegram_links[discord_user_id] = {
+                            'telegram_id': telegram_id,
+                            'agent_name': agent_name,
+                            'discord_username': discord_username,
+                            'linked_at': time.time()
+                        }
+                        self._save_telegram_links()
+                        print(f"✓ Linked Discord {discord_username} to Telegram agent {agent_name} (from shared)")
+                        return agent_name
+
+        except Exception as e:
+            print(f"⚠️ Error verifying Telegram link: {e}")
+
+        return None
 
     def _setup_bot_events(self):
         """Setup Discord bot events"""
@@ -2465,7 +2644,8 @@ class DiscordKernel:
                 "• `!info` - Show this help message\n"
                 "• `!progress [on|off|toggle]` - Toggle agent progress tracking\n"
                 "• `!context` - Show agent context and user profile\n"
-                "• `!reset` - Reset user data (memories, preferences, tasks)"
+                "• `!reset` - Reset user data (memories, preferences, tasks)\n"
+                "• `!agent [name]` - Switch agents in DMs (cross-platform)"
             )
             embed.add_field(
                 name="📋 Basic Commands",
@@ -2535,6 +2715,369 @@ class DiscordKernel:
                 )
 
             embed.set_footer(text="ProA Kernel v2.0 | Powered by Augment AI")
+
+            await ctx.send(embed=embed)
+
+        # Agent switching command (DM only) - with Telegram ID verification
+        @self.bot.command(name="agent")
+        async def switch_agent(ctx: commands.Context, agent_name: str = None, telegram_id: str = None):
+            """
+            Switch to a different agent in DMs for cross-platform context.
+
+            Usage:
+                !agent                          - Show current agent and available agents
+                !agent telegram <telegram_id>   - Link & switch to your Telegram agent
+                !agent discord                  - Switch back to Discord agent (default)
+
+            Security: Only the public Discord agent or YOUR OWN Telegram agent is accessible.
+            """
+            user_id = str(ctx.author.id)
+            discord_username = ctx.author.name.lower()
+
+            # Only allow in DMs
+            if not isinstance(ctx.channel, discord.DMChannel):
+                await ctx.send("❌ Agent switching is only available in DMs!")
+                return
+
+            if agent_name is None:
+                # Show current agent and linked status
+                current_agent = self.user_active_agents.get(user_id, "default")
+                linked_telegram = self.user_telegram_links.get(user_id)
+
+                embed = discord.Embed(
+                    title="🤖 Agent Selection",
+                    description=f"**Current Agent:** `{current_agent if current_agent != 'default' else self.agent.amd.name}`",
+                    color=discord.Color.blue()
+                )
+
+                # Show linked Telegram status
+                if linked_telegram:
+                    embed.add_field(
+                        name="🔗 Linked Telegram",
+                        value=f"ID: `{linked_telegram['telegram_id']}`\nAgent: `{linked_telegram['agent_name']}`",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="🔗 Telegram Not Linked",
+                        value="Use `!agent telegram <your_telegram_id>` to link",
+                        inline=False
+                    )
+
+                embed.add_field(
+                    name="📋 Available Options",
+                    value=(
+                        f"• `{self.agent.amd.name}` - Public Discord Agent\n"
+                        f"• Your Telegram Agent (requires linking)"
+                    ),
+                    inline=False
+                )
+
+                embed.add_field(
+                    name="🔒 Security",
+                    value="You can only access the public agent or YOUR OWN Telegram agent.",
+                    inline=False
+                )
+
+                await ctx.send(embed=embed)
+                return
+
+            # Switch agent
+            agent_name_lower = agent_name.lower()
+
+            # Handle "discord" or "default" - always allowed
+            if agent_name_lower == "discord" or agent_name_lower == "default":
+                if user_id in self.user_active_agents:
+                    del self.user_active_agents[user_id]
+                await ctx.send(f"✅ Switched back to default Discord agent: `{self.agent.amd.name}`")
+                return
+
+            # Handle "telegram" - requires Telegram ID verification
+            if agent_name_lower == "telegram":
+                if telegram_id is None:
+                    # Check if already linked
+                    linked = self.user_telegram_links.get(user_id)
+                    if linked:
+                        # Already linked, switch to it
+                        agent_name = linked['agent_name']
+                        self.user_active_agents[user_id] = agent_name
+                        await ctx.send(f"✅ Switched to your Telegram agent: `{agent_name}`")
+                        return
+                    else:
+                        await ctx.send(
+                            "❌ **Telegram ID required for first-time linking!**\n\n"
+                            "Usage: `!agent telegram <your_telegram_id>`\n\n"
+                            "📱 To find your Telegram ID:\n"
+                            "1. Message @userinfobot on Telegram\n"
+                            "2. It will reply with your ID\n\n"
+                            "🔒 This links your Discord to your Telegram agent securely."
+                        )
+                        return
+
+                # Verify and link Telegram ID
+                verified_agent = await self._verify_and_link_telegram(
+                    discord_user_id=user_id,
+                    discord_username=discord_username,
+                    telegram_id=telegram_id
+                )
+
+                if verified_agent:
+                    self.user_active_agents[user_id] = verified_agent
+                    await ctx.send(
+                        f"✅ **Telegram linked successfully!**\n\n"
+                        f"Agent: `{verified_agent}`\n"
+                        f"Telegram ID: `{telegram_id}`\n\n"
+                        f"You can now use `!agent telegram` to switch anytime."
+                    )
+                else:
+                    await ctx.send(
+                        f"❌ **Verification failed!**\n\n"
+                        f"No Telegram agent found for ID `{telegram_id}`.\n\n"
+                        f"**Possible reasons:**\n"
+                        f"• You haven't used the Telegram bot yet\n"
+                        f"• The Telegram ID is incorrect\n"
+                        f"• The user mappings file doesn't exist\n\n"
+                        f"📱 First, message the Telegram bot to create your agent, then try again."
+                    )
+                return
+
+            # Direct agent name - SECURITY CHECK
+            # Only allow public Discord agent or user's own linked Telegram agent
+            if agent_name == self.agent.amd.name:
+                # Public Discord agent - always allowed
+                self.user_active_agents[user_id] = agent_name
+                await ctx.send(f"✅ Switched to: `{agent_name}`")
+                return
+
+            # Check if it's the user's linked Telegram agent
+            linked = self.user_telegram_links.get(user_id)
+            if linked and agent_name == linked['agent_name']:
+                self.user_active_agents[user_id] = agent_name
+                await ctx.send(f"✅ Switched to your Telegram agent: `{agent_name}`")
+                return
+
+            # SECURITY: Block access to other agents
+            await ctx.send(
+                f"❌ **Access denied!**\n\n"
+                f"You can only access:\n"
+                f"• `{self.agent.amd.name}` (public Discord agent)\n"
+                f"• Your own Telegram agent (use `!agent telegram <id>` to link)\n\n"
+                f"🔒 Other users' agents are private."
+            )
+
+        # ===== OBSIDIAN COMMANDS =====
+
+        @self.bot.command(name="capture")
+        async def capture_command(ctx: commands.Context, *, text: str = None):
+            """Quick capture to daily note. Usage: !capture Your idea here #tag"""
+            if not self.obsidian_tools:
+                await ctx.send(
+                    "❌ Obsidian vault not configured.\n\n"
+                    "Set `OBSIDIAN_VAULT_PATH` environment variable to your vault folder."
+                )
+                return
+
+            if not text:
+                await ctx.send(
+                    "💡 **Quick Capture**\n\n"
+                    "Usage: `!capture Your idea or note here #optional #tags`\n\n"
+                    "This adds an entry to today's Daily Note."
+                )
+                return
+
+            async with ctx.typing():
+                result = await self.obsidian_tools.capture(text)
+
+            if result["success"]:
+                tags_str = " ".join([f"`#{t}`" for t in result["tags"]]) if result["tags"] else ""
+                embed = discord.Embed(
+                    title="✅ Captured!",
+                    description=f"_{result['captured']}_",
+                    color=discord.Color.green()
+                )
+                if tags_str:
+                    embed.add_field(name="Tags", value=tags_str, inline=True)
+                embed.add_field(name="Daily Note", value=f"`{result['daily_note']}`", inline=True)
+                await ctx.send(embed=embed)
+            else:
+                await ctx.send(f"❌ Capture failed: {result.get('error', 'Unknown error')}")
+
+        @self.bot.command(name="note")
+        async def note_command(ctx: commands.Context, title: str = None, *, content: str = ""):
+            """Create a new note. Usage: !note "Title" Content here"""
+            if not self.obsidian_tools:
+                await ctx.send("❌ Obsidian vault not configured. Set `OBSIDIAN_VAULT_PATH`.")
+                return
+
+            if not title:
+                await ctx.send(
+                    "📝 **Create Note**\n\n"
+                    "Usage: `!note \"Title\" Optional content here`\n\n"
+                    "Creates a new note in the Inbox folder."
+                )
+                return
+
+            async with ctx.typing():
+                result = await self.obsidian_tools.create_note(title, content)
+
+            if result["success"]:
+                embed = discord.Embed(
+                    title="📝 Note Created",
+                    description=f"**{result['title']}**",
+                    color=discord.Color.blue()
+                )
+                embed.add_field(name="Path", value=f"`{result['path']}`", inline=False)
+                await ctx.send(embed=embed)
+            else:
+                await ctx.send(f"❌ Failed: {result.get('error')}")
+
+        @self.bot.command(name="vsearch")
+        async def vault_search_command(ctx: commands.Context, *, query: str = None):
+            """Search vault. Usage: !vsearch python async"""
+            if not self.obsidian_tools:
+                await ctx.send("❌ Obsidian vault not configured.")
+                return
+
+            if not query:
+                await ctx.send("💡 Usage: `!vsearch your query here`")
+                return
+
+            async with ctx.typing():
+                result = await self.obsidian_tools.search(query)
+
+            if result["success"] and result["results"]:
+                embed = discord.Embed(
+                    title=f"🔍 Search: {query}",
+                    description=f"Found {result['count']} results",
+                    color=discord.Color.blue()
+                )
+                for r in result["results"][:5]:
+                    snippet = r["snippet"][:100] + "..." if len(r["snippet"]) > 100 else r["snippet"]
+                    embed.add_field(
+                        name=r["title"],
+                        value=f"`{r['path']}`\n{snippet}",
+                        inline=False
+                    )
+                await ctx.send(embed=embed)
+            else:
+                await ctx.send(f"🔍 No results for: {query}")
+
+        @self.bot.command(name="vault")
+        async def vault_stats_command(ctx: commands.Context):
+            """Show vault statistics and graph info"""
+            if not self.obsidian_tools:
+                await ctx.send("❌ Obsidian vault not configured.")
+                return
+
+            async with ctx.typing():
+                result = await self.obsidian_tools.get_graph_stats()
+
+            if result["success"]:
+                stats = result["stats"]
+                embed = discord.Embed(
+                    title="📊 Vault Statistics",
+                    color=discord.Color.purple()
+                )
+                embed.add_field(
+                    name="📈 Overview",
+                    value=(
+                        f"**Notes:** {stats['total_notes']}\n"
+                        f"**Links:** {stats['total_links']}\n"
+                        f"**Orphans:** {stats['orphan_notes']}\n"
+                        f"**Avg Links:** {stats['average_links']:.1f}"
+                    ),
+                    inline=True
+                )
+
+                if result["top_linked"]:
+                    top = "\n".join([f"• {n['title']} ({n['backlinks']})" for n in result["top_linked"][:3]])
+                    embed.add_field(name="🔗 Most Linked", value=top, inline=True)
+
+                if result["top_tags"]:
+                    tags = "\n".join([f"• #{t['tag']} ({t['count']})" for t in result["top_tags"][:5]])
+                    embed.add_field(name="🏷️ Top Tags", value=tags, inline=False)
+
+                if result.get("orphans"):
+                    orphans = ", ".join([f"`{o}`" for o in result["orphans"][:3]])
+                    embed.add_field(name="🏝️ Orphan Notes", value=orphans, inline=False)
+
+                await ctx.send(embed=embed)
+            else:
+                await ctx.send(f"❌ Error: {result.get('error')}")
+
+        @self.bot.command(name="daily")
+        async def daily_note_command(ctx: commands.Context, date_str: str = None):
+            """Get today's daily note. Usage: !daily or !daily 2024-01-15"""
+            if not self.obsidian_tools:
+                await ctx.send("❌ Obsidian vault not configured.")
+                return
+
+            async with ctx.typing():
+                result = await self.obsidian_tools.get_daily(date_str)
+
+            if result["success"]:
+                content = result["content"]
+                # Truncate for Discord
+                if len(content) > 1800:
+                    content = content[:1800] + "\n\n*...truncated...*"
+
+                embed = discord.Embed(
+                    title=f"📅 Daily Note",
+                    description=f"```md\n{content}\n```",
+                    color=discord.Color.gold()
+                )
+                embed.set_footer(text=result["path"])
+                await ctx.send(embed=embed)
+            else:
+                await ctx.send(f"❌ Error: {result.get('error')}")
+
+        @self.bot.command(name="vault_config")
+        async def vault_config_command(ctx: commands.Context):
+            """Show vault configuration"""
+            vault_path = os.getenv("OBSIDIAN_VAULT_PATH", "Not configured")
+
+            embed = discord.Embed(
+                title="⚙️ Vault Configuration",
+                color=discord.Color.blue()
+            )
+
+            embed.add_field(
+                name="Vault Path",
+                value=f"`{vault_path}`",
+                inline=False
+            )
+
+            embed.add_field(
+                name="Status",
+                value="✅ Connected" if self.obsidian_tools else "❌ Not connected",
+                inline=True
+            )
+
+            embed.add_field(
+                name="Support",
+                value="✅ Available" if OBSIDIAN_SUPPORT else "❌ Not installed",
+                inline=True
+            )
+
+            if self.obsidian_tools:
+                result = await self.obsidian_tools.get_graph_stats()
+                if result["success"]:
+                    embed.add_field(
+                        name="Notes",
+                        value=str(result["stats"]["total_notes"]),
+                        inline=True
+                    )
+
+            embed.add_field(
+                name="How to Configure",
+                value=(
+                    "Set environment variable:\n"
+                    "```\n"
+                    "OBSIDIAN_VAULT_PATH=/your/vault/path\n"
+                    "```"
+                ),
+                inline=False
+            )
 
             await ctx.send(embed=embed)
 
@@ -4579,6 +5122,108 @@ Use these tools to interact with Discord based on your current context!
 
         print("✓ Discord Kernel stopped")
 
+    async def _transcribe_voice_message(self, attachment: discord.Attachment) -> Optional[str]:
+        """
+        Transcribe a Discord voice message (audio attachment) using Groq Whisper.
+
+        Args:
+            attachment: Discord attachment with audio content
+
+        Returns:
+            Transcribed text or None if transcription failed
+        """
+        if not GROQ_SUPPORT or not self.output_router.groq_client:
+            print("⚠️ [VOICE_MSG] Groq not available for voice message transcription")
+            return None
+
+        try:
+            import aiohttp
+
+            print(f"🎤 [VOICE_MSG] Downloading voice message: {attachment.filename}")
+
+            # Download the audio file
+            async with aiohttp.ClientSession() as session:
+                async with session.get(attachment.url) as response:
+                    if response.status != 200:
+                        print(f"❌ [VOICE_MSG] Failed to download: HTTP {response.status}")
+                        return None
+                    audio_data = await response.read()
+
+            print(f"🎤 [VOICE_MSG] Downloaded {len(audio_data)} bytes")
+
+            # Save to temporary file
+            with tempfile.NamedTemporaryFile(suffix='.ogg', delete=False) as temp_file:
+                temp_file.write(audio_data)
+                temp_path = temp_file.name
+
+            try:
+                # Transcribe with Groq Whisper
+                print(f"🎤 [VOICE_MSG] Transcribing with Groq Whisper...")
+                with open(temp_path, 'rb') as audio_file:
+                    transcription = self.output_router.groq_client.audio.transcriptions.create(
+                        file=audio_file,
+                        model="whisper-large-v3-turbo",
+                        response_format="json",
+                        temperature=0.0
+                    )
+
+                text = transcription.text.strip()
+                language = getattr(transcription, 'language', 'unknown')
+
+                print(f"🎤 [VOICE_MSG] Transcription: '{text}' (language: {language})")
+
+                if text and len(text) > 1:
+                    return text
+                else:
+                    print(f"🎤 [VOICE_MSG] Empty transcription, skipping")
+                    return None
+
+            finally:
+                # Clean up temp file
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+
+        except Exception as e:
+            print(f"❌ [VOICE_MSG] Error transcribing voice message: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def _is_voice_message(self, attachment: discord.Attachment) -> bool:
+        """
+        Check if an attachment is a Discord voice message.
+
+        Discord voice messages have specific characteristics:
+        - Content type is audio/ogg or audio/mpeg
+        - Filename often contains 'voice-message' or ends with .ogg
+        - Has the 'voice_message' flag in Discord API (if available)
+        """
+        if not attachment.content_type:
+            return False
+
+        # Check content type for audio
+        audio_types = ['audio/ogg', 'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/webm', 'audio/mp4']
+        is_audio = any(attachment.content_type.startswith(t) for t in audio_types)
+
+        if not is_audio:
+            return False
+
+        # Check for voice message indicators
+        filename_lower = attachment.filename.lower()
+        is_voice_msg = (
+            'voice-message' in filename_lower or
+            filename_lower.endswith('.ogg') or
+            # Discord voice messages often have this pattern
+            attachment.filename.startswith('voice-message-')
+        )
+
+        # Also check for the is_voice_message flag (Discord API v10+)
+        if hasattr(attachment, 'is_voice_message') and attachment.is_voice_message:
+            return True
+
+        # For DM channels, treat all audio as potential voice messages
+        return is_audio
+
     def _get_discord_context(self, message: discord.Message) -> dict:
         """
         Gather comprehensive Discord context for the agent
@@ -4754,7 +5399,11 @@ Use these tools to interact with Discord based on your current context!
                 content = content.replace(f"<@{self.bot.user.id}>", "").strip()
 
             # Handle attachments - add them as [media:url] to content
+            # Special handling for voice messages (audio) and images in DM channels
             attachments_info = []
+            transcribed_voice_messages = []
+            is_dm_channel = isinstance(message.channel, discord.DMChannel)
+
             if message.attachments:
                 media_links = []
                 for attachment in message.attachments:
@@ -4763,9 +5412,32 @@ Use these tools to interact with Discord based on your current context!
                         "url": attachment.url,
                         "content_type": attachment.content_type
                     })
-                    # Add media link to content
-                    media_type = "image" if attachment.content_type and attachment.content_type.startswith("image") else "file"
-                    media_links.append(f"[{media_type}:{attachment.url}]")
+
+                    # Check if this is a voice message (audio attachment)
+                    if self._is_voice_message(attachment):
+                        # Transcribe voice message in DM channels or when explicitly audio
+                        print(f"🎤 [VOICE_MSG] Detected voice message: {attachment.filename}")
+
+                        transcription = await self._transcribe_voice_message(attachment)
+                        if transcription:
+                            transcribed_voice_messages.append(transcription)
+                            # Add transcription info to attachments
+                            attachments_info[-1]["transcription"] = transcription
+                            attachments_info[-1]["is_voice_message"] = True
+                            # Add as voice transcription to content
+                            media_links.append(f"[voice_message_transcription: {transcription}]")
+                        else:
+                            # Fallback: add as audio file if transcription failed
+                            media_links.append(f"[audio:{attachment.url}]")
+                    elif attachment.content_type and attachment.content_type.startswith("image"):
+                        # Image attachment - add as [image:url]
+                        media_links.append(f"[image:{attachment.url}]")
+                    elif attachment.content_type and attachment.content_type.startswith("video"):
+                        # Video attachment - add as [video:url]
+                        media_links.append(f"[video:{attachment.url}]")
+                    else:
+                        # Other file types
+                        media_links.append(f"[file:{attachment.url}]")
 
                 # Append media links to content
                 if media_links:
@@ -4776,22 +5448,39 @@ Use these tools to interact with Discord based on your current context!
 
             # Send typing indicator
             async with message.channel.typing():
+                # Build metadata
+                metadata = {
+                    "interface": "discord",
+                    "channel_id": channel_id,
+                    "message_id": message.id,
+                    "attachments": attachments_info,
+                    "guild_id": message.guild.id if message.guild else None,
+                    "user_name": str(message.author),
+                    "user_display_name": message.author.display_name,
+                    "is_dm": is_dm_channel,
+                    # Enhanced context
+                    "discord_context": discord_context
+                }
+
+                # Add voice message transcriptions if any
+                if transcribed_voice_messages:
+                    metadata["voice_message_transcriptions"] = transcribed_voice_messages
+                    metadata["has_voice_messages"] = True
+                    print(f"🎤 [VOICE_MSG] Added {len(transcribed_voice_messages)} transcription(s) to metadata")
+
+                # Check for cross-platform agent switching (DM only)
+                active_agent = self.user_active_agents.get(user_id)
+                if active_agent and is_dm_channel:
+                    metadata["active_agent"] = active_agent
+                    metadata["cross_platform"] = True
+                    print(f"🔄 [AGENT] Using cross-platform agent: {active_agent} for user {user_id}")
+
                 # Send signal to kernel with enhanced metadata
                 signal = KernelSignal(
                     type=SignalType.USER_INPUT,
                     id=user_id,
                     content=content,
-                    metadata={
-                        "interface": "discord",
-                        "channel_id": channel_id,
-                        "message_id": message.id,
-                        "attachments": attachments_info,
-                        "guild_id": message.guild.id if message.guild else None,
-                        "user_name": str(message.author),
-                        "user_display_name": message.author.display_name,
-                        # Enhanced context
-                        "discord_context": discord_context
-                    }
+                    metadata=metadata
                 )
                 await self.kernel.process_signal(signal)
 

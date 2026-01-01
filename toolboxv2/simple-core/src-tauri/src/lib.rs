@@ -66,6 +66,56 @@ async fn check_worker_health(state: State<'_, AppState>) -> Result<bool, String>
     Ok(manager.is_healthy())
 }
 
+/// Update system tray status
+#[tauri::command]
+fn update_tray_status(status: String) -> Result<(), String> {
+    // TODO: Update tray icon/tooltip based on status
+    // For now, just log the status change
+    println!("[Tray] Status update: {}", status);
+    Ok(())
+}
+
+/// Save settings to secure storage
+#[tauri::command]
+async fn save_settings(settings: serde_json::Value) -> Result<(), String> {
+    // TODO: Save to keyring or config file
+    // For now, save to a local JSON file
+    let config_dir = dirs::config_dir()
+        .ok_or_else(|| "Could not find config directory".to_string())?;
+    let settings_path = config_dir.join("toolbox").join("settings.json");
+
+    // Create directory if it doesn't exist
+    if let Some(parent) = settings_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let settings_str = serde_json::to_string_pretty(&settings)
+        .map_err(|e| e.to_string())?;
+    std::fs::write(&settings_path, settings_str).map_err(|e| e.to_string())?;
+
+    println!("[Settings] Saved to {:?}", settings_path);
+    Ok(())
+}
+
+/// Load settings from storage
+#[tauri::command]
+async fn load_settings() -> Result<serde_json::Value, String> {
+    let config_dir = dirs::config_dir()
+        .ok_or_else(|| "Could not find config directory".to_string())?;
+    let settings_path = config_dir.join("toolbox").join("settings.json");
+
+    if settings_path.exists() {
+        let settings_str = std::fs::read_to_string(&settings_path)
+            .map_err(|e| e.to_string())?;
+        let settings: serde_json::Value = serde_json::from_str(&settings_str)
+            .map_err(|e| e.to_string())?;
+        Ok(settings)
+    } else {
+        // Return empty object if no settings file exists
+        Ok(serde_json::json!({}))
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize worker manager with default configuration
@@ -84,7 +134,10 @@ pub fn run() {
             get_worker_status,
             set_api_endpoint,
             get_data_paths,
-            check_worker_health
+            check_worker_health,
+            update_tray_status,
+            save_settings,
+            load_settings
         ])
         .setup(|app| {
             // Auto-start worker on desktop platforms

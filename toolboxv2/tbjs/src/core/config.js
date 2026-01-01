@@ -166,9 +166,32 @@ const Config = {
             }
         }
 
-        // Override global fetch in Tauri to redirect /api/ requests to the correct backend
+        // Override global fetch in Tauri to redirect API/Auth requests to the worker backend
+        // Static assets (HTML, CSS, JS, images) are served by Tauri from frontendDist
         if (_config.isTauri && typeof window !== 'undefined') {
             const originalFetch = window.fetch;
+
+            // Auth endpoints that need to be redirected to the worker
+            const AUTH_ENDPOINTS = ['/validateSession', '/IsValidSession', '/web/logoutS', '/api_user_data'];
+
+            // Static file extensions that should NOT be redirected (served by Tauri)
+            const STATIC_EXTENSIONS = [
+                '.html', '.htm', '.css', '.js', '.mjs', '.json', '.map',
+                '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp',
+                '.woff', '.woff2', '.ttf', '.eot', '.otf',
+                '.mp3', '.mp4', '.webm', '.ogg', '.wav',
+                '.pdf', '.txt', '.xml'
+            ];
+
+            // Get base URL without /api suffix
+            const getBaseUrl = () => _config.baseApiUrl.replace(/\/api\/?$/, '');
+
+            // Check if path is a static asset
+            const isStaticAsset = (path) => {
+                const lowerPath = path.toLowerCase().split('?')[0]; // Remove query string
+                return STATIC_EXTENSIONS.some(ext => lowerPath.endsWith(ext));
+            };
+
             window.fetch = function(input, init) {
                 let url = input;
 
@@ -180,24 +203,39 @@ const Config = {
                 // Convert to string for checking
                 const urlStr = typeof url === 'string' ? url : url.toString();
 
-                // Check if it's a relative /api/ request or tauri.localhost/api request
-                if (urlStr.startsWith('/api/') || urlStr.startsWith('/api')) {
-                    // Redirect to the configured backend
-                    const newUrl = _config.baseApiUrl.replace(/\/api\/?$/, '') + urlStr;
-                    console.log('[Config] Fetch redirect:', urlStr, '->', newUrl);
+                // Extract path from URL (handles both relative and absolute URLs)
+                let path = urlStr;
+                if (urlStr.includes('tauri.localhost')) {
+                    path = urlStr.replace(/^https?:\/\/tauri\.localhost/, '');
+                } else if (urlStr.startsWith('http://') || urlStr.startsWith('https://')) {
+                    try {
+                        path = new URL(urlStr).pathname;
+                    } catch (e) {
+                        // Keep original path if URL parsing fails
+                    }
+                }
+
+                // NEVER redirect static assets - let Tauri serve them
+                if (isStaticAsset(path)) {
+                    return originalFetch.call(this, input, init);
+                }
+
+                // Check if it's an auth endpoint
+                const isAuthEndpoint = AUTH_ENDPOINTS.some(ep => path === ep || path.startsWith(ep + '?'));
+                if (isAuthEndpoint) {
+                    const newUrl = getBaseUrl() + path;
+                    console.log('[Config] Fetch redirect (auth):', urlStr, '->', newUrl);
 
                     if (input instanceof Request) {
-                        // Clone request with new URL
                         return originalFetch.call(this, new Request(newUrl, input), init);
                     }
                     return originalFetch.call(this, newUrl, init);
                 }
 
-                // Check for tauri.localhost/api URLs
-                if (urlStr.includes('tauri.localhost/api')) {
-                    const path = urlStr.replace(/^https?:\/\/tauri\.localhost/, '');
-                    const newUrl = _config.baseApiUrl.replace(/\/api\/?$/, '') + path;
-                    console.log('[Config] Fetch redirect (tauri.localhost):', urlStr, '->', newUrl);
+                // Check if it's an /api/ request
+                if (path.startsWith('/api/') || path === '/api') {
+                    const newUrl = getBaseUrl() + path;
+                    console.log('[Config] Fetch redirect (api):', urlStr, '->', newUrl);
 
                     if (input instanceof Request) {
                         return originalFetch.call(this, new Request(newUrl, input), init);
@@ -205,10 +243,10 @@ const Config = {
                     return originalFetch.call(this, newUrl, init);
                 }
 
-                // Pass through all other requests
+                // Pass through all other requests (static assets, external URLs, etc.)
                 return originalFetch.call(this, input, init);
             };
-            console.log('[Config] Global fetch override installed for Tauri');
+            console.log('[Config] Global fetch override installed for Tauri (API + Auth only, static assets pass through)');
         }
 
         // After logger is initialized in TB.init, this can be moved there or use a preliminary log.

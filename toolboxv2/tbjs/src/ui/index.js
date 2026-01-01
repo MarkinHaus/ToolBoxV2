@@ -5,6 +5,7 @@ import "../ui/components/CookieBanner/CookieBanner.css";
 import "../ui/components/Modal/Modal.css";
 import "../ui/components/Toast/Toast.css";
 import "../ui/components/Chat/Chat.css";
+import "../ui/components/Desktop/Desktop.css";
 
 import theme from './theme.js';
 import htmxIntegration from './htmx-integration.js';
@@ -23,6 +24,16 @@ import NavMenu from './components/NavMenu/NavMenu.js';
 import ChatWidget from './components/Chat/Chat.js';
 import {logger} from "../core/index.js";
 import { MinuRenderer, createMinuRenderer, mountMinuView } from './components/Minu/MinuRenderer.js';
+
+// Desktop/Mobile platform components
+import {
+    QuickCapturePopup,
+    DesktopStatusBar,
+    MobileBottomNav,
+    SystemTray,
+    initPlatformUI
+} from './components/Desktop/index.js';
+import { BrainManager } from './components/Desktop/BrainManager.js';
 
 /**
  * Processes dynamic content added to the DOM (e.g., by HTMX or router).
@@ -109,5 +120,12 @@ export {
     AutocompleteWidget,
     NavMenu,
     ChatWidget,
-    MinuRenderer, createMinuRenderer, mountMinuView
+    MinuRenderer, createMinuRenderer, mountMinuView,
+    // Desktop/Mobile platform components
+    QuickCapturePopup,
+    DesktopStatusBar,
+    MobileBottomNav,
+    SystemTray,
+    BrainManager,
+    initPlatformUI
 };
