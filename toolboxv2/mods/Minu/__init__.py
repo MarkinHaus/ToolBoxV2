@@ -813,7 +813,7 @@ async def stream_updates(
             pass
 
     session_data = request.session if hasattr(request, "session") else {}
-    session_id = session_data.get("session_id", f"sse-{id(request)}")
+    session_id = session_data.get("session_id", request.session_id or "anonymous")
 
     session = get_or_create_session(session_id)
 

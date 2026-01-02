@@ -25,9 +25,15 @@ from toolboxv2.tests.web_util import AsyncWebTestFramework, WebTestFramework
 
 # =================== Configuration ===================
 
-TEST_SERVER_PORT = 8080
+# API Server (Rust workers)
+TEST_SERVER_PORT = 8000
 TEST_SERVER_HOST = "localhost"
 TEST_SERVER_BASE_URL = f"http://{TEST_SERVER_HOST}:{TEST_SERVER_PORT}"
+
+# Web Interface (nginx/tauri serving dist folder, or same as API if integrated)
+# Set TEST_WEB_PORT env var if web is served on different port (e.g., nginx on 80/443)
+TEST_WEB_PORT = int(os.getenv("TEST_WEB_PORT", 80))
+TEST_WEB_BASE_URL = os.getenv("TEST_WEB_BASE_URL", f"http://{TEST_SERVER_HOST}:{TEST_WEB_PORT}")
 
 # Clerk Test Users (configure in .env or here)
 TEST_USERS = {
@@ -48,6 +54,11 @@ TEST_USERS = {
 # Session storage for reuse across tests
 _test_sessions: dict[str, dict] = {}
 
+# =================== Test WEB ===================
+
+def test_web():
+    """Run all tests"""
+    os.system(' '.join([sys.executable, "-m", "pytest", "toolboxv2/tests/web_test/test_api.py","-v"]))
 
 # =================== Server Management via API CLI ===================
 

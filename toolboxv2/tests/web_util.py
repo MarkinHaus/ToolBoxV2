@@ -76,7 +76,7 @@ class AsyncWebTestFramework:
 
         self.browser = await browser_launchers.get(self.browser_type, self.playwright.chromium.launch)(
             headless=self.headless,
-            timeout=200
+            timeout=30000  # 30 seconds for browser launch
         )
 
     async def create_context(self,
@@ -133,8 +133,10 @@ class AsyncWebTestFramework:
                 elif interaction['type'] == 'goback':
                     await self.navigate(url=self.last_url)
                 elif interaction['type'] == 'screenshot':
-                    path = os.path.join('tests', 'images', interaction.get('path', 'screenshot.png'))
-                    os.makedirs(os.path.join('tests', 'images'), exist_ok=True)
+                    # Use absolute path relative to this module's directory
+                    base_dir = os.path.dirname(os.path.abspath(__file__))
+                    path = os.path.join(base_dir, 'images', interaction.get('path', 'screenshot.png'))
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
                     await self.page.screenshot(path=path)
                 elif interaction['type'] == 'goto':
                     await self.navigate(url=interaction.get('url', '/'))
@@ -293,7 +295,7 @@ class WebTestFramework:
 
         self.browser = browser_launchers.get(self.browser_type,
                                              self.playwright.chromium.launch)(
-            headless=self.headless, timeout=200
+            headless=self.headless, timeout=30000  # 30 seconds for browser launch
         )
 
     def create_context(self,
@@ -366,8 +368,10 @@ class WebTestFramework:
                 elif interaction['type'] == 'goback':
                     self.navigate(url=self.last_url)
                 elif interaction['type'] == 'screenshot':
-                    path = os.path.join('tests', 'images', interaction.get('path', 'screenshot.png'))
-                    os.makedirs(os.path.join('tests', 'images'), exist_ok=True)
+                    # Use absolute path relative to this module's directory
+                    base_dir = os.path.dirname(os.path.abspath(__file__))
+                    path = os.path.join(base_dir, 'images', interaction.get('path', 'screenshot.png'))
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
                     self.page.screenshot(path=path)
                 elif interaction['type'] == 'goto':
                     self.navigate(url=interaction.get('url', '/'))

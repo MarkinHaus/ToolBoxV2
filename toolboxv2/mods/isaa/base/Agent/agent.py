@@ -11,12 +11,10 @@ import types
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
-from datetime import datetime, timedelta
+from datetime import timedelta
 from functools import wraps
 from typing import Dict, List
 
-import pandas as pd
 import yaml
 
 from toolboxv2.mods.isaa.base.IntelligentRateLimiter.intelligent_rate_limiter import (
@@ -3027,7 +3025,7 @@ class VariableManager:
                     continue
 
                 # Description similarity
-                if isinstance(var_def, pd.DataFrame):
+                if hasattr(var_def, 'empty'):
                     var_def_bool = not var_def.empty
                 else:
                     var_def_bool = bool(var_def)
@@ -3794,7 +3792,7 @@ class UnifiedContextManager:
         if hasattr(session, "add_message"):
             from toolboxv2 import get_app
 
-            get_app().run_bg_task_advanced(session.add_message, message, direct=False)
+            get_app().run_bg_task_advanced(session.add_message, message, direct=True if role == "assistant" else False)
         elif isinstance(session, dict) and "history" in session:
             # Fallback mode
             session["history"].append(message)
@@ -4076,12 +4074,6 @@ class UnifiedContextManager:
         except:
             return []
     def _get_recent_results(self, limit: int = 3) -> list[dict]:
-        """
-        OPTIMIERTE Version - Weniger Results, kompaktere Previews.
-
-        Vorher: 5 Results mit 150 Char Previews
-        Nachher: 3 Results mit 80 Char Previews
-        """
         try:
             results_store = self.agent.shared.get("results", {})
             if not results_store:
@@ -4094,7 +4086,7 @@ class UnifiedContextManager:
                     data = result_data["data"]
                     # Kürzere Preview
                     if isinstance(data, str):
-                        preview = data[:80] + "..." if len(data) > 80 else data
+                        preview = data[:200] + "..." if len(data) > 200 else data
                     elif isinstance(data, dict):
                         preview = f"Dict({len(data)} keys)"
                     else:
@@ -4289,7 +4281,7 @@ class UnifiedContextManager:
 
 import os
 import asyncio
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, AsyncGenerator
 from pydantic import BaseModel, Field
 from enum import Enum
 
@@ -4695,17 +4687,16 @@ class FlowAgent:
             elif context_mode == "minimal" and self.active_session:
                 # Minimal: Only persona + last interaction
                 last = (
-                    await self.context_manager.get_contextual_history(self.active_session)
+                    await self.context_manager.get_contextual_history(self.active_session, max_entries=3)
                     if self.context_manager
-                    else ""
+                    else []
                 )
                 kwargs["messages"] = [
                     {
                         "role": "system",
                         "content": self.amd.get_system_message_with_persona()
-                        + f"\n\nLast: {str(last)[:300]}",
                     }
-                ] + kwargs.get("messages", [])
+                ] +last+ kwargs.get("messages", [])
 
             elif context_mode == "persona" and self.active_session:
                 # Persona only, no context
@@ -7037,6 +7028,269 @@ Respond in YAML format only:
 
         raise RuntimeError(f"Failed after {max_retries + 1} attempts: {last_error}")
 
+    async def a_stream(
+        self,
+        query: str,
+        session_id: str = None,
+        user_id: str = None,
+        agentic_actions: bool = False,  # Flag für Tool-Aufrufe im Streaming
+        voice_output: int | str = 0,  # 0=normal, 1=verbalisiert, custom strings auch möglich
+        context_mode: str = "full",
+        with_context: bool = True,
+        remember: bool = True,
+        model_preference: str = "fast",
+        **kwargs
+    ) -> AsyncGenerator[str, None]:
+        """
+        Stream LLM response with optional agentic tool execution and voice formatting.
+
+        Args:
+            query: User input
+            session_id: Session identifier
+            user_id: user idedifaction
+            remember: Whether to save to conversation history
+            agentic_actions: If True, agent can decide to use tools during streaming
+            voice_output: 0=normal text, 1=verbalized for TTS, 2=with [emotion] markers
+            context_mode: "full" or "minimal" or "persona" or "none" or "auto"
+            with_context: Include session context
+            model_preference: fast or complex
+            **kwargs: Additional arguments
+
+        Yields:
+            str: Response chunks
+        """
+        # Set active session
+        if session_id:
+            self.active_session = session_id
+
+        # Build voice formatting instructions
+
+        if voice_output == 0:
+            voice_instructions = ""
+        elif voice_output == 1:
+            voice_instructions = """
+IMPORTANT: Format your response for voice/speech output:
+- Use natural, conversational language
+- Avoid markdown, code blocks, or special formatting
+- Spell out abbreviations and numbers naturally
+- Keep sentences clear and flowing
+- Avoid lists - use prose instead
+"""
+        else:
+            voice_instructions = voice_output
+
+        # Build agentic decision prompt addition
+        agentic_prompt = ""
+        if agentic_actions:
+            agentic_prompt = f"""
+You have access to tools. If the user's request would benefit from tool usage,
+start your response with exactly: [TOOLS_NEEDED]
+Then continue with a brief acknowledgment.
+
+Only use [TOOLS_NEEDED] if tools are truly necessary for this request.
+    """
+
+        await self.initialize_session_context(session_id, max_history=200)
+        user_content = query
+        if voice_instructions:
+            user_content = f"{voice_instructions}\n\nUser request: {query}"
+        if agentic_prompt:
+            user_content = f"{agentic_prompt}\n\n{user_content}"
+
+        self.shared.update({
+            "current_query": user_content,
+            "session_id": session_id,
+            "user_id": user_id,
+            "stream_callback": None,
+            "remember": remember,
+            # CENTRAL: Context Manager ist die primäre Context-Quelle
+            "context_manager": self.context_manager,
+            "variable_manager": self.variable_manager,
+            "fast_run": True,  # fast_run-Flag übergeben
+        })
+        self.active_sessio = session_id
+
+        if remember:
+            await self.context_manager.add_interaction(session_id, 'user', query)
+        # Build messages
+        messages = []
+
+        if self.active_session and with_context:
+            # Add context to fist messages as system message
+            # OPTIMIZED: Conditional context injection
+            context_mode = context_mode or "auto" if with_context else "none"
+
+            if context_mode == "full" and self.active_session:
+                # Full context (original behavior)
+                context_ = await self.get_context(self.active_session)
+                messages = [
+                    {
+                        "role": "system",
+                        "content": self.amd.get_system_message_with_persona()
+                        + "\n\nContext:\n\n"
+                        + str(context_),
+                    }
+                ]
+
+            elif context_mode == "minimal" and self.active_session:
+                # Minimal: Only persona + last interaction
+                last = (
+                    await self.context_manager.get_contextual_history(self.active_session, max_entries=3)
+                    if self.context_manager
+                    else []
+                )
+                messages = [
+                    {
+                        "role": "system",
+                        "content": self.amd.get_system_message_with_persona()
+                    }
+                ] + last
+
+            elif context_mode == "persona" and self.active_session:
+                # Persona only, no context
+                messages = [{"role": "system", "content": self.amd.get_system_message_with_persona()}]
+
+            # "none" or "auto" with format_ task = no context injection
+
+            elif context_mode == "auto" and with_context and self.active_session:
+                task_id = kwargs.get("task_id", "")
+                if not task_id.startswith("format_") and not task_id.startswith("lean_"):
+                    # Only inject for non-formatting tasks
+                    context_ = await self.get_context(self.active_session)
+                    kwargs["messages"] = [{"role": "system", "content": self.amd.get_system_message_with_persona()+'\n\nContext:\n\n'+context_}] + kwargs.get("messages", [])
+
+        # Build user message with instructions
+
+        # Stream response
+        full_response = ""
+        tools_needed = False
+
+        try:
+            # Initial streaming call
+            response = await self.llm_handler.completion_with_rate_limiting(
+                litellm,
+                model=self.amd.fast_llm_model if model_preference == "fast" else self.amd.complex_llm_model,
+                messages=messages,
+                stream=True,
+                stream_options={"include_usage": True},
+                **kwargs
+            )
+
+            async for chunk in response:
+                content = chunk.choices[0].delta.content or ""
+                full_response += content
+
+                # Check for tools marker in first chunks
+                if agentic_actions and len(full_response) < 50:
+                    if "[TOOLS_NEEDED]" in full_response:
+                        tools_needed = True
+                        # Don't yield the marker
+                        content = content.replace("[TOOLS_NEEDED]", "").strip()
+
+                if content:
+                    yield content
+
+                # Emit progress event
+                if self.progress_tracker and content:
+                    await self.progress_tracker.emit_event(ProgressEvent(
+                        event_type="llm_stream_chunk",
+                        node_name="a_stream",
+                        session_id=session_id,
+                        status=NodeStatus.RUNNING,
+                        llm_model=self.amd.fast_llm_model if model_preference == "fast" else self.amd.complex_llm_model,
+                        llm_output=content,
+                    ))
+
+            # Handle agentic tool execution if needed
+            if tools_needed and agentic_actions:
+                yield "\n\n"  # Separator
+
+                # Use a_format_class to select tools
+                class ToolSelection(BaseModel):
+                    """Selection of tools to execute"""
+                    tools: list[str] = Field(description="List of tool names to use")
+                    reasoning: str = Field(description="Brief reasoning for tool selection")
+                    execution_order: list[dict] = Field(
+                        description="Ordered list of tool calls with args",
+                        default_factory=list
+                    )
+
+                # Get tool selection from agent
+                selection = await self.a_format_class(
+                    pydantic_model=ToolSelection,
+                    prompt=f"""Based on this user request, select the most appropriate tools:
+
+User request: {query}
+
+Available tools and their capabilities:
+{json.dumps({k: v.get('description', '')[:100] for k, v in list(self._tool_capabilities.items())[:15]}, indent=2)}
+
+Select tools and specify execution order with arguments.""",
+                    model_preference="fast",
+                    lean_mode=True,
+                    auto_context=True
+                )
+
+                if selection and selection.get("tools"):
+                    # Inform user about tool execution
+                    if voice_output >= 1:
+                        yield "[working] Let me use some tools to help with that. "
+                    else:
+                        yield "Using tools: "
+
+                    # Execute selected tools
+                    for tool_call in selection.get("execution_order", []):
+                        tool_name = tool_call.get("tool") or tool_call.get("name")
+                        tool_args = tool_call.get("args", {})
+
+                        if tool_name and tool_name in self.tool_registry:
+                            try:
+                                # Notify about tool execution
+                                if voice_output == 0:
+                                    yield f"`{tool_name}`... "
+
+                                # Execute tool
+                                result = await self.arun_function(tool_name, **tool_args)
+
+                                # Generate response based on tool result
+                                tool_response_messages = messages + [
+                                    {"role": "assistant", "content": full_response},
+                                    {"role": "user",
+                                     "content": f"Tool {tool_name} returned: {str(result)[:1000]}\n\nProvide a natural response incorporating this result.{voice_instructions}"}
+                                ]
+
+                                # Stream tool result explanation
+                                tool_response = await self.llm_handler.completion_with_rate_limiting(
+                                    litellm,
+                                    model=self.amd.fast_llm_model,
+                                    messages=tool_response_messages,
+                                    stream=True,
+                                )
+
+                                async for chunk in tool_response:
+                                    content = chunk.choices[0].delta.content or ""
+                                    if content:
+                                        full_response += content
+                                        yield content
+
+                            except Exception as e:
+                                if voice_output >= 1:
+                                    yield f"[concerned] I encountered an issue with {tool_name}. "
+                                else:
+                                    yield f"(Error with {tool_name}: {str(e)[:50]}) "
+
+            # Save to conversation history
+            if remember and session_id:
+                await self.context_manager.add_interaction(session_id, 'assistant', full_response.replace("[TOOLS_NEEDED]", ""))
+
+
+        except Exception as e:
+            error_msg = f"Error: {str(e)}"
+            if voice_output >= 1:
+                yield f"[apologetic] I'm sorry, something went wrong. {error_msg}"
+            else:
+                yield error_msg
+            raise
 
     def _extract_yaml_content(self, response: str) -> str:
         """Extract YAML content from LLM response with multiple strategies"""
