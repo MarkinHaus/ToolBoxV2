@@ -6,6 +6,7 @@ Complete SSR support with Toolbox integration
 
 import asyncio
 import json
+import uuid
 import weakref
 from typing import Dict, Any, Optional, Callable, Type
 from dataclasses import dataclass, field
@@ -813,7 +814,7 @@ async def stream_updates(
             pass
 
     session_data = request.session if hasattr(request, "session") else {}
-    session_id = session_data.get("session_id", request.session_id or "anonymous")
+    session_id = session_data.get("session_id",  f"anon-{uuid.uuid4().hex[:12]}")
 
     session = get_or_create_session(session_id)
 
