@@ -162,6 +162,26 @@ body.platform-mobile .header {
     background: #f59e0b;
 }
 
+.tb-status-dot.disabled {
+    background: #6b7280;
+    opacity: 0.5;
+}
+
+.tb-status-info {
+    font-size: 11px;
+    color: var(--tb-text-secondary, #666);
+    opacity: 0.8;
+}
+
+.tb-status-item {
+    cursor: default;
+    transition: opacity 0.2s;
+}
+
+.tb-status-item:hover {
+    opacity: 0.8;
+}
+
 /* ===== Mobile Bottom Navigation ===== */
 .tb-bottom-nav {
     position: fixed;

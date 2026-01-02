@@ -242,35 +242,46 @@ def build_tauri_app(project_root: Path, target: Optional[str] = None,
         return False
 
 
-def run_worker_debug(project_root: Path, http_port: int = 5000, ws_port: int = 5001) -> subprocess.Popen:
-    """Start worker in debug mode (directly, without PyInstaller build)."""
-    print_status(f"Starting worker debug mode (HTTP:{http_port}, WS:{ws_port})...", "launch")
+def run_worker_debug(project_root: Path, http_port: int = 5000, ws_port: int = 5001,
+                     no_ws: bool = False, verbose: bool = True) -> subprocess.Popen:
+    """Start worker in debug mode (directly, without PyInstaller build).
+
+    The worker runs both HTTP and WS servers in a unified process.
+    """
+    ws_status = "disabled" if no_ws else f"WS:{ws_port}"
+    print_status(f"Starting worker debug mode (HTTP:{http_port}, {ws_status})...", "launch")
 
     worker_entry = project_root / "toolboxv2" / "utils" / "workers" / "tauri_integration.py"
 
+    # Build command with CLI arguments
+    cmd = [
+        sys.executable, str(worker_entry),
+        "--http-port", str(http_port),
+        "--ws-port", str(ws_port),
+    ]
+    if no_ws:
+        cmd.append("--no-ws")
+    if verbose:
+        cmd.append("--verbose")
+
     env = os.environ.copy()
-    env["TB_HTTP_PORT"] = str(http_port)
-    env["TB_WS_PORT"] = str(ws_port)
-    env["TB_DEBUG"] = "1"
-    env["TOOLBOX_LOGGING_LEVEL"] = "DEBUG"
     env["PYTHONPATH"] = str(project_root)
 
     return subprocess.Popen(
-        [sys.executable, str(worker_entry)],
+        cmd,
         cwd=project_root,
         env=env,
-        # stdout=subprocess.PIPE,
-        # stderr=subprocess.STDOUT,
     )
 
 
 def run_dev_server(project_root: Path, no_worker: bool = False,
                    worker_only: bool = False,
-                   http_port: int = 5000, ws_port: int = 5001) -> None:
+                   http_port: int = 5000, ws_port: int = 5001,
+                   no_ws: bool = False) -> None:
     """Start Tauri development server with debug options.
 
     Tauri always uses the pre-built dist folder for UI.
-    Worker provides the API (HTTP:5000, WS:5001).
+    Worker provides the API (HTTP + WS in unified process).
     """
     print_box_header("Starting Development Server", "🔧")
 
@@ -286,18 +297,20 @@ def run_dev_server(project_root: Path, no_worker: bool = False,
     try:
         # Start worker in debug mode if requested
         if not no_worker:
-            worker_proc = run_worker_debug(project_root, http_port, ws_port)
+            worker_proc = run_worker_debug(project_root, http_port, ws_port, no_ws=no_ws)
             print_status(f"Worker started (PID: {worker_proc.pid})", "success")
             print_status(f"  HTTP API: http://localhost:{http_port}", "info")
-            print_status(f"  WebSocket: ws://localhost:{ws_port}", "info")
+            if not no_ws:
+                print_status(f"  WebSocket: ws://localhost:{ws_port}", "info")
+            else:
+                print_status("  WebSocket: disabled", "info")
 
         if worker_only:
             print_status("Worker-only mode - press Ctrl+C to stop", "info")
-            # Stream worker output
+            # Just wait for the process
             if worker_proc:
                 try:
-                    for line in iter(worker_proc.stdout.readline, b''):
-                        print(line.decode('utf-8', errors='replace'), end='')
+                    worker_proc.wait()
                 except KeyboardInterrupt:
                     pass
             return
@@ -381,6 +394,8 @@ def create_parser() -> argparse.ArgumentParser:
                             help="HTTP worker port (default: 5000)")
     dev_parser.add_argument("--ws-port", type=int, default=5001,
                             help="WebSocket worker port (default: 5001)")
+    dev_parser.add_argument("--no-ws", action="store_true",
+                            help="Disable WebSocket server (HTTP only)")
 
     # clean
     subparsers.add_parser("clean", help="Clean build artifacts")
@@ -450,7 +465,8 @@ def main():
             no_worker=args.no_worker,
             worker_only=args.worker_only,
             http_port=args.http_port,
-            ws_port=args.ws_port
+            ws_port=args.ws_port,
+            no_ws=args.no_ws
         )
 
     elif args.command == "clean":

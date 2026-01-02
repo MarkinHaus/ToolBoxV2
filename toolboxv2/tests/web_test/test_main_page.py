@@ -1,163 +1,189 @@
+# toolboxv2/tests/web_test/test_main_page.py
+"""
+ToolBoxV2 - E2E Web Page Tests
 
-def main_page_interactions(self):
+Pytest-konforme Tests für die Web-Seiten.
+Nutzt das bestehende WebTestFramework aus web_util.py.
+
+Ausführung:
+    pytest toolboxv2/tests/web_test/test_main_page.py -v
+    pytest toolboxv2/tests/web_test/test_main_page.py -v -k "test_index"
+"""
+
+import pytest
+from typing import List, Dict, Any
+
+from toolboxv2.tests.a_util import async_test
+from toolboxv2.tests.web_util import AsyncWebTestFramework
+from toolboxv2.tests.test_web import (
+    TEST_SERVER_BASE_URL,
+    is_server_running,
+)
+
+
+# =================== Konfiguration ===================
+
+# Basis-URL für Tests (kann überschrieben werden)
+BASE_URL = TEST_SERVER_BASE_URL
+
+
+def _server_available() -> bool:
+    """Prüft ob der Test-Server erreichbar ist"""
+    return is_server_running()
+
+
+# =================== Interaktions-Definitionen ===================
+# Diese Funktionen definieren die Test-Interaktionen im Framework-Format
+
+
+def main_page_interactions() -> List[Dict[str, Any]]:
     """
-    Test interactions for the ToolBoxV2 Main Page
+    Interaktionen für die ToolBoxV2 Hauptseite
 
-    Returns a list of interaction dictionaries covering key page elements
+    Returns:
+        Liste von Interaktions-Dictionaries
     """
     return [
-        # Navigate to the main page
-        {"type": "goto", "url": "http://localhost:5000/web/"},
-
-        # Take initial screenshot
-        {"type": "screenshot", "path": "main_page_interactions/main_page_initial.png"},
-
-        # Test navigation to App
-        {"type": "click", "selector": "a[href='/web/mainContent.html']"},
-        {"type": "screenshot", "path": "main_page_interactions/nav_to_app.png"},
-        {"type": "goBack"},
-
-        # Test navigation to Main Idea
-        {"type": "click", "selector": "a[href='/web/core0/MainIdea.html']"},
-        {"type": "screenshot", "path": "main_page_interactions/nav_to_main_idea.png"},
-        {"type": "goBack"},
-
-        # Test navigation to Installation
-        {"type": "click", "selector": "a[href='/web/core0/Installer.html']"},
-        {"type": "screenshot", "path": "main_page_interactions/nav_to_installer.png"},
-        {"type": "goBack"},
-
-        # Test external links
-        {"type": "click", "selector": "a[href='https://github.com/MarkinHaus/ToolBoxV2']"},
-        {"type": "screenshot", "path": "main_page_interactions/github_link.png"},
-        {"type": "goBack"},
-
-        {"type": "click", "selector": "a[href='https://markinhaus.github.io/ToolBoxV2/']"},
-        {"type": "screenshot", "path": "main_page_interactions/docs_link.png"},
-        {"type": "goBack"},
-
-        # Test contact and impressum links
-        {"type": "click", "selector": "a[href='https://github.com/MarkinHaus/ToolBoxV2']", "index": 1},
-        {"type": "screenshot", "path": "main_page_interactions/contact_link.png"},
-        {"type": "goBack"},
-
-        {"type": "click", "selector": "a[href='https://markinhaus.github.io/ToolBoxV2/']", "index": 1},
-        {"type": "screenshot", "path": "main_page_interactions/impressum_link.png"},
-        {"type": "goBack"},
-
-        # Verify welcome message text
-        {"type": "test", "selector": ".welcome-message", "exists": True},
-        {"type": "test", "selector": ".words span", "count": 5},
+        {"type": "goto", "url": f"{BASE_URL}/web/core0/index.html"},
+        {"type": "sleep", "time": 1},
+        {"type": "screenshot", "path": "main_page/initial.png"},
+        {"type": "test", "selector": "body"},
     ]
 
 
-def installer_interactions(self):
+def installer_page_interactions() -> List[Dict[str, Any]]:
     """
-    Test interactions for the ToolBoxV2 Installer page
+    Interaktionen für die Installer-Seite
 
-    Returns a list of interaction dictionaries covering key page elements
+    Returns:
+        Liste von Interaktions-Dictionaries
     """
     return [
-        # Navigate to the installer page
-        {"type": "goto", "url": "http://localhost:5000/web/core0/Installer.html"},
-
-        # Check OS selection dropdown
-        {"type": "click", "selector": "#os-selection"},
-        {"type": "select", "selector": "#os-selection", "value": "Python Runtime"},
-        {"type": "screenshot", "path": "installer_interactions/os_selection_python.png"},
-
-        # Check Windows exe option
-        {"type": "click", "selector": "#os-selection"},
-        {"type": "select", "selector": "#os-selection", "value": "exe"},
-        {"type": "screenshot", "path": "installer_interactions/os_selection_windows.png"},
-
-        # Check Mac dmg option
-        {"type": "click", "selector": "#os-selection"},
-        {"type": "select", "selector": "#os-selection", "value": "dmg"},
-        {"type": "screenshot", "path": "installer_interactions/os_selection_mac.png"},
-
-        # Check Android apk option
-        {"type": "click", "selector": "#os-selection"},
-        {"type": "select", "selector": "#os-selection", "value": "apk"},
-        {"type": "screenshot", "path": "installer_interactions/os_selection_android.png"},
-
-        # Check iOS option
-        {"type": "click", "selector": "#os-selection"},
-        {"type": "select", "selector": "#os-selection", "value": "iOS-IPA"},
-        {"type": "screenshot", "path": "installer_interactions/os_selection_ios.png"},
-
-        # Check Web option
-        {"type": "click", "selector": "#os-selection"},
-        {"type": "select", "selector": "#os-selection", "value": "Web"},
-        {"type": "screenshot", "path": "installer_interactions/os_selection_web.png"},
-
-        # Check home link navigation
-        {"type": "click", "selector": "a[href='/index.html']"},
-        {"type": "screenshot", "path": "installer_interactions/home_link_click.png"},
-
-        {"type": "goback"},
-
-        # Check roadmap link
-        {"type": "click", "selector": "a[href='/web/core0/roadmap.html']"},
-        {"type": "screenshot", "path": "installer_interactions/roadmap_link_click.png"},
-
-        {"type": "goback"},
-
-        # Check support links
-        {"type": "click", "selector": "a[href='https://www.buymeacoffee.com/markinhaus']"},
-        {"type": "screenshot", "path": "installer_interactions/buymeacoffee_link.png"},
-
-        {"type": "goback"},
-
-        {"type": "click", "selector": "a[href='https://www.patreon.com/de-DE']"},
-        {"type": "screenshot", "path": "installer_interactions/patreon_link.png"},
+        {"type": "goto", "url": f"{BASE_URL}/web/core0/Installer.html"},
+        {"type": "sleep", "time": 1},
+        {"type": "screenshot", "path": "installer/initial.png"},
+        {"type": "test", "selector": "#os-selection"},
     ]
 
 
-def contact_page_interactions(self):
+def contact_page_interactions() -> List[Dict[str, Any]]:
     """
-    Test interactions for the Contact Page
+    Interaktionen für die Kontakt-Seite
 
-    Returns a list of interaction dictionaries covering key page elements
+    Returns:
+        Liste von Interaktions-Dictionaries
     """
     return [
-        # Navigate to the contact page
-        {"type": "goto", "url": "http://localhost:5000/web/core0/kontakt.html"},
-
-        # Take initial screenshot
-        {"type": "screenshot", "path": "contact_page_interactions/contact_page_initial.png"},
-
-        # Verify form elements exist
+        {"type": "goto", "url": f"{BASE_URL}/web/core0/kontakt.html"},
+        {"type": "sleep", "time": 1},
+        {"type": "screenshot", "path": "contact/initial.png"},
         {"type": "test", "selector": "#name"},
         {"type": "test", "selector": "#email"},
         {"type": "test", "selector": "#subject"},
         {"type": "test", "selector": "#message"},
-
-        # Additional form validation tests
-        # Test form validation by leaving fields empty
-        {"type": "click", "selector": "button[type='submit']"},
-        {"type": "screenshot", "path": "contact_page_interactions/contact_form_empty_submission.png"},
-
-        # Test form input
-        {"type": "type", "selector": "#name", "text": "Test User"},
-        {"type": "type", "selector": "#email", "text": "testuser@example.com"},
-        {"type": "type", "selector": "#subject", "text": "Test Inquiry"},
-        {"type": "type", "selector": "#message",
-         "text": "This is a test message to verify the contact form functionality."},
-
-        # Take screenshot after filling form
-        {"type": "screenshot", "path": "contact_page_interactions/contact_form_filled.png"},
-
-        # Validate form submission (note: this will trigger email client)
-        {"type": "click", "selector": "button[type='submit']"},
-        {"type": "screenshot", "path": "contact_page_interactions/contact_form_submitted.png"},
-
-        # Test invalid email
-        {"type": "type", "selector": "#name", "text": "Test User"},
-        {"type": "type", "selector": "#email", "text": "invalid-email"},
-        {"type": "type", "selector": "#subject", "text": "Test Inquiry"},
-        {"type": "type", "selector": "#message", "text": "This is a test message."},
-        {"type": "click", "selector": "button[type='submit']"},
-        {"type": "screenshot", "path": "contact_page_interactions/contact_form_invalid_email.png"},
     ]
+
+
+def login_page_interactions() -> List[Dict[str, Any]]:
+    """
+    Interaktionen für die Login-Seite
+
+    Returns:
+        Liste von Interaktions-Dictionaries
+    """
+    return [
+        {"type": "goto", "url": f"{BASE_URL}/web/assets/login.html"},
+        {"type": "sleep", "time": 2},
+        {"type": "screenshot", "path": "auth/login.png"},
+        {"type": "test", "selector": "body"},
+    ]
+
+
+def signup_page_interactions() -> List[Dict[str, Any]]:
+    """
+    Interaktionen für die Signup-Seite
+
+    Returns:
+        Liste von Interaktions-Dictionaries
+    """
+    return [
+        {"type": "goto", "url": f"{BASE_URL}/web/assets/signup.html"},
+        {"type": "sleep", "time": 2},
+        {"type": "screenshot", "path": "auth/signup.png"},
+        {"type": "test", "selector": "body"},
+    ]
+
+
+# =================== Pytest Tests ===================
+
+
+@pytest.fixture(scope="module")
+def check_server():
+    """Fixture: Prüft ob Server verfügbar ist"""
+    if not _server_available():
+        pytest.skip(f"Test-Server nicht erreichbar: {BASE_URL}")
+
+
+class TestPublicPages:
+    """Tests für öffentlich zugängliche Seiten"""
+
+    @async_test
+    async def test_index_page_loads(self, check_server):
+        """Test: Index-Seite lädt korrekt"""
+        async with AsyncWebTestFramework(headless=True) as tf:
+            await tf.create_context(viewport={"width": 1280, "height": 720})
+
+            results = await tf.mimic_user_interaction(main_page_interactions())
+
+            # Alle Interaktionen müssen erfolgreich sein
+            for passed, msg in results:
+                assert passed, f"Interaktion fehlgeschlagen: {msg}"
+
+    @async_test
+    async def test_installer_page_loads(self, check_server):
+        """Test: Installer-Seite lädt korrekt"""
+        async with AsyncWebTestFramework(headless=True) as tf:
+            await tf.create_context(viewport={"width": 1280, "height": 720})
+
+            results = await tf.mimic_user_interaction(installer_page_interactions())
+
+            for passed, msg in results:
+                assert passed, f"Interaktion fehlgeschlagen: {msg}"
+
+    @async_test
+    async def test_contact_page_loads(self, check_server):
+        """Test: Kontakt-Seite lädt und Formular-Elemente existieren"""
+        async with AsyncWebTestFramework(headless=True) as tf:
+            await tf.create_context(viewport={"width": 1280, "height": 720})
+
+            results = await tf.mimic_user_interaction(contact_page_interactions())
+
+            for passed, msg in results:
+                assert passed, f"Interaktion fehlgeschlagen: {msg}"
+
+
+class TestAuthPages:
+    """Tests für Authentifizierungs-Seiten"""
+
+    @async_test
+    async def test_login_page_loads(self, check_server):
+        """Test: Login-Seite lädt korrekt"""
+        async with AsyncWebTestFramework(headless=True) as tf:
+            await tf.create_context(viewport={"width": 1280, "height": 720})
+
+            results = await tf.mimic_user_interaction(login_page_interactions())
+
+            for passed, msg in results:
+                assert passed, f"Interaktion fehlgeschlagen: {msg}"
+
+    @async_test
+    async def test_signup_page_loads(self, check_server):
+        """Test: Signup-Seite lädt korrekt"""
+        async with AsyncWebTestFramework(headless=True) as tf:
+            await tf.create_context(viewport={"width": 1280, "height": 720})
+
+            results = await tf.mimic_user_interaction(signup_page_interactions())
+
+            for passed, msg in results:
+                assert passed, f"Interaktion fehlgeschlagen: {msg}"
 

@@ -126,11 +126,19 @@ export class QuickCapturePopup {
 
 /**
  * Desktop Status Bar - Fixed bar at bottom of screen
+ * Maintains persistent WebSocket connection for notifications
  */
 export class DesktopStatusBar {
     constructor(options = {}) {
         this.items = options.items || [];
         this.element = null;
+        this._updateInterval = null;
+        this._updateIntervalMs = options.updateInterval || 10000; // 10 seconds default
+        this._ws = null;
+        this._wsReconnectTimeout = null;
+        this._wsReconnectDelay = 3000;
+        this._maxReconnectDelay = 30000;
+        this._onNotification = options.onNotification || null;
     }
 
     create() {
@@ -141,30 +149,186 @@ export class DesktopStatusBar {
         this._render();
         document.body.appendChild(this.element);
         document.body.classList.add('platform-desktop');
+
+        // Check HTTP worker status
+        this._checkWorkerStatus();
+
+        // Start persistent WebSocket connection
+        this._connectWebSocket();
+
+        // Periodic HTTP health check only
+        this._updateInterval = setInterval(() => {
+            this._checkWorkerStatus();
+        }, this._updateIntervalMs);
     }
 
     _render() {
         this.element.innerHTML = `
             <div class="tb-status-bar-left">
-                <span class="tb-status-item" data-id="worker">
+                <span class="tb-status-item" data-id="worker" title="HTTP Worker Status">
                     <span class="tb-status-dot"></span>
                     <span class="tb-status-label">Worker</span>
                 </span>
+                <span class="tb-status-item" data-id="ws" title="WebSocket Status">
+                    <span class="tb-status-dot"></span>
+                    <span class="tb-status-label">WS</span>
+                </span>
             </div>
-            <div class="tb-status-bar-center"></div>
+            <div class="tb-status-bar-center">
+                <span class="tb-status-info" data-id="endpoint"></span>
+            </div>
             <div class="tb-status-bar-right">
                 <span class="tb-status-item" data-id="hotkey">Ctrl+Shift+C: Capture</span>
             </div>
         `;
-        this._checkWorkerStatus();
     }
 
     async _checkWorkerStatus() {
         try {
-            const status = await tauriAPI.getWorkerStatus();
-            this.updateItem('worker', status?.running ? 'online' : 'offline');
+            const response = await fetch(`${this._getApiBase()}/health`, {
+                method: 'GET',
+                signal: AbortSignal.timeout(3000)
+            });
+
+            if (response.ok) {
+                const status = await response.json();
+                this.updateItem('worker', status?.status === 'healthy' ? 'online' : 'warning');
+
+                if (status?.worker_id) {
+                    this._updateEndpointInfo(status.worker_id);
+                }
+            } else {
+                this.updateItem('worker', 'warning');
+            }
         } catch {
             this.updateItem('worker', 'offline');
+            this._updateEndpointInfo('disconnected');
+        }
+    }
+
+    _connectWebSocket() {
+        if (this._ws && this._ws.readyState === WebSocket.OPEN) {
+            return; // Already connected
+        }
+
+        const wsUrl = this._getWsUrl();
+        console.log('[StatusBar] Connecting to WebSocket:', wsUrl);
+
+        try {
+            this._ws = new WebSocket(wsUrl);
+
+            this._ws.onopen = () => {
+                console.log('[StatusBar] WebSocket connected');
+                this.updateItem('ws', 'online');
+                this._wsReconnectDelay = 3000; // Reset delay on success
+            };
+
+            this._ws.onmessage = async (event) => {
+                await this._handleWsMessage(event.data);
+            };
+
+            this._ws.onclose = (event) => {
+                console.log('[StatusBar] WebSocket closed:', event.code, event.reason);
+                this.updateItem('ws', 'offline');
+                this._scheduleReconnect();
+            };
+
+            this._ws.onerror = (error) => {
+                console.error('[StatusBar] WebSocket error:', error);
+                this.updateItem('ws', 'offline');
+            };
+        } catch (error) {
+            console.error('[StatusBar] WebSocket connection failed:', error);
+            this.updateItem('ws', 'offline');
+            this._scheduleReconnect();
+        }
+    }
+
+    _scheduleReconnect() {
+        if (this._wsReconnectTimeout) {
+            clearTimeout(this._wsReconnectTimeout);
+        }
+
+        console.log(`[StatusBar] Reconnecting in ${this._wsReconnectDelay / 1000}s...`);
+
+        this._wsReconnectTimeout = setTimeout(() => {
+            this._connectWebSocket();
+        }, this._wsReconnectDelay);
+
+        // Exponential backoff
+        this._wsReconnectDelay = Math.min(this._wsReconnectDelay * 1.5, this._maxReconnectDelay);
+    }
+
+    async _handleWsMessage(data) {
+        try {
+            const message = JSON.parse(data);
+            console.log('[StatusBar] WS message received:', message);
+
+            // Handle notification events
+            if (message.type === 'notification' || message.event === 'notification') {
+                await this._showNotification(message.data || message);
+            }
+
+            // Handle status updates
+            if (message.type === 'status' || message.event === 'status') {
+                this._handleStatusUpdate(message.data || message);
+            }
+
+            // Call custom handler if provided
+            if (this._onNotification) {
+                this._onNotification(message);
+            }
+        } catch (error) {
+            console.warn('[StatusBar] Failed to parse WS message:', error);
+        }
+    }
+
+    async _showNotification(notification) {
+        const title = notification.title || 'ToolBox';
+        const body = notification.content || notification.message || notification.body || '';
+        const icon = notification.icon || null;
+
+        console.log('[StatusBar] Showing notification:', title, body);
+
+        // Use Tauri native notifications
+        await tauriAPI.notify(title, body, icon);
+    }
+
+    _handleStatusUpdate(status) {
+        if (status.worker !== undefined) {
+            this.updateItem('worker', status.worker);
+        }
+        if (status.ws !== undefined) {
+            this.updateItem('ws', status.ws);
+        }
+        if (status.endpoint) {
+            this._updateEndpointInfo(status.endpoint);
+        }
+    }
+
+    _getApiBase() {
+        return 'http://localhost:5000';
+    }
+
+    _getWsUrl() {
+        const wsId = localStorage.getItem('WsID') || `status-${Date.now()}`;
+        return `ws://localhost:5001/ws/${wsId}`;
+    }
+
+    _updateEndpointInfo(url) {
+        const infoEl = this.element?.querySelector('[data-id="endpoint"]');
+        if (infoEl) {
+            infoEl.textContent = url;
+            infoEl.title = `Connected to: ${url}`;
+        }
+    }
+
+    _updateLabel(id, label) {
+        const item = this.element?.querySelector(`[data-id="${id}"]`);
+        if (!item) return;
+        const labelEl = item.querySelector('.tb-status-label');
+        if (labelEl) {
+            labelEl.textContent = label;
         }
     }
 
@@ -177,7 +341,55 @@ export class DesktopStatusBar {
         }
     }
 
+    /**
+     * Force refresh status and reconnect WebSocket
+     */
+    async refresh() {
+        await this._checkWorkerStatus();
+        this._connectWebSocket();
+    }
+
+    /**
+     * Send a message through the WebSocket connection
+     */
+    sendMessage(message) {
+        if (this._ws && this._ws.readyState === WebSocket.OPEN) {
+            const payload = typeof message === 'string' ? message : JSON.stringify(message);
+            this._ws.send(payload);
+            return true;
+        }
+        console.warn('[StatusBar] Cannot send message: WebSocket not connected');
+        return false;
+    }
+
+    /**
+     * Check if WebSocket is connected
+     */
+    isWsConnected() {
+        return this._ws && this._ws.readyState === WebSocket.OPEN;
+    }
+
     destroy() {
+        // Clear intervals
+        if (this._updateInterval) {
+            clearInterval(this._updateInterval);
+            this._updateInterval = null;
+        }
+
+        // Clear reconnect timeout
+        if (this._wsReconnectTimeout) {
+            clearTimeout(this._wsReconnectTimeout);
+            this._wsReconnectTimeout = null;
+        }
+
+        // Close WebSocket
+        if (this._ws) {
+            this._ws.onclose = null; // Prevent reconnect on intentional close
+            this._ws.close();
+            this._ws = null;
+        }
+
+        // Remove element
         if (this.element) {
             this.element.remove();
             document.body.classList.remove('platform-desktop');

@@ -1,4 +1,38 @@
 # toolboxv2.utils.extras.notification
+"""
+Cross-Platform Notification System
+===================================
+
+Supports multiple notification backends:
+- Windows: Toast notifications (PowerShell/win10toast) or MessageBox fallback
+- macOS: osascript notifications
+- Linux: notify-send (libnotify)
+- Tkinter: Cross-platform fallback with rich features
+- Web/Tauri: WebSocket-based notifications for Tauri desktop apps
+
+Web/Tauri Integration:
+    The notification system can send notifications to connected Tauri clients
+    via WebSocket. The frontend DesktopStatusBar component receives these
+    messages and triggers native Tauri notifications.
+
+    Usage:
+        notifier = NotificationSystem()
+        notifier.set_ws_bridge(app._zmq_ws_bridge)  # Set WebSocket bridge
+
+        # Send to all connected web clients
+        await notifier.show_web_notification(
+            title="Update Available",
+            message="A new version is ready",
+            level="info"
+        )
+
+        # Send to specific connection
+        await notifier.show_web_notification(
+            title="Task Complete",
+            message="Your export is ready",
+            conn_id="user-123"
+        )
+"""
 import sys
 import subprocess
 import os
@@ -9,6 +43,7 @@ from dataclasses import dataclass
 from enum import Enum
 import json
 import queue
+import asyncio
 
 from toolboxv2.utils.singelton_class import Singleton
 from toolboxv2.utils.extras.Style import text_save
@@ -56,16 +91,33 @@ class NotificationPosition(Enum):
 
 class NotificationSystem(metaclass=Singleton):
     """
-    Cross-platform notification system with OS integration and tkinter fallback
+    Cross-platform notification system with OS integration, tkinter fallback,
+    and Web/Tauri support via WebSocket.
+
+    Supports:
+        - Native OS notifications (Windows, macOS, Linux)
+        - Tkinter fallback for rich notifications with actions
+        - Web/Tauri notifications via WebSocket bridge
+
+    Web/Tauri Usage:
+        notifier = NotificationSystem()
+        notifier.set_ws_bridge(ws_bridge)  # From ws_bridge.py
+
+        # Async notification to web clients
+        await notifier.show_web_notification("Title", "Message")
+
+        # Or use the sync wrapper
+        notifier.notify_web("Title", "Message", conn_id="user-123")
     """
 
     def __init__(self):
         self.platform = sys.platform.lower()
         self.fallback_to_tkinter = True
         self.sound_enabled = False
-        self.default_timeout = 1500 # Add default timeout in milliseconds
+        self.default_timeout = 1500  # Default timeout in milliseconds
         self.max_timeout = 30000
         self.default_position = NotificationPosition.TOP_RIGHT
+        self._ws_bridge = None  # WebSocket bridge for Tauri notifications
         self._test_os_notifications()
 
     def _test_os_notifications(self):
@@ -185,6 +237,162 @@ class NotificationSystem(metaclass=Singleton):
     def set_default_position(self, position: NotificationPosition):
         """Set default position for notifications"""
         self.default_position = position
+
+    # =========================================================================
+    # Web/Tauri Notification Methods
+    # =========================================================================
+
+    def set_ws_bridge(self, ws_bridge) -> None:
+        """
+        Set the WebSocket bridge for sending notifications to Tauri clients.
+
+        Args:
+            ws_bridge: ZMQWSBridge instance from toolboxv2.utils.workers.ws_bridge
+
+        Example:
+            from toolboxv2.utils.workers.ws_bridge import ZMQWSBridge
+
+            bridge = ZMQWSBridge(event_manager, worker_id)
+            notifier = NotificationSystem()
+            notifier.set_ws_bridge(bridge)
+        """
+        self._ws_bridge = ws_bridge
+
+    def has_ws_bridge(self) -> bool:
+        """Check if WebSocket bridge is configured."""
+        return self._ws_bridge is not None
+
+    async def show_web_notification(
+        self,
+        title: str,
+        message: str,
+        notification_type: NotificationType = NotificationType.INFO,
+        conn_id: str | None = None,
+        channel: str | None = None,
+        icon: str | None = None,
+    ) -> bool:
+        """
+        Send a notification to connected Tauri/Web clients via WebSocket.
+
+        The notification is sent as a JSON message that the frontend
+        DesktopStatusBar component recognizes and displays using Tauri's
+        native notification API.
+
+        Args:
+            title: Notification title
+            message: Notification body/message
+            notification_type: Type of notification (affects icon/styling)
+            conn_id: Send to specific connection only (optional)
+            channel: Broadcast to all connections in channel (optional)
+            icon: Custom icon path (optional)
+
+        Returns:
+            True if notification was sent successfully, False otherwise
+
+        Routing:
+            - If conn_id is provided: sends only to that connection
+            - If channel is provided: broadcasts to all in that channel
+            - If neither: broadcasts to ALL connected clients
+
+        Example:
+            # Send to all connected clients
+            await notifier.show_web_notification(
+                title="System Update",
+                message="Server restarting in 5 minutes",
+                notification_type=NotificationType.WARNING
+            )
+
+            # Send to specific user
+            await notifier.show_web_notification(
+                title="Download Ready",
+                message="Your file is ready for download",
+                conn_id="user-session-123"
+            )
+        """
+        if not self._ws_bridge:
+            print("⚠️  WebSocket bridge not configured. Call set_ws_bridge() first.")
+            return False
+
+        # Map NotificationType to level string
+        level_map = {
+            NotificationType.INFO: "info",
+            NotificationType.SUCCESS: "success",
+            NotificationType.WARNING: "warning",
+            NotificationType.ERROR: "error",
+            NotificationType.QUESTION: "info",
+        }
+        level = level_map.get(notification_type, "info")
+
+        try:
+            return await self._ws_bridge.send_notification(
+                title=title,
+                content=message,
+                conn_id=conn_id,
+                channel=channel,
+                icon=icon,
+                level=level,
+            )
+        except Exception as e:
+            print(f"⚠️  Failed to send web notification: {e}")
+            return False
+
+    def notify_web(
+        self,
+        title: str,
+        message: str,
+        notification_type: NotificationType = NotificationType.INFO,
+        conn_id: str | None = None,
+        channel: str | None = None,
+        icon: str | None = None,
+    ) -> bool:
+        """
+        Synchronous wrapper for show_web_notification.
+
+        Sends a notification to connected Tauri/Web clients. This method
+        handles the async call internally, making it easy to use from
+        synchronous code.
+
+        Args:
+            title: Notification title
+            message: Notification body/message
+            notification_type: Type of notification
+            conn_id: Send to specific connection only (optional)
+            channel: Broadcast to all connections in channel (optional)
+            icon: Custom icon path (optional)
+
+        Returns:
+            True if notification was sent successfully
+
+        Example:
+            notifier.notify_web("Task Complete", "Export finished!", NotificationType.SUCCESS)
+        """
+        if not self._ws_bridge:
+            print("⚠️  WebSocket bridge not configured. Call set_ws_bridge() first.")
+            return False
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Schedule coroutine in running loop
+                future = asyncio.ensure_future(
+                    self.show_web_notification(
+                        title, message, notification_type, conn_id, channel, icon
+                    )
+                )
+                return True  # Can't wait for result in running loop
+            else:
+                return loop.run_until_complete(
+                    self.show_web_notification(
+                        title, message, notification_type, conn_id, channel, icon
+                    )
+                )
+        except RuntimeError:
+            # No event loop, create one
+            return asyncio.run(
+                self.show_web_notification(
+                    title, message, notification_type, conn_id, channel, icon
+                )
+            )
 
     def _show_os_notification(self, title: str, message: str,
                               notification_type: NotificationType, timeout: int) -> None:
@@ -828,6 +1036,96 @@ def ask_question(title: str, message: str,
     return notifier.show_notification(
         title, message, NotificationType.QUESTION, actions=actions, **kwargs
     )
+
+
+# =========================================================================
+# Web/Tauri Convenience Functions
+# =========================================================================
+
+def setup_web_notifications(ws_bridge) -> NotificationSystem:
+    """
+    Configure the notification system for Web/Tauri notifications.
+
+    Args:
+        ws_bridge: ZMQWSBridge instance from toolboxv2.utils.workers.ws_bridge
+
+    Returns:
+        Configured NotificationSystem instance
+
+    Example:
+        from toolboxv2.utils.workers.ws_bridge import install_ws_bridge
+        from toolboxv2.utils.extras.notification import setup_web_notifications
+
+        # In your worker setup:
+        bridge = install_ws_bridge(app, event_manager, worker_id)
+        notifier = setup_web_notifications(bridge)
+
+        # Now you can send web notifications:
+        notifier.notify_web("Hello", "World!")
+    """
+    notifier = create_notification_system()
+    notifier.set_ws_bridge(ws_bridge)
+    return notifier
+
+
+async def web_notify(
+    title: str,
+    message: str,
+    notification_type: NotificationType = NotificationType.INFO,
+    conn_id: str | None = None,
+    channel: str | None = None,
+) -> bool:
+    """
+    Send a notification to connected Tauri/Web clients (async).
+
+    Requires setup_web_notifications() to be called first.
+
+    Args:
+        title: Notification title
+        message: Notification body
+        notification_type: Type of notification
+        conn_id: Send to specific connection (optional)
+        channel: Broadcast to channel (optional)
+
+    Returns:
+        True if sent successfully
+
+    Example:
+        await web_notify("Update", "New version available", NotificationType.INFO)
+    """
+    notifier = create_notification_system()
+    return await notifier.show_web_notification(
+        title, message, notification_type, conn_id, channel
+    )
+
+
+def web_notify_sync(
+    title: str,
+    message: str,
+    notification_type: NotificationType = NotificationType.INFO,
+    conn_id: str | None = None,
+    channel: str | None = None,
+) -> bool:
+    """
+    Send a notification to connected Tauri/Web clients (sync wrapper).
+
+    Requires setup_web_notifications() to be called first.
+
+    Args:
+        title: Notification title
+        message: Notification body
+        notification_type: Type of notification
+        conn_id: Send to specific connection (optional)
+        channel: Broadcast to channel (optional)
+
+    Returns:
+        True if sent successfully
+
+    Example:
+        web_notify_sync("Task Done", "Export complete", NotificationType.SUCCESS)
+    """
+    notifier = create_notification_system()
+    return notifier.notify_web(title, message, notification_type, conn_id, channel)
 
 
 # Example usage

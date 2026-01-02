@@ -1,11 +1,49 @@
 #!/usr/bin/env python3
 """
 ws_bridge.py - WebSocket Bridge for ToolBoxV2 HTTP Workers
+===========================================================
 
-Provides ws_send() and ws_broadcast() methods for App instances
-that communicate with WS workers via ZeroMQ.
+Provides WebSocket communication methods for App instances that communicate
+with WS workers via ZeroMQ.
 
-Replaces the old Rust bridge (_rust_ws_bridge) with a pure Python implementation.
+Features:
+    - ws_send(): Send message to specific WebSocket connection
+    - ws_broadcast(): Broadcast to all connections in a channel
+    - ws_broadcast_all(): Broadcast to ALL connected clients
+    - send_notification(): Send Tauri native notifications to clients
+
+Usage Example:
+    from toolboxv2.utils.workers.ws_bridge import install_ws_bridge
+
+    # Install bridge on app instance
+    bridge = install_ws_bridge(app, event_manager, "my_worker")
+
+    # Send message to specific connection
+    await app.ws_send("conn-123", {"type": "update", "data": {...}})
+
+    # Broadcast to channel
+    await app.ws_broadcast("general", {"type": "message", "text": "Hello"})
+
+    # Broadcast to all
+    await app.ws_broadcast_all({"type": "announcement", "text": "..."})
+
+Notification System:
+    For sending notifications to Tauri/Web clients, use the NotificationSystem
+    from toolboxv2.utils.extras.notification:
+
+        from toolboxv2.utils.extras.notification import setup_web_notifications
+
+        notifier = setup_web_notifications(bridge)
+        notifier.notify_web("Title", "Message")
+
+    See: toolboxv2/utils/extras/notification.py
+
+Frontend Integration:
+    The DesktopStatusBar component in tbjs maintains a persistent WebSocket
+    connection and listens for notification messages. When received, it
+    triggers Tauri's native notification API via tauriAPI.notify().
+
+    See: toolboxv2/tbjs/src/ui/components/Desktop/index.js
 """
 
 import json
@@ -141,6 +179,72 @@ class ZMQWSBridge:
             self._logger.error(f"Failed to broadcast WS message to all: {e}")
             return False
 
+    async def send_notification(
+        self,
+        title: str,
+        content: str,
+        conn_id: str | None = None,
+        channel: str | None = None,
+        icon: str | None = None,
+        level: str = "info",
+    ) -> bool:
+        """
+        Send a notification to WebSocket clients that triggers Tauri native notifications.
+
+        This method sends a specially formatted message that the frontend DesktopStatusBar
+        component recognizes and displays as a native Tauri notification.
+
+        Args:
+            title: Notification title (required)
+            content: Notification body/message (required)
+            conn_id: Send to specific connection only (optional)
+            channel: Broadcast to all connections in channel (optional)
+            icon: Notification icon path (optional)
+            level: Notification level - "info", "warning", "error", "success" (default: "info")
+
+        Returns:
+            True if notification was sent successfully
+
+        Note:
+            - If conn_id is provided, sends to that specific connection
+            - If channel is provided, broadcasts to all connections in that channel
+            - If neither is provided, broadcasts to ALL connected clients
+
+        Example:
+            # Send to specific user
+            await bridge.send_notification(
+                title="Task Complete",
+                content="Your export is ready for download",
+                conn_id="user-123"
+            )
+
+            # Broadcast to all users
+            await bridge.send_notification(
+                title="System Update",
+                content="Server will restart in 5 minutes",
+                level="warning"
+            )
+        """
+        payload = {
+            "type": "notification",
+            "data": {
+                "title": title,
+                "content": content,
+                "level": level,
+            }
+        }
+
+        if icon:
+            payload["data"]["icon"] = icon
+
+        # Route to appropriate send method
+        if conn_id:
+            return await self.send_message(conn_id, payload)
+        elif channel:
+            return await self.broadcast_message(channel, payload)
+        else:
+            return await self.broadcast_all(payload)
+
     async def join_channel(self, conn_id: str, channel: str) -> bool:
         """Request a connection to join a channel."""
         try:
@@ -237,6 +341,44 @@ def install_ws_bridge(app, event_manager: ZMQEventManager, worker_id: str):
     app.ws_join_channel = bridge.join_channel
     app.ws_leave_channel = bridge.leave_channel
     app.ws_broadcast_all = bridge.broadcast_all
+
+    # Expose notification method
+    async def send_notification(
+        title: str,
+        content: str,
+        conn_id: str | None = None,
+        channel: str | None = None,
+        icon: str | None = None,
+        level: str = "info",
+    ) -> bool:
+        """
+        Send a notification to WebSocket clients that triggers Tauri native notifications.
+
+        Args:
+            title: Notification title
+            content: Notification body/message
+            conn_id: Send to specific connection only (optional)
+            channel: Broadcast to all connections in channel (optional)
+            icon: Notification icon path (optional)
+            level: Notification level - "info", "warning", "error", "success"
+
+        Returns:
+            True if notification was sent successfully
+        """
+        if app._zmq_ws_bridge is None:
+            app.logger.error("Cannot send notification: ZMQ bridge is not initialized.")
+            return False
+
+        return await app._zmq_ws_bridge.send_notification(
+            title=title,
+            content=content,
+            conn_id=conn_id,
+            channel=channel,
+            icon=icon,
+            level=level,
+        )
+
+    app.send_notification = send_notification
 
     logger.info(f"WebSocket bridge installed for worker {worker_id}")
     return bridge
