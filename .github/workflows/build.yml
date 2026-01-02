@@ -42,6 +42,9 @@ jobs:
     env:
       SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      # Enable mocking for external services (MinIO, LiteLLM/Ollama)
+      MOCK_EXTERNAL_SERVICES: "true"
+      IS_OFFLINE_DB: "true"
 
     steps:
       - name: Checkout Code
@@ -55,7 +58,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install uv
+          python -m pip install uv pytest pytest-asyncio
           pip install --user --no-cache-dir Cython
 
       - name: Install toolboxv2 with ISAA
@@ -65,7 +68,10 @@ jobs:
         working-directory: ${{ github.workspace }}
 
       - name: Run Tests
-        run: python -m unittest discover -s toolboxv2/tests/
+        env:
+          MOCK_EXTERNAL_SERVICES: "true"
+          IS_OFFLINE_DB: "true"
+        run: python -m pytest toolboxv2/tests/ -v --tb=short || python -m unittest discover -s toolboxv2/tests/
 
   # ============================================================================
   # NODE.JS / FRONTEND BUILDS
@@ -480,13 +486,31 @@ jobs:
           if 'bundle' in config and 'externalBin' in config['bundle']:
               del config['bundle']['externalBin']
               print('Removed externalBin from config')
+          else:
+              print('No externalBin found in config')
           with open('tauri.conf.json', 'w') as f:
               json.dump(config, f, indent=2)
           "
+          # Verify the change was applied
+          echo "=== tauri.conf.json after modification ==="
+          cat tauri.conf.json
+          echo "=========================================="
+
+      - name: Clean Android Build Cache
+        working-directory: ./toolboxv2/simple-core/src-tauri
+        run: |
+          # Remove cached Android project to ensure fresh init with updated config
+          rm -rf gen/android
+          # Clean Cargo build cache for Android targets
+          rm -rf target/aarch64-linux-android
+          rm -rf target/armv7-linux-androideabi
+          rm -rf target/x86_64-linux-android
+          rm -rf target/i686-linux-android
+          echo "Cleaned Android build cache"
 
       - name: Initialize Android project
         working-directory: ./toolboxv2/simple-core
-        run: cargo tauri android init || true
+        run: cargo tauri android init
 
       - name: Build Android APK (Debug)
         working-directory: ./toolboxv2/simple-core
@@ -541,13 +565,30 @@ jobs:
           if 'bundle' in config and 'externalBin' in config['bundle']:
               del config['bundle']['externalBin']
               print('Removed externalBin from config')
+          else:
+              print('No externalBin found in config')
           with open('tauri.conf.json', 'w') as f:
               json.dump(config, f, indent=2)
           "
+          # Verify the change was applied
+          echo "=== tauri.conf.json after modification ==="
+          cat tauri.conf.json
+          echo "=========================================="
+
+      - name: Clean iOS Build Cache
+        working-directory: ./toolboxv2/simple-core/src-tauri
+        run: |
+          # Remove cached iOS project to ensure fresh init with updated config
+          rm -rf gen/apple
+          # Clean Cargo build cache for iOS targets
+          rm -rf target/aarch64-apple-ios
+          rm -rf target/x86_64-apple-ios
+          rm -rf target/aarch64-apple-ios-sim
+          echo "Cleaned iOS build cache"
 
       - name: Initialize iOS project
         working-directory: ./toolboxv2/simple-core
-        run: cargo tauri ios init || true
+        run: cargo tauri ios init
 
       - name: Build iOS (Simulator Debug)
         working-directory: ./toolboxv2/simple-core
@@ -585,6 +626,9 @@ jobs:
           python -m uv pip install -e . --system
 
       - name: Run integration tests
+        env:
+          MOCK_EXTERNAL_SERVICES: "true"
+          IS_OFFLINE_DB: "true"
         run: |
           tb --test -n test || python -m pytest tests/integration/ || true
         continue-on-error: true

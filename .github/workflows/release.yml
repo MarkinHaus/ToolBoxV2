@@ -418,14 +418,32 @@ jobs:
           if 'bundle' in config and 'externalBin' in config['bundle']:
               del config['bundle']['externalBin']
               print('Removed externalBin from config')
+          else:
+              print('No externalBin found in config')
           with open('tauri.conf.json', 'w') as f:
               json.dump(config, f, indent=2)
           "
+          # Verify the change was applied
+          echo "=== tauri.conf.json after modification ==="
+          cat tauri.conf.json
+          echo "=========================================="
+
+      - name: Clean Android Build Cache
+        working-directory: ./toolboxv2/simple-core/src-tauri
+        run: |
+          # Remove cached Android project to ensure fresh init with updated config
+          rm -rf gen/android
+          # Clean Cargo build cache for Android targets to force rebuild with new config
+          rm -rf target/aarch64-linux-android
+          rm -rf target/armv7-linux-androideabi
+          rm -rf target/x86_64-linux-android
+          rm -rf target/i686-linux-android
+          echo "Cleaned Android build cache"
 
       - name: Build Android
         working-directory: ./toolboxv2/simple-core
         run: |
-          cargo tauri android init || true
+          cargo tauri android init
           cargo tauri android build --apk || cargo tauri android build
 
       - name: Package Artifacts
@@ -489,14 +507,31 @@ jobs:
           if 'bundle' in config and 'externalBin' in config['bundle']:
               del config['bundle']['externalBin']
               print('Removed externalBin from config')
+          else:
+              print('No externalBin found in config')
           with open('tauri.conf.json', 'w') as f:
               json.dump(config, f, indent=2)
           "
+          # Verify the change was applied
+          echo "=== tauri.conf.json after modification ==="
+          cat tauri.conf.json
+          echo "=========================================="
+
+      - name: Clean iOS Build Cache
+        working-directory: ./toolboxv2/simple-core/src-tauri
+        run: |
+          # Remove cached iOS project to ensure fresh init with updated config
+          rm -rf gen/apple
+          # Clean Cargo build cache for iOS targets to force rebuild with new config
+          rm -rf target/aarch64-apple-ios
+          rm -rf target/x86_64-apple-ios
+          rm -rf target/aarch64-apple-ios-sim
+          echo "Cleaned iOS build cache"
 
       - name: Build iOS
         working-directory: ./toolboxv2/simple-core
         run: |
-          cargo tauri ios init || true
+          cargo tauri ios init
           cargo tauri ios build --debug || true
 
       - name: Package Artifacts
