@@ -118,6 +118,12 @@ def safe_for_yaml(obj):
     except Exception:
         return str(obj)
 
+def generate_tool_call_id(run_number: int, call_index: int, tool_name: str) -> str:
+    """Generiert eine konsistente, eindeutige Tool-Call-ID"""
+    # Format: tool_{toolname}_{run}_{index}_{random}
+    random_part = uuid.uuid4().hex[:8]
+    safe_name = tool_name.replace(" ", "_").replace("-", "_")[:20]
+    return f"tool_{safe_name}_{run_number}_{call_index}_{random_part}"
 
 # ===== MEDIA PARSING UTILITIES =====
 
@@ -948,15 +954,45 @@ class LLMToolNode(AsyncNode):
             },
         }
 
+    # FIX 4: LLMToolNode - Direkte Tool-Ausführung wenn Args vorgegeben
     async def exec_async(self, prep_res):
-        """Main execution with native LiteLLM function calling or fallback."""
+        """Main execution with native LiteLLM function calling or fallback - FIXED"""
         if not LITELLM_AVAILABLE:
             return await self._fallback_response(prep_res)
 
-        progress_tracker = prep_res.get("progress_tracker")
         model_to_use = self._select_optimal_model(prep_res["task_description"], prep_res)
 
-        # Entscheide: Native Function Calling oder Manual Parsing
+        # FIX: Check for direct tool execution (single tool with predefined args)
+        direct_tool_name = prep_res.get("direct_tool_name")
+        direct_tool_args = prep_res.get("direct_tool_args")
+
+        if direct_tool_name and direct_tool_args:
+            rprint(f"Direct tool execution: {direct_tool_name} with args: {direct_tool_args}")
+            try:
+                result = await self._execute_single_tool(
+                    direct_tool_name,
+                    direct_tool_args,
+                    prep_res,
+                    prep_res.get("progress_tracker")
+                )
+
+                response_text = str(result.get("result", "No result")) if result.get(
+                    "success") else f"Error: {result.get('error', 'Unknown error')}"
+
+                return {
+                    "success": result.get("success", False),
+                    "final_response": response_text,
+                    "tool_calls_made": 1,
+                    "conversation_history": [],
+                    "model_used": model_to_use,
+                    "tool_results": {direct_tool_name: result},
+                    "execution_mode": "direct_execution",
+                }
+            except Exception as e:
+                eprint(f"Direct tool execution failed: {e}")
+                # Fall through to normal execution
+
+        # Normal execution path
         use_native_function_calling = self._supports_function_calling(model_to_use)
 
         if use_native_function_calling:
@@ -964,162 +1000,160 @@ class LLMToolNode(AsyncNode):
         else:
             return await self._exec_with_manual_parsing(prep_res, model_to_use)
 
+    # FIX 1: LLMToolNode._exec_with_native_function_calling - Kompletter Rewrite mit korrektem ID-Handling
     async def _exec_with_native_function_calling(
         self, prep_res: dict, model_to_use: str
     ) -> dict:
-        """Execution mit nativem LiteLLM Function Calling."""
+        """Execution mit nativem LiteLLM Function Calling - COMPLETE FIX"""
         progress_tracker = prep_res.get("progress_tracker")
         agent_instance = prep_res.get("agent_instance")
         variable_manager = prep_res.get("variable_manager")
 
-        conversation_history = []
         tool_call_count = 0
         final_response = None
         all_tool_results = {}
 
-        # System Message
         system_message = self._build_tool_aware_system_message_native(prep_res)
-
-        # Initial User Prompt
         initial_prompt = await self._build_context_aware_prompt(prep_res)
-        conversation_history.append(
-            {
-                "role": "user",
-                "content": variable_manager.format_text(initial_prompt)
-                if variable_manager
-                else initial_prompt,
-            }
-        )
 
-        # Tools für LiteLLM vorbereiten
+        # WICHTIG: Wir bauen die Messages manuell ohne sanitize
+        # um volle Kontrolle über die IDs zu haben
+        raw_conversation = []
+        raw_conversation.append({
+            "role": "user",
+            "content": variable_manager.format_text(initial_prompt) if variable_manager else initial_prompt,
+        })
+
         litellm_tools = self._prepare_tools_for_litellm(prep_res)
 
         runs = 0
-        while tool_call_count < self.max_tool_calls:
+        max_runs = self.max_tool_calls + 3
+
+        while tool_call_count < self.max_tool_calls and runs < max_runs:
             runs += 1
 
-            messages = [
-                {"role": "system", "content": system_message}
-            ] + conversation_history
+            # Baue Messages für LLM - OHNE sanitize, wir kontrollieren alles selbst
+            messages = [{"role": "system", "content": system_message}] + raw_conversation
 
             try:
-                # LiteLLM Completion mit Tools
                 response_message = await agent_instance.a_run_llm_completion(
                     model=model_to_use,
                     messages=messages,
                     tools=litellm_tools if litellm_tools else None,
                     tool_choice="auto" if litellm_tools else None,
                     temperature=0.7,
-                    get_response_message = True
+                    get_response_message=True,
+                    stream=False,  # WICHTIG: Kein Streaming für Tool Calls
+                    with_context=False,  # Kontext ist bereits im System Message
                 )
 
-                # Check für Tool Calls
-                tool_calls = response_message.tool_calls
+                tool_calls = getattr(response_message, 'tool_calls', None) or []
+                content = getattr(response_message, 'content', None) or ""
 
                 if not tool_calls:
                     # Keine Tool Calls - finale Antwort
-                    final_response = response_message.content or "Task completed."
-                    conversation_history.append(
-                        {"role": "assistant", "content": final_response}
-                    )
+                    final_response = content or "Task completed."
+                    raw_conversation.append({"role": "assistant", "content": final_response})
                     break
 
-                # Tool Calls verarbeiten
-                # Assistant Message mit Tool Calls hinzufügen
+                # === KRITISCHER FIX: Generiere eigene konsistente IDs ===
+                # Wir ignorieren die IDs von LiteLLM und generieren unsere eigenen
+                processed_calls = []
+                for i, tc in enumerate(tool_calls):
+                    # Generiere deterministische ID basierend auf Run + Index
+                    our_id = f"call_{runs}_{i}_{uuid.uuid4().hex[:8]}"
+
+                    tc_name = tc.function.name if hasattr(tc.function, 'name') else tc.function.get('name', '')
+                    tc_args_str = tc.function.arguments if hasattr(tc.function, 'arguments') else tc.function.get(
+                        'arguments', '{}')
+
+                    processed_calls.append({
+                        "id": our_id,
+                        "name": tc_name,
+                        "arguments_str": tc_args_str,
+                    })
+
+                # Baue Assistant Message mit UNSEREN IDs
                 assistant_message = {
                     "role": "assistant",
-                    "content": response_message.content or "",
+                    "content": content,
                     "tool_calls": [
                         {
-                            "id": tc.id,
+                            "id": pc["id"],
                             "type": "function",
                             "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
+                                "name": pc["name"],
+                                "arguments": pc["arguments_str"],
                             },
                         }
-                        for tc in tool_calls
+                        for pc in processed_calls
                     ],
                 }
-                conversation_history.append(assistant_message)
+                raw_conversation.append(assistant_message)
 
-                # Tool Calls ausführen
-                for tool_call in tool_calls:
-                    tool_name = tool_call.function.name
+                # Führe Tools aus und füge Responses SOFORT hinzu
+                for pc in processed_calls:
+                    tool_name = pc["name"]
+                    our_id = pc["id"]
 
                     # Check für direct_response
                     if tool_name == "direct_response":
                         try:
-                            args = json.loads(tool_call.function.arguments)
-                            final_response = args.get(
-                                "final_answer", "Task completed."
-                            )
+                            args = json.loads(pc["arguments_str"])
+                            final_response = args.get("final_answer", "Task completed.")
                             tool_call_count += 1
 
-                            # Tool Response hinzufügen
-                            conversation_history.append(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": tool_call.id,
-                                    "content": json.dumps(
-                                        {
-                                            "status": "completed",
-                                            "response": final_response,
-                                        }
-                                    ),
-                                }
-                            )
+                            # Tool Response mit UNSERER ID
+                            raw_conversation.append({
+                                "role": "tool",
+                                "tool_call_id": our_id,
+                                "content": json.dumps({"status": "completed", "response": final_response})
+                            })
                             break
                         except json.JSONDecodeError:
-                            final_response = tool_call.function.arguments
+                            final_response = pc["arguments_str"]
                             break
 
-                    # Normaler Tool Call
+                    # Parse arguments
                     try:
-                        args = json.loads(tool_call.function.arguments)
+                        args = json.loads(pc["arguments_str"])
                     except json.JSONDecodeError as e:
                         error_result = f"Invalid JSON arguments: {e}"
-                        conversation_history.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "content": json.dumps({"error": error_result}),
-                            }
-                        )
+                        raw_conversation.append({
+                            "role": "tool",
+                            "tool_call_id": our_id,
+                            "content": json.dumps({"error": error_result})
+                        })
                         continue
 
-                    # Tool ausführen
-                    tool_result = await self._execute_single_tool(
-                        tool_name, args, prep_res, progress_tracker
-                    )
-
+                    # Execute tool
+                    tool_result = await self._execute_single_tool(tool_name, args, prep_res, progress_tracker)
                     tool_call_count += 1
                     all_tool_results[f"{runs}_{tool_name}"] = tool_result
 
-                    # Tool Response zur Conversation hinzufügen
-                    conversation_history.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps(tool_result, default=str)[
-                                :4000
-                            ],  # Truncate für Context
-                        }
-                    )
+                    # === KRITISCHER FIX: Tool Response SOFORT mit korrekter ID hinzufügen ===
+                    tool_response_content = {
+                        "tool_name": tool_name,
+                        "success": tool_result.get("success", False),
+                        "result": tool_result.get("result") if tool_result.get("success") else None,
+                        "error": tool_result.get("error") if not tool_result.get("success") else None
+                    }
 
-                    # Variables aktualisieren
+                    raw_conversation.append({
+                        "role": "tool",
+                        "tool_call_id": our_id,  # UNSERE ID, nicht die von LiteLLM
+                        "content": json.dumps(tool_response_content, default=str, ensure_ascii=False)[:4000]
+                    })
+
+                    # Update variables
                     if tool_result.get("success") and variable_manager:
-                        variable_manager.set(
-                            f"results.{tool_name}.data", tool_result.get("result")
-                        )
+                        variable_manager.set(f"results.{tool_name}.data", tool_result.get("result"))
 
-                # Check ob direct_response aufgerufen wurde
                 if final_response:
                     break
 
             except Exception as e:
                 import traceback
-
                 traceback.print_exc()
                 eprint(f"LLM Tool execution failed: {e}")
                 final_response = f"Error during execution: {str(e)}"
@@ -1127,52 +1161,45 @@ class LLMToolNode(AsyncNode):
 
         return {
             "success": True,
-            "final_response": final_response
-            or "Task completed without specific result.",
+            "final_response": final_response or "Task completed without specific result.",
             "tool_calls_made": tool_call_count,
-            "conversation_history": conversation_history,
+            "conversation_history": raw_conversation,
             "model_used": model_to_use,
             "tool_results": all_tool_results,
             "execution_mode": "native_function_calling",
         }
 
+    # FIX 2: _exec_with_manual_parsing - Gleicher Ansatz ohne sanitize
     async def _exec_with_manual_parsing(
         self, prep_res: dict, model_to_use: str
     ) -> dict:
-        """Fallback Execution mit manuellem Parsing (für Models ohne Function Calling)."""
+        """Fallback mit manuellem Parsing - FIXED ohne sanitize"""
         progress_tracker = prep_res.get("progress_tracker")
         agent_instance = prep_res.get("agent_instance")
         variable_manager = prep_res.get("variable_manager")
 
-        conversation_history = []
+        raw_conversation = []
         tool_call_count = 0
         final_response = None
         all_tool_results = {}
+        seen_results_hashes = set()
 
-        # System Message mit manuellen Tool-Instruktionen
         system_message = self._build_tool_aware_system_message(prep_res)
-
-        # Initial User Prompt
         initial_prompt = await self._build_context_aware_prompt(prep_res)
-        conversation_history.append(
-            {
-                "role": "user",
-                "content": variable_manager.format_text(initial_prompt)
-                if variable_manager
-                else initial_prompt,
-            }
-        )
+        raw_conversation.append({
+            "role": "user",
+            "content": variable_manager.format_text(initial_prompt) if variable_manager else initial_prompt,
+        })
 
         runs = 0
-        while tool_call_count < self.max_tool_calls:
+        max_runs = self.max_tool_calls + 3
+
+        while tool_call_count < self.max_tool_calls and runs < max_runs:
             runs += 1
 
-            messages = [
-                {"role": "system", "content": system_message}
-            ] + conversation_history
+            messages = [{"role": "system", "content": system_message}] + raw_conversation
 
             try:
-                # Normaler LLM Call ohne Tools
                 llm_response = await agent_instance.a_run_llm_completion(
                     model=model_to_use,
                     messages=messages,
@@ -1180,23 +1207,17 @@ class LLMToolNode(AsyncNode):
                     stream=True,
                     node_name="LLMToolNode",
                     task_id=f"llm_phase_{runs}",
+                    with_context=False,
                 )
 
                 if not llm_response and not final_response:
                     final_response = "Error processing request."
                     break
 
-                # Manuelles Tool Call Parsing
                 tool_calls = self._extract_tool_calls(llm_response)
 
-                llm_response = (
-                    variable_manager.format_text(llm_response)
-                    if variable_manager
-                    else llm_response
-                )
-                conversation_history.append(
-                    {"role": "assistant", "content": llm_response}
-                )
+                llm_response = variable_manager.format_text(llm_response) if variable_manager else llm_response
+                raw_conversation.append({"role": "assistant", "content": llm_response})
 
                 if not tool_calls:
                     final_response = llm_response
@@ -1204,42 +1225,48 @@ class LLMToolNode(AsyncNode):
 
                 # Check für direct_response
                 direct_response_call = next(
-                    (
-                        call
-                        for call in tool_calls
-                        if call.get("tool_name") == "direct_response"
-                    ),
+                    (call for call in tool_calls if call.get("tool_name") == "direct_response"),
                     None,
                 )
                 if direct_response_call:
-                    final_response = direct_response_call.get("arguments", {}).get(
-                        "final_answer", "Task completed."
-                    )
+                    final_response = direct_response_call.get("arguments", {}).get("final_answer", "Task completed.")
                     tool_call_count += 1
                     break
 
-                # Tool Calls ausführen
+                # Execute tool calls
                 tool_results = await self._execute_tool_calls(tool_calls, prep_res)
                 tool_call_count += len(tool_calls)
 
-                # Results formatieren
+                # Loop-Detection
                 tool_results_text = self._format_tool_results(tool_results)
+                result_hash = hash(tool_results_text[:500])
+
+                if result_hash in seen_results_hashes:
+                    print(f"⚠️ [LOOP DETECTION] Same tool result seen twice, breaking loop")
+                    final_response = tool_results_text
+                    break
+                seen_results_hashes.add(result_hash)
+
                 all_tool_results[str(runs)] = tool_results_text
                 final_response = tool_results_text
 
-                # Next Prompt
-                next_prompt = f"""Tool results:
-{tool_results_text}
+                # === FIX: Tool-Ergebnisse direkt als User-Message einfügen ===
+                # Kein Tool-Response-Format nötig bei manuellem Parsing
+                next_prompt = f"""Tool execution completed successfully.
 
-Continue with the next step or call direct_response to finish."""
-                conversation_history.append({"role": "user", "content": next_prompt})
+    ## Results:
+    {tool_results_text}
 
-                # Variables aktualisieren
+    ## Next Step:
+    - If you have enough information, call `direct_response` with your final answer
+    - If you need more information, call another tool
+    - Do NOT repeat the same tool call"""
+
+                raw_conversation.append({"role": "user", "content": next_prompt})
                 self._update_variables_with_results(tool_results, variable_manager)
 
             except Exception as e:
                 import traceback
-
                 traceback.print_exc()
                 eprint(f"LLM Tool execution failed: {e}")
                 final_response = f"Error: {str(e)}"
@@ -1249,40 +1276,42 @@ Continue with the next step or call direct_response to finish."""
             "success": True,
             "final_response": final_response or "Task completed.",
             "tool_calls_made": tool_call_count,
-            "conversation_history": conversation_history,
+            "conversation_history": raw_conversation,
             "model_used": model_to_use,
             "tool_results": all_tool_results,
             "execution_mode": "manual_parsing",
         }
 
+    # FIX 6: _execute_single_tool - Gibt Tool-Name in Result zurück für Matching
     async def _execute_single_tool(
         self, tool_name: str, arguments: dict, prep_res: dict, progress_tracker
     ) -> dict:
-        """Führt einen einzelnen Tool Call aus."""
+        """Führt einen einzelnen Tool Call aus - FIXED mit tool_name im Result"""
         agent_instance = prep_res.get("agent_instance")
         variable_manager = prep_res.get("variable_manager")
 
         tool_start = time.perf_counter()
 
         if progress_tracker:
-            await progress_tracker.emit_event(
-                ProgressEvent(
-                    event_type="tool_call",
-                    timestamp=time.time(),
-                    status=NodeStatus.RUNNING,
-                    node_name="LLMToolNode",
-                    tool_name=tool_name,
-                    tool_args=arguments,
-                    session_id=prep_res.get("session_id"),
-                )
-            )
+            await progress_tracker.emit_event(ProgressEvent(
+                event_type="tool_call",
+                timestamp=time.time(),
+                status=NodeStatus.RUNNING,
+                node_name="LLMToolNode",
+                tool_name=tool_name,
+                tool_args=arguments,
+                session_id=prep_res.get("session_id"),
+            ))
 
         try:
-            # Variable Resolution
+            # Variable Resolution mit Fallback
             resolved_args = {}
             for key, value in arguments.items():
                 if isinstance(value, str) and variable_manager:
-                    resolved_args[key] = variable_manager.format_text(value)
+                    try:
+                        resolved_args[key] = variable_manager.format_text(value)
+                    except Exception:
+                        resolved_args[key] = value
                 else:
                     resolved_args[key] = value
 
@@ -1290,23 +1319,24 @@ Continue with the next step or call direct_response to finish."""
             result = await agent_instance.arun_function(tool_name, **resolved_args)
             tool_duration = time.perf_counter() - tool_start
 
+            if result is None:
+                result = "Tool executed successfully but returned no data."
+
             if progress_tracker:
-                await progress_tracker.emit_event(
-                    ProgressEvent(
-                        event_type="tool_call",
-                        timestamp=time.time(),
-                        node_name="LLMToolNode",
-                        status=NodeStatus.COMPLETED,
-                        tool_name=tool_name,
-                        tool_result=result,
-                        duration=tool_duration,
-                        success=True,
-                        session_id=prep_res.get("session_id"),
-                    )
-                )
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="tool_call",
+                    timestamp=time.time(),
+                    node_name="LLMToolNode",
+                    status=NodeStatus.COMPLETED,
+                    tool_name=tool_name,
+                    tool_result=str(result)[:500],
+                    duration=tool_duration,
+                    success=True,
+                    session_id=prep_res.get("session_id"),
+                ))
 
             return {
-                "tool_name": tool_name,
+                "tool_name": tool_name,  # WICHTIG: Für Matching
                 "arguments": resolved_args,
                 "success": True,
                 "result": result,
@@ -1314,27 +1344,26 @@ Continue with the next step or call direct_response to finish."""
 
         except Exception as e:
             tool_duration = time.perf_counter() - tool_start
+            error_msg = str(e)
 
             if progress_tracker:
-                await progress_tracker.emit_event(
-                    ProgressEvent(
-                        event_type="tool_call",
-                        timestamp=time.time(),
-                        node_name="LLMToolNode",
-                        status=NodeStatus.FAILED,
-                        tool_name=tool_name,
-                        tool_error=str(e),
-                        duration=tool_duration,
-                        success=False,
-                        session_id=prep_res.get("session_id"),
-                    )
-                )
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="tool_call",
+                    timestamp=time.time(),
+                    node_name="LLMToolNode",
+                    status=NodeStatus.FAILED,
+                    tool_name=tool_name,
+                    tool_error=error_msg,
+                    duration=tool_duration,
+                    success=False,
+                    session_id=prep_res.get("session_id"),
+                ))
 
             return {
-                "tool_name": tool_name,
+                "tool_name": tool_name,  # WICHTIG: Für Matching
                 "arguments": arguments,
                 "success": False,
-                "error": str(e),
+                "error": error_msg,
             }
 
     def _build_tool_aware_system_message_native(self, prep_res: dict) -> str:
@@ -1555,6 +1584,9 @@ Continue with the next step or call direct_response to finish."""
                 # Execute via agent
                 result = await agent_instance.arun_function(tool_name, **resolved_args)
                 tool_duration = time.perf_counter() - tool_start
+
+                if not result:
+                    result = "Tool returned empty response."
                 variable_manager.set(f"results.{tool_name}.data", result)
                 results.append({
                     "tool_name": tool_name,
@@ -1932,20 +1964,25 @@ META_TOOLS_SCHEMA = get_meta_tools_schema()
 # SYSTEM PROMPT - Klar und direkt
 # ============================================================================
 
-SYSTEM_PROMPT =  """You are an intellectually honest and precise assistant. Your primary loyalty is to the TRUTH.
+SYSTEM_PROMPT = """You are the STRATEGIC REASONING CORE of an autonomous agent.
+Your job is NOT to guess, but to ORCHESTRATE the solution.
 
-## Operational Modes:
-1. DIRECT ANSWER: If you can solve the task purely with logic or your internal knowledge (e.g., riddles, math, general questions), provide the final answer immediately using `finish`.
-2. TOOL USAGE: Only use `run_tools` if the task REQUIRES external data (web search, file access, specific calculations your internal logic cannot handle).
-3. ERROR RECOVERY: If a tool fails, do not give up. Analyze the error and try to provide the best possible answer from your internal knowledge.
+## AVAILABLE TOOLS & CAPABILITIES:
+{tool_descriptions}
 
-## Core Rules:
-- NO ASSUMPTIONS: If information is truly missing, state it. Do not assume '0'.
-- CLEAN OUTPUT: Your final answer via `finish` must be a natural, helpful response. Remove all technical artifacts like YAML or thought-processes.
+## CRITICAL RULES:
+1. **NO HALLUCINATIONS**: If the user asks for current data (weather, prices, news, docs) or specific calculations, you MUST use `run_tools`. Do NOT answer from your internal training data.
+2. **DELEGATE**: If a tool in the list above matches the user's intent, use `run_tools` immediately. Do not try to simulate the tool.
+3. **VERIFY**: Check the `PREVIOUS TOOL RESULT` in context. If it contains the answer, use `finish`. If it's an error, try a different approach.
+4. **ITERATE**: If the task is complex, break it down. Use `reason` to plan, then `run_tools` for the first step.
+
+## STATE:
+Current Loop: {loop_count}/{max_loops}
 
 {context}
 
-Now, help with: {query}"""
+User Query: {query}
+"""
 
 
 # ============================================================================
@@ -1984,42 +2021,49 @@ class LLMReasonerNode(AsyncNode):
         self.variable_manager = None
 
     async def prep_async(self, shared: dict) -> dict:
-        """Minimal preparation - extract what we need"""
+        """Enhanced preparation with FULL tool descriptions for better decision making"""
         self.state = ReasoningState()
         self.agent_instance = shared.get("agent_instance")
         self.variable_manager = shared.get("variable_manager")
 
-        # Build minimal context
+        # --- FIX 1: Tool Descriptions statt nur Namen ---
+        # Damit der Reasoner weiß, WAS ein Tool tut, nicht nur wie es heißt.
+        tool_registry = shared.get("tool_registry", {})
+        available_tool_names = shared.get("available_tools", [])
+
+        tool_context_lines = []
+        for name in available_tool_names:
+            if name in tool_registry:
+                desc = tool_registry[name].get("description", "No description")
+                # Kürzen um Tokens zu sparen, aber semantik erhalten
+                tool_context_lines.append(f"- {name}: {desc[:100]}")
+
+        tools_str = "\n".join(tool_context_lines)
+        if not tools_str:
+            tools_str = "No external tools available."
+        # -----------------------------------------------
+
+        # Context building (Variable Manager Integration)
         context_parts = []
 
-        # Available tools
-        available_tools = shared.get("available_tools", [])
-        if available_tools:
-            context_parts.append(f"Available tools: {', '.join(available_tools[:20])}")
-
-        # Previous results if any
+        # Previous delegation results (Critical for Loop coherence)
         if self.variable_manager:
-            latest = self.variable_manager.get("delegation.latest")
-            if latest:
-                context_parts.append(
-                    f"Previous result available: {latest.get('task_description', 'unknown')[:100]}"
-                )
-
-        if "query" in shared:
-            q = shared["current_query"].lower()
-            # Erkennt suggestive Fragen, die auf fehlende Infos abzielen
-            if any(word in q for word in ["wie viele", "wann", "wer", "how many", "when", "who"]) and len(shared.get("available_tools", [])) > 0:
-                context_parts.append("\nNote: Validate if the subjects in the question actually exist in the context before calculating.")
+            # Hole explizit die Ergebnisse der letzten Loop
+            latest_delegation = self.variable_manager.get("delegation.latest")
+            if latest_delegation:
+                res_str = str(latest_delegation.get('final_response', ''))[:500]
+                context_parts.append(f"PREVIOUS TOOL RESULT: {res_str}")
 
         return {
             "query": shared.get("current_query", ""),
-            "context": "\n".join(context_parts) if context_parts else "No prior context",
-            "available_tools": available_tools,
-            "model": shared.get("complex_llm_model", "openrouter/openai/gpt-4o"),
+            "context": "\n".join(context_parts),
+            "tool_descriptions": tools_str,  # Neuer Key
+            "available_tools": available_tool_names,
+            "complex_llm_model": shared.get("complex_llm_model"),
             "agent_instance": self.agent_instance,
             "variable_manager": self.variable_manager,
             "progress_tracker": shared.get("progress_tracker"),
-            "session_id": shared.get("session_id", "default"),
+            "session_id": shared.get("session_id"),
             "tool_capabilities": shared.get("tool_capabilities", {}),
             "fast_llm_model": shared.get("fast_llm_model"),
         }
@@ -2027,7 +2071,7 @@ class LLMReasonerNode(AsyncNode):
     async def exec_async(self, prep_res: dict) -> dict:
         """Main reasoning loop - simple and direct"""
         query = prep_res["query"]
-        model = prep_res["model"]
+        model = prep_res["complex_llm_model"]
         agent = prep_res["agent_instance"]
         progress_tracker = prep_res.get("progress_tracker")
 
@@ -2039,7 +2083,11 @@ class LLMReasonerNode(AsyncNode):
 
         # Build initial messages
         system_msg = SYSTEM_PROMPT.format(
-            max_loops=self.max_loops, context=prep_res["context"], query=query
+            max_loops=self.max_loops,
+            loop_count=self.state.loop_count + 1,
+            context=prep_res["context"],
+            tool_descriptions=prep_res["tool_descriptions"],  # Hier nutzen
+            query=query
         )
 
         messages = [
@@ -2122,14 +2170,12 @@ class LLMReasonerNode(AsyncNode):
     async def _execute_with_function_calling(
         self, agent: 'FlowAgent', model: str, messages: list, prep_res: dict
     ) -> dict:
-        """Execute reasoning step with native function calling"""
+        """Execute reasoning step with native function calling - FIXED"""
 
-        # Get dynamic schema with available tools hint
         available_tools = prep_res.get("available_tools", [])
         meta_tools = get_meta_tools_schema(available_tools)
 
         try:
-            # Call LLM with tools - disable streaming for tool calls
             response = await agent.a_run_llm_completion(
                 model=model,
                 messages=messages,
@@ -2139,27 +2185,25 @@ class LLMReasonerNode(AsyncNode):
                 get_response_message=True,
                 node_name="LLMReasonerNode",
                 task_id=f"reasoning_loop_{self.state.loop_count}",
-                stream=False,  # Important: disable streaming for function calls
+                stream=False,
             )
         except Exception as e:
             error_msg = str(e)
-            # Handle malformed function call error
             if "Malformed function call" in error_msg or "MidStreamFallback" in error_msg:
                 wprint(f"Malformed function call detected, retrying with guidance...")
                 return {
                     "message": {"role": "assistant", "content": ""},
                     "tool_response": {
                         "role": "user",
-                        "content": "Error: Your function call was malformed. Call functions like this:\n"
-                        '- finish(final_answer="your answer here")\n'
-                        '- run_tools(task_description="what to do", tool_names=["tool1"])\n'
-                        '- reason(thought="your thinking")\n'
-                        "Try again with correct syntax.",
+                        "content": "Error: Your function call was malformed. Use these formats:\n"
+                                   '- finish(final_answer="your answer here")\n'
+                                   '- run_tools(task_description="what to do", tool_names=["tool1"])\n'
+                                   '- reason(thought="your thinking")\n'
+                                   "Try again with correct syntax.",
                     },
                 }
             raise
 
-        # Extract tool calls
         tool_calls = getattr(response, "tool_calls", None)
         content = getattr(response, "content", "") or ""
 
@@ -2168,13 +2212,9 @@ class LLMReasonerNode(AsyncNode):
         )
 
         if not tool_calls:
-            # No tool calls - LLM responded with text
-            # Check if this is a direct answer
             if content and len(content) > 50:
-                # Treat as completion attempt
                 return {"completed": True, "answer": content}
             else:
-                # Nudge toward using tools
                 return {
                     "message": {"role": "assistant", "content": content},
                     "tool_response": {
@@ -2183,83 +2223,112 @@ class LLMReasonerNode(AsyncNode):
                     },
                 }
 
-        # Process tool calls
-        tool_results = []
+        # FIX: Korrekte Tool-Call-Verarbeitung mit ID-Tracking
+        processed_tool_calls = []
+        for tc in tool_calls:
+            tc_id = tc.id if hasattr(tc, 'id') else f"call_{uuid.uuid4().hex[:8]}"
+            tc_name = tc.function.name if hasattr(tc.function, 'name') else tc.function.get('name', '')
+            tc_args = tc.function.arguments if hasattr(tc.function, 'arguments') else tc.function.get('arguments', '{}')
+
+            processed_tool_calls.append({
+                "id": tc_id,
+                "name": tc_name,
+                "arguments": tc_args
+            })
+
+        # Build assistant message with tool_calls
         assistant_msg = {
             "role": "assistant",
             "content": content,
             "tool_calls": [
                 {
-                    "id": tc.id,
+                    "id": tc["id"],
                     "type": "function",
                     "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
+                        "name": tc["name"],
+                        "arguments": tc["arguments"],
                     },
                 }
-                for tc in tool_calls
+                for tc in processed_tool_calls
             ],
         }
 
-        for tool_call in tool_calls:
-            tool_name = tool_call.function.name
+        # Execute tools and collect responses
+        tool_responses = []
+        completion_result = None
 
-            # Parse arguments with error handling
+        for tc in processed_tool_calls:
+            tool_name = tc["name"]
+            tc_id = tc["id"]
+
+            # Parse arguments
             try:
-                raw_args = tool_call.function.arguments
+                raw_args = tc["arguments"]
                 if not raw_args or raw_args.strip() == "":
                     args = {}
                 else:
                     args = json.loads(raw_args)
             except json.JSONDecodeError as e:
-                wprint(
-                    f"Failed to parse tool args: {tool_call.function.arguments}, error: {e}"
-                )
+                wprint(f"Failed to parse tool args: {tc['arguments']}, error: {e}")
                 args = {}
 
             # Execute the meta-tool
             result = await self._execute_meta_tool(tool_name, args, prep_res)
 
-            tool_results.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": json.dumps(result, ensure_ascii=False, default=str),
-                }
-            )
+            # FIX: Korrekte Tool-Response mit matching ID
+            tool_responses.append({
+                "role": "tool",
+                "tool_call_id": tc_id,
+                "content": json.dumps(result, ensure_ascii=False, default=str)[:4000],
+            })
 
             # Check for completion
             if result.get("completed"):
-                return {
+                completion_result = {
                     "completed": True,
                     "answer": result.get("answer", "Task completed."),
                 }
+                break
 
-        # Return for next iteration
-        return {
-            "message": assistant_msg,
-            "tool_response": tool_results[0]
-            if len(tool_results) == 1
-            else {
-                "role": "user",
-                "content": f"Tool results:\n"
-                + "\n".join(f"- {tr['content']}" for tr in tool_results),
-            },
-        }
+        if completion_result:
+            return completion_result
 
+        # FIX: Return messages in correct format for next iteration
+        # Für eine einzelne Tool-Response, füge sie direkt hinzu
+        # Für mehrere, kombiniere sie in einer User-Message
+        if len(tool_responses) == 1:
+            return {
+                "message": assistant_msg,
+                "tool_response": tool_responses[0],
+            }
+        else:
+            # Multiple tool responses - combine into conversation
+            return {
+                "message": assistant_msg,
+                "tool_response": {
+                    "role": "user",
+                    "content": "Tool execution results:\n" + "\n".join(
+                        f"- {json.loads(tr['content']).get('status', 'unknown')}: "
+                        f"{json.loads(tr['content']).get('response', json.loads(tr['content']).get('message', 'no details'))[:500]}"
+                        for tr in tool_responses
+                    ),
+                },
+            }
+
+    # FIX 1: LLMReasonerNode._execute_meta_tool - Unbekannte Tools automatisch delegieren
     async def _execute_meta_tool(
         self, tool_name: str, args: dict, prep_res: dict
     ) -> dict:
-        """Execute a meta-tool and return result"""
+        """Execute a meta-tool and return result - FIXED to auto-delegate unknown tools"""
 
-        # Normalize tool name (remove any prefixes the LLM might add)
-        tool_name = tool_name.lower().strip()
-        if tool_name.startswith("tool_"):
-            tool_name = tool_name[5:]
-        if tool_name.startswith("function_"):
-            tool_name = tool_name[9:]
+        # Normalize tool name
+        tool_name_normalized = tool_name.lower().strip()
+        if tool_name_normalized.startswith("tool_"):
+            tool_name_normalized = tool_name_normalized[5:]
+        if tool_name_normalized.startswith("function_"):
+            tool_name_normalized = tool_name_normalized[9:]
 
-        # Map old names to new for compatibility
+        # Map old names to new
         name_mapping = {
             "think": "reason",
             "execute_tools": "run_tools",
@@ -2267,12 +2336,12 @@ class LLMReasonerNode(AsyncNode):
             "store_result": "save",
             "get_result": "load",
         }
-        tool_name = name_mapping.get(tool_name, tool_name)
+        tool_name_normalized = name_mapping.get(tool_name_normalized, tool_name_normalized)
 
-        rprint(f"Executing meta-tool: {tool_name} with args: {args}")
+        rprint(f"Executing meta-tool: {tool_name_normalized} with args: {args}")
 
-        if tool_name == "reason":
-            # Internal reasoning - just acknowledge
+        # === KNOWN META-TOOLS ===
+        if tool_name_normalized == "reason":
             thought = args.get("thought", "")
             if not thought:
                 return {"status": "error", "message": "No thought provided"}
@@ -2282,8 +2351,7 @@ class LLMReasonerNode(AsyncNode):
                 "message": "Reasoning noted. Now take action: run_tools or finish.",
             }
 
-        elif tool_name == "run_tools":
-            # Delegate to LLMToolNode
+        elif tool_name_normalized == "run_tools":
             task = args.get("task_description", args.get("task", ""))
             tools = args.get("tool_names", args.get("tools", []))
             if not task:
@@ -2292,15 +2360,13 @@ class LLMReasonerNode(AsyncNode):
                 {"task": task, "tools": tools}, prep_res
             )
 
-        elif tool_name == "finish":
-            # Task completion
+        elif tool_name_normalized == "finish":
             answer = args.get("final_answer", args.get("answer", ""))
             if not answer:
                 return {"status": "error", "message": "No final_answer provided"}
             return {"completed": True, "answer": answer}
 
-        elif tool_name == "save":
-            # Store in variables
+        elif tool_name_normalized == "save":
             key = args.get("name", args.get("key", ""))
             value = args.get("data", args.get("value", ""))
             if not key:
@@ -2310,8 +2376,7 @@ class LLMReasonerNode(AsyncNode):
                 self.variable_manager.set(f"reasoning.{key}", value)
             return {"status": "saved", "name": key}
 
-        elif tool_name == "load":
-            # Retrieve from variables
+        elif tool_name_normalized == "load":
             key = args.get("name", args.get("key", ""))
             if not key:
                 return {"status": "error", "message": "No name/key provided"}
@@ -2323,8 +2388,32 @@ class LLMReasonerNode(AsyncNode):
             return {"status": "ok", "name": key, "value": value}
 
         else:
-            # Unknown tool - try to guess intent
-            wprint(f"Unknown meta-tool: {tool_name}, args: {args}")
+            # === FIX: AUTO-DELEGATE UNKNOWN TOOLS ===
+            # Check if this is a registered tool that should be delegated
+            available_tools = prep_res.get("available_tools", [])
+
+            # Check if the tool_name matches any available tool
+            matching_tool = None
+            for avail_tool in available_tools:
+                if tool_name_normalized == avail_tool.lower() or tool_name == avail_tool:
+                    matching_tool = avail_tool
+                    break
+
+            if matching_tool:
+                rprint(f"Auto-delegating unknown meta-tool '{tool_name}' as regular tool via run_tools")
+
+                # Build task description from args
+                task_parts = [f"Execute the '{matching_tool}' tool"]
+                if args:
+                    args_str = ", ".join(f"{k}={repr(v)}" for k, v in args.items())
+                    task_parts.append(f"with arguments: {args_str}")
+
+                task_description = " ".join(task_parts)
+
+                return await self._delegate_to_tool_node(
+                    {"task": task_description, "tools": [matching_tool], "direct_args": args},
+                    prep_res
+                )
 
             # Check if it looks like a finish attempt
             if any(k in args for k in ["answer", "response", "result", "final_answer"]):
@@ -2339,13 +2428,16 @@ class LLMReasonerNode(AsyncNode):
 
             return {
                 "status": "error",
-                "message": f"Unknown tool '{tool_name}'. Use: reason, run_tools, finish, save, or load",
+                "message": f"Unknown tool '{tool_name}'. Available meta-tools: reason, run_tools, finish, save, load. "
+                           f"Available external tools (use via run_tools): {', '.join(available_tools[:10])}",
             }
 
+    # FIX 2: _delegate_to_tool_node - Bessere Argument-Weitergabe und Fehlerbehandlung
     async def _delegate_to_tool_node(self, args: dict, prep_res: dict) -> dict:
-        """Delegate task execution to LLMToolNode"""
+        """Delegate task execution to LLMToolNode - FIXED with direct args support"""
         task = args.get("task", args.get("task_description", ""))
         tools = args.get("tools", args.get("tool_names", []))
+        direct_args = args.get("direct_args", None)  # NEW: Direct tool arguments
 
         # Ensure tools is a list
         if isinstance(tools, str):
@@ -2360,42 +2452,59 @@ class LLMReasonerNode(AsyncNode):
         if LLMToolNode is None:
             return {"status": "error", "message": "LLMToolNode not available"}
 
-        # If no specific tools requested, use all available
         available_tools = prep_res.get("available_tools", [])
         if not tools:
             tools = available_tools
 
-        rprint(f"Delegating to LLMToolNode: task='{task[:80]}...', tools={tools[:5]}")
+        # Validate requested tools exist
+        valid_tools = [t for t in tools if t in available_tools]
+        if not valid_tools and tools:
+            return {
+                "status": "error",
+                "message": f"Requested tools not available: {tools}. Available: {available_tools[:10]}"
+            }
+
+        rprint(f"Delegating to LLMToolNode: task='{task[:80]}...', tools={valid_tools[:5]}")
+
+        # Build prompt - include direct args if provided
+        tool_node_prompt = f"PRIMARY OBJECTIVE: {task}"
+        if direct_args:
+            tool_node_prompt += f"\n\nPRECONFIGURED ARGUMENTS: {json.dumps(direct_args, default=str)}"
+        tool_node_prompt += "\n\nExecute the tool and report the result."
 
         # Prepare shared state for tool node
         tool_shared = {
-            "current_query": task,
+            "current_query": tool_node_prompt,
             "current_task_description": task,
             "agent_instance": prep_res.get("agent_instance"),
             "variable_manager": prep_res.get("variable_manager"),
-            "available_tools": tools if tools else available_tools,
+            "available_tools": valid_tools if valid_tools else available_tools,
             "tool_capabilities": prep_res.get("tool_capabilities", {}),
             "fast_llm_model": prep_res.get("fast_llm_model"),
-            "complex_llm_model": prep_res.get("model"),
+            "complex_llm_model": prep_res.get("complex_llm_model"),
             "progress_tracker": prep_res.get("progress_tracker"),
             "session_id": prep_res.get("session_id"),
             "formatted_context": {
                 "recent_interaction": f"Reasoning delegation: {task}",
                 "task_context": f"Loop {self.state.loop_count}",
             },
+            # NEW: Pass direct args for single-tool optimization
+            "direct_tool_args": direct_args if len(valid_tools) == 1 else None,
+            "direct_tool_name": valid_tools[0] if len(valid_tools) == 1 and direct_args else None,
         }
 
         try:
-            # Execute tool node
-            tool_node = LLMToolNode()
+            tool_node = prep_res.get("agent_instance").task_flow.llm_tool_node
+            if not tool_node:
+                tool_node = LLMToolNode()
+
             await tool_node.run_async(tool_shared)
 
-            # Extract results
             response = tool_shared.get("current_response", "No response")
             tool_calls_made = tool_shared.get("tool_calls_made", 0)
             results = tool_shared.get("results", {})
 
-            # Store in our state
+            # Store in state
             delegation_key = f"delegation_{self.state.loop_count}"
             self.state.results[delegation_key] = {
                 "task": task,
@@ -2403,7 +2512,7 @@ class LLMReasonerNode(AsyncNode):
                 "tool_calls": tool_calls_made,
             }
 
-            # Store in variables for persistence
+            # Store in variables
             if self.variable_manager:
                 self.variable_manager.set(
                     f"delegation.loop_{self.state.loop_count}",
@@ -2423,7 +2532,6 @@ class LLMReasonerNode(AsyncNode):
                     },
                 )
 
-            # Truncate response for context but keep it useful
             truncated_response = response[:3000] if len(response) > 3000 else response
 
             return {
@@ -2437,8 +2545,9 @@ class LLMReasonerNode(AsyncNode):
         except Exception as e:
             error_msg = str(e)
             eprint(f"Tool delegation failed: {error_msg}")
+            import traceback
+            print(traceback.format_exc())
 
-            # Store error for debugging
             if self.variable_manager:
                 self.variable_manager.set(
                     f"delegation.error.loop_{self.state.loop_count}",
@@ -2451,7 +2560,7 @@ class LLMReasonerNode(AsyncNode):
 
             return {
                 "status": "error",
-                "message": f"Tools unavailable or failed: {str(e)}. Use your internal knowledge to answer or explain why it's not possible.",
+                "message": f"Tool execution failed: {str(e)}. Try a different approach.",
                 "task": task,
             }
 
@@ -3147,7 +3256,7 @@ class VariableManager:
             return self._llm_ctx_cache['content']
 
         # Minimaler Context
-        lines = ["## Variables (access: {{ scope.key }})"]
+        lines = ["## Variables (access: {scope}.{key})"]
 
         priority_scopes = ['results', 'delegation', 'files', 'user', 'reasoning']
 
@@ -4478,74 +4587,111 @@ class FlowAgent:
     def set_progress_callback(self, progress_callback: callable = None):
         self.progress_callback = progress_callback
 
+    # FIX 3: FlowAgent.sanitize_message_history - Intelligentes Matching basierend auf Tool-Namen
     def sanitize_message_history(self, messages: list[dict]) -> list[dict]:
         """
-        Sanitize message history to ensure tool call/response pairs are complete.
-
-        This prevents LiteLLM errors like:
-        "Missing corresponding tool call for tool response message"
-
-        Rules:
-        1. Every 'role: tool' message MUST have a preceding 'role: assistant' message
-           with tool_calls containing the matching tool_call_id
-        2. If orphaned tool response found → remove it
-        3. If assistant has tool_calls but no tool responses follow → remove the tool_calls
-
-        Returns:
-            Sanitized message list safe for all LLM providers
+        Sanitize message history - FIXED with intelligent matching by tool name/content
         """
         if not messages:
             return messages
 
         sanitized = []
-        pending_tool_calls = {}  # tool_call_id -> assistant_message_index
+        pending_tool_calls = {}  # tool_call_id -> {index, name, arguments}
 
         for msg in messages:
             role = msg.get('role', '')
 
             if role == 'assistant':
-                # Track tool_calls if present
                 tool_calls = msg.get('tool_calls', [])
                 if tool_calls:
                     for tc in tool_calls:
-                        tc_id = tc.get('id') or tc.get('tool_call_id')
+                        tc_id = None
+                        tc_name = None
+                        tc_args = None
+
+                        if hasattr(tc, 'id'):
+                            tc_id = tc.id
+                            tc_name = tc.function.name if hasattr(tc, 'function') else None
+                            tc_args = tc.function.arguments if hasattr(tc, 'function') else None
+                        elif isinstance(tc, dict):
+                            tc_id = tc.get('id') or tc.get('tool_call_id')
+                            func = tc.get('function', {})
+                            tc_name = func.get('name')
+                            tc_args = func.get('arguments')
+
                         if tc_id:
-                            pending_tool_calls[tc_id] = len(sanitized)
+                            pending_tool_calls[tc_id] = {
+                                'index': len(sanitized),
+                                'name': tc_name,
+                                'arguments': tc_args
+                            }
                 sanitized.append(msg)
 
             elif role == 'tool':
-                # Check if we have the corresponding tool_call
                 tool_call_id = msg.get('tool_call_id')
+                tool_content = msg.get('content', '')
+
+                # Versuche Tool-Namen aus Content zu extrahieren
+                tool_name_in_response = None
+                try:
+                    content_json = json.loads(tool_content)
+                    tool_name_in_response = content_json.get('tool_name')
+                except:
+                    pass
+
+                matched = False
+
+                # 1. Exakter ID-Match
                 if tool_call_id and tool_call_id in pending_tool_calls:
                     sanitized.append(msg)
                     del pending_tool_calls[tool_call_id]
-                else:
-                    # ORPHANED TOOL RESPONSE - skip it
-                    print(f"⚠️ [SANITIZE] Removing orphaned tool response: {tool_call_id}")
-                    continue
+                    matched = True
+
+                # 2. Match by Tool-Name
+                elif tool_name_in_response and pending_tool_calls:
+                    for tc_id, tc_info in list(pending_tool_calls.items()):
+                        if tc_info['name'] == tool_name_in_response:
+                            msg_copy = msg.copy()
+                            msg_copy['tool_call_id'] = tc_id
+                            sanitized.append(msg_copy)
+                            del pending_tool_calls[tc_id]
+                            matched = True
+                            print(f"✓ [SANITIZE] Matched tool response by name: {tool_name_in_response} -> {tc_id}")
+                            break
+
+                # 3. FIFO Fallback - weise erstem pending zu
+                if not matched and pending_tool_calls:
+                    first_pending_id = next(iter(pending_tool_calls.keys()))
+                    msg_copy = msg.copy()
+                    msg_copy['tool_call_id'] = first_pending_id
+                    sanitized.append(msg_copy)
+                    print(f"⚠️ [SANITIZE] FIFO assigned: {tool_call_id} -> {first_pending_id}")
+                    del pending_tool_calls[first_pending_id]
+                    matched = True
+
+                if not matched:
+                    # Kein pending call - als User-Message mit Ergebnis einfügen
+                    print(f"⚠️ [SANITIZE] Converting orphaned tool response to user message")
+                    sanitized.append({
+                        "role": "user",
+                        "content": f"[Previous tool result]: {tool_content[:1000]}"
+                    })
             else:
                 sanitized.append(msg)
 
-        # Clean up assistant messages with unmatched tool_calls at the end
-        # (tool_calls that never got responses)
+        # Cleanup: Entferne tool_calls ohne Responses am Ende
         if pending_tool_calls:
-            indices_to_clean = set(pending_tool_calls.values())
-            for idx in indices_to_clean:
+            for tc_id, tc_info in pending_tool_calls.items():
+                idx = tc_info['index']
                 if idx < len(sanitized):
                     msg = sanitized[idx]
                     if msg.get('tool_calls'):
-                        # Remove tool_calls from this message or convert to regular assistant
-                        print(f"⚠️ [SANITIZE] Removing unmatched tool_calls from assistant message at index {idx}")
-                        msg_copy = msg.copy()
-                        del msg_copy['tool_calls']
-                        if msg_copy.get('content'):
-                            sanitized[idx] = msg_copy
-                        else:
-                            # Mark for removal if no content
-                            sanitized[idx] = None
-
-            # Remove None entries (empty assistant messages)
-            sanitized = [m for m in sanitized if m is not None]
+                        # Entferne tool_calls aber behalte content
+                        msg_copy = {k: v for k, v in msg.items() if k != 'tool_calls'}
+                        if not msg_copy.get('content'):
+                            msg_copy['content'] = f"(Attempted to call {tc_info['name']} but no response received)"
+                        sanitized[idx] = msg_copy
+                        print(f"⚠️ [SANITIZE] Removed unmatched tool_call: {tc_id}")
 
         return sanitized
 
@@ -4599,7 +4745,7 @@ class FlowAgent:
                 processed_messages.append(msg)
         return processed_messages
 
-    async def a_run_llm_completion(self, node_name="FlowAgentLLMCall",task_id="unknown",model_preference="fast", with_context=True, auto_fallbacks=False, llm_kwargs=None, get_response_message=False,**kwargs) -> str:
+    async def a_run_llm_completion(self, node_name="FlowAgentLLMCall",task_id="unknown",model_preference="fast", with_context=True, auto_fallbacks=False, llm_kwargs=None, get_response_message=False,skip_sanitize=False,**kwargs) -> str:
         """
         Run LLM completion with support for media inputs and custom kwargs
 
@@ -4628,8 +4774,9 @@ class FlowAgent:
         # Parse media from messages if present
         if "messages" in kwargs:
             kwargs["messages"] = self._process_media_in_messages(kwargs["messages"])
-            # Sanitize message history to prevent tool call/response pair corruption
-            kwargs["messages"] = self.sanitize_message_history(kwargs["messages"])
+            if not skip_sanitize:
+                # Sanitize message history to prevent tool call/response pair corruption
+                kwargs["messages"] = self.sanitize_message_history(kwargs["messages"])
 
         llm_start = time.perf_counter()
 
@@ -5014,7 +5161,7 @@ class FlowAgent:
             return result
 
         except Exception as e:
-            eprint(f"Agent execution failed: {e}", exc_info=True)
+            eprint(f"Agent execution failed: {e}")
             error_response = f"I encountered an error: {str(e)}"
             result = error_response
             import traceback

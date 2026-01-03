@@ -431,6 +431,7 @@ class Kernel(IProAKernel):
                 )
 
                 if not response.get("needs_tools"):
+                    print(f"🚀 [KERNEL] Fast Response Mode completed")
                     return
 
 
@@ -480,10 +481,18 @@ class Kernel(IProAKernel):
             self._current_user_id = None
 
     async def _handle_system_event(self, signal: Signal):
-        """Handle SYSTEM_EVENT signal"""
+        """
+        Handle SYSTEM_EVENT signal:
+        1. Speichert Event im Kontext.
+        2. Leitet Signal IMMER an den Agenten weiter (für Awareness/Status-Updates).
+        3. Entscheidet basierend auf Wichtigkeit, ob die Agenten-Reaktion dem User gezeigt wird.
+        """
         self.metrics.system_events_handled += 1
 
-        # Store event in context
+        # User ID bestimmen
+        user_id = signal.metadata.get("user_id", signal.id or "default")
+
+        # 1. Event im Context Store sichern (Basis-Logging)
         self.context_store.store_event(signal.id, {
             "type": signal.type.value,
             "content": signal.content,
@@ -492,8 +501,7 @@ class Kernel(IProAKernel):
             "metadata": signal.metadata
         })
 
-        # Check if proactive action is needed
-        user_id = signal.metadata.get("user_id", signal.id or "default")
+        # 2. Proaktivitäts-Entscheidung treffen
         user_state = await self.state_monitor.get_user_state(user_id)
 
         context = ProactivityContext(
@@ -506,14 +514,76 @@ class Kernel(IProAKernel):
 
         decision = await self.decision_engine.evaluate_proactivity(context)
 
-        if decision == ProactivityDecision.INTERRUPT:
-            await self._proactive_notify(user_id, signal)
-        elif decision == ProactivityDecision.QUEUE:
-            # Store for later retrieval
-            print(f"Queued event {signal.id} for later")
-        elif decision == ProactivityDecision.SILENT:
-            # Process silently - just stored in context
-            print(f"Silently processed event {signal.id}")
+        # 3. Den Agenten mit dem Event füttern (Processing)
+        # Wir bauen einen Prompt, der dem Agenten sagt: "Hier ist ein System-Event, verarbeite es."
+        print(f"🔄 [KERNEL] Processing Event via Agent: {signal.content} (Decision: {decision.name})")
+
+        system_prompt = f"""SYSTEM_EVENT_UPDATE:
+        Type: {signal.type.name}
+        Source: {signal.source}
+        Content: {str(signal.content)}
+
+        Instruction: Process this event to update your internal state or memory.
+        Only generate a response text if necessary based on the content."""
+
+        try:
+            # Wir nutzen den Agenten, um das Event zu verstehen
+            # Wichtig: Wir nutzen hier eine Methode, die den Context aktualisiert
+            agent_response = await self.agent.a_run(
+                query=system_prompt,
+                session_id=user_id,
+                user_id=user_id,
+                remember=True,  # Wichtig: Agent soll sich an das Event erinnern!
+                fast_run=True  # Optional: Sparsamerer Modus für Events
+            )
+
+            # 4. Output Routing basierend auf Entscheidung
+
+            if decision == ProactivityDecision.INTERRUPT:
+                # Sofortige Benachrichtigung an den User mit der Antwort des Agenten
+                await self._proactive_notify(user_id, signal, agent_response)
+
+            elif decision == ProactivityDecision.QUEUE:
+                # Agent hat es verarbeitet, aber wir speichern die Antwort für später
+                # (z.B. in einer "Daily Summary" oder beim nächsten Login)
+                print(f"📥 [KERNEL] Queuing agent response for later: {signal.id}")
+                self.context_store.store_event(f"response_{signal.id}", {
+                    "type": "queued_response",
+                    "content": agent_response,
+                    "original_event_id": signal.id,
+                    "status": "pending"
+                })
+                # Optional: Eine kurze Info in den Task Scheduler werfen
+
+            elif decision == ProactivityDecision.SILENT:
+                # Der Agent hat das Wissen aufgenommen (via remember=True),
+                # aber wir belästigen den User nicht mit der Text-Ausgabe.
+                print(f"🤫 [KERNEL] Event processed silently. Agent awareness updated.")
+                # Wir tun nichts weiter mit agent_response, außer evtl. Logging
+
+        except Exception as e:
+            print(f"❌ Error processing system event via agent: {e}")
+            traceback.print_exc()
+
+    # Hilfsmethode anpassen, um die Agenten-Antwort zu akzeptieren
+    async def _proactive_notify(self, user_id: str, signal: Signal, agent_message: str = None):
+        """
+        Send a proactive notification to the user
+        """
+        self.metrics.proactive_actions += 1
+        self.proactive_tracker.record_action()
+
+        # Wenn der Agent eine sinnvolle Antwort generiert hat, nutzen wir diese.
+        # Sonst Fallback auf den rohen Signal-Inhalt.
+        content = agent_message if agent_message else self._build_notification_content(signal)
+
+        # Send notification
+        await self.output_router.send_notification(
+            user_id=user_id,
+            content=content,
+            priority=signal.priority,
+            metadata=signal.metadata
+        )
 
     async def _handle_tool_result_signal(self, signal: Signal):
         """Handle TOOL_RESULT signal"""

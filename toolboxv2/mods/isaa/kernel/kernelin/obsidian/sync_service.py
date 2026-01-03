@@ -42,6 +42,11 @@ try:
     WATCHDOG_AVAILABLE = True
 except ImportError:
     WATCHDOG_AVAILABLE = False
+    FileSystemEventHandler = object
+    FileModifiedEvent = object
+    FileCreatedEvent = object
+    FileDeletedEvent = object
+    print("⚠️ watchdog not installed. Install with: pip install watchdog")
 
 try:
     import jwt

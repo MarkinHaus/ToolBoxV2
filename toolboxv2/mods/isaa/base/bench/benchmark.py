@@ -2803,6 +2803,19 @@ class MAKERAdapter:
             return r.get('result', str(r)), cost_info
         return await self.bench.run(fn, mode, model_id, seed)
 
+class MAKERAdapterV2:
+    """Adapter for FlowAgent integration with cost tracking"""
+    def __init__(self, agent):
+        self.agent = agent
+        self.bench = Benchmark()
+
+    async def benchmark(self, model_id: str, mode: str = "standard", seed: int = None) -> Report:
+        async def fn(p: str):
+            r = await self.agent.a_accomplish_v2(task=p, min_complexity=3, max_parallel=3)
+            cost_info = r.get('cost_info', {})
+            return r.get('result', str(r)), cost_info
+        return await self.bench.run(fn, mode, model_id, seed)
+
 class RowModelAdapter:
     """Adapter for direct LiteLLM model testing with cost tracking"""
     def __init__(self, agent, model_name: str = None):
