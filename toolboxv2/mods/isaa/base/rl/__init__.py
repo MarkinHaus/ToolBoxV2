@@ -36,7 +36,6 @@ from .data_collection import (
     ReasoningStep,
     TraceCollector,
     CheckpointLoader,
-    hook_into_agent,
 )
 
 from .reward_functions import (
@@ -100,7 +99,6 @@ __all__ = [
     "ReasoningStep",
     "TraceCollector",
     "CheckpointLoader",
-    "hook_into_agent",
     # Rewards
     "BaseReward",
     "RewardResult",

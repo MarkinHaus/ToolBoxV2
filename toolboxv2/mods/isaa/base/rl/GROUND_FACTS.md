@@ -226,6 +226,67 @@ OllamaHostingProfile(
 
 ## Usage Examples
 
+### Real-World Example: Extract Training Data from Saved Checkpoints
+
+The most powerful feature is automatic extraction of training data from how users
+actually interact with the agent. FlowAgent saves checkpoints with conversation
+history, and CheckpointLoader extracts these as training examples.
+
+```python
+from toolboxv2.mods.isaa.base.rl import CheckpointLoader
+
+# Discover all agents with saved checkpoints
+loader = CheckpointLoader()  # No agent_name = discover all
+agents = loader.discover_all_agents()
+print(f"Found agents: {agents}")
+# Output: ['DiscordKernelAssistant', 'TelegramKernelAssistant', 'Coder', 'self']
+
+# Load traces from a specific agent
+loader = CheckpointLoader(agent_name="DiscordKernelAssistant")
+traces = loader.load_all_traces()
+print(f"Extracted {len(traces)} conversation traces")
+
+# Get comprehensive statistics
+stats = loader.get_training_statistics()
+print(f"Total traces: {stats['total_traces']}")
+print(f"Unique sessions: {stats['unique_sessions']}")
+print(f"Tools used: {stats['tools_list']}")
+
+# Load traces from ALL agents at once
+all_traces = loader.load_all_agents_traces()
+for agent_name, agent_traces in all_traces.items():
+    print(f"{agent_name}: {len(agent_traces)} traces")
+```
+
+**Checkpoint Data Structure** (what gets extracted):
+```
+AgentCheckpoint:
+├── session_data: {session_id: {history: [{role, content}, ...]}}
+│   └── Primary source: user/assistant conversation pairs
+├── variable_scopes: {scope_name: {var_name: value}}
+│   └── Contains reasoning results, delegation info
+├── task_state: {task_id: {status, result, error}}
+│   └── Task completion/failure info
+├── agent_state: {tokens_in, tokens_out, cost, llm_calls}
+│   └── Metrics for efficiency rewards
+└── tool_capabilities: {tool_name: capability_info}
+    └── Available tools for context
+```
+
+**Example extracted trace:**
+```python
+ExecutionTrace(
+    session_id="268830485889810432",  # Discord user ID
+    user_query="Hey bist du online?",
+    final_response="Ja, ich bin online und bereit zu helfen!",
+    tool_calls=[],  # Any tools called between query and response
+    reasoning_steps=[ReasoningStep(step_type="final_result", ...)],
+    total_tokens_in=150,
+    total_tokens_out=45,
+    total_cost=0.0002
+)
+```
+
 ### Complete Training Run
 
 ```python
@@ -279,7 +340,7 @@ for trace in unlabeled:
     print(f"Query: {trace.user_query}")
     print(f"Response: {trace.final_response[:200]}...")
     print(f"Tools used: {[tc.tool_name for tc in trace.tool_calls]}")
-    
+
     # Manual review
     label = input("Good? (y/n): ").lower() == "y"
     collector.label_trace(trace.trace_id, label)
@@ -293,7 +354,7 @@ from toolboxv2.mods.isaa.base.rl import BaseReward, RewardResult, RewardEngine
 class CustomReward(BaseReward):
     name = "my_custom_reward"
     weight = 1.5
-    
+
     def compute(self, trace) -> RewardResult:
         # Check something specific
         has_feature = "specific_pattern" in trace.final_response

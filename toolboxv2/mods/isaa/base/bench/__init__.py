@@ -107,6 +107,12 @@ async def main():
         "qwen3-plus": "openrouter/qwen/qwen3-coder-plus",
         "mistral-8b": "openrouter/mistralai/ministral-8b-2512",
     }
+    models = {
+        "qwen2.5:0.5b": "ollama/qwen2.5:0.5b",
+        "qwen-2.5-vl-7b-instruct": "openrouter/qwen/qwen-2.5-vl-7b-instruct",
+        "qwen3-1.7b": "openrouter/qwen/qwen3-1.7b",
+        "qwen3-8b": "openrouter/qwen/qwen3-8b",
+    }
 
     from toolboxv2 import get_app
     app = get_app()
@@ -148,7 +154,7 @@ async def main():
             continue
         tasks.append(asyncio.create_task(run_agent(model_id, model_sig)))
         tasks.append(asyncio.create_task(run_row(model_id, model_sig)))
-        tasks.append(asyncio.create_task(run_maker(model_id, model_sig)))
+        #tasks.append(asyncio.create_task(run_maker(model_id, model_sig)))
     # wait for all tasks to complete
     import tqdm
     for task in tqdm.tqdm(asyncio.as_completed(tasks), total=len(tasks)):
@@ -159,7 +165,7 @@ async def main():
 
     # Dashboard generieren
     # Dashboard.save(reports["MADAP"], "MADAP_comparison.html")
-    Dashboard.save(reports["all"], "comparisonALLMo7.html")
+    Dashboard.save(reports["all"], "comparisonALLMo8.html")
     # Dashboard.save(reports["Agent"], "comparisonAgent.html")
 
 if __name__ == "__main__":
