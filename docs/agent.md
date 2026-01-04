@@ -156,8 +156,7 @@ response_with_format = await agent.a_run_with_format(
 
 
 # Checkpoint management
-await agent.pause()  # Creates and saves a checkpoint
-await agent.resume() # Resumes from the paused state
+await agent.save()  # Creates and saves a checkpoint
 
 # Performance and status monitoring
 summary = await agent.get_task_execution_summary()

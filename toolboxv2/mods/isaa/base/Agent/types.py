@@ -794,7 +794,7 @@ class AgentModelData(BaseModel):
     api_base: str | None  = None
     budget_manager: Any  = None
     caching: bool = True
-    persona: PersonaConfig | None = True
+    persona: PersonaConfig | None = None
     use_fast_response: bool = True
     handler_path_or_dict: str | dict[str, Any] | None = None
 
@@ -802,10 +802,12 @@ class AgentModelData(BaseModel):
         """Get system message with persona integration"""
         base_message = self.system_message
 
-        if self.persona and self.persona.apply_method in ["system_prompt", "both"]:
-            persona_addition = self.persona.to_system_prompt_addition()
-            if persona_addition:
-                base_message += f"\n## Persona Instructions\n{persona_addition}"
+        # Ensure persona is a PersonaConfig instance, not a bool
+        if self.persona and isinstance(self.persona, PersonaConfig):
+            if self.persona.apply_method in ["system_prompt", "both"]:
+                persona_addition = self.persona.to_system_prompt_addition()
+                if persona_addition:
+                    base_message += f"\n## Persona Instructions\n{persona_addition}"
 
         return base_message
 

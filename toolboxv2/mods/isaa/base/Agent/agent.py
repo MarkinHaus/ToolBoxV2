@@ -5738,111 +5738,11 @@ class FlowAgent:
 
         return f"Enhanced capabilities: {'; '.join(summaries)}"
 
-    # Neue Hilfsmethoden für erweiterte Funktionalität
 
-    async def get_task_execution_summary(self) -> dict[str, Any]:
-        """Erhalte detaillierte Zusammenfassung der Task-Ausführung"""
-        tasks = self.shared.get("tasks", {})
-        results_store = self.shared.get("results", {})
+    # ===== save FUNCTIONALITY =====
 
-        summary = {
-            "total_tasks": len(tasks),
-            "completed_tasks": [],
-            "failed_tasks": [],
-            "task_types_used": {},
-            "tools_used": [],
-            "adaptations": self.shared.get("plan_adaptations", 0),
-            "execution_timeline": [],
-            "results_store": results_store
-        }
-
-        for task_id, task in tasks.items():
-            task_info = {
-                "id": task_id,
-                "type": task.type,
-                "description": task.description,
-                "status": task.status,
-                "duration": None
-            }
-
-            if task.started_at and task.completed_at:
-                duration = (task.completed_at - task.started_at).total_seconds()
-                task_info["duration"] = duration
-
-            if task.status == "completed":
-                summary["completed_tasks"].append(task_info)
-                if isinstance(task, ToolTask):
-                    summary["tools_used"].append(task.tool_name)
-            elif task.status == "failed":
-                task_info["error"] = task.error
-                summary["failed_tasks"].append(task_info)
-
-            # Task types counting
-            task_type = task.type
-            summary["task_types_used"][task_type] = summary["task_types_used"].get(task_type, 0) + 1
-
-        return summary
-
-    async def explain_reasoning_process(self) -> str:
-        """Erkläre den Reasoning-Prozess des Agenten"""
-        if not LITELLM_AVAILABLE:
-            return "Reasoning explanation requires LLM capabilities."
-
-        summary = await self.get_task_execution_summary()
-
-        prompt = f"""
-Erkläre den Reasoning-Prozess dieses AI-Agenten in verständlicher Form:
-
-## Ausführungszusammenfassung
-- Total Tasks: {summary['total_tasks']}
-- Erfolgreich: {len(summary['completed_tasks'])}
-- Fehlgeschlagen: {len(summary['failed_tasks'])}
-- Plan-Adaptationen: {summary['adaptations']}
-- Verwendete Tools: {', '.join(set(summary['tools_used']))}
-- Task-Typen: {summary['task_types_used']}
-
-## Task-Details
-Erfolgreiche Tasks:
-{self._format_tasks_for_explanation(summary['completed_tasks'])}
-
-## Anweisungen
-Erkläre in 2-3 Absätzen:
-1. Welche Strategie der Agent gewählt hat
-2. Wie er die Aufgabe in Tasks unterteilt hat
-3. Wie er auf unerwartete Ergebnisse reagiert hat (falls Adaptationen)
-4. Was die wichtigsten Erkenntnisse waren
-
-Schreibe für einen technischen Nutzer, aber verständlich."""
-
-        try:
-            response = await self.a_run_llm_completion(
-                model=self.amd.complex_llm_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.5,
-                max_tokens=800,task_id="reasoning_explanation"
-            )
-
-            return response
-
-        except Exception as e:
-            import traceback
-            print(traceback.format_exc())
-            return f"Could not generate reasoning explanation: {e}"
-
-    def _format_tasks_for_explanation(self, tasks: list[dict]) -> str:
-        formatted = []
-        for task in tasks[:5]:  # Top 5 tasks
-            duration_info = f" ({task['duration']:.1f}s)" if task['duration'] else ""
-            formatted.append(f"- {task['type']}: {task['description']}{duration_info}")
-        return "\n".join(formatted)
-
-    # ===== PAUSE/RESUME FUNCTIONALITY =====
-
-    async def pause(self) -> bool:
+    async def save(self) -> bool:
         """Pause agent execution"""
-        if not self.is_running:
-            return False
-
         self.is_paused = True
         self.shared["system_status"] = "paused"
 
@@ -5850,18 +5750,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
         checkpoint = await self._create_checkpoint()
         await self._save_checkpoint(checkpoint)
 
-        rprint("Agent execution paused")
-        return True
-
-    async def resume(self) -> bool:
-        """Resume agent execution"""
-        if not self.is_paused:
-            return False
-
-        self.is_paused = False
-        self.shared["system_status"] = "running"
-
-        rprint("Agent execution resumed")
+        rprint("Agent state saved")
         return True
 
     # ===== CHECKPOINT MANAGEMENT =====
@@ -6379,22 +6268,13 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             }
 
     # ===== TOOL AND NODE MANAGEMENT =====
-    def _get_tool_analysis_path(self) -> str:
+    @staticmethod
+    def _get_tool_analysis_path() -> str:
         """Get path for tool analysis cache"""
         from toolboxv2 import get_app
         folder = str(get_app().data_dir) + '/Agents/capabilities/'
         os.makedirs(folder, exist_ok=True)
         return folder + 'tool_capabilities.json'
-
-    def _get_context_path(self, session_id=None) -> str:
-        """Get path for tool analysis cache"""
-        from toolboxv2 import get_app
-        folder = str(get_app().data_dir) + '/Agents/context/' + self.amd.name
-        os.makedirs(folder, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        session_suffix = f"_session_{session_id}" if session_id else ""
-        filepath = f"agent_context_{self.amd.name}_{timestamp}{session_suffix}.json"
-        return folder + f'/{filepath}'
 
     def add_first_class_tool(self, tool_func: Callable, name: str, description: str):
         """
@@ -6438,8 +6318,16 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
         else:
             wprint("LLMReasonerNode not available for first-class tool registration")
 
-    async def add_tool(self, tool_func: Callable, name: str = None, description: str = None, is_new=False):
-        """Enhanced tool addition with intelligent analysis"""
+    async def add_tool(self, tool_func: Callable, name: str = None, description: str = None, is_new=False, skip_analysis=False):
+        """Enhanced tool addition with intelligent analysis
+
+        Args:
+            tool_func: The tool function to add
+            name: Optional name override
+            description: Optional description override
+            is_new: If True, always run LLM analysis
+            skip_analysis: If True, skip LLM analysis entirely (use basic fallback)
+        """
         if not asyncio.iscoroutinefunction(tool_func):
             @wraps(tool_func)
             async def async_wrapper(*args, **kwargs):
@@ -6464,7 +6352,15 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             self.shared["available_tools"].append(tool_name)
 
         # Intelligent tool analysis
-        if is_new:
+        if skip_analysis:
+            # Use basic fallback without LLM
+            self._tool_capabilities[tool_name] = {
+                "use_cases": [tool_description],
+                "triggers": [tool_name.lower().replace('_', ' ')],
+                "complexity": "unknown",
+                "confidence": 0.5
+            }
+        elif is_new:
             await self._analyze_tool_capabilities(tool_name, tool_description, get_args_schema(tool_func))
         else:
             if res := self._load_tool_analysis([tool_name]):
@@ -6718,24 +6614,6 @@ tool_complexity: low/medium/high
             wprint(f"Could not load tool analysis: {e}")
         return {}
 
-
-    async def save_context_to_file(self, session_id: str = None) -> bool:
-        """Save current context to file"""
-        try:
-            context = await self.get_context(session_id=session_id, format_for_llm=False)
-
-            filepath = self._get_context_path(session_id)
-
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(context, f, indent=2, ensure_ascii=False, default=str)
-
-            rprint(f"Context saved to: {filepath}")
-            return True
-
-        except Exception as e:
-            eprint(f"Failed to save context: {e}")
-            return False
-
     async def _save_tool_analysis(self):
         """Save tool analysis to cache"""
         if not self._all_tool_capabilities:
@@ -6920,157 +6798,6 @@ tool_complexity: low/medium/high
 
     # ===== FORMATTING =====
 
-    async def a_format_class_leg(self,
-                             pydantic_model: type[BaseModel],
-                             prompt: str,
-                             message_context: list[dict] = None,
-                             max_retries: int = 2, auto_context=True, session_id: str = None, llm_kwargs=None,
-                             model_preference="complex", **kwargs) -> dict[str, Any]:
-        """
-        State-of-the-art LLM-based structured data formatting using Pydantic models.
-        Supports media inputs via [media:(path/url)] tags in the prompt.
-
-        Args:
-            pydantic_model: The Pydantic model class to structure the response
-            prompt: The main prompt for the LLM (can include [media:(path/url)] tags)
-            message_context: Optional conversation context messages
-            max_retries: Maximum number of retry attempts
-            auto_context: Whether to include session context
-            session_id: Optional session ID
-            llm_kwargs: Additional kwargs to pass to litellm
-            model_preference: "fast" or "complex"
-            **kwargs: Additional arguments (merged with llm_kwargs)
-
-        Returns:
-            dict: Validated structured data matching the Pydantic model
-
-        Raises:
-            ValidationError: If the LLM response cannot be validated against the model
-            RuntimeError: If all retry attempts fail
-        """
-
-        if not LITELLM_AVAILABLE:
-            raise RuntimeError("LiteLLM is required for structured formatting but not available")
-
-        if session_id and self.active_session != session_id:
-            self.active_session = session_id
-        # Generate schema documentation
-        schema = pydantic_model.model_json_schema() if issubclass(pydantic_model, BaseModel) else (json.loads(pydantic_model) if isinstance(pydantic_model, str) else pydantic_model)
-        model_name = pydantic_model.__name__ if hasattr(pydantic_model, "__name__") else (pydantic_model.get("title", "UnknownModel") if isinstance(pydantic_model, dict) else "UnknownModel")
-
-        # Create enhanced prompt with schema
-        enhanced_prompt = f"""
-    {prompt}
-
-    CRITICAL FORMATTING REQUIREMENTS:
-    1. Respond ONLY in valid YAML format
-    2. Follow the exact schema structure provided
-    3. Use appropriate data types (strings, lists, numbers, booleans)
-    4. Include ALL required fields
-    5. No additional comments, explanations, or text outside the YAML
-
-    SCHEMA FOR {model_name}:
-    {yaml.dump(safe_for_yaml(schema), default_flow_style=False, indent=2)}
-
-    EXAMPLE OUTPUT FORMAT:
-    ```yaml
-    # Your response here following the schema exactly
-    field_name: "value"
-    list_field:
-      - "item1"
-      - "item2"
-    boolean_field: true
-    number_field: 42
-Respond in YAML format only:
-"""
-        # Prepare messages
-        messages = []
-        if message_context:
-            messages.extend(message_context)
-        messages.append({"role": "user", "content": enhanced_prompt})
-
-        # Retry logic with progressive adjustments
-        last_error = None
-
-        for attempt in range(max_retries + 1):
-            try:
-                # Adjust parameters based on attempt
-                temperature = 0.1 + (attempt * 0.1)  # Increase temperature slightly on retries
-                max_tokens = min(2000 + (attempt * 500), 4000)  # Increase token limit on retries
-
-                rprint(f"[{model_name}] Attempt {attempt + 1}/{max_retries + 1} (temp: {temperature})")
-
-                # Generate LLM response
-                response = await self.a_run_llm_completion(
-                    model_preference=model_preference,
-                    messages=messages,
-                    stream=False,
-                    with_context=auto_context,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    task_id=f"format_{model_name.lower()}_{attempt}",
-                    llm_kwargs=llm_kwargs
-                )
-
-                if not response or not response.strip():
-                    raise ValueError("Empty response from LLM")
-
-                # Extract YAML content with multiple fallback strategies
-
-                yaml_content = self._extract_yaml_content(response)
-
-                print(f"{'='*20}\n {prompt} \n{'-'*20}\n")
-                print(f"{response} \n{'='*20}")
-
-                if not yaml_content:
-                    raise ValueError("No valid YAML content found in response")
-
-                # Parse YAML
-                try:
-                    parsed_data = yaml.safe_load(yaml_content)
-                except yaml.YAMLError as e:
-                    raise ValueError(f"Invalid YAML syntax: {e}")
-                iprint(parsed_data)
-                if not isinstance(parsed_data, dict):
-                    raise ValueError(f"Expected dict, got {type(parsed_data)}")
-
-                # Validate against Pydantic model
-                try:
-                    if isinstance(pydantic_model, BaseModel):
-                        validated_instance = pydantic_model.model_validate(parsed_data)
-                        validated_data = validated_instance.model_dump()
-                    else:
-                        validated_data = parsed_data
-
-                    rprint(f"✅ Successfully formatted {model_name} on attempt {attempt + 1}")
-                    return validated_data
-
-                except ValidationError as e:
-                    detailed_errors = []
-                    for error in e.errors():
-                        field_path = " -> ".join(str(x) for x in error['loc'])
-                        detailed_errors.append(f"Field '{field_path}': {error['msg']}")
-
-                    error_msg = "Validation failed:\n" + "\n".join(detailed_errors)
-                    raise ValueError(error_msg)
-
-            except Exception as e:
-                last_error = e
-                wprint(f"[{model_name}] Attempt {attempt + 1} failed: {str(e)}")
-
-                if attempt < max_retries:
-                    # Add error feedback for next attempt
-                    error_feedback = f"\n\nPREVIOUS ATTEMPT FAILED: {str(e)}\nPlease correct the issues and provide valid YAML matching the schema exactly."
-                    messages[-1]["content"] = enhanced_prompt + error_feedback
-
-                    # Brief delay before retry
-                    # await asyncio.sleep(0.5 * (attempt + 1))
-                else:
-                    eprint(f"[{model_name}] All {max_retries + 1} attempts failed")
-
-        # All attempts failed
-        raise RuntimeError(f"Failed to format {model_name} after {max_retries + 1} attempts. Last error: {last_error}")
-
     async def a_format_class(self,
                              pydantic_model: type[BaseModel],
                              prompt: str,
@@ -7175,6 +6902,61 @@ Respond in YAML format only:
 
         raise RuntimeError(f"Failed after {max_retries + 1} attempts: {last_error}")
 
+    def _extract_yaml_content(self, response: str) -> str:
+        """Extract YAML content from LLM response with multiple strategies"""
+        # Strategy 1: Extract from code blocks
+        if "```yaml" in response:
+            try:
+                yaml_content = response.split("```yaml")[1].split("```")[0].strip()
+                if yaml_content:
+                    return yaml_content
+            except IndexError:
+                pass
+
+        # Strategy 2: Extract from generic code blocks
+        if "```" in response:
+            try:
+                parts = response.split("```")
+                for i, part in enumerate(parts):
+                    if i % 2 == 1:  # Odd indices are inside code blocks
+                        # Skip if it starts with a language identifier
+                        lines = part.strip().split('\n')
+                        if lines and not lines[0].strip().isalpha():
+                            return part.strip()
+                        elif len(lines) > 1:
+                            # Try without first line
+                            return '\n'.join(lines[1:]).strip()
+            except:
+                pass
+
+        # Strategy 3: Look for YAML-like patterns
+        lines = response.split('\n')
+        yaml_lines = []
+        in_yaml = False
+
+        for line in lines:
+            stripped = line.strip()
+
+            # Detect start of YAML-like content
+            if ':' in stripped and not stripped.startswith('#'):
+                in_yaml = True
+                yaml_lines.append(line)
+            elif in_yaml:
+                if stripped == '' or stripped.startswith(' ') or stripped.startswith('-') or ':' in stripped:
+                    yaml_lines.append(line)
+                else:
+                    # Potential end of YAML
+                    break
+
+        if yaml_lines:
+            return '\n'.join(yaml_lines).strip()
+
+        # Strategy 4: Return entire response if it looks like YAML
+        if ':' in response and not response.strip().startswith('<'):
+            return response.strip()
+
+        return ""
+
     async def a_stream(
         self,
         query: str,
@@ -7182,7 +6964,7 @@ Respond in YAML format only:
         user_id: str = None,
         agentic_actions: bool = False,  # Flag für Tool-Aufrufe im Streaming
         voice_output: int | str = 0,  # 0=normal, 1=verbalisiert, custom strings auch möglich
-        context_mode: str = "full",
+        context_mode: str = "auto",
         with_context: bool = True,
         remember: bool = True,
         model_preference: str = "fast",
@@ -7260,7 +7042,7 @@ Only use [TOOLS_NEEDED] if tools are truly necessary for this request.
         if remember:
             await self.context_manager.add_interaction(session_id, 'user', query)
         # Build messages
-        messages = []
+        messages = [{"role": "system", "content": "You are a helpful assistant. To use a tool, must start your response with [TOOLS_NEEDED] and text for the user the tool will be called automatically."}]
 
         if self.active_session and with_context:
             # Add context to fist messages as system message
@@ -7304,10 +7086,10 @@ Only use [TOOLS_NEEDED] if tools are truly necessary for this request.
                 if not task_id.startswith("format_") and not task_id.startswith("lean_"):
                     # Only inject for non-formatting tasks
                     context_ = await self.get_context(self.active_session)
-                    kwargs["messages"] = [{"role": "system", "content": self.amd.get_system_message_with_persona()+'\n\nContext:\n\n'+context_}] + kwargs.get("messages", [])
+                    messages = [{"role": "system", "content": self.amd.get_system_message_with_persona()+'\n\nContext:\n\n'+context_}] + kwargs.get("messages", [])
 
         # Build user message with instructions
-
+        messages.append({"role": "user", "content": user_content})
         # Stream response
         full_response = ""
         tools_needed = False
@@ -7430,7 +7212,6 @@ Select tools and specify execution order with arguments.""",
             if remember and session_id:
                 await self.context_manager.add_interaction(session_id, 'assistant', full_response.replace("[TOOLS_NEEDED]", ""))
 
-
         except Exception as e:
             error_msg = f"Error: {str(e)}"
             if voice_output >= 1:
@@ -7439,60 +7220,7 @@ Select tools and specify execution order with arguments.""",
                 yield error_msg
             raise
 
-    def _extract_yaml_content(self, response: str) -> str:
-        """Extract YAML content from LLM response with multiple strategies"""
-        # Strategy 1: Extract from code blocks
-        if "```yaml" in response:
-            try:
-                yaml_content = response.split("```yaml")[1].split("```")[0].strip()
-                if yaml_content:
-                    return yaml_content
-            except IndexError:
-                pass
 
-        # Strategy 2: Extract from generic code blocks
-        if "```" in response:
-            try:
-                parts = response.split("```")
-                for i, part in enumerate(parts):
-                    if i % 2 == 1:  # Odd indices are inside code blocks
-                        # Skip if it starts with a language identifier
-                        lines = part.strip().split('\n')
-                        if lines and not lines[0].strip().isalpha():
-                            return part.strip()
-                        elif len(lines) > 1:
-                            # Try without first line
-                            return '\n'.join(lines[1:]).strip()
-            except:
-                pass
-
-        # Strategy 3: Look for YAML-like patterns
-        lines = response.split('\n')
-        yaml_lines = []
-        in_yaml = False
-
-        for line in lines:
-            stripped = line.strip()
-
-            # Detect start of YAML-like content
-            if ':' in stripped and not stripped.startswith('#'):
-                in_yaml = True
-                yaml_lines.append(line)
-            elif in_yaml:
-                if stripped == '' or stripped.startswith(' ') or stripped.startswith('-') or ':' in stripped:
-                    yaml_lines.append(line)
-                else:
-                    # Potential end of YAML
-                    break
-
-        if yaml_lines:
-            return '\n'.join(yaml_lines).strip()
-
-        # Strategy 4: Return entire response if it looks like YAML
-        if ':' in response and not response.strip().startswith('<'):
-            return response.strip()
-
-        return ""
     # ===== SERVER SETUP =====
 
     def setup_a2a_server(self, host: str = "0.0.0.0", port: int = 5000, **kwargs):
@@ -8413,7 +8141,7 @@ Returns:
                     "base_message": self.amd.system_message,
                     "persona_active": self.amd.persona is not None,
                     "persona_name": self.amd.persona.name if self.amd.persona else None,
-                    "persona_integration": self.amd.persona.apply_method if self.amd.persona else None
+                    "persona_integration": self.amd.persona.apply_method if (self.amd.persona and hasattr(self.amd.persona, 'apply_method')) else None
                 }
             }
 
@@ -10303,10 +10031,6 @@ if __name__ == "__main__2":
 
         while True:
             query = input("Query: ")
-            if query == "r":
-                res = await agent.explain_reasoning_process()
-                print(res)
-                continue
             if query == "exit":
                 break
             response = await agent.a_run(query)
@@ -10316,3 +10040,18 @@ if __name__ == "__main__2":
 
     asyncio.run(_agent())
 
+"""
+Agent V2
+
+agent exposes.
+
+a_run(task, session_id, remember, context, **kwargs) -> str
+
+a_stream(task, session_id, remember, context, **kwargs) -> AsyncGenerator[str, None]
+
+a_format_class(pydantic_model, prompt, context, **kwargs) -> dict[str, Any]
+
+# Auto
+save and load history and progress data (chapoints)
+
+"""

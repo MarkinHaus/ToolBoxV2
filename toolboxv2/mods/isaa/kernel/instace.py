@@ -1435,5 +1435,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
 
-print("\n✓ ProA Kernel Implementation Complete")
-print("Ready to wrap any FlowAgent and provide always-on capabilities")
+# print("\n[OK] ProA Kernel Implementation Complete")
+# print("Ready to wrap any FlowAgent and provide always-on capabilities")
