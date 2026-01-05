@@ -2790,6 +2790,28 @@ class AgentAdapter:
             return r, cost_info
         return await self.bench.run(fn, mode, model_id, seed)
 
+class AgentAdapterMin:
+    """Adapter for FlowAgent integration with cost tracking"""
+    def __init__(self, agent):
+        self.agent = agent
+        self.bench = Benchmark()
+
+    async def benchmark(self, model_id: str, mode: str = "standard", seed: int = None) -> Report:
+        async def fn(p: str):
+            start_time = time.perf_counter()
+            start_cost = self.agent.total_cost_accumulated
+            start_tokens_in = self.agent.total_tokens_in
+            start_tokens_out = self.agent.total_tokens_out
+            r = await self.agent.a_run(query=p, remember=False, fast_run=True, new=True)
+            cost_info = {
+                "total_cost": self.agent.total_cost_accumulated - start_cost,
+                "tokens_in": self.agent.total_tokens_in - start_tokens_in,
+                "tokens_out": self.agent.total_tokens_out - start_tokens_out,
+                "execution_time_s": (time.perf_counter() - start_time)
+            }
+            return r, cost_info
+        return await self.bench.run(fn, mode, model_id, seed)
+
 class AgentAdapterSt:
     """Adapter for FlowAgent integration with cost tracking"""
     def __init__(self, agent):

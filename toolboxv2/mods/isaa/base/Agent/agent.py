@@ -4458,6 +4458,805 @@ class VotingResult(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
     cost_info: dict[str, float] = Field(default_factory=dict)
 
+# MIXin mini core
+
+import asyncio
+import json
+import uuid
+import time
+import os
+from datetime import datetime
+from dataclasses import dataclass, field
+from typing import Any, Optional, Callable, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import List, Dict
+
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
+@dataclass
+class OrchestratorConfig:
+    """Configuration for the minimalist orchestrator."""
+    max_loops: int = 25
+    max_history_messages: int = 30
+    summary_batch_size: int = 10
+    vfs_max_window_lines: int = 250
+    decision_temperature: float = 0.7
+    tool_temperature: float = 0.5
+    enable_vfs: bool = True
+    enable_compression: bool = True
+    fast_model_preference: str = "fast"
+    complex_model_preference: str = "complex"
+
+
+# =============================================================================
+# 1. VIRTUAL FILE SYSTEM (VFS)
+# =============================================================================
+
+@dataclass
+class VFSFile:
+    """Represents a file in the Virtual File System."""
+    filename: str
+    content: str
+    state: str = "closed"  # "open" or "closed"
+    view_start: int = 0
+    view_end: int = -1
+    mini_summary: str = ""
+    readonly: bool = False
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+
+
+class VirtualFileSystem:
+    """
+    Virtual File System for token-efficient file management.
+
+    Features:
+    - open/closed states (only open files show content in context)
+    - Windowing (show only specific line ranges)
+    - System files (read-only, auto-updated)
+    - Auto-summary on close via LLM
+    """
+
+    def __init__(self, agent_instance: Any = None, max_window_lines: int = 50):
+        self.files: Dict[str, VFSFile] = {}
+        self.agent = agent_instance
+        self.max_window_lines = max_window_lines
+        self._init_system_files()
+
+    def _init_system_files(self):
+        """Initialize read-only system files."""
+        self.files["system_context"] = VFSFile(
+            filename="system_context",
+            content=self._get_system_context(),
+            state="open",
+            readonly=True
+        )
+        self.files["agent_memory.txt"] = VFSFile(
+            filename="agent_memory.txt",
+            content="# Agent Long-Term Memory\n\n[No memories stored yet]\n",
+            state="closed",
+            readonly=False
+        )
+
+    def _get_system_context(self) -> str:
+        """Generate current system context."""
+        now = datetime.now()
+        agent_name = "FlowAgent"
+        session = "default"
+        user_id = "anonymous"
+
+        if self.agent:
+            if hasattr(self.agent, 'amd') and hasattr(self.agent.amd, 'name'):
+                agent_name = self.agent.amd.name
+            session = getattr(self.agent, 'active_session', 'default') or 'default'
+            if hasattr(self.agent, 'shared'):
+                user_id = self.agent.shared.get('user_id', 'anonymous')
+
+        return f"""# System Context
+Current Time: {now.strftime('%Y-%m-%d %H:%M:%S')}
+Agent: {agent_name}
+Session: {session}
+User: {user_id}
+"""
+
+    def _update_system_context(self):
+        """Refresh system context file."""
+        if "system_context" in self.files:
+            self.files["system_context"].content = self._get_system_context()
+            self.files["system_context"].updated_at = datetime.now().isoformat()
+
+    # -------------------------------------------------------------------------
+    # VFS Tool Methods
+    # -------------------------------------------------------------------------
+
+    def create(self, filename: str, content: str = "") -> dict:
+        """Create a new file."""
+        if filename in self.files and self.files[filename].readonly:
+            return {"success": False, "error": f"Cannot overwrite system file: {filename}"}
+
+        self.files[filename] = VFSFile(filename=filename, content=content, state="closed")
+        return {"success": True, "message": f"Created '{filename}' ({len(content)} chars)"}
+
+    def edit(self, filename: str, line_start: int, line_end: int, new_content: str) -> dict:
+        """Edit file by replacing lines (1-indexed)."""
+        if filename not in self.files:
+            return {"success": False, "error": f"File not found: {filename}"}
+
+        f = self.files[filename]
+        if f.readonly:
+            return {"success": False, "error": f"Read-only: {filename}"}
+
+        lines = f.content.split('\n')
+        start_idx = max(0, line_start - 1)
+        end_idx = min(len(lines), line_end)
+
+        new_lines = new_content.split('\n')
+        lines = lines[:start_idx] + new_lines + lines[end_idx:]
+
+        f.content = '\n'.join(lines)
+        f.updated_at = datetime.now().isoformat()
+
+        return {"success": True, "message": f"Edited {filename} lines {line_start}-{line_end}"}
+
+    def open(self, filename: str, line_start: int = 1, line_end: int = -1) -> dict:
+        """Open file (make content visible)."""
+        if filename not in self.files:
+            return {"success": False, "error": f"File not found: {filename}"}
+
+        f = self.files[filename]
+        f.state = "open"
+        f.view_start = max(0, line_start - 1)
+        f.view_end = line_end
+
+        lines = f.content.split('\n')
+        end = line_end if line_end > 0 else len(lines)
+        visible = lines[f.view_start:end]
+
+        return {
+            "success": True,
+            "message": f"Opened '{filename}' (lines {line_start}-{end})",
+            "preview": '\n'.join(visible[:5]) + ("..." if len(visible) > 5 else "")
+        }
+
+    async def close(self, filename: str) -> dict:
+        """Close file (create summary, remove from context)."""
+        if filename not in self.files:
+            return {"success": False, "error": f"File not found: {filename}"}
+
+        f = self.files[filename]
+        if f.readonly:
+            return {"success": False, "error": f"Cannot close system file: {filename}"}
+
+        # Generate summary if agent available and content is substantial
+        if self.agent and len(f.content) > 100:
+            try:
+                prompt = f"Summarize in 1-2 sentences:\n\n{f.content[:2000]}"
+                summary = await self.agent.a_run_llm_completion(
+                    model_preference="fast",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=100,
+                    temperature=0.3,
+                    with_context=False,
+                    task_id=f"vfs_summarize_{filename}"
+                )
+                f.mini_summary = summary.strip()
+            except Exception as e:
+                f.mini_summary = f"[{len(f.content)} chars]"
+        else:
+            f.mini_summary = f"[{len(f.content)} chars]"
+
+        f.state = "closed"
+        return {"success": True, "summary": f.mini_summary}
+
+    async def extract_info(self, filename: str, query: str) -> dict:
+        """Query file without loading into context."""
+        if filename not in self.files:
+            return {"success": False, "error": f"File not found: {filename}"}
+
+        if not self.agent:
+            return {"success": False, "error": "No agent for extraction"}
+
+        try:
+            prompt = f"File: {filename}\nContent:\n{self.files[filename].content[:4000]}\n\nQuery: {query}\n\nAnswer:"
+            result = await self.agent.a_run_llm_completion(
+                model_preference="fast",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=500,
+                temperature=0.3,
+                with_context=False,
+                task_id=f"vfs_extract_{filename}"
+            )
+            return {"success": True, "result": result.strip()}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def view(self, filename: str, line_start: int = 1, line_end: int = -1) -> dict:
+        """View/adjust visible window."""
+        if filename not in self.files:
+            return {"success": False, "error": f"File not found: {filename}"}
+
+        f = self.files[filename]
+        if f.state != "open":
+            self.open(filename, line_start, line_end)
+        else:
+            f.view_start = max(0, line_start - 1)
+            f.view_end = line_end
+
+        lines = f.content.split('\n')
+        end = line_end if line_end > 0 else len(lines)
+
+        return {
+            "success": True,
+            "content": '\n'.join(lines[f.view_start:end])
+        }
+
+    def list_files(self) -> dict:
+        """List all files."""
+        listing = []
+        for name, f in self.files.items():
+            info = {
+                "filename": name,
+                "state": f.state,
+                "readonly": f.readonly,
+                "size": len(f.content),
+                "lines": len(f.content.split('\n'))
+            }
+            if f.state == "closed" and f.mini_summary:
+                info["summary"] = f.mini_summary
+            listing.append(info)
+        return {"success": True, "files": listing}
+
+    def cp_local_to_vfs(self, local_path: str, vfs_path: str) -> dict:
+        """Copy local file to VFS."""
+        if not os.path.exists(local_path):
+            return {"success": False, "error": f"Not found: {local_path}"}
+        try:
+            with open(local_path, 'r', encoding='utf-8', errors='replace') as f:
+                return self.create(vfs_path, f.read())
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def save_vfs_to_local(self, vfs_path: str, local_path: str) -> dict:
+        """Save VFS file to local filesystem."""
+        if vfs_path not in self.files:
+            return {"success": False, "error": f"Not found: {vfs_path}"}
+        try:
+            os.makedirs(os.path.dirname(local_path) or '.', exist_ok=True)
+            with open(local_path, 'w', encoding='utf-8') as f:
+                f.write(self.files[vfs_path].content)
+            return {"success": True, "message": f"Saved to {local_path}"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    # -------------------------------------------------------------------------
+    # Context Building
+    # -------------------------------------------------------------------------
+
+    def build_context_string(self) -> str:
+        """Build VFS context string for LLM."""
+        self._update_system_context()
+
+        parts = ["=== VFS (Virtual File System) ==="]
+
+        for name, f in self.files.items():
+            if f.state == "open":
+                lines = f.content.split('\n')
+                end = f.view_end if f.view_end > 0 else len(lines)
+                visible = lines[f.view_start:end]
+
+                # Limit window size
+                if len(visible) > self.max_window_lines:
+                    visible = visible[:self.max_window_lines]
+                    parts.append(
+                        f"\n[{name}] OPEN (lines {f.view_start + 1}-{f.view_start + self.max_window_lines}, truncated):")
+                else:
+                    parts.append(f"\n[{name}] OPEN (lines {f.view_start + 1}-{end}):")
+                parts.append('\n'.join(visible))
+            else:
+                summary = f.mini_summary or f"[{len(f.content)} chars]"
+                parts.append(f"\n• {name} [closed]: {summary}")
+
+        return '\n'.join(parts)
+
+    def get_vfs_tools_schema(self) -> List[dict]:
+        """Get VFS tools in LiteLLM format."""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "vfs_create",
+                    "description": "Create file in VFS",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filename": {"type": "string"},
+                            "content": {"type": "string", "default": ""}
+                        },
+                        "required": ["filename"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "vfs_edit",
+                    "description": "Edit file lines",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filename": {"type": "string"},
+                            "line_start": {"type": "integer"},
+                            "line_end": {"type": "integer"},
+                            "new_content": {"type": "string"}
+                        },
+                        "required": ["filename", "line_start", "line_end", "new_content"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "vfs_open",
+                    "description": "Open file to show in context",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filename": {"type": "string"},
+                            "line_start": {"type": "integer", "default": 1},
+                            "line_end": {"type": "integer", "default": -1}
+                        },
+                        "required": ["filename"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "vfs_close",
+                    "description": "Close file (auto-summarizes)",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"filename": {"type": "string"}},
+                        "required": ["filename"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "vfs_extract",
+                    "description": "Query file without loading to context",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filename": {"type": "string"},
+                            "query": {"type": "string"}
+                        },
+                        "required": ["filename", "query"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "vfs_view",
+                    "description": "View/adjust file window",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filename": {"type": "string"},
+                            "line_start": {"type": "integer", "default": 1},
+                            "line_end": {"type": "integer", "default": -1}
+                        },
+                        "required": ["filename"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "vfs_list",
+                    "description": "List all VFS files",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "vfs_save_local",
+                    "description": "Save VFS file to local path",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "vfs_path": {"type": "string"},
+                            "local_path": {"type": "string"}
+                        },
+                        "required": ["vfs_path", "local_path"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "vfs_load_local",
+                    "description": "Load local file into VFS",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "local_path": {"type": "string"},
+                            "vfs_path": {"type": "string"}
+                        },
+                        "required": ["local_path", "vfs_path"]
+                    }
+                }
+            }
+        ]
+
+
+# =============================================================================
+# 2. CONTEXT COMPRESSION
+# =============================================================================
+
+async def _compress_history(
+    agent: Any,
+    history: List[dict],
+    config: OrchestratorConfig
+) -> List[dict]:
+    """
+    Compress conversation history using rolling window summarization.
+
+    If history > max_messages:
+    1. Take existing summary + oldest batch
+    2. Create new summary via LLM
+    3. Return [summary] + recent messages
+    """
+    if not config.enable_compression:
+        return history
+
+    if len(history) <= config.max_history_messages:
+        return history
+
+    # Find existing summary
+    existing_summary = ""
+    summary_idx = -1
+    for i, msg in enumerate(history):
+        if msg.get("role") == "system" and "[SUMMARY]" in msg.get("content", ""):
+            existing_summary = msg["content"]
+            summary_idx = i
+            break
+
+    start_idx = summary_idx + 1 if summary_idx >= 0 else 0
+    messages_to_keep = config.max_history_messages - 5
+
+    if len(history) - start_idx <= messages_to_keep:
+        return history
+
+    to_summarize = history[start_idx:start_idx + config.summary_batch_size]
+    to_keep = history[start_idx + config.summary_batch_size:]
+
+    if not to_summarize:
+        return history
+
+    # Build summary prompt
+    parts = []
+    if existing_summary:
+        parts.append(f"Previous:\n{existing_summary}\n")
+
+    parts.append("Messages to summarize:\n")
+    for msg in to_summarize:
+        role = msg.get("role", "?")
+        content = str(msg.get("content", ""))[:300]
+        if role == "tool":
+            parts.append(f"- Tool[{msg.get('name', '?')}]: {content[:150]}...")
+        else:
+            parts.append(f"- {role}: {content}...")
+
+    prompt = f"Create concise summary (key info, decisions, pending tasks):\n\n{''.join(parts)}\n\nSummary:"
+
+    try:
+        summary = await agent.a_run_llm_completion(
+            model_preference="fast",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=250,
+            temperature=0.3,
+            with_context=False,
+            task_id="compress_history"
+        )
+
+        return [{"role": "system", "content": f"[SUMMARY]\n{summary.strip()}"}] + to_keep
+    except Exception as e:
+        print(f"[WARN] Compression failed: {e}")
+        return history[-config.max_history_messages:]
+
+
+# =============================================================================
+# 3. TOOL PREPARATION
+# =============================================================================
+
+def _get_tools_for_litellm(
+    tool_registry: dict,
+    available_tools: List[str]
+) -> List[dict]:
+    """Convert agent tools to LiteLLM format."""
+    tools = []
+
+    for tool_name in available_tools:
+        if tool_name not in tool_registry:
+            continue
+
+        info = tool_registry[tool_name]
+        description = info.get("description", "No description")
+        args_schema = info.get("args_schema", "()")
+
+        # Parse args schema
+        properties = {}
+        required = []
+
+        if args_schema and args_schema != "()":
+            args_str = args_schema.strip("()")
+            for arg in args_str.split(","):
+                arg = arg.strip()
+                if ":" in arg:
+                    name_part = arg.split(":")[0].strip()
+                    type_part = arg.split(":")[1].strip()
+
+                    has_default = "=" in type_part
+                    if has_default:
+                        type_part = type_part.split("=")[0].strip()
+
+                    type_map = {"str": "string", "int": "integer", "float": "number",
+                                "bool": "boolean", "list": "array", "dict": "object"}
+
+                    properties[name_part] = {"type": type_map.get(type_part, "string")}
+                    if not has_default:
+                        required.append(name_part)
+
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": tool_name,
+                "description": description,
+                "parameters": {"type": "object", "properties": properties, "required": required}
+            }
+        })
+
+    # Add direct_response tool
+    tools.append({
+        "type": "function",
+        "function": {
+            "name": "direct_response",
+            "description": "Provide final answer. Use when task is complete.",
+            "parameters": {
+                "type": "object",
+                "properties": {"final_answer": {"type": "string", "description": "Complete answer"}},
+                "required": ["final_answer"]
+            }
+        }
+    })
+
+    return tools
+
+
+# =============================================================================
+# 4. CORE ORCHESTRATION
+# =============================================================================
+
+async def _orchestrate_execution_minimal(
+    agent: Any,
+    config: OrchestratorConfig = None
+) -> str:
+    """
+    Minimalist orchestration replacing LLMReasonerNode and LLMToolNode.
+
+    Flow:
+    1. Compress history
+    2. Build context (VFS + history)
+    3. Decision: direct answer OR [NEED_TOOL]
+    4. If tools needed: native function calling loop
+    5. Return final response
+    """
+    config = config or OrchestratorConfig()
+    loop_count = 0
+
+    # Initialize VFS
+    if config.enable_vfs:
+        if "vfs" not in agent.shared:
+            agent.shared["vfs"] = VirtualFileSystem(agent, config.vfs_max_window_lines)
+        vfs: VirtualFileSystem = agent.shared["vfs"]
+    else:
+        vfs = None
+
+    query = agent.shared.get("current_query", "")
+    history = agent.shared.get("conversation_history", [])
+
+    # Step 0: Compress history
+    history = await _compress_history(agent, history, config)
+    agent.shared["conversation_history"] = history
+
+    # Step 1: Build context
+    vfs_context = vfs.build_context_string() if vfs else ""
+
+    system_msg = getattr(agent.amd, 'get_system_message_with_persona', lambda: agent.amd.system_message)()
+
+    messages = [{
+        "role": "system",
+        "content": f"""{system_msg}
+
+{vfs_context}
+
+INSTRUCTION: Answer directly if possible. Start with [NEED_TOOL] only if tools are required."""
+    }]
+
+    # Add history
+    for msg in history:
+        if msg.get("role") in ["user", "assistant", "system"]:
+            messages.append(msg)
+
+    messages.append({"role": "user", "content": query})
+
+    # Step 2: Decision phase
+    decision = await agent.a_run_llm_completion(
+        model_preference=config.fast_model_preference,
+        messages=messages,
+        temperature=config.decision_temperature,
+        stream=True,
+        with_context=False,
+        task_id="decision"
+    )
+
+    if not decision.strip().startswith("[NEED_TOOL]"):
+        # Direct answer
+        agent.shared["conversation_history"].append({"role": "user", "content": query})
+        agent.shared["conversation_history"].append({"role": "assistant", "content": decision})
+        return decision
+
+    # Step 3: Tool loop
+    available_tools = agent.shared.get("available_tools", [])
+    litellm_tools = _get_tools_for_litellm(agent._tool_registry, available_tools)
+
+    if vfs:
+        litellm_tools.extend(vfs.get_vfs_tools_schema())
+
+    # Add acknowledgment
+    ack = decision.replace("[NEED_TOOL]", "").strip()
+    if ack:
+        messages.append({"role": "assistant", "content": ack})
+
+    final_response = None
+    all_results = {}
+
+    while loop_count < config.max_loops:
+        loop_count += 1
+
+        try:
+            resp_msg = await agent.a_run_llm_completion(
+                model_preference=config.fast_model_preference,
+                messages=messages,
+                tools=litellm_tools,
+                tool_choice="auto",
+                temperature=config.tool_temperature,
+                stream=False,
+                get_response_message=True,
+                with_context=False,
+                task_id=f"tool_loop_{loop_count}"
+            )
+
+            tool_calls = getattr(resp_msg, 'tool_calls', None) or []
+            content = getattr(resp_msg, 'content', None) or ""
+
+            if not tool_calls:
+                final_response = content or "Done."
+                break
+
+            # Build assistant message
+            asst_msg = {"role": "assistant", "content": content, "tool_calls": []}
+
+            for tc in tool_calls:
+                tc_id = tc.id if hasattr(tc, 'id') else f"call_{uuid.uuid4().hex[:8]}"
+                tc_name = tc.function.name if hasattr(tc.function, 'name') else tc.function.get('name', '')
+                tc_args = tc.function.arguments if hasattr(tc.function, 'arguments') else tc.function.get('arguments',
+                                                                                                          '{}')
+
+                asst_msg["tool_calls"].append({
+                    "id": tc_id,
+                    "type": "function",
+                    "function": {"name": tc_name, "arguments": tc_args}
+                })
+
+            messages.append(asst_msg)
+
+            # Execute tools
+            for tc_info in asst_msg["tool_calls"]:
+                tc_id = tc_info["id"]
+                tool_name = tc_info["function"]["name"]
+
+                try:
+                    args = json.loads(tc_info["function"]["arguments"] or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+
+                # Check direct_response
+                if tool_name == "direct_response":
+                    final_response = args.get("final_answer", "Done.")
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "name": tool_name,
+                        "content": json.dumps({"status": "completed"})
+                    })
+                    break
+
+                # Execute VFS tools
+                if tool_name.startswith("vfs_") and vfs:
+                    method_map = {
+                        "vfs_create": lambda **a: vfs.create(**a),
+                        "vfs_edit": lambda **a: vfs.edit(**a),
+                        "vfs_open": lambda **a: vfs.open(**a),
+                        "vfs_close": lambda **a: vfs.close(**a),
+                        "vfs_extract": lambda **a: vfs.extract_info(**a),
+                        "vfs_view": lambda **a: vfs.view(**a),
+                        "vfs_list": lambda **a: vfs.list_files(),
+                        "vfs_save_local": lambda **a: vfs.save_vfs_to_local(a.get("vfs_path"), a.get("local_path")),
+                        "vfs_load_local": lambda **a: vfs.cp_local_to_vfs(a.get("local_path"), a.get("vfs_path"))
+                    }
+
+                    method = method_map.get(tool_name)
+                    if method:
+                        if asyncio.iscoroutinefunction(method) or tool_name in ["vfs_close", "vfs_extract"]:
+                            result = await method(**args)
+                        else:
+                            result = method(**args)
+                    else:
+                        result = {"error": f"Unknown VFS method: {tool_name}"}
+
+                # Execute registered tools
+                elif tool_name in agent._tool_registry:
+                    try:
+                        result = await agent.arun_function(tool_name, **args)
+                        if result is None:
+                            result = {"success": True}
+                        elif not isinstance(result, dict):
+                            result = {"success": True, "result": str(result)}
+                    except Exception as e:
+                        result = {"success": False, "error": str(e)}
+                else:
+                    result = {"error": f"Unknown tool: {tool_name}"}
+
+                all_results[f"{loop_count}_{tool_name}"] = result
+
+                # Add tool response
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "name": tool_name,
+                    "content": json.dumps(result, default=str, ensure_ascii=False)[:4000]
+                })
+
+            if final_response:
+                break
+
+        except Exception as e:
+            print(f"[ERROR] Tool loop: {e}")
+            import traceback
+            traceback.print_exc()
+            final_response = f"Error: {str(e)}"
+            break
+
+    if not final_response:
+        final_response = f"Reached limit ({config.max_loops} loops). Results: {json.dumps(all_results, default=str)[:500]}"
+
+    agent.shared["conversation_history"].append({"role": "user", "content": query})
+    agent.shared["conversation_history"].append({"role": "assistant", "content": final_response})
+    agent.shared["results"] = all_results
+    agent.shared["tool_calls_made"] = loop_count
+
+    return final_response
+
+
 # ===== MAIN AGENT CLASS =====
 class FlowAgent:
     """Production-ready agent system built on PocketFlow """
@@ -4469,6 +5268,7 @@ class FlowAgent:
         enable_pause_resume: bool = True,
         checkpoint_interval: int = 300,  # 5 minutes
         max_parallel_tasks: int = 3,
+        vfs_max_window_lines: int = 250,
         progress_callback: callable = None,
         stream:bool=True,
         **kwargs
@@ -4503,7 +5303,7 @@ class FlowAgent:
         self.context_manager.variable_manager = (
             self.variable_manager
         )  # Register default scopes
-
+        self.shared["vfs"] = VirtualFileSystem(self, vfs_max_window_lines)
         self.shared["context_manager"] = self.context_manager
         self.shared["variable_manager"] = self.variable_manager
         # Flows
@@ -4958,7 +5758,7 @@ class FlowAgent:
 
             if AGENT_VERBOSE and self.verbose:
                 kwargs["messages"] += [{"role": "assistant", "content": result}]
-                print_prompt(kwargs)
+            print_prompt(kwargs)
             # else:
             #     print_prompt([{"role": "assistant", "content": result}])
 
@@ -5028,6 +5828,7 @@ class FlowAgent:
         remember: bool = True,
         as_callback: Callable = None,
         fast_run: bool = False,
+        new=True,
         **kwargs
     ) -> str:
         """Main entry point für Agent-Ausführung mit UnifiedContextManager
@@ -5127,7 +5928,10 @@ class FlowAgent:
             self.is_running = True
 
             # Execute main orchestration flow
-            result = await self._orchestrate_execution()
+            if new:
+                result = await _orchestrate_execution_minimal(self, kwargs.get('orchestrator_config') or OrchestratorConfig())
+            else:
+                result = await self._orchestrate_execution()
 
             #Store assistant response in ChatSession wenn remember=True
             if remember:
