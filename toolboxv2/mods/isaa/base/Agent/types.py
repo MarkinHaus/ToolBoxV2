@@ -797,17 +797,11 @@ class AgentModelData(BaseModel):
     persona: PersonaConfig | None = None
     use_fast_response: bool = True
     handler_path_or_dict: str | dict[str, Any] | None = None
+    vfs_max_window_lines: int = 250
 
-    def get_system_message_with_persona(self) -> str:
+    def get_system_message(self) -> str:
         """Get system message with persona integration"""
         base_message = self.system_message
-
-        # Ensure persona is a PersonaConfig instance, not a bool
-        if self.persona and isinstance(self.persona, PersonaConfig):
-            if self.persona.apply_method in ["system_prompt", "both"]:
-                persona_addition = self.persona.to_system_prompt_addition()
-                if persona_addition:
-                    base_message += f"\n## Persona Instructions\n{persona_addition}"
 
         return base_message
 
