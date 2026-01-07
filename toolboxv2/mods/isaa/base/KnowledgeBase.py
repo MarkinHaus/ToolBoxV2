@@ -315,13 +315,13 @@ class ConceptExtractor:
         # Initialize rate limiter
 
         system_prompt = (
-            "Analyze the given text and extract key concepts and their relationships. For each concept:\n"
+            "Analyze only the given user text and extract key concepts and their relationships. For each concept:\n"
             "1. Identify the concept name and category (technical, domain, method, property, ...)\n"
             "2. Determine relationships with other concepts (uses, part_of, similar_to, depends_on, ...)\n"
             "3. Assess importance (0-1 score) based on centrality to the text\n"
             "4. Extract relevant context snippets\n"
-            "5. Max 5 Concepts!\n"
-            "only return in json format!\n"
+            "5. Max 5 Concepts! only 1 concept is ok for small texts.\n"
+            "only return in format!\n"
             """{"concepts": [{
                 "name": "concept_name",
                 "category": "category_name",
@@ -335,7 +335,7 @@ class ConceptExtractor:
 
         # Prepare all requests
         requests = [
-            (idx, f"Text to Convert in to JSON structure:\n{text}", system_prompt, metadata)
+            (idx, f"{text}", system_prompt, metadata)
             for idx, (text, metadata) in enumerate(zip(texts, metadatas, strict=False))
         ]
 

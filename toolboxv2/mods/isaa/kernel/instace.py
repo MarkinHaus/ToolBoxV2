@@ -20,7 +20,6 @@ import traceback
 
 from pydantic import BaseModel
 
-from toolboxv2.mods.isaa.base.Agent.agent import FlowAgent
 # Import all core interfaces from types
 from toolboxv2.mods.isaa.kernel.types import (
     Signal, SignalType, SignalBus, ISignalBus,
@@ -51,7 +50,7 @@ class Kernel(IProAKernel):
 
     def __init__(
         self,
-        agent: FlowAgent,
+        agent: 'FlowAgent',
         config: KernelConfig = None,
         decision_engine: IDecisionEngine = None,
         output_router: IOutputRouter = None

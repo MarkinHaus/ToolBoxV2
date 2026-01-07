@@ -9,6 +9,9 @@ Components:
 - CheckpointManager: State persistence
 - BindManager: Agent-to-agent binding
 - RuleSet: Dynamic skill/behavior system
+- ExecutionEngine: MAKER/RLM orchestration
+
+Author: FlowAgent V2
 """
 
 # Core agent
@@ -26,6 +29,36 @@ from toolboxv2.mods.isaa.base.Agent.checkpoint_manager import CheckpointManager,
 
 # Binding
 from toolboxv2.mods.isaa.base.Agent.bind_manager import BindManager, BindConfig, SyncEntry
+
+# Execution Engine
+from toolboxv2.mods.isaa.base.Agent.execution_engine import (
+    ExecutionEngine,
+    ExecutionState,
+    ExecutionResult,
+    ExecutionPhase,
+    MicroagentConfig,
+    MicroagentResult,
+    IntentClassification,
+    CategorySelection,
+    ToolSelection,
+    TaskDecomposition,
+    ThoughtAction,
+    ValidationResult,
+    VFS_TOOLS_LITELLM,
+    REACT_SYSTEM_PROMPT,
+    MICROAGENT_SYSTEM_PROMPT,
+)
+
+# Voice Streaming
+from toolboxv2.mods.isaa.base.Agent.voice_stream import (
+    VoiceStreamEngine,
+    BackgroundTaskManager,
+    BackgroundTask,
+    QueryComplexity,
+    CapabilityDetection,
+    voice_stream,
+    VOICE_PHRASES,
+)
 
 # RuleSet
 from toolboxv2.mods.isaa.base.Agent.rule_set import (
@@ -77,6 +110,32 @@ __all__ = [
     'BindManager',
     'BindConfig',
     'SyncEntry',
+    
+    # Execution Engine
+    'ExecutionEngine',
+    'ExecutionState',
+    'ExecutionResult',
+    'ExecutionPhase',
+    'MicroagentConfig',
+    'MicroagentResult',
+    'IntentClassification',
+    'CategorySelection',
+    'ToolSelection',
+    'TaskDecomposition',
+    'ThoughtAction',
+    'ValidationResult',
+    'VFS_TOOLS_LITELLM',
+    'REACT_SYSTEM_PROMPT',
+    'MICROAGENT_SYSTEM_PROMPT',
+    
+    # Voice Streaming
+    'VoiceStreamEngine',
+    'BackgroundTaskManager',
+    'BackgroundTask',
+    'QueryComplexity',
+    'CapabilityDetection',
+    'voice_stream',
+    'VOICE_PHRASES',
     
     # RuleSet
     'RuleSet',

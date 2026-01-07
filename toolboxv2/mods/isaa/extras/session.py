@@ -13,9 +13,7 @@ class ChatSession:
             max_length = 100
         self.max_length = max_length
         self.history = []
-        if os.path.exists(f'{get_app().appdata}/{space_name}.mem'):
-            self.mem.load_memory(self.space_name, f'{get_app().appdata}/{space_name}.mem')
-        else:
+        if not self.mem.load_memory(self.space_name, f'{get_app().appdata}/{space_name}.mem'):
             self.mem.create_memory(self.space_name)
             os.makedirs(f'{get_app().appdata}', exist_ok=True)
             os.makedirs(f'{get_app().appdata}/ChatSession', exist_ok=True)
@@ -37,8 +35,8 @@ class ChatSession:
         if self.max_length and len(self.history) > self.max_length:
             self.history.pop(0)
 
-    async def get_reference(self, text, **kwargs):
-        return "\n".join([str(x) for x in await self.mem.query(text, self.space_name, **kwargs)])
+    async def get_reference(self, text,row=False, **kwargs):
+        return "\n".join([str(x) for x in await self.mem.query(text, self.space_name, **kwargs)]) if not row else await self.mem.query(text, self.space_name, **kwargs)
 
     def get_past_x(self, x, last_u=False):
         if last_u:
@@ -56,5 +54,8 @@ class ChatSession:
         return history[::-1]
     def on_exit(self):
         self.mem.save_memory(self.space_name, f'{get_app().appdata}/{self.space_name}.mem')
+
+    def get_volume(self):
+        return self.mem.get_memory_size(self.space_name)
 
 

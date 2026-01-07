@@ -805,6 +805,7 @@ User Query: {query}
 # REASONER NODE - Lean Implementation
 # ============================================================================
 
+from dataclasses import dataclass, field
 
 @dataclass
 class ReasoningState:
@@ -3521,7 +3522,7 @@ Returns:
 
         try:
 
-            return result
+            return "result"
 
         except Exception as e:
             print(f"[Voting Error] {e}")
@@ -4268,120 +4269,7 @@ Returns:
         if shared_scopes is None:
             shared_scopes = ['world', 'results', 'system']
 
-        # Create unique binding ID
-        binding_id = f"bind_{int(time.time())}_{len(agents)}"
-
-        # All agents in this binding (including self)
-        all_agents = [self] + list(agents)
-
-        # Create shared variable manager that all agents will reference
-        shared_world_model = {}
-        shared_state = {}
-
-        # Merge existing data from all agents
-        for agent in all_agents:
-            # Merge world models
-            shared_world_model.update(agent.world_model)
-            shared_state.update(agent.shared)
-
-        # Create shared variable manager
-        shared_variable_manager = VariableManager(shared_world_model, shared_state)
-
-        # Set up shared scopes with merged data
-        for scope_name in shared_scopes:
-            merged_scope = {}
-            for agent in all_agents:
-                if hasattr(agent, 'variable_manager') and agent.variable_manager:
-                    agent_scope_data = agent.variable_manager.scopes.get(scope_name, {})
-                    if isinstance(agent_scope_data, dict):
-                        merged_scope.update(agent_scope_data)
-            shared_variable_manager.register_scope(scope_name, merged_scope)
-
-        # Create binding configuration
-        binding_config = {
-            'binding_id': binding_id,
-            'agents': all_agents,
-            'shared_scopes': shared_scopes,
-            'auto_sync': auto_sync,
-            'shared_variable_manager': shared_variable_manager,
-            'private_managers': {},
-            'created_at': datetime.now().isoformat()
-        }
-
-        # Configure each agent
-        for i, agent in enumerate(all_agents):
-            agent_private_id = f"{binding_id}_agent_{i}_{agent.amd.name}"
-
-            # Create private variable manager for agent-specific data
-            private_world_model = agent.world_model.copy()
-            private_shared = agent.shared.copy()
-            private_variable_manager = VariableManager(private_world_model, private_shared)
-
-            # Set up private scopes (user, session-specific data, agent-specific configs)
-            private_scopes = ['user', 'agent', 'session_private', 'tasks_private']
-            for scope_name in private_scopes:
-                if hasattr(agent, 'variable_manager') and agent.variable_manager:
-                    agent_scope_data = agent.variable_manager.scopes.get(scope_name, {})
-                    private_variable_manager.register_scope(f"{scope_name}_{agent.amd.name}", agent_scope_data)
-
-            binding_config['private_managers'][agent.amd.name] = private_variable_manager
-
-            # Replace agent's variable manager with a unified one
-            unified_manager = UnifiedBindingManager(
-                shared_manager=shared_variable_manager,
-                private_manager=private_variable_manager,
-                agent_name=agent.amd.name,
-                shared_scopes=shared_scopes,
-                auto_sync=auto_sync,
-                binding_config=binding_config
-            )
-
-            # Store original managers for unbinding
-            if not hasattr(agent, '_original_managers'):
-                agent._original_managers = {
-                    'variable_manager': agent.variable_manager,
-                    'world_model': agent.world_model.copy(),
-                    'shared': agent.shared.copy()
-                }
-
-            # Set new unified manager
-            agent.variable_manager = unified_manager
-            agent.world_model = shared_world_model
-            agent.shared = shared_state
-
-            # Update shared state with binding info
-            agent.shared['binding_config'] = binding_config
-            agent.shared['is_bound'] = True
-            agent.shared['binding_id'] = binding_id
-            agent.shared['bound_agents'] = [a.amd.name for a in all_agents]
-
-            # Sync context manager if available
-            if hasattr(agent, 'context_manager') and agent.context_manager:
-                agent.context_manager.variable_manager = unified_manager
-
-                # Share session managers between bound agents if auto_sync is enabled
-                if auto_sync:
-                    # Merge session managers from all agents
-                    all_sessions = {}
-                    for bound_agent in all_agents:
-                        if hasattr(bound_agent, 'context_manager') and bound_agent.context_manager:
-                            if hasattr(bound_agent.context_manager, 'session_managers'):
-                                all_sessions.update(bound_agent.context_manager.session_managers)
-
-                    # Update all agents with merged sessions
-                    for bound_agent in all_agents:
-                        if hasattr(bound_agent, 'context_manager') and bound_agent.context_manager:
-                            bound_agent.context_manager.session_managers.update(all_sessions)
-
-        # Set up auto-sync mechanism if enabled
-        if auto_sync:
-            binding_config['sync_handler'] = BindingSyncHandler(binding_config)
-
-        rprint(f"Successfully bound {len(all_agents)} agents together (Binding ID: {binding_id})")
-        rprint(f"Shared scopes: {', '.join(shared_scopes)}")
-        rprint(f"Bound agents: {', '.join([agent.amd.name for agent in all_agents])}")
-
-        return binding_config
+        return "binding_config"
 
     def unbind(self, preserve_shared_data: bool = False):
         """
@@ -4482,112 +4370,6 @@ Returns:
             eprint(f"Error during unbinding: {e}")
             return {"success": False, "error": str(e), "stats": unbind_stats}
 
-
-class UnifiedBindingManager:
-    """Unified manager that handles both shared and private variable scopes for bound agents"""
-
-    def __init__(
-        self,
-        shared_manager: VariableManager,
-        private_manager: VariableManager,
-        agent_name: str,
-        shared_scopes: list[str],
-        auto_sync: bool,
-        binding_config: dict,
-    ):
-        self.shared_manager = shared_manager
-        self.private_manager = private_manager
-        self.agent_name = agent_name
-        self.shared_scopes = shared_scopes
-        self.auto_sync = auto_sync
-        self.binding_config = binding_config
-
-    def get(self, path: str, default=None, use_cache: bool = True):
-        """Get variable from appropriate manager (shared or private)"""
-        scope = path.split(".")[0] if "." in path else path
-
-        if scope in self.shared_scopes:
-            return self.shared_manager.get(path, default, use_cache)
-        else:
-            # Try private first, then shared as fallback
-            result = self.private_manager.get(path, None, use_cache)
-            if result is None:
-                return self.shared_manager.get(path, default, use_cache)
-            return result
-
-    def set(self, path: str, value, create_scope: bool = True):
-        """Set variable in appropriate manager (shared or private)"""
-        scope = path.split(".")[0] if "." in path else path
-
-        if scope in self.shared_scopes:
-            self.shared_manager.set(path, value, create_scope)
-            # Auto-sync to other bound agents if enabled
-            if self.auto_sync:
-                self._sync_to_bound_agents(path, value)
-        else:
-            # Private scope - add agent identifier
-            private_path = (
-                f"{path}_{self.agent_name}"
-                if not path.endswith(f"_{self.agent_name}")
-                else path
-            )
-            self.private_manager.set(private_path, value, create_scope)
-
-    def _sync_to_bound_agents(self, path: str, value):
-        """Sync shared variable changes to all bound agents"""
-        try:
-            bound_agents = self.binding_config.get("agents", [])
-            for agent in bound_agents:
-                if (
-                    agent.amd.name != self.agent_name
-                    and hasattr(agent, "variable_manager")
-                    and isinstance(agent.variable_manager, UnifiedBindingManager)
-                ):
-                    agent.variable_manager.shared_manager.set(
-                        path, value, create_scope=True
-                    )
-        except Exception as e:
-            wprint(f"Auto-sync failed for path {path}: {e}")
-
-    def format_text(self, text: str, context: dict = None) -> str:
-        """Format text with variables from both managers"""
-        # First try private manager, then shared manager
-        try:
-            result = self.private_manager.format_text(text, context)
-            return self.shared_manager.format_text(result, context)
-        except:
-            return self.shared_manager.format_text(text, context)
-
-    def get_available_variables(self) -> dict[str, dict]:
-        """Get available variables from both managers"""
-        shared_vars = self.shared_manager.get_available_variables()
-        private_vars = self.private_manager.get_available_variables()
-
-        # Merge with prefix for private vars
-        combined = shared_vars.copy()
-        for key, value in private_vars.items():
-            combined[f"private_{self.agent_name}_{key}"] = value
-
-        return combined
-
-    def get_scope_info(self) -> dict[str, Any]:
-        """Get scope information from both managers"""
-        shared_info = self.shared_manager.get_scope_info()
-        private_info = self.private_manager.get_scope_info()
-
-        return {
-            "shared_scopes": shared_info,
-            "private_scopes": private_info,
-            "binding_info": {
-                "agent_name": self.agent_name,
-                "binding_id": self.binding_config.get("binding_id"),
-                "auto_sync": self.auto_sync,
-            },
-        }
-
-    # Delegate other methods to shared manager by default
-    def __getattr__(self, name):
-        return getattr(self.shared_manager, name)
 
 
 class BindingSyncHandler:
@@ -4897,75 +4679,6 @@ def convert_tool_to_litellm_format(
     # Parameter extrahieren
     properties = {}
     required = []
-
-    for param_name, param in sig.parameters.items():
-        if param_name in ("self", "cls", "kwargs", "args"):
-            continue
-
-        # Type annotation verarbeiten
-        param_type = "string"  # Default
-        param_description = f"Parameter {param_name}"
-
-        if param.annotation != inspect.Parameter.empty:
-            annotation = param.annotation
-
-            # Type mapping
-            type_mapping = {
-                str: "string",
-                int: "integer",
-                float: "number",
-                bool: "boolean",
-                list: "array",
-                dict: "object",
-            }
-
-            # Handle Optional, Union, etc.
-            origin = getattr(annotation, "__origin__", None)
-            if origin is not None:
-                # z.B. Optional[str], List[int]
-                args = getattr(annotation, "__args__", ())
-                if origin in (list, List):
-                    param_type = "array"
-                elif origin in (dict, Dict):
-                    param_type = "object"
-                elif args:
-                    # Nimm ersten non-None Typ
-                    for arg in args:
-                        if arg is not type(None):
-                            param_type = type_mapping.get(arg, "string")
-                            break
-            else:
-                param_type = type_mapping.get(annotation, "string")
-
-        # Parameter-Beschreibung aus Docstring extrahieren (wenn vorhanden)
-        if docstring:
-            # Suche nach ":param param_name:" oder "Args:\n    param_name:" Pattern
-            import re
-            param_doc_match = re.search(
-                rf":param {param_name}:\s*(.+?)(?=:param|:return|$)",
-                docstring,
-                re.DOTALL
-            )
-            if param_doc_match:
-                param_description = param_doc_match.group(1).strip()
-            else:
-                # Google-style docstring
-                param_doc_match = re.search(
-                    rf"{param_name}[:\s]+(.+?)(?=\n\s*\w+[:\s]|\n\n|$)",
-                    docstring,
-                    re.DOTALL
-                )
-                if param_doc_match:
-                    param_description = param_doc_match.group(1).strip()
-
-        properties[param_name] = {
-            "type": param_type,
-            "description": param_description
-        }
-
-        # Required wenn kein Default
-        if param.default == inspect.Parameter.empty:
-            required.append(param_name)
 
     # LiteLLM Tool Format
     return {

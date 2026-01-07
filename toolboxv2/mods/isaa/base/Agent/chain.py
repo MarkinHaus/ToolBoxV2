@@ -191,7 +191,7 @@ class Chain(ChainBase):
 
     def __init__(self, agent: 'FlowAgent' = None):
         self.tasks: list[Any] = [agent] if agent else []
-        self.progress_tracker: 'ChainPrinter' | None = None
+        self.progress_tracker: None = None
 
     @classmethod
     def _create_chain(cls, components: list[Any]) -> 'Chain':

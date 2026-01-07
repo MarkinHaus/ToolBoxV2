@@ -508,6 +508,7 @@ class AISemanticMemory(metaclass=Singleton):
                     })
             #except Exception as e:
             #    print(f"Query failed on {name}: {str(e)}")
+        print(to_str, "to_str")
         if to_str:
             str_res = ""
             if not unified_retrieve:
@@ -557,6 +558,12 @@ class AISemanticMemory(metaclass=Singleton):
                 return False
         return False
 
+    def get_memory_size(self, name: str | None):
+        sanitized = self._sanitize_name(name)
+        if kb := self.memories.get(sanitized):
+            return len(kb.vdb.chunks) if kb.vdb and kb.vdb.chunks else 0
+        return 0
+
     def save_all_memories(self, path: str) -> bool:
         """Save all memory stores to disk"""
         for name, kb in self.memories.items():
@@ -586,7 +593,7 @@ class AISemanticMemory(metaclass=Singleton):
         """Load a memory store from disk"""
         sanitized = self._sanitize_name(name)
         if sanitized in self.memories:
-            return False
+            return True
         try:
             self.memories[sanitized] = KnowledgeBase.load(path)
             return True

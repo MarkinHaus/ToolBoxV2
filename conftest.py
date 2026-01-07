@@ -350,3 +350,168 @@ def mock_external_services(monkeypatch):
 
     yield
 
+
+"""
+Test fixtures and mocks for FlowAgent V2 tests.
+"""
+
+import asyncio
+import json
+from dataclasses import dataclass
+from typing import Any, Callable
+from unittest.mock import AsyncMock, MagicMock, patch
+
+
+# =============================================================================
+# MOCK LLM RESPONSES
+# =============================================================================
+
+class MockLLMResponse:
+    """Mock LiteLLM response"""
+
+    def __init__(self, content: str, tool_calls: list = None):
+        self.content = content
+        self.tool_calls = tool_calls or []
+
+    class Choice:
+        def __init__(self, content, tool_calls):
+            self.message = MagicMock()
+            self.message.content = content
+            self.message.tool_calls = tool_calls
+            self.delta = MagicMock()
+            self.delta.content = content
+            self.delta.tool_calls = tool_calls
+
+    @property
+    def choices(self):
+        return [self.Choice(self.content, self.tool_calls)]
+
+    @property
+    def usage(self):
+        return MagicMock(prompt_tokens=10, completion_tokens=20)
+
+
+class MockStreamResponse:
+    """Mock streaming response"""
+
+    def __init__(self, chunks: list[str]):
+        self.chunks = chunks
+        self._index = 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._index >= len(self.chunks):
+            raise StopAsyncIteration
+
+        chunk = self.chunks[self._index]
+        self._index += 1
+
+        mock = MagicMock()
+        mock.choices = [MagicMock()]
+        mock.choices[0].delta = MagicMock()
+        mock.choices[0].delta.content = chunk
+        mock.choices[0].delta.tool_calls = None
+        mock.usage = MagicMock(prompt_tokens=5, completion_tokens=10)
+
+        return mock
+
+
+class MockToolCall:
+    """Mock tool call"""
+
+    def __init__(self, name: str, arguments: dict, id: str = "tc_001"):
+        self.id = id
+        self.function = MagicMock()
+        self.function.name = name
+        self.function.arguments = json.dumps(arguments)
+
+
+# =============================================================================
+# MOCK AGENT MODEL DATA
+# =============================================================================
+
+@dataclass
+class MockAgentModelData:
+    """Minimal AgentModelData for testing"""
+    name: str = "TestAgent"
+    fast_llm_model: str = "mock/fast"
+    complex_llm_model: str = "mock/complex"
+    handler_path_or_dict: dict = None
+    vfs_max_window_lines: int = 100
+    system_message: str = "You are a test agent."
+
+    def __post_init__(self):
+        if self.handler_path_or_dict is None:
+            self.handler_path_or_dict = {}
+
+    def get_system_message_with_persona(self):
+        return self.system_message
+
+
+# =============================================================================
+# MOCK HANDLERS
+# =============================================================================
+
+class MockRateLimitHandler:
+    """Mock rate limit handler"""
+
+    def __init__(self):
+        self.calls = []
+        self.response = None
+
+    def set_response(self, response):
+        self.response = response
+
+    async def completion_with_rate_limiting(self, litellm, **kwargs):
+        self.calls.append(kwargs)
+        if self.response:
+            return self.response
+        return MockLLMResponse("Test response")
+
+
+# =============================================================================
+# TEST UTILITIES
+# =============================================================================
+
+def async_test(coro):
+    """Decorator to run async tests"""
+
+    def wrapper(*args, **kwargs):
+        return asyncio.get_event_loop().run_until_complete(coro(*args, **kwargs))
+
+    return wrapper
+
+
+async def collect_stream(stream) -> str:
+    """Collect all chunks from async generator"""
+    result = ""
+    async for chunk in stream:
+        result += chunk
+    return result
+
+
+def create_mock_tool(name: str, return_value: Any = None):
+    """Create a mock tool function"""
+
+    async def tool_func(**kwargs):
+        return return_value or {"status": "ok", "args": kwargs}
+
+    tool_func.__name__ = name
+    tool_func.__doc__ = f"Mock tool: {name}"
+    return tool_func
+
+
+# =============================================================================
+# FIXTURES
+# =============================================================================
+
+def get_test_amd() -> MockAgentModelData:
+    """Get test AgentModelData"""
+    return MockAgentModelData()
+
+
+def get_mock_handler() -> MockRateLimitHandler:
+    """Get mock rate limit handler"""
+    return MockRateLimitHandler()

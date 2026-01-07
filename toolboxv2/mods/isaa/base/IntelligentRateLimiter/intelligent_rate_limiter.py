@@ -30,6 +30,8 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 import hashlib
 
+from toolboxv2.utils.extras.Style import print_prompt
+
 logger = logging.getLogger(__name__)
 
 
@@ -1485,6 +1487,9 @@ class LiteLLMRateLimitHandler:
 
                 # Execute request
                 response = await litellm_module.acompletion(**kwargs)
+
+                if not kwargs.get("stream", False):
+                    print_prompt(kwargs["messages"]+[{"role": "assistant", "content": response.choices[0].message.content}])
 
                 # Report success
                 if self.enable_rate_limiting:
