@@ -60,6 +60,28 @@ from toolboxv2.mods.isaa.base.Agent.voice_stream import (
     VOICE_PHRASES,
 )
 
+# Default Tools
+from toolboxv2.mods.isaa.base.Agent.default_tools import (
+    DefaultToolsHandler,
+    DefaultToolDef,
+    DefaultToolCategory,
+    DEFAULT_TOOLS_DEFS,
+    get_default_tools_litellm,
+    get_default_tool_names,
+    is_default_tool,
+    create_default_tools_handler,
+)
+
+# Execution Engine Patch (optional import)
+try:
+    from toolboxv2.mods.isaa.base.Agent.execution_engine_patch import (
+        patch_execution_engine,
+        DefaultToolsMixin,
+    )
+except ImportError:
+    patch_execution_engine = None
+    DefaultToolsMixin = None
+
 # RuleSet
 from toolboxv2.mods.isaa.base.Agent.rule_set import (
     RuleSet,
@@ -136,6 +158,18 @@ __all__ = [
     'CapabilityDetection',
     'voice_stream',
     'VOICE_PHRASES',
+    
+    # Default Tools
+    'DefaultToolsHandler',
+    'DefaultToolDef',
+    'DefaultToolCategory',
+    'DEFAULT_TOOLS_DEFS',
+    'get_default_tools_litellm',
+    'get_default_tool_names',
+    'is_default_tool',
+    'create_default_tools_handler',
+    'patch_execution_engine',
+    'DefaultToolsMixin',
     
     # RuleSet
     'RuleSet',

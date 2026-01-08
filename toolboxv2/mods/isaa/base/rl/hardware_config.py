@@ -216,9 +216,18 @@ def detect_hardware(storage_path: Optional[str] = None) -> HardwareConfig:
     else:
         try:
             from toolboxv2 import get_app
-            config.storage_path = str(get_app().data_dir) + '/models'
+            app = get_app()
+            # Validate that data_dir is a real path, not a Mock
+            data_dir = str(app.data_dir)
+            if '<' in data_dir or 'MagicMock' in data_dir or 'Mock' in data_dir:
+                raise ValueError("Mock detected")
+            config.storage_path = data_dir + '/models'
         except:
             config.storage_path = os.path.expanduser("~/.toolbox/models")
+    
+    # Validate storage path before creating
+    if '<' in config.storage_path or 'MagicMock' in config.storage_path:
+        config.storage_path = os.path.expanduser("~/.toolbox/models")
     
     os.makedirs(config.storage_path, exist_ok=True)
     

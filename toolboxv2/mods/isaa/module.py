@@ -240,7 +240,7 @@ class AgentNetworkManifest(BaseModel):
 # MAIN TOOLS CLASS
 # =============================================================================
 
-class Tools(MainTool, FileHandler):
+class Tools(MainTool):
 
     def __init__(self, app=None):
         self.run_callback = None
@@ -317,7 +317,7 @@ class Tools(MainTool, FileHandler):
         self.default_setter = None
         self.initialized = False
 
-        FileHandler.__init__(self, f"isaa{extra_path.replace('/', '-')}.config", app.id if app else __name__)
+        self.file_handler = FileHandler(f"isaa{extra_path.replace('/', '-')}.config", app.id if app else __name__)
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=None, color=self.color, on_exit=self.on_exit)
 
@@ -332,8 +332,8 @@ class Tools(MainTool, FileHandler):
 
         self.print(f"Start {self.spec}.isaa")
         with Spinner(message="Starting module", symbols='c'):
-            self.load_file_handler()
-            config_fh = self.get_file_handler(self.keys["Config"])
+            self.file_handler.load_file_handler()
+            config_fh = self.file_handler.get_file_handler(self.keys["Config"])
             if config_fh is not None:
                 if isinstance(config_fh, str):
                     try:
@@ -1000,8 +1000,8 @@ class Tools(MainTool, FileHandler):
                 continue
             clean_config[key] = value
 
-        self.add_to_save_file_handler(self.keys["Config"], json.dumps(clean_config))
-        self.save_file_handler()
+        self.file_handler.add_to_save_file_handler(self.keys["Config"], json.dumps(clean_config))
+        self.file_handler.save_file_handler()
 
     def save_to_mem_sync(self):
         memory_instance = self.get_memory()
