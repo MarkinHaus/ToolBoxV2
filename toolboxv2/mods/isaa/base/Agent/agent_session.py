@@ -597,6 +597,8 @@ class AgentSession:
     - Tool restrictions per session
     """
 
+    tools_initialized = False
+
     def __init__(
         self,
         session_id: str,

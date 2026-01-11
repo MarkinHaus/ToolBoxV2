@@ -30,17 +30,6 @@ class TestExecutionEngine(AsyncTestCase):
     def test_01_init(self):
         self.assertIsInstance(self.engine, ExecutionEngine)
 
-    def test_02_detect_intent_immediate(self):
-        # Mock a_format_class response
-        self.agent.a_format_class.return_value = {
-            'can_answer_directly': True, 'needs_tools': False,
-            'is_complex_task': False, 'confidence': 1.0
-        }
-        state = ExecutionState("id", "Hello", "sess")
-
-        res = self.async_run(self.engine._detect_intent(state, self.session, False))
-        self.assertTrue(res.can_answer_directly)
-
     def test_03_immediate_path(self):
         self.agent.a_run_llm_completion = AsyncMock(return_value="Hi there")
         state = ExecutionState("id", "Hello", "sess")

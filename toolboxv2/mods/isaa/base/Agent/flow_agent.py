@@ -16,10 +16,12 @@ import json
 import os
 import time
 import uuid
+from pathlib import Path
+
 import yaml
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import Any, AsyncGenerator, Callable
+from typing import Any, AsyncGenerator, Callable, Generator, Coroutine, Union
 
 from pydantic import BaseModel, ValidationError
 
@@ -81,6 +83,7 @@ class FlowAgent:
 
         self.is_running = False
         self.active_session: str | None = None
+        self.active_execution_id: str | None = None
 
         # Statistics
         self.total_tokens_in = 0
@@ -185,6 +188,7 @@ class FlowAgent:
         get_response_message: bool = False,
         task_id: str = "unknown",
         session_id: str | None = None,
+        do_tool_execution: bool = False,
         **kwargs
     ) -> str | Any:
         if not LITELLM_AVAILABLE:
@@ -198,17 +202,13 @@ class FlowAgent:
         llm_kwargs = {'model': model, 'messages': messages.copy(), 'stream': use_stream, **kwargs}
         session_id = session_id or self.active_session
         system_msg = self.amd.get_system_message()
-        history = []
         if session_id:
             session = self.session_manager.get(session_id)
             if session:
                 await session.initialize()
                 system_msg += "\n\n"+  session.build_vfs_context()
-                history = session.get_history(5)
-                if len(history) >= 1:
-                    history = history[:-1]
         if with_context:
-            llm_kwargs['messages'] = [{"role": "system", "content": f"{system_msg}"}] + history + llm_kwargs['messages']
+            llm_kwargs['messages'] = [{"role": "system", "content": f"{system_msg}"}] + llm_kwargs['messages']
 
         if 'api_key' not in llm_kwargs:
             llm_kwargs['api_key'] = self._get_api_key_for_model(model)
@@ -235,6 +235,12 @@ class FlowAgent:
             self.total_tokens_out += output_tokens
             self.total_cost_accumulated += cost
             self.total_llm_calls += 1
+
+            if do_tool_execution and 'tools' in llm_kwargs:
+                tool_response = await self.run_tool_response(result, session_id)
+                llm_kwargs['messages'] += [{"role": "assistant", "content": result}]+tool_response
+                del kwargs['tools']
+                return await self.a_run_llm_completion(llm_kwargs['messages'], model_preference, with_context, stream, get_response_message, task_id, session_id, **kwargs)
 
             return result
         except Exception as e:
@@ -271,6 +277,30 @@ class FlowAgent:
             result = Message(role="assistant", content=result or None, tool_calls=list(tool_calls_acc.values()) if tool_calls_acc else [])
 
         return result, usage
+
+    async def run_tool_response(self, response, session_id):
+
+        tool_calls = response.tool_calls
+        session = None
+        if session_id:
+            session = self.session_manager.get(session_id)
+        all_results = []
+        for tc in tool_calls:
+            tool_name = tc.function.name
+            tool_args = json.loads(tc.function.arguments or "{}")
+            try:
+                result = await self.arun_function(tool_name, **tool_args)
+            except Exception as e:
+                result = f"Error: {str(e)}"
+            tool_response = {
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": str(result)
+            }
+            all_results.append(tool_response)
+            if session:
+                await session.add_message(tool_response)
+        return all_results
 
     def _get_api_key_for_model(self, model: str) -> str | None:
         prefix = model.split("/")[0]
@@ -376,7 +406,6 @@ class FlowAgent:
         self,
         query: str,
         session_id: str = "default",
-        remember: bool = True,
         execution_id: str | None = None,
         use_native_tools: bool = True,
         human_online: bool = False,
@@ -404,7 +433,6 @@ class FlowAgent:
         Args:
             query: User query
             session_id: Session identifier
-            remember: Save to history
             execution_id: For continuing paused execution
             use_native_tools: LiteLLM native tool calling vs a_format_class
             human_online: Allow human-in-the-loop
@@ -419,12 +447,16 @@ class FlowAgent:
             - "__PAUSED__:{execution_id}" - Execution paused
             - "__NEEDS_HUMAN__:{execution_id}:{question}" - Waiting for human
         """
-        from toolboxv2.mods.isaa.base.Agent.execution_engine import ExecutionEngine
 
-        print(f"ACTIVE SESSION IN A_RUN {self.active_session=} {session_id=}")
+        if not session_id:
+            session_id = "default"
+        if session_id == "default" and self.active_session is not None:
+            session_id = self.active_session
+
         self.active_session = session_id
         self.is_running = True
-
+        if execution_id is None and self.active_execution_id is not None:
+            execution_id = self.active_execution_id
         try:
             # Create execution engine
             engine = self._get_execution_engine(
@@ -438,8 +470,6 @@ class FlowAgent:
                 query=query,
                 session_id=session_id,
                 execution_id=execution_id,
-                remember=remember,
-                with_context=kwargs.get('with_context', True),
                 human_response=human_response,
                 max_iterations=max_iterations,
                 token_budget=token_budget,
@@ -448,10 +478,11 @@ class FlowAgent:
 
             # Handle special states
             if result.paused:
+                self.active_execution_id = result.execution_id
                 if result.needs_human:
-                    return f"__NEEDS_HUMAN__:{result.execution_id}:{result.human_query}"
-                return f"__PAUSED__:{result.execution_id}"
-
+                    return f"__NEEDS_HUMAN__:{result.human_query}"
+                return f"__PAUSED__"
+            self.active_execution_id = None
             return result.response
 
         except Exception as e:
@@ -526,119 +557,185 @@ class FlowAgent:
         self,
         query: str,
         session_id: str = "default",
-        remember: bool = True,
-        language: str = "en",
-        wait_for_hard: bool = False,
-        force_mode: str | None = None,
-        callback_on_complete: Callable[[str, str], None] | None = None,
+        execution_id: str | None = None,
+        use_native_tools: bool = True,
+        human_online: bool = False,
+        intermediate_callback: Callable[[str], None] | None = None,
+        human_response: str | None = None,
+        max_iterations: int = 15,
+        token_budget: int = 10000,
         **kwargs
-    ) -> AsyncGenerator[str, None]:
+    ) -> str:
         """
-        Voice-first intelligent streaming.
+        Main entry point for streaming agent execution.
 
-        Auto-detects query complexity:
-        - INSTANT: Simple questions → Stream directly
-        - QUICK_TOOL: Single tool needed → Inline execution
-        - HARD_TASK: Complex task → Background a_run
+        Architecture: MAKER (parallel decomposition) + RLM (VFS-based context)
 
-        Natural voice flow:
-        - User: "What's the weather?"
-        - Agent: "Let me check... It's 22°C and sunny."
-
-        - User: "Create a Discord bot for moderation"
-        - Agent: "Ok, I'll take care of that... [works] ... Done! Here's the result..."
+        Features:
+        - Auto Intent Detection → Immediate/Tools/Decomposition
+        - Category-based tool selection (max 5 tools)
+        - RLM-VFS style ReAct loop
+        - Parallel microagent execution for complex tasks
+        - Pause/Continue support
+        - Human-in-the-loop
+        - Transaction-based rollback
+        - Non-blocking learning
 
         Args:
             query: User query
             session_id: Session identifier
-            remember: Save to history
-            language: Response language ("en", "de")
-            wait_for_hard: Wait for hard tasks or return task_id immediately
-            force_mode: Force complexity ("instant", "quick_tool", "hard_task", None=auto)
-            callback_on_complete: Callback when background task completes
+            execution_id: For continuing paused execution
+            use_native_tools: LiteLLM native tool calling vs a_format_class
+            human_online: Allow human-in-the-loop
+            intermediate_callback: User-facing status messages
+            human_response: Response from human (for continuation)
+            max_iterations: Max ReAct iterations (default 15)
+            token_budget: Token budget per iteration (default 10000)
             **kwargs: Additional options
 
-        Yields:
-            str: Response chunks
-
-        Special yields:
-            "__TASK_STARTED__:{task_id}" - Background task started
-            "__TASK_DONE__:{task_id}:{result}" - Task completed (via callback)
-
-        Example:
-            async for chunk in agent.a_stream("Analyze my data", language="de"):
-                print(chunk, end="", flush=True)
+        Returns:
+            Response string or special response for paused states:
+            - "__PAUSED__:{execution_id}" - Execution paused
+            - "__NEEDS_HUMAN__:{execution_id}:{question}" - Waiting for human
         """
-        from toolboxv2.mods.isaa.base.Agent.voice_stream import VoiceStreamEngine
 
-        engine = VoiceStreamEngine(
-            agent=self,
-            language=language,
-            callback_on_complete=callback_on_complete
-        )
+        if not session_id:
+            session_id = "default"
+        if session_id == "default" and self.active_session is not None:
+            session_id = self.active_session
 
-        async for chunk in engine.stream(
-            query=query,
-            session_id=session_id,
-            remember=remember,
-            force_mode=force_mode,
-            wait_for_hard=wait_for_hard,
-            **kwargs
-        ):
-            yield chunk
-
-    async def a_stream_simple(
-        self,
-        query: str,
-        session_id: str = "default",
-        remember: bool = True,
-        **kwargs
-    ) -> AsyncGenerator[str, None]:
-        """Simple streaming without capability detection (legacy mode)."""
         self.active_session = session_id
         self.is_running = True
+        if execution_id is None and self.active_execution_id is not None:
+            execution_id = self.active_execution_id
 
         try:
-            session = await self.session_manager.get_or_create(session_id)
+            # Create execution engine
+            engine = self._get_execution_engine(
+                use_native_tools=use_native_tools,
+                human_online=human_online,
+                intermediate_callback=intermediate_callback
+            )
 
-            if remember:
-                await session.add_message({"role": "user", "content": query})
+            # Execute
+            stream_func, state = await engine.execute(
+                query=query,
+                session_id=session_id,
+                execution_id=execution_id,
+                human_response=human_response,
+                max_iterations=max_iterations,
+                token_budget=token_budget,
+                do_stream=True,
+                **kwargs
+            )
 
-            messages = session.get_history_for_llm(last_n=10)
-            if asyncio.iscoroutine(messages):
-                messages = await messages
-            messages.append({"role": "user", "content": query})
-
-            model = self.amd.fast_llm_model
-            llm_kwargs = {
-                'model': model,
-                'messages': messages,
-                'stream': True,
-                'stream_options': {"include_usage": True}
-            }
-
-            if 'api_key' not in llm_kwargs:
-                llm_kwargs['api_key'] = self._get_api_key_for_model(model)
-
-            response = await self.llm_handler.completion_with_rate_limiting(litellm, **llm_kwargs)
-
-            full_response = ""
-            async for chunk in response:
-                content = chunk.choices[0].delta.content or ""
-                full_response += content
-                if content:
-                    yield content
-
-            if remember:
-                await session.add_message({"role": "assistant", "content": full_response})
+            async for result in stream_func(state):
+                if hasattr(result, 'paused'):
+                    if result.paused:
+                        self.active_execution_id = result.execution_id
+                        yield result.human_query if result.needs_human else "I am Paused"
+                        break
+                    elif result.success:
+                        self.active_execution_id = None
+                        yield result.response
+                        break
+                    elif not result.success:
+                        self.active_execution_id = None
+                        yield result.response
+                        break
+                else:
+                    yield result
 
         except Exception as e:
+            logger.error(f"a_run failed: {e}")
             import traceback
             traceback.print_exc()
             yield f"Error: {str(e)}"
         finally:
             self.is_running = False
             # self.active_session = None
+
+
+    # =========================================================================
+    # audio processing
+    # =========================================================================
+
+    async def a_stream_audio(
+        self,
+        audio_chunks: Generator[bytes, None, None],
+        session_id: str = "default",
+        language: str = "en",
+        **kwargs
+    ) -> AsyncGenerator[bytes, None]:
+        """
+        Process a stream of audio chunks through the agent.
+
+        Use this for real-time audio processing where you want
+        to yield audio output as soon as possible.
+
+        Args:
+            audio_chunks: Generator yielding audio byte chunks
+            session_id: Session identifier
+            language: Response language ("en", "de")
+            **kwargs: Additional options
+
+        Yields:
+            Audio bytes chunks for immediate playback
+        """
+        from toolboxv2.mods.isaa.base.audio_io.audioIo import process_audio_stream
+
+        self.active_session = session_id
+        async for chunk in process_audio_stream(
+            audio_chunks, self.a_stream, language=language, **kwargs
+        ):
+            yield chunk
+
+    async def a_audio(
+        self,
+        audio: Union[bytes, Path, str],
+        session_id: str = "default",
+        language: str = "en",
+        **kwargs
+    ) -> tuple[bytes | None, str, list, dict]:
+        """
+        Process a complete audio file/buffer through the agent.
+
+        This function handles the full pipeline:
+        1. Audio input (file, bytes, or path)
+        2. Understanding (STT or native audio model)
+        3. Processing (your agent logic via processor callback)
+        4. Response generation (TTS or native audio model)
+
+        Args:
+            audio: Audio input (bytes, file path, or Path object)
+            session_id: Session identifier
+            language: Response language ("en", "de")
+            **kwargs: Additional options
+
+        Returns:
+            Audio bytes for playback
+        """
+        from toolboxv2.mods.isaa.base.audio_io.audioIo import process_audio_raw
+        self.active_session = session_id
+        result = await process_audio_raw(audio, self.a_run, language=language, **kwargs)
+        # text_input = result.text_input
+        text_output = result.text_output
+        audio_output = result.audio_output
+        tool_calls = result.tool_calls
+        metadata = result.metadata
+
+        return audio_output, text_output, tool_calls, metadata
+
+    @staticmethod
+    async def tts(text: str, language: str = "en", **kwargs) -> 'TTSResult':
+        from toolboxv2.mods.isaa.base.audio_io.Tts import synthesize, TTSResult
+        return synthesize(text, language=language, **kwargs)
+
+    @staticmethod
+    async def stt(audio: Union[bytes, Path, str], language: str = "en", **kwargs) -> 'STTResult':
+        from toolboxv2.mods.isaa.base.audio_io.Stt import transcribe, STTResult
+        return transcribe(audio, language=language, **kwargs)
+
 
     # =========================================================================
     # TOOL MANAGEMENT
@@ -664,6 +761,147 @@ class FlowAgent:
     def get_tool(self, name: str) -> Callable | None:
         """Get tool function by name."""
         return self.tool_manager.get_function(name)
+
+    # =========================================================================
+    # SESSION TOOLS INITIALIZATION
+    # =========================================================================
+
+    async def init_session_tools(self, session_id: str | None = None):
+        """
+        Initializes and registers standard session-aware tools (VFS, Memory, Situation).
+        These tools allow the LLM to interact with the active AgentSession.
+        """
+        session_id = session_id or self.active_session
+        session = await self.session_manager.get_or_create(session_id)
+        if session.tools_initialized:
+            return
+        # --- Helper to safely get session ---
+        def get_session():
+            if not self.active_session:
+                raise RuntimeError("No active session set for tool execution.")
+            session = self.session_manager.get(self.active_session)
+            if not session:
+                raise ValueError(f"Session '{self.active_session}' not found.")
+            return session
+
+        # ==========================
+        # 1. Virtual File System (VFS)
+        # ==========================
+
+        async def vfs_list_files():
+            """List all files in the virtual file system with their status and size."""
+            return get_session().vfs_list()
+
+        async def vfs_read_file(filename: str):
+            """Read the full content of a file from the VFS."""
+            return get_session().vfs_read(filename)
+
+        async def vfs_create_file(filename: str, content: str):
+            """Create a new file in the VFS with the given content."""
+            return get_session().vfs_create(filename, content)
+
+        async def vfs_write_file(filename: str, content: str):
+            """Overwrite an existing file completely with new content."""
+            return get_session().vfs_write(filename, content)
+
+        async def vfs_edit_file(filename: str, line_start: int, line_end: int, new_content: str):
+            """
+            Edit specific lines in a file. Replaces lines from line_start to line_end with new_content.
+            Use this for precise edits to large files to save tokens.
+            """
+            return get_session().vfs.edit(filename, line_start, line_end, new_content)
+
+        async def vfs_append_file(filename: str, content: str):
+            """Append text to the end of a file."""
+            return get_session().vfs.append(filename, content)
+
+        async def vfs_open_file(filename: str, line_start: int = 1, line_end: int = -1):
+            """
+            'Open' a file to make it visible in your context window.
+            Optionally specify line range.
+            Only open files are "seen" by the agent automatically.
+            """
+            return get_session().vfs_open(filename, line_start, line_end)
+
+        async def vfs_close_file(filename: str):
+            """
+            'Close' a file to remove it from context window and save tokens.
+            Automatically generates a summary of the closed file.
+            """
+            return await get_session().vfs_close(filename)
+
+        # Register VFS Tools
+        vfs_category = ["system", "vfs"]
+        vfs_flags = {"virtual": True, "context_modifying": True}
+
+        await self.add_tool(vfs_list_files, name="vfs_list", description="List all VFS files",
+                            category=vfs_category, flags=vfs_flags)
+        await self.add_tool(vfs_read_file, name="vfs_read", description="Read file content",
+                            category=vfs_category, flags=vfs_flags)
+        await self.add_tool(vfs_create_file, name="vfs_create", description="Create new file",
+                            category=vfs_category, flags=vfs_flags)
+        await self.add_tool(vfs_write_file, name="vfs_write", description="Overwrite file", category=vfs_category,
+                            flags=vfs_flags)
+        await self.add_tool(vfs_edit_file, name="vfs_edit", description="Edit specific file lines",
+                            category=vfs_category, flags=vfs_flags)
+        await self.add_tool(vfs_append_file, name="vfs_append", description="Append to file",
+                            category=vfs_category, flags=vfs_flags)
+        await self.add_tool(vfs_open_file, name="vfs_open", description="Add file to context",
+                            category=vfs_category, flags=vfs_flags)
+        await self.add_tool(vfs_close_file, name="vfs_close", description="Remove file from context",
+                            category=vfs_category, flags=vfs_flags)
+
+        # ==========================
+        # 2. Memory & RAG
+        # ==========================
+
+        async def memory_recall(query: str, concepts: bool = False):
+            """
+            Search long-term memory/knowledge base for relevant information.
+            Use this when you need context not present in the current conversation.
+            """
+            return await get_session().get_reference(query, concepts=concepts)
+
+        async def memory_history(last_n: int = 10):
+            """Retrieve the last N messages of the conversation history."""
+            return get_session().get_history(last_n)
+
+        mem_category = ["system", "memory"]
+
+        await self.add_tool(memory_recall, name="memory_recall",
+                            description="Search knowledge base/long-term memory", category=mem_category,
+                            flags={"readonly": True})
+        await self.add_tool(memory_history, name="memory_history", description="Get recent chat history",
+                            category=mem_category, flags={"readonly": True})
+
+        # ==========================
+        # 3. Situation & Behavior
+        # ==========================
+
+        async def set_agent_situation(situation: str, intent: str):
+            """
+            Update the current situation and intent.
+            This changes which rules apply to the agent's behavior.
+            """
+            get_session().set_situation(situation, intent)
+            return f"Situation set to: {situation} | Intent: {intent}"
+
+        async def check_permissions(action: str):
+            """Check if a specific action is allowed under current rules."""
+            result = get_session().rule_on_action(action)
+            return f"Action '{action}' allowed: {result.allowed}. Reason: {result.reason}"
+
+        meta_category = ["system", "meta"]
+
+        await self.add_tool(set_agent_situation, name="situation_set",
+                            description="Update current agent situation/context", category=meta_category,
+                            flags={"affects_rules": True})
+        await self.add_tool(check_permissions, name="check_rules", description="Check if action is allowed",
+                            category=meta_category, flags={"readonly": True})
+
+        logger.info(f"Initialized standard session tools for agent '{self.amd.name}'")
+
+        session.tools_initialized = True
 
     # =========================================================================
     # CHECKPOINT

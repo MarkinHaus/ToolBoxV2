@@ -27,6 +27,8 @@ class ChatSession:
             role = "user"
         elif message['role'].startswith('a'):
             role = "assistant"
+        elif message['role'].startswith('t'):
+            role = "tool"
         else:
             raise ValueError(f"Invalid role value {message['role']}")
         await self.mem.add_data(self.space_name, message['content'],

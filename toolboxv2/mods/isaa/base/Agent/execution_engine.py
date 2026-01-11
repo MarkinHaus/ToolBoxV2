@@ -18,9 +18,12 @@ import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING, AsyncGenerator, Coroutine
 
+from litellm.types.utils import ModelResponse
 from pydantic import BaseModel, Field
+
+from toolboxv2.mods.isaa.base.Agent import ToolEntry
 
 if TYPE_CHECKING:
     from toolboxv2.mods.isaa.base.Agent.flow_agent import FlowAgent
@@ -455,259 +458,7 @@ Deine verfügbaren Tools: {tools}
 
 Wenn du fertig bist: final_answer mit deinem Ergebnis."""
 
-from dataclasses import dataclass
-from typing import Optional
-import re
-
-# Tool-bezogene Concept-Kategorien und Keywords
-TOOL_INDICATORS = {
-    # Kategorien die Tools benötigen
-    "categories": {
-        "action", "operation", "command", "execution",
-        "file_operation", "system", "api", "integration",
-        "data_processing", "automation", "deployment"
-    },
-    # Relationship-Typen die auf Tool-Nutzung hindeuten
-    "relationships": {
-        "executes", "modifies", "creates", "deletes",
-        "calls", "invokes", "triggers", "deploys"
-    },
-    # Concept-Namen (Keywords) die Tools implizieren
-    "keywords": {
-        "file", "database", "api", "server", "deploy",
-        "install", "execute", "run", "create", "delete",
-        "modify", "update", "send", "fetch", "download",
-        "upload", "compile", "build", "test", "debug"
-    }
-}
-
-# Conversational/Simple Query Indicators
-DIRECT_ANSWER_INDICATORS = {
-    "categories": {
-        "question", "explanation", "definition", "concept",
-        "theory", "discussion", "opinion", "advice",
-        "conversation", "greeting", "clarification"
-    },
-    "keywords": {
-        "was ist", "what is", "erkläre", "explain",
-        "warum", "why", "wie funktioniert", "how does",
-        "meinung", "opinion", "hilfe", "help", "hi", "hallo",
-        "danke", "thanks", "verstehe", "understand"
-    }
-}
-
-
-@dataclass
-class ConceptAnalysis:
-    """Result of concept-based intent analysis"""
-    tool_score: float  # 0-1, how likely tools are needed
-    direct_score: float  # 0-1, how likely direct answer works
-    complexity_score: float  # 0-1, task complexity
-    confidence: float  # 0-1, how confident the analysis is
-    concepts_found: list[str]
-    reasoning: str
-
-
-def analyze_concepts_for_intent(concepts_data: list[dict]) -> ConceptAnalysis:
-    """
-    Analyze extracted concepts to determine intent without LLM.
-
-    Args:
-        concepts_data: List of concept dicts from RAG result
-
-    Returns:
-        ConceptAnalysis with scores and reasoning
-    """
-    if not concepts_data:
-        return ConceptAnalysis(
-            tool_score=0.5,
-            direct_score=0.5,
-            complexity_score=0.0,
-            confidence=0.0,  # No concepts = no confidence
-            concepts_found=[],
-            reasoning="Keine Concepts gefunden"
-        )
-
-    tool_matches = []
-    direct_matches = []
-    all_concepts = []
-    relationship_count = 0
-
-    for concept in concepts_data:
-        name = concept.get("name", "").lower()
-        category = concept.get("category", "").lower()
-        relationships = concept.get("relationships", {})
-        importance = concept.get("importance_score", 0.5)
-
-        all_concepts.append(name)
-        relationship_count += sum(len(v) for v in relationships.values())
-
-        # Check for tool indicators
-        if category in TOOL_INDICATORS["categories"]:
-            tool_matches.append((name, importance, "category"))
-
-        for rel_type in relationships.keys():
-            if rel_type.lower() in TOOL_INDICATORS["relationships"]:
-                tool_matches.append((name, importance, "relationship"))
-
-        for keyword in TOOL_INDICATORS["keywords"]:
-            if keyword in name:
-                tool_matches.append((name, importance, "keyword"))
-                break
-
-        # Check for direct answer indicators
-        if category in DIRECT_ANSWER_INDICATORS["categories"]:
-            direct_matches.append((name, importance, "category"))
-
-        for keyword in DIRECT_ANSWER_INDICATORS["keywords"]:
-            if keyword in name:
-                direct_matches.append((name, importance, "keyword"))
-                break
-
-    # Calculate scores
-    num_concepts = len(concepts_data)
-
-    # Tool score: weighted by importance
-    tool_score = 0.0
-    if tool_matches:
-        tool_score = sum(imp for _, imp, _ in tool_matches) / max(len(tool_matches), 1)
-        tool_score = min(1.0, tool_score * (len(tool_matches) / num_concepts))
-
-    # Direct answer score
-    direct_score = 0.0
-    if direct_matches:
-        direct_score = sum(imp for _, imp, _ in direct_matches) / max(len(direct_matches), 1)
-        direct_score = min(1.0, direct_score * (len(direct_matches) / num_concepts))
-
-    # Complexity based on relationship count and concept count
-    complexity_score = min(1.0, (relationship_count / 10) + (num_concepts / 5) * 0.3)
-
-    # Confidence based on how clear the signal is
-    score_diff = abs(tool_score - direct_score)
-    has_matches = len(tool_matches) > 0 or len(direct_matches) > 0
-    confidence = score_diff * 0.7 + (0.3 if has_matches else 0.0)
-
-    # Build reasoning
-    reasoning_parts = []
-    if tool_matches:
-        reasoning_parts.append(f"Tool-Indikatoren: {[m[0] for m in tool_matches[:3]]}")
-    if direct_matches:
-        reasoning_parts.append(f"Direkt-Indikatoren: {[m[0] for m in direct_matches[:3]]}")
-    reasoning_parts.append(
-        f"Komplexität: {complexity_score:.2f} ({num_concepts} Concepts, {relationship_count} Relations)")
-
-    return ConceptAnalysis(
-        tool_score=tool_score,
-        direct_score=direct_score,
-        complexity_score=complexity_score,
-        confidence=confidence,
-        concepts_found=all_concepts,
-        reasoning=" | ".join(reasoning_parts)
-    )
-
-
-def extract_concepts_from_rag_result(rag_result: dict) -> list[dict]:
-    """
-    Extract concept information from RAG result structure.
-
-    Args:
-        rag_result: The raw result from get_reference with row=True
-
-    Returns:
-        List of concept dicts with name, category, relationships, importance
-    """
-    concepts = []
-
-    # Handle RetrievalResult structure
-    result = rag_result.get("result")
-    if result is None:
-        return concepts
-
-    # Check overview for concepts
-    overview = getattr(result, "overview", []) if hasattr(result, "overview") else result.get("overview", [])
-
-    for topic in overview:
-        main_chunks = topic.get("main_chunks", [])
-        for chunk in main_chunks:
-            metadata = chunk.get("metadata", {})
-            chunk_concepts = metadata.get("concepts", [])
-            concept_relationships = metadata.get("concept_relationships", {})
-
-            for concept_name in chunk_concepts:
-                concept_dict = {
-                    "name": concept_name,
-                    "category": _infer_category(concept_name),
-                    "relationships": concept_relationships.get(concept_name, {}),
-                    "importance_score": topic.get("relevance_score", 0.5)
-                }
-                # Avoid duplicates
-                if not any(c["name"] == concept_name for c in concepts):
-                    concepts.append(concept_dict)
-
-    # Also check details
-    details = getattr(result, "details", []) if hasattr(result, "details") else result.get("details", [])
-
-    for chunk in details:
-        metadata = getattr(chunk, "metadata", {}) if hasattr(chunk, "metadata") else chunk.get("metadata", {})
-        chunk_concepts = metadata.get("concepts", [])
-        concept_relationships = metadata.get("concept_relationships", {})
-
-        for concept_name in chunk_concepts:
-            if not any(c["name"] == concept_name for c in concepts):
-                concept_dict = {
-                    "name": concept_name,
-                    "category": _infer_category(concept_name),
-                    "relationships": concept_relationships.get(concept_name, {}),
-                    "importance_score": 0.5
-                }
-                concepts.append(concept_dict)
-
-    return concepts
-
-
-def _infer_category(concept_name: str) -> str:
-    """Infer category from concept name"""
-    name_lower = concept_name.lower()
-
-    # Technical patterns
-    if any(kw in name_lower for kw in ["api", "server", "database", "system", "network"]):
-        return "technical"
-    if any(kw in name_lower for kw in ["algorithm", "method", "process", "analysis"]):
-        return "method"
-    if any(kw in name_lower for kw in ["file", "data", "storage", "memory"]):
-        return "data_processing"
-    if any(kw in name_lower for kw in ["question", "query", "ask"]):
-        return "question"
-
-    return "concept"
-
-
 # Confidence threshold for auto-detection
-AUTO_DETECT_CONFIDENCE_THRESHOLD = 0.6
-def retrieval_to_llm_context_compact(data, max_entries=5):
-    lines = []
-    for _data in data:
-        result = _data["result"]
-        lines.append("\nMemory: " + _data["memory"])
-
-        for item in result.overview[:max_entries]:
-            relevance = float(item.get("relevance_score", 0))
-
-            for chunk in item.get("main_chunks", []):
-                meta = chunk.get("metadata", {})
-                role = meta.get("role", "unk")
-                text = chunk.get("text", "").strip()
-                concepts = ",".join(meta.get("concepts", []))
-
-                lines.append(
-                    f"{role}: [{text}]| is: {concepts} | r={relevance:.2f}"
-                )
-        lines.append("\n")
-    return "\n".join(lines)
-# =============================================================================
-# EXECUTION ENGINE
-# =============================================================================
-
 class ExecutionEngine:
     """
     Main execution engine for a_run().
@@ -738,10 +489,15 @@ class ExecutionEngine:
         # Frozen microagent states
         self._frozen_microagents: dict[str, dict] = {}
 
+        # asyncio background tasks
+        self._background_tasks: set[asyncio.Task] = set()
+
     def _emit_intermediate(self, message: str):
         """Send intermediate message to user"""
         if self.intermediate_callback:
             self.intermediate_callback(message)
+        else:
+            print(f"INTERMEDIATE: {message}")
 
     # =========================================================================
     # MAIN ENTRY POINT
@@ -752,10 +508,9 @@ class ExecutionEngine:
         query: str,
         session_id: str = "default",
         execution_id: str | None = None,
-        remember: bool = True,
-        with_context: bool = True,
+        do_stream:bool=False,
         **kwargs
-    ) -> ExecutionResult:
+    ) -> ExecutionResult | tuple[Callable[[ExecutionState], AsyncGenerator[ExecutionResult, Any]], ExecutionState]:
         """
         Main execution entry point.
 
@@ -774,7 +529,7 @@ class ExecutionEngine:
                     state.waiting_for_human = False
                     state.resumed_at = datetime.now()
 
-            return await self._continue_execution(state, remember, with_context)
+            return await self._continue_execution(state)
 
         # Create new execution
         execution_id = execution_id or f"exec_{uuid.uuid4().hex[:12]}"
@@ -789,13 +544,14 @@ class ExecutionEngine:
 
         self._executions[execution_id] = state
 
-        return await self._run_execution(state, remember, with_context)
+        if do_stream:
+            return self._run_stream_execution, state
+
+        return await self._run_execution(state)
 
     async def _run_execution(
         self,
         state: ExecutionState,
-        remember: bool,
-        with_context: bool
     ) -> ExecutionResult:
         """Run execution from current state"""
 
@@ -809,35 +565,38 @@ class ExecutionEngine:
             state.vfs_snapshot = session.vfs.to_checkpoint()
 
             # Add user message if remember
-            if remember and state.phase == ExecutionPhase.INTENT:
+            if state.phase == ExecutionPhase.INTENT:
                 await session.add_message({"role": "user", "content": state.query})
 
             # Phase 1: Intent Detection
             if state.phase == ExecutionPhase.INTENT:
-                intent = await self._detect_intent(state, session, with_context)
+                for i in range(8):
 
-                if intent.can_answer_directly:
-                    # Immediate path
-                    result = await self._immediate_response(state, session, with_context)
-                    state.phase = ExecutionPhase.COMPLETED
-                    state.final_answer = result
-                    state.success = True
+                    if state.success:
+                        break
 
-                elif intent.is_complex_task:
-                    # Decomposition path
-                    state.phase = ExecutionPhase.DECOMPOSITION
-                    result = await self._decomposition_path(state, session, with_context)
+                    result = await self._immediate_response(state, session)
 
-                else:
-                    # Tool path
-                    state.phase = ExecutionPhase.CATEGORY_SELECT
-                    result = await self._tool_path(state, session, with_context)
+                    if not result.tool_calls:
+                        state.final_answer = result.content
+                        state.phase = ExecutionPhase.COMPLETED
+                        state.success = True
+                        break
+
+                    if result.content:
+                        await session.add_message({
+                            "role": "assistant",
+                            "content": result.content
+                        })
+                        self._emit_intermediate(result.content)
+
+                    await self._tool_runner(result, state, session)
 
             elif state.phase in [ExecutionPhase.CATEGORY_SELECT, ExecutionPhase.TOOL_SELECT, ExecutionPhase.REACT_LOOP]:
-                result = await self._tool_path(state, session, with_context)
+                result = await self._tool_path(state, session)
 
             elif state.phase == ExecutionPhase.DECOMPOSITION:
-                result = await self._decomposition_path(state, session, with_context)
+                result = await self._decomposition_path(state, session)
 
             else:
                 result = state.final_answer or "Execution completed"
@@ -863,7 +622,7 @@ class ExecutionEngine:
                     state.red_flags.extend(valid.issues)
 
             # Save assistant response if remember
-            if remember and state.final_answer:
+            if state.final_answer:
                 await session.add_message({"role": "assistant", "content": state.final_answer})
 
             # Learning (non-blocking)
@@ -901,11 +660,234 @@ class ExecutionEngine:
                 duration=time.perf_counter() - start_time
             )
 
-    async def _continue_execution(
+
+    async def _run_stream_execution(
         self,
         state: ExecutionState,
-        remember: bool,
-        with_context: bool
+    ) -> AsyncGenerator[ExecutionResult, Any]:
+        """Run execution from current state"""
+
+        start_time = time.perf_counter()
+
+        try:
+            # Get or create session
+            session = await self.agent.session_manager.get_or_create(state.session_id)
+
+            # Take VFS snapshot for transaction
+            state.vfs_snapshot = session.vfs.to_checkpoint()
+
+            # Add user message if remember
+            if state.phase == ExecutionPhase.INTENT:
+                await session.add_message({"role": "user", "content": state.query})
+
+            result = None
+            # Phase 1: Intent Detection
+            if state.phase == ExecutionPhase.INTENT:
+                for i in range(8):
+
+                    if state.success:
+                        break
+
+                    result = await self._immediate_response(state, session)
+
+                    if not result.tool_calls:
+                        state.final_answer = result.content
+                        state.phase = ExecutionPhase.COMPLETED
+                        state.success = True
+                        break
+
+                    if result.content:
+                        await session.add_message({
+                            "role": "assistant",
+                            "content": result.content
+                        })
+                        yield result.content
+
+                    await self._tool_runner(result, state, session)
+
+            else:
+                result = await self._run_execution(state)
+                yield result
+
+            # Check for pause
+            if state.phase == ExecutionPhase.PAUSED:
+                yield ExecutionResult(
+                    success=False,
+                    response="",
+                    execution_id=state.execution_id,
+                    path_taken="paused",
+                    paused=True,
+                    needs_human=state.waiting_for_human,
+                    human_query=state.human_query
+                )
+
+            # Validation
+            if state.phase != ExecutionPhase.COMPLETED and result:
+                valid = await self._validate_result(state, result)
+                if not valid.is_valid:
+                    # Rollback
+                    session.vfs.from_checkpoint(state.vfs_snapshot)
+                    state.red_flags.extend(valid.issues)
+
+            # Save assistant response if remember
+            if state.final_answer:
+                await session.add_message({"role": "assistant", "content": state.final_answer})
+
+            # Learning (non-blocking)
+            if state.success:
+                task = asyncio.create_task(self._learn_from_execution(state, session))
+                self._background_tasks.add(task)
+
+
+            duration = time.perf_counter() - start_time
+
+            yield ExecutionResult(
+                success=state.success,
+                response=state.final_answer or result or "",
+                execution_id=state.execution_id,
+                path_taken=self._get_path_taken(state),
+                iterations=state.iteration,
+                tools_used=list(set(a.get('tool') for a in state.actions if a.get('tool'))),
+                tokens_used=state.tokens_used,
+                duration=duration
+            )
+
+        except Exception as e:
+            # Rollback on error
+            session = self.agent.session_manager.get(state.session_id)
+            if session and state.vfs_snapshot:
+                session.vfs.from_checkpoint(state.vfs_snapshot)
+
+            state.phase = ExecutionPhase.FAILED
+            state.red_flags.append(str(e))
+            import traceback
+            print(traceback.format_exc())
+            yield ExecutionResult(
+                success=False,
+                response=f"Execution failed: {str(e)}",
+                execution_id=state.execution_id,
+                path_taken="failed",
+                duration=time.perf_counter() - start_time
+            )
+
+    async def _tool_runner(self, result, state: ExecutionState, session: 'Session') -> None:
+        if result.tool_calls is None:
+            return None
+        for tool_call in result.tool_calls:
+            args = json.loads(tool_call.function.arguments or "{}")
+
+            self._emit_intermediate(f"Verwende {tool_call.function.name}...")
+            if tool_call.function.name == "final_answer":
+                state.final_answer = args.get("final_answer")
+                state.phase = ExecutionPhase.COMPLETED
+                state.success = True
+                break
+
+            elif tool_call.function.name == "need_tool":
+                state.phase = ExecutionPhase.CATEGORY_SELECT
+                tool_result = await self._tool_path(state, session, args.get("tools"))
+                await session.add_message({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": tool_result
+                })
+
+            elif tool_call.function.name == "complex":
+                state.phase = ExecutionPhase.DECOMPOSITION
+                tool_result = await self._decomposition_path(state, session)
+                await session.add_message({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": tool_result
+                })
+
+            elif tool_call.function.name == "need_human" and self.human_online:
+                state.phase = ExecutionPhase.PAUSED
+                state.paused_at = datetime.now()
+                state.waiting_for_human = tool_call.id
+                state.human_query = args.get("question")
+                state.success = True
+                break
+
+            elif tool_call.function.name == "think":
+                state.thoughts.append(args.get("thought"))
+                await session.add_message({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": args.get("thought")
+                })
+
+            elif tool_call.function.name == "list_tools":
+                tools = self.agent.tool_manager.get_all()
+                # ["need_tool", "complex", "need_human", "think", "list_tools", "request_tool"]
+                tools += [
+                    ToolEntry(name="need_tool", description="Request specific tool", args_schema="(tools: list[str])",
+                              category=["system"]),
+                    ToolEntry(name="complex", description="Request decomposition", args_schema="()",
+                              category=["system"]),
+                    ToolEntry(name="need_human", description="Request human assistance", args_schema="(question: str)",
+                              category=["system"]),
+                    ToolEntry(name="think", description="Reason over multiple data sources",
+                              args_schema="(thought: str)", category=["system"]),
+                    ToolEntry(name="list_tools", description="List available tools",
+                              args_schema="(category: str, search: str)", category=["system"]),
+                    ToolEntry(name="request_tool", description="Request tool definition",
+                              args_schema="(tool_name: str)", category=["system"])]
+
+                # vfs tools
+                tools += [ToolEntry(name=t['function']['name'], description=t['function']['description'],
+                                    args_schema=t['function']['parameters'], category=["vfs"]) for t in
+                          VFS_TOOLS_LITELLM]
+                category = args.get("category")
+                search = args.get("search")
+                if category:
+                    tools = [t for t in tools if t.has_category(category)]
+
+                if search:
+                    search_lower = search.lower()
+                    tools = [t for t in tools if
+                             search_lower in t.name.lower() or search_lower in t.description.lower()]
+
+                res = "\n".join(f"{t.name} - {t.description} ({t.category})" for t in tools)
+                await session.add_message({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": res
+                })
+            elif tool_call.function.name == "request_tool":
+                tool_name = args.get("tool_name")
+
+                tool_result = f"Tool '{tool_name}' not found"
+                if tool_name in ["need_tool", "complex", "need_human", "think", "list_tools",
+                                 "request_tool"] or tool_name.startswith("vfs_"):
+                    tool_result = "is a system tool"
+
+                tool = self.agent.tool_manager.get(tool_name)
+
+                if tool:
+                    # Tool exists, check if restricted
+                    if not session.is_tool_allowed(tool_name):
+                        tool_result = f"Tool '{tool_name}' is restricted in this session"
+                    else:
+                        tool_result = f"{tool.description} {tool.args_schema}"
+
+                await session.add_message({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": tool_result
+                })
+            else:
+                args['type'] = tool_call.function.name
+                tool_result = await self._execute_action(state, session, args)
+
+                await session.add_message({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": str(tool_result)
+                })
+    async def _continue_execution(
+        self,
+        state: ExecutionState
     ) -> ExecutionResult:
         """Continue a paused execution"""
         state.resumed_at = datetime.now()
@@ -917,92 +899,7 @@ class ExecutionEngine:
                     # Will be resumed in decomposition_path
                     pass
 
-        return await self._run_execution(state, remember, with_context)
-
-    # =========================================================================
-    # PHASE 1: INTENT DETECTION
-    # =========================================================================
-
-    async def _detect_intent(
-        self,
-        state: "ExecutionState",
-        session,
-        with_context: bool
-    ) -> "IntentClassification":
-        """
-        Detect what the user wants - using concept-based auto-detection first,
-        falling back to LLM only when uncertain.
-        """
-        self._emit_intermediate("Analysiere deine Anfrage...")
-
-        # Phase 1: Try auto-detection via concepts
-        concepts_data = []
-        rag_context = ""
-
-        if with_context:
-            # Get RAG result with concepts
-            rag_result = await session.get_reference(state.query, concepts=True)
-
-            if rag_result:
-                # Extract concepts for auto-detection
-                concepts_data = []
-                [concepts_data.extend(extract_concepts_from_rag_result(_)) for _ in rag_result]
-
-                # Also prepare context string for potential LLM fallback
-                rag_context = retrieval_to_llm_context_compact(
-                    rag_result,
-                    max_entries=5
-                )
-
-        # Analyze concepts
-        concept_analysis = analyze_concepts_for_intent(concepts_data)
-
-        # Phase 2: Auto-detect if confident enough
-        if concept_analysis.confidence >= AUTO_DETECT_CONFIDENCE_THRESHOLD:
-            self._emit_intermediate(f"Auto-Intent: {concept_analysis.reasoning}")
-
-            # Determine intent from scores
-            needs_tools = concept_analysis.tool_score > concept_analysis.direct_score
-            can_answer_directly = concept_analysis.direct_score >= 0.4 and not needs_tools
-            is_complex = concept_analysis.complexity_score > 0.5
-
-            return IntentClassification(
-                can_answer_directly=can_answer_directly,
-                needs_tools=needs_tools,
-                is_complex_task=is_complex,
-                confidence=concept_analysis.confidence
-            )
-
-        # Phase 3: LLM fallback for uncertain cases
-        self._emit_intermediate("Nutze LLM für Intent-Klassifikation...")
-
-        # Add concept info to prompt for better LLM decision
-        concept_hint = ""
-        if concepts_data:
-            concept_names = [c["name"] for c in concepts_data[:5]]
-            concept_hint = f"\nErkannte Concepts: {', '.join(concept_names)}"
-            concept_hint += f"\nVoranalyse: Tool-Score={concept_analysis.tool_score:.2f}, Direkt-Score={concept_analysis.direct_score:.2f}"
-
-        prompt = f"""Analysiere diese Anfrage:
-
-    Query: {state.query}
-    {concept_hint}
-    {"Kontext: " + rag_context[:500] if rag_context else ""}
-
-    Bestimme:
-    1. can_answer_directly: Kann ich ohne Tools antworten? (Ja wenn simple Frage/Konversation)
-    2. needs_tools: Brauche ich Tools? (Ja wenn Aktionen/Daten nötig)
-    3. is_complex_task: Ist das eine komplexe Aufgabe mit mehreren Schritten?
-    4. confidence: Wie sicher bin ich? (0-1)"""
-
-        result = await self.agent.a_format_class(
-            IntentClassification,
-            prompt,
-            model_preference="fast",
-            auto_context=False
-        )
-
-        return IntentClassification(**result)
+        return await self._run_execution(state)
 
     # =========================================================================
     # IMMEDIATE PATH
@@ -1011,27 +908,154 @@ class ExecutionEngine:
     async def _immediate_response(
         self,
         state: ExecutionState,
-        session,
-        with_context: bool
-    ) -> str:
+        session
+    ) -> ModelResponse:
         """Direct response without tools"""
 
         self._emit_intermediate("Antworte direkt...")
 
-        messages = session.get_history_for_llm(last_n=5)
+        messages = session.get_history_for_llm(last_n=15)
+        # list of 4 tools with description and args_schema 1 finale response 2 need tools 3 is complex
+        default_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "final_answer",
+                    "description": "Provide an immediate answer to the user based on the available information.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "final_answer": {
+                                "type": "string",
+                                "description": "Your final answer"
+                            }
+                        },
+                        "required": ["final_answer"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "need_tool",
+                    "description": "Indicate that you need a tool to proceed.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "tools": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "List of tools you need"
+                            }
+                        },
+                        "required": ["tools"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "complex",
+                    "description": "Indicate that the task is too complex to answer.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "is_complex": {
+                                "type": "boolean",
+                                "description": "True if the task needs to be broken down"
+                            }
+                        },
+                        "required": ["is_complex"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "think",
+                    "description": "Reason over multiple data sources. for an final answer.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "thought": {
+                                "type": "string",
+                                "description": "Your thought"
+                            }
+                        },
+                        "required": ["thought"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_tools",
+                    "description": "List available tools. sort by category. or search by name and description.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "category": {
+                                "type": "string",
+                                "description": "Category to filter by"
+                            },
+                            "search": {
+                                "type": "string",
+                                "description": "Search query"
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "request_tool",
+                    "description": "Request a specific tool by name.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "tool_name": {
+                                "type": "string",
+                                "description": "Name of the tool to request"
+                            }
+                        },
+                        "required": ["tool_name"]
+                    }
+                }
+            }
+            # think list_tools request_tool
+        ]
+
+        if self.human_online:
+            default_tools.append({
+                "type": "function",
+                "function": {
+                    "name": "need_human",
+                    "description": "Request human assistance when stuck or need confirmation.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "question": {
+                                "type": "string",
+                                "description": "Question for the human"
+                            }
+                        },
+                        "required": ["question"]
+                    }
+                }
+            })
 
         response = await self.agent.a_run_llm_completion(
+            tools=default_tools,
+            tool_choice="auto",
             messages=messages,
             model_preference="fast",
-            with_context=with_context,
+            with_context=True,
             stream=False,
             task_id=f"{state.execution_id}_immediate",
-            session_id=state.session_id
+            session_id=state.session_id,
+            get_response_message=True
         )
-
-        state.final_answer = response
-        state.success = True
-        state.phase = ExecutionPhase.COMPLETED
 
         return response
 
@@ -1043,9 +1067,16 @@ class ExecutionEngine:
         self,
         state: ExecutionState,
         session,
-        with_context: bool
+        tool_names:list[str]|None=None
     ) -> str:
         """Execute with tools via ReAct loop"""
+
+        if tool_names:
+            # Check if tool_names is a sub set of the available tools
+            available_tools = self.agent.tool_manager.list_names()
+            if set(tool_names).issubset(set(available_tools)):
+                state.selected_tools = tool_names
+                state.phase = ExecutionPhase.REACT_LOOP
 
         # Category selection
         if state.phase == ExecutionPhase.CATEGORY_SELECT:
@@ -1059,7 +1090,7 @@ class ExecutionEngine:
 
         # ReAct loop
         if state.phase == ExecutionPhase.REACT_LOOP:
-            result = await self._react_loop(state, session, with_context)
+            result = await self._react_loop(state, session)
             return result
 
         return state.final_answer or ""
@@ -1071,6 +1102,10 @@ class ExecutionEngine:
 
         # Get available categories
         categories = self.agent.tool_manager.list_categories()
+
+        if not categories:
+            state.red_flags.append("No tool categories available")
+            return
 
         prompt = f"""Welche Tool-Kategorien sind für diese Aufgabe relevant?
 
@@ -1123,7 +1158,6 @@ Wähle nur die wichtigsten Tools."""
         self,
         state: ExecutionState,
         session,
-        with_context: bool
     ) -> str:
         """Main ReAct loop (RLM-VFS style)"""
 
@@ -1187,6 +1221,9 @@ Wähle nur die wichtigsten Tools."""
             if action.get('type') == ActionType.NEED_INFO.value:
                 missing = action.get('missing', 'Unbekannt')
                 self._emit_intermediate(f"Mir fehlt: {missing}")
+                state.phase = ExecutionPhase.PAUSED
+                state.paused_at = datetime.now()
+                return ""
 
             # Loop detection
             if self._detect_loop(state):
@@ -1399,6 +1436,9 @@ Was ist der nächste Schritt?"""
         elif action_type == 'thinking':
             return {"status": "thinking"}
 
+        else:
+            return await self.agent.arun_function(action_type, **action)
+
         return {"error": f"Unknown action type: {action_type}"}
 
     def _detect_loop(self, state: ExecutionState) -> bool:
@@ -1475,8 +1515,7 @@ Was ist der nächste Schritt?"""
     async def _decomposition_path(
         self,
         state: ExecutionState,
-        session,
-        with_context: bool
+        session
     ) -> str:
         """Execute complex task with parallel microagents"""
 
@@ -1498,7 +1537,7 @@ Was ist der nächste Schritt?"""
                 return ""
 
             # Execute group in parallel
-            results = await self._execute_parallel_group(state, session, group, with_context)
+            results = await self._execute_parallel_group(state, session, group)
 
             # Check for human needed
             if any(r.frozen_state for r in results):
@@ -1572,8 +1611,7 @@ Markiere welche parallel ausgeführt werden können."""
         self,
         state: ExecutionState,
         session,
-        group: list[dict],
-        with_context: bool
+        group: list[dict]
     ) -> list[MicroagentResult]:
         """Execute a group of subtasks in parallel"""
 
@@ -1581,7 +1619,7 @@ Markiere welche parallel ausgeführt werden können."""
         tasks = []
         for subtask in group:
             task = asyncio.create_task(
-                self._run_microagent(state, session, subtask, with_context)
+                self._run_microagent(state, session, subtask)
             )
             tasks.append(task)
             state.active_microagents.append(subtask['id'])
@@ -1621,7 +1659,6 @@ Markiere welche parallel ausgeführt werden können."""
         state: ExecutionState,
         session,
         subtask: dict,
-        with_context: bool
     ) -> MicroagentResult:
         """Run a single microagent"""
 

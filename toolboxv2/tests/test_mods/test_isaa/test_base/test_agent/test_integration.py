@@ -89,26 +89,6 @@ class TestIntegration(AsyncTestCase):
         self.agent.unbind("P")
         self.agent.bind_manager.unbind.assert_called()
 
-    def test_09_stream_simple_legacy(self):
-        # Test a_stream_simple fallback
-        self.agent.llm_handler = MagicMock()
-
-        async def mock_resp():
-            m = MagicMock()
-            m.choices[0].delta.content = "X"
-            yield m
-
-        self.agent.llm_handler.completion_with_rate_limiting = AsyncMock(return_value=mock_resp())
-        self.agent.session_manager.get_or_create = AsyncMock()
-
-        async def consume():
-            res = ""
-            async for c in self.agent.a_stream_simple("Q"):
-                res += c
-            return res
-
-        res = self.async_run(consume())
-        self.assertEqual(res, "X")
 
     def test_10_format_class_yaml_parse(self):
         from pydantic import BaseModel
