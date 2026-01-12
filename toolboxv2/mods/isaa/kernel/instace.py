@@ -1,26 +1,28 @@
 """
-ProA Kernel - Complete Implementation
-Version: 1.0.0
+ProA Kernel - Autonomous Event-Driven System
+Version: 2.1.0
 
-Full implementation of the Proactive Autonomous Kernel that wraps FlowAgent
-and provides always-on, event-driven, proactive capabilities.
+Architecture:
+- Perception Layer: Event → PerceivedEvent (RuleSet.get_groups_for_intent)
+- World Model: User + Environment State (SessionManager.sessions)
+- Attention System: Salience Scoring (RuleSet.match_rules)
+- Decision Engine: Act/Schedule/Queue/Observe (RuleSet.rule_on_action)
+- Learning Loop: Pattern Detection (RuleSet.learn_pattern, add_rule)
+
+Uses FlowAgent + SessionManager + RuleSet - no duplication.
 """
 
 import asyncio
-import random
+import pickle
 import time
 import uuid
-import json
-import pickle
-from datetime import datetime, timedelta
-from typing import Any, Optional
-from pathlib import Path
 from collections import defaultdict
-import traceback
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from typing import Any, Optional, TYPE_CHECKING
 
-from pydantic import BaseModel
-
-# Import all core interfaces from types
 from toolboxv2.mods.isaa.kernel.types import (
     Signal, SignalType, SignalBus, ISignalBus,
     UserState, UserContext, StateMonitor, IStateMonitor,
@@ -32,21 +34,540 @@ from toolboxv2.mods.isaa.kernel.types import (
     Memory, MemoryType, ScheduledTask, TaskStatus
 )
 
-# Import model classes
 from toolboxv2.mods.isaa.kernel.models import (
     ContextStore, ProactiveActionTracker,
     LearningEngine, MemoryStore, TaskScheduler,
-    WebSocketOutputRouter, MultiChannelRouter,
     AgentIntegrationLayer
 )
 
+if TYPE_CHECKING:
+    from toolboxv2.mods.isaa.base.Agent.flow_agent import FlowAgent
+    from toolboxv2.mods.isaa.base.Agent.agent_session import AgentSession
+    from toolboxv2.mods.isaa.base.Agent.rule_set import RuleSet
 
-# ===== KERNEL IMPLEMENTATION =====
+
+# =============================================================================
+# PERCEPTION LAYER
+# =============================================================================
+
+@dataclass
+class PerceivedEvent:
+    """Normalized event with extracted features."""
+    raw_signal: Signal
+    user_id: str
+
+    # Extracted
+    intent: str = ""
+    entities: list[str] = field(default_factory=list)
+    urgency: float = 0.5
+    topic_tags: list[str] = field(default_factory=list)
+
+    # From RuleSet
+    matching_tool_groups: list[str] = field(default_factory=list)
+    matching_rules: list[str] = field(default_factory=list)
+    relevant_patterns: list[str] = field(default_factory=list)
+
+
+class PerceptionLayer:
+    """Transforms raw signals into perceived events using RuleSet."""
+
+    def __init__(self, kernel: 'Kernel'):
+        self.kernel = kernel
+
+    async def perceive(self, signal: Signal, session: 'AgentSession') -> PerceivedEvent:
+        """Extract features from signal using session's RuleSet."""
+        user_id = signal.metadata.get("user_id", "default")
+        content = str(signal.content)
+
+        # Quick intent extraction via heuristics
+        intent = self._extract_intent(content)
+        entities = self._extract_entities(content)
+        urgency = self._compute_urgency(signal, content)
+
+        # Use RuleSet for tool group matching
+        rule_set = session.rule_set
+        tool_groups = [g.name for g in rule_set.get_groups_for_intent(intent)]
+
+        # Get matching rules
+        situation = rule_set.current_situation or "general"
+        matched = rule_set.match_rules(situation, intent)
+        matching_rules = [r.id for r in matched[:3]]
+
+        # Get relevant patterns
+        patterns = [p.pattern for p in rule_set.get_relevant_patterns(intent, limit=5)]
+
+        return PerceivedEvent(
+            raw_signal=signal,
+            user_id=user_id,
+            intent=intent,
+            entities=entities,
+            urgency=urgency,
+            topic_tags=self._extract_topics(content),
+            matching_tool_groups=tool_groups,
+            matching_rules=matching_rules,
+            relevant_patterns=patterns
+        )
+
+    def _extract_intent(self, content: str) -> str:
+        """Heuristic intent extraction."""
+        content_lower = content.lower()
+
+        # Question detection
+        if any(q in content_lower for q in ["?", "what", "how", "why", "when", "where", "who"]):
+            return "question"
+
+        # Command detection
+        if any(c in content_lower for c in ["create", "make", "build", "generate"]):
+            return "create"
+        if any(c in content_lower for c in ["delete", "remove", "clear"]):
+            return "delete"
+        if any(c in content_lower for c in ["update", "change", "modify", "edit"]):
+            return "update"
+        if any(c in content_lower for c in ["find", "search", "look", "get"]):
+            return "search"
+        if any(c in content_lower for c in ["remind", "schedule", "later", "tomorrow"]):
+            return "schedule"
+        if any(c in content_lower for c in ["help", "assist", "support"]):
+            return "help"
+
+        return "general"
+
+    def _extract_entities(self, content: str) -> list[str]:
+        """Extract key entities (simple word extraction)."""
+        import re
+        entities = []
+
+        # Extract quoted strings first
+        quoted = re.findall(r'"([^"]+)"|\'([^\']+)\'', content)
+        for match in quoted:
+            entities.append(match[0] or match[1])
+
+        # Remove quoted parts for word extraction
+        clean = re.sub(r'"[^"]+"|\'[^\']+\'', '', content)
+
+        # Extract capitalized words
+        for w in clean.split():
+            w_clean = w.strip('.,!?;:')
+            if len(w_clean) > 2 and w_clean[0].isupper() and w_clean not in entities:
+                entities.append(w_clean)
+
+        return entities[:10]
+
+    def _extract_topics(self, content: str) -> list[str]:
+        """Extract topic tags."""
+        topics = []
+        keywords = {
+            "code": ["code", "program", "script", "function", "class"],
+            "file": ["file", "document", "folder", "directory"],
+            "api": ["api", "endpoint", "request", "response"],
+            "data": ["data", "database", "sql", "query"],
+            "web": ["web", "website", "html", "css", "javascript"],
+        }
+        content_lower = content.lower()
+        for topic, kws in keywords.items():
+            if any(kw in content_lower for kw in kws):
+                topics.append(topic)
+        return topics
+
+    def _compute_urgency(self, signal: Signal, content: str) -> float:
+        """Compute urgency score 0.0-1.0."""
+        urgency = signal.priority / 10.0
+
+        # Boost for urgent keywords
+        urgent_words = ["urgent", "asap", "immediately", "critical", "emergency", "now"]
+        if any(w in content.lower() for w in urgent_words):
+            urgency = min(1.0, urgency + 0.3)
+
+        return urgency
+
+
+# =============================================================================
+# WORLD MODEL
+# =============================================================================
+
+@dataclass
+class UserModel:
+    """Dynamic model of a user."""
+    user_id: str
+
+    # Activity tracking
+    activity_rhythm: dict[int, float] = field(default_factory=dict)  # hour -> activity_prob
+    interaction_count: int = 0
+    last_interaction: float = field(default_factory=time.time)
+
+    # Inferred
+    preferred_response_style: str = "balanced"
+    topics_of_interest: list[str] = field(default_factory=list)
+    engagement_level: float = 0.5
+
+    def update_activity(self, hour: int = None):
+        """Update activity rhythm."""
+        hour = hour or datetime.now().hour
+        current = self.activity_rhythm.get(hour, 0.0)
+        self.activity_rhythm[hour] = current * 0.9 + 0.1
+        self.interaction_count += 1
+        self.last_interaction = time.time()
+
+    def is_likely_available(self) -> bool:
+        """Check if user is likely available based on rhythm."""
+        hour = datetime.now().hour
+        return self.activity_rhythm.get(hour, 0.5) > 0.3
+
+
+class WorldModel:
+    """Maintains world state from SessionManager."""
+
+    def __init__(self, kernel: 'Kernel'):
+        self.kernel = kernel
+        self.users: dict[str, UserModel] = {}
+
+    def get_user(self, user_id: str) -> UserModel:
+        """Get or create user model."""
+        if user_id not in self.users:
+            self.users[user_id] = UserModel(user_id=user_id)
+        return self.users[user_id]
+
+    def get_active_sessions(self) -> list[str]:
+        """Get active session IDs from SessionManager."""
+        return self.kernel.agent.session_manager.list_sessions()
+
+    def get_session_stats(self, user_id: str) -> dict:
+        """Get session statistics."""
+        session = self.kernel.agent.session_manager.get(user_id)
+        if session:
+            return session.get_stats()
+        return {}
+
+    async def update_from_event(self, event: PerceivedEvent, success: bool):
+        """Update world model after interaction."""
+        user = self.get_user(event.user_id)
+        user.update_activity()
+
+        # Update topics
+        for topic in event.topic_tags:
+            if topic not in user.topics_of_interest:
+                user.topics_of_interest.append(topic)
+        user.topics_of_interest = user.topics_of_interest[-20:]  # Keep last 20
+
+        # Update engagement
+        if success:
+            user.engagement_level = min(1.0, user.engagement_level + 0.05)
+        else:
+            user.engagement_level = max(0.0, user.engagement_level - 0.1)
+
+
+# =============================================================================
+# ATTENTION SYSTEM
+# =============================================================================
+
+@dataclass
+class SalienceScore:
+    """How important is this event?"""
+    score: float
+    reasons: list[str] = field(default_factory=list)
+    should_interrupt: bool = False
+
+
+class AttentionSystem:
+    """Determines event importance using RuleSet."""
+
+    def __init__(self, kernel: 'Kernel'):
+        self.kernel = kernel
+
+    def compute_salience(
+        self,
+        event: PerceivedEvent,
+        user_model: UserModel,
+        session: 'AgentSession'
+    ) -> SalienceScore:
+        """Compute salience score."""
+        score = 0.0
+        reasons = []
+
+        # 1. Explicit urgency
+        if event.urgency > 0.7:
+            score += 0.3
+            reasons.append(f"High urgency: {event.urgency:.0%}")
+
+        # 2. Rule match strength (from RuleSet)
+        if event.matching_rules:
+            rule = session.rule_set.get_rule(event.matching_rules[0])
+            if rule and rule.confidence > 0.7:
+                score += 0.25
+                reasons.append(f"Strong rule match: {rule.id}")
+
+        # 3. User engagement
+        if user_model.engagement_level > 0.6:
+            score += 0.15
+            reasons.append("High user engagement")
+
+        # 4. Topic relevance
+        if any(t in user_model.topics_of_interest for t in event.topic_tags):
+            score += 0.15
+            reasons.append("Matches user interests")
+
+        # 5. Tool group availability
+        if event.matching_tool_groups:
+            score += 0.1
+            reasons.append(f"Tools available: {event.matching_tool_groups[:2]}")
+
+        # 6. Time appropriateness
+        if user_model.is_likely_available():
+            score += 0.05
+        else:
+            score -= 0.1
+            reasons.append("User likely unavailable")
+
+        should_interrupt = score > 0.5 and user_model.is_likely_available()
+
+        return SalienceScore(
+            score=min(1.0, max(0.0, score)),
+            reasons=reasons,
+            should_interrupt=should_interrupt
+        )
+
+
+# =============================================================================
+# AUTONOMOUS DECISION ENGINE
+# =============================================================================
+
+class AutonomousDecision(Enum):
+    """Kernel decision types."""
+    ACT_NOW = "act_now"
+    SCHEDULE = "schedule"
+    QUEUE = "queue"
+    OBSERVE = "observe"
+    IGNORE = "ignore"
+
+
+class ActionType(Enum):
+    """How to act."""
+    RESPOND = "respond"
+    NOTIFY = "notify"
+    INITIATE = "initiate"
+    BACKGROUND = "background"
+    ASK = "ask"
+
+
+@dataclass
+class ActionPlan:
+    """What to do and how."""
+    decision: AutonomousDecision
+    action_type: ActionType
+    content: str
+    tool_groups: list[str] = field(default_factory=list)
+    instructions: list[str] = field(default_factory=list)
+    schedule_at: Optional[float] = None
+    confidence: float = 0.5
+    reasoning: list[str] = field(default_factory=list)
+
+
+class AutonomousDecisionEngine:
+    """Decision engine using RuleSet."""
+
+    def __init__(self, kernel: 'Kernel'):
+        self.kernel = kernel
+
+    async def decide(
+        self,
+        event: PerceivedEvent,
+        salience: SalienceScore,
+        user_model: UserModel,
+        session: 'AgentSession'
+    ) -> ActionPlan:
+        """Decide what to do."""
+        reasoning = []
+        rule_set = session.rule_set
+
+        # Check RuleSet for action permission
+        rule_result = rule_set.rule_on_action(
+            action=event.intent,
+            context={"urgency": event.urgency, "user_available": user_model.is_likely_available()}
+        )
+
+        if not rule_result.allowed:
+            reasoning.append(f"Blocked by rule: {rule_result.required_steps}")
+            return ActionPlan(
+                decision=AutonomousDecision.OBSERVE,
+                action_type=ActionType.BACKGROUND,
+                content="",
+                instructions=rule_result.instructions,
+                confidence=0.9,
+                reasoning=reasoning
+            )
+
+        # Determine proactivity based on salience
+        if salience.should_interrupt:
+            decision = AutonomousDecision.ACT_NOW
+            reasoning.extend(salience.reasons)
+        elif salience.score > 0.4:
+            decision = AutonomousDecision.QUEUE
+            reasoning.append("Medium salience - queue for later")
+        elif salience.score > 0.2:
+            decision = AutonomousDecision.OBSERVE
+            reasoning.append("Low salience - observe only")
+        else:
+            decision = AutonomousDecision.IGNORE
+            reasoning.append("Very low salience")
+
+        # Determine action type
+        signal_type = event.raw_signal.type
+        if signal_type == SignalType.USER_INPUT:
+            action_type = ActionType.RESPOND
+        elif signal_type == SignalType.SYSTEM_EVENT:
+            action_type = ActionType.NOTIFY if salience.should_interrupt else ActionType.BACKGROUND
+        else:
+            action_type = ActionType.RESPOND
+
+        # Collect instructions from matched rules
+        instructions = list(rule_result.instructions)
+        for rule_id in event.matching_rules[:2]:
+            rule = rule_set.get_rule(rule_id)
+            if rule:
+                instructions.extend(rule.instructions)
+
+        return ActionPlan(
+            decision=decision,
+            action_type=action_type,
+            content=str(event.raw_signal.content),
+            tool_groups=event.matching_tool_groups,
+            instructions=list(set(instructions)),
+            confidence=salience.score,
+            reasoning=reasoning
+        )
+
+
+# =============================================================================
+# LEARNING LOOP
+# =============================================================================
+
+@dataclass
+class InteractionOutcome:
+    """Outcome of an action for learning."""
+    event: PerceivedEvent
+    plan: ActionPlan
+    success: bool
+    response_time: float
+    user_feedback: Optional[str] = None
+    feedback_score: float = 0.0
+
+
+class LearningLoop:
+    """Learns from outcomes using RuleSet."""
+
+    def __init__(self, kernel: 'Kernel'):
+        self.kernel = kernel
+        self._buffer: list[InteractionOutcome] = []
+        self._pattern_threshold = 10
+
+    async def record_outcome(
+        self,
+        outcome: InteractionOutcome,
+        session: 'AgentSession'
+    ):
+        """Record and learn from outcome."""
+        rule_set = session.rule_set
+
+        # Update rule confidence
+        for rule_id in outcome.event.matching_rules:
+            if outcome.success:
+                rule_set.record_rule_success(rule_id)
+            else:
+                rule_set.record_rule_failure(rule_id)
+
+        # Buffer for pattern detection
+        self._buffer.append(outcome)
+
+        # Trigger pattern detection periodically
+        if len(self._buffer) >= self._pattern_threshold:
+            await self._detect_patterns(session)
+
+    async def _detect_patterns(self, session: 'AgentSession'):
+        """Detect patterns and generate rules."""
+        rule_set = session.rule_set
+
+        # Group by intent
+        by_intent: dict[str, list[InteractionOutcome]] = {}
+        for outcome in self._buffer:
+            by_intent.setdefault(outcome.event.intent, []).append(outcome)
+
+        for intent, outcomes in by_intent.items():
+            successes = [o for o in outcomes if o.success]
+
+            if len(successes) >= 3:
+                # Find common tool groups in successes
+                tool_counts: dict[str, int] = {}
+                for o in successes:
+                    for tg in o.plan.tool_groups:
+                        tool_counts[tg] = tool_counts.get(tg, 0) + 1
+
+                if tool_counts:
+                    best_tool = max(tool_counts.items(), key=lambda x: x[1])[0]
+
+                    # Learn pattern
+                    pattern = f"For '{intent}' tasks, {best_tool} tools are effective"
+                    rule_set.learn_pattern(
+                        pattern=pattern,
+                        source_situation=intent,
+                        confidence=min(0.8, len(successes) * 0.1),
+                        category="tool_preference",
+                        tags=[intent, best_tool]
+                    )
+
+                # Generate rule if high confidence
+                if len(successes) >= 5:
+                    rule_set.add_rule(
+                        situation="general",
+                        intent=intent,
+                        instructions=[f"Consider using {best_tool} tools", "Approach has proven effective"],
+                        required_tool_groups=[best_tool] if tool_counts else [],
+                        learned=True,
+                        confidence=min(0.8, len(successes) * 0.1)
+                    )
+
+        # Detect time-based patterns
+        await self._detect_time_patterns(session)
+
+        # Clear buffer
+        self._buffer.clear()
+
+    async def _detect_time_patterns(self, session: 'AgentSession'):
+        """Detect temporal patterns."""
+        rule_set = session.rule_set
+
+        # Group by hour
+        by_hour: dict[int, list[InteractionOutcome]] = {}
+        for outcome in self._buffer:
+            ts = outcome.event.raw_signal.timestamp
+            hour = datetime.fromtimestamp(ts).hour
+            by_hour.setdefault(hour, []).append(outcome)
+
+        for hour, outcomes in by_hour.items():
+            if len(outcomes) >= 3:
+                # Find common intents at this hour
+                intent_counts: dict[str, int] = {}
+                for o in outcomes:
+                    intent_counts[o.event.intent] = intent_counts.get(o.event.intent, 0) + 1
+
+                if intent_counts:
+                    common_intent = max(intent_counts.items(), key=lambda x: x[1])
+                    if common_intent[1] >= 2:
+                        pattern = f"User often requests '{common_intent[0]}' around {hour}:00"
+                        rule_set.learn_pattern(
+                            pattern=pattern,
+                            source_situation="temporal",
+                            confidence=min(0.7, common_intent[1] * 0.15),
+                            category="temporal",
+                            tags=["time", f"hour_{hour}", common_intent[0]]
+                        )
+
+
+# =============================================================================
+# MAIN KERNEL
+# =============================================================================
 
 class Kernel(IProAKernel):
-    """
-    kernel with learning, memory, and scheduling
-    """
+    """Autonomous event-driven kernel."""
 
     def __init__(
         self,
@@ -55,25 +576,27 @@ class Kernel(IProAKernel):
         decision_engine: IDecisionEngine = None,
         output_router: IOutputRouter = None
     ):
-        """Initialize kernel"""
         self.agent = agent
         self.config = config or KernelConfig()
-        self.decision_engine = decision_engine or DefaultDecisionEngine()
+        self.legacy_decision_engine = decision_engine or DefaultDecisionEngine()
         self.output_router = output_router or ConsoleOutputRouter()
 
-        # Core components
-        self.signal_bus: ISignalBus = SignalBus(
-            max_queue_size=self.config.max_signal_queue_size
-        )
+        # Core systems
+        self.signal_bus: ISignalBus = SignalBus(max_queue_size=self.config.max_signal_queue_size)
         self.state_monitor: IStateMonitor = StateMonitor()
         self.context_store = ContextStore()
 
-        # New advanced components
+        # Autonomous layers
+        self.perception = PerceptionLayer(self)
+        self.world_model = WorldModel(self)
+        self.attention = AttentionSystem(self)
+        self.decision_engine = AutonomousDecisionEngine(self)
+        self.learning_loop = LearningLoop(self)
+
+        # Extended systems (from models.py)
         self.learning_engine = LearningEngine(agent)
         self.memory_store = MemoryStore()
         self.scheduler = TaskScheduler(self)
-
-        # Agent integration layer
         self.integration = AgentIntegrationLayer(self)
 
         # State
@@ -81,1358 +604,393 @@ class Kernel(IProAKernel):
         self.metrics = KernelMetrics()
         self.proactive_tracker = ProactiveActionTracker()
         self.running = False
-
-        # Lifecycle
-        self.main_task: Optional[asyncio.Task] = None
-        self.heartbeat_task: Optional[asyncio.Task] = None
-
-        # Current context
         self._current_user_id: Optional[str] = None
         self._pending_questions: dict[str, asyncio.Future] = {}
 
-        print(f"✓ ProA Kernel initialized for {(agent.amd.name if agent and agent.amd else None) or 'self'}")
+        # Tasks
+        self.main_task: Optional[asyncio.Task] = None
+        self.heartbeat_task: Optional[asyncio.Task] = None
 
-    async def _export_functions_to_agent(self):
-        """Export kernel functions to agent for use in tools"""
-        # Make functions available as agent tools
-        self.agent.add_first_class_tool(
-            self.integration.schedule_task,
-            "kernel_schedule_task",
-            description="Schedule a task for future execution. Use for reminders, delayed queries, or scheduled actions. "
-                       "Args: task_type (str: 'reminder'/'query'/'action'), content (str), "
-                       "delay_seconds (float, optional), scheduled_time (float, optional), priority (int: 0-10, default 5). "
-                       "Returns: task_id (str). Example: await kernel_schedule_task('reminder', 'Follow up on project X', delay_seconds=3600)"
-        )
-
-        self.agent.add_first_class_tool(
-            self.integration.send_intermediate_response,
-            "kernel_send_intermediate",
-            description="Send intermediate status updates during long-running operations to keep user informed. "
-                       "Args: content (str), stage (str: 'processing'/'analysis'/'synthesis'/etc., default 'processing'). "
-                       "Example: await kernel_send_intermediate('Analyzing data...', stage='analysis')"
-        )
-
-        self.agent.add_first_class_tool(
-            self.integration.ask_user,
-            "kernel_ask_user",
-            description="Ask the user a question and wait for their response. Use when you need clarification or user input during execution. "
-                       "Args: question (str), timeout (float: seconds, default 300.0). "
-                       "Returns: answer (str) or None if timeout. "
-                       "Example: answer = await kernel_ask_user('Which option do you prefer: A or B?', timeout=60.0)"
-        )
-
-        self.agent.add_first_class_tool(
-            self.integration.inject_memory,
-            "kernel_inject_memory",
-            description="Store important information about the user for future sessions. Use for preferences, facts, events, or context. "
-                       "Args: content (str), memory_type (str: 'fact'/'event'/'preference'/'context', default 'fact'), "
-                       "importance (float: 0.0-1.0, default 0.5), tags (list[str], optional). "
-                       "Returns: memory_id (str). "
-                       "Example: await kernel_inject_memory('User prefers concise responses', memory_type='preference', importance=0.8, tags=['communication'])"
-        )
-
-        self.agent.add_first_class_tool(
-            self.integration.get_user_preferences,
-            "kernel_get_preferences",
-            description="Get the current user's learned preferences from previous interactions. "
-                       "Returns: dict with keys: communication_style, response_format, proactivity_level, preferred_tools. "
-                       "Example: prefs = await kernel_get_preferences(); style = prefs.get('communication_style')"
-        )
-
-        self.agent.add_first_class_tool(
-            self.integration.record_feedback,
-            "kernel_record_feedback",
-            description="Record user feedback to improve future responses through learning. Use when user expresses satisfaction/dissatisfaction. "
-                       "Args: feedback (str), score (float: -1.0 to 1.0, negative=bad, positive=good). "
-                       "Example: await kernel_record_feedback('Response was too verbose', score=-0.5)"
-        )
-
-        # >>>>>>>>>>>>
-
-
-        await self.agent.add_tool(
-            self.integration.schedule_task,
-            "kernel_schedule_task",
-            description="Schedule a task for future execution. Use for reminders, delayed queries, or scheduled actions. "
-                       "Args: task_type (str: 'reminder'/'query'/'action'), content (str), "
-                       "delay_seconds (float, optional), scheduled_time (float, optional), priority (int: 0-10, default 5). "
-                       "Returns: task_id (str). Example: await kernel_schedule_task('reminder', 'Follow up on project X', delay_seconds=3600)"
-        )
-
-        await self.agent.add_tool(
-            self.integration.send_intermediate_response,
-            "kernel_send_intermediate",
-            description="Send intermediate status updates during long-running operations to keep user informed. "
-                       "Args: content (str), stage (str: 'processing'/'analysis'/'synthesis'/etc., default 'processing'). "
-                       "Example: await kernel_send_intermediate('Analyzing data...', stage='analysis')"
-        )
-
-        await self.agent.add_tool(
-            self.integration.ask_user,
-            "kernel_ask_user",
-            description="Ask the user a question and wait for their response. Use when you need clarification or user input during execution. "
-                       "Args: question (str), timeout (float: seconds, default 300.0). "
-                       "Returns: answer (str) or None if timeout. "
-                       "Example: answer = await kernel_ask_user('Which option do you prefer: A or B?', timeout=60.0)"
-        )
-
-        await self.agent.add_tool(
-            self.integration.inject_memory,
-            "kernel_inject_memory",
-            description="Store important information about the user for future sessions. Use for preferences, facts, events, or context. "
-                       "Args: content (str), memory_type (str: 'fact'/'event'/'preference'/'context', default 'fact'), "
-                       "importance (float: 0.0-1.0, default 0.5), tags (list[str], optional). "
-                       "Returns: memory_id (str). "
-                       "Example: await kernel_inject_memory('User prefers concise responses', memory_type='preference', importance=0.8, tags=['communication'])"
-        )
-
-        await self.agent.add_tool(
-            self.integration.get_user_preferences,
-            "kernel_get_preferences",
-            description="Get the current user's learned preferences from previous interactions. "
-                       "Returns: dict with keys: communication_style, response_format, proactivity_level, preferred_tools. "
-                       "Example: prefs = await kernel_get_preferences(); style = prefs.get('communication_style')"
-        )
-
-        await self.agent.add_tool(
-            self.integration.record_feedback,
-            "kernel_record_feedback",
-            description="Record user feedback to improve future responses through learning. Use when user expresses satisfaction/dissatisfaction. "
-                       "Args: feedback (str), score (float: -1.0 to 1.0, negative=bad, positive=good). "
-                       "Example: await kernel_record_feedback('Response was too verbose', score=-0.5)"
-        )
-
-        print("✓ Exported 6 kernel functions to agent as tools")
+    # =========================================================================
+    # LIFECYCLE
+    # =========================================================================
 
     async def start(self):
-        """Start the kernel"""
+        """Start kernel."""
         if self.state == KernelState.RUNNING:
             return
 
-        # Export functions to agent
-        await self._export_functions_to_agent()
-        await self.agent.load_latest_checkpoint()
-        print("Starting ProA Kernel...")
         self.state = KernelState.STARTING
         self.running = True
 
-        # Start scheduler
-        await self.scheduler.start()
+        await self._register_tools()
+        if self.agent.checkpoint_manager:
+            await self.agent.restore()
 
-        # Start lifecycle tasks
+        await self.scheduler.start()
         self.heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-        self.main_task = asyncio.create_task(self._lifecycle_loop())
+        self.main_task = asyncio.create_task(self._main_loop())
 
         self.state = KernelState.RUNNING
-        print(f"✓ Kernel running")
 
     async def stop(self):
-        """Stop the kernel"""
+        """Stop kernel."""
         if self.state == KernelState.STOPPED:
             return
 
-        print("Stopping Kernel...")
         self.state = KernelState.STOPPING
         self.running = False
 
-        # Stop scheduler
         await self.scheduler.stop()
-
-        # Stop tasks
-        if self.heartbeat_task:
-            self.heartbeat_task.cancel()
-        if self.main_task:
-            self.main_task.cancel()
+        for task in [self.heartbeat_task, self.main_task]:
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
         await self.agent.close()
         self.state = KernelState.STOPPED
-        print("✓ Kernel stopped")
 
-    async def _lifecycle_loop(self):
-        """Main lifecycle loop"""
+    async def _register_tools(self):
+        """Register kernel tools with proper category and flags."""
+        kernel_tools = [
+            (self.integration.schedule_task, "kernel_schedule_task",
+             "Schedule task/reminder",
+             ["kernel", "scheduling"], {"side_effect": True, "persistent": True}),
+
+            (self.integration.send_intermediate_response, "kernel_send_intermediate",
+             "Send status update during processing",
+             ["kernel", "communication"], {"intermediate": True}),
+
+            (self.integration.ask_user, "kernel_ask_user",
+             "Ask user question, wait for response",
+             ["kernel", "communication"], {"pauses_execution": True}),
+
+            (self.integration.inject_memory, "kernel_inject_memory",
+             "Store user fact/preference for future",
+             ["kernel", "memory"], {"side_effect": True}),
+
+            (self.integration.get_user_preferences, "kernel_get_preferences",
+             "Get learned user preferences",
+             ["kernel", "memory"], {"readonly": True}),
+
+            (self.integration.record_feedback, "kernel_record_feedback",
+             "Record feedback for learning",
+             ["kernel", "learning"], {"side_effect": True}),
+        ]
+
+        for func, name, desc, category, flags in kernel_tools:
+            self.agent.add_first_class_tool(func, name, description=desc)
+            await self.agent.add_tool(func, name, description=desc, category=category, flags=flags)
+
+    # =========================================================================
+    # MAIN LOOPS
+    # =========================================================================
+
+    async def _main_loop(self):
+        """Process signals with autonomous pipeline."""
         while self.running:
             try:
-                signal = await self.signal_bus.get_next_signal(
-                    timeout=self.config.signal_timeout
-                )
-
+                signal = await self.signal_bus.get_next_signal(timeout=self.config.signal_timeout)
                 if signal:
-                    await self._process_signal(signal)
-
+                    await self._process_signal_autonomous(signal)
             except asyncio.CancelledError:
                 break
-            except Exception as e:
-                print(f"Lifecycle error: {e}")
-                traceback.print_exc()
+            except Exception:
+                self.metrics.errors += 1
 
     async def _heartbeat_loop(self):
-        """Heartbeat loop"""
+        """Maintenance heartbeat."""
         while self.running:
             try:
                 await asyncio.sleep(self.config.heartbeat_interval)
-                # Emit heartbeat signal
-                heartbeat = Signal(
-                    id=str(uuid.uuid4()),
-                    type=SignalType.HEARTBEAT,
-                    priority=0,
-                    content={"timestamp": time.time()},
-                    source="kernel",
-                    timestamp=time.time()
-                )
-
-                await self.signal_bus.emit_signal(heartbeat)
-
-
+                await self._handle_heartbeat()
             except asyncio.CancelledError:
                 break
-            except Exception as e:
-                print(f"Heartbeat error: {e}")
 
-        # ===== SIGNAL PROCESSING =====
+    # =========================================================================
+    # AUTONOMOUS SIGNAL PROCESSING
+    # =========================================================================
 
-    async def _process_signal(self, signal: Signal):
-        """
-        Process a signal based on its type
+    async def _process_signal_autonomous(self, signal: Signal):
+        """Full autonomous pipeline: Perceive → Attend → Decide → Act → Learn."""
+        start = time.time()
+        self.metrics.signals_processed += 1
 
-        Args:
-            signal: The signal to process
-        """
-        start_time = time.time()
+        user_id = signal.metadata.get("user_id", "default")
+        self._current_user_id = user_id
 
         try:
-            self.metrics.signals_processed += 1
+            # Get or create session
+            session = await self.agent.session_manager.get_or_create(user_id)
 
-            # Route based on signal type
-            if signal.type == SignalType.USER_INPUT:
-                await self._handle_user_input(signal)
+            # 1. PERCEIVE
+            event = await self.perception.perceive(signal, session)
 
-            elif signal.type == SignalType.SYSTEM_EVENT:
-                await self._handle_system_event(signal)
+            # 2. GET USER MODEL
+            user_model = self.world_model.get_user(user_id)
 
-            elif signal.type == SignalType.HEARTBEAT:
-                await self._handle_heartbeat_signal(signal)
+            # 3. ATTEND (compute salience)
+            salience = self.attention.compute_salience(event, user_model, session)
 
-            elif signal.type == SignalType.TOOL_RESULT:
-                await self._handle_tool_result_signal(signal)
+            # 4. DECIDE
+            plan = await self.decision_engine.decide(event, salience, user_model, session)
 
-            elif signal.type == SignalType.ERROR:
-                await self._handle_error_signal(signal)
+            # 5. ACT
+            success, response = await self._execute_plan(event, plan, session)
 
-            else:
-                signal.content += " System signal"
-                await self._handle_user_input(signal)
+            # 6. LEARN
+            outcome = InteractionOutcome(
+                event=event,
+                plan=plan,
+                success=success,
+                response_time=time.time() - start
+            )
+            await self.learning_loop.record_outcome(outcome, session)
 
-            # Update metrics
-            response_time = time.time() - start_time
-            self.metrics.update_response_time(response_time)
+            # Update world model
+            await self.world_model.update_from_event(event, success)
+
+            self.metrics.update_response_time(time.time() - start)
 
         except Exception as e:
             self.metrics.errors += 1
-            print(f"Error processing signal {signal.id}: {e}")
-            traceback.print_exc()
-
-    async def _handle_user_input(self, signal: Signal):
-        """user input handling with learning"""
-        user_id = signal.metadata.get("user_id", signal.id or "default")
-        content = signal.content
-
-        # Set current user context
-        self._current_user_id = user_id
-
-        # Update user state
-        await self.state_monitor.update_user_activity(user_id, "input")
-
-        # Record interaction
-        await self.learning_engine.record_interaction(
-            user_id=user_id,
-            interaction_type=InteractionType.USER_INPUT,
-            content={"query": content}
-        )
-
-        # Get relevant memories
-        memories = await self.memory_store.get_relevant_memories(
-            user_id=user_id,
-            query=content,
-            limit=5
-        )
-
-        # Apply preferences
-        modified_query, hints = await self.learning_engine.apply_preferences_to_query(
-            user_id, content
-        )
-
-        # Inject memory context
-        if memories:
-            memory_context = self.memory_store.format_memories_for_context(memories)
-            # Inject into agent's variable system
-            if hasattr(self.agent, 'variable_manager'):
-                self.agent.variable_manager.set(
-                    f'user_memories.{user_id}',
-                    memory_context
-                )
-
-        # Get formatting instructions from metadata (set by Discord voice input)
-        formatting_instructions = signal.metadata.get("formatting_instructions", "")
-
-        # Get voice channel history from metadata (set by Discord voice input in group calls)
-        voice_channel_history = signal.metadata.get("voice_channel_history", "")
-
-        # Temporarily inject formatting instructions and voice history into system prompt
-        original_system_message = None
-        if hasattr(self.agent, 'amd'):
-            original_system_message = self.agent.amd.system_message
-
-            # Build additional context
-            additional_context = ""
-            if formatting_instructions:
-                additional_context += f"\n\n{formatting_instructions}"
-            if voice_channel_history:
-                additional_context += f"\n\n{voice_channel_history}"
-                print(f"📋 [KERNEL] Injecting voice channel history into agent context")
-
-            if additional_context:
-                self.agent.amd.system_message = original_system_message + additional_context
-
-        try:
-            # Check if fast response mode is enabled (for voice input)
-            fast_response_mode = signal.metadata.get("fast_response", False)
-
-            if fast_response_mode:
-                print(f"🚀 [KERNEL] Fast Response Mode enabled for voice input")
-
-                # PHASE 1: Single LLM call with full context for immediate response
-                print(f"🚀 [KERNEL] Phase 1: Generating immediate response...")
-                class ImmediateResponse(BaseModel):
-                    response: str
-                    needs_tools: bool
-
-                response = await self.agent.a_format_class(
-                    pydantic_model=ImmediateResponse,
-                    prompt='Task generate an immediate response to the following USER REQUEST: '+modified_query,
-                    session_id=user_id,
-                    auto_context=True,
-                    model_preference="fast",
-                )
-
-                # Record and send immediate response
-                await self.learning_engine.record_interaction(
-                    user_id=user_id,
-                    interaction_type=InteractionType.AGENT_RESPONSE,
-                    content={"response": response.get("response"), "phase": "immediate"},
-                    outcome="success"
-                )
-
-                print(f"🚀 [KERNEL] Sending immediate response...")
-                await self.output_router.send_response(
-                    user_id=user_id,
-                    content=response.get("response"),
-                    role="assistant"
-                )
-
-                if not response.get("needs_tools"):
-                    print(f"🚀 [KERNEL] Fast Response Mode completed")
-                    return
-
-
-            # Normal mode: Standard agent run
-            response = await self.agent.a_run(
-                query=modified_query,
-                session_id=user_id,
-                user_id=user_id,
-                remember=True,
-                fast_run=True
-            )
-
-            # Record response
-            await self.learning_engine.record_interaction(
-                user_id=user_id,
-                interaction_type=InteractionType.AGENT_RESPONSE,
-                content={"response": response},
-                outcome="success"
-            )
-
-            # Send response
-            await self.output_router.send_response(
-                user_id=user_id,
-                content=response,
-                role="assistant"
-            )
-
-        except Exception as e:
-            # Restore original system message on error
-            if original_system_message is not None and hasattr(self.agent, 'amd'):
-                self.agent.amd.system_message = original_system_message
-            error_msg = f"Error: {str(e)}"
-            await self.output_router.send_response(
-                user_id=user_id,
-                content=error_msg,
-                role="assistant"
-            )
-
-            await self.learning_engine.record_interaction(
-                user_id=user_id,
-                interaction_type=InteractionType.ERROR,
-                content={"error": str(e)},
-                outcome="error"
-            )
-
         finally:
             self._current_user_id = None
 
-    async def _handle_system_event(self, signal: Signal):
-        """
-        Handle SYSTEM_EVENT signal:
-        1. Speichert Event im Kontext.
-        2. Leitet Signal IMMER an den Agenten weiter (für Awareness/Status-Updates).
-        3. Entscheidet basierend auf Wichtigkeit, ob die Agenten-Reaktion dem User gezeigt wird.
-        """
-        self.metrics.system_events_handled += 1
+    async def _execute_plan(
+        self,
+        event: PerceivedEvent,
+        plan: ActionPlan,
+        session: 'AgentSession'
+    ) -> tuple[bool, str]:
+        """Execute action plan."""
+        user_id = event.user_id
 
-        # User ID bestimmen
-        user_id = signal.metadata.get("user_id", signal.id or "default")
+        if plan.decision == AutonomousDecision.IGNORE:
+            return True, ""
 
-        # 1. Event im Context Store sichern (Basis-Logging)
-        self.context_store.store_event(signal.id, {
-            "type": signal.type.value,
-            "content": signal.content,
-            "source": signal.source,
-            "timestamp": signal.timestamp,
-            "metadata": signal.metadata
-        })
+        if plan.decision == AutonomousDecision.OBSERVE:
+            # Store context only
+            self.context_store.store_event(event.raw_signal.id, {
+                "intent": event.intent,
+                "entities": event.entities,
+                "observed_at": time.time()
+            })
+            return True, ""
 
-        # 2. Proaktivitäts-Entscheidung treffen
-        user_state = await self.state_monitor.get_user_state(user_id)
-
-        context = ProactivityContext(
-            user_state=user_state,
-            signal=signal,
-            last_proactive_time=self.proactive_tracker.last_proactive_time,
-            cooldown_period=self.config.proactive_cooldown,
-            recent_proactive_count=self.proactive_tracker.get_recent_count()
-        )
-
-        decision = await self.decision_engine.evaluate_proactivity(context)
-
-        # 3. Den Agenten mit dem Event füttern (Processing)
-        # Wir bauen einen Prompt, der dem Agenten sagt: "Hier ist ein System-Event, verarbeite es."
-        print(f"🔄 [KERNEL] Processing Event via Agent: {signal.content} (Decision: {decision.name})")
-
-        system_prompt = f"""SYSTEM_EVENT_UPDATE:
-        Type: {signal.type.name}
-        Source: {signal.source}
-        Content: {str(signal.content)}
-
-        Instruction: Process this event to update your internal state or memory.
-        Only generate a response text if necessary based on the content."""
-
-        try:
-            # Wir nutzen den Agenten, um das Event zu verstehen
-            # Wichtig: Wir nutzen hier eine Methode, die den Context aktualisiert
-            agent_response = await self.agent.a_run(
-                query=system_prompt,
-                session_id=user_id,
+        if plan.decision == AutonomousDecision.SCHEDULE:
+            # Schedule for later
+            task_id = await self.scheduler.schedule_task(
                 user_id=user_id,
-                remember=True,  # Wichtig: Agent soll sich an das Event erinnern!
-                fast_run=True  # Optional: Sparsamerer Modus für Events
+                task_type="query",
+                content=plan.content,
+                delay_seconds=300,  # 5 minutes
+                priority=int(plan.confidence * 10)
+            )
+            return True, f"Scheduled: {task_id}"
+
+        if plan.decision == AutonomousDecision.QUEUE:
+            # Queue for when user is available
+            self.context_store.store_event(f"queued_{event.raw_signal.id}", {
+                "content": plan.content,
+                "intent": event.intent,
+                "status": "pending"
+            })
+            return True, ""
+
+        # ACT_NOW - Execute via FlowAgent
+        try:
+            # Set situation in RuleSet
+            session.rule_set.set_situation("kernel_action", event.intent)
+
+            # Activate tool groups
+            for group in plan.tool_groups[:3]:
+                session.rule_set.activate_tool_group(group)
+
+            # Inject memory context
+            memories = await self.memory_store.get_relevant_memories(user_id, plan.content, limit=5)
+            if memories:
+                memory_ctx = self.memory_store.format_memories_for_context(memories)
+                session.vfs.create("user_memories", memory_ctx)
+
+            # Build query with instructions
+            query = plan.content
+            if plan.instructions:
+                instructions_text = "\n".join(f"- {i}" for i in plan.instructions[:5])
+                query = f"{plan.content}\n\n[Instructions]\n{instructions_text}"
+
+            # Execute
+            response = await self.agent.a_run(
+                query=query,
+                session_id=user_id,
+                remember=True
             )
 
-            # 4. Output Routing basierend auf Entscheidung
+            # Handle special states
+            if response.startswith("__NEEDS_HUMAN__:"):
+                question = response.replace("__NEEDS_HUMAN__:", "")
+                await self.output_router.send_notification(
+                    user_id, f"❓ {question}", priority=8
+                )
+                return True, response
+            elif response.startswith("__PAUSED__"):
+                return True, response
 
-            if decision == ProactivityDecision.INTERRUPT:
-                # Sofortige Benachrichtigung an den User mit der Antwort des Agenten
-                await self._proactive_notify(user_id, signal, agent_response)
+            # Record interaction
+            await self.learning_engine.record_interaction(
+                user_id=user_id,
+                interaction_type=InteractionType.AGENT_RESPONSE,
+                content={"response": response[:500]},
+                outcome="success"
+            )
 
-            elif decision == ProactivityDecision.QUEUE:
-                # Agent hat es verarbeitet, aber wir speichern die Antwort für später
-                # (z.B. in einer "Daily Summary" oder beim nächsten Login)
-                print(f"📥 [KERNEL] Queuing agent response for later: {signal.id}")
-                self.context_store.store_event(f"response_{signal.id}", {
-                    "type": "queued_response",
-                    "content": agent_response,
-                    "original_event_id": signal.id,
-                    "status": "pending"
-                })
-                # Optional: Eine kurze Info in den Task Scheduler werfen
+            # Send response based on action type
+            if plan.action_type == ActionType.RESPOND:
+                await self.output_router.send_response(user_id, response, "assistant")
+            elif plan.action_type == ActionType.NOTIFY:
+                self.metrics.proactive_actions += 1
+                self.proactive_tracker.record_action()
+                await self.output_router.send_notification(user_id, response, int(plan.confidence * 10))
 
-            elif decision == ProactivityDecision.SILENT:
-                # Der Agent hat das Wissen aufgenommen (via remember=True),
-                # aber wir belästigen den User nicht mit der Text-Ausgabe.
-                print(f"🤫 [KERNEL] Event processed silently. Agent awareness updated.")
-                # Wir tun nichts weiter mit agent_response, außer evtl. Logging
+            return True, response
 
         except Exception as e:
-            print(f"❌ Error processing system event via agent: {e}")
-            traceback.print_exc()
+            await self.output_router.send_response(user_id, f"Error: {e}", "assistant")
+            return False, str(e)
 
-    # Hilfsmethode anpassen, um die Agenten-Antwort zu akzeptieren
-    async def _proactive_notify(self, user_id: str, signal: Signal, agent_message: str = None):
-        """
-        Send a proactive notification to the user
-        """
-        self.metrics.proactive_actions += 1
-        self.proactive_tracker.record_action()
-
-        # Wenn der Agent eine sinnvolle Antwort generiert hat, nutzen wir diese.
-        # Sonst Fallback auf den rohen Signal-Inhalt.
-        content = agent_message if agent_message else self._build_notification_content(signal)
-
-        # Send notification
-        await self.output_router.send_notification(
-            user_id=user_id,
-            content=content,
-            priority=signal.priority,
-            metadata=signal.metadata
-        )
-
-    async def _handle_tool_result_signal(self, signal: Signal):
-        """Handle TOOL_RESULT signal"""
-        # Store tool result in context
-        self.context_store.store_event(signal.id, {
-            "type": "tool_result",
-            "tool_name": signal.metadata.get("tool_name"),
-            "result": signal.content,
-            "timestamp": signal.timestamp
-        })
-
-        # Check if this result warrants proactive notification
-        if signal.priority >= 7:
-            user_id = signal.metadata.get("user_id", signal.id or "default")
-            await self._proactive_notify(user_id, signal)
-
-    async def _handle_heartbeat_signal(self, signal: Signal):
-        """Handle HEARTBEAT signal with task recovery"""
-        # Maintenance tasks
-        # Update all user states
-        if hasattr(self.state_monitor, 'user_contexts'):
-            for user_id, context in self.state_monitor.user_contexts.items():
-                context.update_state()
+    async def _handle_heartbeat(self):
+        """Heartbeat maintenance."""
+        # Update user states
+        for ctx in self.state_monitor.user_contexts.values():
+            ctx.update_state()
 
         # Clean old context
         self.context_store.clear_old_events(max_age_seconds=3600)
 
-        # Prüfe auf verpasste Tasks
+        # Execute overdue tasks
         now = time.time()
-        overdue_tasks = [
-            task for task in self.scheduler.tasks.values()
-            if task.status == TaskStatus.PENDING
-               and task.scheduled_time < now - 60  # Mehr als 1 Minute überfällig
-        ]
+        overdue = [t for t in self.scheduler.tasks.values()
+                   if t.status == TaskStatus.PENDING and t.scheduled_time < now - 60]
+        for task in overdue[:5]:
+            asyncio.create_task(self.scheduler._execute_task(task))
 
-        if overdue_tasks:
-            print(f"⚠️ Found {len(overdue_tasks)} overdue tasks, executing now...")
-            for task in overdue_tasks[:5]:  # Max 5 auf einmal
-                if task.status == TaskStatus.PENDING:
-                    asyncio.create_task(self.scheduler._execute_task(task))
+        # Prune low confidence patterns in active sessions
+        for session in self.agent.session_manager.get_all_active():
+            session.rule_set.prune_low_confidence_patterns(threshold=0.2)
 
-        # Alte abgeschlossene Tasks bereinigen
-        completed_cutoff = now - 86400  # 24 Stunden
-        old_completed = [
-            tid for tid, task in self.scheduler.tasks.items()
-            if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)
-               and task.scheduled_time < completed_cutoff
-        ]
+    # =========================================================================
+    # PUBLIC API (IProAKernel)
+    # =========================================================================
 
-        for tid in old_completed[:100]:  # Max 100 auf einmal
-            del self.scheduler.tasks[tid]
-
-        if old_completed:
-            print(f"🧹 Cleaned up {len(old_completed)} old tasks")
-
-        # System health check
-        queue_size = self.signal_bus.get_queue_size()
-        if queue_size > 100:
-            print(f"WARNING: High signal queue size: {queue_size}")
-
-    async def _handle_error_signal(self, signal: Signal):
-        """Handle ERROR signal"""
-        self.metrics.errors += 1
-
-        # Critical errors should notify immediately
-        if signal.priority >= 8:
-            user_id = signal.metadata.get("user_id", signal.id or "default")
-            await self.output_router.send_notification(
-                user_id=user_id,
-                content=f"Critical error: {signal.content}",
-                priority=signal.priority
-            )
-
-        # ===== PROACTIVE NOTIFICATIONS =====
-
-    async def _proactive_notify(self, user_id: str, signal: Signal):
-        """
-        Send a proactive notification to the user
-
-        Args:
-            user_id: User to notify
-            signal: Signal that triggered the notification
-        """
-        self.metrics.proactive_actions += 1
-        self.proactive_tracker.record_action()
-
-        # Build notification content
-        content = self._build_notification_content(signal)
-
-        # Send notification
-        await self.output_router.send_notification(
-            user_id=user_id,
-            content=content,
-            priority=signal.priority,
-            metadata=signal.metadata
-        )
-
-    def _build_notification_content(self, signal: Signal) -> str:
-        """Build human-readable notification from signal"""
-        if isinstance(signal.content, str):
-            return signal.content
-
-        if isinstance(signal.content, dict):
-            # Extract meaningful info from dict
-            message = signal.content.get("message")
-            if message:
-                return message
-
-            # Fallback to JSON representation
-            return f"Event: {signal.content}"
-
-        return str(signal.content)
-
-    # Public API
-    async def handle_user_input(
-        self,
-        user_id: str,
-        content: str,
-        metadata: dict = None
-    ) -> str:
-        """Handle user input"""
-        signal = Signal(
+    async def handle_user_input(self, user_id: str, content: str, metadata: dict = None) -> str:
+        """Handle user input."""
+        await self.signal_bus.emit_signal(Signal(
             id=str(uuid.uuid4()),
             type=SignalType.USER_INPUT,
             priority=10,
             content=content,
             source=f"user_{user_id}",
-            timestamp=time.time(),
             metadata={"user_id": user_id, **(metadata or {})}
-        )
-
-        await self.signal_bus.emit_signal(signal)
+        ))
         return ""
 
-    async def trigger_event(
-        self,
-        event_name: str,
-        payload: dict,
-        priority: int = 5,
-        source: str = "external"
-    ):
-        """Trigger system event"""
-        signal = Signal(
+    async def trigger_event(self, event_name: str, payload: dict, priority: int = 5, source: str = "external"):
+        """Trigger system event."""
+        await self.signal_bus.emit_signal(Signal(
             id=str(uuid.uuid4()),
             type=SignalType.SYSTEM_EVENT,
             priority=priority,
             content=payload,
             source=source,
-            timestamp=time.time(),
             metadata={"event_name": event_name}
-        )
-
-        await self.signal_bus.emit_signal(signal)
-
-    async def process_signal(self, signal: Signal):
-        """Process signal"""
-        await self.signal_bus.emit_signal(signal)
+        ))
 
     async def set_user_location(self, user_id: str, location: str):
-        """Set user location"""
         await self.state_monitor.set_user_location(user_id, location)
 
     async def set_do_not_disturb(self, user_id: str, enabled: bool):
-        """Set DND mode"""
         await self.state_monitor.set_do_not_disturb(user_id, enabled)
 
     def get_status(self) -> dict[str, Any]:
-        """Get comprehensive status"""
+        """Get kernel status."""
         return {
             "state": self.state.value,
             "running": self.running,
-            "agent_name": self.agent.amd.name,
+            "agent": self.agent.amd.name if self.agent and self.agent.amd else None,
             "metrics": self.metrics.to_dict(),
-            "learning": {
-                "total_records": len(self.learning_engine.records),
-                "users_learned": len(self.learning_engine.preferences)
-            },
-            "memory": {
-                "total_memories": len(self.memory_store.memories),
-                "users_with_memory": len(self.memory_store.user_memories)
-            },
-            "scheduler": {
-                "total_tasks": len(self.scheduler.tasks),
-                "pending_tasks": sum(
-                    1 for t in self.scheduler.tasks.values()
-                    if t.status == TaskStatus.PENDING
-                )
-            }
+            "world_model": {"users": len(self.world_model.users), "sessions": len(self.world_model.get_active_sessions())},
+            "learning": {"records": len(self.learning_engine.records), "preferences": len(self.learning_engine.preferences)},
+            "memory": {"total": len(self.memory_store.memories)},
+            "scheduler": {"pending": sum(1 for t in self.scheduler.tasks.values() if t.status == TaskStatus.PENDING)}
         }
 
+    # =========================================================================
+    # PERSISTENCE
+    # =========================================================================
 
-    # ===== SAVE/LOAD METHODS =====
-
-    async def save_to_file(self, filepath: str = None) -> dict[str, Any]:
-        """
-        Save complete kernel state to file
-
-        Args:
-            filepath: Path to save file (default: auto-generated)
-
-        Returns:
-            dict with save statistics
-        """
+    async def save_to_file(self, filepath: str = None) -> dict:
+        """Save kernel state."""
         try:
-            if filepath is None:
-                # Auto-generate path
+            if not filepath:
                 from toolboxv2 import get_app
                 folder = Path(get_app().data_dir) / 'Agents' / 'kernel' / self.agent.amd.name
                 folder.mkdir(parents=True, exist_ok=True)
+                filepath = str(folder / f"kernel_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl")
 
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filepath = str(folder / f"kernel_state_{timestamp}.pkl")
-
-            # Collect state
-            state_data = {
-                "version": "2.0.0",
-                "agent_name": self.agent.amd.name,
+            state = {
+                "version": "2.1.0",
+                "agent": self.agent.amd.name,
                 "saved_at": datetime.now().isoformat(),
-                "config": {
-                    "heartbeat_interval": self.config.heartbeat_interval,
-                    "idle_threshold": self.config.idle_threshold,
-                    "proactive_cooldown": self.config.proactive_cooldown,
-                    "max_proactive_per_hour": self.config.max_proactive_per_hour,
-                    "max_signal_queue_size": self.config.max_signal_queue_size
-                },
                 "metrics": self.metrics.to_dict(),
-                "learning": {
-                    "records": [r.model_dump() for r in self.learning_engine.records],
-                    "preferences": {
-                        uid: prefs.model_dump()
-                        for uid, prefs in self.learning_engine.preferences.items()
-                    }
-                },
-                "memory": {
-                    "memories": {
-                        mid: mem.model_dump()
-                        for mid, mem in self.memory_store.memories.items()
-                    },
-                    "user_memories": dict(self.memory_store.user_memories)
-                },
-                "scheduler": {
-                    "tasks": {
-                        tid: task.model_dump()
-                        for tid, task in self.scheduler.tasks.items()
-                    }
-                },
-                "state_monitor": {
-                    "user_contexts": {
-                        uid: {
-                            "user_id": ctx.user_id,
-                            "state": ctx.state.value,
-                            "last_interaction": ctx.last_interaction,
-                            "location": ctx.location,
-                            "do_not_disturb": ctx.do_not_disturb,
-                            "activity_history": ctx.activity_history[-50:]  # Last 50
-                        }
-                        for uid, ctx in self.state_monitor.user_contexts.items()
-                    }
-                }
+                "world_model": {u: {"activity": m.activity_rhythm, "topics": m.topics_of_interest, "engagement": m.engagement_level}
+                               for u, m in self.world_model.users.items()},
+                "learning": {"records": [r.model_dump() for r in self.learning_engine.records],
+                            "preferences": {u: p.model_dump() for u, p in self.learning_engine.preferences.items()}},
+                "memory": {"memories": {m: mem.model_dump() for m, mem in self.memory_store.memories.items()},
+                          "user_memories": dict(self.memory_store.user_memories)},
+                "scheduler": {"tasks": {t: task.model_dump() for t, task in self.scheduler.tasks.items()}}
             }
 
-            # Save to file
             with open(filepath, 'wb') as f:
-                pickle.dump(state_data, f)
+                pickle.dump(state, f)
 
-            # Calculate statistics
-            stats = {
-                "success": True,
-                "filepath": filepath,
-                "file_size_kb": Path(filepath).stat().st_size / 1024,
-                "learning_records": len(state_data["learning"]["records"]),
-                "user_preferences": len(state_data["learning"]["preferences"]),
-                "memories": len(state_data["memory"]["memories"]),
-                "scheduled_tasks": len(state_data["scheduler"]["tasks"]),
-                "user_contexts": len(state_data["state_monitor"]["user_contexts"]),
-                "saved_at": state_data["saved_at"]
-            }
-
-            print(f"✓ Kernel state saved to {filepath}")
-            print(f"  - Learning records: {stats['learning_records']}")
-            print(f"  - User preferences: {stats['user_preferences']}")
-            print(f"  - Memories: {stats['memories']}")
-            print(f"  - Scheduled tasks: {stats['scheduled_tasks']}")
-
-            return stats
-
+            return {"success": True, "filepath": filepath}
         except Exception as e:
-            print(f"❌ Failed to save kernel state: {e}")
-            traceback.print_exc()
-            return {
-                "success": False,
-                "error": str(e)
-            }
+            return {"success": False, "error": str(e)}
 
-
-    async def load_from_file(self, filepath: str) -> dict[str, Any]:
-        """
-        Load kernel state from file
-
-        Args:
-            filepath: Path to saved state file
-
-        Returns:
-            dict with load statistics
-        """
+    async def load_from_file(self, filepath: str) -> dict:
+        """Load kernel state."""
         try:
             if not Path(filepath).exists():
-                return {
-                    "success": False,
-                    "error": f"File not found: {filepath}"
-                }
+                return {"success": False, "error": "File not found"}
 
-            # Load state data
             with open(filepath, 'rb') as f:
-                state_data = pickle.load(f)
+                state = pickle.load(f)
 
-            # Validate version
-            version = state_data.get("version", "unknown")
-            print(f"Loading kernel state version {version}...")
+            # Restore world model
+            for user_id, data in state.get("world_model", {}).items():
+                user = self.world_model.get_user(user_id)
+                user.activity_rhythm = data.get("activity", {})
+                user.topics_of_interest = data.get("topics", [])
+                user.engagement_level = data.get("engagement", 0.5)
 
-            # Restore config
-            config_data = state_data.get("config", {})
-            for key, value in config_data.items():
-                if hasattr(self.config, key):
-                    setattr(self.config, key, value)
+            # Restore learning
+            l = state.get("learning", {})
+            self.learning_engine.records = [LearningRecord(**r) for r in l.get("records", [])]
+            self.learning_engine.preferences = {u: UserPreferences(**p) for u, p in l.get("preferences", {}).items()}
 
-            # Restore metrics
-            if "metrics" in state_data:
-                metrics_data = state_data["metrics"]
-                self.metrics.signals_processed = metrics_data.get("signals_processed", 0)
-                self.metrics.user_inputs_handled = metrics_data.get("user_inputs", 0)
-                self.metrics.system_events_handled = metrics_data.get("system_events", 0)
-                self.metrics.proactive_actions = metrics_data.get("proactive_actions", 0)
-                self.metrics.errors = metrics_data.get("errors", 0)
-                self.metrics.average_response_time = metrics_data.get("avg_response_time", 0.0)
-
-            # Restore learning engine
-            if "learning" in state_data:
-                learning_data = state_data["learning"]
-
-                # Restore records
-                self.learning_engine.records = [
-                    LearningRecord(**record_data)
-                    for record_data in learning_data.get("records", [])
-                ]
-
-                # Restore preferences
-                self.learning_engine.preferences = {
-                    uid: UserPreferences(**prefs_data)
-                    for uid, prefs_data in learning_data.get("preferences", {}).items()
-                }
-
-            # Restore memory store
-            if "memory" in state_data:
-                memory_data = state_data["memory"]
-
-                # Restore memories
-                self.memory_store.memories = {
-                    mid: Memory(**mem_data)
-                    for mid, mem_data in memory_data.get("memories", {}).items()
-                }
-
-                # Restore user memory mappings
-                self.memory_store.user_memories = defaultdict(
-                    list,
-                    memory_data.get("user_memories", {})
-                )
+            # Restore memory
+            mem = state.get("memory", {})
+            self.memory_store.memories = {m: Memory(**d) for m, d in mem.get("memories", {}).items()}
+            self.memory_store.user_memories = defaultdict(list, mem.get("user_memories", {}))
 
             # Restore scheduler
-            if "scheduler" in state_data:
-                scheduler_data = state_data["scheduler"]
+            for tid, td in state.get("scheduler", {}).get("tasks", {}).items():
+                self.scheduler.tasks[tid] = ScheduledTask(**td)
 
-                # Restore tasks
-                self.scheduler.tasks = {
-                    tid: ScheduledTask(**task_data)
-                    for tid, task_data in scheduler_data.get("tasks", {}).items()
-                }
-
-            # Restore state monitor
-            if "state_monitor" in state_data:
-                monitor_data = state_data["state_monitor"]
-
-                # Restore user contexts
-                for uid, ctx_data in monitor_data.get("user_contexts", {}).items():
-                    context = UserContext(
-                        user_id=ctx_data["user_id"],
-                        state=UserState(ctx_data["state"]),
-                        last_interaction=ctx_data["last_interaction"],
-                        location=ctx_data["location"],
-                        do_not_disturb=ctx_data["do_not_disturb"],
-                        activity_history=ctx_data.get("activity_history", [])
-                    )
-                    self.state_monitor.user_contexts[uid] = context
-
-            # Calculate statistics
-            stats = {
-                "success": True,
-                "filepath": filepath,
-                "version": version,
-                "saved_at": state_data.get("saved_at"),
-                "loaded_at": datetime.now().isoformat(),
-                "learning_records": len(self.learning_engine.records),
-                "user_preferences": len(self.learning_engine.preferences),
-                "memories": len(self.memory_store.memories),
-                "scheduled_tasks": len(self.scheduler.tasks),
-                "user_contexts": len(self.state_monitor.user_contexts)
-            }
-
-            print(f"✓ Kernel state loaded from {filepath}")
-            print(f"  - Learning records: {stats['learning_records']}")
-            print(f"  - User preferences: {stats['user_preferences']}")
-            print(f"  - Memories: {stats['memories']}")
-            print(f"  - Scheduled tasks: {stats['scheduled_tasks']}")
-            print(f"  - User contexts: {stats['user_contexts']}")
-
-            return stats
-
+            return {"success": True, "loaded": filepath}
         except Exception as e:
-            print(f"❌ Failed to load kernel state: {e}")
-            traceback.print_exc()
-            return {
-                "success": False,
-                "error": str(e)
-            }
-
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Export kernel state to dictionary (for API/serialization)
-
-        Returns:
-            dict with complete kernel state
-        """
-        return {
-            "version": "2.0.0",
-            "agent_name": self.agent.amd.name,
-            "state": self.state.value,
-            "running": self.running,
-            "exported_at": datetime.now().isoformat(),
-            "config": {
-                "heartbeat_interval": self.config.heartbeat_interval,
-                "idle_threshold": self.config.idle_threshold,
-                "proactive_cooldown": self.config.proactive_cooldown,
-                "max_proactive_per_hour": self.config.max_proactive_per_hour
-            },
-            "metrics": self.metrics.to_dict(),
-            "learning": {
-                "total_records": len(self.learning_engine.records),
-                "user_preferences": {
-                    uid: prefs.model_dump()
-                    for uid, prefs in self.learning_engine.preferences.items()
-                }
-            },
-            "memory": {
-                "total_memories": len(self.memory_store.memories),
-                "user_memory_counts": {
-                    uid: len(mids)
-                    for uid, mids in self.memory_store.user_memories.items()
-                }
-            },
-            "scheduler": {
-                "total_tasks": len(self.scheduler.tasks),
-                "pending_tasks": [
-                    task.model_dump()
-                    for task in self.scheduler.tasks.values()
-                    if task.status.value == "pending"
-                ]
-            },
-            "users": {
-                uid: {
-                    "state": ctx.state.value,
-                    "last_interaction": ctx.last_interaction,
-                    "location": ctx.location,
-                    "do_not_disturb": ctx.do_not_disturb,
-                    "idle_time": ctx.get_idle_time()
-                }
-                for uid, ctx in self.state_monitor.user_contexts.items()
-            }
-        }
-
-
-    async def from_dict(self, data: dict[str, Any]) -> dict[str, Any]:
-        """
-        Import kernel state from dictionary
-
-        Args:
-            data: Dictionary with kernel state (from to_dict or API)
-
-        Returns:
-            dict with import statistics
-        """
-        try:
-            version = data.get("version", "unknown")
-            print(f"Importing kernel state version {version}...")
-
-            # Import config
-            if "config" in data:
-                config_data = data["config"]
-                for key, value in config_data.items():
-                    if hasattr(self.config, key):
-                        setattr(self.config, key, value)
-
-            # Import learning preferences
-            if "learning" in data and "user_preferences" in data["learning"]:
-                self.learning_engine.preferences = {
-                    uid: UserPreferences(**prefs_data)
-                    for uid, prefs_data in data["learning"]["user_preferences"].items()
-                }
-
-            # Import scheduled tasks
-            if "scheduler" in data and "pending_tasks" in data["scheduler"]:
-                for task_data in data["scheduler"]["pending_tasks"]:
-                    task = ScheduledTask(**task_data)
-                    self.scheduler.tasks[task.id] = task
-
-            stats = {
-                "success": True,
-                "version": version,
-                "imported_at": datetime.now().isoformat(),
-                "user_preferences": len(self.learning_engine.preferences),
-                "scheduled_tasks": len(
-                    [t for t in data.get("scheduler", {}).get("pending_tasks", [])]
-                )
-            }
-
-            print(f"✓ Kernel state imported")
-            print(f"  - User preferences: {stats['user_preferences']}")
-            print(f"  - Scheduled tasks: {stats['scheduled_tasks']}")
-
-            return stats
-
-        except Exception as e:
-            print(f"❌ Failed to import kernel state: {e}")
-            traceback.print_exc()
-            return {
-                "success": False,
-                "error": str(e)
-            }
-
-
-    # ===== SYSTEM PROMPT EXTENSION =====
-
-    def get_kernel_system_prompt_extension(self) -> str:
-        """
-        Generate system prompt extension that informs the agent about kernel capabilities
-
-        This should be added to the agent's system prompt to enable kernel awareness.
-
-        Returns:
-            str: System prompt extension text
-        """
-        # Get current user preferences if available
-        prefs_info = ""
-        if self._current_user_id:
-            prefs = self.learning_engine.get_preferences(self._current_user_id)
-            prefs_info = f"""
-
-## Current User Preferences (Learned)
-- Communication Style: {prefs.communication_style}
-- Response Format: {prefs.response_format}
-- Proactivity Level: {prefs.proactivity_level}
-- Preferred Tools: {', '.join(prefs.preferred_tools) if prefs.preferred_tools else 'None learned yet'}
-"""
-
-        # Get memory context if available
-        memory_info = ""
-        if self._current_user_id:
-            memory_count = len(self.memory_store.user_memories.get(self._current_user_id, []))
-            if memory_count > 0:
-                memory_info = f"""
-
-## User Memory Context
-You have access to {memory_count} stored memories about this user.
-These memories are automatically injected into your context when relevant.
-"""
-
-        prompt_extension = f"""
-
-# ========== KERNEL CAPABILITIES ==========
-
-You are running inside an Kernel that provides advanced capabilities beyond standard agent execution.
-
-## Available Kernel Tools
-
-You have access to the following kernel tools that you can call directly:
-
-### 1. kernel_schedule_task
-Schedule a task for future execution (reminders, delayed queries, or scheduled actions).
-
-**Parameters:**
-- task_type: "reminder", "query", or "action"
-- content: Description of the task
-- delay_seconds: (optional) Delay in seconds from now
-- scheduled_time: (optional) Unix timestamp for exact scheduling
-- priority: (optional) 0-10, default 5
-
-**Returns:** task_id (string)
-
-**Example usage:** When user says "Remind me tomorrow at 2pm to check the report", call kernel_schedule_task with task_type="reminder", content="Check the report", and appropriate scheduled_time.
-
-### 2. kernel_send_intermediate
-Send status updates during long-running operations to keep the user informed.
-
-**Parameters:**
-- content: Status message to send
-- stage: (optional) "processing", "analysis", "synthesis", etc. (default: "processing")
-
-**Example usage:** During multi-step analysis, call kernel_send_intermediate with content="Analyzing data..." and stage="analysis" to update the user.
-
-### 3. kernel_ask_user
-Ask the user a question and wait for their response.
-
-**Parameters:**
-- question: The question to ask
-- timeout: (optional) Seconds to wait (default: 300.0)
-
-**Returns:** User's answer (string) or None if timeout
-
-**Example usage:** When you need clarification, call kernel_ask_user with question="Which option do you prefer: A or B?" and wait for the response.
-
-### 4. kernel_inject_memory
-Store important information about the user for future sessions.
-
-**Parameters:**
-- content: Information to remember
-- memory_type: (optional) "fact", "event", "preference", or "context" (default: "fact")
-- importance: (optional) 0.0 to 1.0 (default: 0.5)
-- tags: (optional) List of tags for categorization
-
-**Returns:** memory_id (string)
-
-**Example usage:** When user states "I prefer concise responses", call kernel_inject_memory with content="User prefers concise responses", memory_type="preference", importance=0.8, tags=["communication", "style"].
-
-### 5. kernel_get_preferences
-Get the current user's learned preferences from previous interactions.
-
-**Parameters:** None
-
-**Returns:** Dictionary with keys:
-- communication_style: "concise", "detailed", or "balanced"
-- response_format: "text", "bullet-points", or "structured"
-- proactivity_level: "low", "medium", or "high"
-- preferred_tools: List of tool names
-
-**Example usage:** Call kernel_get_preferences at the start of complex tasks to adapt your response style.
-
-### 6. kernel_record_feedback
-Record user feedback to improve future responses through learning.
-
-**Parameters:**
-- feedback: Description of the feedback
-- score: -1.0 to 1.0 (negative = bad, positive = good)
-
-**Example usage:** When user says "that was too verbose", call kernel_record_feedback with feedback="Response was too verbose", score=-0.5.
-
-## When to Use Kernel Tools
-
-**kernel_schedule_task** - Use when user mentions future actions, reminders, or scheduled queries:
-- "Remind me tomorrow at 2pm"
-- "Check the weather in 2 hours"
-- "Follow up on this next week"
-
-**kernel_send_intermediate** - Use for long-running operations to keep user informed:
-- Multi-step analysis
-- Large data processing
-- Complex tool chains
-- Any operation taking more than a few seconds
-
-**kernel_ask_user** - Use when you need clarification or choices during execution:
-- Ambiguous requests
-- Multiple valid options
-- Confirmation needed before taking action
-
-**kernel_inject_memory** - Use when learning important facts about the user:
-- User states preferences ("I prefer...", "I like...", "I don't like...")
-- Personal information shared
-- Important context for future interactions
-- Recurring patterns you notice
-
-**kernel_get_preferences** - Use to adapt your response style automatically:
-- Call at the start of complex tasks
-- Check before generating long responses
-- Adjust verbosity based on user's preference
-- Choose appropriate format
-
-**kernel_record_feedback** - Use when user expresses satisfaction/dissatisfaction:
-- Explicit feedback ("that's perfect", "too long", "not what I wanted")
-- Corrections to your responses
-- Style adjustment requests
-{prefs_info}{memory_info}
-
-## Important Guidelines
-
-1. **Use these tools proactively** - They significantly enhance user experience
-2. **Memory is persistent** - Information you store will be available in future sessions
-3. **Learning is continuous** - The kernel learns from every interaction
-4. **Don't ask permission** - Just use the tools when appropriate
-5. **Tasks run independently** - Scheduled tasks execute even after the current session ends
-6. **Call tools directly** - These are available in your toolkit, use them like any other tool
-
-## Current Kernel Status
-- State: {self.state.value}
-- Total interactions processed: {self.metrics.signals_processed}
-- Learning records: {len(self.learning_engine.records)}
-- Stored memories: {len(self.memory_store.memories)}
-- Scheduled tasks: {len(self.scheduler.tasks)}
-
-# ==========================================
-"""
-
-        return prompt_extension
-
-
-    def inject_kernel_prompt_to_agent(self):
-        """
-        Inject kernel capabilities into agent's system prompt
-
-        This should be called after kernel initialization to make the agent
-        aware of kernel functions.
-        """
-        try:
-            # Get extension
-            extension = self.get_kernel_system_prompt_extension()
-
-            # Add to agent's system message
-            if hasattr(self.agent, 'amd'):
-                current_prompt = self.agent.amd.system_message or ""
-
-                # Check if already injected
-                if "KERNEL CAPABILITIES" not in current_prompt:
-                    self.agent.amd.system_message = current_prompt + "\n\n" + extension
-                    print("✓ Kernel capabilities injected into agent system prompt")
-                else:
-                    # Update existing section
-                    parts = current_prompt.split("# ========== KERNEL CAPABILITIES ==========")
-                    if len(parts) == 2:
-                        self.agent.amd.system_message = parts[0] + extension
-                        print("✓ Kernel capabilities updated in agent system prompt")
-            else:
-                print("⚠️  Agent does not have AMD - cannot inject prompt")
-
-        except Exception as e:
-            print(f"❌ Failed to inject kernel prompt: {e}")
-
-
-# ===== EXAMPLE USAGE =====
-
-async def example_usage():
-    """Example of how to use the ProA Kernel"""
-    print("\n" + "=" * 60)
-    print("ProA Kernel - Example Usage")
-    print("=" * 60 + "\n")
-
-    # Note: In real usage, you would import FlowAgent from your actual module
-    # from your_module import FlowAgent, AgentModelData
-
-    # For this example, we'll create a mock agent
-    class MockAgent:
-        class MockAMD:
-            name = "TestAgent"
-
-        amd = MockAMD()
-
-        async def a_run(self, query, session_id=None, user_id=None, remember=True):
-            await asyncio.sleep(0.5)  # Simulate processing
-            return f"Mock response to: {query}"
-
-    # Create mock agent
-    agent = MockAgent()
-
-    # Create kernel
-    config = KernelConfig(
-        heartbeat_interval=10.0,
-        proactive_cooldown=5.0,
-        max_proactive_per_hour=10
-    )
-
-    kernel = Kernel(
-        agent=agent,
-        config=config
-    )
-
-    # Start kernel
-    await kernel.start()
-
-    try:
-        # Simulate user interactions
-        print("\n--- Simulating user interactions ---\n")
-
-        # User input
-        await kernel.handle_user_input(
-            user_id="user123",
-            content="Hello, how are you?"
-        )
-
-        await asyncio.sleep(2)
-
-        # System event (low priority)
-        await kernel.trigger_event(
-            event_name="file_uploaded",
-            payload={"filename": "document.pdf", "size": 1024},
-            priority=3
-        )
-
-        await asyncio.sleep(2)
-
-        # System event (high priority - should trigger notification)
-        await kernel.trigger_event(
-            event_name="critical_alert",
-            payload={"message": "System backup completed successfully"},
-            priority=8
-        )
-
-        await asyncio.sleep(2)
-
-        # Set user as busy
-        await kernel.set_do_not_disturb("user123", True)
-
-        # This event should be queued, not notified
-        await kernel.trigger_event(
-            event_name="low_priority_update",
-            payload={"message": "New feature available"},
-            priority=5
-        )
-
-        await asyncio.sleep(2)
-
-        # Check status
-        status = kernel.get_status()
-        print("\n--- Kernel Status ---")
-        print(f"State: {status['state']}")
-        print(f"Metrics: {status['metrics']}")
-        print(f"Queue Size: {status['signal_queue_size']}")
-
-        # Let it run for a bit
-        print("\n--- Kernel running... (press Ctrl+C to stop) ---\n")
-        await asyncio.sleep(10)
-
-    finally:
-        # Stop kernel
-        await kernel.stop()
-        print("\n✓ Example completed\n")
-
-
-if __name__ == "__main__":
-    # Run example
-    try:
-        asyncio.run(example_usage())
-    except KeyboardInterrupt:
-        print("\n\nInterrupted by user")
-
-# print("\n[OK] ProA Kernel Implementation Complete")
-# print("Ready to wrap any FlowAgent and provide always-on capabilities")
+            return {"success": False, "error": str(e)}
