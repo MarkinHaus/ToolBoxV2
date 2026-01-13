@@ -10,7 +10,7 @@ from .kernelin.tools.discord_tools import DiscordKernelTools
 from .kernelin.tools.whatsapp_tools import WhatsAppKernelTools
 
 __version__ = "1.0.0"
-__all__ = ["Kernel", "CLIKernel", "KernelConfig", "KernelState", "KernelMetrics", "InteractionType",
+__all__ = ["Kernel", "CLIKernel","KernelConfig", "KernelState", "KernelMetrics", "InteractionType",
            "LearningRecord", "UserPreferences", "Memory", "MemoryType", "ScheduledTask",
            "TaskStatus", "Signal", "SignalType", "ISignalBus", "UserState", "UserContext",
            "IStateMonitor", "ProactivityContext", "ProactivityDecision", "IDecisionEngine",

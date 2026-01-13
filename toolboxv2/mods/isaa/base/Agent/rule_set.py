@@ -1103,33 +1103,114 @@ def create_default_ruleset(config_path: str | None = None) -> RuleSet:
     """
     ruleset = RuleSet(config_path=config_path)
 
-    # Add some default rules if no config loaded
     if not ruleset.situation_rules:
-        # Generic safety rule
+
+        # =========================
+        # GENERAL RULES (1)
+        # =========================
+
         ruleset.add_rule(
             situation="any",
-            intent="permanent save",
+            intent="insufficient information",
             instructions=[
-                "Verify data integrity before saving",
-                "Ask for user confirmation on destructive operations",
-                "Create backup if modifying existing data"
+                "Detect missing, ambiguous, or contradictory information",
+                "Explicitly ask the user for the missing details using kernel_ask_user",
+                "Do not assume defaults for critical parameters",
+                "Pause execution until required information is provided or timeout occurs"
             ],
-            rule_id="default_save_safety"
+            required_tool_groups=["communication"],
+            rule_id="general_missing_information",
+            confidence=1.0
         )
 
-        # Generic API rule
+        # =========================
+        # SPECIFIC RULES (5)
+        # =========================
+
+        # 1. Task scheduling
         ruleset.add_rule(
-            situation="api integration",
-            intent="create or modify",
+            situation="task scheduling",
+            intent="schedule reminder or job",
             instructions=[
-                "Check API documentation for required fields",
-                "Test in sandbox/dev environment first",
-                "Validate response before proceeding"
+                "Verify task_type and content are provided",
+                "Check whether delay_seconds or scheduled_time is specified",
+                "If neither is provided, ask the user when the task should run",
+                "Schedule the task using kernel_schedule_task",
+                "Confirm scheduling success to the user"
             ],
-            rule_id="default_api_safety"
+            required_tool_groups=["scheduling", "communication"],
+            preconditions=[
+                "Task description is understandable"
+            ],
+            postconditions=[
+                "Task is scheduled and task_id is returned"
+            ],
+            rule_id="schedule_task_rule"
+        )
+
+        # 2. Long-running processing
+        ruleset.add_rule(
+            situation="long running operation",
+            intent="process data or perform multi-step reasoning",
+            instructions=[
+                "Send an initial intermediate response indicating start",
+                "Provide periodic status updates via kernel_send_intermediate",
+                "If processing stalls or blocks, notify the user",
+                "Send final confirmation when finished"
+            ],
+            required_tool_groups=["communication"],
+            rule_id="long_running_feedback"
+        )
+
+        # 3. Memory injection
+        ruleset.add_rule(
+            situation="user preference or fact detected",
+            intent="store memory",
+            instructions=[
+                "Evaluate whether the information is stable and reusable",
+                "If importance or memory_type is unclear, ask the user for confirmation",
+                "Inject memory using kernel_inject_memory",
+                "Avoid storing temporary or speculative information"
+            ],
+            required_tool_groups=["memory", "communication"],
+            preconditions=[
+                "Information is explicitly stated or clearly implied by the user"
+            ],
+            postconditions=[
+                "Memory entry is persisted"
+            ],
+            rule_id="memory_injection_rule"
+        )
+
+        # 4. Personalized response generation
+        ruleset.add_rule(
+            situation="response generation",
+            intent="personalize answer",
+            instructions=[
+                "Retrieve user preferences via kernel_get_preferences",
+                "Adapt tone, verbosity, and structure accordingly",
+                "If preferences conflict with the request, ask the user which to prioritize"
+            ],
+            required_tool_groups=["memory", "communication"],
+            rule_id="preference_application_rule"
+        )
+
+        # 5. Feedback handling
+        ruleset.add_rule(
+            situation="user feedback received",
+            intent="learn from feedback",
+            instructions=[
+                "Interpret feedback sentiment and intent",
+                "If feedback is unclear, ask the user to clarify",
+                "Record feedback using kernel_record_feedback",
+                "Adjust future behavior implicitly based on feedback score"
+            ],
+            required_tool_groups=["learning", "communication"],
+            rule_id="feedback_learning_rule"
         )
 
     return ruleset
+
 
 
 def auto_group_tools_by_name_pattern(

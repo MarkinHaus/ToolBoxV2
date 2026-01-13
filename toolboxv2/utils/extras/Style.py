@@ -35,6 +35,8 @@ def print_prompt(msg_data):
                                                                                 'NONE') == 'system' else caller
         caller = Style.VIOLET2(message.get('role', 'NONE').upper()) if message.get('role',
                                                                                    'NONE') == 'assistant' else caller
+        caller = Style.GREYBG(message.get('role', 'NONE').upper()) if message.get('role',
+                                                                                   'NONE') == 'tool' else caller
         print(f"\n{caller}\n{Style.GREY(str(message.get('content', '--#--')))}\n")
     print(Style.GREEN("PROMPT END -- "))
 

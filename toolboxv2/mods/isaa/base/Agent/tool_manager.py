@@ -31,24 +31,24 @@ class ToolEntry:
     name: str
     description: str
     args_schema: str                          # "(arg1: str, arg2: int = 0)"
-    
+
     # Categorization
     category: list[str] = field(default_factory=list)  # ['local', 'discord', 'mcp_filesystem']
     flags: dict[str, bool] = field(default_factory=dict)  # read, write, dangerous, etc.
     source: str = "local"                     # 'local', 'mcp', 'a2a'
-    
+
     # Function reference (None when serialized/restored)
     function: Callable | None = None
-    
+
     # Cached LiteLLM schema
     litellm_schema: dict | None = None
-    
+
     # Metadata
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
     call_count: int = 0
     last_called: datetime | None = None
-    
+
     # MCP/A2A specific
     server_name: str | None = None            # For MCP/A2A: which server
     original_name: str | None = None          # Original tool name before prefixing
@@ -61,7 +61,7 @@ class ToolEntry:
             self.category = []
         if self.metadata is None:
             self.metadata = {}
-        
+
         # Set default flags based on name/description heuristics
         self._infer_flags()
 
@@ -69,27 +69,27 @@ class ToolEntry:
         """Infer flags from tool name and description"""
         name_lower = self.name.lower()
         desc_lower = self.description.lower()
-        
+
         # Read flag
         if 'read' not in self.flags:
             read_keywords = ['get', 'list', 'fetch', 'query', 'search', 'find', 'show', 'view']
             self.flags['read'] = any(kw in name_lower or kw in desc_lower for kw in read_keywords)
-        
+
         # Write flag
         if 'write' not in self.flags:
             write_keywords = ['create', 'update', 'set', 'add', 'insert', 'modify', 'change']
             self.flags['write'] = any(kw in name_lower or kw in desc_lower for kw in write_keywords)
-        
+
         # Save/Permanent write flag
         if 'save_write' not in self.flags:
             save_keywords = ['save', 'store', 'persist', 'permanent', 'commit']
             self.flags['save_write'] = any(kw in name_lower or kw in desc_lower for kw in save_keywords)
-        
+
         # Dangerous flag
         if 'dangerous' not in self.flags:
             danger_keywords = ['delete', 'remove', 'drop', 'destroy', 'purge', 'clear', 'reset']
             self.flags['dangerous'] = any(kw in name_lower or kw in desc_lower for kw in danger_keywords)
-        
+
         # Requires confirmation
         if 'requires_confirmation' not in self.flags:
             self.flags['requires_confirmation'] = self.flags.get('dangerous', False)
@@ -126,7 +126,7 @@ class ToolEntry:
 class ToolManager:
     """
     Unified tool registry managing local, MCP, and A2A tools.
-    
+
     Features:
     - Single registry for all tool types
     - Category and flag-based filtering
@@ -137,21 +137,21 @@ class ToolManager:
     def __init__(self, rule_set: 'RuleSet | None' = None):
         """
         Initialize ToolManager.
-        
+
         Args:
             rule_set: Optional RuleSet for automatic tool group registration
         """
         # Main registry
         self._registry: dict[str, ToolEntry] = {}
-        
+
         # Indexes for fast lookups
         self._category_index: dict[str, set[str]] = {}  # category -> tool names
         self._flags_index: dict[str, set[str]] = {}     # flag -> tool names with flag=True
         self._source_index: dict[str, set[str]] = {}    # source -> tool names
-        
+
         # RuleSet integration
         self._rule_set = rule_set
-        
+
         # Statistics
         self._total_calls = 0
 
@@ -173,7 +173,7 @@ class ToolManager:
     ) -> ToolEntry:
         """
         Register a tool in the registry.
-        
+
         Args:
             func: The callable function (can be None for MCP/A2A stubs)
             name: Tool name (defaults to function name)
@@ -184,7 +184,7 @@ class ToolManager:
             server_name: For MCP/A2A: the server name
             metadata: Additional metadata
             args_schema: Override args schema string
-            
+
         Returns:
             Created ToolEntry
         """
@@ -194,33 +194,33 @@ class ToolManager:
             tool_name = func.__name__
         if tool_name is None:
             raise ValueError("Tool name required when func is None")
-        
+
         # Determine description
         tool_description = description
         if tool_description is None and func is not None:
             tool_description = func.__doc__ or f"Tool: {tool_name}"
         if tool_description is None:
             tool_description = f"Tool: {tool_name}"
-        
+
         # Ensure description is clean
         tool_description = tool_description.strip().split('\n')[0][:500]
-        
+
         # Determine args schema
         if args_schema is None and func is not None:
             args_schema = self._get_args_schema(func)
         elif args_schema is None:
             args_schema = "()"
-        
+
         # Normalize category
         if category is None:
             category = [source]
         elif isinstance(category, str):
             category = [category]
-        
+
         # Ensure source is in category
         if source not in category:
             category.append(source)
-        
+
         # Wrap sync functions as async
         effective_func = func
         if func is not None and not asyncio.iscoroutinefunction(func):
@@ -228,7 +228,7 @@ class ToolManager:
             async def async_wrapper(*args, **kwargs):
                 return await asyncio.to_thread(func, *args, **kwargs)
             effective_func = async_wrapper
-        
+
         # Create entry
         entry = ToolEntry(
             name=tool_name,
@@ -242,20 +242,21 @@ class ToolManager:
             original_name=name if server_name else None,
             metadata=metadata or {}
         )
-        
+
         # Build LiteLLM schema
         entry.litellm_schema = self._build_litellm_schema(entry)
-        
+
         # Store in registry
         self._registry[tool_name] = entry
-        
+
         # Update indexes
         self._update_indexes(entry)
-        
+
         # Sync to RuleSet if available
         if self._rule_set:
             self._sync_tool_to_ruleset(entry)
-        
+
+        print(f"Registered tool: {tool_name}",tool_name in self.list_names())
         return entry
 
     def register_mcp_tools(
@@ -266,7 +267,7 @@ class ToolManager:
     ):
         """
         Register multiple MCP tools from a server.
-        
+
         Args:
             server_name: Name of the MCP server
             tools: List of tool configs from MCP server
@@ -276,11 +277,11 @@ class ToolManager:
         for tool_config in tools:
             original_name = tool_config.get('name', 'unknown')
             prefixed_name = f"{server_name}_{original_name}"
-            
+
             # Extract args schema from inputSchema
             input_schema = tool_config.get('inputSchema', {})
             args_schema = self._schema_to_args_string(input_schema)
-            
+
             self.register(
                 func=None,  # MCP tools don't have local functions
                 name=prefixed_name,
@@ -303,7 +304,7 @@ class ToolManager:
     ):
         """
         Register multiple A2A tools from a server.
-        
+
         Args:
             server_name: Name of the A2A server
             tools: List of tool configs from A2A server
@@ -312,7 +313,7 @@ class ToolManager:
         for tool_config in tools:
             original_name = tool_config.get('name', 'unknown')
             prefixed_name = f"{server_name}_{original_name}"
-            
+
             self.register(
                 func=None,  # A2A tools don't have local functions
                 name=prefixed_name,
@@ -329,46 +330,46 @@ class ToolManager:
         """Remove a tool from the registry"""
         if name not in self._registry:
             return False
-        
+
         entry = self._registry[name]
-        
+
         # Remove from indexes
         for cat in entry.category:
             if cat in self._category_index:
                 self._category_index[cat].discard(name)
-        
+
         for flag_name, flag_value in entry.flags.items():
             if flag_value and flag_name in self._flags_index:
                 self._flags_index[flag_name].discard(name)
-        
+
         if entry.source in self._source_index:
             self._source_index[entry.source].discard(name)
-        
+
         # Remove from registry
         del self._registry[name]
-        
+
         return True
 
     def update(self, name: str, **updates) -> bool:
         """Update a tool's attributes"""
         if name not in self._registry:
             return False
-        
+
         entry = self._registry[name]
-        
+
         # Store old values for index update
         old_categories = entry.category.copy()
         old_flags = entry.flags.copy()
-        
+
         # Apply updates
         for key, value in updates.items():
             if hasattr(entry, key):
                 setattr(entry, key, value)
-        
+
         # Rebuild LiteLLM schema if description or args changed
         if 'description' in updates or 'args_schema' in updates:
             entry.litellm_schema = self._build_litellm_schema(entry)
-        
+
         # Update indexes if category or flags changed
         if 'category' in updates or 'flags' in updates:
             # Remove from old indexes
@@ -378,10 +379,10 @@ class ToolManager:
             for flag_name, flag_value in old_flags.items():
                 if flag_value and flag_name in self._flags_index:
                     self._flags_index[flag_name].discard(name)
-            
+
             # Add to new indexes
             self._update_indexes(entry)
-        
+
         return True
 
     def _update_indexes(self, entry: ToolEntry):
@@ -391,14 +392,14 @@ class ToolManager:
             if cat not in self._category_index:
                 self._category_index[cat] = set()
             self._category_index[cat].add(entry.name)
-        
+
         # Flags index
         for flag_name, flag_value in entry.flags.items():
             if flag_value:
                 if flag_name not in self._flags_index:
                     self._flags_index[flag_name] = set()
                 self._flags_index[flag_name].add(entry.name)
-        
+
         # Source index
         if entry.source not in self._source_index:
             self._source_index[entry.source] = set()
@@ -420,34 +421,34 @@ class ToolManager:
     def get_by_category(self, *categories: str) -> list[ToolEntry]:
         """
         Get tools matching any of the given categories.
-        
+
         Args:
             *categories: Category names to match
-            
+
         Returns:
             List of matching ToolEntries
         """
         matching_names: set[str] = set()
-        
+
         for cat in categories:
             if cat in self._category_index:
                 matching_names.update(self._category_index[cat])
-        
+
         return [self._registry[name] for name in matching_names if name in self._registry]
 
     def get_by_flags(self, **flags: bool) -> list[ToolEntry]:
         """
         Get tools matching all given flag conditions.
-        
+
         Args:
             **flags: Flag conditions (e.g., read=True, dangerous=False)
-            
+
         Returns:
             List of matching ToolEntries
         """
         # Start with all tools
         candidates = set(self._registry.keys())
-        
+
         for flag_name, required_value in flags.items():
             if required_value:
                 # Must have flag = True
@@ -459,7 +460,7 @@ class ToolManager:
                 # Must NOT have flag = True
                 if flag_name in self._flags_index:
                     candidates -= self._flags_index[flag_name]
-        
+
         return [self._registry[name] for name in candidates]
 
     def get_by_source(self, source: str) -> list[ToolEntry]:
@@ -493,7 +494,7 @@ class ToolManager:
         return {
             'total_tools': len(self._registry),
             'by_source': {
-                source: len(names) 
+                source: len(names)
                 for source, names in self._source_index.items()
             },
             'categories': list(self._category_index.keys()),
@@ -520,34 +521,34 @@ class ToolManager:
     ) -> list[dict]:
         """
         Get all tools in LiteLLM format with optional filtering.
-        
+
         Args:
             filter_categories: Only include tools with these categories
             filter_flags: Only include tools matching these flag conditions
             exclude_categories: Exclude tools with these categories
             max_tools: Maximum number of tools to return
-            
+
         Returns:
             List of tool schemas in LiteLLM format
         """
         candidates = self.get_all()
-        
+
         # Filter by categories
         if filter_categories:
             candidates = [e for e in candidates if e.matches_categories(filter_categories)]
-        
+
         # Exclude categories
         if exclude_categories:
             candidates = [e for e in candidates if not e.matches_categories(exclude_categories)]
-        
+
         # Filter by flags
         if filter_flags:
             candidates = [e for e in candidates if e.matches_flags(**filter_flags)]
-        
+
         # Apply limit
         if max_tools and len(candidates) > max_tools:
             candidates = candidates[:max_tools]
-        
+
         # Return LiteLLM schemas
         return [e.litellm_schema for e in candidates if e.litellm_schema]
 
@@ -557,7 +558,7 @@ class ToolManager:
         """
         # Parse args schema to properties
         properties, required = self._parse_args_schema(entry.args_schema)
-        
+
         return {
             "type": "function",
             "function": {
@@ -576,30 +577,30 @@ class ToolManager:
         try:
             sig = inspect.signature(func)
             parts = []
-            
+
             for name, param in sig.parameters.items():
                 if name in ('self', 'cls', 'args', 'kwargs'):
                     continue
-                
+
                 # Get type annotation
                 ann = ""
                 if param.annotation != inspect.Parameter.empty:
                     ann = f": {self._annotation_to_str(param.annotation)}"
-                
+
                 # Get default value
                 default = ""
                 if param.default != inspect.Parameter.empty:
                     default = f" = {repr(param.default)}"
-                
+
                 # Handle *args and **kwargs
                 prefix = ""
                 if param.kind == inspect.Parameter.VAR_POSITIONAL:
                     prefix = "*"
                 elif param.kind == inspect.Parameter.VAR_KEYWORD:
                     prefix = "**"
-                
+
                 parts.append(f"{prefix}{name}{ann}{default}")
-            
+
             return f"({', '.join(parts)})"
         except Exception:
             return "()"
@@ -607,10 +608,10 @@ class ToolManager:
     def _annotation_to_str(self, annotation) -> str:
         """Convert type annotation to string"""
         import typing
-        
+
         if isinstance(annotation, str):
             return annotation
-        
+
         # Handle Optional, Union
         if getattr(annotation, "__origin__", None) is typing.Union:
             args = annotation.__args__
@@ -618,7 +619,7 @@ class ToolManager:
                 non_none = args[0] if args[1] is type(None) else args[1]
                 return f"Optional[{self._annotation_to_str(non_none)}]"
             return " | ".join(self._annotation_to_str(a) for a in args)
-        
+
         # Handle generics
         if hasattr(annotation, "__origin__"):
             origin = getattr(annotation.__origin__, "__name__", str(annotation.__origin__))
@@ -626,74 +627,74 @@ class ToolManager:
             if args:
                 return f"{origin}[{', '.join(self._annotation_to_str(a) for a in args)}]"
             return origin
-        
+
         # Handle normal types
         if hasattr(annotation, "__name__"):
             return annotation.__name__
-        
+
         return str(annotation)
 
     def _parse_args_schema(self, args_schema: str) -> tuple[dict, list]:
         """
         Parse args schema string to LiteLLM properties format.
-        
+
         Args:
             args_schema: String like "(arg1: str, arg2: int = 0)"
-            
+
         Returns:
             Tuple of (properties dict, required list)
         """
         properties = {}
         required = []
-        
+
         if not args_schema or args_schema == "()":
             return properties, required
-        
+
         # Remove parentheses
         inner = args_schema.strip("()")
         if not inner:
             return properties, required
-        
+
         # Split by comma (handling nested brackets)
         parts = self._split_args(inner)
-        
+
         for part in parts:
             part = part.strip()
             if not part or part.startswith('*'):
                 continue
-            
+
             # Parse "name: type = default" format
             has_default = "=" in part
-            
+
             if ":" in part:
                 name_part = part.split(":")[0].strip()
                 type_part = part.split(":")[1].strip()
-                
+
                 if "=" in type_part:
                     type_part = type_part.split("=")[0].strip()
-                
+
                 # Map Python types to JSON Schema types
                 json_type = self._python_type_to_json(type_part)
-                
+
                 properties[name_part] = {
                     "type": json_type,
                     "description": f"Parameter: {name_part}"
                 }
-                
+
                 if not has_default:
                     required.append(name_part)
             else:
                 # No type annotation
                 name_part = part.split("=")[0].strip() if "=" in part else part.strip()
-                
+
                 properties[name_part] = {
                     "type": "string",
                     "description": f"Parameter: {name_part}"
                 }
-                
+
                 if not has_default:
                     required.append(name_part)
-        
+
         return properties, required
 
     def _split_args(self, args_str: str) -> list[str]:
@@ -701,7 +702,7 @@ class ToolManager:
         parts = []
         current = ""
         bracket_count = 0
-        
+
         for char in args_str:
             if char in "([{":
                 bracket_count += 1
@@ -711,12 +712,12 @@ class ToolManager:
                 parts.append(current)
                 current = ""
                 continue
-            
+
             current += char
-        
+
         if current:
             parts.append(current)
-        
+
         return parts
 
     def _python_type_to_json(self, type_str: str) -> str:
@@ -736,7 +737,7 @@ class ToolManager:
             "object": "object",
             "any": "string",
         }
-        
+
         type_lower = type_str.lower().split("[")[0]  # Remove generic part
         return type_map.get(type_lower, "string")
 
@@ -744,14 +745,14 @@ class ToolManager:
         """Convert JSON Schema to args string"""
         if not input_schema:
             return "()"
-        
+
         properties = input_schema.get("properties", {})
         required = set(input_schema.get("required", []))
-        
+
         parts = []
         for name, prop in properties.items():
             prop_type = prop.get("type", "string")
-            
+
             # Map JSON type to Python
             type_map = {
                 "string": "str",
@@ -761,14 +762,14 @@ class ToolManager:
                 "array": "list",
                 "object": "dict"
             }
-            
+
             python_type = type_map.get(prop_type, "Any")
-            
+
             if name in required:
                 parts.append(f"{name}: {python_type}")
             else:
                 parts.append(f"{name}: {python_type} = None")
-        
+
         return f"({', '.join(parts)})"
 
     # =========================================================================
@@ -778,44 +779,44 @@ class ToolManager:
     async def execute(self, name: str, **kwargs) -> Any:
         """
         Execute a tool by name.
-        
+
         Args:
             name: Tool name
             **kwargs: Arguments to pass to the tool
-            
+
         Returns:
             Tool execution result
-            
+
         Raises:
             ValueError: If tool not found
             RuntimeError: If tool has no function (MCP/A2A)
         """
         entry = self._registry.get(name)
-        
+
         if entry is None:
             raise ValueError(f"Tool not found: {name}")
-        
+
         if entry.function is None:
             raise RuntimeError(
                 f"Tool '{name}' has no local function. "
                 f"It's a {entry.source} tool from server '{entry.server_name}'. "
                 f"Use the appropriate {entry.source} client to execute it."
             )
-        
+
         # Record call
         entry.record_call()
         self._total_calls += 1
-        
+
         # Execute
         if asyncio.iscoroutinefunction(entry.function):
             result = await entry.function(**kwargs)
         else:
             result = entry.function(**kwargs)
-        
+
         # Handle coroutine result
         if asyncio.iscoroutine(result):
             result = await result
-        
+
         return result
 
     # =========================================================================
@@ -832,16 +833,16 @@ class ToolManager:
         """Sync all tools to RuleSet as tool groups"""
         if not self._rule_set:
             return
-        
+
         # Group tools by category
         category_tools: dict[str, list[str]] = {}
-        
+
         for entry in self._registry.values():
             for cat in entry.category:
                 if cat not in category_tools:
                     category_tools[cat] = []
                 category_tools[cat].append(entry.name)
-        
+
         # Register as tool groups
         self._rule_set.register_tool_groups_from_categories(category_tools)
 
@@ -849,11 +850,11 @@ class ToolManager:
         """Sync a single tool to RuleSet"""
         if not self._rule_set:
             return
-        
+
         # Update tool groups for this tool's categories
         for cat in entry.category:
             group_name = f"{cat}_tools"
-            
+
             if group_name in self._rule_set.tool_groups:
                 # Add to existing group
                 if entry.name not in self._rule_set.tool_groups[group_name].tool_names:
@@ -908,25 +909,25 @@ class ToolManager:
     ):
         """
         Restore registry from checkpoint.
-        
+
         Args:
             data: Checkpoint data
             function_registry: Optional dict mapping tool names to functions
                               (for restoring local tool functions)
         """
         function_registry = function_registry or {}
-        
+
         # Clear current registry
         self._registry.clear()
         self._category_index.clear()
         self._flags_index.clear()
         self._source_index.clear()
-        
+
         # Restore tools
         for name, tool_data in data.get('tools', {}).items():
             # Get function if available
             func = function_registry.get(name)
-            
+
             entry = ToolEntry(
                 name=tool_data['name'],
                 description=tool_data['description'],
@@ -941,23 +942,23 @@ class ToolManager:
                 call_count=tool_data.get('call_count', 0),
                 litellm_schema=tool_data.get('litellm_schema')
             )
-            
+
             # Restore timestamps
             if tool_data.get('created_at'):
                 entry.created_at = datetime.fromisoformat(tool_data['created_at'])
             if tool_data.get('last_called'):
                 entry.last_called = datetime.fromisoformat(tool_data['last_called'])
-            
+
             # Rebuild schema if missing
             if not entry.litellm_schema:
                 entry.litellm_schema = self._build_litellm_schema(entry)
-            
+
             self._registry[name] = entry
             self._update_indexes(entry)
-        
+
         # Restore stats
         self._total_calls = data.get('stats', {}).get('total_calls', 0)
-        
+
         # Sync to RuleSet
         if self._rule_set:
             self._sync_all_to_ruleset()
@@ -968,29 +969,29 @@ class ToolManager:
         Useful for debugging and status displays.
         """
         lines = ["# Tool Registry", ""]
-        
+
         # Group by source
         by_source: dict[str, list[ToolEntry]] = {}
         for entry in self._registry.values():
             if entry.source not in by_source:
                 by_source[entry.source] = []
             by_source[entry.source].append(entry)
-        
+
         for source, entries in by_source.items():
             lines.append(f"## {source.upper()} Tools ({len(entries)})")
             lines.append("")
-            
+
             for entry in sorted(entries, key=lambda e: e.name):
                 flags_str = ", ".join(f for f, v in entry.flags.items() if v)
                 cats_str = ", ".join(entry.category[:3])
-                
+
                 lines.append(f"- **{entry.name}**")
                 lines.append(f"  {entry.description[:80]}...")
                 lines.append(f"  Categories: {cats_str}")
                 if flags_str:
                     lines.append(f"  Flags: {flags_str}")
                 lines.append("")
-        
+
         return "\n".join(lines)
 
 

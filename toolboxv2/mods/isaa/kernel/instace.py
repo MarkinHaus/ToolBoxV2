@@ -225,6 +225,7 @@ class WorldModel:
         """Get or create user model."""
         if user_id not in self.users:
             self.users[user_id] = UserModel(user_id=user_id)
+            self.users[user_id].update_activity()
         return self.users[user_id]
 
     def get_active_sessions(self) -> list[str]:
@@ -286,7 +287,7 @@ class AttentionSystem:
 
         # 1. Explicit urgency
         if event.urgency > 0.7:
-            score += 0.3
+            score += 0.3 + (event.urgency/10)
             reasons.append(f"High urgency: {event.urgency:.0%}")
 
         # 2. Rule match strength (from RuleSet)
@@ -311,19 +312,11 @@ class AttentionSystem:
             score += 0.1
             reasons.append(f"Tools available: {event.matching_tool_groups[:2]}")
 
-        # 6. Time appropriateness
-        if user_model.is_likely_available():
-            score += 0.05
-        else:
-            score -= 0.1
-            reasons.append("User likely unavailable")
-
-        should_interrupt = score > 0.5 and user_model.is_likely_available()
 
         return SalienceScore(
             score=min(1.0, max(0.0, score)),
             reasons=reasons,
-            should_interrupt=should_interrupt
+            should_interrupt=score > 0.5 or event.raw_signal.type.value == "user_input"
         )
 
 
@@ -577,6 +570,7 @@ class Kernel(IProAKernel):
         output_router: IOutputRouter = None
     ):
         self.agent = agent
+
         self.config = config or KernelConfig()
         self.legacy_decision_engine = decision_engine or DefaultDecisionEngine()
         self.output_router = output_router or ConsoleOutputRouter()
@@ -611,22 +605,21 @@ class Kernel(IProAKernel):
         self.main_task: Optional[asyncio.Task] = None
         self.heartbeat_task: Optional[asyncio.Task] = None
 
+
+        self._register_tools()
+
     # =========================================================================
     # LIFECYCLE
     # =========================================================================
 
     async def start(self):
         """Start kernel."""
+
         if self.state == KernelState.RUNNING:
             return
 
         self.state = KernelState.STARTING
         self.running = True
-
-        await self._register_tools()
-        if self.agent.checkpoint_manager:
-            await self.agent.restore()
-
         await self.scheduler.start()
         self.heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         self.main_task = asyncio.create_task(self._main_loop())
@@ -653,37 +646,125 @@ class Kernel(IProAKernel):
         await self.agent.close()
         self.state = KernelState.STOPPED
 
-    async def _register_tools(self):
+    def _register_tools(self):
         """Register kernel tools with proper category and flags."""
         kernel_tools = [
-            (self.integration.schedule_task, "kernel_schedule_task",
-             "Schedule task/reminder",
-             ["kernel", "scheduling"], {"side_effect": True, "persistent": True}),
+            (
+                self.integration.schedule_task,
+                "kernel_schedule_task",
+                (
+                    "Plant eine Aufgabe oder Erinnerung im Kernel-Scheduler.\n\n"
+                    "MUSS:\n"
+                    "- task_type (str): Typ der Aufgabe, z. B. 'reminder', 'job', 'follow_up'\n"
+                    "- content (str): Inhalt oder Beschreibung der Aufgabe\n\n"
+                    "OPTIONAL:\n"
+                    "- delay_seconds (float): Verzögerung in Sekunden ab jetzt\n"
+                    "- scheduled_time (float): Absoluter Unix-Timestamp für die Ausführung\n"
+                    "- priority (int, Standard=5): Priorität (höher = wichtiger)\n\n"
+                    "HINWEISE:\n"
+                    "- Entweder delay_seconds ODER scheduled_time verwenden\n"
+                    "- Erzeugt persistente Seiteneffekte (Task wird gespeichert)\n"
+                    "- Gibt eine task_id zurück"
+                ),
+                ["kernel", "scheduling"],
+                {"side_effect": True, "persistent": True}
+            ),
 
-            (self.integration.send_intermediate_response, "kernel_send_intermediate",
-             "Send status update during processing",
-             ["kernel", "communication"], {"intermediate": True}),
+            (
+                self.integration.send_intermediate_response,
+                "kernel_send_intermediate",
+                (
+                    "Sendet eine Zwischenmeldung an den Nutzer während laufender Verarbeitung.\n\n"
+                    "MUSS:\n"
+                    "- content (str): Text der Statusmeldung\n\n"
+                    "OPTIONAL:\n"
+                    "- stage (str, Standard='processing'): Verarbeitungsphase "
+                    "(z. B. 'analysis', 'loading', 'thinking')\n\n"
+                    "HINWEISE:\n"
+                    "- Unterbricht die Ausführung NICHT\n"
+                    "- Wird bevorzugt für lange oder mehrstufige Agentenprozesse genutzt\n"
+                    "- Fallback auf Notification, falls kein Intermediate-Channel existiert"
+                ),
+                ["kernel", "communication"],
+                {"intermediate": True}
+            ),
 
-            (self.integration.ask_user, "kernel_ask_user",
-             "Ask user question, wait for response",
-             ["kernel", "communication"], {"pauses_execution": True}),
+            (
+                self.integration.ask_user,
+                "kernel_ask_user",
+                (
+                    "Stellt dem Nutzer eine explizite Frage und wartet auf eine Antwort.\n\n"
+                    "MUSS:\n"
+                    "- question (str): Die zu stellende Frage\n\n"
+                    "OPTIONAL:\n"
+                    "- timeout (float, Standard=300.0): Maximale Wartezeit in Sekunden\n\n"
+                    "HINWEISE:\n"
+                    "- Pausiert die Agentenausführung bis Antwort oder Timeout\n"
+                    "- Gibt die Nutzerantwort als String zurück\n"
+                    "- Gibt None zurück, wenn das Timeout erreicht wird\n"
+                    "- Sollte sparsam eingesetzt werden (User-Interaktion!)"
+                ),
+                ["kernel", "communication"],
+                {"pauses_execution": True}
+            ),
 
-            (self.integration.inject_memory, "kernel_inject_memory",
-             "Store user fact/preference for future",
-             ["kernel", "memory"], {"side_effect": True}),
+            (
+                self.integration.inject_memory,
+                "kernel_inject_memory",
+                (
+                    "Speichert gezielt Wissen über den Nutzer im Memory-System.\n\n"
+                    "MUSS:\n"
+                    "- content (str): Zu speichernde Information (Fakt, Präferenz, Kontext)\n\n"
+                    "OPTIONAL:\n"
+                    "- memory_type (str, Standard='fact'): 'fact', 'preference', 'context'\n"
+                    "- importance (float, Standard=0.5): Relevanz (0.0 – 1.0)\n"
+                    "- tags (list[str]): Freie Tags zur späteren Filterung\n\n"
+                    "HINWEISE:\n"
+                    "- Erzeugt persistente Seiteneffekte\n"
+                    "- Wird für Personalisierung und Langzeitlernen verwendet\n"
+                    "- Sollte nur bei stabilen, verlässlichen Informationen genutzt werden"
+                ),
+                ["kernel", "memory"],
+                {"side_effect": True}
+            ),
 
-            (self.integration.get_user_preferences, "kernel_get_preferences",
-             "Get learned user preferences",
-             ["kernel", "memory"], {"readonly": True}),
+            (
+                self.integration.get_user_preferences,
+                "kernel_get_preferences",
+                (
+                    "Liest die aktuell gelernten Nutzerpräferenzen aus dem Learning-System.\n\n"
+                    "MUSS:\n"
+                    "- Keine Argumente\n\n"
+                    "RÜCKGABE:\n"
+                    "- dict mit Präferenzen (z. B. Kommunikationsstil, Detailgrad)\n\n"
+                    "HINWEISE:\n"
+                    "- Read-only (keine Seiteneffekte)\n"
+                    "- Sollte vor Antwortgenerierung zur Personalisierung genutzt werden"
+                ),
+                ["kernel", "memory"],
+                {"readonly": True}
+            ),
 
-            (self.integration.record_feedback, "kernel_record_feedback",
-             "Record feedback for learning",
-             ["kernel", "learning"], {"side_effect": True}),
+            (
+                self.integration.record_feedback,
+                "kernel_record_feedback",
+                (
+                    "Speichert explizites Feedback zur Verbesserung des Lernsystems.\n\n"
+                    "MUSS:\n"
+                    "- feedback (str): Textuelles Feedback\n"
+                    "- score (float): Bewertung (z. B. -1.0 schlecht bis +1.0 gut)\n\n"
+                    "HINWEISE:\n"
+                    "- Erzeugt Seiteneffekte im Learning-System\n"
+                    "- Wird zur Anpassung zukünftiger Antworten genutzt\n"
+                    "- Sollte Feedback zur Qualität oder Relevanz widerspiegeln"
+                ),
+                ["kernel", "learning"],
+                {"side_effect": True}
+            ),
         ]
 
         for func, name, desc, category, flags in kernel_tools:
-            self.agent.add_first_class_tool(func, name, description=desc)
-            await self.agent.add_tool(func, name, description=desc, category=category, flags=flags)
+            self.agent.tool_manager.register(func, name, description=desc, category=category, flags=flags)
 
     # =========================================================================
     # MAIN LOOPS
@@ -691,11 +772,15 @@ class Kernel(IProAKernel):
 
     async def _main_loop(self):
         """Process signals with autonomous pipeline."""
+        print("Kernel started")
         while self.running:
             try:
                 signal = await self.signal_bus.get_next_signal(timeout=self.config.signal_timeout)
                 if signal:
+                    print("Signal received:", signal)
                     await self._process_signal_autonomous(signal)
+                else:
+                    await asyncio.sleep(0.1)
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -725,22 +810,22 @@ class Kernel(IProAKernel):
         try:
             # Get or create session
             session = await self.agent.session_manager.get_or_create(user_id)
-
             # 1. PERCEIVE
             event = await self.perception.perceive(signal, session)
-
             # 2. GET USER MODEL
             user_model = self.world_model.get_user(user_id)
-
+            if signal.source.startswith("user_"):
+                user_model.update_activity()
             # 3. ATTEND (compute salience)
             salience = self.attention.compute_salience(event, user_model, session)
-
+            print("Salience:", salience)
             # 4. DECIDE
             plan = await self.decision_engine.decide(event, salience, user_model, session)
-
+            print("Plan:", plan)
             # 5. ACT
+            await self.agent.init_session_tools(session)
             success, response = await self._execute_plan(event, plan, session)
-
+            print("Response:", response)
             # 6. LEARN
             outcome = InteractionOutcome(
                 event=event,
@@ -748,6 +833,7 @@ class Kernel(IProAKernel):
                 success=success,
                 response_time=time.time() - start
             )
+            print("Outcome:", outcome)
             await self.learning_loop.record_outcome(outcome, session)
 
             # Update world model
@@ -769,7 +855,7 @@ class Kernel(IProAKernel):
         """Execute action plan."""
         user_id = event.user_id
 
-        if plan.decision == AutonomousDecision.IGNORE:
+        if plan.decision == AutonomousDecision.IGNORE and plan.content == "":
             return True, ""
 
         if plan.decision == AutonomousDecision.OBSERVE:
@@ -779,7 +865,7 @@ class Kernel(IProAKernel):
                 "entities": event.entities,
                 "observed_at": time.time()
             })
-            return True, ""
+
 
         if plan.decision == AutonomousDecision.SCHEDULE:
             # Schedule for later
@@ -822,11 +908,12 @@ class Kernel(IProAKernel):
                 instructions_text = "\n".join(f"- {i}" for i in plan.instructions[:5])
                 query = f"{plan.content}\n\n[Instructions]\n{instructions_text}"
 
+
             # Execute
             response = await self.agent.a_run(
                 query=query,
-                session_id=user_id,
-                remember=True
+                session_id=session.session_id,
+                user_id=user_id
             )
 
             # Handle special states

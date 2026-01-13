@@ -723,7 +723,7 @@ class ExecutionEngine:
 
             # Validation
             if state.phase != ExecutionPhase.COMPLETED and result:
-                valid = await self._validate_result(state, result)
+                valid = await self._validate_result(state, result.response)
                 if not valid.is_valid:
                     # Rollback
                     session.vfs.from_checkpoint(state.vfs_snapshot)
@@ -1804,11 +1804,12 @@ Erstelle eine zusammenhängende Antwort."""
 
         if not result:
             return ValidationResult(is_valid=False, confidence=0.0, issues=["Empty result"])
-
+        if not isinstance(result, str):
+            return ValidationResult(is_valid=False, confidence=0.0, issues=["Invalid result type"])
         prompt = f"""Validiere dieses Ergebnis:
 
 Aufgabe: {state.query}
-Ergebnis: {result[:500]}
+Ergebnis: {result[:2000]+ (f'...{len(result) - 2000}...{result[-2000:]}' if len(result) > 2000 else '')}
 
 Ist das Ergebnis vollständig und korrekt?"""
 

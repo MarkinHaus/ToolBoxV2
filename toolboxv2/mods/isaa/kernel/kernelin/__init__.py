@@ -1,4 +1,4 @@
-from .kernelin_cli import CLIKernel
+from .kernelin_cli import main as CLIKernel
 try:
     import discord
     from .kernelin_discord import DiscordKernel

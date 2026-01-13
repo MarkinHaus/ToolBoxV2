@@ -202,13 +202,17 @@ class FlowAgent:
         llm_kwargs = {'model': model, 'messages': messages.copy(), 'stream': use_stream, **kwargs}
         session_id = session_id or self.active_session
         system_msg = self.amd.get_system_message()
+        session = None
         if session_id:
             session = self.session_manager.get(session_id)
             if session:
                 await session.initialize()
                 system_msg += "\n\n"+  session.build_vfs_context()
         if with_context:
-            llm_kwargs['messages'] = [{"role": "system", "content": f"{system_msg}"}] + llm_kwargs['messages']
+            if session:
+                llm_kwargs['messages'] = [{"role": "system", "content": f"{system_msg}"}] + session.get_history(kwargs.get("history_size", 6))[:-1] + llm_kwargs['messages']
+            else:
+                llm_kwargs['messages'] = [{"role": "system", "content": f"{system_msg}"}] + llm_kwargs['messages']
 
         if 'api_key' not in llm_kwargs:
             llm_kwargs['api_key'] = self._get_api_key_for_model(model)
@@ -758,6 +762,7 @@ class FlowAgent:
             flags=flags
         )
 
+
     def get_tool(self, name: str) -> Callable | None:
         """Get tool function by name."""
         return self.tool_manager.get_function(name)
@@ -766,20 +771,21 @@ class FlowAgent:
     # SESSION TOOLS INITIALIZATION
     # =========================================================================
 
-    async def init_session_tools(self, session_id: str | None = None):
+    async def init_session_tools(self, session_id: str = None):
         """
         Initializes and registers standard session-aware tools (VFS, Memory, Situation).
         These tools allow the LLM to interact with the active AgentSession.
         """
         session_id = session_id or self.active_session
-        session = await self.session_manager.get_or_create(session_id)
-        if session.tools_initialized:
+        _session = await self.session_manager.get_or_create(session_id) if isinstance(session_id, str) else session_id
+        session_id = _session.session_id
+        if not self.session_manager.exists(session_id):
+            raise ValueError(f"Session '{session_id}' not found. create it using the session_manager get_or_create")
+        if _session.tools_initialized:
             return
         # --- Helper to safely get session ---
         def get_session():
-            if not self.active_session:
-                raise RuntimeError("No active session set for tool execution.")
-            session = self.session_manager.get(self.active_session)
+            session = self.session_manager.get(session_id)
             if not session:
                 raise ValueError(f"Session '{self.active_session}' not found.")
             return session
@@ -901,7 +907,7 @@ class FlowAgent:
 
         logger.info(f"Initialized standard session tools for agent '{self.amd.name}'")
 
-        session.tools_initialized = True
+        _session.tools_initialized = True
 
     # =========================================================================
     # CHECKPOINT
