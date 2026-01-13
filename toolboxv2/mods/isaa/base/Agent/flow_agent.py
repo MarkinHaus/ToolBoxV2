@@ -210,7 +210,28 @@ class FlowAgent:
                 system_msg += "\n\n"+  session.build_vfs_context()
         if with_context:
             if session:
-                llm_kwargs['messages'] = [{"role": "system", "content": f"{system_msg}"}] + session.get_history(kwargs.get("history_size", 6))[:-1] + llm_kwargs['messages']
+                sysmsg = [{"role": "system", "content": f"{system_msg}"}]
+                full_history = session.get_history(kwargs.get("history_size", 6))
+                current_msg = llm_kwargs['messages']
+                for msg in full_history:
+
+                    if not current_msg:
+                        break
+
+                    if msg['role'] != 'user':
+                        continue
+
+                    content = msg['content']
+
+                    if current_msg[0]['role'] == 'user' and current_msg[0]['content'] == content:
+                        current_msg = current_msg[1:]
+                        break
+
+                    if len(current_msg) > 1 and current_msg[-1]['role'] == 'user' and current_msg[-1]['content'] == content:
+                        current_msg = current_msg[:-1]
+                        break
+
+                llm_kwargs['messages'] = sysmsg + full_history + current_msg
             else:
                 llm_kwargs['messages'] = [{"role": "system", "content": f"{system_msg}"}] + llm_kwargs['messages']
 
@@ -770,6 +791,12 @@ class FlowAgent:
     # =========================================================================
     # SESSION TOOLS INITIALIZATION
     # =========================================================================
+
+    def clear_session_history(self, session_id: str = None):
+        session_id = session_id or self.active_session
+        _session = self.session_manager.get(session_id)
+        if _session:
+            _session.clear_history()
 
     async def init_session_tools(self, session_id: str = None):
         """

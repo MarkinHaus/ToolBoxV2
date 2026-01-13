@@ -1101,6 +1101,7 @@ def create_default_ruleset(config_path: str | None = None) -> RuleSet:
     """
     Create a RuleSet with sensible defaults.
     """
+    print("Creating default ruleset", config_path)
     ruleset = RuleSet(config_path=config_path)
 
     if not ruleset.situation_rules:
@@ -1109,19 +1110,19 @@ def create_default_ruleset(config_path: str | None = None) -> RuleSet:
         # GENERAL RULES (1)
         # =========================
 
-        ruleset.add_rule(
-            situation="any",
-            intent="insufficient information",
-            instructions=[
-                "Detect missing, ambiguous, or contradictory information",
-                "Explicitly ask the user for the missing details using kernel_ask_user",
-                "Do not assume defaults for critical parameters",
-                "Pause execution until required information is provided or timeout occurs"
-            ],
-            required_tool_groups=["communication"],
-            rule_id="general_missing_information",
-            confidence=1.0
-        )
+        # ruleset.add_rule(
+        #     situation="any",
+        #     intent="insufficient information",
+        #     instructions=[
+        #         "Detect missing, ambiguous, or contradictory information",
+        #         "Explicitly ask the user for the missing details using kernel_ask_user",
+        #         "Do not assume defaults for critical parameters",
+        #         "Pause execution until required information is provided or timeout occurs"
+        #     ],
+        #     required_tool_groups=["communication"],
+        #     rule_id="general_missing_information",
+        #     confidence=1.0
+        # )
 
         # =========================
         # SPECIFIC RULES (5)

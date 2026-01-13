@@ -777,7 +777,6 @@ class Kernel(IProAKernel):
             try:
                 signal = await self.signal_bus.get_next_signal(timeout=self.config.signal_timeout)
                 if signal:
-                    print("Signal received:", signal)
                     await self._process_signal_autonomous(signal)
                 else:
                     await asyncio.sleep(0.1)
@@ -818,14 +817,11 @@ class Kernel(IProAKernel):
                 user_model.update_activity()
             # 3. ATTEND (compute salience)
             salience = self.attention.compute_salience(event, user_model, session)
-            print("Salience:", salience)
             # 4. DECIDE
             plan = await self.decision_engine.decide(event, salience, user_model, session)
-            print("Plan:", plan)
             # 5. ACT
             await self.agent.init_session_tools(session)
             success, response = await self._execute_plan(event, plan, session)
-            print("Response:", response)
             # 6. LEARN
             outcome = InteractionOutcome(
                 event=event,
@@ -833,7 +829,6 @@ class Kernel(IProAKernel):
                 success=success,
                 response_time=time.time() - start
             )
-            print("Outcome:", outcome)
             await self.learning_loop.record_outcome(outcome, session)
 
             # Update world model

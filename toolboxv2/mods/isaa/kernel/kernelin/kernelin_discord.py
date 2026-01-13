@@ -3619,7 +3619,7 @@ class DiscordKernel:
                             embed.add_field(name="🎤 Voice Status", value=voice_info, inline=False)
 
                 # Kernel Status
-                kernel_status = self.kernel.to_dict()
+                kernel_status = self.kernel.get_status()
                 kernel_info = (
                     f"**State:** {kernel_status['state']}\n"
                     f"**Signals Processed:** {kernel_status['metrics']['signals_processed']}\n"
@@ -5054,19 +5054,20 @@ Use these tools to interact with Discord based on your current context!
 """
 
             if hasattr(self.kernel.agent, 'amd'):
-                current_prompt = self.kernel.agent.amd.system_message or ""
+                current_context_adapters = self.kernel.agent.amd.context_adapters or []
 
-                # Check if already injected
-                if "DISCORD CONTEXT AWARENESS" not in current_prompt:
-                    self.kernel.agent.amd.system_message = current_prompt + "\n" + discord_context_prompt
-                    print("✓ Discord context awareness injected into agent system prompt")
+                for current_prompt in current_context_adapters:
+                    if "# ========== DISCORD CONTEXT AWARENESS ==========" in current_prompt:
+
+                        # Update existing section
+                        parts = current_prompt.split("# ========== DISCORD CONTEXT AWARENESS ==========")
+                        if len(parts) >= 2:
+                            # Keep everything before the Discord context section
+                            self.kernel.agent.amd.system_message = parts[0] + discord_context_prompt
+                            print("✓ Discord context awareness updated in agent system prompt")
                 else:
-                    # Update existing section
-                    parts = current_prompt.split("# ========== DISCORD CONTEXT AWARENESS ==========")
-                    if len(parts) >= 2:
-                        # Keep everything before the Discord context section
-                        self.kernel.agent.amd.system_message = parts[0] + discord_context_prompt
-                        print("✓ Discord context awareness updated in agent system prompt")
+                    self.kernel.agent.amd.context_adapters.append(discord_context_prompt)
+                    print("✓ Discord context awareness injected into agent system prompt")
             else:
                 print("⚠️  Agent does not have AMD - cannot inject Discord context")
 
@@ -5084,9 +5085,6 @@ Use these tools to interact with Discord based on your current context!
 
         # Start kernel
         await self.kernel.start()
-
-        # Inject kernel prompt to agent
-        self.kernel.inject_kernel_prompt_to_agent()
 
         # Inject Discord-specific context awareness
         self._inject_discord_context_to_agent()

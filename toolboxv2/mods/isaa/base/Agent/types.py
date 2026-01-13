@@ -790,6 +790,7 @@ class AgentModelData(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 2048
     max_input_tokens: int = 32768
+    context_adapters: list[str] = Field(default_factory=list)
     api_key: str | None  = None
     api_base: str | None  = None
     budget_manager: Any  = None
@@ -801,7 +802,7 @@ class AgentModelData(BaseModel):
 
     def get_system_message(self) -> str:
         """Get system message with persona integration"""
-        base_message = self.system_message
+        base_message = self.system_message + '\n\n'.join(self.context_adapters)
 
         return base_message
 

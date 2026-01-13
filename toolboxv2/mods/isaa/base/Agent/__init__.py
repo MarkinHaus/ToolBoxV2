@@ -45,8 +45,6 @@ from toolboxv2.mods.isaa.base.Agent.execution_engine import (
     ThoughtAction,
     ValidationResult,
     VFS_TOOLS_LITELLM,
-    REACT_SYSTEM_PROMPT,
-    MICROAGENT_SYSTEM_PROMPT,
 )
 
 # RuleSet
@@ -114,8 +112,6 @@ __all__ = [
     'ThoughtAction',
     'ValidationResult',
     'VFS_TOOLS_LITELLM',
-    'REACT_SYSTEM_PROMPT',
-    'MICROAGENT_SYSTEM_PROMPT',
 
     # RuleSet
     'RuleSet',

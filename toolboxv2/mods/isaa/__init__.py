@@ -9,4 +9,6 @@ try:
     version = version
 
 except ImportError:
+    import traceback
+    print(traceback.format_exc())
     pass

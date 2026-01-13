@@ -2780,13 +2780,14 @@ class AgentAdapter:
             start_cost = self.agent.total_cost_accumulated
             start_tokens_in = self.agent.total_tokens_in
             start_tokens_out = self.agent.total_tokens_out
-            r = await self.agent.a_run(query=p)
+            r = await self.agent.a_run(query=p, session_id="benchmark")
             cost_info = {
                 "total_cost": self.agent.total_cost_accumulated - start_cost,
                 "tokens_in": self.agent.total_tokens_in - start_tokens_in,
                 "tokens_out": self.agent.total_tokens_out - start_tokens_out,
                 "execution_time_s": (time.perf_counter() - start_time)
             }
+            self.agent.clear_session_history("benchmark")
             return r, cost_info
         return await self.bench.run(fn, mode, model_id, seed)
 
@@ -2803,7 +2804,7 @@ class AgentAdapterSt:
             start_tokens_in = self.agent.total_tokens_in
             start_tokens_out = self.agent.total_tokens_out
             r = ""
-            async for chunk in self.agent.a_stream(query=p,wait_for_hard=True):
+            async for chunk in self.agent.a_stream(query=p,wait_for_hard=True, session_id="benchmark"):
                 r += str(chunk) if not type(chunk) == str else chunk
             cost_info = {
                 "total_cost": self.agent.total_cost_accumulated - start_cost,
@@ -2811,6 +2812,7 @@ class AgentAdapterSt:
                 "tokens_out": self.agent.total_tokens_out - start_tokens_out,
                 "execution_time_s": (time.perf_counter() - start_time)
             }
+            self.agent.clear_session_history("benchmark")
             return r, cost_info
         return await self.bench.run(fn, mode, model_id, seed)
 

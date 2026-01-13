@@ -698,6 +698,12 @@ class AgentSession:
     # CHAT METHODS
     # =========================================================================
 
+    def clear_history(self):
+        """Clear conversation history"""
+        self._ensure_initialized()
+        self._update_activity()
+        self._chat_session.clear_history()
+
     async def add_message(self, message: dict, **kwargs):
         """
         Add message to conversation history.
@@ -756,24 +762,7 @@ class AgentSession:
         """
         self._ensure_initialized()
 
-        history = self._chat_session.get_start_with_last_user(last_n)
-
-        # Ensure proper format
-        formatted = []
-        for msg in history:
-            role = msg.get('role', 'user')
-            content = msg.get('content', '')
-
-            if role.startswith('s'):
-                role = 'system'
-            elif role.startswith('u'):
-                role = 'user'
-            elif role.startswith('a'):
-                role = 'assistant'
-
-            formatted.append({'role': role, 'content': content})
-
-        return formatted
+        return self._chat_session.get_start_with_last_user(last_n)
 
     # =========================================================================
     # VFS METHODS

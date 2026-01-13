@@ -18,6 +18,9 @@ class ChatSession:
             os.makedirs(f'{get_app().appdata}', exist_ok=True)
             os.makedirs(f'{get_app().appdata}/ChatSession', exist_ok=True)
 
+    def clear_history(self):
+        self.history = []
+
     async def add_message(self, message, direct=True, **kwargs):
         self.history.append(message)
         role = ""
