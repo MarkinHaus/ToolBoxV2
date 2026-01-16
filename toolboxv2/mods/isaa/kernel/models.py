@@ -580,31 +580,12 @@ class TaskScheduler:
     async def _execute_task(self, task: ScheduledTask):
         """Execute a scheduled task with proper user notification"""
         task.status = TaskStatus.RUNNING
-        print(f"Executing task {task.id} content: {task.content}")
+        print(f"Executing task-{task.task_type} {task.id} content: {task.content}")
 
         try:
-            # Create signal for the task
-            signal = Signal(
-                id=str(uuid.uuid4()),
-                type=SignalType.SYSTEM_EVENT,
-                priority=task.priority,
-                content={
-                    "task_id": task.id,
-                    "task_type": task.task_type,
-                    "content": task.content
-                },
-                source="task_scheduler",
-                timestamp=time.time(),
-                metadata={
-                    "user_id": task.user_id,
-                    "scheduled_task": True
-                }
-            )
-
-            # Emit signal
-            await self.kernel.signal_bus.emit_signal(signal)
 
             if task.task_type == "reminder":
+                print("running reminder")
                 await self.kernel.output_router.send_notification(
                     user_id=task.user_id,
                     content=f"⏰ Reminder: {task.content}",
@@ -641,6 +622,13 @@ class TaskScheduler:
                 await self.kernel.output_router.send_notification(
                     user_id=task.user_id,
                     content=f"✅ Action completed: {response[:200]}{'...' if len(response) > 200 else ''}",
+                    priority=task.priority
+                )
+            else:
+                print("unknown task_type", task.task_type)
+                await self.kernel.output_router.send_notification(
+                    user_id=task.user_id,
+                    content=f"⏰ Reminder: {task.content}",
                     priority=task.priority
                 )
 
@@ -886,7 +874,7 @@ class AgentIntegrationLayer:
         """
         user_id = self.kernel._current_user_id or "system"
 
-        return await self.kernel.scheduler.schedule_task(
+        await self.kernel.scheduler.schedule_task(
             user_id=user_id,
             task_type=task_type,
             content=content,
@@ -894,6 +882,8 @@ class AgentIntegrationLayer:
             delay_seconds=delay_seconds,
             priority=priority
         )
+
+        return "Task scheduled successfully!"
 
     async def send_intermediate_response(
         self,
@@ -981,14 +971,14 @@ class AgentIntegrationLayer:
 
         from toolboxv2.mods.isaa.kernel.types import MemoryType
         mem_type = MemoryType[memory_type.upper()]
-
-        return await self.kernel.memory_store.inject_memory(
+        mem_id = await self.kernel.memory_store.inject_memory(
             user_id=user_id,
             memory_type=mem_type,
             content=content,
             importance=importance,
             tags=tags or []
         )
+        return f"Memory with id = {mem_id} injected"
 
     async def get_user_preferences(self) -> dict:
         """

@@ -169,7 +169,7 @@ class AutoFocusTracker:
         if not self._entries:
             return ""
 
-        lines = ["\n═══ AUTO-FOCUS: Letzte Aktionsergebnisse (automatisch sichtbar) ═══"]
+        lines = ["\n═══ AUTO-FOCUS: Letzte Aktionsergebnisse ═══"]
 
         for entry in reversed(list(self._entries)):
             age_secs = time.time() - entry.timestamp
@@ -306,7 +306,7 @@ class ExecutionState:
     vfs_snapshot: dict = field(default_factory=dict)
     thoughts: list[str] = field(default_factory=list)
     actions: list[dict] = field(default_factory=list)
-    observations: list[str] = field(default_factory=list)
+    observations: list[dict[str, Any]] = field(default_factory=list)
     selected_categories: list[str] = field(default_factory=list)
     selected_tools: list[str] = field(default_factory=list)
     react_goal: str | None = None  # NEW: Goal for ReAct mode
@@ -578,7 +578,7 @@ IMMEDIATE_RESPONSE_SYSTEM_PROMPT = """Du bist ein intelligenter Assistent mit Zu
 DEINE FÄHIGKEITEN:
 1. Direkte Antwort: Fragen beantworten ohne Tools wenn möglich
 2. VFS Operationen: Dateien lesen, schreiben, bearbeiten (ohne ReAct-Loop)
-3. Tool Nutzung: Bei Bedarf in den ReAct-Modus wechseln
+3. Tool Nutzung: um externe Tools aufzurufen wechele in den ReAct-Modus dieser hat weitere tools zurverfügung.
 
 ENTSCHEIDUNGSBAUM:
 - Einfache Frage/Antwort → final_answer
@@ -603,6 +603,7 @@ KRITISCH - LOOP-VERMEIDUNG:
 1. Wenn ein Tool ERFOLG meldet → SOFORT final_answer, NICHT wiederholen!
 2. Du siehst Tool-Ergebnisse automatisch im Kontext (Auto-Focus)
 3. Gleiche Aktion wiederholen = FEHLER = Loop = Abbruch
+4. Arbiter im muster Observe -> Think -> Act -> Observe
 
 WICHTIGE REGELN:
 1. Du darfst NUR Informationen verwenden die du:
@@ -1018,7 +1019,7 @@ class ExecutionEngine:
 
             else:
                 state.phase = ExecutionPhase.CATEGORY_SELECT
-                state.query += f"\nUse tool {tool_name} with infos {tool_call.function.arguments}"
+                state.query += f"\nUse tool {tool_name} with infos {args.values()}"
                 tool_result = await self._tool_path(state, session, [tool_name])
                 await session.add_message({
                     "role": "tool", "tool_call_id": tool_call.id, "content": tool_result
@@ -1135,7 +1136,7 @@ class ExecutionEngine:
             }},
             {"type": "function", "function": {
                 "name": "enter_react_mode",
-                "description": "Enter ReAct mode for multi-step tasks.",
+                "description": "Enter ReAct mode.",
                 "parameters": {"type": "object", "properties": {
                     "goal": {"type": "string", "description": "The goal to achieve"},
                     "initial_plan": {"type": "string", "description": "Initial plan"},
@@ -1230,6 +1231,10 @@ class ExecutionEngine:
             state.red_flags.append("No tool categories available")
             return
 
+        if len(categories) <= 2:
+            state.selected_categories = categories
+            return
+
         prompt = f"""Welche Tool-Kategorien sind für diese Aufgabe relevant?
 Aufgabe: {state.query}
 Verfügbare Kategorien: {', '.join(categories)}
@@ -1316,8 +1321,12 @@ Verfügbare Tools:
             loop_detector.record_action(action)
             result = await self._execute_action(state, session, action)
 
+            # await session.add_message({
+            #     "role": "system", "content": f"action: {action}, result: {result}"
+            # })
+
             state.actions.append(action)
-            state.observations.append(str(result)[:500])
+            state.observations.append({"role": "tool", "content": str(result)[:2000]})
 
             if action.get('type') in [ActionType.FINAL_ANSWER.value, 'final_answer']:
                 state.final_answer = action.get('answer', '')
@@ -1369,9 +1378,12 @@ Verfügbare Tools:
         )
 
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": state.query}]
-        for thought, obs in zip(state.thoughts, state.observations):
-            messages.append({"role": "assistant", "content": thought})
-            messages.append({"role": "user", "content": f"Observation: {obs}"})
+        if state.thoughts:
+            for thought, obs in zip(state.thoughts, state.observations):
+                messages.append({"role": "assistant", "content": thought})
+                messages.append(obs)
+        elif state.observations:
+            messages.extend(state.observations)
 
         selected_tools_litellm = [
             t for t in self.agent.tool_manager.get_all_litellm()
@@ -1384,7 +1396,7 @@ Verfügbare Tools:
                 messages=messages, tools=all_tools, tool_choice="auto",
                 model_preference="fast", stream=False, get_response_message=True,
                 task_id=f"{state.execution_id}_react_{state.iteration}",
-                session_id=state.session_id
+                session_id=state.session_id, with_context=False
             )
 
         try:
@@ -1415,7 +1427,7 @@ Verfügbare Tools:
         prompt = f"""Du bearbeitest diese Aufgabe: {state.query}
 Aktueller VFS Status: {vfs_context}
 Bisherige Aktionen: {len(state.actions)}
-{chr(10).join(state.observations[-3:]) if state.observations else "Keine"}
+{chr(10).join([s.get('content', '') for s in state.observations[-3:]]) if state.observations else "Keine"}
 Deine verfügbaren Tools: {', '.join(state.selected_tools or [])}
 WICHTIG: Wenn eine Aktion erfolgreich war, verwende final_answer!"""
 
@@ -1453,6 +1465,10 @@ WICHTIG: Wenn eine Aktion erfolgreich war, verwende final_answer!"""
                 auto_focus.record(result_file, 'tool_result', result_str)
                 return result
             except Exception as e:
+
+                import traceback
+                traceback.print_exc()
+                print("⚠️  Error in _execute_action")
                 return {"error": str(e)}
 
         elif action_type == 'final_answer':
@@ -1643,7 +1659,7 @@ Erstelle eine Liste von Teilaufgaben. Markiere welche parallel ausgeführt werde
         """Select relevant tools for a subtask"""
         prompt = f"""Welche Tools brauche ich für diese Aufgabe?
 Aufgabe: {subtask['description']}
-Verfügbare Kategorien: {', '.join(self.agent.tool_manager.list_categories())}
+Verfügbare Tools: {', '.join(self.agent.tool_manager.list_names())}
 Wähle max 3 relevante Tools."""
 
         async def make_call():
@@ -1717,6 +1733,9 @@ Ist das Ergebnis vollständig und korrekt?"""
                 if random.random() < 0.1:
                     session.rule_set.prune_low_confidence_patterns(threshold=0.2)
         except Exception:
+            import traceback
+            traceback.print_exc()
+            print("⚠️  Error in _learn_from_execution")
             pass
 
     def _get_path_taken(self, state: ExecutionState) -> str:

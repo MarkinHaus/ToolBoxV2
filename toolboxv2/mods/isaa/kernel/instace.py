@@ -781,9 +781,13 @@ class Kernel(IProAKernel):
                 else:
                     await asyncio.sleep(0.1)
             except asyncio.CancelledError:
+
+                print("CancelledError in main loop:")
                 break
-            except Exception:
+            except Exception as e:
+                print("Error in main loop:", e)
                 self.metrics.errors += 1
+        print("Kernel stopped")
 
     async def _heartbeat_loop(self):
         """Maintenance heartbeat."""
@@ -819,6 +823,7 @@ class Kernel(IProAKernel):
             salience = self.attention.compute_salience(event, user_model, session)
             # 4. DECIDE
             plan = await self.decision_engine.decide(event, salience, user_model, session)
+            print("Plan:", plan)
             # 5. ACT
             await self.agent.init_session_tools(session)
             success, response = await self._execute_plan(event, plan, session)
@@ -911,6 +916,18 @@ class Kernel(IProAKernel):
                 user_id=user_id
             )
 
+            # Ensure response is a string (a_run can return various types)
+            if response is None:
+                response = ""
+            elif not isinstance(response, str):
+                # Handle Message objects, dicts, or other types
+                if hasattr(response, 'content'):
+                    response = str(response.content)
+                elif hasattr(response, 'text'):
+                    response = str(response.text)
+                else:
+                    response = str(response)
+
             # Handle special states
             if response.startswith("__NEEDS_HUMAN__:"):
                 question = response.replace("__NEEDS_HUMAN__:", "")
@@ -969,6 +986,7 @@ class Kernel(IProAKernel):
 
     async def handle_user_input(self, user_id: str, content: str, metadata: dict = None) -> str:
         """Handle user input."""
+        print("Handling user input:", user_id, content)
         await self.signal_bus.emit_signal(Signal(
             id=str(uuid.uuid4()),
             type=SignalType.USER_INPUT,
@@ -1076,3 +1094,6 @@ class Kernel(IProAKernel):
             return {"success": True, "loaded": filepath}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    async def process_signal(self, signal: Signal):
+        return await self.signal_bus.emit_signal(signal)

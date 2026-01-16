@@ -3539,570 +3539,389 @@ class DiscordKernelTools:
     # ===== EXPORT TO AGENT =====
 
     async def export_to_agent(self):
-        """Export all Discord tools to the agent"""
+        """Export all Discord tools to the agent with categories and flags"""
         agent = self.kernel.agent
 
-        # Server Management Tools
-        await agent.add_tool(
-            self.get_server_info,
-            "discord_get_server_info",
-            description="Get information about Discord server(s). "
-                       "Args: guild_id (int, optional). If None, returns all servers. "
-                       "Returns: Dict with server info (name, member_count, channels, roles, etc.). "
-                       "Example: discord_get_server_info(guild_id=123456789)"
-        )
+        # =================================================================
+        # CATEGORY: discord_read - Read-only information gathering tools
+        # =================================================================
+        read_category = ["discord", "discord_read"]
+        read_flags = {"read": True, "write": False, "dangerous": False}
 
         await agent.add_tool(
-            self.get_channel_info,
-            "discord_get_channel_info",
-            description="Get information about a Discord channel. "
-                       "Args: channel_id (int). "
-                       "Returns: Dict with channel info (name, type, topic, members, etc.). "
-                       "Example: discord_get_channel_info(channel_id=987654321)"
+            self.get_server_info, "discord_get_server_info",
+            description="Get information about Discord server(s). Args: guild_id (int, optional). Returns: Dict with server info.",
+            category=read_category, flags=read_flags
         )
-
         await agent.add_tool(
-            self.list_channels,
-            "discord_list_channels",
-            description="List all channels in a guild. "
-                       "Args: guild_id (int), channel_type (str, optional: 'text'/'voice'/'category'/'stage'). "
-                       "Returns: List of channel dicts. "
-                       "Example: discord_list_channels(guild_id=123, channel_type='text')"
+            self.get_channel_info, "discord_get_channel_info",
+            description="Get information about a Discord channel. Args: channel_id (int). Returns: Dict with channel info.",
+            category=read_category, flags=read_flags
         )
-
         await agent.add_tool(
-            self.get_user_info,
-            "discord_get_user_info",
-            description="Get information about a Discord user. "
-                       "Args: user_id (int), guild_id (int, optional for member-specific info). "
-                       "Returns: Dict with user info (name, roles, voice_channel, etc.). "
-                       "Example: discord_get_user_info(user_id=111, guild_id=222)"
+            self.list_channels, "discord_list_channels",
+            description="List all channels in a guild. Args: guild_id (int), channel_type (str, optional). Returns: List of channel dicts.",
+            category=read_category, flags=read_flags
         )
-
-        # Message Management Tools
-        await agent.add_tool(
-            self.send_message,
-            "discord_send_message",
-            description="Send a message to a Discord channel. "
-                       "Args: channel_id (int), content (str), embed (dict, optional), reply_to (int, optional). "
-                       "Embed format: {'title': str, 'description': str, 'color': int, 'fields': [{'name': str, 'value': str, 'inline': bool}]}. "
-                       "Returns: Dict with message_id and timestamp. "
-                       "Example: discord_send_message(channel_id=123, content='Hello!', reply_to=456)"
+        await agent.add_tool(
+            self.get_user_info, "discord_get_user_info",
+            description="Get information about a Discord user. Args: user_id (int), guild_id (int, optional). Returns: Dict with user info.",
+            category=read_category, flags=read_flags
         )
-
         await agent.add_tool(
-            self.output_router.send_media,
-            "discord_send_media",
-            description="Send media (images, files) to a Discord user. "
-                       "Args: user_id (str), file_path (str, optional), url (str, optional), caption (str, optional). "
-                       "Either file_path or url must be provided. "
-                       "Returns: Dict with success status. "
-                       "Example: discord_send_media(user_id='123456789', url='https://example.com/image.png', caption='Check this out!')"
+            self.get_message, "discord_get_message",
+            description="Get information about a specific message. Args: channel_id (int), message_id (int). Returns: Dict with message info.",
+            category=read_category, flags=read_flags
         )
-
         await agent.add_tool(
-            self.edit_message,
-            "discord_edit_message",
-            description="Edit an existing message. "
-                       "Args: channel_id (int), message_id (int), new_content (str, optional), new_embed (dict, optional). "
-                       "Returns: Dict with success status. "
-                       "Example: discord_edit_message(channel_id=123, message_id=456, new_content='Updated!')"
+            self.get_recent_messages, "discord_get_recent_messages",
+            description="Get recent messages from a channel. Args: channel_id (int), limit (int, default 10). Returns: List of message dicts.",
+            category=read_category, flags=read_flags
         )
-
         await agent.add_tool(
-            self.delete_message,
-            "discord_delete_message",
-            description="Delete a message. "
-                       "Args: channel_id (int), message_id (int), delay (float, optional seconds). "
-                       "Returns: Dict with success status. "
-                       "Example: discord_delete_message(channel_id=123, message_id=456, delay=5.0)"
+            self.get_message_reactions, "discord_get_message_reactions",
+            description="Get reactions from a Discord message. Args: channel_id (int), message_id (int), emoji (str, optional). Returns: Dict with reaction data.",
+            category=read_category, flags=read_flags
         )
-
         await agent.add_tool(
-            self.get_message,
-            "discord_get_message",
-            description="Get information about a specific message. "
-                       "Args: channel_id (int), message_id (int). "
-                       "Returns: Dict with message info (content, author, embeds, reactions, etc.). "
-                       "Example: discord_get_message(channel_id=123, message_id=456)"
+            self.get_member_roles, "discord_get_member_roles",
+            description="Get all roles of a member in a guild. Args: guild_id (int), user_id (int). Returns: List of role dicts.",
+            category=read_category, flags=read_flags
         )
-
         await agent.add_tool(
-            self.get_recent_messages,
-            "discord_get_recent_messages",
-            description="Get recent messages from a channel. "
-                       "Args: channel_id (int), limit (int, default 10, max 100), before (int, optional), after (int, optional). "
-                       "Returns: List of message dicts. "
-                       "Example: discord_get_recent_messages(channel_id=123, limit=20)"
+            self.get_bot_status, "discord_get_bot_status",
+            description="Get current bot status and statistics. Returns: Dict with bot info.",
+            category=read_category, flags=read_flags
         )
-
         await agent.add_tool(
-            self.get_message_reactions,
-            "discord_get_message_reactions",
-            description="Get reactions from a Discord message. "
-                        "Args: channel_id (int), message_id (int), emoji (str, optional). "
-                        "If emoji is specified, only returns data for that specific reaction. "
-                        "Returns: Dict with reaction data including emoji, count, and users who reacted. "
-                        "Example: discord_get_message_reactions(channel_id=123456789, message_id=987654321) "
-                        "or discord_get_message_reactions(channel_id=123456789, message_id=987654321, emoji='👍')"
+            self.get_kernel_metrics, "discord_get_kernel_metrics",
+            description="Get kernel performance metrics. Returns: Dict with metrics.",
+            category=read_category, flags=read_flags
         )
-
         await agent.add_tool(
-            self.add_reaction,
-            "discord_add_reaction",
-            description="Add a reaction emoji to a message. "
-                       "Args: channel_id (int), message_id (int), emoji (str). "
-                       "Returns: Dict with success status. "
-                       "Example: discord_add_reaction(channel_id=123, message_id=456, emoji='👍')"
+            self.get_voice_status, "discord_get_voice_status",
+            description="Get voice connection status for a guild. Args: guild_id (int). Returns: Dict with voice status.",
+            category=["discord", "discord_read", "discord_voice"], flags=read_flags
         )
-
         await agent.add_tool(
-            self.remove_reaction,
-            "discord_remove_reaction",
-            description="Remove a reaction from a message. "
-                       "Args: channel_id (int), message_id (int), emoji (str), user_id (int, optional). "
-                       "Returns: Dict with success status. "
-                       "Example: discord_remove_reaction(channel_id=123, message_id=456, emoji='👍')"
+            self.can_hear_user, "discord_can_hear_user",
+            description="Check if the bot can hear a specific user. Args: guild_id (int), user_id (int). Returns: Dict with can_hear status.",
+            category=["discord", "discord_read", "discord_voice"], flags=read_flags
         )
 
-        # Voice Control Tools
-        await agent.add_tool(
-            self.join_voice_channel,
-            "discord_join_voice",
-            description="Join a voice channel. "
-                       "Args: channel_id (int). "
-                       "Returns: Dict with success status and channel info. "
-                       "Example: discord_join_voice(channel_id=123456789)"
-        )
+        # =================================================================
+        # CATEGORY: discord_write - Message and content creation tools
+        # =================================================================
+        write_category = ["discord", "discord_write"]
+        write_flags = {"read": False, "write": True, "dangerous": False}
 
         await agent.add_tool(
-            self.leave_voice_channel,
-            "discord_leave_voice",
-            description="Leave the current voice channel in a guild. "
-                       "Args: guild_id (int). "
-                       "Returns: Dict with success status. "
-                       "Example: discord_leave_voice(guild_id=123456789)"
+            self.send_message, "discord_send_message",
+            description="Send a message to a Discord channel. Args: channel_id (int), content (str), embed (dict, optional), reply_to (int, optional). Returns: Dict with message_id.",
+            category=write_category, flags=write_flags
         )
-
         await agent.add_tool(
-            self.get_voice_status,
-            "discord_get_voice_status",
-            description="Get voice connection status for a guild. "
-                       "Args: guild_id (int). "
-                       "Returns: Dict with voice status (connected, channel, playing, listening, tts_enabled, etc.). "
-                       "Example: discord_get_voice_status(guild_id=123456789)"
+            self.output_router.send_media, "discord_send_media",
+            description="Send media (images, files) to a Discord user. Args: user_id (str), file_path (str, optional), url (str, optional), caption (str, optional). Returns: Dict with success status.",
+            category=write_category, flags=write_flags
         )
-
         await agent.add_tool(
-            self.toggle_tts,
-            "discord_toggle_tts",
-            description="Toggle TTS (Text-to-Speech) on/off. "
-                       "Args: guild_id (int), mode (str, optional: 'elevenlabs'/'piper'/'off'/None to toggle). "
-                       "Returns: Dict with TTS status. "
-                       "Example: discord_toggle_tts(guild_id=123, mode='piper')"
+            self.edit_message, "discord_edit_message",
+            description="Edit an existing message. Args: channel_id (int), message_id (int), new_content (str, optional), new_embed (dict, optional). Returns: Dict with success status.",
+            category=write_category, flags=write_flags
         )
-
         await agent.add_tool(
-            self.send_tts_message,
-            "discord_send_tts_message",
-            description="Send a TTS (Text-to-Speech) message in the current voice channel. "
-                       "Args: guild_id (int), text (str), mode (str, optional: 'elevenlabs'/'piper'). "
-                       "Returns: Dict with success status and TTS info. "
-                       "Example: discord_send_tts_message(guild_id=123, text='Hello from voice!', mode='piper')"
+            self.delete_message, "discord_delete_message",
+            description="Delete a message. Args: channel_id (int), message_id (int), delay (float, optional). Returns: Dict with success status.",
+            category=write_category, flags=write_flags
         )
-
         await agent.add_tool(
-            self.can_hear_user,
-            "discord_can_hear_user",
-            description="Check if the bot can hear a specific user (voice listening status). "
-                       "Verifies: bot in voice, listening enabled, user in same channel, user not muted. "
-                       "Args: guild_id (int), user_id (int). "
-                       "Returns: Dict with can_hear (bool), reason, voice_channel, users_in_channel. "
-                       "Example: discord_can_hear_user(guild_id=123, user_id=456)"
+            self.add_reaction, "discord_add_reaction",
+            description="Add a reaction emoji to a message. Args: channel_id (int), message_id (int), emoji (str). Returns: Dict with success status.",
+            category=write_category, flags=write_flags
         )
-
-        # Role & Permission Tools
-        await agent.add_tool(
-            self.get_member_roles,
-            "discord_get_member_roles",
-            description="Get all roles of a member in a guild. "
-                       "Args: guild_id (int), user_id (int). "
-                       "Returns: List of role dicts with id, name, color, position, permissions. "
-                       "Example: discord_get_member_roles(guild_id=123, user_id=456)"
+        await agent.add_tool(
+            self.remove_reaction, "discord_remove_reaction",
+            description="Remove a reaction from a message. Args: channel_id (int), message_id (int), emoji (str), user_id (int, optional). Returns: Dict with success status.",
+            category=write_category, flags=write_flags
         )
-
         await agent.add_tool(
-            self.add_role,
-            "discord_add_role",
-            description="Add a role to a member. "
-                       "Args: guild_id (int), user_id (int), role_id (int), reason (str, optional). "
-                       "Returns: Dict with success status. "
-                       "Example: discord_add_role(guild_id=123, user_id=456, role_id=789, reason='Promotion')"
+            self.send_dm, "discord_send_dm",
+            description="Send a DM to user. Args: user_id (int), content (str), embed (dict, optional). Returns: Dict with message info.",
+            category=write_category, flags=write_flags
         )
-
         await agent.add_tool(
-            self.remove_role,
-            "discord_remove_role",
-            description="Remove a role from a member. "
-                       "Args: guild_id (int), user_id (int), role_id (int), reason (str, optional). "
-                       "Returns: Dict with success status. "
-                       "Example: discord_remove_role(guild_id=123, user_id=456, role_id=789)"
+            self.send_file, "discord_send_file",
+            description="Send a file. Args: channel_id (int), file_path (str), filename (str, optional), content (str, optional). Returns: Dict with message info.",
+            category=write_category, flags=write_flags
         )
-
-        # Lifetime Management Tools
         await agent.add_tool(
-            self.get_bot_status,
-            "discord_get_bot_status",
-            description="Get current bot status and statistics. "
-                       "Returns: Dict with bot info (latency, guilds, users, voice_connections, kernel_state, etc.). "
-                       "Example: discord_get_bot_status()"
+            self.set_bot_status, "discord_set_bot_status",
+            description="Set bot's Discord status and activity. Args: status (str), activity_type (str), activity_name (str, optional). Returns: Dict with success status.",
+            category=write_category, flags=write_flags
         )
+
+        # =================================================================
+        # CATEGORY: discord_voice - Voice channel tools
+        # =================================================================
+        voice_category = ["discord", "discord_voice"]
+        voice_flags = {"read": False, "write": True, "dangerous": False, "voice": True}
 
         await agent.add_tool(
-            self.set_bot_status,
-            "discord_set_bot_status",
-            description="Set bot's Discord status and activity. "
-                       "Args: status (str: 'online'/'idle'/'dnd'/'invisible'), "
-                       "activity_type (str: 'playing'/'watching'/'listening'/'streaming'), "
-                       "activity_name (str, optional). "
-                       "Returns: Dict with success status. "
-                       "Example: discord_set_bot_status(status='online', activity_type='playing', activity_name='with AI')"
+            self.join_voice_channel, "discord_join_voice",
+            description="Join a voice channel. Args: channel_id (int). Returns: Dict with success status and channel info.",
+            category=voice_category, flags=voice_flags
         )
-
         await agent.add_tool(
-            self.get_kernel_metrics,
-            "discord_get_kernel_metrics",
-            description="Get kernel performance metrics. "
-                       "Returns: Dict with metrics (total_signals, user_inputs, agent_responses, proactive_actions, errors, avg_response_time). "
-                       "Example: discord_get_kernel_metrics()"
+            self.leave_voice_channel, "discord_leave_voice",
+            description="Leave the current voice channel in a guild. Args: guild_id (int). Returns: Dict with success status.",
+            category=voice_category, flags=voice_flags
         )
-
-        # Server Management
         await agent.add_tool(
-            self.create_server,
-            "discord_create_server",
-            description="Create a new Discord server. Args: name (str), icon (str, optional base64), region (str, optional). Returns: Dict with guild_id and info."
+            self.toggle_tts, "discord_toggle_tts",
+            description="Toggle TTS (Text-to-Speech) on/off. Args: guild_id (int), mode (str, optional). Returns: Dict with TTS status.",
+            category=voice_category, flags=voice_flags
         )
-
         await agent.add_tool(
-            self.delete_server,
-            "discord_delete_server",
-            description="Delete a Discord server (bot must be owner). Args: guild_id (int). Returns: Dict with success status."
+            self.send_tts_message, "discord_send_tts_message",
+            description="Send a TTS message in the current voice channel. Args: guild_id (int), text (str), mode (str, optional). Returns: Dict with success status.",
+            category=voice_category, flags=voice_flags
         )
+
+        # =================================================================
+        # CATEGORY: discord_admin - Server/Channel administration tools
+        # =================================================================
+        admin_category = ["discord", "discord_admin"]
+        admin_flags = {"read": False, "write": True, "dangerous": True, "admin": True}
 
         await agent.add_tool(
-            self.edit_server,
-            "discord_edit_server",
-            description="Edit server settings. Args: guild_id (int), name (str, optional), icon (str, optional), description (str, optional), verification_level (int 0-4, optional). Returns: Dict with success status."
+            self.create_server, "discord_create_server",
+            description="Create a new Discord server. Args: name (str), icon (str, optional), region (str, optional). Returns: Dict with guild_id.",
+            category=admin_category, flags=admin_flags
         )
-
-        # Channel Management
         await agent.add_tool(
-            self.create_channel,
-            "discord_create_channel",
-            description="Create a channel. Args: guild_id (int), name (str), channel_type (str: 'text'/'voice'/'category'/'stage'), category_id (int, optional), topic (str, optional), slowmode_delay (int, optional), nsfw (bool, optional). Returns: Dict with channel info."
+            self.delete_server, "discord_delete_server",
+            description="Delete a Discord server (bot must be owner). Args: guild_id (int). Returns: Dict with success status.",
+            category=admin_category, flags={**admin_flags, "destructive": True}
         )
-
         await agent.add_tool(
-            self.delete_channel,
-            "discord_delete_channel",
-            description="Delete a channel. Args: channel_id (int), reason (str, optional). Returns: Dict with success status."
+            self.edit_server, "discord_edit_server",
+            description="Edit server settings. Args: guild_id (int), name (str, optional), icon (str, optional), description (str, optional). Returns: Dict with success status.",
+            category=admin_category, flags=admin_flags
         )
 
+        # Channel Management (admin category continued)
         await agent.add_tool(
-            self.edit_channel,
-            "discord_edit_channel",
-            description="Edit channel settings. Args: channel_id (int), name (str, optional), topic (str, optional), slowmode_delay (int, optional), nsfw (bool, optional), position (int, optional). Returns: Dict with success status."
+            self.create_channel, "discord_create_channel",
+            description="Create a channel. Args: guild_id (int), name (str), channel_type (str), category_id (int, optional). Returns: Dict with channel info.",
+            category=admin_category, flags=admin_flags
         )
-
-        # Thread Management
         await agent.add_tool(
-            self.create_thread,
-            "discord_create_thread",
-            description="Create a thread. Args: channel_id (int), name (str), message_id (int, optional), auto_archive_duration (int: 60/1440/4320/10080 minutes). Returns: Dict with thread info."
+            self.delete_channel, "discord_delete_channel",
+            description="Delete a channel. Args: channel_id (int), reason (str, optional). Returns: Dict with success status.",
+            category=admin_category, flags={**admin_flags, "destructive": True}
         )
-
         await agent.add_tool(
-            self.join_thread,
-            "discord_join_thread",
-            description="Join a thread. Args: thread_id (int). Returns: Dict with success status."
+            self.edit_channel, "discord_edit_channel",
+            description="Edit channel settings. Args: channel_id (int), name (str, optional), topic (str, optional). Returns: Dict with success status.",
+            category=admin_category, flags=admin_flags
         )
-
         await agent.add_tool(
-            self.leave_thread,
-            "discord_leave_thread",
-            description="Leave a thread. Args: thread_id (int). Returns: Dict with success status."
+            self.set_channel_permissions, "discord_set_channel_permissions",
+            description="Set channel permissions. Args: channel_id (int), target_id (int), target_type (str), allow (int, optional), deny (int, optional). Returns: Dict with success status.",
+            category=admin_category, flags=admin_flags
         )
-
-        # Moderation
         await agent.add_tool(
-            self.kick_member,
-            "discord_kick_member",
-            description="Kick a member. Args: guild_id (int), user_id (int), reason (str, optional). Returns: Dict with success status."
+            self.create_webhook, "discord_create_webhook",
+            description="Create a webhook. Args: channel_id (int), name (str), avatar (bytes, optional). Returns: Dict with webhook URL and info.",
+            category=admin_category, flags=admin_flags
         )
 
+        # Thread Management (admin category)
         await agent.add_tool(
-            self.ban_member,
-            "discord_ban_member",
-            description="Ban a member. Args: guild_id (int), user_id (int), reason (str, optional), delete_message_days (int 0-7, optional). Returns: Dict with success status."
+            self.create_thread, "discord_create_thread",
+            description="Create a thread. Args: channel_id (int), name (str), message_id (int, optional). Returns: Dict with thread info.",
+            category=admin_category, flags=admin_flags
         )
-
         await agent.add_tool(
-            self.unban_member,
-            "discord_unban_member",
-            description="Unban a member. Args: guild_id (int), user_id (int), reason (str, optional). Returns: Dict with success status."
+            self.join_thread, "discord_join_thread",
+            description="Join a thread. Args: thread_id (int). Returns: Dict with success status.",
+            category=write_category, flags=write_flags
         )
-
         await agent.add_tool(
-            self.timeout_member,
-            "discord_timeout_member",
-            description="Timeout (mute) a member. Args: guild_id (int), user_id (int), duration_minutes (int, max 40320), reason (str, optional). Returns: Dict with timeout info."
+            self.leave_thread, "discord_leave_thread",
+            description="Leave a thread. Args: thread_id (int). Returns: Dict with success status.",
+            category=write_category, flags=write_flags
         )
+
+        # =================================================================
+        # CATEGORY: discord_moderation - User moderation tools
+        # =================================================================
+        mod_category = ["discord", "discord_moderation"]
+        mod_flags = {"read": False, "write": True, "dangerous": True, "moderation": True}
 
         await agent.add_tool(
-            self.remove_timeout,
-            "discord_remove_timeout",
-            description="Remove timeout from member. Args: guild_id (int), user_id (int), reason (str, optional). Returns: Dict with success status."
+            self.kick_member, "discord_kick_member",
+            description="Kick a member. Args: guild_id (int), user_id (int), reason (str, optional). Returns: Dict with success status.",
+            category=mod_category, flags=mod_flags
         )
-
         await agent.add_tool(
-            self.change_nickname,
-            "discord_change_nickname",
-            description="Change member nickname. Args: guild_id (int), user_id (int), nickname (str or None), reason (str, optional). Returns: Dict with success status."
+            self.ban_member, "discord_ban_member",
+            description="Ban a member. Args: guild_id (int), user_id (int), reason (str, optional), delete_message_days (int, optional). Returns: Dict with success status.",
+            category=mod_category, flags={**mod_flags, "destructive": True}
         )
-
         await agent.add_tool(
-            self.move_member,
-            "discord_move_member",
-            description="Move member to voice channel. Args: guild_id (int), user_id (int), channel_id (int). Returns: Dict with success status."
+            self.unban_member, "discord_unban_member",
+            description="Unban a member. Args: guild_id (int), user_id (int), reason (str, optional). Returns: Dict with success status.",
+            category=mod_category, flags=mod_flags
         )
-
         await agent.add_tool(
-            self.disconnect_member,
-            "discord_disconnect_member",
-            description="Disconnect member from voice. Args: guild_id (int), user_id (int). Returns: Dict with success status."
+            self.timeout_member, "discord_timeout_member",
+            description="Timeout (mute) a member. Args: guild_id (int), user_id (int), duration_minutes (int). Returns: Dict with timeout info.",
+            category=mod_category, flags=mod_flags
         )
-
-        # Files & Permissions
         await agent.add_tool(
-            self.send_file,
-            "discord_send_file",
-            description="Send a file. Args: channel_id (int), file_path (str), filename (str, optional), content (str, optional). Returns: Dict with message info."
+            self.remove_timeout, "discord_remove_timeout",
+            description="Remove timeout from member. Args: guild_id (int), user_id (int), reason (str, optional). Returns: Dict with success status.",
+            category=mod_category, flags=mod_flags
         )
-
         await agent.add_tool(
-            self.set_channel_permissions,
-            "discord_set_channel_permissions",
-            description="Set channel permissions. Args: channel_id (int), target_id (int), target_type (str: 'role'/'member'), allow (int bitfield, optional), deny (int bitfield, optional), reason (str, optional). Returns: Dict with success status."
+            self.change_nickname, "discord_change_nickname",
+            description="Change member nickname. Args: guild_id (int), user_id (int), nickname (str or None). Returns: Dict with success status.",
+            category=mod_category, flags=mod_flags
         )
-
-        # DM & Webhooks
         await agent.add_tool(
-            self.send_dm,
-            "discord_send_dm",
-            description="Send a DM to user. Args: user_id (int), content (str), embed (dict, optional). Returns: Dict with message info."
+            self.move_member, "discord_move_member",
+            description="Move member to voice channel. Args: guild_id (int), user_id (int), channel_id (int). Returns: Dict with success status.",
+            category=mod_category, flags=mod_flags
         )
-
         await agent.add_tool(
-            self.create_webhook,
-            "discord_create_webhook",
-            description="Create a webhook. Args: channel_id (int), name (str), avatar (bytes, optional). Returns: Dict with webhook URL and info."
+            self.disconnect_member, "discord_disconnect_member",
+            description="Disconnect member from voice. Args: guild_id (int), user_id (int). Returns: Dict with success status.",
+            category=mod_category, flags=mod_flags
         )
-
+        await agent.add_tool(
+            self.add_role, "discord_add_role",
+            description="Add a role to a member. Args: guild_id (int), user_id (int), role_id (int), reason (str, optional). Returns: Dict with success status.",
+            category=mod_category, flags=mod_flags
+        )
+        await agent.add_tool(
+            self.remove_role, "discord_remove_role",
+            description="Remove a role from a member. Args: guild_id (int), user_id (int), role_id (int), reason (str, optional). Returns: Dict with success status.",
+            category=mod_category, flags=mod_flags
+        )
 
-        # Add these to the export_to_agent() method:
+        # =================================================================
+        # CATEGORY: discord_invites - Invitation management tools
+        # =================================================================
+        invite_category = ["discord", "discord_invites"]
 
-        # Invitation Management
-        await agent.add_tool(
-            self.create_invite,
-            "discord_create_invite",
-            description="Create a server invitation link. "
-                        "Args: channel_id (int), max_age (int, seconds until expiry, 0=never, default 86400=24h), "
-                        "max_uses (int, 0=unlimited), temporary (bool, temporary membership), unique (bool, create unique invite), "
-                        "reason (str, optional). "
-                        "Returns: Dict with invite_code, invite_url, expiration info. "
-                        "Example: discord_create_invite(channel_id=123, max_age=3600, max_uses=10)"
+        await agent.add_tool(
+            self.create_invite, "discord_create_invite",
+            description="Create a server invitation link. Args: channel_id (int), max_age (int, optional), max_uses (int, optional). Returns: Dict with invite info.",
+            category=invite_category, flags=admin_flags
         )
-
         await agent.add_tool(
-            self.get_invites,
-            "discord_get_invites",
-            description="Get all invites for a server. "
-                        "Args: guild_id (int). "
-                        "Returns: List of invite dicts with code, URL, uses, max_uses, expiration. "
-                        "Example: discord_get_invites(guild_id=123456789)"
+            self.get_invites, "discord_get_invites",
+            description="Get all invites for a server. Args: guild_id (int). Returns: List of invite dicts.",
+            category=invite_category, flags=read_flags
         )
-
         await agent.add_tool(
-            self.delete_invite,
-            "discord_delete_invite",
-            description="Delete/revoke an invite. "
-                        "Args: invite_code (str, just the code not full URL), reason (str, optional). "
-                        "Returns: Dict with success status. "
-                        "Example: discord_delete_invite(invite_code='abc123XYZ')"
+            self.delete_invite, "discord_delete_invite",
+            description="Delete/revoke an invite. Args: invite_code (str), reason (str, optional). Returns: Dict with success status.",
+            category=invite_category, flags=admin_flags
         )
-
         await agent.add_tool(
-            self.get_invite_info,
-            "discord_get_invite_info",
-            description="Get information about an invite without joining. "
-                        "Args: invite_code (str). "
-                        "Returns: Dict with guild info, member counts, expiration. "
-                        "Example: discord_get_invite_info(invite_code='abc123XYZ')"
+            self.get_invite_info, "discord_get_invite_info",
+            description="Get information about an invite. Args: invite_code (str). Returns: Dict with invite info.",
+            category=invite_category, flags=read_flags
         )
 
-        # Add these to the export_to_agent() method:
+        # =================================================================
+        # CATEGORY: discord_templates - Message template tools
+        # =================================================================
+        template_category = ["discord", "discord_templates"]
+        template_flags = {"read": False, "write": True, "dangerous": False, "templates": True}
 
-        # Template Message Management
-        await agent.add_tool(
-            self.create_message_template,
-            "discord_create_message_template",
-            description="Create a reusable message template. "
-                        "Args: template_name (str), content (str, optional), embed (dict, optional), components (list, optional). "
-                        "Supports variable substitution with {variable_name} syntax. "
-                        "Returns: Dict with template info. "
-                        "Example: discord_create_message_template('welcome', content='Hello {username}!', embed={'title': 'Welcome', 'description': '{username} joined'})"
+        await agent.add_tool(
+            self.create_message_template, "discord_create_message_template",
+            description="Create a reusable message template. Args: template_name (str), content (str, optional), embed (dict, optional). Returns: Dict with template info.",
+            category=template_category, flags=template_flags
         )
-
         await agent.add_tool(
-            self.get_message_template,
-            "discord_get_message_template",
-            description="Get a message template by name. "
-                        "Args: template_name (str). "
-                        "Returns: Dict with template data. "
-                        "Example: discord_get_message_template('welcome')"
+            self.get_message_template, "discord_get_message_template",
+            description="Get a message template by name. Args: template_name (str). Returns: Dict with template data.",
+            category=template_category, flags=read_flags
         )
-
         await agent.add_tool(
-            self.list_message_templates,
-            "discord_list_message_templates",
-            description="List all available message templates. "
-                        "Returns: List of template info dicts. "
-                        "Example: discord_list_message_templates()"
+            self.list_message_templates, "discord_list_message_templates",
+            description="List all available message templates. Returns: List of template info dicts.",
+            category=template_category, flags=read_flags
         )
-
         await agent.add_tool(
-            self.delete_message_template,
-            "discord_delete_message_template",
-            description="Delete a message template. "
-                        "Args: template_name (str). "
-                        "Returns: Dict with success status. "
-                        "Example: discord_delete_message_template('old_template')"
+            self.delete_message_template, "discord_delete_message_template",
+            description="Delete a message template. Args: template_name (str). Returns: Dict with success status.",
+            category=template_category, flags=template_flags
         )
-
         await agent.add_tool(
-            self.send_template_message,
-            "discord_send_template_message",
-            description="Send a message using a template with variable substitution. "
-                        "Args: channel_id (int), template_name (str), variables (dict, optional), reply_to (int, optional). "
-                        "Variables replace {key} in template with values. "
-                        "Returns: Dict with message info. "
-                        "Example: discord_send_template_message(channel_id=123, template_name='welcome', variables={'username': 'John', 'member_count': '100'})"
+            self.send_template_message, "discord_send_template_message",
+            description="Send a message using a template. Args: channel_id (int), template_name (str), variables (dict, optional). Returns: Dict with message info.",
+            category=template_category, flags=template_flags
         )
-
         await agent.add_tool(
-            self.create_welcome_template,
-            "discord_create_welcome_template",
-            description="Create a welcome message template. "
-                        "Args: template_name (str, default 'welcome'), title (str), description (str), color (int hex), "
-                        "thumbnail (str, optional), image (str, optional), fields (list, optional). "
-                        "Supports variables: {username}, {server_name}, {member_count}. "
-                        "Returns: Dict with template info. "
-                        "Example: discord_create_welcome_template(title='Welcome {username}!', description='Welcome to {server_name}')"
+            self.create_welcome_template, "discord_create_welcome_template",
+            description="Create a welcome message template. Args: template_name (str), title (str), description (str), color (int). Returns: Dict with template info.",
+            category=template_category, flags=template_flags
         )
-
         await agent.add_tool(
-            self.create_announcement_template,
-            "discord_create_announcement_template",
-            description="Create an announcement template. "
-                        "Args: template_name (str, default 'announcement'), title (str), description (str), "
-                        "color (int hex), mention_role (str, optional like '@everyone'). "
-                        "Supports variables: {message}, {date}. "
-                        "Returns: Dict with template info. "
-                        "Example: discord_create_announcement_template(title='Update', description='{message}')"
+            self.create_announcement_template, "discord_create_announcement_template",
+            description="Create an announcement template. Args: template_name (str), title (str), description (str), color (int). Returns: Dict with template info.",
+            category=template_category, flags=template_flags
         )
-
         await agent.add_tool(
-            self.create_poll_template,
-            "discord_create_poll_template",
-            description="Create a poll template with reaction options. "
-                        "Args: template_name (str, default 'poll'), question (str), options (list of str, max 10). "
-                        "Supports variables: {question}, {option1}, {option2}, etc. "
-                        "Returns: Dict with template info. "
-                        "Example: discord_create_poll_template(question='Favorite color?', options=['Red', 'Blue', 'Green'])"
+            self.create_poll_template, "discord_create_poll_template",
+            description="Create a poll template. Args: template_name (str), question (str), options (list). Returns: Dict with template info.",
+            category=template_category, flags=template_flags
         )
 
         await agent.add_tool(
-            self.create_embed_template,
-            "discord_create_embed_template",
-            description="Create a custom embed template with all options. "
-                        "Args: template_name (str), title (str, optional), description (str, optional), "
-                        "color (int hex, default 0x3498db), fields (list, optional), footer (str, optional), "
-                        "author (str, optional), thumbnail (str URL, optional), image (str URL, optional), url (str, optional). "
-                        "All text fields support variable substitution. "
-                        "Returns: Dict with template info. "
-                        "Example: discord_create_embed_template('info', title='{title}', description='{content}', color=0xff0000)"
+            self.create_embed_template, "discord_create_embed_template",
+            description="Create a custom embed template. Args: template_name (str), title (str, optional), description (str, optional), color (int). Returns: Dict with template info.",
+            category=template_category, flags=template_flags
         )
-
         await agent.add_tool(
-            self.create_button_template,
-            "discord_create_button_template",
-            description="Create a message template with buttons. "
-                        "Args: template_name (str), content (str, optional), "
-                        "buttons (list of dicts with keys: label, style='primary'/'secondary'/'success'/'danger'/'link', "
-                        "custom_id, emoji, url, disabled). "
-                        "Returns: Dict with template info. "
-                        "Example: discord_create_button_template('menu', buttons=[{'label': 'Click me', 'style': 'primary', 'custom_id': 'btn1'}])"
+            self.create_button_template, "discord_create_button_template",
+            description="Create a message template with buttons. Args: template_name (str), content (str, optional), buttons (list). Returns: Dict with template info.",
+            category=template_category, flags=template_flags
         )
-
         await agent.add_tool(
-            self.create_select_menu_template,
-            "discord_create_select_menu_template",
-            description="Create a message template with a select menu (dropdown). "
-                        "Args: template_name (str), content (str, optional), placeholder (str), "
-                        "options (list of dicts with keys: label, value, description, emoji), "
-                        "min_values (int, default 1), max_values (int, default 1). "
-                        "Returns: Dict with template info. "
-                        "Example: discord_create_select_menu_template('roles', options=[{'label': 'Admin', 'value': 'admin'}, {'label': 'User', 'value': 'user'}])"
+            self.create_select_menu_template, "discord_create_select_menu_template",
+            description="Create a message template with a select menu. Args: template_name (str), placeholder (str), options (list). Returns: Dict with template info.",
+            category=template_category, flags=template_flags
         )
 
-        # Information & Help Tools
-        await agent.add_tool(
-            self.get_template_help,
-            "discord_get_template_help",
-            description="Get comprehensive help on creating and using message templates. "
-                        "Returns detailed documentation including: variable substitution, template types, "
-                        "workflow examples, color codes, best practices, common use cases, and tips. "
-                        "No arguments required. "
-                        "Returns: Dict with complete template documentation. "
-                        "Example: discord_get_template_help()"
-        )
+        # =================================================================
+        # CATEGORY: discord_help - Information and help tools
+        # =================================================================
+        help_category = ["discord", "discord_help"]
+        help_flags = {"read": True, "write": False, "dangerous": False, "help": True}
 
         await agent.add_tool(
-            self.get_tools_overview,
-            "discord_get_tools_overview",
-            description="Get overview of all 56+ available Discord tools organized by category. "
-                        "Includes: server management, channels, messages, templates, moderation, roles, "
-                        "voice, threads, invites, reactions, permissions, DMs, webhooks, bot status. "
-                        "Each category includes tool names, descriptions, and usage examples. "
-                        "No arguments required. "
-                        "Returns: Dict with categorized tool information and quick-start workflows. "
-                        "Example: discord_get_tools_overview()"
+            self.get_template_help, "discord_get_template_help",
+            description="Get comprehensive help on creating and using message templates. Returns: Dict with template documentation.",
+            category=help_category, flags=help_flags
         )
-
+        await agent.add_tool(
+            self.get_tools_overview, "discord_get_tools_overview",
+            description="Get overview of all available Discord tools organized by category. Returns: Dict with categorized tool information.",
+            category=help_category, flags=help_flags
+        )
         await agent.add_tool(
-            self.get_template_examples,
-            "discord_get_template_examples",
-            description="Get practical, ready-to-use template examples for common scenarios. "
-                        "Includes complete code examples for: welcome messages, moderation logs, "
-                        "verification systems, role selection, polls, event announcements, leaderboards, "
-                        "ticket systems, status updates, help menus, giveaways, server rules, level-up notifications. "
-                        "Each example includes full implementation code and expected results. "
-                        "No arguments required. "
-                        "Returns: Dict with 12+ complete template examples. "
-                        "Example: discord_get_template_examples()"
+            self.get_template_examples, "discord_get_template_examples",
+            description="Get practical, ready-to-use template examples for common scenarios. Returns: Dict with template examples.",
+            category=help_category, flags=help_flags
         )
 
-        print("✓ Discord tools exported to agent (59 tools total)")
+        print("✓ Discord tools exported to agent with categories (59 tools total)")
 
 

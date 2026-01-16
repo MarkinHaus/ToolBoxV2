@@ -337,7 +337,7 @@ class DockerCodeExecutor(_BaseExecutorClass):
     # --- End Direct Call ---
 
 # --- Factory function ---
-def get_code_executor(config: 'AgentConfig') -> RestrictedPythonExecutor | DockerCodeExecutor | BaseCodeExecutor | None:
+def get_code_executor(config: 'AgentConfig') -> RestrictedPythonExecutor | DockerCodeExecutor | None:
     """Creates a code executor instance based on configuration."""
     executor_type = config.code_executor_type
     executor_config = config.code_executor_config or {}

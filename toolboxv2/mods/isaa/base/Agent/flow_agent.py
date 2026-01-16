@@ -76,6 +76,7 @@ class FlowAgent:
         stream: bool = True,
         **kwargs
     ):
+        self.last_result = None
         self.amd = amd
         self.verbose = verbose
         self.stream = stream
@@ -262,8 +263,8 @@ class FlowAgent:
             self.total_llm_calls += 1
 
             if do_tool_execution and 'tools' in llm_kwargs:
-                tool_response = await self.run_tool_response(result, session_id)
-                llm_kwargs['messages'] += [{"role": "assistant", "content": result}]+tool_response
+                tool_response = await self.run_tool_response(result if get_response_message else response.choices[0].message, session_id)
+                llm_kwargs['messages'] += [{"role": "assistant", "content":result.content if get_response_message else result}]+tool_response
                 del kwargs['tools']
                 return await self.a_run_llm_completion(llm_kwargs['messages'], model_preference, with_context, stream, get_response_message, task_id, session_id, **kwargs)
 
@@ -365,6 +366,7 @@ class FlowAgent:
         max_retries: int = 1,
         model_preference: str = "fast",
         auto_context: bool = False,
+        max_tokens: int | None = None,
         **kwargs
     ) -> dict[str, Any]:
         schema = pydantic_model.model_json_schema()
@@ -376,14 +378,34 @@ class FlowAgent:
 
         enhanced_prompt = f"{prompt}"
 
-        messages = (message_context or []) + [{"role": "user", "content": enhanced_prompt} , {"role": "system", "content": "Return YAML with fields:\n" + "\n".join(fields_desc)}]
+        try:
+            from litellm import supports_response_schema
+
+            for mp in [model_preference, "complex" if model_preference == "fast" else "fast"]:
+                data = await self.a_run_llm_completion(
+                    messages=[{"role": "user", "content": enhanced_prompt}], model_preference=mp, stream=False,
+                    with_context=auto_context,
+                    max_tokens=max_tokens, task_id=f"format_{model_name.lower()}", response_format=pydantic_model
+                )
+                if isinstance(data, str):
+                    data = json.loads(data)
+                validated = pydantic_model.model_validate(data)
+                return validated.model_dump()
+
+
+        except ImportError as e:
+            logger.error(f"LLM call failed: {e}")
+            print("LLM call failed:", e, "falling back to YAML")
+
+
+        messages = (message_context or []) + [{"role": "system", "content": "You are a YAML formatter. format the input to valid YAML."}, {"role": "user", "content": enhanced_prompt} , {"role": "system", "content": "Return YAML with fields:\n" + "\n".join(fields_desc)}]
 
         for attempt in range(max_retries + 1):
             try:
                 response = await self.a_run_llm_completion(
                     messages=messages, model_preference=model_preference, stream=False,
                     with_context=auto_context, temperature=0.1 + (attempt * 0.1),
-                    max_tokens=500, task_id=f"format_{model_name.lower()}_{attempt}"
+                    max_tokens=max_tokens, task_id=f"format_{model_name.lower()}_{attempt}"
                 )
 
                 if not response or not response.strip():
@@ -508,7 +530,21 @@ class FlowAgent:
                     return f"__NEEDS_HUMAN__:{result.human_query}"
                 return f"__PAUSED__"
             self.active_execution_id = None
-            return result.response
+
+            response = result.response
+            # Ensure response is a string (a_run can return various types)
+            if response is None:
+                response = ""
+            elif not isinstance(response, str):
+                # Handle Message objects, dicts, or other types
+                if hasattr(response, 'content'):
+                    response = str(response.content)
+                elif hasattr(response, 'text'):
+                    response = str(response.text)
+                else:
+                    response = str(response)
+            self.last_result = result
+            return response
 
         except Exception as e:
             logger.error(f"a_run failed: {e}")
@@ -935,6 +971,154 @@ class FlowAgent:
         logger.info(f"Initialized standard session tools for agent '{self.amd.name}'")
 
         _session.tools_initialized = True
+
+    # =========================================================================
+    # CONTEXT AWARENESS & ANALYTICS
+    # =========================================================================
+
+    async def context_overview(self, session_id: str | None = None, print_visual: bool = True) -> dict:
+        """
+        Analysiert den aktuellen Token-Verbrauch des Kontexts und gibt eine Übersicht zurück.
+
+        Args:
+            session_id: Die zu analysierende Session (oder None für generische Analyse)
+            print_visual: Ob eine grafische CLI-Anzeige ausgegeben werden soll
+
+        Returns:
+            Ein Dictionary mit den detaillierten Token-Metriken.
+        """
+        if not LITELLM_AVAILABLE:
+            logger.warning("LiteLLM not available, cannot count tokens.")
+            return {}
+
+        # 1. Setup & Defaults
+        target_session = session_id or self.active_session or "default"
+        model = self.amd.fast_llm_model.split("/")[-1]  # Wir nutzen das schnelle Modell für die Tokenizer-Logik
+
+        # Holen der Context Window Size (Fallback auf 128k wenn unbekannt)
+        try:
+            model_info = litellm.get_model_info(model)
+            context_limit = model_info.get("max_input_tokens") or model_info.get("max_tokens") or 128000
+        except Exception:
+            context_limit = 128000
+
+        metrics = {
+            "system_prompt": 0,
+            "tool_definitions": 0,
+            "vfs_context": 0,
+            "history": 0,
+            "overhead": 0,
+            "total": 0,
+            "limit": context_limit,
+            "session_id": target_session if session_id else "NONE (Base Config)"
+        }
+
+        # 2. System Prompt Berechnung
+        # Wir simulieren den Prompt, den die Engine bauen würde
+        base_system_msg = self.amd.get_system_message()
+        # Hinweis: ExecutionEngine fügt oft noch spezifische Prompts hinzu (Immediate/React)
+        # Wir nehmen hier eine repräsentative Größe an.
+        from toolboxv2.mods.isaa.base.Agent.execution_engine import IMMEDIATE_RESPONSE_SYSTEM_PROMPT
+        full_sys_msg = f"{base_system_msg}\n\n{IMMEDIATE_RESPONSE_SYSTEM_PROMPT}"
+        metrics["system_prompt"] = litellm.token_counter(model=model, text=full_sys_msg)
+
+        # 3. Tools Definitions Berechnung
+        # Wir sammeln alle Tools + Standard VFS Tools um die Definition-Größe zu berechnen
+        from toolboxv2.mods.isaa.base.Agent.execution_engine import VFS_TOOLS_LITELLM, CONTROL_TOOLS_LITELLM
+
+        user_tools = self.tool_manager.get_all_litellm()
+        # System Tools die immer injected werden
+        all_tools = user_tools + VFS_TOOLS_LITELLM + CONTROL_TOOLS_LITELLM
+
+        # LiteLLM Token Counter kann Tools nicht direkt, wir dumpen das JSON als Näherungswert
+        # (Dies ist oft genauer als man denkt, da Definitionen als Text/JSON injected werden)
+        tools_json = json.dumps(all_tools)
+        metrics["tool_definitions"] = litellm.token_counter(model=model, text=tools_json)
+
+        # 4. Session Specific Data (VFS & History)
+        if session_id:
+            session = await self.session_manager.get_or_create(target_session)
+
+            # VFS Context
+            # Wir rufen build_context_string auf, um genau zu sehen, was das LLM sieht
+            vfs_str = session.build_vfs_context()
+            # Plus Auto-Focus (Letzte Änderungen)
+            if self._execution_engine:  # Falls Engine instanziiert, holen wir AutoFocus
+                # Wir müssen hier tricksen, da AutoFocus in der Engine Instanz liegt
+                # und private ist. Wir nehmen an, dass es leer ist oder klein,
+                # oder wir instanziieren eine temporäre Engine.
+                # Für Performance nehmen wir hier nur den VFS String.
+                pass
+
+            metrics["vfs_context"] = litellm.token_counter(model=model, text=vfs_str)
+
+            # Chat History
+            # Wir nehmen an, dass standardmäßig ca. 10-15 Nachrichten gesendet werden
+            history = session.get_history_for_llm(last_n=15)
+            metrics["history"] = litellm.token_counter(model=model, messages=history)
+
+        # 5. Summe
+        # Puffer für Protokoll-Overhead (Role-Tags, JSON-Formatierung) ~50 Tokens
+        metrics["overhead"] = 50
+        metrics["total"] = sum(
+            [v for k, v in metrics.items() if isinstance(v, (int, float)) and k not in ["limit", "total"]])
+
+        # 6. Visualisierung
+        if print_visual:
+            self._print_context_visual(metrics, model)
+
+        return metrics
+
+    def _print_context_visual(self, metrics: dict, model_name: str):
+        """Helper für die CLI Visualisierung"""
+        total = metrics["total"]
+        limit = metrics["limit"]
+        percent = min(100, (total / limit) * 100)
+
+        # Farben (ANSI)
+        C_RESET = "\033[0m"
+        C_BOLD = "\033[1m"
+        C_GREEN = "\033[32m"
+        C_YELLOW = "\033[33m"
+        C_RED = "\033[31m"
+        C_BLUE = "\033[34m"
+        C_GRAY = "\033[90m"
+
+        # Farbe basierend auf Auslastung
+        bar_color = C_GREEN
+        if percent > 70: bar_color = C_YELLOW
+        if percent > 90: bar_color = C_RED
+
+        # Progress Bar bauen (Breite 30 Zeichen)
+        bar_width = 30
+        filled = int((percent / 100) * bar_width)
+        bar = "█" * filled + "░" * (bar_width - filled)
+
+        print(f"\n{C_BOLD}CONTEXT OVERVIEW{C_RESET} | Session: {C_BLUE}{metrics['session_id']}{C_RESET}")
+        print(f"{C_GRAY}Model: {model_name} | Limit: {limit:,} tokens{C_RESET}\n")
+
+        print(f"Usage:")
+        print(f"{bar_color}[{bar}]{C_RESET} {C_BOLD}{percent:.1f}%{C_RESET} ({total:,} / {limit:,})")
+
+        print(f"\n{C_BOLD}Breakdown:{C_RESET}")
+
+        def print_row(label, value, color=C_RESET):
+            pct = (value / total * 100) if total > 0 else 0
+            print(f" • {label:<18} {color}{value:>6,}{C_RESET} tokens {C_GRAY}({pct:>4.1f}%){C_RESET}")
+
+        print_row("System Prompts", metrics["system_prompt"], C_YELLOW)
+        print_row("Tools (Defs)", metrics["tool_definitions"], C_BLUE)
+        if metrics["vfs_context"] > 0:
+            print_row("VFS / Files", metrics["vfs_context"], C_GREEN)
+        if metrics["history"] > 0:
+            print_row("Chat History", metrics["history"], C_BLUE)
+
+        # Leerer Platz Berechnung
+        remaining = limit - total
+        print("-" * 40)
+        print(f" {C_BOLD}{'TOTAL':<18} {total:>6,}{C_RESET}")
+        print(f" {C_GRAY}{'Remaining':<18} {remaining:>6,}{C_RESET}")
+        print("")
 
     # =========================================================================
     # CHECKPOINT
