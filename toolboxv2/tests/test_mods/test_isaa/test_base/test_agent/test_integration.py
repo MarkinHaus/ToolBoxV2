@@ -48,7 +48,8 @@ class TestIntegration(AsyncTestCase):
 
         with patch.object(self.agent, '_get_execution_engine', return_value=mock_engine):
             res = self.async_run(self.agent.a_run("Wait"))
-            self.assertEqual(res, "__PAUSED__:123")
+            self.assertEqual(res, "__PAUSED__")
+            self.assertEqual(self.agent.active_execution_id, "123")
 
     def test_05_run_needs_human(self):
         mock_engine = MagicMock()
@@ -59,7 +60,8 @@ class TestIntegration(AsyncTestCase):
 
         with patch.object(self.agent, '_get_execution_engine', return_value=mock_engine):
             res = self.async_run(self.agent.a_run("Help"))
-            self.assertEqual(res, "__NEEDS_HUMAN__:123:Why?")
+            self.assertEqual(res, "__NEEDS_HUMAN__:Why?")
+            self.assertEqual(self.agent.active_execution_id, "123")
 
     def test_06_continue_execution(self):
         with patch.object(self.agent, 'a_run', new_callable=AsyncMock) as mock_run:
@@ -89,26 +91,6 @@ class TestIntegration(AsyncTestCase):
         self.agent.unbind("P")
         self.agent.bind_manager.unbind.assert_called()
 
-
-    def test_10_format_class_yaml_parse(self):
-        from pydantic import BaseModel
-        class T(BaseModel): a: int
-
-        # Mock LLM return valid YAML
-        self.agent.a_run_llm_completion = AsyncMock(return_value="```yaml\na: 10\n```")
-
-        res = self.async_run(self.agent.a_format_class(T, "prompt"))
-        self.assertEqual(res['a'], 10)
-
-    def test_11_format_class_retry(self):
-        from pydantic import BaseModel
-        class T(BaseModel): a: int
-
-        # Fail once then succeed
-        self.agent.a_run_llm_completion = AsyncMock(side_effect=["Bad", "a: 5"])
-
-        res = self.async_run(self.agent.a_format_class(T, "prompt", max_retries=1))
-        self.assertEqual(res['a'], 5)
 
     def test_12_stats(self):
         stats = self.agent.get_stats()

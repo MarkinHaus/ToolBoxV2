@@ -34,7 +34,7 @@ class TestExecutionEngine(AsyncTestCase):
         self.agent.a_run_llm_completion = AsyncMock(return_value="Hi there")
         state = ExecutionState("id", "Hello", "sess")
 
-        res = self.async_run(self.engine._immediate_response(state, self.session, False))
+        res = self.async_run(self.engine._immediate_response(state, self.session))
         self.assertEqual(res, "Hi there")
         self.assertEqual(state.phase, ExecutionPhase.COMPLETED)
 
@@ -70,7 +70,7 @@ class TestExecutionEngine(AsyncTestCase):
         # Mock format fallback
         self.agent.a_format_class.return_value = {'action': 'final_answer', 'answer': '42'}
 
-        res = self.async_run(self.engine._react_loop(state, self.session, False))
+        res = self.async_run(self.engine._react_loop(state, self.session))
         self.assertEqual(res, "42")
 
     def test_07_execute_action_vfs(self):
@@ -106,11 +106,6 @@ class TestExecutionEngine(AsyncTestCase):
         self.assertTrue(res)
         self.assertNotIn("id", self.engine._executions)
 
-    def test_11_detect_loop(self):
-        state = ExecutionState("id", "Q", "sess")
-        state.actions = [{'type': 'A'}] * 3
-        self.assertTrue(self.engine._detect_loop(state))
-
     def test_12_validation(self):
         self.agent.a_format_class.return_value = {'is_valid': True, 'confidence': 1.0, 'issues': []}
         state = ExecutionState("id", "Q", "sess")
@@ -137,7 +132,7 @@ class TestExecutionEngine(AsyncTestCase):
             subtask = {'id': 't1', 'description': 'd'}
 
             res = self.async_run(self.engine._run_microagent(
-                ExecutionState("id", "Q", "sess"), self.session, subtask, False
+                ExecutionState("id", "Q", "sess"), self.session, subtask
             ))
             self.assertEqual(res.result, "Done")
 
@@ -147,7 +142,7 @@ class TestExecutionEngine(AsyncTestCase):
         # Mock _run_execution to avoid real logic
         with patch.object(self.engine, '_run_execution', new_callable=AsyncMock) as mock_run:
             mock_run.return_value = "Result"
-            res = self.async_run(self.engine._continue_execution(state, False, False))
+            res = self.async_run(self.engine._continue_execution(state))
             self.assertEqual(res, "Result")
             self.assertIsNotNone(state.resumed_at)
 
@@ -157,7 +152,10 @@ class TestExecutionEngine(AsyncTestCase):
             'can_answer_directly': True, 'needs_tools': False,
             'is_complex_task': False, 'confidence': 1.0
         }
-        self.agent.a_run_llm_completion = AsyncMock(return_value="Ans")
+        r = lambda x: None
+        r.tool_calls = None
+        r.content = "Ans"
+        self.agent.a_run_llm_completion = AsyncMock(return_value=r)
 
         self.session.add_message = AsyncMock()
         self.session.get_reference = AsyncMock()

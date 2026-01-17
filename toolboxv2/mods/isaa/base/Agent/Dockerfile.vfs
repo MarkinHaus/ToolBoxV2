@@ -1,0 +1,104 @@
+# ToolboxV2 VFS Docker Base Image
+# Based on official Python 3.12 slim image
+# 
+# Usage:
+#   docker build -t toolboxv2-vfs:latest -f Dockerfile.vfs .
+#   
+# The image expects:
+#   - ToolboxV2 wheel to be mounted at /mnt/toolboxv2.whl
+#   - Or pre-installed during build by uncommenting the COPY/RUN lines
+
+FROM python:3.12-slim
+
+LABEL maintainer="ToolboxV2 Team"
+LABEL description="Base image for VFS Docker execution environment"
+LABEL version="1.0"
+
+# Prevent Python from writing pyc files and buffering stdout/stderr
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Set workspace directory
+ENV WORKSPACE=/workspace
+WORKDIR ${WORKSPACE}
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Basic tools
+    curl \
+    wget \
+    git \
+    # Build essentials for Python packages
+    build-essential \
+    # Network tools
+    netcat-openbsd \
+    # Process management
+    procps \
+    # For web apps
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js (for web app support)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Upgrade pip
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Install common Python packages for agent work
+RUN pip install --no-cache-dir \
+    # HTTP
+    httpx \
+    aiohttp \
+    requests \
+    # Data processing
+    pandas \
+    numpy \
+    # JSON/YAML
+    pyyaml \
+    orjson \
+    # Utilities
+    python-dotenv \
+    rich
+
+# Create non-root user for security
+RUN useradd -m -s /bin/bash vfsuser \
+    && chown -R vfsuser:vfsuser ${WORKSPACE}
+
+# Create mount point for ToolboxV2 wheel
+RUN mkdir -p /mnt
+
+# Optional: Pre-install ToolboxV2 if wheel is available during build
+# Uncomment these lines and place wheel in build context
+# COPY toolboxv2-*.whl /tmp/
+# RUN pip install --no-cache-dir /tmp/toolboxv2-*.whl && rm /tmp/toolboxv2-*.whl
+
+# Install script that runs on container start
+COPY --chmod=755 <<'EOF' /usr/local/bin/vfs-init.sh
+#!/bin/bash
+set -e
+
+# Install ToolboxV2 if wheel is mounted
+if [ -f /mnt/*.whl ]; then
+    echo "Installing ToolboxV2 from mounted wheel..."
+    pip install --no-cache-dir /mnt/*.whl --quiet 2>/dev/null || true
+fi
+
+# Execute the provided command
+exec "$@"
+EOF
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import sys; sys.exit(0)" || exit 1
+
+# Default to running as vfsuser
+USER vfsuser
+
+# Entry point
+ENTRYPOINT ["/usr/local/bin/vfs-init.sh"]
+
+# Default command (keep container running)
+CMD ["tail", "-f", "/dev/null"]

@@ -22,6 +22,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from toolboxv2 import Spinner, get_logger
+from toolboxv2.mods.isaa.base.Agent.docker_vfs import DockerConfig
 
 # Framework imports with graceful degradation
 try:
@@ -660,6 +661,24 @@ class FlowAgentBuilder:
             self.add_tool(obj, name=tool_name, category=category or module.__name__)
 
         iprint(f"Added tools from module {module.__name__}")
+        return self
+
+    def with_docker_vfs(self, config: DockerConfig | None = None) -> 'FlowAgentBuilder':
+        """Enable Docker VFS"""
+        self.config.docker_config = config or DockerConfig()
+        iprint(f"Docker VFS enabled")
+        return self.with_docker(True)
+
+    def with_lsp(self, enabled: bool = True) -> 'FlowAgentBuilder':
+        """Enable LSP"""
+        self.config.enable_lsp = enabled
+        iprint(f"LSP enabled: {enabled}")
+        return self
+
+    def with_docker(self, enabled: bool = True) -> 'FlowAgentBuilder':
+        """Enable Docker"""
+        self.config.enable_docker = enabled
+        iprint(f"Docker enabled: {enabled}")
         return self
 
     # =========================================================================

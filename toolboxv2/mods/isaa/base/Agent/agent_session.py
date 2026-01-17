@@ -52,7 +52,7 @@ class VirtualFileSystem:
     - Auto-summary on close
     """
 
-    def __init__(
+    def  __init__(
         self,
         session_id: str,
         agent_name: str,

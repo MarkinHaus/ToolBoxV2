@@ -117,13 +117,22 @@ class FlowAgent:
         from toolboxv2.mods.isaa.base.Agent.tool_manager import ToolManager
         from toolboxv2.mods.isaa.base.Agent.checkpoint_manager import CheckpointManager
         from toolboxv2.mods.isaa.base.Agent.bind_manager import BindManager
+        from toolboxv2.mods.isaa.base.Agent.docker_vfs import DockerConfig
 
         self.session_manager = SessionManager(
             agent_name=self.amd.name,
             default_max_history=100,
             vfs_max_window_lines=self.amd.vfs_max_window_lines,
             rule_config_path=self._rule_config_path,
-            summarizer=self._create_summarizer()
+            summarizer=self._create_summarizer(),
+
+            enable_lsp = self.amd.enable_lsp,
+            enable_docker = self.amd.enable_docker,
+            docker_config = self.amd.docker_config or DockerConfig(
+                memory_limit="4g",
+                timeout_seconds=600
+            ),
+            toolboxv2_wheel_path = os.getenv("TOOLBV2_WHEEL_PATH", "C:/Users/Markin/Workspace/ToolBoxV2/dist/toolboxv2-0.1.24-py2.py3-none-any.whl")
         )
 
         self.tool_manager = ToolManager()
@@ -834,143 +843,890 @@ class FlowAgent:
         if _session:
             _session.clear_history()
 
-    async def init_session_tools(self, session_id: str = None):
+    def init_session_tools(self, session: 'AgentSession'):
         """
-        Initializes and registers standard session-aware tools (VFS, Memory, Situation).
-        These tools allow the LLM to interact with the active AgentSession.
+        Initialize session-specific tools for VFS V2, Docker, and filesystem operations.
+
+        Tools are categorized:
+        - vfs: Virtual File System operations
+        - docker: Container execution (flag: requires_docker)
+        - filesystem: Real filesystem copy operations (flag: filesystem_access)
+        - memory: RAG and history
+        - situation: Behavior control
         """
-        session_id = session_id or self.active_session
-        _session = await self.session_manager.get_or_create(session_id) if isinstance(session_id, str) else session_id
-        session_id = _session.session_id
-        if not self.session_manager.exists(session_id):
-            raise ValueError(f"Session '{session_id}' not found. create it using the session_manager get_or_create")
-        if _session.tools_initialized:
-            return
-        # --- Helper to safely get session ---
-        def get_session():
-            session = self.session_manager.get(session_id)
-            if not session:
-                raise ValueError(f"Session '{self.active_session}' not found.")
-            return session
 
-        # ==========================
-        # 1. Virtual File System (VFS)
-        # ==========================
+        # =========================================================================
+        # VFS TOOLS (V2)
+        # =========================================================================
 
-        async def vfs_list_files():
-            """List all files in the virtual file system with their status and size."""
-            return get_session().vfs_list()
+        # --- File Operations ---
 
-        async def vfs_read_file(filename: str):
-            """Read the full content of a file from the VFS."""
-            return get_session().vfs_read(filename)
-
-        async def vfs_create_file(filename: str, content: str):
-            """Create a new file in the VFS with the given content."""
-            return get_session().vfs_create(filename, content)
-
-        async def vfs_write_file(filename: str, content: str):
-            """Overwrite an existing file completely with new content."""
-            return get_session().vfs_write(filename, content)
-
-        async def vfs_edit_file(filename: str, line_start: int, line_end: int, new_content: str):
+        def vfs_list(path: str = "/", recursive: bool = False) -> dict:
             """
-            Edit specific lines in a file. Replaces lines from line_start to line_end with new_content.
-            Use this for precise edits to large files to save tokens.
+            List directory contents in VFS.
+
+            Args:
+                path: Directory path to list (default: root)
+                recursive: If True, list recursively
+
+            Returns:
+                Dict with contents list including files and directories
             """
-            return get_session().vfs.edit(filename, line_start, line_end, new_content)
+            return session.vfs_ls(path, recursive)
 
-        async def vfs_append_file(filename: str, content: str):
-            """Append text to the end of a file."""
-            return get_session().vfs.append(filename, content)
-
-        async def vfs_open_file(filename: str, line_start: int = 1, line_end: int = -1):
+        def vfs_read(path: str) -> dict:
             """
-            'Open' a file to make it visible in your context window.
-            Optionally specify line range.
-            Only open files are "seen" by the agent automatically.
+            Read file content from VFS.
+
+            Args:
+                path: Path to file (e.g., "/src/main.py")
+
+            Returns:
+                Dict with file content
             """
-            return get_session().vfs_open(filename, line_start, line_end)
+            return session.vfs_read(path)
 
-        async def vfs_close_file(filename: str):
+        def vfs_create(path: str, content: str = "") -> dict:
             """
-            'Close' a file to remove it from context window and save tokens.
-            Automatically generates a summary of the closed file.
+            Create a new file in VFS.
+
+            Args:
+                path: Path for new file (e.g., "/src/utils.py")
+                content: Initial file content
+
+            Returns:
+                Dict with success status and file type info
             """
-            return await get_session().vfs_close(filename)
+            return session.vfs_create(path, content)
 
-        # Register VFS Tools
-        vfs_category = ["system", "vfs"]
-        vfs_flags = {"virtual": True, "context_modifying": True}
-
-        await self.add_tool(vfs_list_files, name="vfs_list", description="List all VFS files",
-                            category=vfs_category, flags=vfs_flags)
-        await self.add_tool(vfs_read_file, name="vfs_read", description="Read file content",
-                            category=vfs_category, flags=vfs_flags)
-        await self.add_tool(vfs_create_file, name="vfs_create", description="Create new file",
-                            category=vfs_category, flags=vfs_flags)
-        await self.add_tool(vfs_write_file, name="vfs_write", description="Overwrite file", category=vfs_category,
-                            flags=vfs_flags)
-        await self.add_tool(vfs_edit_file, name="vfs_edit", description="Edit specific file lines",
-                            category=vfs_category, flags=vfs_flags)
-        await self.add_tool(vfs_append_file, name="vfs_append", description="Append to file",
-                            category=vfs_category, flags=vfs_flags)
-        await self.add_tool(vfs_open_file, name="vfs_open", description="Add file to context",
-                            category=vfs_category, flags=vfs_flags)
-        await self.add_tool(vfs_close_file, name="vfs_close", description="Remove file from context",
-                            category=vfs_category, flags=vfs_flags)
-
-        # ==========================
-        # 2. Memory & RAG
-        # ==========================
-
-        async def memory_recall(query: str, concepts: bool = False):
+        def vfs_write(path: str, content: str) -> dict:
             """
-            Search long-term memory/knowledge base for relevant information.
-            Use this when you need context not present in the current conversation.
+            Write/overwrite file content in VFS.
+
+            Args:
+                path: Path to file
+                content: New content
+
+            Returns:
+                Dict with success status
             """
-            return await get_session().get_reference(query, concepts=concepts)
+            return session.vfs_write(path, content)
 
-        async def memory_history(last_n: int = 10):
-            """Retrieve the last N messages of the conversation history."""
-            return get_session().get_history(last_n)
-
-        mem_category = ["system", "memory"]
-
-        await self.add_tool(memory_recall, name="memory_recall",
-                            description="Search knowledge base/long-term memory", category=mem_category,
-                            flags={"readonly": True})
-        await self.add_tool(memory_history, name="memory_history", description="Get recent chat history",
-                            category=mem_category, flags={"readonly": True})
-
-        # ==========================
-        # 3. Situation & Behavior
-        # ==========================
-
-        async def set_agent_situation(situation: str, intent: str):
+        def vfs_edit(path: str, line_start: int, line_end: int, new_content: str) -> dict:
             """
-            Update the current situation and intent.
-            This changes which rules apply to the agent's behavior.
+            Edit file by replacing lines (1-indexed).
+
+            Args:
+                path: Path to file
+                line_start: First line to replace (1-indexed)
+                line_end: Last line to replace (inclusive)
+                new_content: New content for those lines
+
+            Returns:
+                Dict with success status
             """
-            get_session().set_situation(situation, intent)
-            return f"Situation set to: {situation} | Intent: {intent}"
+            return session.vfs.edit(path, line_start, line_end, new_content)
 
-        async def check_permissions(action: str):
-            """Check if a specific action is allowed under current rules."""
-            result = get_session().rule_on_action(action)
-            return f"Action '{action}' allowed: {result.allowed}. Reason: {result.reason}"
+        def vfs_append(path: str, content: str) -> dict:
+            """
+            Append content to a file.
 
-        meta_category = ["system", "meta"]
+            Args:
+                path: Path to file
+                content: Content to append
 
-        await self.add_tool(set_agent_situation, name="situation_set",
-                            description="Update current agent situation/context", category=meta_category,
-                            flags={"affects_rules": True})
-        await self.add_tool(check_permissions, name="check_rules", description="Check if action is allowed",
-                            category=meta_category, flags={"readonly": True})
+            Returns:
+                Dict with success status
+            """
+            return session.vfs.append(path, content)
 
-        logger.info(f"Initialized standard session tools for agent '{self.amd.name}'")
+        def vfs_delete(path: str) -> dict:
+            """
+            Delete a file from VFS.
 
-        _session.tools_initialized = True
+            Args:
+                path: Path to file
+
+            Returns:
+                Dict with success status
+            """
+            return session.vfs.delete(path)
+
+        # --- Directory Operations ---
+
+        def vfs_mkdir(path: str, parents: bool = True) -> dict:
+            """
+            Create a directory in VFS.
+
+            Args:
+                path: Directory path (e.g., "/src/components")
+                parents: If True, create parent directories as needed
+
+            Returns:
+                Dict with success status
+            """
+            return session.vfs_mkdir(path, parents)
+
+        def vfs_rmdir(path: str, force: bool = False) -> dict:
+            """
+            Remove a directory from VFS.
+
+            Args:
+                path: Directory path
+                force: If True, remove non-empty directories recursively
+
+            Returns:
+                Dict with success status
+            """
+            return session.vfs_rmdir(path, force)
+
+        def vfs_mv(source: str, destination: str) -> dict:
+            """
+            Move/rename a file or directory.
+
+            Args:
+                source: Source path
+                destination: Destination path
+
+            Returns:
+                Dict with success status
+            """
+            return session.vfs_mv(source, destination)
+
+        # --- Open/Close Operations ---
+
+        def vfs_open(path: str, line_start: int = 1, line_end: int = -1) -> dict:
+            """
+            Open a file (make visible in LLM context).
+
+            Args:
+                path: Path to file
+                line_start: First line to show (1-indexed)
+                line_end: Last line to show (-1 = all)
+
+            Returns:
+                Dict with preview of content
+            """
+            return session.vfs_open(path, line_start, line_end)
+
+        async def vfs_close(path: str) -> dict:
+            """
+            Close a file (remove from context, generate summary).
+
+            Args:
+                path: Path to file
+
+            Returns:
+                Dict with generated summary
+            """
+            return await session.vfs_close(path)
+
+        def vfs_view(path: str, line_start: int = 1, line_end: int = -1) -> dict:
+            """
+            View/adjust visible window of an open file.
+
+            Args:
+                path: Path to file
+                line_start: First line to show
+                line_end: Last line to show
+
+            Returns:
+                Dict with visible content
+            """
+            return session.vfs.view(path, line_start, line_end)
+
+        # --- Info & Diagnostics ---
+
+        def vfs_info(path: str) -> dict:
+            """
+            Get detailed info about a file or directory.
+
+            Args:
+                path: Path to file or directory
+
+            Returns:
+                Dict with metadata (type, size, lines, file_type, lsp_enabled, etc.)
+            """
+            return session.vfs.get_file_info(path)
+
+        async def vfs_diagnostics(path: str) -> dict:
+            """
+            Get LSP diagnostics (errors, warnings, hints) for a code file.
+
+            Args:
+                path: Path to code file
+
+            Returns:
+                Dict with diagnostics list, error/warning/hint counts
+            """
+            return await session.vfs_diagnostics(path)
+
+        def vfs_executables() -> list[dict]:
+            """
+            Get list of all executable files in VFS.
+
+            Returns:
+                List of executable files with path, language, size
+            """
+            return session.vfs.get_executable_files()
+
+        # =========================================================================
+        # FILESYSTEM COPY TOOLS (Flag: filesystem_access)
+        # =========================================================================
+
+        def fs_copy_to_vfs(
+            local_path: str,
+            vfs_path: str | None = None,
+            allowed_dirs: list[str] | None = None,
+            max_size_bytes: int = 1024 * 1024
+        ) -> dict:
+            """
+            Copy a file from real filesystem into VFS.
+
+            Args:
+                local_path: Path on real filesystem
+                vfs_path: Destination path in VFS (default: /<filename>)
+                allowed_dirs: List of allowed directories for security
+                max_size_bytes: Maximum file size (default: 1MB)
+
+            Returns:
+                Dict with success status, vfs_path, size, lines, file_type
+
+            Security:
+                Requires filesystem_access flag.
+                Only reads from allowed_dirs if specified.
+            """
+            return session.vfs.load_from_local(
+                local_path=local_path,
+                vfs_path=vfs_path,
+                allowed_dirs=allowed_dirs,
+                max_size_bytes=max_size_bytes
+            )
+
+        def fs_copy_from_vfs(
+            vfs_path: str,
+            local_path: str,
+            allowed_dirs: list[str] | None = None,
+            overwrite: bool = False,
+            create_dirs: bool = True
+        ) -> dict:
+            """
+            Copy a file from VFS to real filesystem.
+
+            Args:
+                vfs_path: Path in VFS
+                local_path: Destination path on real filesystem
+                allowed_dirs: List of allowed directories for security
+                overwrite: Allow overwriting existing files
+                create_dirs: Create parent directories if needed
+
+            Returns:
+                Dict with success status, saved_path, size, lines
+
+            Security:
+                Requires filesystem_access flag.
+                Only writes to allowed_dirs if specified.
+            """
+            return session.vfs.save_to_local(
+                vfs_path=vfs_path,
+                local_path=local_path,
+                allowed_dirs=allowed_dirs,
+                overwrite=overwrite,
+                create_dirs=create_dirs
+            )
+
+        def fs_copy_folder_to_vfs(
+            local_path: str,
+            vfs_path: str = "/",
+            allowed_dirs: list[str] | None = None,
+            max_size_bytes: int = 1024 * 1024,
+            max_files: int = 100,
+            include_patterns: list[str] | None = None,
+            exclude_patterns: list[str] | None = None
+        ) -> dict:
+            """
+            Copy a folder from real filesystem into VFS recursively.
+
+            Args:
+                local_path: Path to folder on real filesystem
+                vfs_path: Destination path in VFS (default: root)
+                allowed_dirs: List of allowed directories for security
+                max_size_bytes: Maximum size per file (default: 1MB)
+                max_files: Maximum number of files to copy (default: 100)
+                include_patterns: Only include files matching these patterns (e.g., ["*.py", "*.js"])
+                exclude_patterns: Exclude files matching these patterns (e.g., ["__pycache__", "*.pyc", ".git"])
+
+            Returns:
+                Dict with success status, copied files count, skipped files, errors
+
+            Security:
+                Requires filesystem_access flag.
+                Only reads from allowed_dirs if specified.
+            """
+            import os
+            import fnmatch
+
+            results = {
+                "success": True,
+                "copied_files": [],
+                "copied_dirs": [],
+                "skipped": [],
+                "errors": [],
+                "total_size": 0
+            }
+
+            # Default exclude patterns
+            if exclude_patterns is None:
+                exclude_patterns = [
+                    "__pycache__", "*.pyc", "*.pyo", ".git", ".svn",
+                    "node_modules", ".venv", "venv", "*.egg-info",
+                    ".DS_Store", "Thumbs.db", "*.log"
+                ]
+
+            try:
+                resolved_path = os.path.abspath(os.path.expanduser(local_path))
+            except Exception as e:
+                return {"success": False, "error": f"Invalid path: {e}"}
+
+            # Security check
+            if allowed_dirs:
+                allowed = any(
+                    resolved_path.startswith(os.path.abspath(os.path.expanduser(d)))
+                    for d in allowed_dirs
+                )
+                if not allowed:
+                    return {"success": False, "error": f"Path not in allowed directories: {resolved_path}"}
+
+            if not os.path.exists(resolved_path):
+                return {"success": False, "error": f"Folder not found: {resolved_path}"}
+
+            if not os.path.isdir(resolved_path):
+                return {"success": False, "error": f"Not a directory: {resolved_path}"}
+
+            def should_include(filename: str) -> bool:
+                """Check if file should be included based on patterns"""
+                # Check exclude patterns first
+                for pattern in exclude_patterns:
+                    if fnmatch.fnmatch(filename, pattern) or fnmatch.fnmatch(os.path.basename(filename), pattern):
+                        return False
+
+                # If include patterns specified, file must match at least one
+                if include_patterns:
+                    return any(
+                        fnmatch.fnmatch(filename, p) or fnmatch.fnmatch(os.path.basename(filename), p)
+                        for p in include_patterns
+                    )
+
+                return True
+
+            def should_include_dir(dirname: str) -> bool:
+                """Check if directory should be traversed"""
+                basename = os.path.basename(dirname)
+                for pattern in exclude_patterns:
+                    if fnmatch.fnmatch(basename, pattern):
+                        return False
+                return True
+
+            # Normalize vfs_path
+            vfs_base = vfs_path.rstrip("/")
+            if not vfs_base:
+                vfs_base = ""
+
+            file_count = 0
+
+            # Walk the directory
+            for root, dirs, files in os.walk(resolved_path):
+                # Filter directories in-place to prevent traversal
+                dirs[:] = [d for d in dirs if should_include_dir(os.path.join(root, d))]
+
+                # Calculate relative path
+                rel_root = os.path.relpath(root, resolved_path)
+                if rel_root == ".":
+                    vfs_dir = vfs_base if vfs_base else "/"
+                else:
+                    vfs_dir = f"{vfs_base}/{rel_root.replace(os.sep, '/')}"
+
+                # Create directory in VFS
+                if vfs_dir and vfs_dir != "/":
+                    dir_result = session.vfs_mkdir(vfs_dir, parents=True)
+                    if dir_result.get("success"):
+                        results["copied_dirs"].append(vfs_dir)
+
+                # Copy files
+                for filename in files:
+                    if file_count >= max_files:
+                        results["skipped"].append(f"{root}/{filename} (max files reached)")
+                        continue
+
+                    local_file = os.path.join(root, filename)
+
+                    if not should_include(local_file):
+                        results["skipped"].append(f"{local_file} (excluded by pattern)")
+                        continue
+
+                    # Check file size
+                    try:
+                        file_size = os.path.getsize(local_file)
+                        if file_size > max_size_bytes:
+                            results["skipped"].append(f"{local_file} (too large: {file_size} bytes)")
+                            continue
+                    except Exception as e:
+                        results["errors"].append(f"{local_file}: {e}")
+                        continue
+
+                    # Build VFS path
+                    vfs_file_path = f"{vfs_dir}/{filename}" if vfs_dir != "/" else f"/{filename}"
+
+                    # Copy file
+                    copy_result = session.vfs.load_from_local(
+                        local_path=local_file,
+                        vfs_path=vfs_file_path,
+                        allowed_dirs=allowed_dirs,
+                        max_size_bytes=max_size_bytes
+                    )
+
+                    if copy_result.get("success"):
+                        results["copied_files"].append({
+                            "local": local_file,
+                            "vfs": vfs_file_path,
+                            "size": copy_result.get("size_bytes", 0),
+                            "type": copy_result.get("file_type", "Unknown")
+                        })
+                        results["total_size"] += copy_result.get("size_bytes", 0)
+                        file_count += 1
+                    else:
+                        results["errors"].append(f"{local_file}: {copy_result.get('error')}")
+
+            results["files_copied"] = len(results["copied_files"])
+            results["dirs_created"] = len(results["copied_dirs"])
+
+            if results["errors"]:
+                results["success"] = len(results["copied_files"]) > 0  # Partial success
+
+            return results
+
+        def fs_copy_folder_from_vfs(
+            vfs_path: str,
+            local_path: str,
+            allowed_dirs: list[str] | None = None,
+            overwrite: bool = False,
+            create_dirs: bool = True,
+            include_patterns: list[str] | None = None,
+            exclude_patterns: list[str] | None = None
+        ) -> dict:
+            """
+            Copy a folder from VFS to real filesystem recursively.
+
+            Args:
+                vfs_path: Path to folder in VFS
+                local_path: Destination path on real filesystem
+                allowed_dirs: List of allowed directories for security
+                overwrite: Allow overwriting existing files
+                create_dirs: Create parent directories if needed
+                include_patterns: Only include files matching these patterns
+                exclude_patterns: Exclude files matching these patterns
+
+            Returns:
+                Dict with success status, copied files count, skipped files, errors
+
+            Security:
+                Requires filesystem_access flag.
+                Only writes to allowed_dirs if specified.
+            """
+            import os
+            import fnmatch
+
+            results = {
+                "success": True,
+                "copied_files": [],
+                "created_dirs": [],
+                "skipped": [],
+                "errors": [],
+                "total_size": 0
+            }
+
+            # Default exclude patterns
+            if exclude_patterns is None:
+                exclude_patterns = []
+
+            # Normalize VFS path
+            vfs_path = vfs_path.rstrip("/")
+            if not vfs_path:
+                vfs_path = "/"
+
+            # Check if VFS path exists and is a directory
+            if not session.vfs._is_directory(vfs_path) and vfs_path != "/":
+                # Maybe it's root or doesn't exist
+                if vfs_path != "/" and not session.vfs._path_exists(vfs_path):
+                    return {"success": False, "error": f"VFS path not found: {vfs_path}"}
+
+            try:
+                resolved_local = os.path.abspath(os.path.expanduser(local_path))
+            except Exception as e:
+                return {"success": False, "error": f"Invalid local path: {e}"}
+
+            # Security check
+            if allowed_dirs:
+                allowed = any(
+                    resolved_local.startswith(os.path.abspath(os.path.expanduser(d)))
+                    for d in allowed_dirs
+                )
+                if not allowed:
+                    return {"success": False, "error": f"Path not in allowed directories: {resolved_local}"}
+
+            def should_include(filename: str) -> bool:
+                """Check if file should be included based on patterns"""
+                basename = os.path.basename(filename)
+
+                # Check exclude patterns
+                for pattern in exclude_patterns:
+                    if fnmatch.fnmatch(basename, pattern) or fnmatch.fnmatch(filename, pattern):
+                        return False
+
+                # If include patterns specified, must match at least one
+                if include_patterns:
+                    return any(
+                        fnmatch.fnmatch(basename, p) or fnmatch.fnmatch(filename, p)
+                        for p in include_patterns
+                    )
+
+                return True
+
+            def copy_vfs_directory(vfs_dir: str, local_dir: str):
+                """Recursively copy VFS directory to local"""
+                # Create local directory
+                if not os.path.exists(local_dir):
+                    if create_dirs:
+                        try:
+                            os.makedirs(local_dir, exist_ok=True)
+                            results["created_dirs"].append(local_dir)
+                        except Exception as e:
+                            results["errors"].append(f"Cannot create {local_dir}: {e}")
+                            return
+                    else:
+                        results["errors"].append(f"Directory does not exist: {local_dir}")
+                        return
+
+                # List VFS directory contents
+                ls_result = session.vfs.ls(vfs_dir, recursive=False)
+                if not ls_result.get("success"):
+                    results["errors"].append(f"Cannot list {vfs_dir}: {ls_result.get('error')}")
+                    return
+
+                for item in ls_result.get("contents", []):
+                    item_name = item["name"]
+                    item_vfs_path = item["path"]
+                    item_local_path = os.path.join(local_dir, item_name)
+
+                    if item["type"] == "directory":
+                        # Check exclude patterns for directories
+                        skip = False
+                        for pattern in exclude_patterns:
+                            if fnmatch.fnmatch(item_name, pattern):
+                                results["skipped"].append(f"{item_vfs_path} (excluded directory)")
+                                skip = True
+                                break
+
+                        if not skip:
+                            copy_vfs_directory(item_vfs_path, item_local_path)
+
+                    else:  # file
+                        if not should_include(item_name):
+                            results["skipped"].append(f"{item_vfs_path} (excluded by pattern)")
+                            continue
+
+                        # Skip readonly/system files
+                        vfs_file = session.vfs.files.get(item_vfs_path)
+                        if vfs_file and vfs_file.readonly:
+                            results["skipped"].append(f"{item_vfs_path} (system file)")
+                            continue
+
+                        # Check if local file exists
+                        if os.path.exists(item_local_path) and not overwrite:
+                            results["skipped"].append(f"{item_vfs_path} (file exists, overwrite=False)")
+                            continue
+
+                        # Copy file
+                        save_result = session.vfs.save_to_local(
+                            vfs_path=item_vfs_path,
+                            local_path=item_local_path,
+                            allowed_dirs=allowed_dirs,
+                            overwrite=overwrite,
+                            create_dirs=create_dirs
+                        )
+
+                        if save_result.get("success"):
+                            results["copied_files"].append({
+                                "vfs": item_vfs_path,
+                                "local": item_local_path,
+                                "size": save_result.get("size_bytes", 0)
+                            })
+                            results["total_size"] += save_result.get("size_bytes", 0)
+                        else:
+                            results["errors"].append(f"{item_vfs_path}: {save_result.get('error')}")
+
+            # Start recursive copy
+            copy_vfs_directory(vfs_path, resolved_local)
+
+            results["files_copied"] = len(results["copied_files"])
+            results["dirs_created"] = len(results["created_dirs"])
+
+            if results["errors"]:
+                results["success"] = len(results["copied_files"]) > 0  # Partial success
+
+            return results
+
+        # =========================================================================
+        # DOCKER TOOLS (Flag: requires_docker)
+        # =========================================================================
+
+        async def docker_run(
+            command: str,
+            timeout: int = 300,
+            sync_before: bool = True,
+            sync_after: bool = True
+        ) -> dict:
+            """
+            Execute a command in the Docker container.
+
+            The container has VFS files synced to /workspace.
+            Changes made in the container are synced back to VFS.
+
+            Args:
+                command: Shell command to execute
+                timeout: Timeout in seconds (default: 300)
+                sync_before: Sync VFS to container before execution
+                sync_after: Sync container to VFS after execution
+
+            Returns:
+                Dict with stdout, stderr, exit_code, duration, success
+            """
+            return await session.docker_run_command(command, timeout, sync_before, sync_after)
+
+        async def docker_start_app(
+            entrypoint: str,
+            port: int = 8080,
+            env: dict[str, str] | None = None
+        ) -> dict:
+            """
+            Start a web application in the Docker container.
+
+            Args:
+                entrypoint: Command to start the app (e.g., "python app.py")
+                port: Port the app listens on (default: 8080)
+                env: Environment variables
+
+            Returns:
+                Dict with url, host_port, status
+            """
+            return await session.docker_start_web_app(entrypoint, port, env)
+
+        async def docker_stop_app() -> dict:
+            """
+            Stop the running web application.
+
+            Returns:
+                Dict with success status
+            """
+            return await session.docker_stop_web_app()
+
+        async def docker_logs(lines: int = 100) -> dict:
+            """
+            Get logs from the web application.
+
+            Args:
+                lines: Number of log lines to retrieve
+
+            Returns:
+                Dict with logs content
+            """
+            return await session.docker_get_logs(lines)
+
+        def docker_status() -> dict:
+            """
+            Get Docker container status.
+
+            Returns:
+                Dict with is_running, container_id, exposed_ports, etc.
+            """
+            return session.docker_status()
+
+        # =========================================================================
+        # MEMORY/RAG TOOLS
+        # =========================================================================
+
+        async def recall(query: str, max_entries: int = 5) -> str:
+            """
+            Query RAG memory for relevant context.
+
+            Args:
+                query: Search query
+                max_entries: Maximum results to return
+
+            Returns:
+                Formatted context string from memory
+            """
+            return await session.get_reference(query, max_entries=max_entries)
+
+        def history(last_n: int = 10) -> list[dict]:
+            """
+            Get recent conversation history.
+
+            Args:
+                last_n: Number of recent messages
+
+            Returns:
+                List of message dicts with role and content
+            """
+            return session.get_history_for_llm(last_n)
+
+        # =========================================================================
+        # SITUATION/BEHAVIOR TOOLS
+        # =========================================================================
+
+        def set_agent_situation(situation: str, intent: str) -> dict:
+            """
+            Set the current situation and intent for rule-based behavior.
+
+            Args:
+                situation: Current situation description
+                intent: Current intent/goal
+
+            Returns:
+                Confirmation dict
+            """
+            session.set_situation(situation, intent)
+            return {"success": True, "situation": situation, "intent": intent}
+
+        def check_permissions(action: str, context: dict | None = None) -> dict:
+            """
+            Check if an action is allowed under current rules.
+
+            Args:
+                action: Action to check
+                context: Optional context for rule evaluation
+
+            Returns:
+                Dict with allowed status and reason
+            """
+            result = session.rule_on_action(action, context)
+            return {
+                "allowed": result.allowed,
+                "reason": result.reason,
+                "rule": result.rule_name
+            }
+
+        # =========================================================================
+        # REGISTER ALL TOOLS
+        # =========================================================================
+
+        tools = [
+            # VFS File Operations
+            {"function": vfs_list, "name": "vfs_list", "category": ["vfs", "read"]},
+            {"function": vfs_read, "name": "vfs_read", "category": ["vfs", "read"]},
+            {"function": vfs_create, "name": "vfs_create", "category": ["vfs", "write"]},
+            {"function": vfs_write, "name": "vfs_write", "category": ["vfs", "write"]},
+            {"function": vfs_edit, "name": "vfs_edit", "category": ["vfs", "write"]},
+            {"function": vfs_append, "name": "vfs_append", "category": ["vfs", "write"]},
+            {"function": vfs_delete, "name": "vfs_delete", "category": ["vfs", "write"]},
+
+            # VFS Directory Operations
+            {"function": vfs_mkdir, "name": "vfs_mkdir", "category": ["vfs", "write"]},
+            {"function": vfs_rmdir, "name": "vfs_rmdir", "category": ["vfs", "write"]},
+            {"function": vfs_mv, "name": "vfs_mv", "category": ["vfs", "write"]},
+
+            # VFS Open/Close
+            {"function": vfs_open, "name": "vfs_open", "category": ["vfs", "context"]},
+            {"function": vfs_close, "name": "vfs_close", "category": ["vfs", "context"], "is_async": True},
+            {"function": vfs_view, "name": "vfs_view", "category": ["vfs", "context"]},
+
+            # VFS Info & Diagnostics
+            {"function": vfs_info, "name": "vfs_info", "category": ["vfs", "read"]},
+            {"function": vfs_diagnostics, "name": "vfs_diagnostics", "category": ["vfs", "lsp"], "is_async": True},
+            {"function": vfs_executables, "name": "vfs_executables", "category": ["vfs", "read"]},
+
+            # Filesystem Copy (Flag-based)
+            {
+                "function": fs_copy_to_vfs,
+                "name": "fs_copy_to_vfs",
+                "category": ["filesystem", "vfs"],
+                "flags": {"filesystem_access": True},
+                "description": "Copy file from real filesystem to VFS"
+            },
+            {
+                "function": fs_copy_from_vfs,
+                "name": "fs_copy_from_vfs",
+                "category": ["filesystem", "vfs"],
+                "flags": {"filesystem_access": True},
+                "description": "Copy file from VFS to real filesystem"
+            },
+            {
+                "function": fs_copy_folder_to_vfs,
+                "name": "fs_copy_folder_to_vfs",
+                "category": ["filesystem", "vfs"],
+                "flags": {"filesystem_access": True},
+                "description": "Copy folder from real filesystem to VFS recursively"
+            },
+            {
+                "function": fs_copy_folder_from_vfs,
+                "name": "fs_copy_folder_from_vfs",
+                "category": ["filesystem", "vfs"],
+                "flags": {"filesystem_access": True},
+                "description": "Copy folder from VFS to real filesystem recursively"
+            },
+
+            # Docker (Flag-based)
+            {
+                "function": docker_run,
+                "name": "docker_run",
+                "category": ["docker", "execute"],
+                "flags": {"requires_docker": True},
+                "is_async": True
+            },
+            {
+                "function": docker_start_app,
+                "name": "docker_start_app",
+                "category": ["docker", "web"],
+                "flags": {"requires_docker": True},
+                "is_async": True
+            },
+            {
+                "function": docker_stop_app,
+                "name": "docker_stop_app",
+                "category": ["docker", "web"],
+                "flags": {"requires_docker": True},
+                "is_async": True
+            },
+            {
+                "function": docker_logs,
+                "name": "docker_logs",
+                "category": ["docker", "read"],
+                "flags": {"requires_docker": True},
+                "is_async": True
+            },
+            {
+                "function": docker_status,
+                "name": "docker_status",
+                "category": ["docker", "read"],
+                "flags": {"requires_docker": True}
+            },
+
+            # Memory/RAG
+            {"function": recall, "name": "recall", "category": ["memory", "rag"], "is_async": True},
+            {"function": history, "name": "history", "category": ["memory", "history"]},
+
+            # Situation/Behavior
+            {"function": set_agent_situation, "name": "set_agent_situation", "category": ["situation"]},
+            {"function": check_permissions, "name": "check_permissions", "category": ["situation", "rules"]},
+        ]
+
+        # Register all tools
+        for tool_def in tools:
+            self.add_tool(**tool_def)
+
+        session.tools_initialized = True
+
+        return tools
 
     # =========================================================================
     # CONTEXT AWARENESS & ANALYTICS
@@ -1179,6 +1935,8 @@ class FlowAgent:
         self.is_running = False
         print("Saving checkpoint...")
         await self.save()
+        if self.amd.enable_docker:
+            await self.session_manager.cleanup_docker_containers()
         await self.session_manager.close_all()
         self.executor.shutdown(wait=True)
 

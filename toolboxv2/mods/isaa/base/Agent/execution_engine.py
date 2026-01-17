@@ -22,8 +22,10 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, TYPE_CHECKING, AsyncGenerator
 from collections import deque
-
-from litellm.types.utils import ModelResponse
+try:
+    from litellm.types.utils import ModelResponse
+except ImportError:
+    class ModelResponse: pass
 from pydantic import BaseModel, Field
 
 from toolboxv2.mods.isaa.base.Agent import ToolEntry
@@ -1192,6 +1194,7 @@ class ExecutionEngine:
 
         try:
             response = await self._safe_llm_call(make_call, fallback_response=None, max_retries=2, context="_immediate_response")
+            state.phase = ExecutionPhase.COMPLETED
             return response
         except RuntimeError as e:
             state.red_flags.append(f"Immediate response failed: {e}")

@@ -9,6 +9,9 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from toolboxv2.mods.isaa.base.Agent.docker_vfs import DockerConfig
+
+
 class CheckpointConfig(BaseModel):
     """Checkpoint configuration"""
     enabled: bool = True
@@ -799,6 +802,9 @@ class AgentModelData(BaseModel):
     use_fast_response: bool = True
     handler_path_or_dict: str | dict[str, Any] | None = None
     vfs_max_window_lines: int = 250
+    enable_lsp: bool = True
+    enable_docker: bool = False
+    docker_config: DockerConfig | None = None
 
     def get_system_message(self) -> str:
         """Get system message with persona integration"""

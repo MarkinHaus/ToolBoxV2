@@ -41,6 +41,9 @@ class MockAgentModelData:
         self.vfs_max_window_lines = 100
         self.handler_path_or_dict = {}
         self.persona = None
+        self.enable_lsp = False
+        self.enable_docker = False
+        self.docker_config = None
 
     def get_system_message(self):
         return self.system_message
