@@ -180,9 +180,8 @@ class FlowAgent:
 
         return ExecutionEngine(
             agent=self,
-            use_native_tools=kwargs.get('use_native_tools', True),
             human_online=kwargs.get('human_online', False),
-            intermediate_callback=kwargs.get('intermediate_callback')
+            callback=kwargs.get('intermediate_callback')
         )
 
     # =========================================================================
@@ -533,7 +532,7 @@ class FlowAgent:
             )
 
             # Handle special states
-            if result.paused:
+            if result.needs_human:
                 self.active_execution_id = result.execution_id
                 if result.needs_human:
                     return f"__NEEDS_HUMAN__:{result.human_query}"
@@ -1774,22 +1773,23 @@ class FlowAgent:
         base_system_msg = self.amd.get_system_message()
         # Hinweis: ExecutionEngine fügt oft noch spezifische Prompts hinzu (Immediate/React)
         # Wir nehmen hier eine repräsentative Größe an.
-        from toolboxv2.mods.isaa.base.Agent.execution_engine import IMMEDIATE_RESPONSE_SYSTEM_PROMPT
-        full_sys_msg = f"{base_system_msg}\n\n{IMMEDIATE_RESPONSE_SYSTEM_PROMPT}"
+        from toolboxv2.mods.isaa.base.Agent.execution_engine import SYSTEM_PROMPT
+        full_sys_msg = f"{base_system_msg}\n\n{SYSTEM_PROMPT}"
         metrics["system_prompt"] = litellm.token_counter(model=model, text=full_sys_msg)
 
         # 3. Tools Definitions Berechnung
         # Wir sammeln alle Tools + Standard VFS Tools um die Definition-Größe zu berechnen
-        from toolboxv2.mods.isaa.base.Agent.execution_engine import VFS_TOOLS_LITELLM, CONTROL_TOOLS_LITELLM
+        from toolboxv2.mods.isaa.base.Agent.execution_engine import VFS_TOOLS, CONTROL_TOOLS, DISCOVERY_TOOLS
 
-        user_tools = self.tool_manager.get_all_litellm()
         # System Tools die immer injected werden
-        all_tools = user_tools + VFS_TOOLS_LITELLM + CONTROL_TOOLS_LITELLM
+        all_tools = VFS_TOOLS + CONTROL_TOOLS + DISCOVERY_TOOLS
 
         # LiteLLM Token Counter kann Tools nicht direkt, wir dumpen das JSON als Näherungswert
         # (Dies ist oft genauer als man denkt, da Definitionen als Text/JSON injected werden)
         tools_json = json.dumps(all_tools)
         metrics["tool_definitions"] = litellm.token_counter(model=model, text=tools_json)
+        tools_json = json.dumps(self.tool_manager.get_all_litellm())
+        metrics["user_tool_definitions"] = litellm.token_counter(model=model, text=tools_json)
 
         # 4. Session Specific Data (VFS & History)
         if session_id:
