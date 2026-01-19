@@ -809,11 +809,13 @@ async def admin_list_local_models(auth: Dict = Depends(verify_admin)):
 async def admin_search_hf_models(q: str, auth: Dict = Depends(verify_admin)):
     """Search HuggingFace for GGUF models"""
     return await model_manager.search_hf_models(q)
-
+class DownloadRequest(BaseModel):
+    repo_id: str
+    filename: str
 @app.post("/admin/api/models/download")
-async def admin_download_model(repo_id: str, filename: str, auth: Dict = Depends(verify_admin)):
+async def admin_download_model(request: DownloadRequest, auth: Dict = Depends(verify_admin)):
     """Download model from HuggingFace"""
-    return await model_manager.download_hf_model(repo_id, filename)
+    return await model_manager.download_hf_model(request.repo_id, request.filename)
 
 @app.get("/admin/api/system")
 async def admin_system_stats(auth: Dict = Depends(verify_admin)):
