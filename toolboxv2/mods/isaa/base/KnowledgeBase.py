@@ -6,6 +6,7 @@ import math
 import os
 import pickle
 import re
+import sys
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -296,6 +297,545 @@ class GraphVisualizer:
 
 
 
+
+class TextSplitter:
+    def __init__(
+        self,
+        chunk_size: int = 3600,
+        chunk_overlap: int = 130,
+        separator: str = "\n"
+    ):
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.separator = separator
+
+    def approximate(self, text_len: int) -> float:
+        """
+        Approximate the number of chunks and average chunk size for a given text length
+
+        Args:
+            text_len (int): Length of the text to be split
+
+        Returns:
+            Tuple[int, int]: (number_of_chunks, approximate_chunk_size)
+        """
+        if text_len <= self.chunk_size:
+            return 1, text_len
+
+        # Handle extreme overlap cases
+        if self.chunk_overlap >= self.chunk_size:
+            estimated_chunks = text_len
+            return estimated_chunks, 1
+
+        # Calculate based on overlap ratio
+        overlap_ratio = self.chunk_overlap / self.chunk_size
+        base_chunks = text_len / self.chunk_size
+        estimated_chunks = base_chunks * 2 / (overlap_ratio if overlap_ratio > 0 else 1)
+
+        # print('#',estimated_chunks, base_chunks, overlap_ratio)
+        # Calculate average chunk size
+        avg_chunk_size = max(1, text_len / estimated_chunks)
+
+        return estimated_chunks * avg_chunk_size
+
+    def split_text(self, text: str) -> list[str]:
+        """Split text into chunks with overlap"""
+        # Clean and normalize text
+        text = re.sub(r'\s+', ' ', text).strip()
+
+        # If text is shorter than chunk_size, return as is
+        if len(text) <= self.chunk_size:
+            return [text]
+
+        chunks = []
+        start = 0
+
+        while start < len(text):
+            # Find end of chunk
+            end = start + self.chunk_size
+
+            if end >= len(text):
+                chunks.append(text[start:])
+                break
+
+            # Try to find a natural break point
+            last_separator = text.rfind(self.separator, start, end)
+            if last_separator != -1:
+                end = last_separator
+
+            # Add chunk
+            chunks.append(text[start:end])
+
+            # Calculate allowed overlap for this chunk
+            chunk_length = end - start
+            allowed_overlap = min(self.chunk_overlap, chunk_length - 1)
+
+            # Move start position considering adjusted overlap
+            start = end - allowed_overlap
+
+        return chunks
+
+
+import re
+from collections import Counter, defaultdict
+from typing import Any
+
+
+import spacy
+from spacy.tokens import Doc, Token
+
+# ============================================================================
+# DOMAIN ONTOLOGY - Statische Whitelist für Fachbegriffe
+# ============================================================================
+DOMAIN_ONTOLOGY: dict[str, set[str]] = {
+    "technical": {
+        "machine learning", "deep learning", "neural network", "neural networks",
+        "algorithm", "algorithms", "gpu", "gpus", "cpu", "cpus", "api", "apis",
+        "database", "databases", "python", "javascript", "rust", "java",
+        "transformer", "transformers", "bert", "gpt", "llm", "llms",
+        "backpropagation", "gradient descent", "optimization", "optimizer",
+        "batch size", "learning rate", "epoch", "epochs", "layer", "layers",
+        "convolution", "convolutional", "recurrent", "lstm", "gru",
+        "attention", "self-attention", "multi-head attention",
+        "embedding", "embeddings", "vector", "vectors", "tensor", "tensors",
+        "weights", "bias", "activation", "relu", "sigmoid", "softmax",
+        "dropout", "regularization", "normalization", "batch normalization",
+    },
+    "domain": {
+        "artificial intelligence", "ai", "data science", "data engineering",
+        "natural language processing", "nlp", "computer vision", "cv",
+        "reinforcement learning", "rl", "supervised learning", "unsupervised learning",
+        "transfer learning", "few-shot learning", "zero-shot learning",
+        "image recognition", "object detection", "segmentation",
+        "speech recognition", "text generation", "sentiment analysis",
+        "recommendation system", "anomaly detection", "clustering",
+    },
+    "method": {
+        "training", "inference", "prediction", "classification", "regression",
+        "fine-tuning", "pre-training", "tokenization", "preprocessing",
+        "feature extraction", "feature engineering", "data augmentation",
+        "cross-validation", "hyperparameter tuning", "model selection",
+        "ensemble", "bagging", "boosting", "stacking",
+    },
+    "property": {
+        "accuracy", "precision", "recall", "f1-score", "loss", "error",
+        "performance", "efficiency", "scalability", "robustness",
+        "generalization", "overfitting", "underfitting", "convergence",
+    },
+    "entity": {
+        "model", "models", "dataset", "datasets", "benchmark", "benchmarks",
+        "framework", "frameworks", "library", "libraries", "architecture",
+        "network", "networks", "system", "systems", "pipeline", "pipelines",
+    },
+}
+
+# Flatten für schnelle Lookups
+ALL_DOMAIN_TERMS: set[str] = set()
+TERM_TO_CATEGORY: dict[str, str] = {}
+for category, terms in DOMAIN_ONTOLOGY.items():
+    ALL_DOMAIN_TERMS.update(terms)
+    for term in terms:
+        TERM_TO_CATEGORY[term] = category
+
+# Dependency-Label zu Beziehungstyp Mapping
+DEP_TO_RELATION: dict[str, str] = {
+    "nsubj": "subject_of",
+    "nsubjpass": "subject_of",
+    "dobj": "uses",
+    "pobj": "related_to",
+    "compound": "part_of",
+    "amod": "has_property",
+    "prep": "related_to",
+    "conj": "similar_to",
+    "appos": "also_known_as",
+    "attr": "is_a",
+    "agent": "used_by",
+}
+
+
+# ============================================================================
+# LOCAL CONCEPT EXTRACTOR
+# ============================================================================
+
+class LocalConceptExtractor:
+    """
+    Lokaler, deterministischer Konzept-Extraktor basierend auf spaCy NLP.
+    Ersetzt LLM-basierte Extraktion für maximale Geschwindigkeit.
+    """
+
+    _nlp_instance = None
+
+    @classmethod
+    def get_nlp(cls):
+        """Lazy-load spaCy model (Singleton)"""
+        if cls._nlp_instance is None:
+            try:
+                cls._nlp_instance = spacy.load("en_core_web_sm")
+            except OSError:
+                # Fallback: Download if not installed
+                import subprocess
+                subprocess.run([sys.executable, "-m", "spacy", "download", "en_core_web_sm"], check=True)
+                cls._nlp_instance = spacy.load("en_core_web_sm")
+        return cls._nlp_instance
+
+    def __init__(self, max_concepts: int = 5):
+        self.nlp = self.get_nlp()
+        self.max_concepts = max_concepts
+
+    def extract(self, text: str) -> dict[str, Any]:
+        """
+        Extrahiert Konzepte aus Text mittels NLP-Analyse.
+
+        Returns:
+            Dict im Format {"concepts": [rConcept, ...]}
+        """
+        doc = self.nlp(text)
+
+        # 1. Kandidaten sammeln
+        candidates = self._collect_candidates(doc)
+
+        # 2. Beziehungen aus Dependency Tree extrahieren
+        relationships = self._extract_relationships(doc, candidates)
+
+        # 3. Wichtigkeit berechnen
+        importance_scores = self._calculate_importance(doc, candidates)
+
+        # 4. Kontext-Snippets extrahieren
+        context_snippets = self._extract_context(doc, candidates)
+
+        # 5. Top-N Konzepte auswählen
+        top_concepts = self._select_top_concepts(
+            candidates, importance_scores, relationships
+        )
+
+        # 6. In Output-Format konvertieren
+        concepts = []
+        for name in top_concepts[:self.max_concepts]:
+            concept = {
+                "name": name,
+                "category": self._determine_category(name, doc),
+                "relationships": self._format_relationships(name, relationships),
+                "importance_score": round(importance_scores.get(name, 0.1), 2),
+                "context_snippets": context_snippets.get(name, [])[:3],
+            }
+            concepts.append(concept)
+
+        return {"concepts": concepts}
+
+    def _collect_candidates(self, doc: Doc) -> set[str]:
+        """Sammelt Konzept-Kandidaten aus dem Text"""
+        candidates = set()
+
+        # 1. Named Entities
+        for ent in doc.ents:
+            if ent.label_ in {"ORG", "PRODUCT", "GPE", "WORK_OF_ART", "EVENT", "LAW"}:
+                candidates.add(ent.text.lower())
+
+        # 2. Noun Chunks (Nominalphrasen)
+        for chunk in doc.noun_chunks:
+            # Filtere zu generische Chunks
+            chunk_text = chunk.text.lower().strip()
+            if len(chunk_text) > 2 and chunk_text not in {"it", "this", "that", "they", "we"}:
+                candidates.add(chunk_text)
+                # Auch den Root des Chunks
+                candidates.add(chunk.root.lemma_.lower())
+
+        # 3. Domain-Terme aus Ontologie (Multi-Word matching)
+        text_lower = doc.text.lower()
+        for term in ALL_DOMAIN_TERMS:
+            if term in text_lower:
+                candidates.add(term)
+
+        # 4. Wichtige Nomen (basierend auf POS-Tags)
+        for token in doc:
+            if token.pos_ in {"NOUN", "PROPN"} and len(token.text) > 2:
+                if not token.is_stop:
+                    candidates.add(token.lemma_.lower())
+
+        return candidates
+
+    def _extract_relationships(
+        self, doc: Doc, candidates: set[str]
+    ) -> dict[str, dict[str, set[str]]]:
+        """Extrahiert Beziehungen aus dem Dependency Tree"""
+        relationships: dict[str, dict[str, set[str]]] = defaultdict(
+            lambda: defaultdict(set)
+        )
+
+        for token in doc:
+            token_text = token.lemma_.lower()
+            head_text = token.head.lemma_.lower()
+
+            # Nur relevante Kandidaten
+            if token_text not in candidates and head_text not in candidates:
+                continue
+
+            # Map dependency to relation type
+            rel_type = DEP_TO_RELATION.get(token.dep_, None)
+
+            if rel_type and token_text in candidates and head_text in candidates:
+                if token_text != head_text:
+                    relationships[token_text][rel_type].add(head_text)
+                    # Inverse Beziehung
+                    inverse_rel = self._get_inverse_relation(rel_type)
+                    if inverse_rel:
+                        relationships[head_text][inverse_rel].add(token_text)
+
+            # Compound-Beziehungen (z.B. "neural network")
+            if token.dep_ == "compound":
+                compound_term = f"{token.text.lower()} {token.head.text.lower()}"
+                if compound_term in candidates:
+                    relationships[token_text]["part_of"].add(compound_term)
+                    relationships[compound_term]["has_part"].add(token_text)
+
+            # Verb-basierte Beziehungen
+            if token.pos_ == "VERB":
+                subjects = [c for c in token.children if c.dep_ in {"nsubj", "nsubjpass"}]
+                objects = [c for c in token.children if c.dep_ in {"dobj", "pobj"}]
+
+                for subj in subjects:
+                    subj_text = subj.lemma_.lower()
+                    for obj in objects:
+                        obj_text = obj.lemma_.lower()
+                        if subj_text in candidates and obj_text in candidates:
+                            # z.B. "GPU accelerates training"
+                            verb_rel = f"{token.lemma_.lower()}s"  # Simple verb form
+                            if verb_rel in {"uses", "requires", "needs", "enables", "supports"}:
+                                relationships[subj_text]["uses"].add(obj_text)
+                            else:
+                                relationships[subj_text]["related_to"].add(obj_text)
+
+        # Kookkurrenz-basierte Beziehungen (gleicher Satz)
+        for sent in doc.sents:
+            sent_concepts = [
+                c for c in candidates
+                if c in sent.text.lower()
+            ]
+            for i, c1 in enumerate(sent_concepts):
+                for c2 in sent_concepts[i + 1:]:
+                    if c1 != c2:
+                        relationships[c1]["co_occurs_with"].add(c2)
+                        relationships[c2]["co_occurs_with"].add(c1)
+
+        return relationships
+
+    def _get_inverse_relation(self, rel_type: str) -> str | None:
+        """Gibt die inverse Beziehung zurück"""
+        inverses = {
+            "uses": "used_by",
+            "part_of": "has_part",
+            "subject_of": "has_subject",
+            "has_property": "property_of",
+            "is_a": "instance_of",
+            "depends_on": "dependency_of",
+        }
+        return inverses.get(rel_type)
+
+    def _calculate_importance(
+        self, doc: Doc, candidates: set[str]
+    ) -> dict[str, float]:
+        """Berechnet Wichtigkeits-Score basierend auf mehreren Faktoren"""
+        scores: dict[str, float] = {}
+        text_lower = doc.text.lower()
+        total_tokens = len(doc)
+
+        # Frequenz-Counter
+        term_freq = Counter()
+        for term in candidates:
+            term_freq[term] = text_lower.count(term)
+
+        max_freq = max(term_freq.values()) if term_freq else 1
+
+        for term in candidates:
+            score = 0.0
+
+            # 1. Frequenz (normalisiert)
+            freq_score = term_freq[term] / max_freq
+            score += freq_score * 0.3
+
+            # 2. Domain-Relevanz (aus Ontologie)
+            if term in ALL_DOMAIN_TERMS:
+                score += 0.3
+
+            # 3. Position im Text (früher = wichtiger)
+            first_pos = text_lower.find(term)
+            if first_pos != -1:
+                position_score = 1.0 - (first_pos / len(text_lower))
+                score += position_score * 0.2
+
+            # 4. Syntaktische Rolle
+            for token in doc:
+                if token.lemma_.lower() == term or term in token.text.lower():
+                    if token.dep_ in {"nsubj", "ROOT", "dobj"}:
+                        score += 0.1
+                    if token.pos_ in {"PROPN"}:
+                        score += 0.05
+                    break
+
+            # 5. Named Entity Bonus
+            for ent in doc.ents:
+                if term in ent.text.lower():
+                    score += 0.1
+                    break
+
+            # Normalisiere auf [0, 1]
+            scores[term] = min(score, 1.0)
+
+        return scores
+
+    def _extract_context(
+        self, doc: Doc, candidates: set[str]
+    ) -> dict[str, list[str]]:
+        """Extrahiert Kontext-Snippets für jeden Kandidaten"""
+        context: dict[str, list[str]] = defaultdict(list)
+
+        for sent in doc.sents:
+            sent_text = sent.text.strip()
+            if len(sent_text) < 10:
+                continue
+
+            sent_lower = sent_text.lower()
+            for term in candidates:
+                if term in sent_lower:
+                    # Kürze zu lange Sätze
+                    snippet = sent_text[:200] + "..." if len(sent_text) > 200 else sent_text
+                    if snippet not in context[term]:
+                        context[term].append(snippet)
+
+        return context
+
+    def _determine_category(self, term: str, doc: Doc) -> str:
+        """Bestimmt die Kategorie eines Konzepts"""
+        # 1. Prüfe Ontologie
+        if term in TERM_TO_CATEGORY:
+            return TERM_TO_CATEGORY[term]
+
+        # 2. Prüfe Teil-Matches in Ontologie
+        for domain_term, category in TERM_TO_CATEGORY.items():
+            if term in domain_term or domain_term in term:
+                return category
+
+        # 3. Fallback: POS-basierte Kategorisierung
+        for token in doc:
+            if token.lemma_.lower() == term or term in token.text.lower():
+                if token.pos_ == "PROPN":
+                    return "entity"
+                elif token.pos_ == "VERB":
+                    return "method"
+                elif token.pos_ == "ADJ":
+                    return "property"
+
+        # 4. Default
+        return "concept"
+
+    def _format_relationships(
+        self, name: str, relationships: dict[str, dict[str, set[str]]]
+    ) -> dict[str, list[str]]:
+        """Formatiert Beziehungen für Output"""
+        if name not in relationships:
+            return {}
+
+        formatted = {}
+        for rel_type, targets in relationships[name].items():
+            # Filtere self-references und limitiere
+            filtered = [t for t in targets if t != name][:5]
+            if filtered:
+                formatted[rel_type] = filtered
+
+        return formatted
+
+    def _select_top_concepts(
+        self,
+        candidates: set[str],
+        importance_scores: dict[str, float],
+        relationships: dict[str, dict[str, set[str]]]
+    ) -> list[str]:
+        """Wählt die wichtigsten Konzepte aus"""
+        scored = []
+
+        for term in candidates:
+            base_score = importance_scores.get(term, 0.0)
+
+            # Bonus für Konzepte mit vielen Beziehungen
+            rel_count = sum(len(targets) for targets in relationships.get(term, {}).values())
+            rel_bonus = min(rel_count * 0.05, 0.2)
+
+            # Bonus für Domain-Terme
+            domain_bonus = 0.15 if term in ALL_DOMAIN_TERMS else 0.0
+
+            final_score = base_score + rel_bonus + domain_bonus
+            scored.append((term, final_score))
+
+        # Sortiere nach Score
+        scored.sort(key=lambda x: x[1], reverse=True)
+
+        # Dedupliziere ähnliche Terme (z.B. "network" vs "neural network")
+        selected = []
+        selected_lower = set()
+
+        for term, score in scored:
+            # Skip wenn ein ähnlicher Term bereits ausgewählt
+            is_subset = any(
+                term in s or s in term
+                for s in selected_lower
+                if term != s
+            )
+            if not is_subset:
+                selected.append(term)
+                selected_lower.add(term)
+
+            if len(selected) >= self.max_concepts * 2:  # Buffer für Filtering
+                break
+
+        return selected
+
+
+# ============================================================================
+# INTEGRATION: Ersetzt process_single_request
+# ============================================================================
+
+# Singleton-Instanz für Performance
+_local_extractor: LocalConceptExtractor | None = None
+
+
+def get_local_extractor(max_concepts: int = 5) -> LocalConceptExtractor:
+    """Lazy-load der Extractor-Instanz"""
+    global _local_extractor
+    if _local_extractor is None:
+        _local_extractor = LocalConceptExtractor(max_concepts=max_concepts)
+    return _local_extractor
+
+
+async def process_single_request_local(
+    idx: int,
+    prompt: str,
+    system_prompt: str,  # Ignoriert, für API-Kompatibilität
+    metadata: dict[str, Any]
+) -> tuple[int, dict[str, Any] | None]:
+    """
+    Lokale, deterministische Ersetzung für process_single_request.
+
+    Nutzt NLP-basierte Konzeptextraktion statt LLM.
+
+    Args:
+        idx: Index des Requests
+        prompt: Der zu analysierende Text
+        system_prompt: Ignoriert (für Kompatibilität)
+        metadata: Metadaten (für Kompatibilität)
+
+    Returns:
+        Tuple von (idx, {"concepts": [...]} oder None bei Fehler)
+    """
+    try:
+        extractor = get_local_extractor(max_concepts=5)
+        result = extractor.extract(prompt)
+        return idx, result
+    except Exception as e:
+        print(f"Error in local concept extraction {idx}: {str(e)}")
+        return idx, None
+
+
+
 class ConceptExtractor:
     """Handles extraction of concepts and relationships from text"""
 
@@ -306,100 +846,28 @@ class ConceptExtractor:
 
     async def extract_concepts(self, texts: list[str], metadatas: list[dict[str, Any]]) -> list[list[Concept]]:
         """
-        Extract concepts from texts using concurrent processing with rate limiting.
-        Requests are made at the specified rate while responses are processed asynchronously.
+        Extract concepts from texts using LOCAL NLP processing.
+        No API calls, deterministic, milliseconds per text.
         """
-        # Ensure metadatas list matches texts length
         metadatas = metadatas + [{}] * (len(texts) - len(metadatas))
 
-        # Initialize rate limiter
+        # Verwende lokalen Extraktor
+        extractor = get_local_extractor(max_concepts=5)
 
-        system_prompt = (
-            "Analyze only the given user text and extract key concepts and their relationships. For each concept:\n"
-            "1. Identify the concept name and category (technical, domain, method, property, ...)\n"
-            "2. Determine relationships with other concepts (uses, part_of, similar_to, depends_on, ...)\n"
-            "3. Assess importance (0-1 score) based on centrality to the text\n"
-            "4. Extract relevant context snippets\n"
-            "5. Max 5 Concepts! only 1 concept is ok for small texts.\n"
-            "only return in format!\n"
-            """{"concepts": [{
-                "name": "concept_name",
-                "category": "category_name",
-                "relationships": {
-                    "relationship_type": ["related_concept1", "related_concept2"]
-                },
-                "importance_score": 0.0,
-                "context_snippets": ["relevant text snippet"]
-            }]}\n"""
-        )
-
-        # Prepare all requests
-        requests = [
-            (idx, f"{text}", system_prompt, metadata)
-            for idx, (text, metadata) in enumerate(zip(texts, metadatas, strict=False))
-        ]
-
-        async def process_single_request(idx: int, prompt: str, system_prompt: str, metadata: dict[str, Any]):
-            """Process a single request with rate limiting"""
+        all_results = []
+        for idx, (text, metadata) in enumerate(zip(texts, metadatas, strict=False)):
             try:
-                # Wait for rate limit
+                # Lokale Extraktion (synchron, aber sehr schnell)
+                concept_data = extractor.extract(text)
+                concepts = await self._process_response(concept_data, metadata)
+                all_results.append(concepts)
                 self.kb.stats['concept_calls'] += 1
-                # Make API call without awaiting the response
-
-
-                from toolboxv2 import get_app
-                response_future = await get_app().get_mod("isaa").mini_task_completion_format(
-                    mini_task=system_prompt,
-                    user_task=prompt,
-                    format_schema=Concepts,
-                    agent_name="summary")
-
-                return idx, response_future
-
             except Exception as e:
-                print(f"Error initiating request {idx}: {str(e)}")
-                return idx, None
+                print(f"Error extracting concepts for text {idx}: {e}")
+                self.kb.stats['concept_errors'] += 1
+                all_results.append([])
 
-        async def process_response(idx: int, response) -> list[Concept]:
-            """Process the response once it's ready"""
-            if response is None:
-                return []
-
-            return await self._process_response(response, metadatas[idx])
-
-        request_tasks = []
-        batch_size = self.kb.batch_size
-
-        for batch_start in range(0, len(requests), batch_size):
-            batch = requests[batch_start:batch_start + batch_size]
-
-            # Create tasks for the batch
-            batch_tasks = [
-                process_single_request(idx, prompt, sys_prompt, meta)
-                for idx, prompt, sys_prompt, meta in batch
-            ]
-            request_tasks.extend(batch_tasks)
-
-        # Execute all requests with rate limiting
-        request_results = await asyncio.gather(*request_tasks)
-
-        # Process responses as they complete
-        response_tasks = [
-            process_response(idx, response_future)
-            for idx, response_future in request_results
-        ]
-
-        # Gather all results
-        all_results = await asyncio.gather(*response_tasks)
-
-        # Sort results by original index
-        sorted_results = [[] for _ in texts]
-        for idx, concepts in enumerate(all_results):
-
-            async with self._results_lock:
-                sorted_results[idx] = concepts
-
-        return sorted_results
+        return all_results
 
     async def _process_response(self, concept_data: dict[str, Any], metadata: dict[str, Any]) -> list[Concept]:
         """Helper method to process a single response and convert it to Concepts"""
@@ -522,83 +990,6 @@ class ConceptExtractor:
             return {"concepts": {}, "relationships": [], "groups": []}
 
 
-class TextSplitter:
-    def __init__(
-        self,
-        chunk_size: int = 3600,
-        chunk_overlap: int = 130,
-        separator: str = "\n"
-    ):
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
-        self.separator = separator
-
-    def approximate(self, text_len: int) -> float:
-        """
-        Approximate the number of chunks and average chunk size for a given text length
-
-        Args:
-            text_len (int): Length of the text to be split
-
-        Returns:
-            Tuple[int, int]: (number_of_chunks, approximate_chunk_size)
-        """
-        if text_len <= self.chunk_size:
-            return 1, text_len
-
-        # Handle extreme overlap cases
-        if self.chunk_overlap >= self.chunk_size:
-            estimated_chunks = text_len
-            return estimated_chunks, 1
-
-        # Calculate based on overlap ratio
-        overlap_ratio = self.chunk_overlap / self.chunk_size
-        base_chunks = text_len / self.chunk_size
-        estimated_chunks = base_chunks * 2 / (overlap_ratio if overlap_ratio > 0 else 1)
-
-        # print('#',estimated_chunks, base_chunks, overlap_ratio)
-        # Calculate average chunk size
-        avg_chunk_size = max(1, text_len / estimated_chunks)
-
-        return estimated_chunks * avg_chunk_size
-
-    def split_text(self, text: str) -> list[str]:
-        """Split text into chunks with overlap"""
-        # Clean and normalize text
-        text = re.sub(r'\s+', ' ', text).strip()
-
-        # If text is shorter than chunk_size, return as is
-        if len(text) <= self.chunk_size:
-            return [text]
-
-        chunks = []
-        start = 0
-
-        while start < len(text):
-            # Find end of chunk
-            end = start + self.chunk_size
-
-            if end >= len(text):
-                chunks.append(text[start:])
-                break
-
-            # Try to find a natural break point
-            last_separator = text.rfind(self.separator, start, end)
-            if last_separator != -1:
-                end = last_separator
-
-            # Add chunk
-            chunks.append(text[start:end])
-
-            # Calculate allowed overlap for this chunk
-            chunk_length = end - start
-            allowed_overlap = min(self.chunk_overlap, chunk_length - 1)
-
-            # Move start position considering adjusted overlap
-            start = end - allowed_overlap
-
-        return chunks
-
 class KnowledgeBase:
     def __init__(self, embedding_dim: int = 256, similarity_threshold: float = 0.61, batch_size: int = 12,
                  n_clusters: int = 4, deduplication_threshold: float = 0.85, model_name=os.getenv("SUMMARYMODEL"),
@@ -682,6 +1073,9 @@ class KnowledgeBase:
     def compute_hash(text: str) -> str:
         """Compute SHA-256 hash of text"""
         return hashlib.sha256(text.encode('utf-8', errors='ignore')).hexdigest()
+
+    async def get_embeddings(self, texts: list[str]) -> np.ndarray:
+        return await self._get_embeddings(texts)
 
     async def _get_embeddings(self, texts: list[str]) -> np.ndarray:
         """Get normalized embeddings in batches"""

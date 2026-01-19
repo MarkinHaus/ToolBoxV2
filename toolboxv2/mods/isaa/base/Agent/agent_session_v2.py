@@ -20,6 +20,7 @@ from toolboxv2.mods.isaa.base.Agent.docker_vfs import DockerVFS, DockerConfig
 
 if TYPE_CHECKING:
     from toolboxv2.mods.isaa.base.Agent.rule_set import RuleSet, RuleResult
+    from toolboxv2.mods.isaa.base.Agent.skills import SkillsManager, Skill
 
 
 # =============================================================================
@@ -56,7 +57,7 @@ def retrieval_to_llm_context_compact(data, max_entries=5):
 class AgentSessionV2:
     """
     Enhanced AgentSession with VFS V2 and Docker integration.
-    
+
     Features:
     - VirtualFileSystemV2 with directories, file types, LSP
     - DockerVFS for isolated command execution
@@ -133,12 +134,12 @@ class AgentSessionV2:
         # Docker VFS (optional)
         self._docker_vfs: DockerVFS | None = None
         self._docker_enabled = enable_docker
-        
+
         if enable_docker:
             docker_cfg = docker_config or DockerConfig()
             if toolboxv2_wheel_path:
                 docker_cfg.toolboxv2_wheel_path = toolboxv2_wheel_path
-            
+
             self._docker_vfs = DockerVFS(
                 vfs=self.vfs,
                 config=docker_cfg
@@ -147,7 +148,11 @@ class AgentSessionV2:
         # RuleSet - session specific
         from toolboxv2.mods.isaa.base.Agent.rule_set import RuleSet, create_default_ruleset
         self.rule_set: RuleSet = create_default_ruleset(config_path=rule_config_path)
-
+        from toolboxv2.mods.isaa.base.Agent.skills import SkillsManager
+        self.skills: SkillsManager = SkillsManager(
+            agent_name=agent_name,
+            memory_instance=memory_instance
+        )
         # Sync RuleSet to VFS
         self._sync_ruleset_to_vfs()
 
@@ -300,19 +305,19 @@ class AgentSessionV2:
     ) -> dict:
         """
         Run a command in the Docker container.
-        
+
         Args:
             command: Shell command to execute
             timeout: Command timeout in seconds
             sync_before: Sync VFS to container before execution
             sync_after: Sync container to VFS after execution
-            
+
         Returns:
             Result dict with stdout, stderr, exit_code
         """
         if not self._docker_vfs:
             return {"success": False, "error": "Docker not enabled for this session"}
-        
+
         self._update_activity()
         return await self._docker_vfs.run_command(command, timeout, sync_before, sync_after)
 
@@ -325,7 +330,7 @@ class AgentSessionV2:
         """Start a web app in the Docker container"""
         if not self._docker_vfs:
             return {"success": False, "error": "Docker not enabled for this session"}
-        
+
         self._update_activity()
         return await self._docker_vfs.start_web_app(entrypoint, port, env)
 
@@ -451,7 +456,7 @@ class AgentSessionV2:
     def to_checkpoint(self) -> dict:
         """Serialize session for checkpoint"""
         self._chat_session.on_exit() if self._chat_session else None
-        
+
         checkpoint = {
             'session_id': self.session_id,
             'agent_name': self.agent_name,
@@ -461,6 +466,7 @@ class AgentSessionV2:
             'tool_restrictions': self.tool_restrictions,
             'vfs': self.vfs.to_checkpoint(),
             'rule_set': self.rule_set.to_checkpoint(),
+            'skills': self.skills.to_checkpoint(),
             'chat_history': self._chat_session.history if self._chat_session else [],
             'max_history': self._max_history,
             'kb': self._chat_session.mem.save_memory(self._chat_session.space_name, None) if self._chat_session else None,
@@ -469,11 +475,11 @@ class AgentSessionV2:
             'docker_enabled': self._docker_enabled,
             'lsp_enabled': self._lsp_manager is not None
         }
-        
+
         # Include Docker history if enabled
         if self._docker_vfs:
             checkpoint['docker_history'] = self._docker_vfs.to_checkpoint()
-        
+
         return checkpoint
 
     @classmethod
@@ -511,6 +517,8 @@ class AgentSessionV2:
 
         # Restore RuleSet
         session.rule_set.from_checkpoint(data.get('rule_set', {}))
+        if data.get('skills'):
+            session.skills.from_checkpoint(data['skills'])
 
         # Initialize ChatSession
         await session.initialize()
@@ -551,15 +559,16 @@ class AgentSessionV2:
             'vfs_open_files': sum(1 for f in self.vfs.files.values() if f.state == "open"),
             'tool_restrictions': len(self.tool_restrictions),
             'active_rules': len(self.rule_set.get_active_rules()),
+            'skills': self.skills.get_stats(),
             'current_situation': self.rule_set.current_situation,
             'current_intent': self.rule_set.current_intent,
             'lsp_enabled': self._lsp_manager is not None,
             'docker_enabled': self._docker_enabled
         }
-        
+
         if self._docker_vfs:
             stats['docker_status'] = self._docker_vfs.get_status()
-        
+
         return stats
 
     def __repr__(self) -> str:

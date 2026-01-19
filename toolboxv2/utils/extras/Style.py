@@ -23,22 +23,77 @@ def stram_print(text):
 
 
 def print_prompt(msg_data):
+    """
+    Erweiterte Print-Funktion für Chat-Nachrichten mit Support für
+    Tool-Calls, Tool-Results und Metadaten.
+    """
+    # Normalisierung des Inputs (Dict oder List)
     messages = msg_data.get('massages', msg_data.get('messages', [])) if isinstance(msg_data, dict) else msg_data
-    if len(messages) == 0:
+
+    if not messages or len(messages) == 0:
         print(Style.YELLOW("NO PROMPT to print"))
         return
-    print(Style.GREEN2("PROMPT START "))
-    for message in messages:
-        caller = Style.WHITE(message.get('role', 'NONE').upper()) if message.get('role',
-                                                                                 'NONE') == 'user' else 'NONE'
-        caller = Style.CYAN(message.get('role', 'NONE').upper()) if message.get('role',
-                                                                                'NONE') == 'system' else caller
-        caller = Style.VIOLET2(message.get('role', 'NONE').upper()) if message.get('role',
-                                                                                   'NONE') == 'assistant' else caller
-        caller = Style.GREYBG(message.get('role', 'NONE').upper()) if message.get('role',
-                                                                                   'NONE') == 'tool' else caller
-        print(f"\n{caller}\n{Style.GREY(str(message.get('content', '--#--')))}\n")
-    print(Style.GREEN("PROMPT END -- "))
+
+    print(Style.GREEN2("┏━━━━━━━━━━━━━━━━━━━━━━━━━━ PROMPT START ━━━━━━━━━━━━━━━━━━━━━━━━━━┓"))
+
+    for i, message in enumerate(messages):
+        role = message.get('role', 'NONE').lower()
+        content = message.get('content')
+        tool_calls = message.get('tool_calls')
+
+        # --- 1. Header Styling based on Role ---
+        if role == 'user':
+            caller = Style.WHITE(f"👤 USER")
+        elif role == 'system':
+            caller = Style.CYAN(f"⚙️ SYSTEM")
+        elif role == 'assistant':
+            caller = Style.VIOLET2(f"🤖 ASSISTANT")
+        elif role == 'tool':
+            # Bei Tool Results den Namen des Tools im Header anzeigen
+            tool_name = message.get('name', 'unknown')
+            caller = Style.GREYBG(f"🛠️ TOOL RESULT: {tool_name}")
+        else:
+            caller = Style.GREY(f"UNKNOWN ({role.upper()})")
+
+        print(f"\n{caller}")
+
+        # --- 2. Content Display ---
+        if content is not None:
+            # Bei Tool Results den Content evtl. kürzen, falls riesig
+            content_str = str(content)
+            if role == 'tool' and len(content_str) > 2000:
+                print(Style.GREY(f"{content_str[:2000]}... [truncated {len(content_str) - 2000} chars]"))
+            else:
+                # Standard Text Content
+                print(Style.GREY(f"{content_str}"))
+
+        # --- 3. Tool Calls Display (Assistant Side) ---
+        # Das ist wichtig: Wenn der Agent entscheidet, ein Tool zu nutzen
+        if tool_calls and isinstance(tool_calls, list):
+            print(Style.YELLOW("  ┌── ⚡ TOOL CALLS ──────────────────────────────"))
+            for tc in tool_calls:
+                func = tc.get('function', {})
+                f_name = func.get('name', 'unknown')
+                f_args = func.get('arguments', '{}')
+                f_id = tc.get('id', 'no-id')
+
+                print(Style.YELLOW(f"  │ 🔧 {f_name}"))
+                print(Style.GREY(f"  │    Args: {f_args}"))
+                # print(Style.GREY(f"  │    ID:   {f_id}")) # Optional: ID anzeigen
+            print(Style.YELLOW("  └───────────────────────────────────────────────"))
+
+        # --- 4. Metadata Display ---
+        # Zeige alles an, was nicht Standard ist (z.B. Timestamps, Cost, etc.)
+        standard_keys = ['role', 'content', 'tool_calls', 'tool_call_id', 'function', 'name']
+        metadata = {k: v for k, v in message.items() if k not in standard_keys}
+
+        if metadata:
+            meta_str = str(metadata)
+            if len(meta_str) > 300:
+                meta_str = meta_str[:300] + "..."
+            print(Style.GREY(f"  [Meta: {meta_str}]"))
+
+    print(Style.GREEN2("┗━━━━━━━━━━━━━━━━━━━━━━━━━━ PROMPT END ━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"))
 
 
 

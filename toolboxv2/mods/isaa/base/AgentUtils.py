@@ -415,6 +415,10 @@ class AISemanticMemory(metaclass=Singleton):
         self.memories[sanitized] = KnowledgeBase(**kb_params)
         return self.memories[sanitized]
 
+    async def get_embeddings(self, text: str | list[str]):
+        from toolboxv2.mods.isaa.extras.adapter import litellm_embed
+        return (await litellm_embed(texts=[text] if isinstance(text, str) else text, model=self.default_config["embedding_model"], dimensions=self.default_config["embedding_dim"]))[0]
+
     async def add_data(self,
                        memory_name: str,
                        data: str | list[str] | bytes | dict,

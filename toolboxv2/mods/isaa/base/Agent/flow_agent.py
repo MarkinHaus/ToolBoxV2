@@ -31,7 +31,6 @@ from toolboxv2.mods.isaa.base.Agent.types import (
     AgentModelData,
     PersonaConfig,
     ProgressEvent,
-    ProgressTracker,
     NodeStatus,
 )
 
@@ -76,7 +75,6 @@ class FlowAgent:
         stream: bool = True,
         **kwargs
     ):
-        self.last_result = None
         self.amd = amd
         self.verbose = verbose
         self.stream = stream
@@ -92,12 +90,6 @@ class FlowAgent:
         self.total_cost_accumulated = 0.0
         self.total_llm_calls = 0
 
-        # Progress tracking
-        self.progress_tracker = ProgressTracker(
-            progress_callback=progress_callback,
-            agent_name=amd.name
-        )
-
         self.executor = ThreadPoolExecutor(max_workers=max_parallel_tasks)
 
         # Servers
@@ -105,7 +97,7 @@ class FlowAgent:
         self.mcp_server: FastMCP | None = None
 
         # Execution engine instance (lazy loaded)
-        self._execution_engine = None
+        self._execution_engine_cache = None
 
         self._init_managers(auto_load_checkpoint)
         self._init_rate_limiter()
@@ -254,6 +246,8 @@ class FlowAgent:
             response = await self.llm_handler.completion_with_rate_limiting(litellm, **llm_kwargs)
 
             if use_stream:
+                if 'true_stream' in llm_kwargs and llm_kwargs['true_stream']:
+                    return response
                 result, usage = await self._process_streaming_response(response, task_id, model, get_response_message)
             else:
                 result = response.choices[0].message.content
@@ -263,7 +257,7 @@ class FlowAgent:
 
             input_tokens = usage.prompt_tokens if usage else 0
             output_tokens = usage.completion_tokens if usage else 0
-            cost = self.progress_tracker.calculate_llm_cost(model, input_tokens, output_tokens, response)
+            cost = self.calculate_llm_cost(model, input_tokens, output_tokens, response)
 
             self.total_tokens_in += input_tokens
             self.total_tokens_out += output_tokens
@@ -280,6 +274,26 @@ class FlowAgent:
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             raise
+
+
+    def calculate_llm_cost(self, model: str, input_tokens: int, output_tokens: int,completion_response:Any=None) -> float:
+        """Calculate approximate LLM cost"""
+        cost = (input_tokens / 1000) * 0.002 + (output_tokens / 1000) * 0.01
+        if hasattr(completion_response, "_hidden_params"):
+            cost = completion_response._hidden_params.get("response_cost", 0)
+        try:
+            import litellm
+            cost = litellm.completion_cost(model=model, completion_response=completion_response)
+        except ImportError:
+            pass
+        except Exception as e:
+            try:
+                import litellm
+                cost = litellm.completion_cost(model=model.split('/')[-1], completion_response=completion_response)
+            except Exception:
+                pass
+        return cost or (input_tokens / 1000) * 0.002 + (output_tokens / 1000) * 0.01
+
 
     async def _process_streaming_response(self, response, task_id, model, get_response_message):
         from litellm.types.utils import Message, ChatCompletionMessageToolCall, Function
@@ -355,11 +369,6 @@ class FlowAgent:
         start_time = time.perf_counter()
         result = await self.tool_manager.execute(function_name, **kwargs)
 
-        if self.progress_tracker:
-            await self.progress_tracker.emit_event(ProgressEvent(
-                event_type="tool_call", node_name="FlowAgent", status=NodeStatus.COMPLETED, success=True,
-                duration=time.perf_counter() - start_time, tool_name=function_name, tool_args=kwargs, tool_result=result,
-            ))
         return result
 
     # =========================================================================
@@ -456,6 +465,49 @@ class FlowAgent:
     # =========================================================================
     # CORE: a_run - ExecutionEngine based with Pause/Continue
     # =========================================================================
+    def _get_execution_engine(
+        self,
+        use_native_tools: bool = True,
+        human_online: bool = False,
+        intermediate_callback: Callable[[str], None] | None = None
+    ) -> 'ExecutionEngine':
+        """
+        Get or create ExecutionEngine instance.
+
+        Caches the engine for reuse within the same agent instance.
+        Creates a new engine only if parameters change significantly.
+
+        Args:
+            use_native_tools: Use LiteLLM native tool calling
+            human_online: Allow human-in-the-loop
+            intermediate_callback: Callback for status messages
+
+        Returns:
+            ExecutionEngine instance
+        """
+        from toolboxv2.mods.isaa.base.Agent.execution_engine import ExecutionEngine
+
+        # Check if we can reuse cached engine
+        if self._execution_engine_cache is not None:
+            # Update dynamic parameters
+            self._execution_engine_cache.human_online = human_online
+            self._execution_engine_cache.callback = intermediate_callback
+            return self._execution_engine_cache
+
+        # Create new engine
+        engine = ExecutionEngine(
+            agent=self,
+            human_online=human_online,
+            callback=intermediate_callback,
+            is_sub_agent=False
+        )
+
+        self._execution_engine_cache = engine
+        return engine
+
+    # =========================================================================
+    # MAIN ENTRY POINT (your existing a_run should work with this)
+    # =========================================================================
 
     async def a_run(
         self,
@@ -465,55 +517,50 @@ class FlowAgent:
         use_native_tools: bool = True,
         human_online: bool = False,
         intermediate_callback: Callable[[str], None] | None = None,
-        human_response: str | None = None,
         max_iterations: int = 15,
-        token_budget: int = 10000,
+        get_ctx: bool = False,
         **kwargs
-    ) -> str:
+    ) -> str | tuple[str, Any]:
         """
         Main entry point for agent execution.
-
-        Architecture: MAKER (parallel decomposition) + RLM (VFS-based context)
-
-        Features:
-        - Auto Intent Detection → Immediate/Tools/Decomposition
-        - Category-based tool selection (max 5 tools)
-        - RLM-VFS style ReAct loop
-        - Parallel microagent execution for complex tasks
-        - Pause/Continue support
-        - Human-in-the-loop
-        - Transaction-based rollback
-        - Non-blocking learning
 
         Args:
             query: User query
             session_id: Session identifier
             execution_id: For continuing paused execution
-            use_native_tools: LiteLLM native tool calling vs a_format_class
+            use_native_tools: LiteLLM native tool calling
             human_online: Allow human-in-the-loop
             intermediate_callback: User-facing status messages
             human_response: Response from human (for continuation)
             max_iterations: Max ReAct iterations (default 15)
-            token_budget: Token budget per iteration (default 10000)
+            token_budget: Token budget per iteration
+            get_ctx: Return (result, ExecutionContext) tuple
             **kwargs: Additional options
 
         Returns:
-            Response string or special response for paused states:
-            - "__PAUSED__:{execution_id}" - Execution paused
-            - "__NEEDS_HUMAN__:{execution_id}:{question}" - Waiting for human
+            Response string, or (response, ctx) if get_ctx=True
         """
-
+        # Handle defaults
         if not session_id:
             session_id = "default"
-        if session_id == "default" and self.active_session is not None:
+        if session_id == "default" and getattr(self, 'active_session', None):
             session_id = self.active_session
 
         self.active_session = session_id
         self.is_running = True
-        if execution_id is None and self.active_execution_id is not None:
-            execution_id = self.active_execution_id
+
+        # Check for resume
+        ctx = None
+        if execution_id:
+            engine = self._get_execution_engine(
+                use_native_tools=use_native_tools,
+                human_online=human_online,
+                intermediate_callback=intermediate_callback
+            )
+            ctx = engine.get_execution(execution_id)
+
         try:
-            # Create execution engine
+            # Get or create execution engine
             engine = self._get_execution_engine(
                 use_native_tools=use_native_tools,
                 human_online=human_online,
@@ -524,99 +571,94 @@ class FlowAgent:
             result = await engine.execute(
                 query=query,
                 session_id=session_id,
-                execution_id=execution_id,
-                human_response=human_response,
                 max_iterations=max_iterations,
-                token_budget=token_budget,
-                **kwargs
+                ctx=ctx,
+                get_ctx=get_ctx
             )
 
-            # Handle special states
-            if result.needs_human:
-                self.active_execution_id = result.execution_id
-                if result.needs_human:
-                    return f"__NEEDS_HUMAN__:{result.human_query}"
-                return f"__PAUSED__"
-            self.active_execution_id = None
-
-            response = result.response
-            # Ensure response is a string (a_run can return various types)
-            if response is None:
-                response = ""
-            elif not isinstance(response, str):
-                # Handle Message objects, dicts, or other types
-                if hasattr(response, 'content'):
-                    response = str(response.content)
-                elif hasattr(response, 'text'):
-                    response = str(response.text)
-                else:
-                    response = str(response)
-            self.last_result = result
-            return response
+            return result
 
         except Exception as e:
-            logger.error(f"a_run failed: {e}")
+            import logging
             import traceback
+            logging.error(f"a_run failed: {e}")
             traceback.print_exc()
             return f"Error: {str(e)}"
         finally:
             self.is_running = False
-            # self.active_session = None
 
-    async def continue_execution(
-        self,
-        execution_id: str,
-        human_response: str | None = None,
-        **kwargs
-    ) -> str:
-        """
-        Continue a paused execution.
-
-        Args:
-            execution_id: ID of paused execution
-            human_response: Response from human (if was waiting)
-
-        Returns:
-            Response string
-        """
-        return await self.a_run(
-            query="",  # Ignored for continuation
-            execution_id=execution_id,
-            human_response=human_response,
-            **kwargs
-        )
+    # =========================================================================
+    # PAUSE / CANCEL / LIST (these should work as-is)
+    # =========================================================================
 
     async def pause_execution(self, execution_id: str) -> dict | None:
         """
         Pause a running execution.
 
-        Returns:
-            Execution state dict or None if not found
-        """
-        from toolboxv2.mods.isaa.base.Agent.execution_engine import ExecutionEngine
+        Args:
+            execution_id: The run_id to pause
 
+        Returns:
+            Checkpoint dict or None
+        """
         engine = self._get_execution_engine()
-        state = await engine.pause(execution_id)
-        return state.to_checkpoint() if state else None
+        ctx = await engine.pause(execution_id)
+        return ctx.to_checkpoint() if ctx else None
 
     async def cancel_execution(self, execution_id: str) -> bool:
         """
-        Cancel an execution and rollback changes.
+        Cancel an execution.
+
+        Args:
+            execution_id: The run_id to cancel
 
         Returns:
             True if cancelled
         """
-        from toolboxv2.mods.isaa.base.Agent.execution_engine import ExecutionEngine
-
         engine = self._get_execution_engine()
         return await engine.cancel(execution_id)
 
     def list_executions(self) -> list[dict]:
-        """List all active/paused executions."""
-        from toolboxv2.mods.isaa.base.Agent.execution_engine import ExecutionEngine
+        """
+        List all active/paused executions.
 
+        Returns:
+            List of execution summaries
+        """
         engine = self._get_execution_engine()
         return engine.list_executions()
+
+    async def resume_execution(
+        self,
+        execution_id: str,
+        max_iterations: int = 15
+    ) -> str:
+        """
+        Resume a paused execution.
+
+        Args:
+            execution_id: The run_id to resume
+            max_iterations: Max additional iterations
+
+        Returns:
+            Final response
+        """
+        engine = self._get_execution_engine()
+        return await engine.resume(execution_id, max_iterations)
+
+    def get_execution_state(self, execution_id: str) -> dict | None:
+        """
+        Get current state of an execution.
+
+        Args:
+            execution_id: The run_id
+
+        Returns:
+            Checkpoint dict or None
+        """
+        engine = self._get_execution_engine()
+        ctx = engine.get_execution(execution_id)
+        return ctx.to_checkpoint() if ctx else None
 
     # =========================================================================
     # CORE: a_stream - Voice-First Intelligent Streaming
@@ -630,44 +672,21 @@ class FlowAgent:
         use_native_tools: bool = True,
         human_online: bool = False,
         intermediate_callback: Callable[[str], None] | None = None,
-        human_response: str | None = None,
         max_iterations: int = 15,
-        token_budget: int = 10000,
         **kwargs
-    ) -> str:
+    ):
         """
-        Main entry point for streaming agent execution.
+        Streaming execution - yields chunks during execution.
 
-        Architecture: MAKER (parallel decomposition) + RLM (VFS-based context)
-
-        Features:
-        - Auto Intent Detection → Immediate/Tools/Decomposition
-        - Category-based tool selection (max 5 tools)
-        - RLM-VFS style ReAct loop
-        - Parallel microagent execution for complex tasks
-        - Pause/Continue support
-        - Human-in-the-loop
-        - Transaction-based rollback
-        - Non-blocking learning
-
-        Args:
-            query: User query
-            session_id: Session identifier
-            execution_id: For continuing paused execution
-            use_native_tools: LiteLLM native tool calling vs a_format_class
-            human_online: Allow human-in-the-loop
-            intermediate_callback: User-facing status messages
-            human_response: Response from human (for continuation)
-            max_iterations: Max ReAct iterations (default 15)
-            token_budget: Token budget per iteration (default 10000)
-            **kwargs: Additional options
-
-        Returns:
-            Response string or special response for paused states:
-            - "__PAUSED__:{execution_id}" - Execution paused
-            - "__NEEDS_HUMAN__:{execution_id}:{question}" - Waiting for human
+        Yields:
+            dict with 'type' key:
+            - {"type": "content", "chunk": "..."}
+            - {"type": "tool_start", "name": "..."}
+            - {"type": "tool_result", "name": "...", "result": "..."}
+            - {"type": "final_answer", "answer": "..."}
+            - {"type": "paused", "run_id": "..."}
+            - {"type": "done", "success": bool, "final_answer": "..."}
         """
-
         if not session_id:
             session_id = "default"
         if session_id == "default" and self.active_session is not None:
@@ -675,54 +694,99 @@ class FlowAgent:
 
         self.active_session = session_id
         self.is_running = True
-        if execution_id is None and self.active_execution_id is not None:
-            execution_id = self.active_execution_id
+
+        # Check for resume
+        ctx = None
+        if execution_id:
+            engine = self._get_execution_engine(
+                use_native_tools=use_native_tools,
+                human_online=human_online,
+                intermediate_callback=intermediate_callback
+            )
+            ctx = engine.get_execution(execution_id)
 
         try:
-            # Create execution engine
             engine = self._get_execution_engine(
                 use_native_tools=use_native_tools,
                 human_online=human_online,
                 intermediate_callback=intermediate_callback
             )
 
-            # Execute
-            stream_func, state = await engine.execute(
+            # Get stream generator
+            stream_func, ctx = await engine.execute_stream(
                 query=query,
                 session_id=session_id,
-                execution_id=execution_id,
-                human_response=human_response,
                 max_iterations=max_iterations,
-                token_budget=token_budget,
-                do_stream=True,
-                **kwargs
+                ctx=ctx
             )
 
-            async for result in stream_func(state):
-                if hasattr(result, 'paused'):
-                    if result.paused:
-                        self.active_execution_id = result.execution_id
-                        yield result.human_query if result.needs_human else "I am Paused"
-                        break
-                    elif result.success:
-                        self.active_execution_id = None
-                        yield result.response
-                        break
-                    elif not result.success:
-                        self.active_execution_id = None
-                        yield result.response
-                        break
-                else:
-                    yield result
+            # Yield all chunks
+            async for chunk in stream_func(ctx):
+                yield chunk
 
         except Exception as e:
-            logger.error(f"a_run failed: {e}")
             import traceback
             traceback.print_exc()
-            yield f"Error: {str(e)}"
+            yield {"type": "error", "error": str(e)}
         finally:
             self.is_running = False
-            # self.active_session = None
+
+    async def a_stream_verbose(
+        self,
+        query: str,
+        session_id: str = "default",
+        execution_id: str | None = None,
+        use_native_tools: bool = True,
+        human_online: bool = False,
+        intermediate_callback: Callable[[str], None] | None = None,
+        max_iterations: int = 15,
+        **kwargs
+    ):
+        """
+        Vereinfachtes Streaming - gibt nur Strings zurück.
+
+        Yields:
+            str: Lesbarer Text für jeden Schritt
+        """
+        async for chunk in self.a_stream(
+            query=query,
+            session_id=session_id,
+            execution_id=execution_id,
+            use_native_tools=use_native_tools,
+            human_online=human_online,
+            intermediate_callback=intermediate_callback,
+            max_iterations=max_iterations,
+            **kwargs
+        ):
+            chunk_type = chunk.get("type", "")
+
+            if chunk_type == "content":
+                yield chunk["chunk"]
+
+            elif chunk_type == "tool_start":
+                yield f"\n🔧 Nutze Tool: {chunk['name']}\n"
+
+            elif chunk_type == "tool_result":
+                result = chunk.get("result", "")
+                if len(result) > 200:
+                    result = result[:200] + "..."
+                yield f"   ✓ Ergebnis: {result}\n"
+
+            elif chunk_type == "final_answer":
+                yield f"\n\n📝 {chunk['answer']}"
+
+            elif chunk_type == "paused":
+                yield f"\n⏸️ Pausiert (ID: {chunk['run_id']})\n"
+
+            elif chunk_type == "max_iterations":
+                yield f"\n⚠️ Max Iterationen erreicht\n{chunk['answer']}"
+
+            elif chunk_type == "error":
+                yield f"\n❌ Fehler: {chunk['error']}\n"
+
+            elif chunk_type == "done":
+                status = "✅" if chunk.get("success") else "⚠️"
+                yield f"\n{status} Fertig\n"
 
 
     # =========================================================================
@@ -755,7 +819,7 @@ class FlowAgent:
 
         self.active_session = session_id
         async for chunk in process_audio_stream(
-            audio_chunks, self.a_stream, language=language, **kwargs
+            audio_chunks, self.a_stream_verbose, language=language, **kwargs
         ):
             yield chunk
 
@@ -1759,7 +1823,8 @@ class FlowAgent:
 
         metrics = {
             "system_prompt": 0,
-            "tool_definitions": 0,
+            "system_tool_definitions": 0,
+            "user_tool_definitions": 0,
             "vfs_context": 0,
             "history": 0,
             "overhead": 0,
@@ -1773,21 +1838,20 @@ class FlowAgent:
         base_system_msg = self.amd.get_system_message()
         # Hinweis: ExecutionEngine fügt oft noch spezifische Prompts hinzu (Immediate/React)
         # Wir nehmen hier eine repräsentative Größe an.
-        from toolboxv2.mods.isaa.base.Agent.execution_engine import SYSTEM_PROMPT
-        full_sys_msg = f"{base_system_msg}\n\n{SYSTEM_PROMPT}"
+        full_sys_msg = f"{base_system_msg}"
         metrics["system_prompt"] = litellm.token_counter(model=model, text=full_sys_msg)
 
         # 3. Tools Definitions Berechnung
         # Wir sammeln alle Tools + Standard VFS Tools um die Definition-Größe zu berechnen
-        from toolboxv2.mods.isaa.base.Agent.execution_engine import VFS_TOOLS, CONTROL_TOOLS, DISCOVERY_TOOLS
+        from toolboxv2.mods.isaa.base.Agent.execution_engine import STATIC_TOOLS, DISCOVERY_TOOLS
 
         # System Tools die immer injected werden
-        all_tools = VFS_TOOLS + CONTROL_TOOLS + DISCOVERY_TOOLS
+        all_tools = STATIC_TOOLS + DISCOVERY_TOOLS
 
         # LiteLLM Token Counter kann Tools nicht direkt, wir dumpen das JSON als Näherungswert
         # (Dies ist oft genauer als man denkt, da Definitionen als Text/JSON injected werden)
         tools_json = json.dumps(all_tools)
-        metrics["tool_definitions"] = litellm.token_counter(model=model, text=tools_json)
+        metrics["system_tool_definitions"] = litellm.token_counter(model=model, text=tools_json)
         tools_json = json.dumps(self.tool_manager.get_all_litellm())
         metrics["user_tool_definitions"] = litellm.token_counter(model=model, text=tools_json)
 
@@ -1863,7 +1927,8 @@ class FlowAgent:
             print(f" • {label:<18} {color}{value:>6,}{C_RESET} tokens {C_GRAY}({pct:>4.1f}%){C_RESET}")
 
         print_row("System Prompts", metrics["system_prompt"], C_YELLOW)
-        print_row("Tools (Defs)", metrics["tool_definitions"], C_BLUE)
+        print_row("Tools (Sys)", metrics["system_tool_definitions"], C_BLUE)
+        print_row("Tools (User)", metrics["user_tool_definitions"], C_BLUE)
         if metrics["vfs_context"] > 0:
             print_row("VFS / Files", metrics["vfs_context"], C_GREEN)
         if metrics["history"] > 0:

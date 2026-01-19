@@ -454,7 +454,8 @@ class SimpleIsaaCLI:
                 )
 
             print_row("System Prompt", "system_prompt")
-            print_row("Tools (Defs)", "tool_definitions")
+            print_row("Tools (Sys)", "system_tool_definitions")
+            print_row("Tools (User)", "user_tool_definitions")
             print_row("VFS Context", "vfs_context")
             print_row("Chat History", "history")
             print(Style.GREY("-" * 60))

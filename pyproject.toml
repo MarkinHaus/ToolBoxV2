@@ -62,6 +62,7 @@ dependencies = [
     "waitress>=3.0.2",
     "pyzmq>=27.1.0",
     "aiohttp-cors>=0.8.1",
+    "spacy>=3.8.11",
 ]
 
 [project.scripts]

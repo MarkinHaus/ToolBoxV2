@@ -343,24 +343,6 @@ class ProgressTracker:
         del self.active_timers[key]
         return duration
 
-    def calculate_llm_cost(self, model: str, input_tokens: int, output_tokens: int,completion_response:Any=None) -> float:
-        """Calculate approximate LLM cost"""
-        cost = (input_tokens / 1000) * self.token_costs["input"] + (output_tokens / 1000) * self.token_costs["output"]
-        if hasattr(completion_response, "_hidden_params"):
-            cost = completion_response._hidden_params.get("response_cost", 0)
-        try:
-            import litellm
-            cost = litellm.completion_cost(model=model, completion_response=completion_response)
-        except ImportError:
-            pass
-        except Exception as e:
-            try:
-                import litellm
-                cost = litellm.completion_cost(model=model.split('/')[-1], completion_response=completion_response)
-            except Exception:
-                pass
-        return cost or (input_tokens / 1000) * self.token_costs["input"] + (output_tokens / 1000) * self.token_costs["output"]
-
     def get_summary(self) -> dict[str, Any]:
         """Get comprehensive progress summary"""
         summary = {

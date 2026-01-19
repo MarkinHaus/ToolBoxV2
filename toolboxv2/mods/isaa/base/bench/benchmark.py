@@ -2804,7 +2804,7 @@ class AgentAdapterSt:
             start_tokens_in = self.agent.total_tokens_in
             start_tokens_out = self.agent.total_tokens_out
             r = ""
-            async for chunk in self.agent.a_stream(query=p,wait_for_hard=True, session_id="benchmark"):
+            async for chunk in self.agent.a_stream_verbose(query=p,wait_for_hard=True, session_id="benchmark"):
                 r += str(chunk) if not type(chunk) == str else chunk
             cost_info = {
                 "total_cost": self.agent.total_cost_accumulated - start_cost,
