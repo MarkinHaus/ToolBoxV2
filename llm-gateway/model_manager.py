@@ -110,7 +110,9 @@ class ModelManager:
         )
 
         # Wait for server to be ready
-        ready = await self._wait_for_ready(slot, timeout=120, model_type=model_type)
+        # Omni and large vision models need more time to load
+        timeout = 300 if model_type in ("omni", "vision") else 180
+        ready = await self._wait_for_ready(slot, timeout=timeout, model_type=model_type)
 
         if not ready:
             # Get stderr for debugging
@@ -259,7 +261,7 @@ class ModelManager:
 
         return None
 
-    async def _wait_for_ready(self, port: int, timeout: int = 120, model_type: str = "text") -> bool:
+    async def _wait_for_ready(self, port: int, timeout: int = 180, model_type: str = "text") -> bool:
         """Wait for server to respond to health check"""
         import httpx
 
@@ -275,19 +277,34 @@ class ModelManager:
             endpoints = [f"http://127.0.0.1:{port}/health"]
 
         start = asyncio.get_event_loop().time()
+        last_status = None
 
         while asyncio.get_event_loop().time() - start < timeout:
             for url in endpoints:
                 try:
                     async with httpx.AsyncClient() as client:
-                        resp = await client.get(url, timeout=3.0)
-                        # Accept 200 or 405 (method not allowed means server is up)
+                        resp = await client.get(url, timeout=5.0)
+                        last_status = resp.status_code
+
+                        # 200 = ready, 405 = method not allowed (server is up)
                         if resp.status_code in (200, 405):
                             return True
-                except:
-                    pass
-            await asyncio.sleep(1.0)
 
+                        # 503 = Service Unavailable = still loading model
+                        # This is normal, keep waiting
+                        if resp.status_code == 503:
+                            pass  # Continue waiting
+
+                except httpx.TimeoutException:
+                    pass  # Connection timeout, keep trying
+                except httpx.ConnectError:
+                    pass  # Server not yet listening, keep trying
+                except Exception:
+                    pass
+
+            await asyncio.sleep(2.0)  # Longer sleep for big models
+
+        print(f"Health check timeout. Last status: {last_status}")
         return False
 
     async def unload_model(self, slot: int) -> Dict:
@@ -596,7 +613,7 @@ class ModelManager:
     # === HuggingFace Integration ===
 
     async def search_hf_models(self, query: str) -> List[Dict]:
-        """Search HuggingFace for GGUF models"""
+        """Search HuggingFace for GGUF and model files"""
         if HfApi is None:
             return {"error": "huggingface_hub not installed"}
 
@@ -614,14 +631,21 @@ class ModelManager:
             for model in models:
                 try:
                     files = list_repo_files(model.id)
-                    gguf_files = [f for f in files if f.endswith(".gguf")]
 
-                    if gguf_files:
+                    # Find model files: .gguf, .bin (whisper), mmproj files
+                    model_files = []
+                    for f in files:
+                        if f.endswith(".gguf"):
+                            model_files.append(f)
+                        elif f.endswith(".bin") and ("whisper" in model.id.lower() or "ggml" in f.lower()):
+                            model_files.append(f)
+
+                    if model_files:
                         results.append({
                             "repo_id": model.id,
                             "downloads": model.downloads,
                             "likes": model.likes,
-                            "files": gguf_files[:10]
+                            "files": model_files[:15]  # Show more files for mmproj
                         })
                 except:
                     pass

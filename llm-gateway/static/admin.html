@@ -504,9 +504,11 @@
             <div class="form-group">
                 <label>Type <span id="typeAutoDetected" style="color: var(--green); font-size: 11px;"></span></label>
                 <select id="loadType">
-                    <option value="text">Text</option>
-                    <option value="vision">Vision (requires mmproj file)</option>
-                    <option value="audio">Audio (Whisper)</option>
+                    <option value="text">💬 Text</option>
+                    <option value="vision">👁️ Vision (requires mmproj)</option>
+                    <option value="omni">🌐 Omni (Audio+Vision+Text, requires mmproj)</option>
+                    <option value="embedding">📊 Embedding</option>
+                    <option value="audio">🎵 Audio (legacy Whisper)</option>
                 </select>
             </div>
             <div class="form-group">
@@ -745,7 +747,25 @@
             const resp = await api('/admin/api/slots');
             const slots = await resp.json();
 
-            document.getElementById('slotsContainer').innerHTML = slots.map(s => `
+            // Type icons mapping
+            const typeIcons = {
+                'text': '💬',
+                'vision': '👁️',
+                'omni': '🌐',
+                'embedding': '📊',
+                'audio': '🎵'
+            };
+
+            document.getElementById('slotsContainer').innerHTML = slots.map(s => {
+                const typeIcon = typeIcons[s.model_type] || '💬';
+                const caps = s.capabilities || {};
+                const capBadges = [];
+                if (caps.text) capBadges.push('📝');
+                if (caps.vision) capBadges.push('👁️');
+                if (caps.audio) capBadges.push('🎤');
+                if (caps.embedding) capBadges.push('📊');
+
+                return `
                 <div class="slot-card">
                     <div class="slot-header">
                         <span class="slot-port">:${s.port}</span>
@@ -754,9 +774,12 @@
                     ${s.model_name ? `
                         <div class="slot-model">${s.model_name}</div>
                         <div class="slot-stats">
-                            <span>Type: ${s.model_type}</span>
+                            <span>${typeIcon} ${s.model_type}</span>
                             <span>RAM: ${s.ram_mb}MB</span>
                             <span>Ctx: ${s.ctx_size}</span>
+                        </div>
+                        <div style="font-size: 11px; color: var(--text2); margin: 4px 0;">
+                            Capabilities: ${capBadges.join(' ') || 'none'}
                         </div>
                         <div class="slot-actions">
                             <button class="btn btn-danger btn-sm" onclick="unloadModel(${s.port})">Unload</button>
@@ -765,23 +788,31 @@
                         <div style="color: var(--text2); padding: 20px 0;">Empty slot</div>
                     `}
                 </div>
-            `).join('');
+            `}).join('');
 
             // Local models
             const localResp = await api('/admin/api/models/local');
             const local = await localResp.json();
+
+            // Type icons mapping
+            const typeIcons = {
+                'text': '💬',
+                'vision': '👁️',
+                'omni': '🌐',
+                'embedding': '📊',
+                'audio': '🎵',
+                'mmproj': '🔗'
+            };
 
             document.getElementById('localModels').innerHTML = local.length ? `
                 <table>
                     <thead><tr><th>Name</th><th>Size</th><th>Type</th><th>Actions</th></tr></thead>
                     <tbody>
                         ${local.map(m => {
-                            const name = m.name.toLowerCase();
-                            const isWhisper = name.includes('whisper') || (name.includes('ggml-') && (name.endsWith('.bin') || name.includes('large') || name.includes('medium') || name.includes('small') || name.includes('base') || name.includes('tiny')));
-                            const isVision = !isWhisper && (name.includes('-vl') || name.includes('_vl') || name.includes('minicpm-v'));
-                            const isMmproj = name.includes('mmproj');
-                            const typeIcon = isMmproj ? '🔗' : isWhisper ? '🎵' : isVision ? '👁️' : '💬';
-                            const typeLabel = isMmproj ? 'mmproj' : isWhisper ? 'Audio' : isVision ? 'Vision' : 'Text';
+                            const detectedType = m.detected_type || 'text';
+                            const isMmproj = detectedType === 'mmproj';
+                            const typeIcon = typeIcons[detectedType] || '💬';
+                            const typeLabel = detectedType.charAt(0).toUpperCase() + detectedType.slice(1);
 
                             return `
                             <tr>
@@ -797,7 +828,7 @@
                     </tbody>
                 </table>
                 <p style="font-size: 12px; color: var(--text2); margin-top: 8px;">
-                    👁️ Vision models need both the model file AND the 🔗 mmproj file in the same folder.
+                    👁️ Vision and 🌐 Omni models need both the model file AND the 🔗 mmproj file in the same folder.
                 </p>
             ` : '<div style="color: var(--text2);">No local models found. Download from HF Browser.</div>';
         }
@@ -809,11 +840,27 @@
 
             let detected = null;
 
-            // Audio models: contain "whisper" or "ggml-" (whisper format) - check FIRST
-            if (path.includes('whisper') || (path.includes('ggml-') && (path.includes('.bin') || path.includes('large') || path.includes('medium') || path.includes('small') || path.includes('base') || path.includes('tiny')))) {
+            // Check for mmproj (not a loadable model)
+            if (path.includes('mmproj')) {
+                indicator.textContent = '(mmproj file - not loadable directly)';
+                indicator.style.color = 'var(--yellow)';
+                return;
+            }
+            indicator.style.color = 'var(--green)';
+
+            // Omni models (audio + vision + text) - check FIRST
+            if (path.includes('omni')) {
+                detected = 'omni';
+            }
+            // Audio-only models: whisper
+            else if (path.includes('whisper') || (path.includes('ggml-') && (path.includes('.bin') || path.includes('large') || path.includes('medium') || path.includes('small') || path.includes('base') || path.includes('tiny')))) {
                 detected = 'audio';
             }
-            // Vision models: contain "VL", "vision", "minicpm-v"
+            // Embedding models
+            else if (path.includes('embed')) {
+                detected = 'embedding';
+            }
+            // Vision models: VL = Vision-Language
             else if (path.includes('-vl') || path.includes('_vl') || path.includes('vision') || path.includes('minicpm-v') || path.includes('minicpm_v')) {
                 detected = 'vision';
             }
@@ -852,7 +899,7 @@
 
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 min timeout
+                const timeoutId = setTimeout(() => controller.abort(), 360000); // 6 min timeout for large models
 
                 const resp = await fetch('/admin/api/slots/load', {
                     method: 'POST',
@@ -940,14 +987,25 @@
                 return;
             }
 
+            // Helper to get file icon
+            const getFileIcon = (f) => {
+                const name = f.toLowerCase();
+                if (name.includes('mmproj')) return '🔗';
+                if (name.includes('omni')) return '🌐';
+                if (name.includes('whisper') || name.includes('ggml-')) return '🎵';
+                if (name.includes('-vl') || name.includes('vision')) return '👁️';
+                if (name.includes('embed')) return '📊';
+                return '💬';
+            };
+
             document.getElementById('hfResults').innerHTML = results.map(r => `
                 <div class="search-item">
                     <div class="search-item-title">${r.repo_id}</div>
-                    <div class="search-item-meta">⬇️ ${r.downloads} | ❤️ ${r.likes}</div>
+                    <div class="search-item-meta">⬇️ ${r.downloads?.toLocaleString() || 0} | ❤️ ${r.likes || 0}</div>
                     <div class="file-list">
                         ${r.files.map(f => `
                             <div class="file-item">
-                                <span>${f}</span>
+                                <span>${getFileIcon(f)} ${f}</span>
                                 <button class="btn btn-sm btn-primary" onclick="downloadModel('${r.repo_id}', '${f}')">Download</button>
                             </div>
                         `).join('')}
