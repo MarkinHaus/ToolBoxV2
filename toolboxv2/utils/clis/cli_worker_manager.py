@@ -1263,7 +1263,7 @@ http {{
         )
 
         # Determine path
-        sites_dir = getattr(self.config, 'sites_available_path', DEFAULT_BOX_AVAILABLE)
+        sites_dir = getattr(self.config, 'sites_enabled_path', DEFAULT_BOX_ENABLED)
         config_path = os.path.join(sites_dir, site_name)
 
         try:
@@ -1925,7 +1925,15 @@ class WorkerManager:
         return [w.socket_path for w in self._workers.values() if w.worker_type == WorkerType.HTTP and w.state == WorkerState.RUNNING and w.socket_path]
 
     def _update_nginx_config(self):
-        self._nginx.write_config(self._get_http_ports(), self._get_ws_ports(), self._get_http_sockets(), [], self._cluster.get_remote_addresses())
+        self._nginx.write_site_config(
+            self._get_http_ports(),
+            self._get_ws_ports(),
+            self._get_http_sockets(),
+            [],
+            self._cluster.get_remote_addresses(),
+            site_name="toolbox"
+        )
+        self._nginx.enable_site("toolbox")
 
     def start_all(self) -> bool:
         logger.info("Starting all services...")
