@@ -1,0 +1,1163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Gateway Admin</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #0a0a0f;
+            --bg2: #12121a;
+            --bg3: #1a1a25;
+            --text: #e0e0e0;
+            --text2: #888;
+            --accent: #6366f1;
+            --accent2: #818cf8;
+            --green: #22c55e;
+            --red: #ef4444;
+            --yellow: #eab308;
+            --border: #2a2a3a;
+        }
+        body {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            background: var(--bg);
+            color: var(--text);
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 200px 1fr;
+            min-height: 100vh;
+        }
+        /* Sidebar */
+        .sidebar {
+            background: var(--bg2);
+            border-right: 1px solid var(--border);
+            padding: 20px 0;
+        }
+        .logo {
+            padding: 0 20px 20px;
+            font-size: 16px;
+            font-weight: bold;
+            color: var(--accent);
+        }
+        .nav-item {
+            padding: 10px 20px;
+            cursor: pointer;
+            border-left: 3px solid transparent;
+            transition: all 0.2s;
+        }
+        .nav-item:hover { background: var(--bg3); }
+        .nav-item.active {
+            background: var(--bg3);
+            border-left-color: var(--accent);
+            color: var(--accent2);
+        }
+        /* Main */
+        .main {
+            padding: 20px;
+            overflow-y: auto;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        h1 { font-size: 20px; font-weight: 500; }
+        .page { display: none; }
+        .page.active { display: block; }
+        /* Cards */
+        .card {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .card-title {
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 12px;
+            color: var(--text2);
+        }
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: var(--accent2);
+        }
+        .stat-label { color: var(--text2); font-size: 12px; }
+        /* Slots */
+        .slots-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 12px;
+        }
+        .slot-card {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .slot-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .slot-port {
+            font-weight: bold;
+            color: var(--accent);
+        }
+        .slot-status {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+        .slot-status.running { background: rgba(34,197,94,0.2); color: var(--green); }
+        .slot-status.empty { background: rgba(136,136,136,0.2); color: var(--text2); }
+        .slot-status.crashed { background: rgba(239,68,68,0.2); color: var(--red); }
+        .slot-model { font-size: 12px; margin-bottom: 8px; word-break: break-all; }
+        .slot-stats {
+            display: flex;
+            gap: 16px;
+            font-size: 11px;
+            color: var(--text2);
+        }
+        .slot-actions { margin-top: 12px; display: flex; gap: 8px; }
+        /* Progress Bar */
+        .progress {
+            height: 6px;
+            background: var(--bg3);
+            border-radius: 3px;
+            overflow: hidden;
+            margin: 8px 0;
+        }
+        .progress-bar {
+            height: 100%;
+            background: var(--accent);
+            transition: width 0.3s;
+        }
+        .progress-bar.warning { background: var(--yellow); }
+        .progress-bar.danger { background: var(--red); }
+        /* Table */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            text-align: left;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        th { color: var(--text2); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+        tr:hover { background: var(--bg3); }
+        /* Buttons */
+        .btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-family: inherit;
+            transition: all 0.2s;
+        }
+        .btn-primary { background: var(--accent); color: white; }
+        .btn-primary:hover { background: var(--accent2); }
+        .btn-danger { background: var(--red); color: white; }
+        .btn-danger:hover { opacity: 0.8; }
+        .btn-sm { padding: 4px 8px; font-size: 11px; }
+        /* Forms */
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; margin-bottom: 4px; color: var(--text2); font-size: 12px; }
+        input, select {
+            width: 100%;
+            padding: 8px 12px;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 13px;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 24px;
+            min-width: 400px;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .modal h2 { margin-bottom: 16px; }
+        /* Search Results */
+        .search-results {
+            max-height: 300px;
+            overflow-y: auto;
+            margin: 12px 0;
+        }
+        .search-item {
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            margin-bottom: 8px;
+            cursor: pointer;
+        }
+        .search-item:hover { border-color: var(--accent); }
+        .search-item-title { font-weight: 500; margin-bottom: 4px; }
+        .search-item-meta { font-size: 11px; color: var(--text2); }
+        .file-list { margin-top: 8px; }
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 8px;
+            background: var(--bg3);
+            border-radius: 4px;
+            margin: 4px 0;
+            font-size: 11px;
+        }
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            z-index: 200;
+            animation: slideIn 0.3s;
+        }
+        .toast.success { border-color: var(--green); }
+        .toast.error { border-color: var(--red); }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        /* Auth */
+        .auth-screen {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+        .auth-box {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 32px;
+            width: 350px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Auth Screen -->
+    <div id="authScreen" class="auth-screen">
+        <div class="auth-box">
+            <h2 style="margin-bottom: 20px; color: var(--accent);">🔐 Admin Login</h2>
+            <div class="form-group">
+                <label>API Key</label>
+                <input type="password" id="apiKeyInput" placeholder="sk-...">
+            </div>
+            <button class="btn btn-primary" style="width: 100%;" onclick="login()">Login</button>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="mainApp" class="container" style="display: none;">
+        <nav class="sidebar">
+            <div class="logo">⚡ LLM Gateway</div>
+            <div class="nav-item active" data-page="dashboard">📊 Dashboard</div>
+            <div class="nav-item" data-page="models">🧠 Model Slots</div>
+            <div class="nav-item" data-page="hf">🤗 HF Browser</div>
+            <div class="nav-item" data-page="users">👥 Users</div>
+            <div class="nav-item" data-page="signups">📝 Signups</div>
+            <div class="nav-item" data-page="config">⚙️ Config</div>
+        </nav>
+
+        <main class="main">
+            <!-- Dashboard -->
+            <div id="page-dashboard" class="page active">
+                <div class="header">
+                    <h1>Dashboard</h1>
+                    <span id="lastUpdate" style="color: var(--text2);"></span>
+                </div>
+
+                <!-- Pending Signups Alert -->
+                <div id="pendingSignupsAlert" class="card" style="display: none; border-color: var(--yellow); background: rgba(234, 179, 8, 0.1);">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <strong style="color: var(--yellow);">📝 Pending Signup Requests</strong>
+                            <span id="pendingCount" style="margin-left: 8px;"></span>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="document.querySelector('[data-page=signups]').click()">Review Now</button>
+                    </div>
+                </div>
+
+                <div class="stats-grid" id="systemStats"></div>
+
+                <div class="card">
+                    <div class="card-title">Active Model Slots</div>
+                    <div id="dashboardSlots" class="slots-grid"></div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">24h Stats</div>
+                    <div id="usageStats"></div>
+                </div>
+            </div>
+
+            <!-- Models -->
+            <div id="page-models" class="page">
+                <div class="header">
+                    <h1>Model Slots</h1>
+                    <button class="btn btn-primary" onclick="openLoadModal()">+ Load Model</button>
+                </div>
+
+                <div id="slotsContainer" class="slots-grid"></div>
+
+                <div class="card" style="margin-top: 20px;">
+                    <div class="card-title">Local Models</div>
+                    <div id="localModels"></div>
+                </div>
+            </div>
+
+            <!-- HF Browser -->
+            <div id="page-hf" class="page">
+                <div class="header">
+                    <h1>HuggingFace Browser</h1>
+                </div>
+
+                <div class="card">
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="hfSearchInput" placeholder="Search GGUF models...">
+                        <button class="btn btn-primary" onclick="searchHF()">Search</button>
+                    </div>
+                    <div id="hfResults" class="search-results"></div>
+                </div>
+            </div>
+
+            <!-- Users -->
+            <div id="page-users" class="page">
+                <div class="header">
+                    <h1>Users</h1>
+                    <button class="btn btn-primary" onclick="openUserModal()">+ Add User</button>
+                </div>
+
+                <div class="card">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Email</th>
+                                <th>Tier</th>
+                                <th>Balance</th>
+                                <th>Keys</th>
+                                <th>Usage</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTable"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Config -->
+            <div id="page-config" class="page">
+                <div class="header">
+                    <h1>Configuration</h1>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Admin Access</div>
+                    <div class="form-group">
+                        <label>Admin API Key</label>
+                        <input type="text" id="adminKeyDisplay" readonly style="background: var(--bg); color: var(--text2);">
+                        <small style="color: var(--text2); display: block; margin-top: 4px;">
+                            To change: edit <code>data/config.json</code> → <code>admin_key</code> field, then restart server
+                        </small>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Model Defaults</div>
+                    <div class="form-group">
+                        <label>HuggingFace Token</label>
+                        <input type="password" id="hfTokenInput" placeholder="hf_...">
+                    </div>
+                    <div class="form-group">
+                        <label>Default Context Size</label>
+                        <input type="number" id="ctxSizeInput" value="8192">
+                    </div>
+                    <div class="form-group">
+                        <label>Default Threads</label>
+                        <input type="number" id="threadsInput" value="10">
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Pricing</div>
+                    <div class="form-group">
+                        <label>Input (per 1K tokens) €</label>
+                        <input type="number" id="priceInputInput" step="0.0001" value="0.0001">
+                    </div>
+                    <div class="form-group">
+                        <label>Output (per 1K tokens) €</label>
+                        <input type="number" id="priceOutputInput" step="0.0001" value="0.0002">
+                    </div>
+                    <button class="btn btn-primary" onclick="saveConfig()">Save Config</button>
+                </div>
+            </div>
+
+            <!-- Signups -->
+            <div id="page-signups" class="page">
+                <div class="header">
+                    <h1>Signup Requests</h1>
+                    <button class="btn btn-secondary" onclick="loadSignups()">↻ Refresh</button>
+                </div>
+
+                <div class="card">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Email</th>
+                                <th>Tier</th>
+                                <th>Message</th>
+                                <th>Status</th>
+                                <th>Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="signupsTable"></tbody>
+                    </table>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">📧 Email Templates</div>
+                    <div style="margin-bottom: 16px;">
+                        <label style="color: var(--text2); font-size: 12px;">Welcome Email (PAYG)</label>
+                        <textarea id="emailTemplatePAYG" readonly style="width: 100%; height: 200px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; padding: 12px; color: var(--text); font-family: inherit; font-size: 12px; resize: vertical;"></textarea>
+                        <button class="btn btn-sm" style="margin-top: 8px;" onclick="copyTemplate('emailTemplatePAYG')">📋 Copy</button>
+                    </div>
+                    <div>
+                        <label style="color: var(--text2); font-size: 12px;">Welcome Email (Subscription - €39/month)</label>
+                        <textarea id="emailTemplateSub" readonly style="width: 100%; height: 220px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; padding: 12px; color: var(--text); font-family: inherit; font-size: 12px; resize: vertical;"></textarea>
+                        <button class="btn btn-sm" style="margin-top: 8px;" onclick="copyTemplate('emailTemplateSub')">📋 Copy</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Load Model Modal -->
+    <div id="loadModal" class="modal-overlay">
+        <div class="modal">
+            <h2>Load Model</h2>
+            <div class="form-group">
+                <label>Slot</label>
+                <select id="loadSlot">
+                    <option value="4801">4801</option>
+                    <option value="4802">4802</option>
+                    <option value="4803">4803</option>
+                    <option value="4804">4804</option>
+                    <option value="4805">4805</option>
+                    <option value="4806">4806</option>
+                    <option value="4807">4807</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Model Path</label>
+                <input type="text" id="loadPath" placeholder="model.gguf or path/to/model.gguf">
+            </div>
+            <div class="form-group">
+                <label>Type</label>
+                <select id="loadType">
+                    <option value="text">Text</option>
+                    <option value="vision">Vision</option>
+                    <option value="audio">Audio (Whisper)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Context Size (optional)</label>
+                <input type="number" id="loadCtx" placeholder="8192">
+            </div>
+            <div class="form-group">
+                <label>Threads (optional)</label>
+                <input type="number" id="loadThreads" placeholder="10">
+            </div>
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                <button class="btn" onclick="closeModal('loadModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="loadModel()">Load</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- User Modal -->
+    <div id="userModal" class="modal-overlay">
+        <div class="modal">
+            <h2>Add User</h2>
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" id="userEmail">
+            </div>
+            <div class="form-group">
+                <label>Tier</label>
+                <select id="userTier">
+                    <option value="payg">Pay As You Go</option>
+                    <option value="sub">Subscription</option>
+                </select>
+            </div>
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                <button class="btn" onclick="closeModal('userModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="createUser()">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Balance Modal -->
+    <div id="balanceModal" class="modal-overlay">
+        <div class="modal">
+            <h2>Update Balance</h2>
+            <input type="hidden" id="balanceUserId">
+            <div class="form-group">
+                <label>New Balance (€)</label>
+                <input type="number" id="newBalance" step="0.01">
+            </div>
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                <button class="btn" onclick="closeModal('balanceModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="updateBalance()">Update</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let API_KEY = localStorage.getItem('adminKey') || '';
+        let refreshInterval = null;
+
+        // Auth
+        function login() {
+            API_KEY = document.getElementById('apiKeyInput').value;
+            localStorage.setItem('adminKey', API_KEY);
+            checkAuth();
+        }
+
+        async function checkAuth() {
+            if (!API_KEY) {
+                showAuthScreen();
+                return;
+            }
+
+            try {
+                const resp = await fetch('/admin/api/users', {
+                    headers: { 'Authorization': `Bearer ${API_KEY}` }
+                });
+
+                if (resp.ok) {
+                    document.getElementById('authScreen').style.display = 'none';
+                    document.getElementById('mainApp').style.display = 'grid';
+                    init();
+                } else {
+                    // Invalid key - clear and show auth
+                    localStorage.removeItem('adminKey');
+                    API_KEY = '';
+                    showAuthScreen();
+                }
+            } catch (e) {
+                showAuthScreen();
+            }
+        }
+
+        function showAuthScreen() {
+            document.getElementById('authScreen').style.display = 'flex';
+            document.getElementById('mainApp').style.display = 'none';
+        }
+
+        // API Helper
+        async function api(path, options = {}) {
+            const resp = await fetch(path, {
+                ...options,
+                headers: {
+                    'Authorization': `Bearer ${API_KEY}`,
+                    'Content-Type': 'application/json',
+                    ...options.headers
+                }
+            });
+            if (resp.status === 401 || resp.status === 403) {
+                localStorage.removeItem('adminKey');
+                API_KEY = '';
+                showAuthScreen();
+                throw new Error('Unauthorized');
+            }
+            return resp;
+        }
+
+        // Toast
+        function toast(msg, type = 'success') {
+            const t = document.createElement('div');
+            t.className = `toast ${type}`;
+            t.textContent = msg;
+            document.body.appendChild(t);
+            setTimeout(() => t.remove(), 3000);
+        }
+
+        // Navigation
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.onclick = () => {
+                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+                item.classList.add('active');
+                document.getElementById(`page-${item.dataset.page}`).classList.add('active');
+            };
+        });
+
+        // Modal
+        function openLoadModal() {
+            document.getElementById('loadModal').classList.add('active');
+        }
+        function openUserModal() {
+            document.getElementById('userModal').classList.add('active');
+        }
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('active');
+        }
+
+        // Dashboard
+        async function loadDashboard() {
+            // Check pending signups
+            try {
+                const signupsResp = await api('/admin/api/signups');
+                const signups = await signupsResp.json();
+                const pending = signups.filter(s => s.status === 'pending');
+
+                if (pending.length > 0) {
+                    document.getElementById('pendingSignupsAlert').style.display = 'block';
+                    document.getElementById('pendingCount').textContent = `(${pending.length} waiting)`;
+                } else {
+                    document.getElementById('pendingSignupsAlert').style.display = 'none';
+                }
+            } catch (e) {
+                // Ignore
+            }
+
+            // System stats
+            const sysResp = await api('/admin/api/system');
+            const sys = await sysResp.json();
+
+            const ramPct = sys.memory.percent;
+            const ramClass = ramPct > 80 ? 'danger' : ramPct > 60 ? 'warning' : '';
+
+            document.getElementById('systemStats').innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-value">${sys.cpu.total_percent.toFixed(1)}%</div>
+                    <div class="stat-label">CPU (${sys.cpu.cores} cores)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${sys.memory.used_gb}GB</div>
+                    <div class="stat-label">RAM Used / ${sys.memory.total_gb}GB</div>
+                    <div class="progress"><div class="progress-bar ${ramClass}" style="width: ${ramPct}%"></div></div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${sys.slots.filter(s => s.status === 'running').length}</div>
+                    <div class="stat-label">Active Slots</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${sys.memory.available_gb}GB</div>
+                    <div class="stat-label">RAM Available</div>
+                </div>
+            `;
+
+            // Slots overview
+            document.getElementById('dashboardSlots').innerHTML = sys.slots
+                .filter(s => s.status === 'running')
+                .map(s => `
+                    <div class="slot-card">
+                        <div class="slot-header">
+                            <span class="slot-port">:${s.port}</span>
+                            <span class="slot-status running">running</span>
+                        </div>
+                        <div class="slot-model">${s.model || '-'}</div>
+                        <div class="slot-stats">
+                            <span>RAM: ${s.ram_mb}MB</span>
+                            <span>CPU: ${s.cpu_percent || 0}%</span>
+                        </div>
+                    </div>
+                `).join('') || '<div style="color: var(--text2);">No models loaded</div>';
+
+            // Usage stats
+            const statsResp = await api('/v1/stats/summary');
+            const stats = await statsResp.json();
+
+            document.getElementById('usageStats').innerHTML = `
+                <p>${stats.summary}</p>
+                <div class="stats-grid" style="margin-top: 12px;">
+                    <div class="stat-card">
+                        <div class="stat-value">${stats.stats.total_requests}</div>
+                        <div class="stat-label">Requests</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${stats.stats.total_tokens}</div>
+                        <div class="stat-label">Tokens</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${stats.stats.avg_latency_ms}ms</div>
+                        <div class="stat-label">Avg Latency</div>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('lastUpdate').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+        }
+
+        // Slots
+        async function loadSlots() {
+            const resp = await api('/admin/api/slots');
+            const slots = await resp.json();
+
+            document.getElementById('slotsContainer').innerHTML = slots.map(s => `
+                <div class="slot-card">
+                    <div class="slot-header">
+                        <span class="slot-port">:${s.port}</span>
+                        <span class="slot-status ${s.status}">${s.status}</span>
+                    </div>
+                    ${s.model_name ? `
+                        <div class="slot-model">${s.model_name}</div>
+                        <div class="slot-stats">
+                            <span>Type: ${s.model_type}</span>
+                            <span>RAM: ${s.ram_mb}MB</span>
+                            <span>Ctx: ${s.ctx_size}</span>
+                        </div>
+                        <div class="slot-actions">
+                            <button class="btn btn-danger btn-sm" onclick="unloadModel(${s.port})">Unload</button>
+                        </div>
+                    ` : `
+                        <div style="color: var(--text2); padding: 20px 0;">Empty slot</div>
+                    `}
+                </div>
+            `).join('');
+
+            // Local models
+            const localResp = await api('/admin/api/models/local');
+            const local = await localResp.json();
+
+            document.getElementById('localModels').innerHTML = local.length ? `
+                <table>
+                    <thead><tr><th>Name</th><th>Size</th><th>Action</th></tr></thead>
+                    <tbody>
+                        ${local.map(m => `
+                            <tr>
+                                <td>${m.name}</td>
+                                <td>${m.size_gb}GB</td>
+                                <td><button class="btn btn-sm btn-primary" onclick="quickLoad('${m.path}')">Load</button></td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            ` : '<div style="color: var(--text2);">No local models found. Download from HF Browser.</div>';
+        }
+
+        async function loadModel() {
+            const slot = document.getElementById('loadSlot').value;
+            const path = document.getElementById('loadPath').value;
+            const type = document.getElementById('loadType').value;
+            const ctx = document.getElementById('loadCtx').value;
+            const threads = document.getElementById('loadThreads').value;
+
+            const resp = await api('/admin/api/slots/load', {
+                method: 'POST',
+                body: JSON.stringify({
+                    slot: parseInt(slot),
+                    model_path: path,
+                    model_type: type,
+                    ctx_size: ctx ? parseInt(ctx) : null,
+                    threads: threads ? parseInt(threads) : null
+                })
+            });
+
+            const result = await resp.json();
+            if (resp.ok) {
+                toast(`Model loaded on slot ${slot}`);
+                closeModal('loadModal');
+                loadSlots();
+                loadDashboard();
+            } else {
+                toast(result.detail || 'Failed to load model', 'error');
+            }
+        }
+
+        async function unloadModel(slot) {
+            if (!confirm(`Unload model from slot ${slot}?`)) return;
+
+            const resp = await api(`/admin/api/slots/${slot}/unload`, { method: 'POST' });
+            if (resp.ok) {
+                toast(`Slot ${slot} unloaded`);
+                loadSlots();
+                loadDashboard();
+            }
+        }
+
+        function quickLoad(path) {
+            document.getElementById('loadPath').value = path;
+            openLoadModal();
+        }
+
+        // HF Browser
+        async function searchHF() {
+            const q = document.getElementById('hfSearchInput').value;
+            document.getElementById('hfResults').innerHTML = '<div>Searching...</div>';
+
+            const resp = await api(`/admin/api/models/search?q=${encodeURIComponent(q)}`);
+            const results = await resp.json();
+
+            if (results.error) {
+                document.getElementById('hfResults').innerHTML = `<div style="color: var(--red);">${results.error}</div>`;
+                return;
+            }
+
+            document.getElementById('hfResults').innerHTML = results.map(r => `
+                <div class="search-item">
+                    <div class="search-item-title">${r.repo_id}</div>
+                    <div class="search-item-meta">⬇️ ${r.downloads} | ❤️ ${r.likes}</div>
+                    <div class="file-list">
+                        ${r.files.map(f => `
+                            <div class="file-item">
+                                <span>${f}</span>
+                                <button class="btn btn-sm btn-primary" onclick="downloadModel('${r.repo_id}', '${f}')">Download</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `).join('') || '<div>No results found</div>';
+        }
+
+        async function downloadModel(repo, file) {
+            toast('Starting download...');
+            const resp = await api('/admin/api/models/download', {
+                method: 'POST',
+                body: JSON.stringify({ repo_id: repo, filename: file })
+            });
+            const result = await resp.json();
+            if (result.error) {
+                toast(result.error, 'error');
+            } else {
+                toast(`Downloaded: ${result.path}`);
+                loadSlots();
+            }
+        }
+
+        // Users
+        async function loadUsers() {
+            const resp = await api('/admin/api/users');
+            const users = await resp.json();
+
+            document.getElementById('usersTable').innerHTML = users.map(u => `
+                <tr>
+                    <td>${u.email}</td>
+                    <td>${u.tier}</td>
+                    <td>€${(u.balance || 0).toFixed(4)}</td>
+                    <td>${u.key_count}</td>
+                    <td>€${(u.total_usage || 0).toFixed(4)}</td>
+                    <td>
+                        <button class="btn btn-sm" onclick="openBalanceModal(${u.id}, ${u.balance})">💰</button>
+                        <button class="btn btn-sm" onclick="createApiKey(${u.id})">🔑</button>
+                        <button class="btn btn-sm ${u.active ? '' : 'btn-danger'}" onclick="toggleUser(${u.id}, ${u.active})">
+                            ${u.active ? '✓' : '✗'}
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        async function createUser() {
+            const email = document.getElementById('userEmail').value;
+            const tier = document.getElementById('userTier').value;
+
+            const resp = await api('/admin/api/users', {
+                method: 'POST',
+                body: JSON.stringify({ email, tier })
+            });
+
+            if (resp.ok) {
+                toast('User created');
+                closeModal('userModal');
+                loadUsers();
+            } else {
+                const err = await resp.json();
+                toast(err.detail || 'Failed', 'error');
+            }
+        }
+
+        async function createApiKey(userId) {
+            const resp = await api(`/admin/api/users/${userId}/apikey`, {
+                method: 'POST',
+                body: JSON.stringify({ user_id: userId, name: 'default' })
+            });
+            const result = await resp.json();
+            if (resp.ok) {
+                prompt('New API Key (copy now, will not be shown again):', result.key);
+                loadUsers();
+            }
+        }
+
+        function openBalanceModal(userId, currentBalance) {
+            document.getElementById('balanceUserId').value = userId;
+            document.getElementById('newBalance').value = currentBalance || 0;
+            document.getElementById('balanceModal').classList.add('active');
+        }
+
+        async function updateBalance() {
+            const userId = document.getElementById('balanceUserId').value;
+            const balance = parseFloat(document.getElementById('newBalance').value);
+
+            const resp = await api(`/admin/api/users/${userId}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ balance })
+            });
+
+            if (resp.ok) {
+                toast('Balance updated');
+                closeModal('balanceModal');
+                loadUsers();
+            }
+        }
+
+        async function toggleUser(userId, current) {
+            await api(`/admin/api/users/${userId}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ active: !current })
+            });
+            loadUsers();
+        }
+
+        // Config
+        async function loadConfig() {
+            const resp = await api('/admin/api/config');
+            const config = await resp.json();
+
+            document.getElementById('adminKeyDisplay').value = config.admin_key_display || 'Not set';
+            document.getElementById('hfTokenInput').value = config.hf_token || '';
+            document.getElementById('ctxSizeInput').value = config.default_ctx_size || 8192;
+            document.getElementById('threadsInput').value = config.default_threads || 10;
+            document.getElementById('priceInputInput').value = config.pricing?.input_per_1k || 0.0001;
+            document.getElementById('priceOutputInput').value = config.pricing?.output_per_1k || 0.0002;
+        }
+
+        async function saveConfig() {
+            const hfToken = document.getElementById('hfTokenInput').value;
+            const config = {
+                default_ctx_size: parseInt(document.getElementById('ctxSizeInput').value),
+                default_threads: parseInt(document.getElementById('threadsInput').value),
+                pricing: {
+                    input_per_1k: parseFloat(document.getElementById('priceInputInput').value),
+                    output_per_1k: parseFloat(document.getElementById('priceOutputInput').value)
+                }
+            };
+
+            if (hfToken && !hfToken.includes('...')) {
+                config.hf_token = hfToken;
+            }
+
+            const resp = await api('/admin/api/config', {
+                method: 'PATCH',
+                body: JSON.stringify(config)
+            });
+
+            if (resp.ok) {
+                toast('Config saved');
+            }
+        }
+
+        // Signups
+        async function loadSignups() {
+            const resp = await api('/admin/api/signups');
+            const signups = await resp.json();
+
+            document.getElementById('signupsTable').innerHTML = signups.map(s => {
+                const statusClass = s.status === 'pending' ? 'style="color: var(--yellow)"' :
+                                   s.status === 'approved' ? 'style="color: var(--green)"' :
+                                   'style="color: var(--red)"';
+                const date = new Date(s.created_at).toLocaleDateString();
+
+                return `
+                    <tr>
+                        <td>${s.email}</td>
+                        <td>${s.tier}</td>
+                        <td>${s.message || '-'}</td>
+                        <td ${statusClass}>${s.status}</td>
+                        <td>${date}</td>
+                        <td>
+                            ${s.status === 'pending' ? `
+                                <button class="btn btn-sm btn-primary" onclick="approveSignup(${s.id})">✓ Approve</button>
+                                <button class="btn btn-sm btn-danger" onclick="rejectSignup(${s.id})">✗ Reject</button>
+                            ` : '-'}
+                        </td>
+                    </tr>
+                `;
+            }).join('') || '<tr><td colspan="6" style="color: var(--text2);">No signup requests</td></tr>';
+
+            // Update email templates
+            updateEmailTemplates();
+        }
+
+        function updateEmailTemplates() {
+            const baseUrl = window.location.origin;
+
+            document.getElementById('emailTemplatePAYG').value = `Hallo,
+
+willkommen bei LLM Gateway! Dein Account wurde erfolgreich erstellt.
+
+🔑 Dein API Key: [API_KEY_HERE]
+
+📖 Quick Start:
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="${baseUrl}/v1",
+    api_key="dein-api-key"
+)
+
+response = client.chat.completions.create(
+    model="model-name",
+    messages=[{"role": "user", "content": "Hallo!"}]
+)
+
+💰 Pricing: Pay As You Go
+- €0.0001 pro 1K Input Tokens
+- €0.0002 pro 1K Output Tokens
+- Rate Limit: 5 Requests/Minute
+
+💳 Guthaben aufladen:
+Überweise den gewünschten Betrag an:
+IBAN: [DEINE_IBAN]
+Verwendungszweck: LLM Gateway - [DEINE_EMAIL]
+
+Dashboard: ${baseUrl}/user/
+
+Bei Fragen einfach antworten!
+
+Viele Grüße`;
+
+            document.getElementById('emailTemplateSub').value = `Hallo,
+
+willkommen bei LLM Gateway! Dein Subscription Account wurde erfolgreich erstellt.
+
+🔑 Dein API Key: [API_KEY_HERE]
+
+📖 Quick Start:
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="${baseUrl}/v1",
+    api_key="dein-api-key"
+)
+
+response = client.chat.completions.create(
+    model="model-name",
+    messages=[{"role": "user", "content": "Hallo!"}]
+)
+
+💎 Subscription Plan: €39/Monat
+- Unlimited Tokens
+- Rate Limit: 10 Requests/Minute
+- Priority Support
+
+💳 Monatliche Zahlung:
+Bitte überweise €39 bis zum 1. des Monats an:
+IBAN: [DEINE_IBAN]
+Verwendungszweck: LLM Gateway Sub - [DEINE_EMAIL]
+
+Dashboard: ${baseUrl}/user/
+
+Bei Fragen einfach antworten!
+
+Viele Grüße`;
+        }
+
+        function copyTemplate(id) {
+            const textarea = document.getElementById(id);
+            textarea.select();
+            document.execCommand('copy');
+            toast('Template kopiert!');
+        }
+
+        async function approveSignup(id) {
+            const resp = await api(`/admin/api/signups/${id}/approve`, { method: 'POST' });
+            const result = await resp.json();
+
+            if (resp.ok) {
+                // Show API key in prompt so admin can copy and send to user
+                const key = result.api_key;
+                const tier = result.tier || 'payg';
+
+                // Copy key to clipboard
+                navigator.clipboard.writeText(key).catch(() => {});
+
+                alert(`✅ User approved!\n\nEmail: ${result.email}\nTier: ${tier}\n\nAPI Key (copied to clipboard):\n${key}\n\nGo to Signups tab to copy the email template.`);
+
+                toast('User approved and created');
+                loadSignups();
+                loadUsers();
+                loadDashboard();
+            } else {
+                toast(result.detail || 'Failed to approve', 'error');
+            }
+        }
+
+        async function rejectSignup(id) {
+            if (!confirm('Reject this signup request?')) return;
+
+            const resp = await api(`/admin/api/signups/${id}/reject`, { method: 'POST' });
+            if (resp.ok) {
+                toast('Request rejected');
+                loadSignups();
+            }
+        }
+
+        // Init
+        async function init() {
+            await loadDashboard();
+            await loadSlots();
+            await loadUsers();
+            await loadSignups();
+            await loadConfig();
+
+            // Auto refresh dashboard
+            refreshInterval = setInterval(loadDashboard, 5000);
+        }
+
+        // Start
+        checkAuth();
+    </script>
+</body>
+</html>

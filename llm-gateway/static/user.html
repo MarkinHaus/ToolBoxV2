@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Gateway - Dashboard</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #0a0a0f;
+            --bg2: #12121a;
+            --bg3: #1a1a25;
+            --text: #e0e0e0;
+            --text2: #888;
+            --accent: #6366f1;
+            --accent2: #818cf8;
+            --green: #22c55e;
+            --red: #ef4444;
+            --yellow: #eab308;
+            --border: #2a2a3a;
+        }
+        body {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            background: var(--bg);
+            color: var(--text);
+            font-size: 13px;
+            line-height: 1.5;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 30px;
+        }
+        .logo {
+            font-size: 18px;
+            font-weight: bold;
+            color: var(--accent);
+        }
+        /* Cards */
+        .card {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .card-title {
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 16px;
+            color: var(--text2);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 28px;
+            font-weight: bold;
+            color: var(--accent2);
+            margin-bottom: 4px;
+        }
+        .stat-label {
+            color: var(--text2);
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        /* Status Indicator */
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .status-indicator.online {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--green);
+        }
+        .status-indicator.offline {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--red);
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        /* Table */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            text-align: left;
+            padding: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        th {
+            color: var(--text2);
+            font-weight: 500;
+            font-size: 11px;
+            text-transform: uppercase;
+        }
+        /* API Key Display */
+        .api-key {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: var(--bg3);
+            border-radius: 6px;
+            margin-bottom: 12px;
+        }
+        .api-key code {
+            flex: 1;
+            font-family: inherit;
+            color: var(--accent2);
+        }
+        /* Models Grid */
+        .models-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+        }
+        .model-card {
+            background: var(--bg3);
+            border-radius: 6px;
+            padding: 16px;
+        }
+        .model-name {
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+        .model-type {
+            font-size: 11px;
+            color: var(--text2);
+            text-transform: uppercase;
+        }
+        .model-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            margin-top: 8px;
+        }
+        .model-badge.text { background: rgba(99, 102, 241, 0.2); color: var(--accent2); }
+        .model-badge.vision { background: rgba(234, 179, 8, 0.2); color: var(--yellow); }
+        .model-badge.audio { background: rgba(34, 197, 94, 0.2); color: var(--green); }
+        /* Usage Chart */
+        .usage-chart {
+            display: flex;
+            align-items: flex-end;
+            gap: 4px;
+            height: 100px;
+            padding: 10px 0;
+        }
+        .usage-bar {
+            flex: 1;
+            background: var(--accent);
+            border-radius: 2px 2px 0 0;
+            min-height: 4px;
+            position: relative;
+        }
+        .usage-bar:hover::after {
+            content: attr(data-value);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 4px 8px;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-size: 10px;
+            white-space: nowrap;
+        }
+        /* Auth */
+        .auth-screen {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+        .auth-box {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 32px;
+            width: 350px;
+        }
+        .form-group { margin-bottom: 16px; }
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            color: var(--text2);
+            font-size: 12px;
+        }
+        input {
+            width: 100%;
+            padding: 10px 14px;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 13px;
+        }
+        input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-family: inherit;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+            width: 100%;
+        }
+        .btn-primary:hover { background: var(--accent2); }
+        /* Code Block */
+        .code-block {
+            background: var(--bg3);
+            border-radius: 6px;
+            padding: 16px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+        .code-block pre {
+            margin: 0;
+            color: var(--text2);
+        }
+        .code-block .highlight { color: var(--accent2); }
+        /* Uptime */
+        .uptime-grid {
+            display: flex;
+            gap: 2px;
+        }
+        .uptime-day {
+            width: 12px;
+            height: 24px;
+            border-radius: 2px;
+            background: var(--green);
+            cursor: pointer;
+        }
+        .uptime-day:hover {
+            opacity: 0.8;
+            transform: scaleY(1.1);
+        }
+        .uptime-day.down { background: var(--red); }
+        .uptime-day.partial { background: var(--yellow); }
+        .uptime-day.nodata { background: var(--border); }
+    </style>
+</head>
+<body>
+    <!-- Auth Screen -->
+    <div id="authScreen" class="auth-screen">
+        <div class="auth-box">
+            <h2 style="margin-bottom: 8px; color: var(--accent);">⚡ LLM Gateway</h2>
+            <p style="margin-bottom: 24px; color: var(--text2);">Enter your API key to view dashboard</p>
+            <div class="form-group">
+                <label>API Key</label>
+                <input type="password" id="apiKeyInput" placeholder="sk-...">
+            </div>
+            <button class="btn btn-primary" onclick="login()">Login</button>
+        </div>
+    </div>
+
+    <!-- Main Dashboard -->
+    <div id="mainApp" class="container" style="display: none;">
+        <header>
+            <div class="logo">⚡ LLM Gateway</div>
+            <div id="serviceStatus" class="status-indicator online">
+                <span class="status-dot"></span>
+                <span>All Systems Operational</span>
+            </div>
+        </header>
+
+        <!-- Stats -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value" id="balanceValue">€0.00</div>
+                <div class="stat-label">Balance</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="tierValue">-</div>
+                <div class="stat-label">Tier</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="rateLimitValue">-</div>
+                <div class="stat-label">Requests/min</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="requestsValue">0</div>
+                <div class="stat-label">Requests (7d)</div>
+            </div>
+        </div>
+
+        <!-- API Keys -->
+        <div class="card">
+            <div class="card-title">🔑 Your API Keys</div>
+            <div id="apiKeysContainer"></div>
+        </div>
+
+        <!-- Usage -->
+        <div class="card">
+            <div class="card-title">📊 Usage (Last 7 Days)</div>
+            <div id="usageChart" class="usage-chart"></div>
+            <table id="usageTable">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Requests</th>
+                        <th>Tokens In</th>
+                        <th>Tokens Out</th>
+                        <th>Cost</th>
+                        <th>Avg Latency</th>
+                    </tr>
+                </thead>
+                <tbody id="usageTableBody"></tbody>
+            </table>
+        </div>
+
+        <!-- Available Models -->
+        <div class="card">
+            <div class="card-title">🧠 Available Models</div>
+            <div id="modelsGrid" class="models-grid"></div>
+        </div>
+
+        <!-- Quick Start -->
+        <div class="card">
+            <div class="card-title">🚀 Quick Start</div>
+            <div class="code-block">
+<pre>
+<span class="highlight"># Python</span>
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="<span class="highlight" id="baseUrl">http://gateway.simplecore.app/v1</span>",
+    api_key="<span class="highlight">your-api-key</span>"
+)
+
+response = client.chat.completions.create(
+    model="<span class="highlight" id="exampleModel">qwen2.5-7b</span>",
+    messages=[{"role": "user", "content": "Hello!"}],
+    stream=True
+)
+
+for chunk in response:
+    print(chunk.choices[0].delta.content, end="")
+</pre>
+            </div>
+        </div>
+
+        <!-- Uptime -->
+        <div class="card">
+            <div class="card-title">📈 Uptime (Last 30 Days)</div>
+            <div id="uptimeGrid" class="uptime-grid"></div>
+            <p style="margin-top: 12px; color: var(--text2); font-size: 12px;">
+                <span id="uptimePercent">Loading...</span> uptime
+                <span id="uptimeLegend" style="float: right;">
+                    <span style="color: var(--green);">■</span> Up
+                    <span style="color: var(--yellow); margin-left: 8px;">■</span> Degraded
+                    <span style="color: var(--red); margin-left: 8px;">■</span> Down
+                    <span style="color: var(--text2); margin-left: 8px;">■</span> No data
+                </span>
+            </p>
+        </div>
+    </div>
+
+    <script>
+        let API_KEY = localStorage.getItem('userKey') || '';
+
+        // Auth
+        function login() {
+            API_KEY = document.getElementById('apiKeyInput').value;
+            localStorage.setItem('userKey', API_KEY);
+            checkAuth();
+        }
+
+        async function checkAuth() {
+            try {
+                const resp = await fetch('/user/api/me', {
+                    headers: { 'Authorization': `Bearer ${API_KEY}` }
+                });
+
+                if (resp.ok) {
+                    document.getElementById('authScreen').style.display = 'none';
+                    document.getElementById('mainApp').style.display = 'block';
+                    loadDashboard();
+                } else {
+                    showAuth();
+                }
+            } catch (e) {
+                showAuth();
+            }
+        }
+
+        function showAuth() {
+            document.getElementById('authScreen').style.display = 'flex';
+            document.getElementById('mainApp').style.display = 'none';
+        }
+
+        async function api(path) {
+            const resp = await fetch(path, {
+                headers: { 'Authorization': `Bearer ${API_KEY}` }
+            });
+            if (resp.status === 401) {
+                localStorage.removeItem('userKey');
+                showAuth();
+                throw new Error('Unauthorized');
+            }
+            return resp.json();
+        }
+
+        async function loadDashboard() {
+            // Load user info
+            const user = await api('/user/api/me');
+            document.getElementById('balanceValue').textContent = user.tier === 'sub' ? '∞' : `€${(user.balance || 0).toFixed(4)}`;
+            document.getElementById('tierValue').textContent = user.tier === 'payg' ? 'Pay As You Go' :
+                                                               user.tier === 'sub' ? 'Subscription' : user.tier;
+
+            // Rate limit
+            try {
+                const rateLimit = await api('/user/api/ratelimit');
+                document.getElementById('rateLimitValue').textContent = `${rateLimit.remaining}/${rateLimit.max_per_minute}`;
+            } catch (e) {
+                document.getElementById('rateLimitValue').textContent = '-';
+            }
+
+            // API Keys
+            document.getElementById('apiKeysContainer').innerHTML = user.api_keys.map(k => `
+                <div class="api-key">
+                    <code>${k.key_prefix}...****</code>
+                    <span style="color: var(--text2); font-size: 11px;">${k.name}</span>
+                </div>
+            `).join('') || '<div style="color: var(--text2);">No API keys. Contact admin.</div>';
+
+            // Usage
+            const usage = await api('/user/api/usage?days=7');
+
+            // Calculate totals
+            const totalRequests = usage.reduce((a, b) => a + (b.requests || 0), 0);
+
+            document.getElementById('requestsValue').textContent = totalRequests.toLocaleString();
+
+            // Usage chart
+            const maxRequests = Math.max(...usage.map(u => u.requests || 1), 1);
+            document.getElementById('usageChart').innerHTML = usage.slice().reverse().map(u => {
+                const height = Math.max(((u.requests || 0) / maxRequests) * 100, 4);
+                return `<div class="usage-bar" style="height: ${height}%" data-value="${u.date}: ${u.requests} req"></div>`;
+            }).join('');
+
+            // Usage table
+            document.getElementById('usageTableBody').innerHTML = usage.map(u => `
+                <tr>
+                    <td>${u.date}</td>
+                    <td>${u.requests || 0}</td>
+                    <td>${(u.tokens_in || 0).toLocaleString()}</td>
+                    <td>${(u.tokens_out || 0).toLocaleString()}</td>
+                    <td>€${(u.cost || 0).toFixed(4)}</td>
+                    <td>${Math.round(u.avg_latency || 0)}ms</td>
+                </tr>
+            `).join('') || '<tr><td colspan="6" style="color: var(--text2);">No usage data yet</td></tr>';
+
+            // Models
+            const models = await api('/user/api/models');
+            document.getElementById('modelsGrid').innerHTML = models.map(m => `
+                <div class="model-card">
+                    <div class="model-name">${m.name}</div>
+                    <span class="model-badge ${m.type}">${m.type}</span>
+                </div>
+            `).join('') || '<div style="color: var(--text2);">No models available</div>';
+
+            // Update example model
+            if (models.length > 0) {
+                document.getElementById('exampleModel').textContent = models[0].name;
+            }
+
+            // Base URL
+            document.getElementById('baseUrl').textContent = `${window.location.origin}/v1`;
+
+            // Check health for uptime
+            checkHealth();
+
+            // Load real uptime data
+            loadUptime();
+        }
+
+        async function checkHealth() {
+            try {
+                const resp = await fetch('/health');
+                const data = await resp.json();
+
+                if (data.status === 'ok') {
+                    document.getElementById('serviceStatus').className = 'status-indicator online';
+                    document.getElementById('serviceStatus').innerHTML = `
+                        <span class="status-dot"></span>
+                        <span>All Systems Operational (${data.active_slots} models)</span>
+                    `;
+                } else {
+                    throw new Error('Not ok');
+                }
+            } catch (e) {
+                document.getElementById('serviceStatus').className = 'status-indicator offline';
+                document.getElementById('serviceStatus').innerHTML = `
+                    <span class="status-dot"></span>
+                    <span>Service Degraded</span>
+                `;
+            }
+        }
+
+        async function loadUptime() {
+            try {
+                const resp = await fetch('/api/uptime?days=30');
+                const data = await resp.json();
+
+                // Create date map for last 30 days
+                const dateMap = {};
+                data.daily.forEach(d => {
+                    dateMap[d.date] = d.status;
+                });
+
+                // Generate grid for last 30 days
+                const days = [];
+                for (let i = 29; i >= 0; i--) {
+                    const date = new Date();
+                    date.setDate(date.getDate() - i);
+                    const dateStr = date.toISOString().split('T')[0];
+                    const status = dateMap[dateStr] || 'nodata';
+                    days.push({ date: dateStr, status });
+                }
+
+                document.getElementById('uptimeGrid').innerHTML = days.map(d => {
+                    let className = '';
+                    let title = d.date;
+
+                    switch (d.status) {
+                        case 'up':
+                            className = '';
+                            title += ' - Operational';
+                            break;
+                        case 'degraded':
+                            className = 'partial';
+                            title += ' - Degraded';
+                            break;
+                        case 'down':
+                            className = 'down';
+                            title += ' - Down';
+                            break;
+                        default:
+                            className = 'nodata';
+                            title += ' - No data';
+                    }
+
+                    return `<div class="uptime-day ${className}" title="${title}"></div>`;
+                }).join('');
+
+                document.getElementById('uptimePercent').textContent = `${data.overall_uptime_percent}%`;
+
+            } catch (e) {
+                document.getElementById('uptimeGrid').innerHTML = '<span style="color: var(--text2);">Unable to load uptime data</span>';
+                document.getElementById('uptimePercent').textContent = '-';
+            }
+        }
+
+        // Auto-refresh
+        setInterval(() => {
+            checkHealth();
+        }, 30000);
+
+        // Start
+        checkAuth();
+    </script>
+</body>
+</html>

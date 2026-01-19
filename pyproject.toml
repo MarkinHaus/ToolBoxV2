@@ -112,6 +112,11 @@ isaa = [
 [tool.uv.sources]
 isaa = { workspace = true }
 
+[tool.uv.workspace]
+members = [
+    "llm-gateway",
+]
+
 [tool.deptry]
 exclude = ["toolboxv2/.data/*", "venv", "python_en", ".data/*", ".data"]
 known_first_party = ["toolboxv2", "whatsapp", "hmr", "restrictedpython"]
