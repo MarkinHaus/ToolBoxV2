@@ -748,12 +748,14 @@
             const slots = await resp.json();
 
             // Type icons mapping
+
             const typeIcons = {
                 'text': '💬',
                 'vision': '👁️',
                 'omni': '🌐',
                 'embedding': '📊',
-                'audio': '🎵'
+                'audio': '🎵',
+                'mmproj': '🔗'
             };
 
             document.getElementById('slotsContainer').innerHTML = slots.map(s => {
@@ -793,16 +795,6 @@
             // Local models
             const localResp = await api('/admin/api/models/local');
             const local = await localResp.json();
-
-            // Type icons mapping
-            const typeIcons = {
-                'text': '💬',
-                'vision': '👁️',
-                'omni': '🌐',
-                'embedding': '📊',
-                'audio': '🎵',
-                'mmproj': '🔗'
-            };
 
             document.getElementById('localModels').innerHTML = local.length ? `
                 <table>
