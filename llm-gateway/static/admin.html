@@ -499,13 +499,13 @@
             </div>
             <div class="form-group">
                 <label>Model Path</label>
-                <input type="text" id="loadPath" placeholder="model.gguf or path/to/model.gguf">
+                <input type="text" id="loadPath" placeholder="model.gguf or path/to/model.gguf" onchange="autoDetectModelType()" oninput="autoDetectModelType()">
             </div>
             <div class="form-group">
-                <label>Type</label>
+                <label>Type <span id="typeAutoDetected" style="color: var(--green); font-size: 11px;"></span></label>
                 <select id="loadType">
                     <option value="text">Text</option>
-                    <option value="vision">Vision</option>
+                    <option value="vision">Vision (requires mmproj file)</option>
                     <option value="audio">Audio (Whisper)</option>
                 </select>
             </div>
@@ -773,18 +773,58 @@
 
             document.getElementById('localModels').innerHTML = local.length ? `
                 <table>
-                    <thead><tr><th>Name</th><th>Size</th><th>Action</th></tr></thead>
+                    <thead><tr><th>Name</th><th>Size</th><th>Type</th><th>Action</th></tr></thead>
                     <tbody>
-                        ${local.map(m => `
+                        ${local.map(m => {
+                            const name = m.name.toLowerCase();
+                            const isVision = name.includes('-vl') || name.includes('_vl') || name.includes('minicpm-v');
+                            const isMmproj = name.includes('mmproj');
+                            const isWhisper = name.includes('whisper');
+                            const typeIcon = isMmproj ? '🔗' : isWhisper ? '🎵' : isVision ? '👁️' : '💬';
+                            const typeLabel = isMmproj ? 'mmproj' : isWhisper ? 'Audio' : isVision ? 'Vision' : 'Text';
+
+                            return `
                             <tr>
                                 <td>${m.name}</td>
                                 <td>${m.size_gb}GB</td>
-                                <td><button class="btn btn-sm btn-primary" onclick="quickLoad('${m.path}')">Load</button></td>
+                                <td>${typeIcon} ${typeLabel}</td>
+                                <td>${isMmproj ? '<span style="color: var(--text2);">-</span>' : `<button class="btn btn-sm btn-primary" onclick="quickLoad('${m.path}')">Load</button>`}</td>
                             </tr>
-                        `).join('')}
+                        `}).join('')}
                     </tbody>
                 </table>
+                <p style="font-size: 12px; color: var(--text2); margin-top: 8px;">
+                    👁️ Vision models need both the model file AND the 🔗 mmproj file in the same folder.
+                </p>
             ` : '<div style="color: var(--text2);">No local models found. Download from HF Browser.</div>';
+        }
+
+        function autoDetectModelType() {
+            const path = document.getElementById('loadPath').value.toLowerCase();
+            const typeSelect = document.getElementById('loadType');
+            const indicator = document.getElementById('typeAutoDetected');
+
+            let detected = null;
+
+            // Vision models: contain "VL", "vision", "minicpm-v"
+            if (path.includes('-vl') || path.includes('_vl') || path.includes('vision') || path.includes('minicpm-v') || path.includes('minicpm_v')) {
+                detected = 'vision';
+            }
+            // Audio models: contain "whisper"
+            else if (path.includes('whisper')) {
+                detected = 'audio';
+            }
+            // Default to text
+            else if (path.length > 0) {
+                detected = 'text';
+            }
+
+            if (detected) {
+                typeSelect.value = detected;
+                indicator.textContent = '(auto-detected)';
+            } else {
+                indicator.textContent = '';
+            }
         }
 
         async function loadModel() {
@@ -829,6 +869,7 @@
 
         function quickLoad(path) {
             document.getElementById('loadPath').value = path;
+            autoDetectModelType();
             openLoadModal();
         }
 

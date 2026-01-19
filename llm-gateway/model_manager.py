@@ -19,22 +19,22 @@ except ImportError:
 
 class ModelManager:
     """Manages llama-server and whisper-server processes"""
-    
+
     SLOT_PORTS = list(range(4801, 4808))  # 4801-4807
-    
+
     def __init__(self, base_dir: Path, models_dir: Path, config: Dict):
         self.base_dir = base_dir
         self.models_dir = models_dir
         self.config = config
         self.processes: Dict[int, subprocess.Popen] = {}
         self.slot_info: Dict[int, Dict] = {}
-        
+
         self.models_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Binaries
         self.llama_server = base_dir / "llama-server"
         self.whisper_server = base_dir / "whisper-server"
-    
+
     async def restore_slots(self):
         """Restore slots from config on startup"""
         slots = self.config.get("slots", {})
@@ -50,7 +50,7 @@ class ModelManager:
                     )
                 except Exception as e:
                     print(f"Failed to restore slot {port_str}: {e}")
-    
+
     async def load_model(
         self,
         slot: int,
@@ -60,32 +60,32 @@ class ModelManager:
         threads: Optional[int] = None
     ) -> Dict:
         """Load a model into a slot"""
-        
+
         if slot not in self.SLOT_PORTS:
             raise ValueError(f"Invalid slot {slot}. Must be 4801-4807")
-        
+
         # Unload existing if any
         if slot in self.processes:
             await self.unload_model(slot)
-        
+
         # Resolve model path
         if model_path.startswith("/") or model_path.startswith("./"):
             full_path = Path(model_path)
         else:
             full_path = self.models_dir / model_path
-        
+
         if not full_path.exists():
             raise FileNotFoundError(f"Model not found: {full_path}")
-        
+
         # Build command
         ctx = ctx_size or self.config.get("default_ctx_size", 8192)
         thr = threads or self.config.get("default_threads", 10)
-        
+
         if model_type == "audio":
             # Whisper server
             if not self.whisper_server.exists():
                 raise FileNotFoundError("whisper-server not found. Run setup.sh")
-            
+
             cmd = [
                 str(self.whisper_server),
                 "--model", str(full_path),
@@ -97,7 +97,7 @@ class ModelManager:
             # llama-server for text and vision
             if not self.llama_server.exists():
                 raise FileNotFoundError("llama-server not found. Run setup.sh")
-            
+
             cmd = [
                 str(self.llama_server),
                 "--model", str(full_path),
@@ -109,13 +109,17 @@ class ModelManager:
                 "--cont-batching",
                 "--jinja"  # Enable tool calling
             ]
-            
+
             # Vision model needs mmproj
             if model_type == "vision":
-                mmproj = full_path.with_suffix(".mmproj.gguf")
-                if mmproj.exists():
+                mmproj = self._find_mmproj(full_path)
+                if mmproj:
                     cmd.extend(["--mmproj", str(mmproj)])
-        
+                else:
+                    raise FileNotFoundError(
+                        f"Vision model requires mmproj file. Download mmproj-*.gguf for this model."
+                    )
+
         # Start process
         process = subprocess.Popen(
             cmd,
@@ -123,14 +127,14 @@ class ModelManager:
             stderr=subprocess.PIPE,
             preexec_fn=os.setsid
         )
-        
+
         # Wait for server to be ready
         ready = await self._wait_for_ready(slot, timeout=60)
-        
+
         if not ready:
             process.kill()
             raise RuntimeError(f"Model failed to start on port {slot}")
-        
+
         self.processes[slot] = process
         self.slot_info[slot] = {
             "port": slot,
@@ -141,24 +145,62 @@ class ModelManager:
             "threads": thr,
             "pid": process.pid
         }
-        
+
         # Update config
         self._save_slot_config()
-        
+
         return {
             "status": "loaded",
             "slot": slot,
             "model": full_path.stem,
             "pid": process.pid
         }
-    
+
+    def _find_mmproj(self, model_path: Path) -> Optional[Path]:
+        """Find mmproj file for vision model"""
+        model_dir = model_path.parent
+        model_name = model_path.stem  # e.g., "Qwen3VL-8B-Instruct-Q4_K_M"
+
+        # Common mmproj naming patterns
+        patterns = [
+            # Pattern 1: mmproj-ModelName-F16.gguf
+            f"mmproj-*.gguf",
+            f"mmproj*.gguf",
+            # Pattern 2: model.mmproj.gguf
+            f"{model_name}.mmproj.gguf",
+            # Pattern 3: mmproj.gguf
+            "mmproj.gguf",
+            # Pattern 4: *-mmproj-*.gguf
+            "*mmproj*.gguf",
+        ]
+
+        for pattern in patterns:
+            matches = list(model_dir.glob(pattern))
+            if matches:
+                # Return the first match (prefer F16 if multiple)
+                for m in matches:
+                    if "F16" in m.name:
+                        return m
+                return matches[0]
+
+        # Also check in models_dir root
+        for pattern in patterns:
+            matches = list(self.models_dir.glob(pattern))
+            if matches:
+                for m in matches:
+                    if "F16" in m.name:
+                        return m
+                return matches[0]
+
+        return None
+
     async def _wait_for_ready(self, port: int, timeout: int = 60) -> bool:
         """Wait for server to respond to health check"""
         import httpx
-        
+
         url = f"http://127.0.0.1:{port}/health"
         start = asyncio.get_event_loop().time()
-        
+
         while asyncio.get_event_loop().time() - start < timeout:
             try:
                 async with httpx.AsyncClient() as client:
@@ -168,17 +210,17 @@ class ModelManager:
             except:
                 pass
             await asyncio.sleep(0.5)
-        
+
         return False
-    
+
     async def unload_model(self, slot: int) -> Dict:
         """Unload model from slot"""
-        
+
         if slot not in self.processes:
             return {"status": "not_loaded", "slot": slot}
-        
+
         process = self.processes[slot]
-        
+
         try:
             # Graceful shutdown
             os.killpg(os.getpgid(process.pid), signal.SIGTERM)
@@ -189,20 +231,20 @@ class ModelManager:
                 process.wait()
         except ProcessLookupError:
             pass
-        
+
         del self.processes[slot]
         if slot in self.slot_info:
             del self.slot_info[slot]
-        
+
         self._save_slot_config()
-        
+
         return {"status": "unloaded", "slot": slot}
-    
+
     async def shutdown_all(self):
         """Shutdown all model processes"""
         for slot in list(self.processes.keys()):
             await self.unload_model(slot)
-    
+
     def _save_slot_config(self):
         """Save current slot configuration"""
         slots = {}
@@ -217,19 +259,19 @@ class ModelManager:
                 }
             else:
                 slots[str(port)] = None
-        
+
         self.config["slots"] = slots
         config_path = self.base_dir / "data" / "config.json"
         config_path.write_text(json.dumps(self.config, indent=2))
-    
+
     def get_slots_status(self) -> List[Dict]:
         """Get status of all slots"""
         result = []
-        
+
         for port in self.SLOT_PORTS:
             if port in self.slot_info:
                 info = self.slot_info[port].copy()
-                
+
                 # Add process stats
                 try:
                     proc = psutil.Process(info["pid"])
@@ -240,7 +282,7 @@ class ModelManager:
                 except psutil.NoSuchProcess:
                     info["status"] = "crashed"
                     info["ram_mb"] = 0
-                
+
                 result.append(info)
             else:
                 result.append({
@@ -250,9 +292,9 @@ class ModelManager:
                     "model_type": None,
                     "ram_mb": 0
                 })
-        
+
         return result
-    
+
     def get_active_models(self) -> List[Dict]:
         """Get list of active models"""
         return [
@@ -263,11 +305,11 @@ class ModelManager:
             }
             for info in self.slot_info.values()
         ]
-    
+
     def get_process_stats(self) -> List[Dict]:
         """Get detailed process stats for all slots"""
         stats = []
-        
+
         for port in self.SLOT_PORTS:
             if port in self.slot_info:
                 info = self.slot_info[port]
@@ -295,31 +337,31 @@ class ModelManager:
                     "port": port,
                     "status": "empty"
                 })
-        
+
         return stats
-    
+
     def find_model_slot(self, model_name: str) -> Optional[Dict]:
         """Find which slot has a model loaded"""
         for info in self.slot_info.values():
             if model_name in info["model_name"] or info["model_name"] in model_name:
                 return info
         return None
-    
+
     def find_audio_slot(self) -> Optional[Dict]:
         """Find slot with audio model"""
         for info in self.slot_info.values():
             if info["model_type"] == "audio":
                 return info
         return None
-    
+
     def list_local_models(self) -> List[Dict]:
         """List downloaded models"""
         models = []
-        
+
         for f in self.models_dir.glob("**/*.gguf"):
             if ".mmproj" in f.name:
                 continue
-            
+
             size_mb = f.stat().st_size / (1024**2)
             models.append({
                 "name": f.stem,
@@ -327,7 +369,7 @@ class ModelManager:
                 "size_mb": round(size_mb, 1),
                 "size_gb": round(size_mb / 1024, 2)
             })
-        
+
         # Also check for whisper models
         for f in self.models_dir.glob("**/*.bin"):
             size_mb = f.stat().st_size / (1024**2)
@@ -338,16 +380,16 @@ class ModelManager:
                 "size_gb": round(size_mb / 1024, 2),
                 "type": "audio"
             })
-        
+
         return sorted(models, key=lambda x: x["name"])
-    
+
     async def search_hf_models(self, query: str) -> List[Dict]:
         """Search HuggingFace for GGUF models"""
         if HfApi is None:
             return {"error": "huggingface_hub not installed"}
-        
+
         api = HfApi()
-        
+
         try:
             # Search for models with GGUF files
             models = api.list_models(
@@ -356,14 +398,14 @@ class ModelManager:
                 direction=-1,
                 limit=20
             )
-            
+
             results = []
             for model in models:
                 # Check if has GGUF files
                 try:
                     files = list_repo_files(model.id)
                     gguf_files = [f for f in files if f.endswith(".gguf")]
-                    
+
                     if gguf_files:
                         results.append({
                             "repo_id": model.id,
@@ -373,22 +415,22 @@ class ModelManager:
                         })
                 except:
                     pass
-                
+
                 if len(results) >= 10:
                     break
-            
+
             return results
-            
+
         except Exception as e:
             return {"error": str(e)}
-    
+
     async def download_hf_model(self, repo_id: str, filename: str) -> Dict:
         """Download model from HuggingFace"""
         if HfApi is None:
             return {"error": "huggingface_hub not installed"}
-        
+
         hf_token = self.config.get("hf_token")
-        
+
         try:
             # Download to models directory
             local_path = hf_hub_download(
@@ -397,13 +439,13 @@ class ModelManager:
                 local_dir=self.models_dir,
                 token=hf_token
             )
-            
+
             return {
                 "status": "downloaded",
                 "path": str(Path(local_path).relative_to(self.models_dir)),
                 "repo": repo_id,
                 "filename": filename
             }
-            
+
         except Exception as e:
             return {"error": str(e)}
