@@ -456,11 +456,19 @@ def detect_content_requirements(messages: List[ChatMessage]) -> tuple[bool, bool
                 if isinstance(part, dict):
                     part_type = part.get("type", "")
 
-                    # Vision content
-                    if part_type in ("image_url", "image"):
+                    # Check image_url - could be image OR audio (llama-server workaround)
+                    if part_type == "image_url":
+                        url = part.get("image_url", {}).get("url", "")
+                        if "data:audio/" in url:
+                            needs_audio = True
+                        else:
+                            needs_vision = True
+
+                    # Standard image types
+                    if part_type == "image":
                         needs_vision = True
 
-                    # Audio content
+                    # Audio content types
                     if part_type in ("audio", "input_audio", "audio_url"):
                         needs_audio = True
 

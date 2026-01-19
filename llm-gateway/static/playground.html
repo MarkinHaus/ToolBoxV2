@@ -517,7 +517,7 @@
             <div class="header-actions">
                 <button class="btn btn-icon" onclick="toggleSettings()" title="Settings">⚙️</button>
                 <button class="btn btn-danger" onclick="clearChat()" title="Clear Chat">🗑️ Clear</button>
-                <a href="/llm-gateway/static" class="btn btn-icon" title="Back to Home">🏠</a>
+                <a href="/" class="btn btn-icon" title="Back to Home">🏠</a>
             </div>
         </div>
 
@@ -687,9 +687,18 @@
 
                 const select = document.getElementById('modelSelect');
 
+                // Model type icons
+                const typeIcons = {
+                    'text': '💬',
+                    'vision': '👁️',
+                    'omni': '🌐',
+                    'embedding': '📊',
+                    'audio': '🎵'
+                };
+
                 if (data.models && data.models.length > 0) {
                     select.innerHTML = data.models.map(m => {
-                        const icon = m.type === 'vision' ? '👁️' : m.type === 'audio' ? '🎵' : '💬';
+                        const icon = typeIcons[m.type] || '💬';
                         return `<option value="${m.id}" data-type="${m.type}">${icon} ${m.id}</option>`;
                     }).join('');
                 } else {
@@ -841,18 +850,23 @@
             const modelOption = document.getElementById('modelSelect').selectedOptions[0];
             const modelType = modelOption?.dataset.type || 'text';
 
-            // Handle audio files - transcribe first if text model
+            // Handle audio files
             let transcribedText = text;
             const audioFiles = mediaFiles.filter(m => m.type === 'audio');
+            const imageFiles = mediaFiles.filter(m => m.type === 'image');
 
-            if (audioFiles.length > 0 && modelType !== 'audio') {
-                // Transcribe audio first
+            // For text models: transcribe audio first (requires whisper model loaded)
+            // For omni models: send audio directly
+            // For audio models: use /v1/audio/transcriptions endpoint
+            if (audioFiles.length > 0 && modelType === 'text') {
+                // Text model can't handle audio - try to transcribe
                 for (const audioFile of audioFiles) {
                     try {
                         const transcription = await transcribeAudio(audioFile.file);
                         transcribedText += (transcribedText ? '\n\n' : '') + `[Transcription]: ${transcription}`;
                     } catch (e) {
                         console.error('Transcription failed:', e);
+                        transcribedText += (transcribedText ? '\n\n' : '') + '[Audio file attached - transcription failed]';
                     }
                 }
             }
@@ -868,13 +882,34 @@
                 userMessage.content.push({ type: 'text', text: transcribedText });
             }
 
-            // Add images for vision models
-            const imageFiles = mediaFiles.filter(m => m.type === 'image');
-            if (imageFiles.length > 0 && modelType === 'vision') {
+            // Add images for vision and omni models
+            if (imageFiles.length > 0 && (modelType === 'vision' || modelType === 'omni')) {
                 for (const img of imageFiles) {
                     userMessage.content.push({
                         type: 'image_url',
                         image_url: { url: img.dataUrl }
+                    });
+                }
+            }
+
+            // Add audio for omni models
+            // Note: llama-server expects audio as base64 data URL in image_url field
+            // (This is a workaround until proper audio API is standardized)
+            if (audioFiles.length > 0 && modelType === 'omni') {
+                for (const audio of audioFiles) {
+                    // Send audio as image_url (llama-server workaround)
+                    // The data URL format works: data:audio/wav;base64,xxxx
+                    userMessage.content.push({
+                        type: 'image_url',
+                        image_url: { url: audio.dataUrl }
+                    });
+                }
+
+                // Add instruction to process audio
+                if (!transcribedText) {
+                    userMessage.content.unshift({
+                        type: 'text',
+                        text: 'Listen to the audio and respond.'
                     });
                 }
             }
@@ -901,6 +936,20 @@
 
             // Generate response
             await generateResponse(model);
+        }
+
+        // Convert audio file to base64 WAV format for Omni models
+        async function convertAudioToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    // Get base64 without the data URL prefix
+                    const base64 = reader.result.split(',')[1];
+                    resolve(base64);
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
         }
 
         async function transcribeAudio(file) {
