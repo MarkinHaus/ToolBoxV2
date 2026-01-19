@@ -618,6 +618,8 @@ class NginxManager:
             }}
         }}
 
+        include /etc/nginx/box-enabled/*;
+
     }}
     """
 
