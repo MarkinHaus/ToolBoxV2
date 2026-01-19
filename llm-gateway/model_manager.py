@@ -129,11 +129,18 @@ class ModelManager:
         )
 
         # Wait for server to be ready
-        ready = await self._wait_for_ready(slot, timeout=60)
+        ready = await self._wait_for_ready(slot, timeout=90, model_type=model_type)
 
         if not ready:
+            # Get stderr for debugging
+            try:
+                _, stderr = process.communicate(timeout=1)
+                error_msg = stderr.decode()[:500] if stderr else "No error output"
+            except:
+                error_msg = "Could not get error output"
+
             process.kill()
-            raise RuntimeError(f"Model failed to start on port {slot}")
+            raise RuntimeError(f"Model failed to start on port {slot}. Error: {error_msg}")
 
         self.processes[slot] = process
         self.slot_info[slot] = {
@@ -194,21 +201,32 @@ class ModelManager:
 
         return None
 
-    async def _wait_for_ready(self, port: int, timeout: int = 60) -> bool:
+    async def _wait_for_ready(self, port: int, timeout: int = 60, model_type: str = "text") -> bool:
         """Wait for server to respond to health check"""
         import httpx
 
-        url = f"http://127.0.0.1:{port}/health"
+        # Different endpoints for different servers
+        if model_type == "audio":
+            # whisper-server uses different endpoint
+            endpoints = [
+                f"http://127.0.0.1:{port}/",
+                f"http://127.0.0.1:{port}/inference",
+            ]
+        else:
+            endpoints = [f"http://127.0.0.1:{port}/health"]
+
         start = asyncio.get_event_loop().time()
 
         while asyncio.get_event_loop().time() - start < timeout:
-            try:
-                async with httpx.AsyncClient() as client:
-                    resp = await client.get(url, timeout=2.0)
-                    if resp.status_code == 200:
-                        return True
-            except:
-                pass
+            for url in endpoints:
+                try:
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.get(url, timeout=2.0)
+                        # Accept 200 or 405 (method not allowed means server is up)
+                        if resp.status_code in (200, 405):
+                            return True
+                except:
+                    pass
             await asyncio.sleep(0.5)
 
         return False
@@ -359,22 +377,19 @@ class ModelManager:
         models = []
 
         for f in self.models_dir.glob("**/*.gguf"):
-            if ".mmproj" in f.name:
-                continue
-
             size_mb = f.stat().st_size / (1024**2)
             models.append({
-                "name": f.stem,
+                "name": f.name,
                 "path": str(f.relative_to(self.models_dir)),
                 "size_mb": round(size_mb, 1),
                 "size_gb": round(size_mb / 1024, 2)
             })
 
-        # Also check for whisper models
+        # Also check for whisper models (.bin)
         for f in self.models_dir.glob("**/*.bin"):
             size_mb = f.stat().st_size / (1024**2)
             models.append({
-                "name": f.stem,
+                "name": f.name,
                 "path": str(f.relative_to(self.models_dir)),
                 "size_mb": round(size_mb, 1),
                 "size_gb": round(size_mb / 1024, 2),
@@ -382,6 +397,34 @@ class ModelManager:
             })
 
         return sorted(models, key=lambda x: x["name"])
+
+    def delete_model(self, model_path: str) -> Dict:
+        """Delete a local model file"""
+        # Resolve path
+        if Path(model_path).is_absolute():
+            full_path = Path(model_path)
+        else:
+            full_path = self.models_dir / model_path
+
+        # Security check - must be inside models_dir
+        try:
+            full_path.resolve().relative_to(self.models_dir.resolve())
+        except ValueError:
+            return {"error": "Invalid path - must be inside models directory"}
+
+        if not full_path.exists():
+            return {"error": f"File not found: {model_path}"}
+
+        # Check if model is currently loaded
+        for slot, info in self.slot_info.items():
+            if info and info.get("model_path") == str(full_path):
+                return {"error": f"Model is currently loaded in slot {slot}. Unload it first."}
+
+        try:
+            full_path.unlink()
+            return {"status": "deleted", "path": model_path}
+        except Exception as e:
+            return {"error": f"Failed to delete: {str(e)}"}
 
     async def search_hf_models(self, query: str) -> List[Dict]:
         """Search HuggingFace for GGUF models"""

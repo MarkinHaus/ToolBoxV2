@@ -773,13 +773,13 @@
 
             document.getElementById('localModels').innerHTML = local.length ? `
                 <table>
-                    <thead><tr><th>Name</th><th>Size</th><th>Type</th><th>Action</th></tr></thead>
+                    <thead><tr><th>Name</th><th>Size</th><th>Type</th><th>Actions</th></tr></thead>
                     <tbody>
                         ${local.map(m => {
                             const name = m.name.toLowerCase();
-                            const isVision = name.includes('-vl') || name.includes('_vl') || name.includes('minicpm-v');
+                            const isWhisper = name.includes('whisper') || (name.includes('ggml-') && (name.endsWith('.bin') || name.includes('large') || name.includes('medium') || name.includes('small') || name.includes('base') || name.includes('tiny')));
+                            const isVision = !isWhisper && (name.includes('-vl') || name.includes('_vl') || name.includes('minicpm-v'));
                             const isMmproj = name.includes('mmproj');
-                            const isWhisper = name.includes('whisper');
                             const typeIcon = isMmproj ? '🔗' : isWhisper ? '🎵' : isVision ? '👁️' : '💬';
                             const typeLabel = isMmproj ? 'mmproj' : isWhisper ? 'Audio' : isVision ? 'Vision' : 'Text';
 
@@ -788,7 +788,10 @@
                                 <td>${m.name}</td>
                                 <td>${m.size_gb}GB</td>
                                 <td>${typeIcon} ${typeLabel}</td>
-                                <td>${isMmproj ? '<span style="color: var(--text2);">-</span>' : `<button class="btn btn-sm btn-primary" onclick="quickLoad('${m.path}')">Load</button>`}</td>
+                                <td>
+                                    ${isMmproj ? '' : `<button class="btn btn-sm btn-primary" onclick="quickLoad('${m.path}')">Load</button>`}
+                                    <button class="btn btn-sm btn-danger" onclick="deleteModel('${m.path}')" title="Delete">🗑️</button>
+                                </td>
                             </tr>
                         `}).join('')}
                     </tbody>
@@ -806,13 +809,13 @@
 
             let detected = null;
 
-            // Vision models: contain "VL", "vision", "minicpm-v"
-            if (path.includes('-vl') || path.includes('_vl') || path.includes('vision') || path.includes('minicpm-v') || path.includes('minicpm_v')) {
-                detected = 'vision';
-            }
-            // Audio models: contain "whisper"
-            else if (path.includes('whisper')) {
+            // Audio models: contain "whisper" or "ggml-" (whisper format) - check FIRST
+            if (path.includes('whisper') || (path.includes('ggml-') && (path.includes('.bin') || path.includes('large') || path.includes('medium') || path.includes('small') || path.includes('base') || path.includes('tiny')))) {
                 detected = 'audio';
+            }
+            // Vision models: contain "VL", "vision", "minicpm-v"
+            else if (path.includes('-vl') || path.includes('_vl') || path.includes('vision') || path.includes('minicpm-v') || path.includes('minicpm_v')) {
+                detected = 'vision';
             }
             // Default to text
             else if (path.length > 0) {
@@ -834,25 +837,59 @@
             const ctx = document.getElementById('loadCtx').value;
             const threads = document.getElementById('loadThreads').value;
 
-            const resp = await api('/admin/api/slots/load', {
-                method: 'POST',
-                body: JSON.stringify({
-                    slot: parseInt(slot),
-                    model_path: path,
-                    model_type: type,
-                    ctx_size: ctx ? parseInt(ctx) : null,
-                    threads: threads ? parseInt(threads) : null
-                })
-            });
+            if (!path) {
+                toast('Please enter a model path', 'error');
+                return;
+            }
 
-            const result = await resp.json();
-            if (resp.ok) {
-                toast(`Model loaded on slot ${slot}`);
-                closeModal('loadModal');
-                loadSlots();
-                loadDashboard();
-            } else {
-                toast(result.detail || 'Failed to load model', 'error');
+            // Show loading state
+            const loadBtn = document.querySelector('#loadModal .btn-primary');
+            const originalText = loadBtn.textContent;
+            loadBtn.disabled = true;
+            loadBtn.textContent = 'Loading...';
+
+            toast(`Loading ${path} to slot ${slot}... This may take a minute.`);
+
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 min timeout
+
+                const resp = await fetch('/admin/api/slots/load', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${API_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        slot: parseInt(slot),
+                        model_path: path,
+                        model_type: type,
+                        ctx_size: ctx ? parseInt(ctx) : null,
+                        threads: threads ? parseInt(threads) : null
+                    }),
+                    signal: controller.signal
+                });
+
+                clearTimeout(timeoutId);
+
+                const result = await resp.json();
+                if (resp.ok) {
+                    toast(`Model loaded on slot ${slot}`);
+                    closeModal('loadModal');
+                    loadSlots();
+                    loadDashboard();
+                } else {
+                    toast(result.detail || 'Failed to load model', 'error');
+                }
+            } catch (e) {
+                if (e.name === 'AbortError') {
+                    toast('Loading timed out. Check server logs.', 'error');
+                } else {
+                    toast(`Error: ${e.message}`, 'error');
+                }
+            } finally {
+                loadBtn.disabled = false;
+                loadBtn.textContent = originalText;
             }
         }
 
@@ -871,6 +908,23 @@
             document.getElementById('loadPath').value = path;
             autoDetectModelType();
             openLoadModal();
+        }
+
+        async function deleteModel(path) {
+            if (!confirm(`Delete model "${path}"?\n\nThis cannot be undone!`)) return;
+
+            const resp = await api('/admin/api/models/delete', {
+                method: 'POST',
+                body: JSON.stringify({ model_path: path })
+            });
+
+            const result = await resp.json();
+            if (resp.ok) {
+                toast('Model deleted');
+                loadSlots();
+            } else {
+                toast(result.detail || 'Failed to delete', 'error');
+            }
         }
 
         // HF Browser
