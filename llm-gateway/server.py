@@ -134,7 +134,7 @@ class ApiKeyCreate(BaseModel):
 class ModelLoadRequest(BaseModel):
     slot: int  # 4801-4807
     model_path: str  # local path or HF repo
-    model_type: str = "text"  # text, vision, audio
+    model_type: str = "text"  # text, vision, omni, embedding, audio
     ctx_size: Optional[int] = None
     threads: Optional[int] = None
 
@@ -294,7 +294,7 @@ async def verify_admin(auth: Dict = Depends(verify_api_key)) -> Dict:
 
 def load_config() -> Dict:
     if CONFIG_PATH.exists():
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        return json.loads(CONFIG_PATH.read_text())
     return {
         "slots": {str(p): None for p in range(4801, 4808)},
         "hf_token": None,
@@ -437,13 +437,49 @@ async def list_models(auth: Dict = Depends(verify_api_key)):
         ]
     }
 
+# === Content Detection Helpers ===
+
+def detect_content_requirements(messages: List[ChatMessage]) -> tuple[bool, bool]:
+    """
+    Analyze messages to detect if request needs audio or vision capabilities.
+    Returns (needs_audio, needs_vision)
+    """
+    needs_audio = False
+    needs_vision = False
+
+    for msg in messages:
+        content = msg.content
+
+        # Content can be a string or a list of content parts
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    part_type = part.get("type", "")
+
+                    # Vision content
+                    if part_type in ("image_url", "image"):
+                        needs_vision = True
+
+                    # Audio content
+                    if part_type in ("audio", "input_audio", "audio_url"):
+                        needs_audio = True
+
+        elif isinstance(content, str):
+            # Check for base64 data URIs
+            if "data:image/" in content:
+                needs_vision = True
+            if "data:audio/" in content:
+                needs_audio = True
+
+    return needs_audio, needs_vision
+
 @app.post("/v1/chat/completions")
 async def chat_completions(
     request: ChatCompletionRequest,
     background_tasks: BackgroundTasks,
     auth: Dict = Depends(verify_api_key)
 ):
-    """Chat completions endpoint (OpenAI compatible)"""
+    """Chat completions endpoint (OpenAI compatible) with smart model routing"""
 
     # Check rate limit
     config = load_config()
@@ -458,10 +494,24 @@ async def chat_completions(
     if auth["tier"] == "payg" and auth["balance"] <= 0:
         raise HTTPException(402, "Insufficient balance")
 
-    # Find model slot
-    slot = model_manager.find_model_slot(request.model)
+    # Detect content requirements
+    needs_audio, needs_vision = detect_content_requirements(request.messages)
+
+    # Smart model slot finding
+    slot = model_manager.find_slot_for_request(
+        model_name=request.model,
+        needs_audio=needs_audio,
+        needs_vision=needs_vision
+    )
+
     if not slot:
-        raise HTTPException(404, f"Model '{request.model}' not loaded")
+        # Provide helpful error message
+        if needs_audio:
+            raise HTTPException(404, f"No model with audio capability loaded. Load an 'omni' model.")
+        elif needs_vision:
+            raise HTTPException(404, f"No model with vision capability loaded. Load a 'vision' or 'omni' model.")
+        else:
+            raise HTTPException(404, f"Model '{request.model}' not loaded")
 
     backend_url = f"http://127.0.0.1:{slot['port']}/v1/chat/completions"
 
@@ -565,17 +615,36 @@ async def embeddings(
     background_tasks: BackgroundTasks,
     auth: Dict = Depends(verify_api_key)
 ):
-    """Embeddings endpoint (OpenAI compatible)"""
+    """Embeddings endpoint (OpenAI compatible) with smart model routing"""
+
+    # Try to find by model name first
     slot = model_manager.find_model_slot(request.model)
+
+    # Fallback to dedicated embedding slot
     if not slot:
-        raise HTTPException(404, f"Model '{request.model}' not loaded")
+        slot = model_manager.find_embedding_slot()
+
+    # Fallback to any text-capable model (llama-server supports embeddings too)
+    if not slot:
+        slot = model_manager.find_text_slot()
+
+    if not slot:
+        raise HTTPException(
+            404,
+            f"No embedding model loaded. Load an 'embedding' model or any text model."
+        )
 
     backend_url = f"http://127.0.0.1:{slot['port']}/v1/embeddings"
 
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(backend_url, json=request.model_dump())
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp = await client.post(backend_url, json=request.model_dump())
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(e.response.status_code, f"Backend error: {e.response.text}")
+        except Exception as e:
+            raise HTTPException(500, str(e))
 
 @app.post("/v1/audio/transcriptions")
 async def transcriptions(
@@ -583,13 +652,35 @@ async def transcriptions(
     background_tasks: BackgroundTasks,
     auth: Dict = Depends(verify_api_key)
 ):
-    """Audio transcription endpoint (OpenAI compatible)"""
-    # Find whisper slot
+    """
+    Audio transcription endpoint (OpenAI compatible).
+
+    Note: This endpoint requires a legacy 'audio' (whisper) model.
+    For modern audio processing, use /v1/chat/completions with an 'omni' model
+    and include audio content in the messages.
+    """
+    # Find audio-capable slot (whisper or omni)
     slot = model_manager.find_audio_slot()
     if not slot:
-        raise HTTPException(404, "No audio model loaded")
+        raise HTTPException(
+            404,
+            "No audio model loaded. Load a whisper model as 'audio' type, "
+            "or use /v1/chat/completions with an 'omni' model for audio processing."
+        )
 
-    backend_url = f"http://127.0.0.1:{slot['port']}/inference"
+    # Different backends for different model types
+    model_type = slot.get("model_type", "audio")
+
+    if model_type == "audio":
+        # Legacy whisper-server
+        backend_url = f"http://127.0.0.1:{slot['port']}/inference"
+    else:
+        # Omni models don't support the whisper API directly
+        raise HTTPException(
+            400,
+            "Omni models don't support /v1/audio/transcriptions directly. "
+            "Use /v1/chat/completions with audio content in messages instead."
+        )
 
     # Forward multipart form data
     form = await request.form()
@@ -603,9 +694,14 @@ async def transcriptions(
             data[key] = value
 
     async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(backend_url, files=files, data=data)
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp = await client.post(backend_url, files=files, data=data)
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(e.response.status_code, f"Backend error: {e.response.text}")
+        except Exception as e:
+            raise HTTPException(500, str(e))
 
 # === Usage Logging ===
 
@@ -693,7 +789,7 @@ async def stats_summary(auth: Dict = Depends(verify_api_key)):
 @app.get("/admin/", response_class=HTMLResponse)
 async def admin_panel():
     """Serve admin panel"""
-    return (STATIC_DIR / "admin.html").read_text(encoding="utf-8")
+    return (STATIC_DIR / "admin.html").read_text()
 
 @app.get("/admin/api/users")
 async def admin_list_users(auth: Dict = Depends(verify_admin)):
@@ -809,13 +905,33 @@ async def admin_list_local_models(auth: Dict = Depends(verify_admin)):
 async def admin_search_hf_models(q: str, auth: Dict = Depends(verify_admin)):
     """Search HuggingFace for GGUF models"""
     return await model_manager.search_hf_models(q)
+
 class DownloadRequest(BaseModel):
     repo_id: str
     filename: str
+
 @app.post("/admin/api/models/download")
 async def admin_download_model(request: DownloadRequest, auth: Dict = Depends(verify_admin)):
     """Download model from HuggingFace"""
     return await model_manager.download_hf_model(request.repo_id, request.filename)
+
+class DeleteModelRequest(BaseModel):
+    model_path: str
+
+@app.post("/admin/api/models/delete")
+async def admin_delete_model(request: DeleteModelRequest, auth: Dict = Depends(verify_admin)):
+    """Delete a local model file"""
+    try:
+        result = model_manager.delete_model(request.model_path)
+        return result
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))  # Conflict - model is loaded
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 @app.get("/admin/api/system")
 async def admin_system_stats(auth: Dict = Depends(verify_admin)):
@@ -865,12 +981,12 @@ async def admin_update_config(updates: Dict, auth: Dict = Depends(verify_admin))
 @app.get("/user/", response_class=HTMLResponse)
 async def user_dashboard():
     """Serve user dashboard"""
-    return (STATIC_DIR / "user.html").read_text(encoding="utf-8")
+    return (STATIC_DIR / "user.html").read_text()
 
 @app.get("/playground/", response_class=HTMLResponse)
 async def playground():
     """Serve playground"""
-    return (STATIC_DIR / "playground.html").read_text(encoding="utf-8")
+    return (STATIC_DIR / "playground.html").read_text()
 
 @app.get("/user/api/me")
 async def user_me(auth: Dict = Depends(verify_api_key)):
@@ -951,7 +1067,7 @@ async def health():
 @app.get("/", response_class=HTMLResponse)
 async def landing_page():
     """Serve landing page"""
-    return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    return (STATIC_DIR / "index.html").read_text()
 
 # === Public Models Endpoint (no auth) ===
 
