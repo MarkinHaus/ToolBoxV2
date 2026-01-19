@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Playground - LLM Gateway</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #0a0a0a;
+            --bg2: #141414;
+            --bg3: #1a1a1a;
+            --border: #2a2a2a;
+            --text: #ffffff;
+            --text2: #888888;
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --green: #22c55e;
+            --yellow: #eab308;
+            --red: #ef4444;
+            --purple: #a855f7;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 20px;
+            background: var(--bg2);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-left: auto;
+        }
+
+        /* Model Selector */
+        .model-select {
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px 12px;
+            color: var(--text);
+            font-size: 13px;
+            min-width: 200px;
+            cursor: pointer;
+        }
+
+        .model-select:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-icon {
+            padding: 8px;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            color: var(--text2);
+        }
+
+        .btn-icon:hover {
+            background: var(--border);
+            color: var(--text);
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-hover);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-danger {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text2);
+        }
+
+        .btn-danger:hover {
+            border-color: var(--red);
+            color: var(--red);
+        }
+
+        /* Main Layout */
+        .main {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* Chat Area */
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            max-width: 85%;
+        }
+
+        .message.user {
+            margin-left: auto;
+        }
+
+        .message-header {
+            font-size: 11px;
+            color: var(--text2);
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .message-content {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 14px 16px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .message.user .message-content {
+            background: var(--primary);
+            border-color: var(--primary);
+        }
+
+        .message-media {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .message-media img {
+            max-width: 200px;
+            max-height: 150px;
+            border-radius: 8px;
+            object-fit: cover;
+        }
+
+        .message-media audio {
+            max-width: 250px;
+        }
+
+        .cursor {
+            display: inline-block;
+            width: 8px;
+            height: 18px;
+            background: var(--primary);
+            animation: blink 1s infinite;
+            vertical-align: text-bottom;
+            margin-left: 2px;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        /* Stats Bar */
+        .stats-bar {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            padding: 10px 20px;
+            background: var(--bg2);
+            border-top: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--text2);
+        }
+
+        .stat {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .stat-value {
+            color: var(--text);
+            font-weight: 500;
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+
+        .stat-value.highlight {
+            color: var(--green);
+        }
+
+        /* Input Area */
+        .input-area {
+            padding: 16px 20px;
+            background: var(--bg2);
+            border-top: 1px solid var(--border);
+        }
+
+        .input-row {
+            display: flex;
+            align-items: flex-end;
+            gap: 10px;
+        }
+
+        .input-actions {
+            display: flex;
+            gap: 6px;
+        }
+
+        .input-wrapper {
+            flex: 1;
+            position: relative;
+        }
+
+        .input-field {
+            width: 100%;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px 16px;
+            color: var(--text);
+            font-size: 14px;
+            resize: none;
+            min-height: 48px;
+            max-height: 150px;
+            line-height: 1.5;
+        }
+
+        .input-field:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .input-field::placeholder {
+            color: var(--text2);
+        }
+
+        /* Media Preview */
+        .media-preview {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .media-item {
+            position: relative;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        .media-item img {
+            width: 40px;
+            height: 40px;
+            object-fit: cover;
+            border-radius: 4px;
+        }
+
+        .media-item .remove {
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            width: 18px;
+            height: 18px;
+            background: var(--red);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            font-size: 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Recording indicator */
+        .btn-recording {
+            background: var(--red) !important;
+            color: white !important;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        /* Settings Panel */
+        .settings-panel {
+            width: 300px;
+            background: var(--bg2);
+            border-left: 1px solid var(--border);
+            padding: 20px;
+            display: none;
+            overflow-y: auto;
+        }
+
+        .settings-panel.active {
+            display: block;
+        }
+
+        .settings-title {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .settings-group {
+            margin-bottom: 20px;
+        }
+
+        .settings-group label {
+            display: block;
+            font-size: 12px;
+            color: var(--text2);
+            margin-bottom: 6px;
+        }
+
+        .settings-group input,
+        .settings-group textarea {
+            width: 100%;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 12px;
+            color: var(--text);
+            font-size: 13px;
+        }
+
+        .settings-group input:focus,
+        .settings-group textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .settings-group textarea {
+            min-height: 100px;
+            resize: vertical;
+            font-family: inherit;
+        }
+
+        .range-value {
+            float: right;
+            font-family: 'SF Mono', Monaco, monospace;
+            color: var(--text);
+        }
+
+        /* Auth Screen */
+        .auth-screen {
+            position: fixed;
+            inset: 0;
+            background: var(--bg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+        }
+
+        .auth-box {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 32px;
+            width: 100%;
+            max-width: 400px;
+        }
+
+        .auth-box h2 {
+            margin-bottom: 8px;
+        }
+
+        .auth-box p {
+            color: var(--text2);
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        .auth-box input {
+            width: 100%;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 12px;
+            color: var(--text);
+            font-size: 14px;
+            margin-bottom: 16px;
+        }
+
+        .auth-box input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .auth-box .btn {
+            width: 100%;
+            justify-content: center;
+        }
+
+        /* Empty State */
+        .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: var(--text2);
+            text-align: center;
+            padding: 40px;
+        }
+
+        .empty-state .icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .empty-state h3 {
+            color: var(--text);
+            margin-bottom: 8px;
+        }
+
+        /* Hidden file input */
+        .hidden {
+            display: none;
+        }
+
+        /* Transcription result */
+        .transcription-badge {
+            background: var(--purple);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            margin-left: 8px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Auth Screen -->
+    <div class="auth-screen" id="authScreen">
+        <div class="auth-box">
+            <h2>🎮 Playground</h2>
+            <p>Enter your API key to start testing models</p>
+            <input type="password" id="apiKeyInput" placeholder="sk-..." onkeydown="if(event.key==='Enter')login()">
+            <button class="btn btn-primary" onclick="login()">Enter Playground</button>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="mainApp" style="display: none; flex-direction: column; height: 100vh;">
+        <!-- Header -->
+        <div class="header">
+            <h1>🎮 Playground</h1>
+
+            <select class="model-select" id="modelSelect">
+                <option value="">Loading models...</option>
+            </select>
+
+            <div class="header-actions">
+                <button class="btn btn-icon" onclick="toggleSettings()" title="Settings">⚙️</button>
+                <button class="btn btn-danger" onclick="clearChat()" title="Clear Chat">🗑️ Clear</button>
+                <a href="/llm-gateway/static" class="btn btn-icon" title="Back to Home">🏠</a>
+            </div>
+        </div>
+
+        <!-- Main -->
+        <div class="main">
+            <!-- Chat Container -->
+            <div class="chat-container">
+                <!-- Messages -->
+                <div class="chat-messages" id="chatMessages">
+                    <div class="empty-state" id="emptyState">
+                        <div class="icon">💬</div>
+                        <h3>Start a Conversation</h3>
+                        <p>Type a message, upload an image, or record audio to begin</p>
+                    </div>
+                </div>
+
+                <!-- Stats Bar -->
+                <div class="stats-bar">
+                    <div class="stat">
+                        <span>⚡ TTFT:</span>
+                        <span class="stat-value" id="statTTFT">-</span>
+                    </div>
+                    <div class="stat">
+                        <span>📥 In:</span>
+                        <span class="stat-value" id="statTokensIn">0</span>
+                    </div>
+                    <div class="stat">
+                        <span>📤 Out:</span>
+                        <span class="stat-value" id="statTokensOut">0</span>
+                    </div>
+                    <div class="stat">
+                        <span>⏱️ Time:</span>
+                        <span class="stat-value" id="statTime">-</span>
+                    </div>
+                    <div class="stat">
+                        <span>💰 Cost:</span>
+                        <span class="stat-value" id="statCost">€0.0000</span>
+                    </div>
+                </div>
+
+                <!-- Input Area -->
+                <div class="input-area">
+                    <div class="input-row">
+                        <div class="input-actions">
+                            <input type="file" id="fileInput" class="hidden" accept="image/*,audio/*" multiple onchange="handleFileSelect(event)">
+                            <button class="btn btn-icon" onclick="document.getElementById('fileInput').click()" title="Upload Image/Audio">📎</button>
+                            <button class="btn btn-icon" id="micBtn" onclick="toggleRecording()" title="Record Audio">🎤</button>
+                        </div>
+
+                        <div class="input-wrapper">
+                            <textarea
+                                class="input-field"
+                                id="messageInput"
+                                placeholder="Type your message... (Shift+Enter for newline)"
+                                rows="1"
+                                onkeydown="handleInputKeydown(event)"
+                                oninput="autoResize(this)"
+                            ></textarea>
+                        </div>
+
+                        <button class="btn btn-primary" id="sendBtn" onclick="sendMessage()">
+                            Send →
+                        </button>
+                    </div>
+
+                    <!-- Media Preview -->
+                    <div class="media-preview" id="mediaPreview"></div>
+                </div>
+            </div>
+
+            <!-- Settings Panel -->
+            <div class="settings-panel" id="settingsPanel">
+                <div class="settings-title">
+                    Settings
+                    <button class="btn btn-icon" onclick="toggleSettings()" style="padding: 4px 8px;">✕</button>
+                </div>
+
+                <div class="settings-group">
+                    <label>System Prompt</label>
+                    <textarea id="systemPrompt" placeholder="You are a helpful assistant..."></textarea>
+                </div>
+
+                <div class="settings-group">
+                    <label>Temperature <span class="range-value" id="tempValue">0.7</span></label>
+                    <input type="range" id="temperature" min="0" max="2" step="0.1" value="0.7" oninput="document.getElementById('tempValue').textContent = this.value">
+                </div>
+
+                <div class="settings-group">
+                    <label>Max Tokens <span class="range-value" id="maxTokensValue">1024</span></label>
+                    <input type="range" id="maxTokens" min="64" max="4096" step="64" value="1024" oninput="document.getElementById('maxTokensValue').textContent = this.value">
+                </div>
+
+                <div class="settings-group">
+                    <label>
+                        <input type="checkbox" id="streamEnabled" checked>
+                        Enable Streaming
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let API_KEY = localStorage.getItem('playgroundKey') || '';
+        let messages = [];
+        let mediaFiles = []; // { type: 'image'|'audio', file: File, dataUrl: string }
+        let isGenerating = false;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let isRecording = false;
+
+        // Stats
+        let currentStats = {
+            startTime: null,
+            ttft: null,
+            tokensIn: 0,
+            tokensOut: 0,
+            cost: 0
+        };
+
+        // Init
+        document.addEventListener('DOMContentLoaded', () => {
+            if (API_KEY) {
+                checkAuth();
+            }
+        });
+
+        // Auth
+        function login() {
+            API_KEY = document.getElementById('apiKeyInput').value.trim();
+            if (!API_KEY) return;
+            localStorage.setItem('playgroundKey', API_KEY);
+            checkAuth();
+        }
+
+        async function checkAuth() {
+            try {
+                const resp = await fetch('/user/api/me', {
+                    headers: { 'Authorization': `Bearer ${API_KEY}` }
+                });
+
+                if (resp.ok) {
+                    document.getElementById('authScreen').style.display = 'none';
+                    document.getElementById('mainApp').style.display = 'flex';
+                    loadModels();
+                } else {
+                    showAuth();
+                }
+            } catch (e) {
+                showAuth();
+            }
+        }
+
+        function showAuth() {
+            localStorage.removeItem('playgroundKey');
+            API_KEY = '';
+            document.getElementById('authScreen').style.display = 'flex';
+            document.getElementById('mainApp').style.display = 'none';
+        }
+
+        // Models
+        async function loadModels() {
+            try {
+                const resp = await fetch('/api/models');
+                const data = await resp.json();
+
+                const select = document.getElementById('modelSelect');
+
+                if (data.models && data.models.length > 0) {
+                    select.innerHTML = data.models.map(m => {
+                        const icon = m.type === 'vision' ? '👁️' : m.type === 'audio' ? '🎵' : '💬';
+                        return `<option value="${m.id}" data-type="${m.type}">${icon} ${m.id}</option>`;
+                    }).join('');
+                } else {
+                    select.innerHTML = '<option value="">No models available</option>';
+                }
+            } catch (e) {
+                console.error('Failed to load models:', e);
+            }
+        }
+
+        // Settings
+        function toggleSettings() {
+            document.getElementById('settingsPanel').classList.toggle('active');
+        }
+
+        // Input handling
+        function handleInputKeydown(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        }
+
+        function autoResize(el) {
+            el.style.height = 'auto';
+            el.style.height = Math.min(el.scrollHeight, 150) + 'px';
+        }
+
+        // File handling
+        function handleFileSelect(e) {
+            const files = Array.from(e.target.files);
+
+            files.forEach(file => {
+                const reader = new FileReader();
+
+                reader.onload = (ev) => {
+                    const type = file.type.startsWith('image/') ? 'image' : 'audio';
+                    mediaFiles.push({
+                        type,
+                        file,
+                        dataUrl: ev.target.result,
+                        name: file.name
+                    });
+                    updateMediaPreview();
+                };
+
+                reader.readAsDataURL(file);
+            });
+
+            e.target.value = '';
+        }
+
+        function updateMediaPreview() {
+            const container = document.getElementById('mediaPreview');
+
+            container.innerHTML = mediaFiles.map((m, i) => {
+                if (m.type === 'image') {
+                    return `
+                        <div class="media-item">
+                            <img src="${m.dataUrl}" alt="${m.name}">
+                            <span>${m.name}</span>
+                            <button class="remove" onclick="removeMedia(${i})">✕</button>
+                        </div>
+                    `;
+                } else {
+                    return `
+                        <div class="media-item">
+                            <span>🎵</span>
+                            <span>${m.name}</span>
+                            <button class="remove" onclick="removeMedia(${i})">✕</button>
+                        </div>
+                    `;
+                }
+            }).join('');
+        }
+
+        function removeMedia(index) {
+            mediaFiles.splice(index, 1);
+            updateMediaPreview();
+        }
+
+        // Audio Recording
+        async function toggleRecording() {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        }
+
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+
+                mediaRecorder.ondataavailable = (e) => {
+                    audioChunks.push(e.data);
+                };
+
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(audioChunks, { type: 'audio/webm' });
+                    const file = new File([blob], 'recording.webm', { type: 'audio/webm' });
+
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        mediaFiles.push({
+                            type: 'audio',
+                            file,
+                            dataUrl: ev.target.result,
+                            name: 'recording.webm'
+                        });
+                        updateMediaPreview();
+                    };
+                    reader.readAsDataURL(blob);
+
+                    // Stop all tracks
+                    stream.getTracks().forEach(track => track.stop());
+                };
+
+                mediaRecorder.start();
+                isRecording = true;
+                document.getElementById('micBtn').classList.add('btn-recording');
+                document.getElementById('micBtn').textContent = '⏹️';
+
+            } catch (e) {
+                alert('Could not access microphone: ' + e.message);
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                isRecording = false;
+                document.getElementById('micBtn').classList.remove('btn-recording');
+                document.getElementById('micBtn').textContent = '🎤';
+            }
+        }
+
+        // Send Message
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const text = input.value.trim();
+            const model = document.getElementById('modelSelect').value;
+
+            if ((!text && mediaFiles.length === 0) || !model || isGenerating) return;
+
+            // Get model type
+            const modelOption = document.getElementById('modelSelect').selectedOptions[0];
+            const modelType = modelOption?.dataset.type || 'text';
+
+            // Handle audio files - transcribe first if text model
+            let transcribedText = text;
+            const audioFiles = mediaFiles.filter(m => m.type === 'audio');
+
+            if (audioFiles.length > 0 && modelType !== 'audio') {
+                // Transcribe audio first
+                for (const audioFile of audioFiles) {
+                    try {
+                        const transcription = await transcribeAudio(audioFile.file);
+                        transcribedText += (transcribedText ? '\n\n' : '') + `[Transcription]: ${transcription}`;
+                    } catch (e) {
+                        console.error('Transcription failed:', e);
+                    }
+                }
+            }
+
+            // Build user message
+            const userMessage = {
+                role: 'user',
+                content: []
+            };
+
+            // Add text
+            if (transcribedText) {
+                userMessage.content.push({ type: 'text', text: transcribedText });
+            }
+
+            // Add images for vision models
+            const imageFiles = mediaFiles.filter(m => m.type === 'image');
+            if (imageFiles.length > 0 && modelType === 'vision') {
+                for (const img of imageFiles) {
+                    userMessage.content.push({
+                        type: 'image_url',
+                        image_url: { url: img.dataUrl }
+                    });
+                }
+            }
+
+            // If only text, simplify content
+            if (userMessage.content.length === 1 && userMessage.content[0].type === 'text') {
+                userMessage.content = userMessage.content[0].text;
+            }
+
+            // Add to messages
+            messages.push(userMessage);
+
+            // Render user message
+            renderUserMessage(text, mediaFiles);
+
+            // Clear input
+            input.value = '';
+            input.style.height = 'auto';
+            mediaFiles = [];
+            updateMediaPreview();
+
+            // Hide empty state
+            document.getElementById('emptyState').style.display = 'none';
+
+            // Generate response
+            await generateResponse(model);
+        }
+
+        async function transcribeAudio(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('model', 'whisper-1');
+
+            const resp = await fetch('/v1/audio/transcriptions', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${API_KEY}` },
+                body: formData
+            });
+
+            if (!resp.ok) throw new Error('Transcription failed');
+
+            const data = await resp.json();
+            return data.text;
+        }
+
+        function renderUserMessage(text, media) {
+            const container = document.getElementById('chatMessages');
+
+            let mediaHtml = '';
+            if (media.length > 0) {
+                mediaHtml = '<div class="message-media">';
+                for (const m of media) {
+                    if (m.type === 'image') {
+                        mediaHtml += `<img src="${m.dataUrl}" alt="${m.name}">`;
+                    } else {
+                        mediaHtml += `<audio controls src="${m.dataUrl}"></audio>`;
+                    }
+                }
+                mediaHtml += '</div>';
+            }
+
+            const div = document.createElement('div');
+            div.className = 'message user';
+            div.innerHTML = `
+                <div class="message-header">You</div>
+                <div class="message-content">${escapeHtml(text || '[Media]')}</div>
+                ${mediaHtml}
+            `;
+
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        async function generateResponse(model) {
+            isGenerating = true;
+            document.getElementById('sendBtn').disabled = true;
+
+            // Reset stats
+            currentStats = {
+                startTime: performance.now(),
+                ttft: null,
+                tokensIn: 0,
+                tokensOut: 0,
+                cost: 0
+            };
+            updateStatsDisplay();
+
+            // Create assistant message element
+            const container = document.getElementById('chatMessages');
+            const div = document.createElement('div');
+            div.className = 'message assistant';
+            div.innerHTML = `
+                <div class="message-header">Assistant</div>
+                <div class="message-content"><span class="cursor"></span></div>
+            `;
+            container.appendChild(div);
+
+            const contentEl = div.querySelector('.message-content');
+            let fullContent = '';
+
+            try {
+                // Build request
+                const systemPrompt = document.getElementById('systemPrompt').value.trim();
+                const temperature = parseFloat(document.getElementById('temperature').value);
+                const maxTokens = parseInt(document.getElementById('maxTokens').value);
+                const stream = document.getElementById('streamEnabled').checked;
+
+                const requestMessages = [...messages];
+                if (systemPrompt) {
+                    requestMessages.unshift({ role: 'system', content: systemPrompt });
+                }
+
+                const body = {
+                    model,
+                    messages: requestMessages,
+                    temperature,
+                    max_tokens: maxTokens,
+                    stream
+                };
+
+                const resp = await fetch('/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${API_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(body)
+                });
+
+                if (!resp.ok) {
+                    const error = await resp.json();
+                    throw new Error(error.detail || 'Request failed');
+                }
+
+                if (stream) {
+                    // Streaming response
+                    const reader = resp.body.getReader();
+                    const decoder = new TextDecoder();
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        const chunk = decoder.decode(value);
+                        const lines = chunk.split('\n').filter(l => l.startsWith('data: '));
+
+                        for (const line of lines) {
+                            const data = line.slice(6);
+                            if (data === '[DONE]') continue;
+
+                            try {
+                                const json = JSON.parse(data);
+
+                                // TTFT
+                                if (!currentStats.ttft && json.choices?.[0]?.delta?.content) {
+                                    currentStats.ttft = performance.now() - currentStats.startTime;
+                                }
+
+                                // Content
+                                const content = json.choices?.[0]?.delta?.content || '';
+                                fullContent += content;
+                                contentEl.innerHTML = escapeHtml(fullContent) + '<span class="cursor"></span>';
+
+                                // Usage (if provided in stream)
+                                if (json.usage) {
+                                    currentStats.tokensIn = json.usage.prompt_tokens || 0;
+                                    currentStats.tokensOut = json.usage.completion_tokens || 0;
+                                }
+
+                                updateStatsDisplay();
+                                container.scrollTop = container.scrollHeight;
+
+                            } catch (e) {
+                                // Skip invalid JSON
+                            }
+                        }
+                    }
+                } else {
+                    // Non-streaming response
+                    const data = await resp.json();
+
+                    currentStats.ttft = performance.now() - currentStats.startTime;
+                    fullContent = data.choices?.[0]?.message?.content || '';
+                    currentStats.tokensIn = data.usage?.prompt_tokens || 0;
+                    currentStats.tokensOut = data.usage?.completion_tokens || 0;
+
+                    contentEl.textContent = fullContent;
+                }
+
+                // Final stats
+                const totalTime = performance.now() - currentStats.startTime;
+                document.getElementById('statTime').textContent = (totalTime / 1000).toFixed(2) + 's';
+
+                // Estimate tokens if not provided
+                if (currentStats.tokensOut === 0) {
+                    currentStats.tokensOut = Math.ceil(fullContent.length / 4);
+                }
+
+                // Calculate cost (from config pricing)
+                currentStats.cost = (currentStats.tokensIn * 0.0001 + currentStats.tokensOut * 0.0002) / 1000;
+                updateStatsDisplay();
+
+                // Remove cursor
+                contentEl.textContent = fullContent;
+
+                // Add assistant message to history
+                messages.push({ role: 'assistant', content: fullContent });
+
+            } catch (e) {
+                contentEl.innerHTML = `<span style="color: var(--red);">Error: ${escapeHtml(e.message)}</span>`;
+            }
+
+            isGenerating = false;
+            document.getElementById('sendBtn').disabled = false;
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function updateStatsDisplay() {
+            document.getElementById('statTTFT').textContent = currentStats.ttft ?
+                Math.round(currentStats.ttft) + 'ms' : '-';
+            document.getElementById('statTokensIn').textContent = currentStats.tokensIn;
+            document.getElementById('statTokensOut').textContent = currentStats.tokensOut;
+            document.getElementById('statCost').textContent = '€' + currentStats.cost.toFixed(4);
+
+            if (currentStats.ttft && currentStats.ttft < 500) {
+                document.getElementById('statTTFT').classList.add('highlight');
+            } else {
+                document.getElementById('statTTFT').classList.remove('highlight');
+            }
+        }
+
+        // Clear chat
+        function clearChat() {
+            messages = [];
+            document.getElementById('chatMessages').innerHTML = `
+                <div class="empty-state" id="emptyState">
+                    <div class="icon">💬</div>
+                    <h3>Start a Conversation</h3>
+                    <p>Type a message, upload an image, or record audio to begin</p>
+                </div>
+            `;
+
+            currentStats = { startTime: null, ttft: null, tokensIn: 0, tokensOut: 0, cost: 0 };
+            updateStatsDisplay();
+            document.getElementById('statTime').textContent = '-';
+        }
+
+        // Utils
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

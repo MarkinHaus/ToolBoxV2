@@ -20,6 +20,7 @@ import psutil
 from fastapi import FastAPI, HTTPException, Header, Request, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from model_manager import ModelManager
@@ -403,6 +404,15 @@ app = FastAPI(
     title="LLM Gateway",
     version="1.0.0",
     lifespan=lifespan
+)
+
+# CORS - Allow all origins for API access
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # === OpenAI Compatible Endpoints ===
@@ -854,6 +864,11 @@ async def admin_update_config(updates: Dict, auth: Dict = Depends(verify_admin))
 async def user_dashboard():
     """Serve user dashboard"""
     return (STATIC_DIR / "user.html").read_text(encoding="utf-8")
+
+@app.get("/playground/", response_class=HTMLResponse)
+async def playground():
+    """Serve playground"""
+    return (STATIC_DIR / "playground.html").read_text(encoding="utf-8")
 
 @app.get("/user/api/me")
 async def user_me(auth: Dict = Depends(verify_api_key)):

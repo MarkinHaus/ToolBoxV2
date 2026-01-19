@@ -570,8 +570,8 @@ CONFIG = {
     # Maps platform IDs to unified user IDs
     # This allows same user to use both platforms with shared context
     "identity_map": {
-        f"discord:{os.environ.get("DISCORD_AID", "0")}": "user:markin",
-        f"telegram:{os.environ.get("TELEGRAM_AID", "0")}": "user:markin",
+        f'discord:{os.environ.get("DISCORD_AID", "0")}': "user:markin",
+        f'telegram:{os.environ.get("TELEGRAM_AID", "0")}': "user:markin",
     },
 
     # Kernel Configuration
