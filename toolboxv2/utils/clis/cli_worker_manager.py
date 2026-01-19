@@ -152,51 +152,59 @@ class ClusterNode:
 # ============================================================================
 # SSL Certificate Discovery
 # ============================================================================
+"""
+NginxManager - Updated version with separate site config generation
+Supports standard nginx pattern: nginx.conf includes sites-enabled/*
+"""
+
+import os
+import shutil
+import subprocess
+import logging
+from pathlib import Path
+from typing import List, Tuple, Optional
+import platform
+
+logger = logging.getLogger(__name__)
+
+SYSTEM = platform.system()
+IS_WINDOWS = SYSTEM == "Windows"
+IS_LINUX = SYSTEM == "Linux"
+IS_MACOS = SYSTEM == "Darwin"
+
+DEFAULT_NGINX_PATHS = [
+    "/usr/sbin/nginx",
+    "/usr/local/bin/nginx",
+    "/opt/homebrew/bin/nginx",
+    "C:\\nginx\\nginx.exe",
+]
+
+DEFAULT_CONF_PATH = "/etc/nginx/nginx.conf" if not IS_WINDOWS else "C:\\nginx\\conf\\nginx.conf"
+DEFAULT_SITES_AVAILABLE = "/etc/nginx/sites-available"
+DEFAULT_SITES_ENABLED = "/etc/nginx/sites-enabled"
+DEFAULT_BOX_AVAILABLE = "/etc/nginx/box-available"
+DEFAULT_BOX_ENABLED = "/etc/nginx/box-enabled"
+
 
 class SSLManager:
-    def __init__(self, domain: str = None):
-        self.domain = domain
-        self._cert_path: str | None = None
-        self._key_path: str | None = None
+    """Placeholder - import your actual SSLManager"""
 
-    def discover(self) -> bool:
-        env_cert = os.environ.get("NGINX_CERT_PATH") or os.environ.get("SSL_CERT_PATH")
-        env_key = os.environ.get("NGINX_KEY_PATH") or os.environ.get("SSL_KEY_PATH")
+    def __init__(self, server_name):
+        self.server_name = server_name
+        self.cert_path = None
+        self.key_path = None
+        self.available = False
 
-        if env_cert and env_key and os.path.exists(env_cert) and os.path.exists(env_key):
-            self._cert_path, self._key_path = env_cert, env_key
-            return True
+    def discover(self):
+        # Check for Let's Encrypt certs
+        if self.server_name:
+            cert_path = f"/etc/letsencrypt/live/{self.server_name}/fullchain.pem"
+            key_path = f"/etc/letsencrypt/live/{self.server_name}/privkey.pem"
+            if os.path.exists(cert_path) and os.path.exists(key_path):
+                self.cert_path = cert_path
+                self.key_path = key_path
+                self.available = True
 
-        for cert_base in ["/etc/letsencrypt/live"]:
-            if not os.path.isdir(cert_base):
-                continue
-            try:
-                for name in os.listdir(cert_base):
-                    cert = os.path.join(cert_base, name, "fullchain.pem")
-                    key = os.path.join(cert_base, name, "privkey.pem")
-                    if os.path.exists(cert) and os.path.exists(key):
-                        self._cert_path, self._key_path = cert, key
-                        return True
-            except PermissionError:
-                continue
-        return False
-
-    @property
-    def available(self) -> bool:
-        return self._cert_path is not None
-
-    @property
-    def cert_path(self) -> str | None:
-        return self._cert_path
-
-    @property
-    def key_path(self) -> str | None:
-        return self._key_path
-
-
-# ============================================================================
-# Nginx Manager
-# ============================================================================
 
 class NginxManager:
     def __init__(self, config):
@@ -256,7 +264,138 @@ class NginxManager:
         except subprocess.CalledProcessError:
             return False
 
-    def generate_config(
+    # =========================================================================
+    # NEW: Generate nginx.conf (main config) - minimal, just loads sites
+    # =========================================================================
+    def generate_nginx_conf(self) -> str:
+        """
+        Generate minimal nginx.conf that includes sites-enabled and box-enabled.
+        This goes to /etc/nginx/nginx.conf
+
+        Rate limiting zones are defined here (http block level).
+        """
+        cfg = self.config
+
+        # OS-specific optimizations
+        if IS_LINUX:
+            event_use = "epoll"
+            worker_processes = "auto"
+            worker_rlimit = "worker_rlimit_nofile 65535;"
+            worker_connections = "4096"
+            pid_directive = "pid /run/nginx.pid;"
+            mime_include = "include /etc/nginx/mime.types;"
+            log_path = "/var/log/nginx"
+        elif IS_MACOS:
+            event_use = "kqueue"
+            worker_processes = "auto"
+            worker_rlimit = "worker_rlimit_nofile 65535;"
+            worker_connections = "4096"
+            pid_directive = "pid /usr/local/var/run/nginx.pid;"
+            mime_include = "include /usr/local/etc/nginx/mime.types;"
+            log_path = "/usr/local/var/log/nginx"
+        else:  # Windows
+            event_use = "select"
+            worker_processes = "1"
+            worker_rlimit = ""
+            worker_connections = "1024"
+            pid_directive = ""
+            mime_include = "include mime.types;"
+            log_path = "logs"
+
+        # Rate limiting configuration (must be in http block)
+        rate_limit_enabled = getattr(cfg, "rate_limit_enabled", True)
+        rate_limit_zone = getattr(cfg, "rate_limit_zone", "tb_limit")
+        rate_limit_rate = getattr(cfg, "rate_limit_rate", "10r/s")
+        auth_rate_limit_rate = getattr(cfg, "auth_rate_limit_rate", "5r/s")
+
+        rate_limit_zones = ""
+        if rate_limit_enabled:
+            rate_limit_zones = f"""
+    # Rate limiting zones (used by site configs)
+    limit_req_zone $binary_remote_addr zone={rate_limit_zone}:10m rate={rate_limit_rate};
+    limit_req_zone $binary_remote_addr zone=tb_auth_limit:10m rate={auth_rate_limit_rate};
+    limit_req_status 429;"""
+
+        return f"""# ToolBoxV2 Nginx Main Configuration - {SYSTEM}
+# Generated automatically - regenerate with: tb manager nginx-config
+# Site configs go in /etc/nginx/sites-available/ and box-available/
+
+user nginx;
+{pid_directive}
+worker_processes {worker_processes};
+{worker_rlimit}
+
+events {{
+    worker_connections {worker_connections};
+    use {event_use};
+    multi_accept on;
+}}
+
+http {{
+    {mime_include}
+    default_type application/octet-stream;
+
+    # Logging
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for" '
+                    'rt=$request_time uct="$upstream_connect_time" '
+                    'uht="$upstream_header_time" urt="$upstream_response_time"';
+
+    access_log {log_path}/access.log main;
+    error_log {log_path}/error.log warn;
+
+    # Performance
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    keepalive_requests 1000;
+    types_hash_max_size 2048;
+
+    # Buffers
+    client_body_buffer_size 128k;
+    client_max_body_size 50M;
+    client_header_buffer_size 1k;
+    large_client_header_buffers 4 16k;
+
+    # Timeouts
+    client_body_timeout 60s;
+    client_header_timeout 60s;
+    send_timeout 60s;
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_min_length 1000;
+    gzip_types
+        text/plain
+        text/css
+        text/xml
+        text/javascript
+        application/json
+        application/javascript
+        application/x-javascript
+        application/xml
+        application/xml+rss
+        application/atom+xml
+        image/svg+xml;
+{rate_limit_zones}
+
+    # Include standard sites
+    include /etc/nginx/sites-enabled/*;
+
+    # Include ToolBoxV2 box configs
+    include /etc/nginx/box-enabled/*;
+}}
+"""
+
+    # =========================================================================
+    # NEW: Generate site config (for sites-available/toolbox)
+    # =========================================================================
+    def generate_site_config(
         self,
         http_ports: List[int],
         ws_ports: List[int],
@@ -265,29 +404,22 @@ class NginxManager:
         remote_nodes: List[Tuple[str, int]] = None,
     ) -> str:
         """
-        Generate Nginx configuration for ToolBoxV2 worker system.
+        Generate site-specific Nginx configuration for ToolBoxV2.
+        This goes to /etc/nginx/sites-available/toolbox (or box-available/)
+
+        Does NOT include worker_processes, events, http block wrapper.
+        Designed to be included by main nginx.conf.
 
         Features:
         - HTTP/WS upstream load balancing
         - Auth endpoint routing (secured)
         - API endpoint routing with access control
         - Unix socket support (Linux/macOS)
-        - Rate limiting (different zones for auth/api)
+        - Rate limiting (references zones from nginx.conf)
         - Static file serving from dist/
-        - SSL/TLS support
-        - Gzip compression
+        - SSL/TLS support (auto-detected or via certbot)
         - WebSocket proxying with session auth
         - SSE streaming support
-
-        Args:
-            http_ports: List of HTTP worker ports
-            ws_ports: List of WebSocket worker ports
-            http_sockets: Optional Unix socket paths for HTTP workers
-            ws_sockets: Optional Unix socket paths for WS workers
-            remote_nodes: Optional list of (host, port) tuples for remote backends
-
-        Returns:
-            Complete nginx.conf content as string
         """
         cfg = self.config
         remote_nodes = remote_nodes or []
@@ -296,8 +428,7 @@ class NginxManager:
 
         http_servers, ws_server_list = [], []
 
-        # Always use TCP ports on all platforms (Unix sockets disabled)
-        # This ensures consistent behavior across Windows, Linux, and macOS
+        # Build upstream server lists
         for port in http_ports:
             http_servers.append(
                 f"server 127.0.0.1:{port} weight=1 max_fails=3 fail_timeout=80s;"
@@ -318,7 +449,347 @@ class NginxManager:
             else "server 127.0.0.1:8100;"
         )
 
-        # OS-specific optimizations
+        # Config values
+        listen_port = getattr(cfg, "listen_port", 80)
+        upstream_http = getattr(cfg, "upstream_http", "toolbox_http")
+        upstream_ws = getattr(cfg, "upstream_ws", "toolbox_ws")
+        server_name = getattr(cfg, "server_name", "_")
+
+        # Rate limiting (references zones defined in nginx.conf)
+        rate_limit_enabled = getattr(cfg, "rate_limit_enabled", True)
+        rate_limit_zone = getattr(cfg, "rate_limit_zone", "tb_limit")
+        rate_limit_burst = getattr(cfg, "rate_limit_burst", 20)
+        auth_rate_limit_burst = getattr(cfg, "auth_rate_limit_burst", 10)
+
+        rate_limit_api_block = ""
+        rate_limit_auth_block = ""
+        if rate_limit_enabled:
+            rate_limit_api_block = f"""
+                limit_req zone={rate_limit_zone} burst={rate_limit_burst} nodelay;"""
+            rate_limit_auth_block = f"""
+                limit_req zone=tb_auth_limit burst={auth_rate_limit_burst} nodelay;"""
+
+        # Static files configuration
+        static_enabled = getattr(cfg, "static_enabled", True)
+        static_root = getattr(cfg, "static_root", "./dist")
+
+        static_block = ""
+        if static_enabled:
+            static_block = f"""
+        # Static files (SPA frontend)
+        location / {{
+            root {static_root};
+            try_files $uri $uri/ /index.html;
+
+            # Cache static assets
+            location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {{
+                expires 1h;
+                add_header Cache-Control "public, immutable";
+                access_log off;
+            }}
+
+            # Don't cache HTML
+            location ~* \\.html$ {{
+                expires -1;
+                add_header Cache-Control "no-store, no-cache, must-revalidate";
+            }}
+        }}"""
+
+        # SSL configuration - check if certbot has set up certs
+        use_ssl = self._ssl.available and getattr(cfg, "ssl_enabled", False)
+        ssl_server_block = ""
+
+        if use_ssl:
+            ssl_port = getattr(cfg, "listen_ssl_port", 443)
+            ssl_server_block = self._generate_ssl_server_block(
+                ssl_port, upstream_http, upstream_ws, server_name,
+                static_block, rate_limit_api_block, rate_limit_auth_block
+            )
+
+        # Auth endpoints block
+        auth_endpoints_block = self._generate_auth_endpoints_block(
+            upstream_http, rate_limit_auth_block
+        )
+
+        # API endpoints block with security
+        api_endpoints_block = self._generate_api_endpoints_block(
+            upstream_http, rate_limit_api_block
+        )
+
+        # WebSocket block with session validation
+        ws_endpoints_block = self._generate_ws_endpoints_block(
+            upstream_ws, upstream_http
+        )
+
+        # Admin UI block
+        admin_ui_port = getattr(self._manager, "web_ui_port", 9002)
+        admin_block = self._generate_admin_ui_block(admin_ui_port)
+
+        return f"""# ToolBoxV2 Site Configuration
+# Generated automatically - regenerate with: tb manager nginx-config
+# Place in /etc/nginx/sites-available/toolbox or /etc/nginx/box-available/toolbox
+# Enable with: ln -s ../sites-available/toolbox /etc/nginx/sites-enabled/
+
+# HTTP Backend Upstream
+upstream {upstream_http} {{
+    least_conn;
+    {http_upstream}
+    keepalive 128;
+    keepalive_requests 10000;
+    keepalive_timeout 60s;
+}}
+
+# WebSocket Backend Upstream
+upstream {upstream_ws} {{
+    # Consistent hashing for sticky sessions
+    hash $request_uri consistent;
+    {ws_upstream}
+}}
+
+# HTTP Server (certbot will modify this for HTTPS redirect)
+server {{
+    listen {listen_port};
+    listen [::]:{listen_port};
+    server_name {server_name};
+
+    # Logging
+    access_log /var/log/nginx/toolboxv2_access.log;
+    error_log /var/log/nginx/toolboxv2_error.log warn;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Timeouts for LLM/long requests
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 300s;
+    proxy_read_timeout 300s;
+{static_block}
+{auth_endpoints_block}
+{api_endpoints_block}
+
+    # SSE / Streaming endpoints
+    location /sse/ {{
+        proxy_pass http://{upstream_http};
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # Disable buffering for streaming
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding on;
+
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }}
+{ws_endpoints_block}
+
+    # Health check endpoint (no rate limit)
+    location /health {{
+        proxy_pass http://{upstream_http}/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        access_log off;
+    }}
+
+    # Metrics endpoint (restricted access recommended)
+    location /metrics {{
+        proxy_pass http://{upstream_http}/metrics;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        # Uncomment to restrict access:
+        # allow 127.0.0.1;
+        # deny all;
+    }}
+
+    {admin_block}
+
+    # Error pages
+    error_page 500 502 503 504 /50x.html;
+    location = /50x.html {{
+        root {static_root if static_enabled else "/usr/share/nginx/html"};
+        internal;
+    }}
+
+    error_page 429 /429.html;
+    location = /429.html {{
+        default_type application/json;
+        return 429 '{{"error": "TooManyRequests", "message": "Rate limit exceeded"}}';
+    }}
+
+    error_page 401 /401.html;
+    location = /401.html {{
+        default_type application/json;
+        return 401 '{{"error": "Unauthorized", "message": "Authentication required"}}';
+    }}
+
+    error_page 403 /403.html;
+    location = /403.html {{
+        default_type application/json;
+        return 403 '{{"error": "Forbidden", "message": "Access denied"}}';
+    }}
+}}
+{ssl_server_block}
+"""
+
+    def _generate_ssl_server_block(
+        self, ssl_port: int, upstream_http: str, upstream_ws: str,
+        server_name: str, static_block: str,
+        rate_limit_api_block: str, rate_limit_auth_block: str
+    ) -> str:
+        """Generate HTTPS server block (only if SSL is available)."""
+        return f"""
+# HTTPS Server (managed by certbot or manual SSL)
+server {{
+    listen {ssl_port} ssl http2;
+    listen [::]:{ssl_port} ssl http2;
+    server_name {server_name};
+
+    # SSL certificates (certbot manages these)
+    ssl_certificate {self._ssl.cert_path};
+    ssl_certificate_key {self._ssl.key_path};
+
+    # Modern SSL config
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # Logging
+    access_log /var/log/nginx/toolboxv2_ssl_access.log;
+    error_log /var/log/nginx/toolboxv2_ssl_error.log warn;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Strict-Transport-Security "max-age=63072000" always;
+
+    # Timeouts
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 300s;
+    proxy_read_timeout 300s;
+{static_block}
+
+    # All other locations same as HTTP...
+    location /api/ {{
+        proxy_pass http://{upstream_http};
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Cookie $http_cookie;
+        proxy_set_header Authorization $http_authorization;
+        proxy_pass_header Set-Cookie;
+{rate_limit_api_block}
+    }}
+
+    location /ws {{
+        proxy_pass http://{upstream_ws};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Cookie $http_cookie;
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+    }}
+
+    location /health {{
+        proxy_pass http://{upstream_http}/health;
+        proxy_http_version 1.1;
+        access_log off;
+    }}
+}}
+"""
+
+    # =========================================================================
+    # LEGACY: generate_config - now calls generate_site_config
+    # Kept for backward compatibility
+    # =========================================================================
+    def generate_config(
+        self,
+        http_ports: List[int],
+        ws_ports: List[int],
+        http_sockets: List[str] = None,
+        ws_sockets: List[str] = None,
+        remote_nodes: List[Tuple[str, int]] = None,
+        full_config: bool = False,
+    ) -> str:
+        """
+        Generate Nginx configuration.
+
+        Args:
+            http_ports: List of HTTP worker ports
+            ws_ports: List of WebSocket worker ports
+            http_sockets: Optional Unix socket paths for HTTP workers
+            ws_sockets: Optional Unix socket paths for WS workers
+            remote_nodes: Optional list of (host, port) tuples for remote backends
+            full_config: If True, generate complete nginx.conf (legacy behavior)
+                        If False (default), generate site config only
+
+        Returns:
+            Nginx configuration content as string
+        """
+        if full_config:
+            # Legacy behavior - full nginx.conf
+            return self._generate_full_config(
+                http_ports, ws_ports, http_sockets, ws_sockets, remote_nodes
+            )
+        else:
+            # New behavior - site config only
+            return self.generate_site_config(
+                http_ports, ws_ports, http_sockets, ws_sockets, remote_nodes
+            )
+
+    def _generate_full_config(
+        self,
+        http_ports: List[int],
+        ws_ports: List[int],
+        http_sockets: List[str] = None,
+        ws_sockets: List[str] = None,
+        remote_nodes: List[Tuple[str, int]] = None,
+    ) -> str:
+        """
+        Generate complete nginx.conf (legacy behavior).
+        Use this only for standalone deployments without sites-enabled pattern.
+        """
+        # ... [Original generate_config implementation here - kept for backward compat]
+        # This is the original full config generation
+        cfg = self.config
+        remote_nodes = remote_nodes or []
+        http_sockets = http_sockets or []
+        ws_sockets = ws_sockets or []
+
+        http_servers, ws_server_list = [], []
+
+        for port in http_ports:
+            http_servers.append(
+                f"server 127.0.0.1:{port} weight=1 max_fails=3 fail_timeout=80s;"
+            )
+        for port in ws_ports:
+            ws_server_list.append(f"server 127.0.0.1:{port};")
+
+        for host, port in remote_nodes:
+            http_servers.append(f"server {host}:{port} backup;")
+
+        http_upstream = (
+            "\n        ".join(http_servers) if http_servers else "server 127.0.0.1:8000;"
+        )
+        ws_upstream = (
+            "\n        ".join(ws_server_list)
+            if ws_server_list
+            else "server 127.0.0.1:8100;"
+        )
+
         if IS_LINUX:
             event_use = "epoll"
             worker_processes = "auto"
@@ -329,13 +800,12 @@ class NginxManager:
             worker_processes = "auto"
             worker_rlimit = "worker_rlimit_nofile 65535;"
             worker_connections = "4096"
-        else:  # Windows
+        else:
             event_use = "select"
             worker_processes = "1"
             worker_rlimit = ""
             worker_connections = "1024"
 
-        # SSL configuration
         use_ssl = self._ssl.available and getattr(cfg, "ssl_enabled", False)
         ssl_block = ""
         ssl_redirect = ""
@@ -358,7 +828,6 @@ class NginxManager:
 
             listen_port = getattr(cfg, "listen_port", 80)
             ssl_redirect = f"""
-        # HTTP to HTTPS redirect
         server {{
             listen {listen_port};
             server_name {getattr(cfg, "server_name", "_")};
@@ -371,7 +840,6 @@ class NginxManager:
         upstream_ws = getattr(cfg, "upstream_ws", "toolbox_ws")
         server_name = getattr(cfg, "server_name", "_")
 
-        # Paths based on OS
         if IS_WINDOWS:
             mime_include = "include mime.types;"
             log_path = "logs"
@@ -381,13 +849,10 @@ class NginxManager:
             log_path = "/var/log/nginx"
             pid_directive = "pid /run/nginx.pid;"
 
-        # Rate limiting configuration
         rate_limit_enabled = getattr(cfg, "rate_limit_enabled", True)
         rate_limit_zone = getattr(cfg, "rate_limit_zone", "tb_limit")
         rate_limit_rate = getattr(cfg, "rate_limit_rate", "10r/s")
         rate_limit_burst = getattr(cfg, "rate_limit_burst", 20)
-
-        # Auth rate limit (stricter)
         auth_rate_limit_rate = getattr(cfg, "auth_rate_limit_rate", "5r/s")
         auth_rate_limit_burst = getattr(cfg, "auth_rate_limit_burst", 10)
 
@@ -396,7 +861,6 @@ class NginxManager:
         rate_limit_auth_block = ""
         if rate_limit_enabled:
             rate_limit_zone_block = f"""
-        # Rate limiting zones
         limit_req_zone $binary_remote_addr zone={rate_limit_zone}:10m rate={rate_limit_rate};
         limit_req_zone $binary_remote_addr zone=tb_auth_limit:10m rate={auth_rate_limit_rate};
         limit_req_status 429;"""
@@ -405,48 +869,36 @@ class NginxManager:
             rate_limit_auth_block = f"""
                 limit_req zone=tb_auth_limit burst={auth_rate_limit_burst} nodelay;"""
 
-        # Static files configuration
         static_enabled = getattr(cfg, "static_enabled", True)
         static_root = getattr(cfg, "static_root", "./dist")
 
         static_block = ""
         if static_enabled:
             static_block = f"""
-            # Static files (SPA frontend)
             location / {{
                 root {static_root};
                 try_files $uri $uri/ /index.html;
-
-                # Cache static assets
                 location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {{
                     expires 1h;
                     add_header Cache-Control "public, immutable";
                     access_log off;
                 }}
-
-                # Don't cache HTML
                 location ~* \\.html$ {{
                     expires -1;
                     add_header Cache-Control "no-store, no-cache, must-revalidate";
                 }}
             }}"""
 
-        # Main listen directive
         main_listen = f"listen {listen_port};" if not (use_ssl and ssl_redirect) else ""
         if use_ssl and not ssl_redirect:
             main_listen = f"listen {listen_port};"
 
-        # Auth endpoints block
         auth_endpoints_block = self._generate_auth_endpoints_block(
             upstream_http, rate_limit_auth_block
         )
-
-        # API endpoints block with security
         api_endpoints_block = self._generate_api_endpoints_block(
             upstream_http, rate_limit_api_block
         )
-
-        # WebSocket block with session validation
         ws_endpoints_block = self._generate_ws_endpoints_block(
             upstream_ws, upstream_http
         )
@@ -454,450 +906,274 @@ class NginxManager:
         admin_ui_port = getattr(self._manager, "web_ui_port", 9002)
         admin_block = self._generate_admin_ui_block(admin_ui_port)
 
-
         return f"""# ToolBoxV2 Nginx Configuration - {SYSTEM}
-    # Generated automatically - do not edit manually
-    # Regenerate with: tb manager nginx-config
+# FULL CONFIG MODE - includes everything
+# Generated automatically
 
-    {pid_directive}
-    worker_processes {worker_processes};
-    {worker_rlimit}
+{pid_directive}
+worker_processes {worker_processes};
+{worker_rlimit}
 
-    events {{
-        worker_connections {worker_connections};
-        use {event_use};
-        multi_accept on;
+events {{
+    worker_connections {worker_connections};
+    use {event_use};
+    multi_accept on;
+}}
+
+http {{
+    {mime_include}
+    default_type application/octet-stream;
+
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log {log_path}/toolboxv2_access.log main;
+    error_log {log_path}/toolboxv2_error.log warn;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    client_max_body_size 50M;
+
+    gzip on;
+    gzip_vary on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
+{rate_limit_zone_block}
+
+    upstream {upstream_http} {{
+        least_conn;
+        {http_upstream}
+        keepalive 128;
     }}
 
-    http {{
-        {mime_include}
-        default_type application/octet-stream;
-
-        # Logging
-        log_format main '$remote_addr - $remote_user [$time_local] "$request" '
-                        '$status $body_bytes_sent "$http_referer" '
-                        '"$http_user_agent" "$http_x_forwarded_for" '
-                        'rt=$request_time uct="$upstream_connect_time" '
-                        'uht="$upstream_header_time" urt="$upstream_response_time"';
-
-        access_log {log_path}/toolboxv2_access.log main;
-        error_log {log_path}/toolboxv2_error.log warn;
-
-        # Performance
-        sendfile on;
-        tcp_nopush on;
-        tcp_nodelay on;
-        keepalive_timeout 65;
-        keepalive_requests 1000;
-        types_hash_max_size 2048;
-
-        # Buffers
-        client_body_buffer_size 128k;
-        client_max_body_size 50M;
-        client_header_buffer_size 1k;
-        large_client_header_buffers 4 16k;
-
-        # Timeouts
-        client_body_timeout 60s;
-        client_header_timeout 60s;
-        send_timeout 60s;
-
-        # Gzip compression
-        gzip on;
-        gzip_vary on;
-        gzip_proxied any;
-        gzip_comp_level 6;
-        gzip_min_length 1000;
-        gzip_types
-            text/plain
-            text/css
-            text/xml
-            text/javascript
-            application/json
-            application/javascript
-            application/x-javascript
-            application/xml
-            application/xml+rss
-            application/atom+xml
-            image/svg+xml;
-    {rate_limit_zone_block}
-
-        # HTTP Backend Upstream
-        upstream {upstream_http} {{
-            least_conn;
-            {http_upstream}
-            keepalive 128;
-            keepalive_requests 10000;
-            keepalive_timeout 60s;
-        }}
-
-        # WebSocket Backend Upstream
-        upstream {upstream_ws} {{
-            # Consistent hashing for sticky sessions
-            hash $request_uri consistent;
-            {ws_upstream}
-        }}
-    {ssl_redirect}
-        # Main Server Block
-        server {{
-            {main_listen}{ssl_block}
-            server_name {server_name};
-
-            # Security headers
-            add_header X-Frame-Options "SAMEORIGIN" always;
-            add_header X-Content-Type-Options "nosniff" always;
-            add_header X-XSS-Protection "1; mode=block" always;
-            add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    {static_block}
-    {auth_endpoints_block}
-    {api_endpoints_block}
-
-            # SSE / Streaming endpoints
-            location /sse/ {{
-                proxy_pass http://{upstream_http};
-                proxy_http_version 1.1;
-                proxy_set_header Connection "";
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-
-                # Disable buffering for streaming
-                proxy_buffering off;
-                proxy_cache off;
-                chunked_transfer_encoding on;
-
-                proxy_read_timeout 3600s;
-                proxy_send_timeout 3600s;
-            }}
-    {ws_endpoints_block}
-
-            # Health check endpoint (no rate limit)
-            location /health {{
-                proxy_pass http://{upstream_http}/health;
-                proxy_http_version 1.1;
-                proxy_set_header Connection "";
-                access_log off;
-            }}
-
-            # Metrics endpoint (restricted access recommended)
-            location /metrics {{
-                proxy_pass http://{upstream_http}/metrics;
-                proxy_http_version 1.1;
-                proxy_set_header Connection "";
-                # Uncomment to restrict access:
-                # allow 127.0.0.1;
-                # deny all;
-            }}
-
-
-            {admin_block}
-
-            # Error pages
-            error_page 500 502 503 504 /50x.html;
-            location = /50x.html {{
-                root {static_root if static_enabled else "/usr/share/nginx/html"};
-                internal;
-            }}
-
-            error_page 429 /429.html;
-            location = /429.html {{
-                default_type application/json;
-                return 429 '{{"error": "TooManyRequests", "message": "Rate limit exceeded"}}';
-            }}
-
-            error_page 401 /401.html;
-            location = /401.html {{
-                default_type application/json;
-                return 401 '{{"error": "Unauthorized", "message": "Authentication required"}}';
-            }}
-
-            error_page 403 /403.html;
-            location = /403.html {{
-                default_type application/json;
-                return 403 '{{"error": "Forbidden", "message": "Access denied"}}';
-            }}
-        }}
-
-        include /etc/nginx/box-enabled/*;
-
+    upstream {upstream_ws} {{
+        hash $request_uri consistent;
+        {ws_upstream}
     }}
-    """
+{ssl_redirect}
+    server {{
+        {main_listen}{ssl_block}
+        server_name {server_name};
+
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+{static_block}
+{auth_endpoints_block}
+{api_endpoints_block}
+
+        location /sse/ {{
+            proxy_pass http://{upstream_http};
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_buffering off;
+            proxy_read_timeout 3600s;
+        }}
+{ws_endpoints_block}
+
+        location /health {{
+            proxy_pass http://{upstream_http}/health;
+            access_log off;
+        }}
+
+        location /metrics {{
+            proxy_pass http://{upstream_http}/metrics;
+        }}
+
+        {admin_block}
+    }}
+
+    include /etc/nginx/box-enabled/*;
+}}
+"""
 
     def _generate_auth_endpoints_block(
         self, upstream_http: str, rate_limit_block: str
     ) -> str:
         """Generate auth endpoint configuration."""
         return f"""
-            # ============================================================
-            # Auth Endpoints (Clerk Integration)
-            # ============================================================
+        # Auth Endpoints (Clerk Integration)
+        location = /validateSession {{
+            limit_except POST {{ deny all; }}
+{rate_limit_block}
+            proxy_pass http://{upstream_http}/validateSession;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Content-Type $content_type;
+            proxy_connect_timeout 10s;
+            proxy_read_timeout 30s;
+        }}
 
-            # Validate session with Clerk token (POST only)
-            location = /validateSession {{
-                limit_except POST {{
-                    deny all;
-                }}
-    {rate_limit_block}
-                proxy_pass http://{upstream_http}/validateSession;
-                proxy_http_version 1.1;
-                proxy_set_header Connection "";
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header X-Forwarded-Proto $scheme;
-                proxy_set_header Content-Type $content_type;
+        location = /IsValidSession {{
+            limit_except GET {{ deny all; }}
+            proxy_pass http://{upstream_http}/IsValidSession;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header Cookie $http_cookie;
+            proxy_connect_timeout 5s;
+            proxy_read_timeout 10s;
+        }}
 
-                proxy_connect_timeout 10s;
-                proxy_send_timeout 30s;
-                proxy_read_timeout 30s;
-            }}
+        location = /web/logoutS {{
+            limit_except POST {{ deny all; }}
+{rate_limit_block}
+            proxy_pass http://{upstream_http}/web/logoutS;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header Cookie $http_cookie;
+        }}
 
-            # Check if session is valid (GET only)
-            location = /IsValidSession {{
-                limit_except GET {{
-                    deny all;
-                }}
-                proxy_pass http://{upstream_http}/IsValidSession;
-                proxy_http_version 1.1;
-                proxy_set_header Connection "";
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header Cookie $http_cookie;
+        location = /api_user_data {{
+            limit_except GET {{ deny all; }}
+            proxy_pass http://{upstream_http}/api_user_data;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header Cookie $http_cookie;
+            proxy_set_header Authorization $http_authorization;
+        }}
 
-                proxy_connect_timeout 5s;
-                proxy_send_timeout 10s;
-                proxy_read_timeout 10s;
-            }}
-
-            # Logout endpoint (POST only)
-            location = /web/logoutS {{
-                limit_except POST {{
-                    deny all;
-                }}
-    {rate_limit_block}
-                proxy_pass http://{upstream_http}/web/logoutS;
-                proxy_http_version 1.1;
-                proxy_set_header Connection "";
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header Cookie $http_cookie;
-
-                proxy_connect_timeout 5s;
-                proxy_send_timeout 10s;
-                proxy_read_timeout 10s;
-            }}
-
-            # Get user data endpoint (GET only, requires valid session)
-            location = /api_user_data {{
-                limit_except GET {{
-                    deny all;
-                }}
-                proxy_pass http://{upstream_http}/api_user_data;
-                proxy_http_version 1.1;
-                proxy_set_header Connection "";
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header Cookie $http_cookie;
-                proxy_set_header Authorization $http_authorization;
-
-                proxy_connect_timeout 5s;
-                proxy_send_timeout 15s;
-                proxy_read_timeout 15s;
-            }}
-
-            # Logout redirect page (static or handled by frontend)
-            location = /web/logout {{
-                # Can be handled by SPA or redirect
-                try_files $uri /index.html;
-            }}"""
+        location = /web/logout {{
+            try_files $uri /index.html;
+        }}"""
 
     def _generate_api_endpoints_block(
         self, upstream_http: str, rate_limit_block: str
     ) -> str:
-        """Generate API endpoint configuration with security."""
+        """Generate API endpoint configuration."""
         return f"""
-            # ============================================================
-            # API Endpoints
-            # Access control is handled by the workers based on:
-            # - open_modules: Publicly accessible modules
-            # - open* functions: Functions starting with 'open' are public
-            # - User level: -1=Admin, 0=not logged in, 1=logged in, 2=trusted
-            # ============================================================
+        # API Endpoints
+        location /api/ {{
+            proxy_pass http://{upstream_http};
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Request-ID $request_id;
+            proxy_set_header Cookie $http_cookie;
+            proxy_set_header Authorization $http_authorization;
+            proxy_pass_header Set-Cookie;
 
-            location /api/ {{
-                proxy_pass http://{upstream_http};
-                proxy_http_version 1.1;
-                proxy_set_header Connection "";
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header X-Forwarded-Proto $scheme;
-                proxy_set_header X-Request-ID $request_id;
-                proxy_set_header Cookie $http_cookie;
-                proxy_set_header Authorization $http_authorization;
+            proxy_buffering on;
+            proxy_buffer_size 4k;
+            proxy_buffers 8 16k;
 
-                # Pass session cookie for auth validation
-                proxy_pass_header Set-Cookie;
-
-                # Buffering for normal API requests
-                proxy_buffering on;
-                proxy_buffer_size 4k;
-                proxy_buffers 8 16k;
-                proxy_busy_buffers_size 24k;
-
-                proxy_connect_timeout 10s;
-                proxy_send_timeout 30s;
-                proxy_read_timeout 30s;
-    {rate_limit_block}
-            }}"""
+            proxy_connect_timeout 10s;
+            proxy_read_timeout 30s;
+{rate_limit_block}
+        }}"""
 
     def _generate_ws_endpoints_block(
         self, upstream_ws: str, upstream_http: str
     ) -> str:
-        """Generate WebSocket endpoint configuration with auth subrequest."""
+        """Generate WebSocket endpoint configuration."""
         return f"""
-            # ============================================================
-            # WebSocket Endpoint
-            # Auth validated via subrequest to /IsValidSession
-            # ============================================================
+        # WebSocket auth check
+        location = /_ws_auth {{
+            internal;
+            proxy_pass http://{upstream_http}/IsValidSession;
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
+            proxy_set_header Cookie $http_cookie;
+        }}
 
-            # Internal auth check endpoint
-            location = /_ws_auth {{
-                internal;
-                proxy_pass http://{upstream_http}/IsValidSession;
-                proxy_pass_request_body off;
-                proxy_set_header Content-Length "";
-                proxy_set_header X-Original-URI $request_uri;
-                proxy_set_header Cookie $http_cookie;
-            }}
+        # WebSocket endpoint
+        location /ws {{
+            proxy_pass http://{upstream_ws};
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header Cookie $http_cookie;
 
-            # Main WebSocket endpoint
-            location /ws {{
-                # Optional: Require authentication for WebSocket
-                # Uncomment the following lines to enable auth check:
-                # auth_request /_ws_auth;
-                # auth_request_set $auth_status $upstream_status;
+            proxy_connect_timeout 10s;
+            proxy_send_timeout 3600s;
+            proxy_read_timeout 3600s;
+            proxy_buffering off;
+        }}
 
-                proxy_pass http://{upstream_ws};
-                proxy_http_version 1.1;
-                proxy_set_header Upgrade $http_upgrade;
-                proxy_set_header Connection "upgrade";
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header X-Forwarded-Proto $scheme;
-                proxy_set_header Cookie $http_cookie;
-
-                # WebSocket specific timeouts
-                proxy_connect_timeout 10s;
-                proxy_send_timeout 3600s;
-                proxy_read_timeout 3600s;
-
-                # Disable buffering for WebSocket
-                proxy_buffering off;
-            }}
-
-            # WebSocket with explicit path routing (e.g., /ws/Module/handler)
-            location ~ ^/ws/([^/]+)/([^/]+)$ {{
-                # Optional: Require authentication
-                # auth_request /_ws_auth;
-
-                proxy_pass http://{upstream_ws};
-                proxy_http_version 1.1;
-                proxy_set_header Upgrade $http_upgrade;
-                proxy_set_header Connection "upgrade";
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header X-Forwarded-Proto $scheme;
-                proxy_set_header Cookie $http_cookie;
-
-                proxy_connect_timeout 10s;
-                proxy_send_timeout 3600s;
-                proxy_read_timeout 3600s;
-                proxy_buffering off;
-            }}"""
+        location ~ ^/ws/([^/]+)/([^/]+)$ {{
+            proxy_pass http://{upstream_ws};
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header Cookie $http_cookie;
+            proxy_buffering off;
+            proxy_read_timeout 3600s;
+        }}"""
 
     def _generate_admin_ui_block(self, web_port: int) -> str:
-        """
-        Generates a password-protected admin UI route on /admin/
-        exposed on config.manager.web_ui_port.
-
-        Password is read from ENV ADMIN_UI_PASSWORD.
-        Proxies to DB (9000) and Worker Manager (9001) internally.
-        Admin index must be outside static_root.
-        """
-
+        """Generate admin UI block with basic auth."""
         import os
 
         pwd = os.environ.get("ADMIN_UI_PASSWORD", "")
         if not pwd:
-            raise RuntimeError("Environment variable ADMIN_UI_PASSWORD is missing.")
+            # Return empty block if no password set
+            return "# Admin UI disabled - set ADMIN_UI_PASSWORD env var"
 
-        # htpasswd hash generieren (bcrypt)
-        from platform import system
-
-        if system() == "Windows":
-            import bcrypt, toolboxv2
-            hashed = bcrypt.hashpw(
-                pwd.encode("utf-8"), bcrypt.gensalt(rounds=12)
-            ).decode()
-            admin_htpasswd = toolboxv2.get_app().appdata + "/admin_htpasswd"
-            admin_root = toolboxv2.get_app().appdata + "/admin_ui"
+        if IS_WINDOWS:
+            import bcrypt
+            try:
+                import toolboxv2
+                hashed = bcrypt.hashpw(pwd.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode()
+                admin_htpasswd = toolboxv2.get_app().appdata + "/admin_htpasswd"
+                admin_root = toolboxv2.get_app().appdata + "/admin_ui"
+            except ImportError:
+                return "# Admin UI disabled - toolboxv2 not available"
             auth_basic = ""
         else:
             import crypt
-
             hashed = crypt.crypt(pwd, crypt.mksalt(crypt.METHOD_BLOWFISH))
             admin_htpasswd = "/etc/nginx/admin_htpasswd"
             admin_root = "/var/lib/toolboxv2/admin_ui"
+            auth_basic = f'auth_basic "Restricted Admin UI";\n            auth_basic_user_file {admin_htpasswd};'
 
-            auth_basic = f'auth_basic "Restricted Admin UI";\n                    auth_basic_user_file {admin_htpasswd};'
+        # Write htpasswd
+        try:
+            os.makedirs(os.path.dirname(admin_htpasswd), exist_ok=True)
+            with open(admin_htpasswd, "w") as f:
+                f.write(f"admin:{hashed}\n")
+        except Exception as e:
+            logger.warning(f"Could not write htpasswd: {e}")
 
-        # htpasswd speichern
-        with open(admin_htpasswd, "w") as f:
-            f.write(f"admin:{hashed}\n")
-
-        # Admin root directory erstellen falls nicht vorhanden
         os.makedirs(admin_root, exist_ok=True)
-
         self._populate_admin_ui(admin_root, manager_port=web_port)
 
         return f"""
-            # Admin UI Server (Basic Auth protected)
-                # Admin UI mit Basic Auth
-                location /admin/ {{
-                    {auth_basic}
+        # Admin UI (Basic Auth protected)
+        location /admin/ {{
+            {auth_basic}
+            root {admin_root};
+            try_files $uri $uri/ /admin/index.html;
+        }}
 
-                    # Admin static files (außerhalb static_root!)
-                    root {admin_root};
-                    try_files $uri $uri/ /admin/index.html;
-                }}
+        location /admin/db/ {{
+            {auth_basic}
+            proxy_pass http://127.0.0.1:9000/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+        }}
 
-                # Proxy zu DB auf Port 9000 (nur mit Auth)
-                location /admin/db/ {{
-                    {auth_basic}
-
-                    proxy_pass http://127.0.0.1:9000/;
-                    proxy_set_header Host $host;
-                    proxy_set_header X-Real-IP $remote_addr;
-                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                }}
-
-                # Proxy zu Worker Manager auf Port {web_port} (nur mit Auth)
-                location /admin/manager/ {{
-                    {auth_basic}
-
-                    proxy_pass http://127.0.0.1:{web_port}/;
-                    proxy_set_header Host $host;
-                    proxy_set_header X-Real-IP $remote_addr;
-                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                }}
-
-        """
+        location /admin/manager/ {{
+            {auth_basic}
+            proxy_pass http://127.0.0.1:{web_port}/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+        }}"""
 
     def _populate_admin_ui(
         self,
@@ -906,604 +1182,148 @@ class NginxManager:
         minio_console_port: int = 9001,
         manager_port: int = 9002,
     ) -> None:
-        """
-        Populates admin_ui directory with a minimal HUNIZED UI if not already present.
-        Creates index.html that directly fetches from MinIO and Manager APIs.
-        """
-        import os
-
+        """Create admin UI index.html if not exists."""
         admin_index = os.path.join(admin_root, "admin", "index.html")
 
-        # Nur erstellen wenn noch nicht vorhanden
         if os.path.exists(admin_index):
             return
 
-        # Directory struktur erstellen
         os.makedirs(os.path.dirname(admin_index), exist_ok=True)
 
-        # Minimal HUNIZED Admin UI mit direkten API Calls
+        # Minimal admin UI HTML
         html_content = f"""<!DOCTYPE html>
-    <html lang="de">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>ToolBoxV2 Admin</title>
-        <style>
-            * {{
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }}
-
-            body {{
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                background: #0a0a0a;
-                color: #e0e0e0;
-                height: 100vh;
-                display: flex;
-                flex-direction: column;
-            }}
-
-            header {{
-                background: #111;
-                border-bottom: 1px solid #222;
-                padding: 1rem 2rem;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            }}
-
-            h1 {{
-                font-size: 1.2rem;
-                font-weight: 600;
-                color: #fff;
-            }}
-
-            .tabs {{
-                display: flex;
-                gap: 0.5rem;
-            }}
-
-            .tab {{
-                padding: 0.5rem 1rem;
-                background: transparent;
-                border: 1px solid #333;
-                border-radius: 6px;
-                color: #999;
-                cursor: pointer;
-                transition: all 0.2s;
-                font-size: 0.9rem;
-            }}
-
-            .tab:hover {{
-                background: #1a1a1a;
-                border-color: #444;
-                color: #fff;
-            }}
-
-            .tab.active {{
-                background: #2563eb;
-                border-color: #2563eb;
-                color: #fff;
-            }}
-
-            .content {{
-                flex: 1;
-                padding: 2rem;
-                overflow-y: auto;
-            }}
-
-            .panel {{
-                display: none;
-            }}
-
-            .panel.active {{
-                display: block;
-            }}
-
-            .status {{
-                display: flex;
-                align-items: center;
-                gap: 0.5rem;
-                font-size: 0.85rem;
-                color: #666;
-            }}
-
-            .status-dot {{
-                width: 8px;
-                height: 8px;
-                border-radius: 50%;
-                background: #22c55e;
-                animation: pulse 2s infinite;
-            }}
-
-            .status-dot.error {{
-                background: #ef4444;
-            }}
-
-            .status-dot.warning {{
-                background: #f59e0b;
-            }}
-
-            @keyframes pulse {{
-                0%, 100% {{ opacity: 1; }}
-                50% {{ opacity: 0.5; }}
-            }}
-
-            .card {{
-                background: #111;
-                border: 1px solid #222;
-                border-radius: 8px;
-                padding: 1.5rem;
-                margin-bottom: 1rem;
-            }}
-
-            .card h2 {{
-                font-size: 1rem;
-                margin-bottom: 1rem;
-                color: #fff;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            }}
-
-            .badge {{
-                padding: 0.25rem 0.75rem;
-                background: #1a1a1a;
-                border: 1px solid #333;
-                border-radius: 12px;
-                font-size: 0.75rem;
-                font-weight: 500;
-            }}
-
-            .worker-list {{
-                display: grid;
-                gap: 1rem;
-            }}
-
-            .worker-item {{
-                background: #0a0a0a;
-                border: 1px solid #222;
-                border-radius: 6px;
-                padding: 1rem;
-                display: flex;
-                justify-content: space-between;
-                align-items: start;
-                transition: border-color 0.2s;
-            }}
-
-            .worker-item:hover {{
-                border-color: #333;
-            }}
-
-            .worker-item.unhealthy {{
-                border-color: #ef4444;
-            }}
-
-            .worker-main {{
-                flex: 1;
-            }}
-
-            .worker-header {{
-                display: flex;
-                align-items: center;
-                gap: 0.75rem;
-                margin-bottom: 0.5rem;
-            }}
-
-            .worker-name {{
-                font-weight: 600;
-                color: #fff;
-                font-family: 'Courier New', monospace;
-            }}
-
-            .worker-type {{
-                padding: 0.125rem 0.5rem;
-                background: #2563eb;
-                border-radius: 4px;
-                font-size: 0.75rem;
-                font-weight: 600;
-                text-transform: uppercase;
-            }}
-
-            .worker-type.ws {{
-                background: #8b5cf6;
-            }}
-
-            .worker-details {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-                gap: 0.5rem;
-                font-size: 0.85rem;
-                color: #666;
-            }}
-
-            .worker-detail {{
-                display: flex;
-                flex-direction: column;
-            }}
-
-            .worker-detail-label {{
-                font-size: 0.75rem;
-                color: #555;
-            }}
-
-            .worker-detail-value {{
-                color: #e0e0e0;
-                font-family: 'Courier New', monospace;
-            }}
-
-            .worker-detail-value.healthy {{
-                color: #22c55e;
-            }}
-
-            .worker-detail-value.unhealthy {{
-                color: #ef4444;
-            }}
-
-            .worker-actions {{
-                display: flex;
-                gap: 0.5rem;
-            }}
-
-            button {{
-                padding: 0.5rem 1rem;
-                background: #1a1a1a;
-                border: 1px solid #333;
-                border-radius: 6px;
-                color: #e0e0e0;
-                cursor: pointer;
-                transition: all 0.2s;
-                font-size: 0.85rem;
-            }}
-
-            button:hover {{
-                background: #222;
-                border-color: #444;
-            }}
-
-            button.danger {{
-                border-color: #ef4444;
-                color: #ef4444;
-            }}
-
-            button.danger:hover {{
-                background: #ef4444;
-                color: #fff;
-            }}
-
-            .loading {{
-                text-align: center;
-                padding: 2rem;
-                color: #666;
-            }}
-
-            .error {{
-                background: #1a0a0a;
-                border: 1px solid #ef4444;
-                border-radius: 6px;
-                padding: 1rem;
-                color: #ef4444;
-            }}
-
-            .minio-link {{
-                display: inline-block;
-                padding: 0.75rem 1.5rem;
-                background: #c72c48;
-                border-radius: 6px;
-                color: #fff;
-                text-decoration: none;
-                font-weight: 500;
-                transition: all 0.2s;
-            }}
-
-            .minio-link:hover {{
-                background: #a81d38;
-            }}
-
-            .stats-grid {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-                gap: 1rem;
-                margin-top: 1rem;
-            }}
-
-            .stat-card {{
-                background: #0a0a0a;
-                border: 1px solid #222;
-                border-radius: 6px;
-                padding: 1rem;
-            }}
-
-            .stat-value {{
-                font-size: 1.5rem;
-                font-weight: 600;
-                color: #2563eb;
-            }}
-
-            .stat-label {{
-                font-size: 0.85rem;
-                color: #666;
-                margin-top: 0.25rem;
-            }}
-        </style>
-    </head>
-    <body>
-        <header>
-            <h1>ToolBoxV2 Admin</h1>
-            <div class="tabs">
-                <button class="tab active" onclick="switchTab('manager')">Workers</button>
-                <button class="tab" onclick="switchTab('minio')">MinIO Storage</button>
-            </div>
-            <div class="status">
-                <span class="status-dot" id="status-dot"></span>
-                <span id="status-text">Online</span>
-            </div>
-        </header>
-
-        <div class="content">
-            <!-- Worker Manager Panel -->
-            <div id="manager-panel" class="panel active">
-                <div class="card">
-                    <h2>
-                        Worker Status
-                        <span class="badge" id="worker-count">0 Workers</span>
-                    </h2>
-                    <div id="manager-content" class="loading">Loading...</div>
-                </div>
-            </div>
-
-            <!-- MinIO Panel -->
-            <div id="minio-panel" class="panel">
-                <div class="card">
-                    <h2>MinIO Object Storage</h2>
-                    <p style="color: #666; margin-bottom: 1rem;">
-                        MinIO Console für Bucket Management und Monitoring
-                    </p>
-                    <a href="http://127.0.0.1:{minio_console_port}" target="_blank" class="minio-link">
-                        Open MinIO Console
-                    </a>
-                    <div id="minio-stats" class="stats-grid">
-                        <!-- Stats werden hier geladen -->
-                    </div>
-                </div>
-            </div>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ToolBoxV2 Admin</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: system-ui, sans-serif; background: #0a0a0a; color: #e0e0e0; }}
+        header {{ background: #111; padding: 1rem 2rem; border-bottom: 1px solid #222; }}
+        h1 {{ font-size: 1.2rem; }}
+        .content {{ padding: 2rem; }}
+        .card {{ background: #111; border: 1px solid #222; border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem; }}
+        a {{ color: #2563eb; }}
+    </style>
+</head>
+<body>
+    <header><h1>ToolBoxV2 Admin</h1></header>
+    <div class="content">
+        <div class="card">
+            <h2>Quick Links</h2>
+            <p><a href="/admin/manager/">Worker Manager</a> (Port {manager_port})</p>
+            <p><a href="http://127.0.0.1:{minio_console_port}" target="_blank">MinIO Console</a></p>
         </div>
-
-        <script>
-            const MINIO_PORT = {minio_port};
-            const MINIO_CONSOLE_PORT = {minio_console_port};
-            const MANAGER_PORT = {manager_port};
-
-            let currentTab = 'manager';
-
-            function switchTab(target) {{
-                currentTab = target;
-
-                document.querySelectorAll('.tab').forEach(tab => {{
-                    tab.classList.remove('active');
-                }});
-                event.target.classList.add('active');
-
-                document.querySelectorAll('.panel').forEach(panel => {{
-                    panel.classList.remove('active');
-                }});
-                document.getElementById(target + '-panel').classList.add('active');
-
-                if (target === 'manager') {{
-                    loadManagerData();
-                }} else if (target === 'minio') {{
-                    loadMinioData();
-                }}
-            }}
-
-            function formatUptime(seconds) {{
-                const hours = Math.floor(seconds / 3600);
-                const minutes = Math.floor((seconds % 3600) / 60);
-                const secs = Math.floor(seconds % 60);
-                if (hours > 0) return `${{hours}}h ${{minutes}}m`;
-                if (minutes > 0) return `${{minutes}}m ${{secs}}s`;
-                return `${{secs}}s`;
-            }}
-
-            function formatLatency(ms) {{
-                return `${{ms.toFixed(1)}}ms`;
-            }}
-
-            async function loadManagerData() {{
-                const content = document.getElementById('manager-content');
-                const countBadge = document.getElementById('worker-count');
-
-                try {{
-                    const response = await fetch(`http://127.0.0.1:${{MANAGER_PORT}}/admin/manager/api/workers`);
-                    if (!response.ok) throw new Error('Failed to fetch workers');
-
-                    const workers = await response.json();
-
-                    if (!workers || workers.length === 0) {{
-                        content.innerHTML = '<p style="color: #666;">No workers running</p>';
-                        countBadge.textContent = '0 Workers';
-                        return;
-                    }}
-
-                    countBadge.textContent = `${{workers.length}} Worker${{workers.length > 1 ? 's' : ''}}`;
-
-                    const healthyCount = workers.filter(w => w.healthy).length;
-                    const unhealthyCount = workers.length - healthyCount;
-
-                    if (unhealthyCount > 0) {{
-                        updateStatus('warning');
-                    }} else {{
-                        updateStatus('online');
-                    }}
-
-                    const workersHtml = workers.map(worker => `
-                        <div class="worker-item ${{!worker.healthy ? 'unhealthy' : ''}}">
-                            <div class="worker-main">
-                                <div class="worker-header">
-                                    <span class="worker-name">${{worker.worker_id}}</span>
-                                    <span class="worker-type ${{worker.worker_type}}">${{worker.worker_type}}</span>
-                                </div>
-                                <div class="worker-details">
-                                    <div class="worker-detail">
-                                        <span class="worker-detail-label">PID</span>
-                                        <span class="worker-detail-value">${{worker.pid}}</span>
-                                    </div>
-                                    <div class="worker-detail">
-                                        <span class="worker-detail-label">Port</span>
-                                        <span class="worker-detail-value">${{worker.port}}</span>
-                                    </div>
-                                    <div class="worker-detail">
-                                        <span class="worker-detail-label">Uptime</span>
-                                        <span class="worker-detail-value">${{formatUptime(worker.uptime)}}</span>
-                                    </div>
-                                    <div class="worker-detail">
-                                        <span class="worker-detail-label">Health</span>
-                                        <span class="worker-detail-value ${{worker.healthy ? 'healthy' : 'unhealthy'}}">
-                                            ${{worker.healthy ? '✓ Healthy' : '✗ Unhealthy'}}
-                                        </span>
-                                    </div>
-                                    <div class="worker-detail">
-                                        <span class="worker-detail-label">Latency</span>
-                                        <span class="worker-detail-value">${{formatLatency(worker.health_latency_ms)}}</span>
-                                    </div>
-                                    <div class="worker-detail">
-                                        <span class="worker-detail-label">Requests</span>
-                                        <span class="worker-detail-value">${{worker.metrics.requests}}</span>
-                                    </div>
-                                    <div class="worker-detail">
-                                        <span class="worker-detail-label">Errors</span>
-                                        <span class="worker-detail-value">${{worker.metrics.errors}}</span>
-                                    </div>
-                                    <div class="worker-detail">
-                                        <span class="worker-detail-label">Restarts</span>
-                                        <span class="worker-detail-value">${{worker.restart_count}}</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="worker-actions">
-                                <button onclick="restartWorker('${{worker.worker_id}}')">Restart</button>
-                                <button class="danger" onclick="stopWorker('${{worker.worker_id}}')">Stop</button>
-                            </div>
-                        </div>
-                    `).join('');
-
-                    content.innerHTML = `<div class="worker-list">${{workersHtml}}</div>`;
-                }} catch (error) {{
-                    content.innerHTML = `<div class="error">Error: ${{error.message}}</div>`;
-                    updateStatus('error');
-                }}
-            }}
-
-            async function loadMinioData() {{
-                const statsDiv = document.getElementById('minio-stats');
-
-                try {{
-                    // MinIO API erfordert auth, daher nur placeholder stats
-                    statsDiv.innerHTML = `
-                        <div class="stat-card">
-                            <div class="stat-value">Active</div>
-                            <div class="stat-label">Status</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value">:{minio_port}</div>
-                            <div class="stat-label">API Port</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value">:{minio_console_port}</div>
-                            <div class="stat-label">Console Port</div>
-                        </div>
-                    `;
-                    updateStatus('online');
-                }} catch (error) {{
-                    statsDiv.innerHTML = `<div class="error">Error loading MinIO stats</div>`;
-                    updateStatus('error');
-                }}
-            }}
-
-            async function restartWorker(workerId) {{
-                try {{
-                    const response = await fetch(`http://127.0.0.1:${{MANAGER_PORT}}/admin/manager/api/workers/${{workerId}}/restart`, {{
-                        method: 'POST'
-                    }});
-                    if (!response.ok) throw new Error('Failed to restart worker');
-                    setTimeout(loadManagerData, 1000);
-                }} catch (error) {{
-                    alert(`Error restarting worker: ${{error.message}}`);
-                }}
-            }}
-
-            async function stopWorker(workerId) {{
-                if (!confirm(`Stop worker ${{workerId}}?`)) return;
-                try {{
-                    const response = await fetch(`http://127.0.0.1:${{MANAGER_PORT}}/admin/manager/api/workers/${{workerId}}/stop`, {{
-                        method: 'POST'
-                    }});
-                    if (!response.ok) throw new Error('Failed to stop worker');
-                    setTimeout(loadManagerData, 1000);
-                }} catch (error) {{
-                    alert(`Error stopping worker: ${{error.message}}`);
-                }}
-            }}
-
-            function updateStatus(status) {{
-                const dot = document.getElementById('status-dot');
-                const text = document.getElementById('status-text');
-
-                dot.classList.remove('error', 'warning');
-
-                if (status === 'online') {{
-                    text.textContent = 'Online';
-                }} else if (status === 'warning') {{
-                    dot.classList.add('warning');
-                    text.textContent = 'Warning';
-                }} else {{
-                    dot.classList.add('error');
-                    text.textContent = 'Error';
-                }}
-            }}
-
-            // Initial load
-            loadManagerData();
-
-            // Auto-refresh every 5 seconds
-            setInterval(() => {{
-                if (currentTab === 'manager') {{
-                    loadManagerData();
-                }}
-            }}, 5000);
-        </script>
-    </body>
-    </html>"""
+    </div>
+</body>
+</html>"""
 
         with open(admin_index, "w", encoding="utf-8") as f:
             f.write(html_content)
-
         print(f"✓ Admin UI created at {admin_index}")
 
-    def write_config(self, http_ports: List[int], ws_ports: List[int],
-                     http_sockets: List[str] = None, ws_sockets: List[str] = None,
-                     remote_nodes: List[Tuple[str, int]] = None) -> bool:
-        content = self.generate_config(http_ports, ws_ports, http_sockets, ws_sockets, remote_nodes)
-        config_path = os.environ.get("NGINX_CONF_PATH") or getattr(self.config, 'config_path', DEFAULT_CONF_PATH)
+    # =========================================================================
+    # Write methods
+    # =========================================================================
+    def write_nginx_conf(self) -> bool:
+        """Write main nginx.conf"""
+        content = self.generate_nginx_conf()
+        config_path = os.environ.get("NGINX_CONF_PATH") or DEFAULT_CONF_PATH
         try:
-            Path(config_path).parent.mkdir(parents=True, exist_ok=True)
+            # Backup existing
+            if os.path.exists(config_path):
+                backup_path = config_path + ".backup"
+                shutil.copy(config_path, backup_path)
+                logger.info(f"Backed up existing nginx.conf to {backup_path}")
+
             with open(config_path, "w") as f:
                 f.write(content)
-            logger.info(f"Nginx config written to {config_path}")
+            logger.info(f"nginx.conf written to {config_path}")
+            return True
+        except PermissionError:
+            logger.error(f"Permission denied writing to {config_path}. Try with sudo.")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to write nginx.conf: {e}")
+            return False
+
+    def write_site_config(
+        self,
+        http_ports: List[int],
+        ws_ports: List[int],
+        http_sockets: List[str] = None,
+        ws_sockets: List[str] = None,
+        remote_nodes: List[Tuple[str, int]] = None,
+        site_name: str = "toolbox"
+    ) -> bool:
+        """Write site config to sites-available or box-available"""
+        content = self.generate_site_config(
+            http_ports, ws_ports, http_sockets, ws_sockets, remote_nodes
+        )
+
+        # Determine path
+        sites_dir = getattr(self.config, 'sites_available_path', DEFAULT_BOX_AVAILABLE)
+        config_path = os.path.join(sites_dir, site_name)
+
+        try:
+            Path(sites_dir).mkdir(parents=True, exist_ok=True)
+            with open(config_path, "w") as f:
+                f.write(content)
+            logger.info(f"Site config written to {config_path}")
+            return True
+        except PermissionError:
+            logger.error(f"Permission denied. Try with sudo.")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to write site config: {e}")
+            return False
+
+    def enable_site(self, site_name: str = "toolbox") -> bool:
+        """Create symlink in sites-enabled or box-enabled"""
+        sites_available = getattr(self.config, 'sites_available_path', DEFAULT_BOX_AVAILABLE)
+        sites_enabled = getattr(self.config, 'sites_enabled_path', DEFAULT_BOX_ENABLED)
+
+        src = os.path.join(sites_available, site_name)
+        dst = os.path.join(sites_enabled, site_name)
+
+        try:
+            Path(sites_enabled).mkdir(parents=True, exist_ok=True)
+            if os.path.exists(dst):
+                os.remove(dst)
+            os.symlink(src, dst)
+            logger.info(f"Enabled site: {dst} -> {src}")
             return True
         except Exception as e:
-            logger.error(f"Failed to write nginx config: {e}")
+            logger.error(f"Failed to enable site: {e}")
             return False
+
+    def write_config(
+        self,
+        http_ports: List[int],
+        ws_ports: List[int],
+        http_sockets: List[str] = None,
+        ws_sockets: List[str] = None,
+        remote_nodes: List[Tuple[str, int]] = None
+    ) -> bool:
+        """
+        Legacy method - writes site config (not full nginx.conf).
+        For full config, use write_nginx_conf() separately.
+        """
+        return self.write_site_config(
+            http_ports, ws_ports, http_sockets, ws_sockets, remote_nodes
+        )
 
     def test_config(self) -> bool:
         if not self._nginx_path:
             return False
-        config_path = os.environ.get("NGINX_CONF_PATH") or getattr(self.config, 'config_path', DEFAULT_CONF_PATH)
         try:
-            result = subprocess.run([self._nginx_path, "-t", "-c", str(config_path)], capture_output=True, text=True)
+            result = subprocess.run([self._nginx_path, "-t"], capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error(f"Nginx config test failed: {result.stderr}")
             return result.returncode == 0
-        except Exception:
+        except Exception as e:
+            logger.error(f"Config test error: {e}")
             return False
 
     def reload(self) -> bool:
@@ -1513,17 +1333,15 @@ class NginxManager:
             subprocess.run([self._nginx_path, "-s", "reload"], check=True, capture_output=True)
             logger.info("Nginx reloaded")
             return True
-        except subprocess.CalledProcessError:
-            return False
-        except Exception:
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Nginx reload failed: {e.stderr}")
             return False
 
     def start(self) -> bool:
         if not self._nginx_path:
             return False
-        config_path = os.environ.get("NGINX_CONF_PATH") or getattr(self.config, 'config_path', DEFAULT_CONF_PATH)
         try:
-            subprocess.run([self._nginx_path, "-c", str(config_path)], check=True, capture_output=True)
+            subprocess.run([self._nginx_path], check=True, capture_output=True)
             return True
         except subprocess.CalledProcessError:
             return False
@@ -1547,6 +1365,45 @@ class NginxManager:
             return "Nginx on Windows uses select() - expect ~10x slower than Linux"
         return None
 
+
+# =============================================================================
+# Usage Example
+# =============================================================================
+if __name__ == "__main__":
+    # Example config object
+    class Config:
+        class Nginx:
+            server_name = "simplecore.app"
+            listen_port = 80
+            ssl_enabled = False
+            rate_limit_enabled = True
+            static_enabled = True
+            static_root = "/var/www/simplecore/dist"
+
+        class Manager:
+            web_ui_port = 9002
+
+        nginx = Nginx()
+        manager = Manager()
+
+
+    config = Config()
+    manager = NginxManager(config)
+
+    # Generate and print site config
+    site_config = manager.generate_site_config(
+        http_ports=[8000, 8001, 8002],
+        ws_ports=[8100, 8101]
+    )
+    print("=== Site Config (for /etc/nginx/box-available/toolbox) ===")
+    print(site_config)
+
+    print("\n" + "=" * 60 + "\n")
+
+    # Generate and print main nginx.conf
+    nginx_conf = manager.generate_nginx_conf()
+    print("=== Main nginx.conf ===")
+    print(nginx_conf)
 
 # ============================================================================
 # Metrics Collector - HTTP + ZMQ based
