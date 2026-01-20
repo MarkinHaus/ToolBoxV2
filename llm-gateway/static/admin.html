@@ -755,7 +755,8 @@
                 'omni': '🌐',
                 'embedding': '📊',
                 'vision-embedding': '👁️📊',
-                'audio': '🎵'
+                'audio': '🎵',
+                'mmproj': '🔗'
             };
 
             document.getElementById('slotsContainer').innerHTML = slots.map(s => {
@@ -797,15 +798,6 @@
             const local = await localResp.json();
 
             // Type icons mapping
-            const typeIcons = {
-                'text': '💬',
-                'vision': '👁️',
-                'omni': '🌐',
-                'embedding': '📊',
-                'vision-embedding': '👁️📊',
-                'audio': '🎵',
-                'mmproj': '🔗'
-            };
 
             document.getElementById('localModels').innerHTML = local.length ? `
                 <table>
