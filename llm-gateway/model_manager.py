@@ -352,6 +352,14 @@ class ModelManager:
 
         return {"status": "unloaded", "slot": slot}
 
+    async def shutdown_all(self):
+        """Shutdown all running model processes"""
+        for slot in list(self.processes.keys()):
+            try:
+                await self.unload_model(slot)
+            except Exception as e:
+                print(f"Error shutting down slot {slot}: {e}")
+
     def _save_slot_config(self):
         """Persist slot configuration"""
         slots = {}
