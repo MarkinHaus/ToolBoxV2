@@ -797,7 +797,6 @@
             const localResp = await api('/admin/api/models/local');
             const local = await localResp.json();
 
-            // Type icons mapping
 
             document.getElementById('localModels').innerHTML = local.length ? `
                 <table>
@@ -893,11 +892,11 @@
             loadBtn.disabled = true;
             loadBtn.textContent = 'Loading...';
 
-            toast(`Loading ${path} to slot ${slot}... This may take a minute.`);
+            toast(`Loading ${path} to slot ${slot}... Large models (especially embeddings) can take 5-10 minutes on CPU.`);
 
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 360000); // 6 min timeout for large models
+                const timeoutId = setTimeout(() => controller.abort(), 720000); // 12 min timeout for large embedding models
 
                 const resp = await fetch('/admin/api/slots/load', {
                     method: 'POST',

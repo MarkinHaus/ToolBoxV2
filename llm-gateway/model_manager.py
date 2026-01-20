@@ -112,7 +112,17 @@ class ModelManager:
 
         # Wait for server to be ready
         # Omni, vision, and vision-embedding models need more time to load
-        timeout = 300 if model_type in ("omni", "vision", "vision-embedding") else 180
+        # Wait for server to be ready
+        # Large models on CPU need more time to load:
+        # - text: 180s (3 min)
+        # - embedding: 600s (10 min) - 8B embedding models are slow on CPU
+        # - vision/omni/vision-embedding: 300s (5 min)
+        if model_type in ("embedding",):
+            timeout = 600  # 10 minutes for large embedding models
+        elif model_type in ("omni", "vision", "vision-embedding"):
+            timeout = 300  # 5 minutes
+        else:
+            timeout = 180  # 3 minutes
         ready = await self._wait_for_ready(slot, timeout=timeout, model_type=model_type)
 
         if not ready:
