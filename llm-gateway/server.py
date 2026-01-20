@@ -137,6 +137,7 @@ class ModelLoadRequest(BaseModel):
     model_type: str = "text"  # text, vision, omni, embedding, vision-embedding, audio
     ctx_size: Optional[int] = None
     threads: Optional[int] = None
+    mmproj_path: Optional[str] = None  # Manual mmproj path (auto-detect if None)
 
 class SignupRequest(BaseModel):
     email: str
@@ -905,7 +906,8 @@ async def admin_load_model(request: ModelLoadRequest, auth: Dict = Depends(verif
         model_path=request.model_path,
         model_type=request.model_type,
         ctx_size=request.ctx_size,
-        threads=request.threads
+        threads=request.threads,
+        mmproj_path=request.mmproj_path
     )
     return result
 
@@ -1278,3 +1280,4 @@ async def admin_reject_signup(request_id: int, auth: Dict = Depends(verify_admin
 # === Static Files ===
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+

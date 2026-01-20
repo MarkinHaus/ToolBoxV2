@@ -68,7 +68,8 @@ class ModelManager:
         model_path: str,
         model_type: str = "text",
         ctx_size: Optional[int] = None,
-        threads: Optional[int] = None
+        threads: Optional[int] = None,
+        mmproj_path: Optional[str] = None
     ) -> Dict:
         """Load a model into a slot"""
 
@@ -99,7 +100,7 @@ class ModelManager:
         if model_type == "audio":
             cmd = self._build_whisper_command(full_path, slot, thr)
         else:
-            cmd = self._build_llama_command(full_path, slot, ctx, thr, model_type)
+            cmd = self._build_llama_command(full_path, slot, ctx, thr, model_type, mmproj_path)
 
         # Start process
         print(f"Starting model: {' '.join(cmd)}")
@@ -110,8 +111,6 @@ class ModelManager:
             preexec_fn=os.setsid
         )
 
-        # Wait for server to be ready
-        # Omni, vision, and vision-embedding models need more time to load
         # Wait for server to be ready
         # Large models on CPU need more time to load:
         # - text: 180s (3 min)
@@ -165,20 +164,42 @@ class ModelManager:
         slot: int,
         ctx: int,
         threads: int,
-        model_type: str
+        model_type: str,
+        mmproj_path: Optional[str] = None
     ) -> List[str]:
         """Build llama-server command for text/vision/omni/embedding models"""
 
         if not self.llama_server.exists():
             raise FileNotFoundError("llama-server not found. Run setup.sh")
 
+        # Get optimization settings from config
+        perf_config = self.config.get("performance", {})
+        use_flash_attn = perf_config.get("flash_attention", True)
+        use_mlock = perf_config.get("mlock", True)
+        kv_cache_quant = perf_config.get("kv_cache_quantization", "q8_0")  # q8_0, q4_0, f16
+        batch_size = perf_config.get("batch_size", 512)
+
         cmd = [
             str(self.llama_server),
             "--model", str(model_path),
             "--port", str(slot),
             "--threads", str(threads),
+            "--threads-batch", str(threads * 2),  # More threads for prompt eval
             "--host", "127.0.0.1",
         ]
+
+        # ⚡ Flash Attention - significant speedup (20-30%)
+        if use_flash_attn:
+            cmd.append("--flash-attn")
+
+        # 🔒 mlock - prevents swapping, keeps model in RAM
+        if use_mlock:
+            cmd.append("--mlock")
+
+        # 💾 KV-Cache quantization - saves memory, allows larger context
+        if kv_cache_quant and kv_cache_quant != "f16":
+            cmd.extend(["--cache-type-k", kv_cache_quant])
+            cmd.extend(["--cache-type-v", kv_cache_quant])
 
         # Embedding models (including vision-embedding)
         if model_type in ("embedding", "vision-embedding"):
@@ -186,18 +207,20 @@ class ModelManager:
             # - ubatch-size must be >= batch-size (non-causal attention requirement)
             # - Use smaller ctx for embeddings (saves memory)
             # - Use "last" pooling for Qwen embedding models
-            batch_size = min(ctx, 2048)  # Reasonable default
+            embed_batch = min(ctx, 2048)  # Reasonable default
             cmd.extend([
-                "--ctx-size", str(batch_size),
-                "--batch-size", str(batch_size),
-                "--ubatch-size", str(batch_size),  # Must be >= batch-size for embeddings
+                "--ctx-size", str(embed_batch),
+                "--batch-size", str(embed_batch),
+                "--ubatch-size", str(embed_batch),  # Must be >= batch-size for embeddings
                 "--embedding",
                 "--pooling", "last",  # "last" works best for Qwen embeddings
             ])
         else:
-            # Chat models get parallel processing and jinja
+            # Chat models get parallel processing, batching, and jinja
             cmd.extend([
                 "--ctx-size", str(ctx),
+                "--batch-size", str(batch_size),
+                "--ubatch-size", str(batch_size),
                 "--parallel", "2",
                 "--cont-batching",
                 "--jinja",
@@ -205,7 +228,14 @@ class ModelManager:
 
         # Vision, Omni, and Vision-Embedding models need mmproj
         if model_type in ("vision", "omni", "vision-embedding"):
-            mmproj = self._find_mmproj(model_path)
+            # Use manually specified mmproj if provided, otherwise auto-detect
+            if mmproj_path:
+                mmproj = Path(mmproj_path)
+                if not mmproj.exists():
+                    raise FileNotFoundError(f"Specified mmproj file not found: {mmproj_path}")
+            else:
+                mmproj = self._find_mmproj(model_path)
+
             if mmproj:
                 cmd.extend(["--mmproj", str(mmproj)])
             else:
