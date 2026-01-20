@@ -508,6 +508,7 @@
                     <option value="vision">👁️ Vision (requires mmproj)</option>
                     <option value="omni">🌐 Omni (Audio+Vision+Text, requires mmproj)</option>
                     <option value="embedding">📊 Embedding</option>
+                    <option value="vision-embedding">👁️📊 Vision-Embedding (requires mmproj)</option>
                     <option value="audio">🎵 Audio (legacy Whisper)</option>
                 </select>
             </div>
@@ -748,14 +749,13 @@
             const slots = await resp.json();
 
             // Type icons mapping
-
             const typeIcons = {
                 'text': '💬',
                 'vision': '👁️',
                 'omni': '🌐',
                 'embedding': '📊',
-                'audio': '🎵',
-                'mmproj': '🔗'
+                'vision-embedding': '👁️📊',
+                'audio': '🎵'
             };
 
             document.getElementById('slotsContainer').innerHTML = slots.map(s => {
@@ -795,6 +795,17 @@
             // Local models
             const localResp = await api('/admin/api/models/local');
             const local = await localResp.json();
+
+            // Type icons mapping
+            const typeIcons = {
+                'text': '💬',
+                'vision': '👁️',
+                'omni': '🌐',
+                'embedding': '📊',
+                'vision-embedding': '👁️📊',
+                'audio': '🎵',
+                'mmproj': '🔗'
+            };
 
             document.getElementById('localModels').innerHTML = local.length ? `
                 <table>
@@ -848,17 +859,20 @@
             else if (path.includes('whisper') || (path.includes('ggml-') && (path.includes('.bin') || path.includes('large') || path.includes('medium') || path.includes('small') || path.includes('base') || path.includes('tiny')))) {
                 detected = 'audio';
             }
-            // Embedding models
-            else if (path.includes('embed')) {
-                detected = 'embedding';
-            }
-            // Vision models: VL = Vision-Language
-            else if (path.includes('-vl') || path.includes('_vl') || path.includes('vision') || path.includes('minicpm-v') || path.includes('minicpm_v')) {
-                detected = 'vision';
-            }
-            // Default to text
-            else if (path.length > 0) {
-                detected = 'text';
+            // Check for VL (vision) + embed combination
+            else {
+                const isVision = path.includes('-vl') || path.includes('_vl') || path.includes('vision') || path.includes('minicpm-v') || path.includes('minicpm_v');
+                const isEmbedding = path.includes('embed');
+
+                if (isVision && isEmbedding) {
+                    detected = 'vision-embedding';
+                } else if (isEmbedding) {
+                    detected = 'embedding';
+                } else if (isVision) {
+                    detected = 'vision';
+                } else if (path.length > 0) {
+                    detected = 'text';
+                }
             }
 
             if (detected) {

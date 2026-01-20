@@ -29,6 +29,7 @@ class ModelManager:
         "vision": {"text": True, "vision": True, "audio": False, "embedding": False},
         "omni": {"text": True, "vision": True, "audio": True, "embedding": False},
         "embedding": {"text": True, "vision": False, "audio": False, "embedding": True},
+        "vision-embedding": {"text": True, "vision": True, "audio": False, "embedding": True},
         "audio": {"text": False, "vision": False, "audio": True, "embedding": False},  # Legacy whisper
     }
 
@@ -110,8 +111,8 @@ class ModelManager:
         )
 
         # Wait for server to be ready
-        # Omni and large vision models need more time to load
-        timeout = 300 if model_type in ("omni", "vision") else 180
+        # Omni, vision, and vision-embedding models need more time to load
+        timeout = 300 if model_type in ("omni", "vision", "vision-embedding") else 180
         ready = await self._wait_for_ready(slot, timeout=timeout, model_type=model_type)
 
         if not ready:
@@ -170,8 +171,8 @@ class ModelManager:
             "--host", "127.0.0.1",
         ]
 
-        # Embedding-only model
-        if model_type == "embedding":
+        # Embedding models (including vision-embedding)
+        if model_type in ("embedding", "vision-embedding"):
             cmd.extend([
                 "--embedding",
                 "--pooling", "mean",  # mean pooling for embeddings
@@ -184,8 +185,8 @@ class ModelManager:
                 "--jinja",
             ])
 
-        # Vision and Omni models need mmproj
-        if model_type in ("vision", "omni"):
+        # Vision, Omni, and Vision-Embedding models need mmproj
+        if model_type in ("vision", "omni", "vision-embedding"):
             mmproj = self._find_mmproj(model_path)
             if mmproj:
                 cmd.extend(["--mmproj", str(mmproj)])
@@ -429,11 +430,27 @@ class ModelManager:
                 return info
         return None
 
-    def find_embedding_slot(self) -> Optional[Dict]:
-        """Find slot for embeddings"""
+    def find_embedding_slot(self, needs_vision: bool = False) -> Optional[Dict]:
+        """Find slot for embeddings, optionally with vision capability"""
+        # If vision is needed, try to find vision-embedding first
+        if needs_vision:
+            for info in self.slot_info.values():
+                caps = info.get("capabilities", {})
+                if caps.get("embedding") and caps.get("vision"):
+                    return info
+
+        # Fallback to any embedding slot
         for info in self.slot_info.values():
             caps = info.get("capabilities", {})
             if caps.get("embedding"):
+                return info
+        return None
+
+    def find_vision_embedding_slot(self) -> Optional[Dict]:
+        """Find slot for vision embeddings (vision-embedding type)"""
+        for info in self.slot_info.values():
+            caps = info.get("capabilities", {})
+            if caps.get("embedding") and caps.get("vision"):
                 return info
         return None
 
@@ -574,12 +591,19 @@ class ModelManager:
         )):
             return "audio"
 
-        # Embedding models
-        if "embed" in name:
+        # Vision-Embedding models (VL + Embedding)
+        is_vision = "-vl" in name or "_vl" in name or "vision" in name or "minicpm-v" in name
+        is_embedding = "embed" in name
+
+        if is_vision and is_embedding:
+            return "vision-embedding"
+
+        # Pure embedding models
+        if is_embedding:
             return "embedding"
 
         # Vision models (VL = Vision-Language)
-        if "-vl" in name or "_vl" in name or "vision" in name or "minicpm-v" in name:
+        if is_vision:
             return "vision"
 
         # Default to text
