@@ -231,6 +231,10 @@ class ModelManager:
             # Use manually specified mmproj if provided, otherwise auto-detect
             if mmproj_path:
                 mmproj = Path(mmproj_path)
+                # Try as absolute path first
+                if not mmproj.exists():
+                    # Try relative to models_dir
+                    mmproj = self.models_dir / mmproj_path
                 if not mmproj.exists():
                     raise FileNotFoundError(f"Specified mmproj file not found: {mmproj_path}")
             else:
@@ -264,51 +268,111 @@ class ModelManager:
         ]
 
     def _find_mmproj(self, model_path: Path) -> Optional[Path]:
-        """Find mmproj file for vision/omni model"""
+        """Find mmproj file for vision/omni model with fuzzy name matching"""
         model_dir = model_path.parent
-        model_name = model_path.stem
+        model_name = model_path.stem.lower()
 
-        # Extract base model name (remove quantization suffix)
-        # e.g., "Qwen2.5-Omni-7B-Q4_K_M" -> "Qwen2.5-Omni-7B"
-        base_parts = []
-        for part in model_name.split("-"):
-            if part.startswith("Q") and "_" in part:  # Q4_K_M, Q8_0, etc.
-                break
-            base_parts.append(part)
-        base_name = "-".join(base_parts) if base_parts else model_name
+        # Normalize function for fuzzy matching
+        def normalize(name: str) -> str:
+            """Normalize name for comparison: lowercase, remove separators"""
+            return name.lower().replace("-", "").replace("_", "").replace(".", "")
 
-        # Search patterns (ordered by specificity)
-        patterns = [
-            f"mmproj-{base_name}*.gguf",
-            f"mmproj-{model_name}*.gguf",
-            f"mmproj*.gguf",
-            f"{model_name}.mmproj.gguf",
-            f"{base_name}*.mmproj*.gguf",
-            "*mmproj*.gguf",
-        ]
+        # Extract key identifiers from model name
+        def extract_identifiers(name: str) -> set:
+            """Extract key parts like model family, size, etc."""
+            normalized = name.lower()
+            identifiers = set()
 
-        # Search in model directory first
-        for pattern in patterns:
-            matches = list(model_dir.glob(pattern))
-            if matches:
-                # Prefer F16 or Q8 quality
-                for quality in ["F16", "Q8", "F32"]:
-                    for m in matches:
-                        if quality in m.name:
-                            return m
-                return matches[0]
+            # Common model families
+            families = ["qwen", "llama", "mistral", "phi", "gemma", "deepseek", "glm", "minicpm"]
+            for family in families:
+                if family in normalized:
+                    identifiers.add(family)
 
-        # Also check in models_dir root
-        for pattern in patterns:
-            matches = list(self.models_dir.glob(pattern))
-            if matches:
-                for quality in ["F16", "Q8", "F32"]:
-                    for m in matches:
-                        if quality in m.name:
-                            return m
-                return matches[0]
+            # Vision indicators
+            if "vl" in normalized or "vision" in normalized:
+                identifiers.add("vision")
+            if "omni" in normalized:
+                identifiers.add("omni")
+            if "embed" in normalized:
+                identifiers.add("embed")
 
-        return None
+            # Size indicators (1b, 3b, 7b, 8b, 14b, etc.)
+            import re
+            sizes = re.findall(r'(\d+\.?\d*b)', normalized)
+            identifiers.update(sizes)
+
+            # Version indicators (v2, v3, 2.5, 3.0, etc.)
+            versions = re.findall(r'(v?\d+\.?\d*)', normalized)
+            for v in versions:
+                if v not in sizes:  # Don't double-count sizes
+                    identifiers.add(v)
+
+            return identifiers
+
+        def score_match(mmproj_name: str, model_identifiers: set) -> int:
+            """Score how well an mmproj matches the model"""
+            mmproj_normalized = normalize(mmproj_name)
+            model_normalized = normalize(model_path.stem)
+
+            score = 0
+
+            # Exact normalized match (best)
+            if model_normalized in mmproj_normalized:
+                score += 100
+
+            # Check identifier overlap
+            mmproj_identifiers = extract_identifiers(mmproj_name)
+            common = model_identifiers & mmproj_identifiers
+            score += len(common) * 20
+
+            # Prefer higher quality quantizations
+            if "f16" in mmproj_name.lower():
+                score += 5
+            elif "q8" in mmproj_name.lower():
+                score += 4
+            elif "f32" in mmproj_name.lower():
+                score += 3
+
+            return score
+
+        model_identifiers = extract_identifiers(model_path.stem)
+
+        # Collect all mmproj files
+        all_mmproj = []
+
+        # Search in model directory
+        all_mmproj.extend(model_dir.glob("*mmproj*.gguf"))
+        all_mmproj.extend(model_dir.glob("*mmproj*.bin"))
+
+        # Search in models_dir root
+        all_mmproj.extend(self.models_dir.glob("*mmproj*.gguf"))
+        all_mmproj.extend(self.models_dir.glob("*mmproj*.bin"))
+
+        # Remove duplicates
+        all_mmproj = list(set(all_mmproj))
+
+        if not all_mmproj:
+            return None
+
+        # Score all candidates
+        scored = [(score_match(m.name, model_identifiers), m) for m in all_mmproj]
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        # Debug logging
+        print(f"mmproj matching for {model_path.name}:")
+        for score, m in scored[:5]:
+            print(f"  {score}: {m.name}")
+
+        # Return best match if score is reasonable
+        best_score, best_match = scored[0]
+        if best_score >= 20:  # At least one identifier matched
+            print(f"  → Selected: {best_match.name} (score: {best_score})")
+            return best_match
+
+        # Fallback: return first if no good match
+        print(f"  → Fallback: {all_mmproj[0].name}")
+        return all_mmproj[0]
 
     async def _wait_for_ready(self, port: int, timeout: int = 180, model_type: str = "text") -> bool:
         """Wait for server to respond to health check"""
