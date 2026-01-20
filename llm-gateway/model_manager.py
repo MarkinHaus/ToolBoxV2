@@ -166,20 +166,28 @@ class ModelManager:
             str(self.llama_server),
             "--model", str(model_path),
             "--port", str(slot),
-            "--ctx-size", str(ctx),
             "--threads", str(threads),
             "--host", "127.0.0.1",
         ]
 
         # Embedding models (including vision-embedding)
         if model_type in ("embedding", "vision-embedding"):
+            # For embedding models:
+            # - ubatch-size must be >= batch-size (non-causal attention requirement)
+            # - Use smaller ctx for embeddings (saves memory)
+            # - Use "last" pooling for Qwen embedding models
+            batch_size = min(ctx, 2048)  # Reasonable default
             cmd.extend([
+                "--ctx-size", str(batch_size),
+                "--batch-size", str(batch_size),
+                "--ubatch-size", str(batch_size),  # Must be >= batch-size for embeddings
                 "--embedding",
-                "--pooling", "mean",  # mean pooling for embeddings
+                "--pooling", "last",  # "last" works best for Qwen embeddings
             ])
         else:
             # Chat models get parallel processing and jinja
             cmd.extend([
+                "--ctx-size", str(ctx),
                 "--parallel", "2",
                 "--cont-batching",
                 "--jinja",
