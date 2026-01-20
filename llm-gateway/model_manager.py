@@ -190,7 +190,7 @@ class ModelManager:
 
         # ⚡ Flash Attention - significant speedup (20-30%)
         if use_flash_attn:
-            cmd.append("--flash-attn")
+            cmd.extend(["--flash-attn", "on"])
 
         # 🔒 mlock - prevents swapping, keeps model in RAM
         if use_mlock:
