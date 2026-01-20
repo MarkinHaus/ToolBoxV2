@@ -134,7 +134,7 @@ class ApiKeyCreate(BaseModel):
 class ModelLoadRequest(BaseModel):
     slot: int  # 4801-4807
     model_path: str  # local path or HF repo
-    model_type: str = "text"  # text, vision, omni, embedding, audio
+    model_type: str = "text"  # text, vision, omni, embedding, vision-embedding, audio
     ctx_size: Optional[int] = None
     threads: Optional[int] = None
 
@@ -372,7 +372,17 @@ async def lifespan(app: FastAPI):
         models_dir=DATA_DIR / "models",
         config=config
     )
-    await model_manager.restore_slots()
+
+    # Restore slots in background (don't block startup)
+    async def restore_in_background():
+        try:
+            print("Restoring model slots from config...")
+            await model_manager.restore_slots()
+            print("Model slots restored successfully")
+        except Exception as e:
+            print(f"Warning: Failed to restore some slots: {e}")
+
+    asyncio.create_task(restore_in_background())
 
     # Start uptime checker
     uptime_task = asyncio.create_task(uptime_checker())
@@ -386,6 +396,7 @@ async def lifespan(app: FastAPI):
         )
         await db.commit()
 
+    print("LLM Gateway started successfully!")
     yield
 
     # Cancel uptime checker
