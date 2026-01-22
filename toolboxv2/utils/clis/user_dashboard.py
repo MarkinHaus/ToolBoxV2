@@ -796,28 +796,50 @@ async def interactive_user_dashboard():
             self.go_back()
 
         async def show_services(self):
-            """Show services management"""
-            services = [
-                ("🖥️", "Worker System", "workers"),
-                ("🗄️", "Database", "db"),
-                ("🌐", "P2P Client", "p2p"),
-                ("📦", "Module Manager", "mods"),
-                ("🔙", "Back", "back")
-            ]
+            """Show services management with Service Registry integration"""
+            from toolboxv2.utils.clis.service_manager import ServiceManager, ServiceRegistry
+
+            manager = ServiceManager()
+            registry = ServiceRegistry()
 
             while True:
                 print('\033[2J\033[H')
 
                 print_box_header("Service Management", "🔧")
+
+                # Get all services with status
+                all_status = manager.get_all_status(include_registry=True)
+
+                # Build menu items dynamically from registry
+                services = []
+                cat_icons = {"core": "🔷", "infrastructure": "🔧", "extension": "🔌"}
+
+                for category in ["core", "infrastructure", "extension"]:
+                    cat_services = registry.get_by_category(category)
+                    for svc in cat_services:
+                        status = all_status.get(svc.name, {})
+                        running = status.get("running", False)
+                        status_icon = "🟢" if running else "🔴"
+                        services.append((
+                            cat_icons.get(category, "•"),
+                            f"{svc.name} {status_icon}",
+                            svc.name,
+                            svc.description
+                        ))
+
+                services.append(("🔙", "Back", "back", ""))
+
                 print_box_footer()
 
                 print()
-                for i, (icon, label, _) in enumerate(services):
+                for i, (icon, label, _, desc) in enumerate(services):
                     is_selected = i == self.selected_index
                     arrow = "▶" if is_selected else " "
 
                     if is_selected:
                         print(f"  {arrow} \033[1;96m{icon} {label}\033[0m")
+                        if desc:
+                            print(f"      \033[2m{desc}\033[0m")
                     else:
                         print(f"  {arrow} {icon} {label}")
 
@@ -835,7 +857,7 @@ async def interactive_user_dashboard():
                 elif key == 'down':
                     self.selected_index = min(len(services) - 1, self.selected_index + 1)
                 elif key == 'enter':
-                    _, _, action = services[self.selected_index]
+                    _, _, action, _ = services[self.selected_index]
 
                     if action == "back":
                         self.go_back()
@@ -844,40 +866,37 @@ async def interactive_user_dashboard():
                         await self.manage_service(action)
 
         async def manage_service(self, service_name: str):
-            """Manage a specific service"""
-            print('\033[2J\033[H')
+            """Manage a specific service using ServiceManager"""
+            from toolboxv2.utils.clis.service_manager import ServiceManager, ServiceRegistry
 
-            print_box_header(f"Manage {service_name.upper()}", "🔧")
-            print_box_footer()
+            manager = ServiceManager()
+            registry = ServiceRegistry()
+            svc_def = registry.get(service_name)
 
+            # Base actions for all services
             actions = [
                 ("▶️", "Start", "start"),
                 ("⏹️", "Stop", "stop"),
-                ("📊", "Status", "status"),
+                ("🔄", "Restart", "restart"),
+                ("ℹ️", "Info", "info"),
+                ("⚙️", "Configure Auto-Start", "config"),
             ]
 
+            # Service-specific actions (legacy support)
             if service_name == "workers":
-                # restart, update, nginx-config, nginx-reload
                 actions.extend([
-                    ("🔄", "Restart", "restart"),
                     ("⬆️", "Update", "update"),
                     ("⚙️", "Nginx Config", "nginx-config"),
                     ("🔃", "Nginx Reload", "nginx-reload"),
                 ])
-            if service_name == "db":
-                # health, update , build, clean, discover
+            elif service_name == "db":
                 actions.extend([
                     ("❤️", "Health", "health"),
-                    ("🔄", "Update", "update"),
                     ("🔨", "Build", "build"),
                     ("🧹", "Clean", "clean"),
-                    ("🔍", "Discover", "discover"),
                 ])
-            if service_name == "p2p":
-                # interactive
+            elif service_name == "p2p":
                 actions.append(("🎮", "Interactive", "interactive"))
-                actions.remove(("▶️", "Start", "start"))
-                actions.remove(("⏹️", "Stop", "stop"))
 
             actions.append(("🔙", "Back", "back"))
 
@@ -886,7 +905,14 @@ async def interactive_user_dashboard():
             while True:
                 print('\033[2J\033[H')
 
+                # Get current status
+                running, pid = manager.is_service_running(service_name)
+                status_str = f"🟢 Running (PID {pid})" if running else "🔴 Stopped"
+
                 print_box_header(f"Manage {service_name.upper()}", "🔧")
+                print(f"  Status: {status_str}")
+                if svc_def:
+                    print(f"  {svc_def.description}")
                 print_box_footer()
 
                 print()
@@ -923,22 +949,66 @@ async def interactive_user_dashboard():
                     print_separator("═")
                     print()
 
-                    # Execute action
+                    # Execute action using ServiceManager
                     try:
-                        if service_name == "workers":
-                            sys.argv = ["workers", action]
-                            cli_worker_runner()
-                        elif service_name == "db":
-                            sys.argv = ["db", action]
-                            cli_db_runner()
-                        elif service_name == "p2p":
-                            sys.argv = ["p2p", action]
-                            cli_tcm_runner()
-                        elif service_name == "mods":
-                            await self.app.a_run_any("CloudM", "manager")
+                        if action == "start":
+                            result = manager.start_service(service_name)
+                            if result.success:
+                                print_status(f"Started (PID {result.pid})", "success")
+                            else:
+                                print_status(f"Failed: {result.error}", "error")
 
-                        print()
-                        print_status("Command executed", "success")
+                        elif action == "stop":
+                            success = manager.stop_service(service_name)
+                            if success:
+                                print_status("Stopped", "success")
+                            else:
+                                print_status("Failed to stop", "error")
+
+                        elif action == "restart":
+                            manager.stop_service(service_name)
+                            import time
+                            time.sleep(1)
+                            result = manager.start_service(service_name)
+                            if result.success:
+                                print_status(f"Restarted (PID {result.pid})", "success")
+                            else:
+                                print_status(f"Failed: {result.error}", "error")
+
+                        elif action == "info":
+                            info = manager.get_service_info(service_name)
+                            if info:
+                                print(f"  Category:    {info['category']}")
+                                print(f"  Auto-Start:  {'✓' if info['auto_start'] else '✗'}")
+                                print(f"  Auto-Restart: {'✓' if info['auto_restart'] else '✗'}")
+                                if info.get("module"):
+                                    print(f"  Module:      {info['module']}")
+
+                        elif action == "config":
+                            # Toggle auto-start
+                            info = manager.get_service_info(service_name)
+                            current = info.get("auto_start", False) if info else False
+                            manager.configure_service(service_name, auto_start=not current)
+                            new_state = "enabled" if not current else "disabled"
+                            print_status(f"Auto-start {new_state}", "success")
+
+                        else:
+                            # Legacy: delegate to original CLI
+                            if service_name == "workers":
+                                sys.argv = ["workers", action]
+                                cli_worker_runner()
+                            elif service_name == "db":
+                                sys.argv = ["db", action]
+                                await cli_db_runner()
+                            elif service_name == "p2p":
+                                sys.argv = ["p2p", action]
+                                cli_tcm_runner()
+                            elif service_name == "mods":
+                                await self.app.a_run_any("CloudM", "manager")
+
+                            print()
+                            print_status("Command executed", "success")
+
                     except Exception as e:
                         print()
                         print_status(f"Error: {e}", "error")
@@ -1062,6 +1132,7 @@ async def interactive_user_dashboard():
         async def show_settings(self):
             """Show settings menu"""
             settings = [
+                ("📋", "Config Manager (tb-manifest)", "config_manager"),
                 ("🔧", "Environment Variables", "env"),
                 ("📝", "View Config", "view_config"),
                 ("💾", "Save Config", "save_config"),
@@ -1108,6 +1179,8 @@ async def interactive_user_dashboard():
                     if action == "back":
                         self.go_back()
                         return
+                    elif action == "config_manager":
+                        await self.show_config_manager()
                     elif action == "about":
                         await self.show_about()
                     elif action == "env":
@@ -1119,6 +1192,219 @@ async def interactive_user_dashboard():
                     elif action == "app_footprint":
                         print(get_app().print_footprint())
                         input(Style.GREY("Press Enter to continue..."))
+
+        async def show_config_manager(self):
+            """Show tb-manifest.yaml configuration manager."""
+            from pathlib import Path
+
+            try:
+                from toolboxv2.utils.manifest import ManifestLoader, ConfigConverter
+            except ImportError:
+                print_status("Manifest system not available", "error")
+                print_status("Press any key to continue...", "info")
+                get_key()
+                return
+
+            loader = ManifestLoader()
+
+            actions = [
+                ("📄", "View Manifest", "view"),
+                ("✅", "Validate Manifest", "validate"),
+                ("🔄", "Apply Manifest (generate configs)", "apply"),
+                ("📝", "Create Default Manifest", "create"),
+                ("🔙", "Back", "back"),
+            ]
+
+            selected = 0
+
+            while True:
+                print('\033[2J\033[H')
+
+                print_box_header("Config Manager (tb-manifest.yaml)", "📋")
+
+                # Check if manifest exists
+                if loader.exists():
+                    print_box_content(f"Manifest: {loader.manifest_path}", "success")
+                    try:
+                        manifest = loader.load()
+                        print_box_content(f"Version: {manifest.manifest_version}", "info")
+                        print_box_content(f"Environment: {manifest.app.environment.value}", "info")
+                        print_box_content(f"DB Mode: {manifest.database.mode.value}", "info")
+                    except Exception as e:
+                        print_box_content(f"Error loading: {e}", "error")
+                else:
+                    print_box_content("No tb-manifest.yaml found", "warning")
+                    print_box_content("Create one with 'Create Default Manifest'", "info")
+
+                print_box_footer()
+
+                print()
+                for i, (icon, label, _) in enumerate(actions):
+                    is_selected = i == selected
+                    arrow = "▶" if is_selected else " "
+
+                    if is_selected:
+                        print(f"  {arrow} \033[1;96m{icon} {label}\033[0m")
+                    else:
+                        print(f"  {arrow} {icon} {label}")
+
+                print()
+                print_separator()
+                print_status("↑↓/w/s: Navigate | Enter: Select | b: Back", "info")
+
+                key = get_key()
+
+                if key in ('quit', 'b', 'B'):
+                    return
+                elif key == 'up':
+                    selected = max(0, selected - 1)
+                elif key == 'down':
+                    selected = min(len(actions) - 1, selected + 1)
+                elif key == 'enter':
+                    _, _, action = actions[selected]
+
+                    if action == "back":
+                        return
+                    elif action == "view":
+                        await self._config_manager_view(loader)
+                    elif action == "validate":
+                        await self._config_manager_validate(loader)
+                    elif action == "apply":
+                        await self._config_manager_apply(loader)
+                    elif action == "create":
+                        await self._config_manager_create(loader)
+
+        async def _config_manager_view(self, loader):
+            """View the current manifest."""
+            print('\033[2J\033[H')
+            print_box_header("View tb-manifest.yaml", "📄")
+
+            if not loader.exists():
+                print_status("No manifest file found", "error")
+            else:
+                try:
+                    with open(loader.manifest_path, "r") as f:
+                        content = f.read()
+                    print_code_block(content[:3000], "yaml", show_line_numbers=True)
+                    if len(content) > 3000:
+                        print_status("... (truncated)", "info")
+                except Exception as e:
+                    print_status(f"Error reading: {e}", "error")
+
+            print()
+            print_status("Press any key to continue...", "info")
+            get_key()
+
+        async def _config_manager_validate(self, loader):
+            """Validate the manifest."""
+            print('\033[2J\033[H')
+            print_box_header("Validate Manifest", "✅")
+
+            if not loader.exists():
+                print_status("No manifest file found", "error")
+            else:
+                try:
+                    loader.load()
+                    is_valid, errors = loader.validate()
+
+                    if is_valid:
+                        print_status("Manifest is valid!", "success")
+                    else:
+                        print_status("Validation errors:", "error")
+                        for err in errors:
+                            print(f"  • {err}")
+                except Exception as e:
+                    print_status(f"Validation failed: {e}", "error")
+
+            print()
+            print_status("Press any key to continue...", "info")
+            get_key()
+
+        async def _config_manager_apply(self, loader):
+            """Apply manifest to generate sub-configs."""
+            from toolboxv2.utils.manifest import ConfigConverter
+
+            print('\033[2J\033[H')
+            print_box_header("Apply Manifest", "🔄")
+
+            if not loader.exists():
+                print_status("No manifest file found", "error")
+            else:
+                try:
+                    manifest = loader.load()
+                    converter = ConfigConverter(manifest, loader.base_dir)
+
+                    print_status("Generating configs...", "progress")
+                    generated = converter.apply_all()
+
+                    print()
+                    print_status("Generated files:", "success")
+                    for path in generated:
+                        print(f"  ✓ {path}")
+
+                    # Suggest missing env vars
+                    suggestions = converter._suggest_env_vars()
+                    if suggestions:
+                        print()
+                        print_status("Missing environment variables:", "warning")
+                        for var, default in suggestions.items():
+                            print(f"  • {var}={default or '(needs value)'}")
+
+                        # Restore terminal for input
+                        if system() != "Windows":
+                            import termios
+                            fd = sys.stdin.fileno()
+                            old_settings = termios.tcgetattr(fd)
+                            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+                        add_missing = input("\n  Add missing vars to .env? (y/N): ").strip().lower()
+                        if add_missing == 'y':
+                            added = converter.append_missing_env_vars()
+                            print_status(f"Added {len(added)} variables to .env", "success")
+
+                except Exception as e:
+                    print_status(f"Apply failed: {e}", "error")
+                    import traceback
+                    traceback.print_exc()
+
+            print()
+            print_status("Press any key to continue...", "info")
+            get_key()
+
+        async def _config_manager_create(self, loader):
+            """Create a default manifest."""
+            print('\033[2J\033[H')
+            print_box_header("Create Default Manifest", "📝")
+
+            if loader.exists():
+                # Restore terminal for input
+                if system() != "Windows":
+                    import termios
+                    fd = sys.stdin.fileno()
+                    old_settings = termios.tcgetattr(fd)
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+                overwrite = input("  Manifest already exists. Overwrite? (y/N): ").strip().lower()
+                if overwrite != 'y':
+                    print_status("Cancelled", "info")
+                    print_status("Press any key to continue...", "info")
+                    get_key()
+                    return
+
+            try:
+                manifest = loader.create_default(save=True)
+                print_status(f"Created: {loader.manifest_path}", "success")
+                print()
+                print("  Next steps:")
+                print("  1. Edit tb-manifest.yaml to customize your config")
+                print("  2. Run 'Validate Manifest' to check for errors")
+                print("  3. Run 'Apply Manifest' to generate sub-configs")
+            except Exception as e:
+                print_status(f"Failed to create: {e}", "error")
+
+            print()
+            print_status("Press any key to continue...", "info")
+            get_key()
 
         async def manage_env_vars(self):
             """Manage environment variables"""

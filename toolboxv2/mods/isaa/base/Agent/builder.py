@@ -968,7 +968,7 @@ class FlowAgentBuilder:
                 tools_added = 0
                 for tool_name, (tool_func, tool_desc, categories, flags) in self._custom_tools.items():
                     try:
-                        await agent.add_tool(
+                        agent.add_tool(
                             tool_func,
                             name=tool_name,
                             description=tool_desc,
@@ -1115,7 +1115,7 @@ class FlowAgentBuilder:
                     ]
 
                     # Register in agent's ToolManager
-                    await agent.add_tool(
+                    agent.add_tool(
                         tool_wrapper,
                         name=wrapper_name,
                         description=tool_info.get('description', f"MCP tool: {tool_name}"),

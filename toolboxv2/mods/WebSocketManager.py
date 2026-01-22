@@ -490,8 +490,6 @@ class Tools(MainTool):
         for client in self.clients.values():
             await client.disconnect()
 
-        self.logger.info("✅ WebSocketManager shutdown complete")
-
     def show_version(self):
         """Show current version."""
         return self.version

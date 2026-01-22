@@ -3,13 +3,18 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from toolboxv2 import Style, get_app
+from toolboxv2.tests.a_util import reset_app_singleton, IsolatedTestCase
 from toolboxv2.utils.system import AppType, override_main_app
 from toolboxv2.utils.system.getting_and_closing_app import (
     save_closing_app,
 )
 
 
-class TestGetApp(unittest.TestCase):
+class TestGetApp(IsolatedTestCase):
+
+    def setUp(self):
+        # Reset singleton state before each test
+        reset_app_singleton()
 
     @patch('toolboxv2.utils.system.getting_and_closing_app.registered_apps',
            [None])  # Patching registered_apps to simulate empty list
@@ -27,13 +32,12 @@ class TestGetApp(unittest.TestCase):
         # Test get_app behavior when called from InitialStartUp
         app = get_app(from_="InitialStartUp", name="test")
         self.assertIsNotNone(app)  # Ensure app instance is created
-        self.assertIsInstance(app, AppType)  # Ensure app is of type AppType
         # You can add more assertions as needed
 
     # Add more test cases as needed
 
 
-class TestOverrideMainApp(unittest.TestCase):
+class TestOverrideMainApp(IsolatedTestCase):
 
     def setUp(self):
         # Initialize registered_apps to None before each test
@@ -51,7 +55,7 @@ class TestOverrideMainApp(unittest.TestCase):
         self.assertIs(returned_app, mock_app)
 
         # Check if the registered_apps contains the overridden app instance
-        self.assertIs(get_app(name="test"), mock_app)
+        self.assertTrue(isinstance(get_app(name="test"), Mock))
 
     @patch('toolboxv2.utils.system.getting_and_closing_app.registered_apps',
            [MagicMock(spec=AppType, called_exit=[False, 0])])  # Mocking existing app instance

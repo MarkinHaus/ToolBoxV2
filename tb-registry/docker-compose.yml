@@ -1,0 +1,78 @@
+# TB-Registry Docker Compose Configuration
+# Development and production deployment
+
+services:
+  registry:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tb-registry
+    ports:
+      - "4025:4025"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=4025
+      - DATABASE_URL=sqlite:///./data/registry.db
+      - MINIO_PRIMARY_ENDPOINT=minio:9000
+      - MINIO_PRIMARY_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_PRIMARY_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_PRIMARY_BUCKET=packages
+      - MINIO_PRIMARY_SECURE=false
+      - CLERK_SECRET_KEY=${CLERK_SECRET_KEY:-}
+      - CLERK_PUBLISHABLE_KEY=${CLERK_PUBLISHABLE_KEY:-}
+    volumes:
+      - registry-data:/app/data
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - registry-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: tb-registry-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - registry-network
+
+  # MinIO bucket initialization
+  minio-init:
+    image: minio/mc:latest
+    container_name: tb-registry-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set myminio http://minio:9000 ${MINIO_ACCESS_KEY:-minioadmin} ${MINIO_SECRET_KEY:-minioadmin};
+      mc mb myminio/packages --ignore-existing;
+      mc mb myminio/artifacts --ignore-existing;
+      mc anonymous set download myminio/packages;
+      exit 0;
+      "
+    networks:
+      - registry-network
+
+volumes:
+  registry-data:
+  minio-data:
+
+networks:
+  registry-network:
+    driver: bridge
+

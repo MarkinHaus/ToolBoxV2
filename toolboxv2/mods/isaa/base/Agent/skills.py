@@ -329,7 +329,22 @@ class SkillsManager:
                 tool_groups=[],
                 source="predefined"
             ),
-
+            Skill(
+                id="autonomous_execution",
+                name="Autonomous Task Execution",
+                triggers=["analyze", "create", "check", "files", "project", "fix", "solve"],
+                instruction="""PROTOCOL FOR COMPLEX TASKS:
+        1. ANALYSIS: Use `think()` to map out dependencies. What files/info do I need?
+        2. RECON: Use `vfs_list` or `list_tools` to understand the environment.
+        3. EXECUTION:
+           - If tools are missing: `load_tools(["category"])`
+           - If files are missing: Create them or ask for content.
+        4. PERSISTENCE: Save intermediate results to VFS (`vfs_write`) if the task is long.
+        5. COMPLETION: Present the result definitively.""",
+                tools_used=["think", "vfs_list", "load_tools", "final_answer"],
+                tool_groups=["vfs", "system"],
+                source="predefined"
+            ),
             # === INTERACTION SKILLS ===
             Skill(
                 id="clarification_needed",

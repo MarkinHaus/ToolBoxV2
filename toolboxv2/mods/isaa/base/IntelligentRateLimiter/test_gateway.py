@@ -126,6 +126,73 @@ def test_custom_provider():
         print()
         return False
 
+def test_custom_provider_streaming():
+    """Custom Provider mit voller Kontrolle"""
+    print("=" * 70)
+    print("METHOD 2: Custom Provider (Empfohlen für Production)")
+    print("=" * 70)
+
+    try:
+        import litellm
+        from litellm import CustomLLM
+        import httpx
+        import json as json_module
+
+        from toolboxv2.mods.isaa.base.IntelligentRateLimiter.gateway import GatewayProvider
+
+        # Register Provider
+        gateway = GatewayProvider()
+        litellm.custom_provider_map = [
+            {"provider": "gateway", "custom_handler": gateway}
+        ]
+
+        # Test
+        response = litellm.completion(
+            model=f"gateway/{test_model}",
+            messages=[
+                {"role": "user", "content": "Sage 'Hallo von Method 2!' auf Deutsch."}
+            ],
+            max_tokens=50,
+            stream=True,
+            stream_options={"include_usage": True}
+        )
+        print("📡 Streaming: ", end="")
+
+        # Sammle Chunks für stream_chunk_builder
+        chunks = []
+        for chunk in response:
+            chunks.append(chunk)
+            if chunk.choices and len(chunk.choices) > 0:
+                delta = chunk.choices[0].delta
+                if hasattr(delta, 'content') and delta.content:
+                    print(delta.content, end="", flush=True)
+
+        print()  # Newline nach Stream
+
+        # Baue vollständige Response aus Chunks
+        complete_response = litellm.stream_chunk_builder(
+            chunks,
+            messages=[{"role": "user", "content": "..."}]
+        )
+
+        print(f"✅ Success!")
+        print(f"📝 Full Response: {complete_response.choices[0].message.content}")
+
+        if complete_response.usage:
+            print(f"📊 Tokens: prompt={complete_response.usage.prompt_tokens}, "
+                  f"completion={complete_response.usage.completion_tokens}, "
+                  f"total={complete_response.usage.total_tokens}")
+
+        print()
+        return True
+
+    except Exception as e:
+            import traceback
+            print(f"❌ Error: {e}")
+            print(f"📋 Details: {traceback.format_exc()}")
+            print()
+            return False
+
 
 # === Method 3: Test streaming ===
 def test_streaming():
@@ -212,6 +279,7 @@ def main():
     results = {
         "Direct OpenAI": test_direct_openai(),
         "Custom Provider": test_custom_provider(),
+        "Custom Provider Streaming": test_custom_provider_streaming(),
         "Streaming": test_streaming(),
         "OpenAI SDK": test_openai_sdk(),
     }

@@ -7,7 +7,6 @@ import shutil
 # Import default Pages
 import sys
 import textwrap
-import threading
 import time
 from functools import wraps
 from platform import node, system
@@ -23,7 +22,7 @@ from toolboxv2.setup_helper import run_command
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils import get_app
 from toolboxv2.utils.clis.cli_worker_manager import main as cli_worker_manager
-from toolboxv2.utils.workers import cli_config, cli_session, cli_event, cli_http_worker, cli_ws_worker
+from toolboxv2.utils.workers import cli_session, cli_event, cli_http_worker, cli_ws_worker
 from toolboxv2.utils.clis.tb_lang_cli import cli_tbx_main
 from toolboxv2.utils.clis.minio_user_manager import main as minio_user_manager_main
 # TEMPORARY FIX: Disabled user_dashboard import due to pywintypes dependency issue
@@ -318,10 +317,11 @@ def setup_service_linux():
 # =================== Constants ===================
 
 RUNNER_KEYS = [
-    "venv", "ipy", "db", "gui", "p2p",
+    "venv", "ipy", "db", "gui", "p2p", "default",
     "status", "browser", "mcp", "login", "logout",
     "run", "mods", "flow", "user", "workers",
     "config","session","broker","http_worker","ws_worker",
+    "services", "registry", "manifest"
 ]
 
 DEFAULT_MODI = "cli"
@@ -770,7 +770,7 @@ def parse_args():
     core.add_argument("-init",
                       type=str,
                       metavar="TYPE",
-                      help="Initialize ToolBoxV2 [venv|system|docker|uninstall]")
+                      help="Initialize ToolBoxV2 [main|config|manifest]")
 
     core.add_argument("-l", "--load-all-mod-in-files",
                       action="store_true",
@@ -1118,7 +1118,7 @@ def _parse_args():
 
 
     parser.add_argument("-init",
-                        help="ToolBoxV2 init (name) -> options ['venv', 'system', 'docker', 'uninstall']", type=str or None, default=None)
+                        help="ToolBoxV2 init (name) -> options ['main', 'config', 'venv', 'system', 'docker', 'uninstall']", type=str or None, default=None)
 
     parser.add_argument("-v", "--get-version",
                         help="get version of ToolBox and all mods with -l",
@@ -1397,6 +1397,8 @@ async def setup_app(ov_name=None, App=TbApp):
     if args.load_all_mod_in_files:
         _min_info = await tb_app.load_all_mods_in_file()
         with Spinner("Crating State"):
+
+            import threading
             st = threading.Thread(target=get_state_from_app, args=(tb_app,
                                                                    os.environ.get("TOOLBOXV2_REMOTE_BASE",
                                                                                   "https://simplecore.app"),
@@ -1530,20 +1532,18 @@ async def main(App=TbApp, do_exit=True):
     if args.init == "main":
         from .setup_helper import setup_main
         setup_main()
-        """
-        if tb_app.system_flag == "Linux":
-            setup_service_linux()
-        if tb_app.system_flag == "Windows":
-            await setup_service_windows()
-        tb_app.get_username(get_input=True)
-        m_link = input("M - Link: ")
-        if m_link:
-            await command_runner(tb_app, ['CloudM', 'login', m_link])
-        st_gui = input("start gui (Y/n): ") or 'Y'
-        if 'y' in st_gui.lower():
-            from toolboxv2.__gui__ import start as start_gui
-            start_gui()
-        """
+    elif args.init == "config":
+        from .utils.clis.config_wizard import run_config_wizard
+        exit_code = run_config_wizard()
+        await tb_app.a_exit()
+        exit(exit_code)
+    elif args.init == "manifest":
+        from .utils.clis.manifest_cli import cmd_init
+        exit_code = cmd_init(args)
+        await tb_app.a_exit()
+        exit(exit_code)
+    elif args.init is not None:
+        tb_app.print("No init action specified valid options are ['main', 'config', 'manifest']")
 
     if args.lm:
         edit_logs()
@@ -1959,6 +1959,10 @@ def runner_setup():
         app = get_app("CloudM.ModManager")
         await app.a_run_any("CloudM", "mods")
 
+    async def registry():
+        app = get_app("CloudM.RegistryServer")
+        await app.a_run_any("CloudM.RegistryServer", "start")
+
     runner = {
         "venv": lambda: __import__('toolboxv2.utils.system.venv_runner', fromlist=['main']).main(),
         "ipy": start_ipython_session,
@@ -1973,17 +1977,19 @@ def runner_setup():
         "logout": logout,
         "flow": run_c,
         "mods": mods_manager,
+        "registry": registry,
 
         "run": cli_tbx_main,
         "user": minio_user_manager_main,
         "default": interactive_user_dashboard,
 
         "workers": cli_worker_manager,
-        "config": cli_config,
         "session": cli_session,
         "broker": cli_event,
         "http_worker": cli_http_worker,
         "ws_worker": cli_ws_worker,
+        "services": lambda: __import__('toolboxv2.utils.clis.service_manager', fromlist=['cli_services']).cli_services(),
+        "manifest": lambda: __import__('toolboxv2.utils.clis.manifest_cli', fromlist=['cli_manifest_main']).cli_manifest_main(),
     }
 
     return runner
@@ -2001,12 +2007,59 @@ def main_runner():
         sys.argv = sys.argv[:1]
         start_ipython_session(argv)
 
+    # Service Manager special case - start all auto-start services and exit
+    elif '--sm' in sys.argv:
+        from toolboxv2.utils.clis.service_manager import run_service_manager_startup
+        sys.exit(run_service_manager_startup())
+
     # Normale Main-App
     else:
         # Clear screen for clean start
         runner = runner_setup()
         runner_keys = list(RUNNER_KEYS)
         main_args, runner_name, runner_args = split_args_by_runner(sys.argv[1:], runner_keys)
+        # Check for unknown runner (argument that looks like a runner but isn't in RUNNER_KEYS)
+        # This catches cases like `tb xyz` where xyz is not a valid runner
+        unknown_runner = None
+        if runner_name is None and len(sys.argv) > 1:
+            # Check if first non-flag argument could be an unknown runner
+            continue_flag = False
+            for arg in sys.argv[1:]:
+                if arg.startswith('-c'):
+                    runner_name = ''
+                    break
+                if arg.startswith('-v'):
+                    runner_name = ''
+                    break
+                if continue_flag:
+                    continue_flag = False
+                    continue
+                if not arg.startswith('-') and '=' not in arg:
+                    # This looks like a runner name but wasn't found in RUNNER_KEYS
+                    unknown_runner = arg
+                    break
+
+                else:
+                    continue_flag = True
+
+
+        if unknown_runner:
+            print(f"\n\033[1;31m❌ Unknown command: '{unknown_runner}'\033[0m")
+            print(f"\n\033[1mAvailable commands:\033[0m")
+            # Group runners by category for better display
+            core_runners = ["user", "run", "db", "workers", "services", "registry"]
+            util_runners = ["login", "logout", "status", "session", "manifest"]
+            dev_runners = ["venv", "ipy", "mcp", "gui", "browser"]
+            other_runners = [r for r in runner_keys if r not in core_runners + util_runners + dev_runners]
+
+            print(f"  \033[36mCore:\033[0m      {', '.join(core_runners)}")
+            print(f"  \033[36mUtility:\033[0m   {', '.join(util_runners)}")
+            print(f"  \033[36mDev:\033[0m       {', '.join(dev_runners)}")
+            if other_runners:
+                print(f"  \033[36mOther:\033[0m     {', '.join(other_runners)}")
+            print(f"\n\033[2mUse 'tb <command> --help' for more information.\033[0m\n")
+            sys.exit(1)
+
         try:
             loop = asyncio.new_event_loop()
             if runner_name == "flows":
@@ -2016,10 +2069,13 @@ def main_runner():
                 TbApp.print = lambda *a, **k: None
 
             async def main_helper(runner_name):
-
-                if runner_name is None and len(sys.argv) < 2:
+                # Default to interactive dashboard if no runner specified
+                # This applies to: `tb`, `tb -l`, `tb --debug`, etc.
+                if runner_name is None:
                     runner_name = "default"
-                await main(TbApp, runner_name is None)
+
+                await main(TbApp, runner_name == "default")
+
                 # Wenn Runner angegeben
                 if runner_name:
                     # Setze sys.argv für Runner
@@ -2032,10 +2088,10 @@ def main_runner():
                     except KeyboardInterrupt:
                         sys.exit(0)
 
-                #if runner_name not in ["flows", "mcp"] and runner_name != "default":
-                #    await runner["default"]()
             loop.run_until_complete(main_helper(runner_name))
         except KeyboardInterrupt:
+            import traceback
+            traceback.print_exc()
             pass
 
 

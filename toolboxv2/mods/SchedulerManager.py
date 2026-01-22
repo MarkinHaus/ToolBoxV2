@@ -354,7 +354,6 @@ class Tools(MainTool, SchedulerManagerClass):
         print("STARTING SchedulerManager")
         self.start()
 
-    @export(mod_name=Name, name='clos_manager', version=version, exit_f=True)
     def on_exit(self):
         self.stop()
         self.save_jobs(self.app.data_dir + '/jobs.compact')

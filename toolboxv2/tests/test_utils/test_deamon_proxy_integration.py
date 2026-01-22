@@ -3,8 +3,8 @@ import threading
 import time
 import unittest
 
-from toolboxv2 import get_app
-from toolboxv2.tests.a_util import async_test
+from toolboxv2.utils.system.getting_and_closing_app import get_app
+from toolboxv2.tests.a_util import async_test, IsolatedTestCase, reset_app_singleton
 from toolboxv2.utils.daemon import DaemonUtil
 from toolboxv2.utils.proxy import ProxyUtil
 
@@ -23,9 +23,19 @@ class MiniHelper:
         return {self.name: self.name}
 
 
-class TestDPIntegration(unittest.TestCase):
+class TestDPIntegration(IsolatedTestCase):
 
-    async def helper(self):
+    def _run_helper_in_thread(self):
+        """Wrapper to run async helper in a new event loop within a thread"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(self._async_helper())
+        finally:
+            loop.close()
+
+    async def _async_helper(self):
+        """Async helper that runs the daemon"""
         daemon = await DaemonUtil(class_instance=MiniHelper("tom"), host='127.0.0.1', port=6183, t=True,
                                   app=None, peer=False, name='tom',
                                   on_register=None, on_client_exit=None, on_server_exit=None,
@@ -34,15 +44,16 @@ class TestDPIntegration(unittest.TestCase):
         await daemon.a_exit()
 
     async def test_helper(self):
+        reset_app_singleton(force_exit=True)
         if not get_app(name="test").local_test:
             return
         app = get_app(name="test")
-        await app.get_mod("SocketManager")
+        app.get_mod("SocketManager")
 
 
         # await app.init_module(socketManager)
 
-        threading.Thread(target=self.helper, daemon=True).start()
+        threading.Thread(target=self._run_helper_in_thread, daemon=True).start()
 
         await asyncio.sleep(1)
 
@@ -79,4 +90,3 @@ class TestDPIntegration(unittest.TestCase):
 
 
 TestDPIntegration.test_helper = async_test(TestDPIntegration.test_helper)
-TestDPIntegration.helper = async_test(TestDPIntegration.helper)

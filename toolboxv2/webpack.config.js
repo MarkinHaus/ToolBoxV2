@@ -1,4 +1,5 @@
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { CleanWebpackPlugin } from 'clean-webpack-plugin';
 import HtmlWebpackPlugin from 'html-webpack-plugin';
 import MiniCssExtractPlugin from 'mini-css-extract-plugin';
@@ -7,8 +8,15 @@ import TerserPlugin from 'terser-webpack-plugin';
 import CssMinimizerPlugin from 'css-minimizer-webpack-plugin';
 import CompressionPlugin from 'compression-webpack-plugin';
 import webpack from 'webpack';
-const isProduction = process.env.NODE_ENV === 'production';
+import dotenv from 'dotenv';
 import BomPlugin from 'webpack-utf8-bom';
+
+// Load .env from project root (one level up from toolboxv2/)
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
+
+// Use TB_ENV from .env, fallback to NODE_ENV, default to 'development'
+const isProduction = (process.env.TB_ENV || process.env.NODE_ENV || 'development').toLowerCase() === 'production';
 
 export default {
   mode: isProduction ? 'production' : 'development',

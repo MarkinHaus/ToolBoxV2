@@ -1,0 +1,49 @@
+[Unit]
+Description=MinIO Object Storage for TB-Registry
+Documentation=https://min.io/docs/minio/linux/index.html
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=minio
+Group=minio
+WorkingDirectory=/opt/minio
+
+# MinIO configuration
+Environment="MINIO_ROOT_USER=minioadmin"
+Environment="MINIO_ROOT_PASSWORD=minioadmin"
+Environment="MINIO_VOLUMES=/opt/minio/data"
+Environment="MINIO_OPTS=--console-address :9001"
+EnvironmentFile=-/opt/minio/.env
+
+ExecStart=/usr/local/bin/minio server $MINIO_OPTS $MINIO_VOLUMES
+
+# Restart configuration
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Security
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/minio/data
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=minio
+
+TimeoutStopSec=30
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target
+

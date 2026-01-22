@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Docs - TB Registry</title>
+  <link rel="stylesheet" href="/static/css/registry.css">
+  <style>
+    .docs { max-width: 800px; margin: 0 auto; padding: var(--space-6) var(--space-4); }
+    .docs h2 { font-size: 1.5rem; margin: var(--space-6) 0 var(--space-3); color: var(--text-primary); }
+    .docs h3 { font-size: 1.1rem; margin: var(--space-5) 0 var(--space-2); color: var(--text-secondary); }
+    .docs p { color: var(--text-secondary); margin-bottom: var(--space-3); }
+    .docs ul { margin: var(--space-3) 0; padding-left: var(--space-5); color: var(--text-secondary); }
+    .docs li { margin-bottom: var(--space-2); }
+    .docs code { background: var(--bg-surface); padding: 2px 6px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 0.85em; }
+    .docs pre { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; margin: var(--space-3) 0; }
+    .docs pre code { background: none; padding: 0; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="container header-inner">
+      <a href="/" class="logo">
+        <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+          <line x1="12" y1="22.08" x2="12" y2="12"/>
+        </svg>
+        TB Registry
+      </a>
+      <nav class="nav">
+        <a href="/">Browse</a>
+        <a href="/docs">Docs</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="docs">
+    <h2>Getting Started</h2>
+    <p>TB Registry is the package registry for the ToolBox Framework. Install and manage modules using the <code>tb</code> CLI with the CloudM module manager.</p>
+
+    <h2>Module Management</h2>
+
+    <h3>Interactive Manager</h3>
+    <p>The easiest way to manage modules is the interactive manager:</p>
+    <div class="code-block">
+      <code>tb -c CloudM mods manager</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+
+    <h3>Install a Module</h3>
+    <div class="code-block">
+      <code>tb -c CloudM mods install &lt;module-name&gt;</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+    <p>Or use the shortcut:</p>
+    <div class="code-block">
+      <code>tb --install &lt;module-name&gt;</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+
+    <h3>List Modules</h3>
+    <div class="code-block">
+      <code>tb -c CloudM mods list</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+
+    <h3>Update Modules</h3>
+    <div class="code-block">
+      <code>tb --update &lt;module-name&gt;</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+
+    <h3>Remove a Module</h3>
+    <div class="code-block">
+      <code>tb --remove &lt;module-name&gt;</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+
+    <h2>Publishing</h2>
+    <p>Publish your own modules to share with the community. You need to be a verified publisher.</p>
+
+    <h3>1. Login</h3>
+    <div class="code-block">
+      <code>tb login</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+
+    <h3>2. Generate Config</h3>
+    <p>Create a <code>tbConfig.yaml</code> for your module:</p>
+    <div class="code-block">
+      <code>tb -c CloudM mods gen-config &lt;module-name&gt;</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+
+    <h3>3. Publish</h3>
+    <p>Use the interactive manager to publish:</p>
+    <div class="code-block">
+      <code>tb -c CloudM mods manager</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+    <p>Then select <strong>REGISTRY → Publish to registry</strong></p>
+
+    <h2>Artifacts</h2>
+    <p>Download official ToolBox applications and tools.</p>
+
+    <h3>SimpleCore Desktop</h3>
+    <p>The official ToolBox desktop application with GUI.</p>
+    <ul>
+      <li>Windows (x64): <code>.exe</code>, <code>.msi</code></li>
+      <li>macOS: <code>.dmg</code> (ARM64, x64)</li>
+      <li>Linux: <code>.deb</code>, <code>.rpm</code>, <code>.AppImage</code></li>
+    </ul>
+
+    <h3>TB CLI</h3>
+    <p>Command-line interface for ToolBox. Install via pip:</p>
+    <div class="code-block">
+      <code>pip install toolboxv2</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+
+    <h2>API Reference</h2>
+    <p>The registry provides a REST API for programmatic access.</p>
+
+    <h3>Packages</h3>
+    <ul>
+      <li><code>GET /api/v1/packages</code> - List all packages</li>
+      <li><code>GET /api/v1/packages/{name}</code> - Get package details</li>
+      <li><code>GET /api/v1/packages/{name}/versions</code> - List versions</li>
+      <li><code>GET /api/v1/packages/{name}/versions/{v}/download</code> - Get download URL</li>
+      <li><code>POST /api/v1/packages</code> - Create package (auth)</li>
+      <li><code>POST /api/v1/packages/{name}/versions</code> - Upload version (auth)</li>
+    </ul>
+
+    <h3>Artifacts</h3>
+    <ul>
+      <li><code>GET /api/v1/artifacts</code> - List artifacts</li>
+      <li><code>GET /api/v1/artifacts/{name}</code> - Get artifact details</li>
+      <li><code>GET /api/v1/artifacts/{name}/versions/{v}/download</code> - Get download URL</li>
+    </ul>
+
+    <h3>Search & Resolve</h3>
+    <ul>
+      <li><code>GET /api/v1/search?q={query}</code> - Search packages</li>
+      <li><code>POST /api/v1/resolve</code> - Resolve dependencies</li>
+    </ul>
+
+    <h3>Example</h3>
+    <pre><code>curl https://registry.simplecore.app/api/v1/packages/CloudM</code></pre>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      TB Registry &copy; 2025 &middot;
+      <a href="https://simplecore.app">SimpleCore.app</a> &middot;
+      <a href="https://github.com/MarkinHaus/ToolBoxV2">GitHub</a>
+    </div>
+  </footer>
+
+  <script>
+    function copy(btn) {
+      const code = btn.previousElementSibling.textContent;
+      navigator.clipboard.writeText(code);
+      btn.textContent = '✓';
+      setTimeout(() => btn.textContent = '📋', 1500);
+    }
+  </script>
+</body>
+</html>
+

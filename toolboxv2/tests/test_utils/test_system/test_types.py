@@ -1,26 +1,30 @@
 import unittest
 
-from toolboxv2 import Result
 from toolboxv2.utils.system.types import (
     CallingObject,
+    Result,
     ToolBoxError,
     ToolBoxInterfaces,
     analyze_data,
 )
+from toolboxv2.tests.a_util import IsolatedTestCase
 
 
-class TestResult(unittest.TestCase):
+class TestResult(IsolatedTestCase):
 
     def test_default_result(self):
         # Test case for default result
-        result = Result.default()
+        # Import directly from types module to avoid mock contamination
+        from toolboxv2.utils.system.types import Result as FreshResult
+        result = FreshResult.default()
         self.assertEqual(result.error, ToolBoxError.none)
         self.assertEqual(result.result.data_to, ToolBoxInterfaces.native)
 
     def test_ok_result(self):
         # Test case for OK result
+        from toolboxv2.utils.system.types import Result as FreshResult
         data = {"key": "value"}
-        result = Result.ok(data=data, data_info="Info")
+        result = FreshResult.ok(data=data, data_info="Info")
         self.assertEqual(result.error, ToolBoxError.none)
         self.assertEqual(result.result.data_to, ToolBoxInterfaces.native)
         self.assertEqual(result.result.data, data)
@@ -28,8 +32,9 @@ class TestResult(unittest.TestCase):
 
     def test_future_result(self):
         # Test case for future result
+        from toolboxv2.utils.system.types import Result as FreshResult
         data = {"key": "value"}
-        result = Result.future(data=data, data_info="Info")
+        result = FreshResult.future(data=data, data_info="Info")
         self.assertEqual(result.error, ToolBoxError.none)
         self.assertEqual(result.result.data_to, ToolBoxInterfaces.future)
         self.assertEqual(result.result.data, data)
@@ -37,8 +42,9 @@ class TestResult(unittest.TestCase):
 
     def test_custom_error_result(self):
         # Test case for custom error result
+        from toolboxv2.utils.system.types import Result as FreshResult
         data = {"key": "value"}
-        result = Result.custom_error(data=data, data_info="Info", info="Custom Error", exec_code=-1)
+        result = FreshResult.custom_error(data=data, data_info="Info", info="Custom Error", exec_code=-1)
         self.assertEqual(result.error, ToolBoxError.custom_error)
         self.assertEqual(result.result.data_to, ToolBoxInterfaces.native)
         self.assertEqual(result.result.data, data)
@@ -47,7 +53,7 @@ class TestResult(unittest.TestCase):
         self.assertEqual(result.info.help_text, "Custom Error")
 
 
-class TestCallingObject(unittest.TestCase):
+class TestCallingObject(IsolatedTestCase):
 
     def test_empty_calling_object(self):
         # Test case for creating an empty CallingObject
@@ -76,7 +82,7 @@ class TestCallingObject(unittest.TestCase):
     # Add more test cases to cover other methods and scenarios
 
 
-class TestAnalyzeData(unittest.TestCase):
+class TestAnalyzeData(IsolatedTestCase):
 
     def test_analyze_data_with_valid_input(self):
         # Test case for analyzing valid data

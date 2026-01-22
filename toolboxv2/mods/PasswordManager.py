@@ -22,7 +22,6 @@ from pathlib import Path
 from toolboxv2 import App, Result, MainTool, get_app
 from toolboxv2.utils.security.cryp import Code, DEVICE_KEY
 from toolboxv2.utils.extras.blobs import BlobStorage, BlobFile
-from toolboxv2.mods.DB.blob_instance import BlobDB
 
 Name = "PasswordManager"
 export = get_app(from_="PasswordManager.EXPORT").tb
@@ -156,6 +155,8 @@ class PasswordManagerCore:
             self.storage_client = self.app.root_blob_storage
 
             # Initialize encrypted password database
+
+            from toolboxv2.mods.DB.blob_instance import BlobDB
             self.password_db = BlobDB()
             result = self.password_db.initialize(
                 db_path=self.blob_path,

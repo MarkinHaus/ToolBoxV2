@@ -1,0 +1,253 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# tb-manifest.yaml - ToolBoxV2 Unified Configuration Manifest
+# ═══════════════════════════════════════════════════════════════════════════════
+# This is the single source of truth for your ToolBox installation.
+# Changes here are applied to all sub-configs when saved.
+#
+# Generate with: tb init config
+# Validate with: tb manifest validate
+# Apply with:    tb manifest apply
+#
+# Database Modes:
+#   LC = LOCAL_DICT    - Local JSON file (no config needed)
+#   LR = LOCAL_REDIS   - Local Redis (needs redis.url)
+#   RR = REMOTE_REDIS  - Remote Redis (needs redis.url or credentials)
+#   CB = CLUSTER_BLOB  - MinIO storage (needs minio.* config)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+manifest_version: "1.0.0"
+
+# =============================================================================
+# Application Identity
+# =============================================================================
+app:
+  name: ToolBoxV2
+  version: "0.1.0"
+  instance_id: tbv2_main
+  environment: development  # development | production | staging | tauri
+  debug: false
+  log_level: INFO
+
+# =============================================================================
+# Autostart Configuration (System Boot)
+# =============================================================================
+autostart:
+  enabled: false
+  services:
+    - workers
+    - db
+  commands:
+    - "tb -v"
+    - "tb status"
+
+# =============================================================================
+# Module Management
+# =============================================================================
+mods:
+  installed:
+    CloudM: "^0.1.0"
+    DB: "^0.0.3"
+    # isaa: "^0.1.0"  # Uncomment to enable ISAA
+
+  dependencies:
+    # isaa:
+    #   - "CloudM>=0.1.0"
+
+  init_modules:
+    - CloudM
+    - DB
+
+  open_modules:
+    - CloudM.AuthManager
+    - CloudM.AuthClerk
+
+  watch_modules: []
+
+# =============================================================================
+# Database Configuration
+# =============================================================================
+database:
+  mode: LC  # LC | LR | RR | CB
+
+  local:
+    path: ".data/MiniDictDB.json"
+
+  redis:
+    url: "${DB_CONNECTION_URI:redis://localhost:6379}"
+    username: "${DB_USERNAME:}"
+    password: "${DB_PASSWORD:}"
+    db_index: 0
+    max_connections: 10
+
+  minio:
+    endpoint: "${MINIO_ENDPOINT:localhost:9000}"
+    access_key: "${MINIO_ACCESS_KEY:minioadmin}"
+    secret_key: "${MINIO_SECRET_KEY:minioadmin}"
+    bucket: toolbox-data
+    use_ssl: false
+
+# =============================================================================
+# Services Configuration
+# =============================================================================
+services:
+  enabled:
+    - workers
+    - db
+
+  zmq:
+    pub_endpoint: "tcp://127.0.0.1:5555"
+    sub_endpoint: "tcp://127.0.0.1:5556"
+    req_endpoint: "tcp://127.0.0.1:5557"
+    http_to_ws_endpoint: "tcp://127.0.0.1:5558"
+    hwm_send: 10000
+    hwm_recv: 10000
+
+  manager:
+    web_ui_enabled: true
+    web_ui_host: "127.0.0.1"
+    web_ui_port: 9000
+    health_check_interval: 10
+    restart_delay: 2
+    max_restart_attempts: 5
+
+# =============================================================================
+# Worker Instances
+# =============================================================================
+workers:
+  http:
+    - name: http_main
+      host: "127.0.0.1"
+      port: 8000
+      workers: 4
+      max_concurrent: 100
+      timeout: 30
+      ssl: false
+
+  websocket:
+    - name: ws_main
+      host: "127.0.0.1"
+      port: 8100
+      max_connections: 10000
+      ping_interval: 30
+      ping_timeout: 10
+      compression: true
+
+# =============================================================================
+# Nginx Reverse Proxy
+# =============================================================================
+nginx:
+  enabled: true
+  server_name: "${TB_NGINX_SERVER_NAME:localhost}"
+  listen_port: 80
+  listen_ssl_port: 443
+  ssl_enabled: false
+  ssl_certificate: ""
+  ssl_certificate_key: ""
+  static_enabled: true
+  rate_limit_enabled: true
+  rate_limit_zone: tb_limit
+  rate_limit_rate: "10r/s"
+  rate_limit_burst: 20
+
+# =============================================================================
+# Authentication
+# =============================================================================
+auth:
+  provider: clerk  # clerk | local | none
+
+  clerk:
+    secret_key: "${CLERK_SECRET_KEY:}"
+    publishable_key: "${CLERK_PUBLISHABLE_KEY:}"
+
+  session:
+    cookie_name: tb_session
+    cookie_secret: "${TB_COOKIE_SECRET:}"
+    cookie_max_age: 604800  # 7 days
+    cookie_secure: false
+    cookie_httponly: true
+    cookie_samesite: Lax
+
+  ws_require_auth: false
+  ws_allow_anonymous: true
+
+# =============================================================================
+# Paths Configuration
+# =============================================================================
+paths:
+  data_dir: "${TB_DATA_DIR:./.data}"
+  config_dir: "./.config"
+  logs_dir: "./logs"
+  mods_dir: "./mods"
+  mods_dev_dir: "./mods_dev"
+  mods_storage_dir: "./mods_sto"
+  dist_dir: "${TB_DIST_DIR:./dist}"
+  web_dir: "./web"
+  registry_cache_dir: "./.tb-registry/cache"
+
+# =============================================================================
+# Registry Configuration
+# =============================================================================
+registry:
+  url: "https://registry.simplecore.app"
+  auto_update: false
+  check_interval: 3600
+
+# =============================================================================
+# ToolBox Settings
+# =============================================================================
+toolbox:
+  client_prefix: api-client
+  timeout_seconds: 60
+  max_instances: 2
+  api_prefix: "/api"
+
+# =============================================================================
+# Utilities (Future Use)
+# =============================================================================
+utilities:
+  enabled: []
+
+# =============================================================================
+# Environment-Specific Overrides
+# =============================================================================
+environments:
+  development:
+    app.debug: true
+    app.log_level: DEBUG
+    database.mode: LC
+    nginx.enabled: false
+    auth.session.cookie_secure: false
+
+  production:
+    app.debug: false
+    app.log_level: INFO
+    database.mode: CB
+    nginx.enabled: true
+    nginx.ssl_enabled: true
+    auth.session.cookie_secure: true
+
+  staging:
+    app.debug: false
+    app.log_level: DEBUG
+    database.mode: CB
+    nginx.enabled: true
+
+# =============================================================================
+# ISAA Configuration (Only when isaa is installed)
+# =============================================================================
+# isaa:
+#   enabled: true
+#   models:
+#     fast: "${FASTMODEL:ollama/llama3.1}"
+#     complex: "${COMPLEXMODEL:ollama/llama3.1}"
+#     blitz: "${BLITZMODEL:ollama/llama3.1}"
+#   self_agent:
+#     name: self
+#     temperature: 0.7
+#   code_executor:
+#     type: restricted
+#   mcp:
+#     enabled: true
+#   a2a:
+#     enabled: false
+

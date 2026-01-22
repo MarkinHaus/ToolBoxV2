@@ -425,6 +425,10 @@ class Tools(MainTool):
         if isinstance(chain, list):
             chain = self.create_chain(*chain)
 
+        if chain is None:
+            print("Chain is None")
+            return None
+
         return await chain.a_run(query, session_id=session_id, **kwargs)
 
     def chain_from_agents(self, *agent_names: str) -> Chain:
@@ -493,6 +497,10 @@ class Tools(MainTool):
         Returns:
             Tuple of (success: bool, manifest or error_message)
         """
+        if agent_name is None:
+            return False, "Agent name is required"
+        if path is None:
+            path = f"{agent_name}.tar.gz"
         if not path.endswith('.tar.gz'):
             path = f"{path}.tar.gz"
 
@@ -622,6 +630,11 @@ class Tools(MainTool):
         """
         warnings = []
 
+        if override_name is None:
+            return None, None, ["No agent name specified"]
+        if path is None:
+            path = f"{override_name}.tar.gz"
+
         if not Path(path).exists():
             return None, None, [f"Archive not found: {path}"]
 
@@ -733,6 +746,13 @@ class Tools(MainTool):
         Returns:
             Tuple of (success, message)
         """
+
+        if path is None and agent_names is None:
+            return False, "No path or agent names specified"
+
+        if path is None and agent_names is not None:
+            path = f"network_{agent_names[0]}.tar.gz"
+
         if not path.endswith('.tar.gz'):
             path = f"{path}.tar.gz"
 
@@ -807,6 +827,9 @@ class Tools(MainTool):
         Returns:
             Tuple of (dict of name->agent, list of warnings)
         """
+
+        if path is None:
+            return {}, ["No path specified"]
         agents = {}
         all_warnings = []
 

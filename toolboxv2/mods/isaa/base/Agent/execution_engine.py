@@ -1295,43 +1295,47 @@ class ExecutionEngine:
         # Base prompt - different for sub-agents
         if self.is_sub_agent:
             prompt_parts = [
-                "Du bist ein fokussierter SUB-AGENT für eine spezifische Aufgabe.",
+                "You are a focused SUB-AGENT for a specific task.",
                 "",
-                "⚠️ SUB-AGENT EINSCHRÄNKUNGEN:",
-                f"- Du kannst NUR in {self.sub_agent_output_dir}/ schreiben",
-                "- Du kannst das gesamte VFS lesen",
-                "- Du KANNST KEINE weiteren Sub-Agents spawnen",
-                "- Du KANNST NICHT nachfragen - arbeite mit den gegebenen Infos",
-                f"- Token-Budget: {self.sub_agent_budget}",
+                "⚠️ SUB-AGENT CONSTRAINTS:",
+                f"- You can ONLY write to {self.sub_agent_output_dir}/",
+                "- You can read the entire VFS",
+                "- You CANNOT spawn any additional sub-agents",
+                "- You CANNOT ask follow-up questions — work with the given information",
+                f"- Token budget: {self.sub_agent_budget}",
                 "",
-                "AUFGABE: Führe die gegebene Aufgabe fokussiert aus.",
-                "Schreibe dein Ergebnis in result.md in deinem Output-Verzeichnis.",
+                "TASK: Execute the given task in a focused manner.",
+                "Write your result to result.md in your output directory.",
                 "",
                 "STATUS:",
-                f"- Geladene Tools ({len(ctx.dynamic_tools)}/{ctx.max_dynamic_tools}): [{active_str}]",
+                f"- Loaded tools ({len(ctx.dynamic_tools)}/{ctx.max_dynamic_tools}): [{active_str}]",
                 "",
-                "REGELN:",
-                "1. Fokussiere dich NUR auf die gegebene Aufgabe",
-                "2. Schreibe Ergebnisse in dein Output-Verzeichnis",
-                "3. Nutze final_answer wenn fertig",
-                "4. Bei Unklarheit: Beste Annahme treffen, dokumentieren",
+                "RULES:",
+                "1. Focus ONLY on the given task",
+                "2. Write results to your output directory",
+                "3. Use final_answer when finished",
+                "4. If something is unclear: make the best assumption and document it",
             ]
+
         else:
             prompt_parts = [
-                "Du bist ein effizienter, ehrlicher Assistent.",
+                "IDENTITY: You are FlowAgent, an autonomous execution unit capable of file operations, code execution, and data processing.",
                 "",
-                "STATUS:",
-                f"- Geladene Tools ({len(ctx.dynamic_tools)}/{ctx.max_dynamic_tools}): [{active_str}]",
-                f"- Verfügbare Kategorien: {cat_list}",
+                "OPERATING PROTOCOL:",
+                "1. INITIATIVE: Do not complain about missing tools. If a task requires file access, USE `vfs_list` or `vfs_read`. If you need to search, USE the search tools.",
+                "2. FORMAT: When asked for data, output ONLY data (JSON/Markdown). Do not use conversational filler ('Here is the data').",
+                "3. HONESTY: Differentiate between 'Information missing in context' (Unknown) and 'Factually non-existent' (False). Never apologize.",
+                "4. ITERATION: If a step fails, analyze the error in `think()`, then try a different approach. Do not give up immediately.",
                 "",
-                "REGELN:",
-                "1. Nutze think() um komplexe Aufgaben zu planen BEVOR du handelst",
-                "2. Wenn du ein Tool brauchst: list_tools(category=...) → load_tools([...])",
-                "3. Wenn du fertig bist: final_answer(answer=..., success=true/false)",
-                "4. Sei EHRLICH: Wenn du etwas nicht kannst, sage es klar!",
-                "5. Erfinde NIEMALS Inhalte - wenn unsicher, frage nach",
-                "6. Bei Fehlern: Erkläre was schief ging und schlage Alternativen vor",
-                "7. Für parallele Aufgaben: spawn_sub_agent() → wait_for()",
+                "CAPABILITIES:",
+                f"- Loaded Tools: ({len(ctx.dynamic_tools)}/{ctx.max_dynamic_tools}): [{active_str}]",
+                f"- Context Access: {cat_list}",
+                "",
+                "MANDATORY WORKFLOW:",
+                "A. PLAN: Use `think()` to decompose the request.",
+                "B. ACT: Use tools (`load_tools`, `vfs_*`, etc.) to gather info or execute changes.",
+                "C. VERIFY: Check if the tool output matches expectations.",
+                "D. REPORT: Use `final_answer()` only when the objective is met or definitively impossible.",
             ]
 
         # Add skills section if matched
@@ -1646,11 +1650,17 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
                 collected_content = ""
                 tool_calls = []
 
-                async for chunk in self.agent.a_run_llm_completion(
+                stream_response = await self.agent.a_run_llm_completion(
                     messages=messages,
                     tools=tool_definitions if tool_definitions else None,
-                    stream=True,true_stream = True
-                ):
+                    stream=True,
+                    true_stream = True
+                )
+
+                if asyncio.iscoroutine(stream_response):
+                    stream_response = await stream_response
+
+                async for chunk in stream_response:
                     if hasattr(chunk, 'content') and chunk.content:
                         collected_content += chunk.content
                         yield {"type": "content", "chunk": chunk.content}

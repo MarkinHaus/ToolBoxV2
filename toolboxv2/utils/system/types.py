@@ -1255,7 +1255,7 @@ class Result(Generic[T]):
 
     def get(self, key=None, default=None):
         data = self.result.data
-        if isinstance(data, Result):
+        if isinstance(data, Result) or hasattr(data, 'result'):
             return data.get(key=key, default=default)
         if key is not None and isinstance(data, dict):
             return data.get(key, default)
@@ -1931,10 +1931,13 @@ class AppType:
 
 
     def start_server(self):
-        from toolboxv2.utils.clis.api import manage_server
+        from toolboxv2.utils.clis.cli_worker_manager import WorkerManager
+        from toolboxv2.utils.workers.config import load_config
+        config = load_config()
+        print(config.nginx.static_root)
         if self.is_server:
             return
-        manage_server("start")
+        WorkerManager(config).start_all()
         self.is_server = False
 
     @staticmethod

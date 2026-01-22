@@ -13,6 +13,7 @@ import os
 import pickle
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -110,7 +111,12 @@ class CheckpointManager:
             )
 
         # Ensure directory exists
-        os.makedirs(self.checkpoint_dir, exist_ok=True)
+        if isinstance(self.checkpoint_dir, str) and not os.path.exists(self.checkpoint_dir):
+            try:
+                os.makedirs(self.checkpoint_dir, exist_ok=True)
+            except Exception as e:
+                print(f"[CheckpointManager] Failed to create checkpoint directory: {e}")
+                self.checkpoint_dir = None
 
         # State
         self.last_checkpoint: datetime | None = None

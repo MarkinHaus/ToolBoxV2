@@ -11,7 +11,7 @@ import os
 import io
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 
-from toolboxv2.tests.a_util import async_test
+from toolboxv2.tests.a_util import async_test, IsolatedTestCase
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -26,7 +26,7 @@ from toolboxv2.mcp_server.workers import (
 )
 
 
-class TestMCPSafeIO(unittest.TestCase):
+class TestMCPSafeIO(IsolatedTestCase):
     """Test MCPSafeIO context manager."""
 
     def test_redirects_stdout_to_stderr(self):
@@ -75,7 +75,7 @@ class TestMCPSafeIO(unittest.TestCase):
         self.assertIs(sys.stdout, original_stdout)
 
 
-class TestPythonWorker(unittest.TestCase):
+class TestPythonWorker(IsolatedTestCase):
     """Test PythonWorker class."""
 
     def setUp(self):
@@ -187,7 +187,7 @@ time.sleep(10)
         self.assertIn("executed successfully", result.content.lower())
 
 
-class TestDocsWorker(unittest.TestCase):
+class TestDocsWorker(IsolatedTestCase):
     """Test DocsWorker class."""
 
     def setUp(self):
@@ -326,7 +326,7 @@ class TestDocsWorker(unittest.TestCase):
         self.assertTrue(result.success)
 
 
-class TestToolboxWorker(unittest.TestCase):
+class TestToolboxWorker(IsolatedTestCase):
     """Test ToolboxWorker class."""
 
     def setUp(self):
@@ -418,7 +418,7 @@ class TestToolboxWorker(unittest.TestCase):
         self.assertIn("error", result.content.lower())
 
 
-class TestSystemWorker(unittest.TestCase):
+class TestSystemWorker(IsolatedTestCase):
     """Test SystemWorker class."""
 
     @async_test

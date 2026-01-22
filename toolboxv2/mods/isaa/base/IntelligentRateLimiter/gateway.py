@@ -64,12 +64,28 @@ def add_to_openai_providers_json():
 
 
 # === Method 2: CustomLLM Class (Full Control) ===
+from typing import List, Dict, Any, Optional, Iterator, AsyncIterator, Union
+import requests
+import httpx
+from litellm import CustomLLM
+from litellm.types.utils import GenericStreamingChunk, ModelResponse
+
+
+class CustomLLMError(Exception):
+    """Custom exception for LLM errors"""
+
+    def __init__(self, status_code: int, message: str):
+        self.status_code = status_code
+        self.message = message
+        super().__init__(self.message)
+
+
 class GatewayProvider(CustomLLM):
     """
     Custom LLM Provider for your Gateway
 
     This gives you full control over request/response handling.
-    Supports both sync and async operations.
+    Supports both sync and async operations including streaming.
     """
 
     def __init__(self):
@@ -111,7 +127,6 @@ class GatewayProvider(CustomLLM):
             return self._available_models
 
         try:
-            import httpx
             headers = {"Authorization": f"Bearer {self.api_key}"}
 
             async with httpx.AsyncClient(timeout=2.0) as client:
@@ -134,6 +149,75 @@ class GatewayProvider(CustomLLM):
 
         return self._available_models
 
+    def _get_allowed_params(self) -> set:
+        """Return set of allowed OpenAI-compatible parameters"""
+        return {
+            'temperature', 'top_p', 'max_tokens', 'stream',
+            'stop', 'n', 'presence_penalty', 'frequency_penalty',
+            'logit_bias', 'user', 'seed', 'tools', 'tool_choice',
+            'response_format', 'logprobs', 'top_logprobs'
+        }
+
+    def _clean_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Filter kwargs to only include allowed params"""
+        allowed = self._get_allowed_params()
+        return {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+
+    def _extract_model(self, model: str) -> str:
+        """Extract actual model name (remove provider prefix)"""
+        return model.split("/", 1)[-1] if "/" in model else model
+
+    def _get_headers(self) -> Dict[str, str]:
+        """Get request headers"""
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+    def _parse_sse_line(self, line: str) -> Optional[Dict[str, Any]]:
+        """Parse a single SSE line and return data dict or None"""
+        import json
+
+        line = line.strip()
+        if not line or line.startswith(':'):
+            return None
+
+        if line.startswith('data: '):
+            data_str = line[6:]
+            if data_str == '[DONE]':
+                return None
+            try:
+                return json.loads(data_str)
+            except json.JSONDecodeError:
+                return None
+        return None
+
+    def _chunk_to_generic(self, chunk_data: Dict[str, Any]) -> GenericStreamingChunk:
+        """Convert OpenAI chunk format to GenericStreamingChunk"""
+        choices = chunk_data.get('choices', [{}])
+        choice = choices[0] if choices else {}
+        delta = choice.get('delta', {})
+        finish_reason = choice.get('finish_reason')
+
+        # Extract usage if present
+        usage_data = chunk_data.get('usage', {})
+        usage = {
+            "completion_tokens": usage_data.get('completion_tokens', 0),
+            "prompt_tokens": usage_data.get('prompt_tokens', 0),
+            "total_tokens": usage_data.get('total_tokens', 0)
+        }
+
+        return {
+            "text": delta.get('content', '') or '',
+            "is_finished": finish_reason is not None,
+            "finish_reason": finish_reason,
+            "index": choice.get('index', 0),
+            "tool_use": delta.get('tool_calls'),
+            "usage": usage
+        }
+
+    # ========== NON-STREAMING METHODS ==========
+
     def completion(
         self,
         model: str,
@@ -141,46 +225,14 @@ class GatewayProvider(CustomLLM):
         api_base: Optional[str] = None,
         custom_llm_provider: Optional[str] = None,
         **kwargs
-    ):
-        """
-        Handle completion requests (sync)
+    ) -> ModelResponse:
+        """Handle non-streaming completion requests (sync)"""
 
-        LiteLLM will call this with model="gateway/model-name"
-        We need to:
-        1. Extract actual model name
-        2. Forward to gateway
-        3. Return raw response (LiteLLM will parse it)
-        """
+        clean_kwargs = self._clean_kwargs(kwargs)
+        clean_kwargs.pop('stream', None)  # Ensure no streaming
 
-        # Filter out LiteLLM internal params and non-serializable objects
-        # Only keep OpenAI-compatible parameters
-        allowed_params = {
-            'temperature', 'top_p', 'max_tokens', 'stream',
-            'stop', 'n', 'presence_penalty', 'frequency_penalty',
-            'logit_bias', 'user', 'seed', 'tools', 'tool_choice',
-            'response_format', 'logprobs', 'top_logprobs'
-        }
-
-        # Build clean payload with only allowed params
-        clean_kwargs = {
-            k: v for k, v in kwargs.items()
-            if k in allowed_params and v is not None
-        }
-
-        # Extract model name (remove "gateway/" prefix if present)
-        actual_model = model.split("/", 1)[-1] if "/" in model else model
-
-        # Use gateway URL
+        actual_model = self._extract_model(model)
         base_url = api_base or f"{self.gateway_url}/v1"
-
-        # Make direct HTTP request instead of using litellm.completion
-        # This avoids double-wrapping the response
-        import httpx
-
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
 
         payload = {
             "model": actual_model,
@@ -188,30 +240,14 @@ class GatewayProvider(CustomLLM):
             **clean_kwargs
         }
 
-        # Check if streaming
-        is_streaming = clean_kwargs.get("stream", False)
-
-        if is_streaming:
-            # For streaming, we need to return the raw stream
-            # LiteLLM will handle the parsing
-            client = httpx.Client(timeout=300.0)
+        with httpx.Client(timeout=300.0) as client:
             response = client.post(
                 f"{base_url}/chat/completions",
                 json=payload,
-                headers=headers,
-                stream=True
+                headers=self._get_headers()
             )
-            return response
-        else:
-            # For non-streaming, return the JSON response
-            with httpx.Client(timeout=300.0) as client:
-                response = client.post(
-                    f"{base_url}/chat/completions",
-                    json=payload,
-                    headers=headers
-                )
-                response.raise_for_status()
-                return ModelResponse(**response.json())
+            response.raise_for_status()
+            return ModelResponse(**response.json())
 
     async def acompletion(
         self,
@@ -220,36 +256,14 @@ class GatewayProvider(CustomLLM):
         api_base: Optional[str] = None,
         custom_llm_provider: Optional[str] = None,
         **kwargs
-    ):
-        """
-        Handle completion requests (async)
+    ) -> ModelResponse:
+        """Handle non-streaming completion requests (async)"""
 
-        Async version of completion() for better performance
-        in async applications.
-        """
+        clean_kwargs = self._clean_kwargs(kwargs)
+        clean_kwargs.pop('stream', None)  # Ensure no streaming
 
-        # Filter out LiteLLM internal params
-        allowed_params = {
-            'temperature', 'top_p', 'max_tokens', 'stream',
-            'stop', 'n', 'presence_penalty', 'frequency_penalty',
-            'logit_bias', 'user', 'seed', 'tools', 'tool_choice',
-            'response_format', 'logprobs', 'top_logprobs'
-        }
-
-        clean_kwargs = {
-            k: v for k, v in kwargs.items()
-            if k in allowed_params and v is not None
-        }
-
-        actual_model = model.split("/", 1)[-1] if "/" in model else model
+        actual_model = self._extract_model(model)
         base_url = api_base or f"{self.gateway_url}/v1"
-
-        import httpx
-
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
 
         payload = {
             "model": actual_model,
@@ -257,28 +271,103 @@ class GatewayProvider(CustomLLM):
             **clean_kwargs
         }
 
-        is_streaming = clean_kwargs.get("stream", False)
-
-        if is_streaming:
-            # Async streaming
-            client = httpx.AsyncClient(timeout=300.0)
+        async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.post(
                 f"{base_url}/chat/completions",
                 json=payload,
-                headers=headers
+                headers=self._get_headers()
             )
-            # Return async iterator for streaming
-            return response.aiter_lines()
-        else:
-            # Async non-streaming
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                response = await client.post(
-                    f"{base_url}/chat/completions",
-                    json=payload,
-                    headers=headers
-                )
+            response.raise_for_status()
+            return ModelResponse(**response.json())
+
+    # ========== STREAMING METHODS ==========
+
+    def streaming(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        api_base: Optional[str] = None,
+        custom_llm_provider: Optional[str] = None,
+        **kwargs
+    ) -> Iterator[GenericStreamingChunk]:
+        """
+        Handle streaming completion requests (sync)
+
+        Returns an iterator that yields GenericStreamingChunk objects.
+        LiteLLM will wrap this in CustomStreamWrapper.
+        """
+
+        clean_kwargs = self._clean_kwargs(kwargs)
+        clean_kwargs['stream'] = True  # Ensure streaming is enabled
+
+        actual_model = self._extract_model(model)
+        base_url = api_base or f"{self.gateway_url}/v1"
+
+        payload = {
+            "model": actual_model,
+            "messages": messages,
+            **clean_kwargs
+        }
+
+        # Use streaming request
+        with httpx.Client(timeout=300.0) as client:
+            with client.stream(
+                "POST",
+                f"{base_url}/chat/completions",
+                json=payload,
+                headers=self._get_headers()
+            ) as response:
                 response.raise_for_status()
-                return ModelResponse(**response.json())
+
+                for line in response.iter_lines():
+                    chunk_data = self._parse_sse_line(line)
+                    if chunk_data:
+                        yield self._chunk_to_generic(chunk_data)
+
+    async def astreaming(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        api_base: Optional[str] = None,
+        custom_llm_provider: Optional[str] = None,
+        **kwargs
+    ) -> AsyncIterator[GenericStreamingChunk]:
+        """
+        Handle streaming completion requests (async)
+
+        Returns an async iterator that yields GenericStreamingChunk objects.
+        LiteLLM will wrap this in CustomStreamWrapper.
+
+        IMPORTANT: This must be an async generator (use 'yield', not 'return')
+        """
+
+        clean_kwargs = self._clean_kwargs(kwargs)
+        clean_kwargs['stream'] = True  # Ensure streaming is enabled
+
+        actual_model = self._extract_model(model)
+        base_url = api_base or f"{self.gateway_url}/v1"
+
+        payload = {
+            "model": actual_model,
+            "messages": messages,
+            **clean_kwargs
+        }
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            async with client.stream(
+                "POST",
+                f"{base_url}/chat/completions",
+                json=payload,
+                headers=self._get_headers()
+            ) as response:
+                response.raise_for_status()
+
+                async for line in response.aiter_lines():
+                    chunk_data = self._parse_sse_line(line)
+                    if chunk_data:
+                        yield self._chunk_to_generic(chunk_data)
+
+    # ========== EMBEDDING METHODS ==========
 
     def embedding(
         self,
@@ -286,25 +375,14 @@ class GatewayProvider(CustomLLM):
         input: Any,
         api_base: Optional[str] = None,
         **kwargs
-    ):
+    ) -> ModelResponse:
         """Handle embedding requests (sync)"""
 
-        # Filter allowed params
         allowed_params = {'encoding_format', 'user', 'dimensions'}
-        clean_kwargs = {
-            k: v for k, v in kwargs.items()
-            if k in allowed_params and v is not None
-        }
+        clean_kwargs = {k: v for k, v in kwargs.items() if k in allowed_params and v is not None}
 
-        actual_model = model.split("/", 1)[-1] if "/" in model else model
+        actual_model = self._extract_model(model)
         base_url = api_base or f"{self.gateway_url}/v1"
-
-        # Direct HTTP request
-        import httpx
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
 
         payload = {
             "model": actual_model,
@@ -316,7 +394,7 @@ class GatewayProvider(CustomLLM):
             response = client.post(
                 f"{base_url}/embeddings",
                 json=payload,
-                headers=headers
+                headers=self._get_headers()
             )
             response.raise_for_status()
             return ModelResponse(**response.json())
@@ -327,24 +405,14 @@ class GatewayProvider(CustomLLM):
         input: Any,
         api_base: Optional[str] = None,
         **kwargs
-    ):
+    ) -> ModelResponse:
         """Handle embedding requests (async)"""
 
-        # Filter allowed params
         allowed_params = {'encoding_format', 'user', 'dimensions'}
-        clean_kwargs = {
-            k: v for k, v in kwargs.items()
-            if k in allowed_params and v is not None
-        }
+        clean_kwargs = {k: v for k, v in kwargs.items() if k in allowed_params and v is not None}
 
-        actual_model = model.split("/", 1)[-1] if "/" in model else model
+        actual_model = self._extract_model(model)
         base_url = api_base or f"{self.gateway_url}/v1"
-
-        import httpx
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
 
         payload = {
             "model": actual_model,
@@ -356,7 +424,7 @@ class GatewayProvider(CustomLLM):
             response = await client.post(
                 f"{base_url}/embeddings",
                 json=payload,
-                headers=headers
+                headers=self._get_headers()
             )
             response.raise_for_status()
             return ModelResponse(**response.json())

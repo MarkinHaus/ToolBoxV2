@@ -14,7 +14,7 @@ import json
 import re
 from unittest.mock import Mock, AsyncMock, patch
 
-from toolboxv2.tests.a_util import async_test
+from toolboxv2.tests.a_util import async_test, IsolatedTestCase
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -22,7 +22,7 @@ from toolboxv2.mcp_server.models import MCPConfig, ServerMode, FlowState
 from toolboxv2.mcp_server.server import ToolBoxV2MCPServer
 
 
-class TestE2EServerLifecycle(unittest.TestCase):
+class TestE2EServerLifecycle(IsolatedTestCase):
     """E2E tests for server lifecycle."""
 
     def test_server_creation_and_configuration(self):
@@ -87,7 +87,7 @@ class TestE2EServerLifecycle(unittest.TestCase):
             self.assertIn("mimeType", resource)
 
 
-class TestE2EAPIKeyWorkflow(unittest.TestCase):
+class TestE2EAPIKeyWorkflow(IsolatedTestCase):
     """E2E tests for API key management workflow."""
 
     def setUp(self):
@@ -179,7 +179,7 @@ def data_processing(data: str) -> str:
     return f"Processed: {data}"
 
 
-class TestE2EPythonExecution(unittest.TestCase):
+class TestE2EPythonExecution(IsolatedTestCase):
     """E2E tests for Python code execution."""
 
     def setUp(self):
@@ -277,7 +277,7 @@ print(f"Sum: {total}, Average: {average}")
         self.assertIn("True", result[0].content)
 
 
-class TestE2ESystemInfo(unittest.TestCase):
+class TestE2ESystemInfo(IsolatedTestCase):
     """E2E tests for system information tools."""
 
     def setUp(self):
@@ -341,7 +341,7 @@ class TestE2ESystemInfo(unittest.TestCase):
         self.assertIn("Persistent", result[0].content)
 
 
-class TestE2ECaching(unittest.TestCase):
+class TestE2ECaching(IsolatedTestCase):
     """E2E tests for caching behavior."""
 
     def setUp(self):
@@ -399,7 +399,7 @@ class TestE2ECaching(unittest.TestCase):
         self.assertEqual(self.server._app.docs_reader.call_count, 2)
 
 
-class TestE2EPerformanceTracking(unittest.TestCase):
+class TestE2EPerformanceTracking(IsolatedTestCase):
     """E2E tests for performance tracking."""
 
     def setUp(self):
@@ -439,7 +439,7 @@ class TestE2EPerformanceTracking(unittest.TestCase):
         self.assertIn("errors", metrics)
 
 
-class TestE2EResourceReading(unittest.TestCase):
+class TestE2EResourceReading(IsolatedTestCase):
     """E2E tests for resource reading."""
 
     def setUp(self):
@@ -464,7 +464,7 @@ class TestE2EResourceReading(unittest.TestCase):
             self.assertGreater(len(content), 0)
 
 
-class TestE2ECompleteWorkflow(unittest.TestCase):
+class TestE2ECompleteWorkflow(IsolatedTestCase):
     """E2E tests for complete real-world workflows."""
 
     def setUp(self):

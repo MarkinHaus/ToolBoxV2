@@ -1154,26 +1154,29 @@ http {{
         self._populate_admin_ui(admin_root, manager_port=web_port)
 
         return f"""
-        # Admin UI (Basic Auth protected)
-        location /admin/ {{
-            {auth_basic}
-            root {admin_root};
-            try_files $uri $uri/ /admin/index.html;
-        }}
 
-        location /admin/db/ {{
+        location ^~ /admin/db/ {{
             {auth_basic}
             proxy_pass http://127.0.0.1:9000/;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
         }}
 
-        location /admin/manager/ {{
+        location ^~ /admin/manager/ {{
             {auth_basic}
             proxy_pass http://127.0.0.1:{web_port}/;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
-        }}"""
+        }}
+
+
+        # Admin UI (Basic Auth protected)
+        location /admin/ {{
+            {auth_basic}
+            root {admin_root};
+            try_files $uri $uri/ /admin/index.html;
+        }}
+"""
 
     def _populate_admin_ui(
         self,

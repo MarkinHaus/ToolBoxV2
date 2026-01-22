@@ -874,7 +874,7 @@ class FlowAgent:
     # TOOL MANAGEMENT
     # =========================================================================
 
-    async def add_tool(
+    def add_tool(
         self,
         tool_func: Callable,
         name: str | None = None,

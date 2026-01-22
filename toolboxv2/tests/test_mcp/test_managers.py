@@ -15,7 +15,7 @@ from pathlib import Path
 
 import sys
 
-from toolboxv2.tests.a_util import async_test
+from toolboxv2.tests.a_util import async_test, IsolatedTestCase
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -29,7 +29,7 @@ from toolboxv2.mcp_server.managers import (
 )
 
 
-class TestAPIKeyManager(unittest.TestCase):
+class TestAPIKeyManager(IsolatedTestCase):
     """Test APIKeyManager class."""
 
     def setUp(self):
@@ -167,7 +167,7 @@ class TestAPIKeyManager(unittest.TestCase):
         self.assertIsNotNone(info.last_used)
 
 
-class TestFlowSessionManager(unittest.TestCase):
+class TestFlowSessionManager(IsolatedTestCase):
     """Test FlowSessionManager class."""
 
     def setUp(self):
@@ -309,7 +309,7 @@ class TestFlowSessionManager(unittest.TestCase):
         self.assertIn("flow_b", flow_names)
 
 
-class TestCacheManager(unittest.TestCase):
+class TestCacheManager(IsolatedTestCase):
     """Test CacheManager class."""
 
     def setUp(self):
@@ -414,7 +414,7 @@ class TestCacheManager(unittest.TestCase):
         self.assertAlmostEqual(stats["hit_rate"], 2 / 3, places=2)
 
 
-class TestPythonContextManager(unittest.TestCase):
+class TestPythonContextManager(IsolatedTestCase):
     """Test PythonContextManager class."""
 
     def setUp(self):
@@ -486,7 +486,7 @@ class TestPythonContextManager(unittest.TestCase):
         self.assertEqual(self.ctx_mgr.execution_count, 2)
 
 
-class TestPerformanceTracker(unittest.TestCase):
+class TestPerformanceTracker(IsolatedTestCase):
     """Test PerformanceTracker class."""
 
     def setUp(self):

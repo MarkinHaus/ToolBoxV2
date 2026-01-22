@@ -585,3 +585,384 @@ API endpoints are accessible using the following URL patterns:
 
 - Regular API: `/api/MOD_NAME/{function_name}?param1=value1&param2=value2`
 - Server-Sent Events (streaming): `/sse/MOD_NAME/{function_name}?param1=value1&param2=value2`
+
+
+"""
+FileHandlerV2 Integration Example
+==================================
+
+This file shows how to integrate FileHandlerV2 into ToolBoxV2 modules.
+
+Directory structure:
+    toolboxv2/
+    ├── utils/
+    │   └── system/
+    │       └── file_handler_v2.py  <-- Put file_handler_v2.py here
+    └── mods/
+        └── YourMod/
+            └── __init__.py         <-- Your module using FileHandlerV2
+"""
+
+# =============================================================================
+# Example 1: Basic Module Usage
+# =============================================================================
+
+"""
+# In your module (__init__.py):
+
+from toolboxv2 import get_app
+from toolboxv2.utils.system.file_handler_v2 import (
+    FileHandlerV2,
+    StorageScope,
+    create_config_handler,
+    create_data_handler,
+    set_current_context,
+)
+
+app = get_app("MyModule")
+Name = "MyModule"
+version = "1.0.0"
+export = app.tb
+
+
+# Configuration handler (always local, encrypted)
+config = create_config_handler(Name)
+config.load()
+
+
+@export(mod_name=Name, api=True, version=version)
+def get_setting(key: str, default=None):
+    '''Get a configuration setting.'''
+    return config.get(key, default)
+
+
+@export(mod_name=Name, api=True, version=version)
+def set_setting(key: str, value):
+    '''Set a configuration setting.'''
+    config.set(key, value)
+    config.save()
+    return {"status": "ok"}
+"""
+
+
+# =============================================================================
+# Example 2: User-Scoped Data with Request Context
+# =============================================================================
+
+"""
+# In your module:
+
+from toolboxv2 import App, get_app, RequestData
+from toolboxv2.utils.system.file_handler_v2 import (
+    FileHandlerV2,
+    StorageScope,
+    set_current_context,
+)
+
+app = get_app("UserDataModule")
+Name = "UserDataModule"
+version = "1.0.0"
+export = app.tb
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
+async def save_user_preferences(
+    app: App,
+    request: RequestData,
+    preferences: dict
+):
+    '''Save user preferences (private, encrypted, synced to cloud).'''
+
+    # Set context from request (enables user-scoped storage)
+    set_current_context(request)
+
+    # Create handler with USER_PRIVATE scope
+    fh = FileHandlerV2(
+        "private.data",  # Filename triggers USER_PRIVATE scope
+        name=Name,
+        request=request,  # Alternative: pass request directly
+    )
+
+    async with fh:  # Auto-loads and saves
+        fh.update(preferences)
+
+    return {"status": "saved", "scope": "user_private"}
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
+async def get_user_preferences(app: App, request: RequestData):
+    '''Get user preferences.'''
+
+    fh = FileHandlerV2("private.data", name=Name, request=request)
+    await fh.aload()
+
+    return {"preferences": fh.to_dict()}
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
+async def share_profile(app: App, request: RequestData, profile: dict):
+    '''Save profile that others can read (but only owner can write).'''
+
+    fh = FileHandlerV2(
+        "public.data",  # USER_PUBLIC scope
+        name=Name,
+        request=request,
+    )
+
+    await fh.aload()
+    fh.update(profile)
+    await fh.asave()
+
+    return {"status": "shared", "scope": "user_public"}
+"""
+
+
+# =============================================================================
+# Example 3: Server-Wide Shared Data
+# =============================================================================
+
+"""
+# In your module:
+
+from toolboxv2 import get_app
+from toolboxv2.utils.system.file_handler_v2 import FileHandlerV2, StorageScope
+
+app = get_app("GlobalModule")
+Name = "GlobalModule"
+version = "1.0.0"
+export = app.tb
+
+
+@export(mod_name=Name, api=True, version=version)
+def get_announcements():
+    '''Get server-wide announcements (anyone can read).'''
+
+    fh = FileHandlerV2(
+        "global.data",  # PUBLIC_READ scope (detected from filename)
+        name=Name,
+    )
+    fh.load()
+
+    return fh.get("announcements", [])
+
+
+@export(mod_name=Name, api=True, version=version, level=10)  # Admin only
+def set_announcement(title: str, message: str):
+    '''Set announcement (admin only).'''
+
+    fh = FileHandlerV2("global.data", name=Name)
+    fh.load()
+
+    announcements = fh.get("announcements", [])
+    announcements.append({
+        "title": title,
+        "message": message,
+        "timestamp": time.time(),
+    })
+
+    fh.set("announcements", announcements)
+    fh.save()
+
+    return {"status": "announced"}
+"""
+
+
+# =============================================================================
+# Example 4: Explicit Backend Selection
+# =============================================================================
+
+"""
+# Force local storage (never cloud):
+
+fh = FileHandlerV2(
+    "cache.data",
+    name=Name,
+    backend="local",  # Always local, regardless of manifest
+)
+
+# Force cloud storage (if available):
+
+fh = FileHandlerV2(
+    "important.data",
+    name=Name,
+    backend="cloud",  # Always use UserDataAPI
+    scope="user_private",  # Explicit scope
+)
+
+# Auto-detect from manifest (default):
+
+fh = FileHandlerV2(
+    "auto.data",
+    name=Name,
+    backend="auto",  # Reads database.mode from tb-manifest.yaml
+)
+# LC mode → local storage
+# CB mode → UserDataAPI (cloud)
+"""
+
+
+# =============================================================================
+# Example 5: Context Manager Patterns
+# =============================================================================
+
+"""
+# Sync context manager (loads on enter, saves on exit):
+
+with FileHandlerV2("settings.config", name=Name) as fh:
+    fh["theme"] = "dark"
+    fh["language"] = "de"
+# Auto-saved here
+
+# Async context manager:
+
+async with FileHandlerV2("async.data", name=Name, request=request) as fh:
+    await fh.aset("key", "value")
+# Auto-saved here
+
+# Error handling (no save on error):
+
+try:
+    with FileHandlerV2("risky.data", name=Name) as fh:
+        fh["step1"] = "done"
+        raise ValueError("Oops!")
+        fh["step2"] = "done"
+except ValueError:
+    pass
+# Data NOT saved because of error
+"""
+
+
+# =============================================================================
+# Example 6: App Integration (set_ctx function)
+# =============================================================================
+
+"""
+# In toolboxv2/utils/system/types.py, add to App class:
+
+class App:
+    # ... existing code ...
+
+    _current_file_handler_context = None
+
+    @staticmethod
+    def set_ctx(ctx):
+        '''
+        Set the current user context for FileHandler operations.
+
+        Can be called with:
+        - RequestData object
+        - Session object
+        - UserContext object
+        - None (clears context)
+        '''
+        from toolboxv2.utils.system.file_handler_v2 import set_current_context
+        set_current_context(ctx)
+
+    @staticmethod
+    def get_ctx():
+        '''Get the current user context.'''
+        from toolboxv2.utils.system.file_handler_v2 import get_current_context
+        return get_current_context()
+
+
+# Usage in modules:
+
+@export(mod_name=Name, api=True, request_as_kwarg=True)
+async def my_api_function(app: App, request: RequestData):
+    # Set context at start of request
+    App.set_ctx(request)
+
+    # Now all FileHandlerV2 instances use this context
+    fh = FileHandlerV2("user.data", name=Name)
+    # ... operations ...
+
+    # Context is automatically associated with the current user
+"""
+
+
+# =============================================================================
+# Example 7: Migration from Old FileHandler
+# =============================================================================
+
+"""
+# Old code:
+from toolboxv2.utils.system.file_handler import FileHandler
+
+fh = FileHandler("mymod.config", name="MyMod")
+fh.load_file_handler()
+value = fh.get_file_handler("key")
+fh.add_to_save_file_handler("key", "value")
+fh.save_file_handler()
+
+# New code (drop-in replacement):
+from toolboxv2.utils.system.file_handler_v2 import FileHandler  # Same name!
+
+fh = FileHandler("mymod.config", name="MyMod")  # Identical
+fh.load_file_handler()                          # Identical
+value = fh.get_file_handler("key")              # Identical
+fh.add_to_save_file_handler("key", "value")     # Identical
+fh.save_file_handler()                          # Identical
+
+# But now you can also use the new API:
+fh.load()                    # Shorter
+value = fh.get("key")        # Shorter
+fh["key"] = "value"          # Dict-like
+fh.save()                    # Shorter
+
+# And async:
+await fh.aload()
+value = await fh.aget("key")
+await fh.asave()
+"""
+
+
+# =============================================================================
+# Scope Reference
+# =============================================================================
+
+"""
+STORAGE SCOPES:
+===============
+
+| Scope          | Filename Pattern | Encryption | Who Can Read | Who Can Write |
+|----------------|------------------|------------|--------------|---------------|
+| CONFIG         | *.config         | Yes        | Local only   | Local only    |
+| USER_PRIVATE   | private.*        | Yes        | User only    | User only     |
+| USER_PUBLIC    | public.*         | No         | Everyone     | User only     |
+| PUBLIC_READ    | global.*         | No         | Everyone     | Admin only    |
+| PUBLIC_RW      | shared.*         | No         | Everyone     | Everyone      |
+| SERVER_SCOPE   | server.*         | No         | Server       | Server        |
+| MOD_DATA       | *.data (default) | No         | Mod scope    | Mod scope     |
+
+
+BACKEND SELECTION:
+==================
+
+backend="auto" (default):
+  - Reads database.mode from tb-manifest.yaml
+  - LC (LOCAL_DICT) → Local storage
+  - CB (CLUSTER_BLOB) → UserDataAPI (cloud)
+  - .config files → Always local
+
+backend="local":
+  - Always uses local JSON files
+  - Good for caches, temporary data
+
+backend="cloud":
+  - Always uses UserDataAPI
+  - Requires MinIO or Redis configured
+  - Falls back to local if unavailable
+"""
+
+
+if __name__ == "__main__":
+    print("FileHandlerV2 Integration Examples")
+    print("=" * 50)
+    print("\nSee the docstrings in this file for usage examples.")
+    print("\nKey features:")
+    print("  • Backward compatible with FileHandler")
+    print("  • Automatic scope detection from filename")
+    print("  • Both sync and async APIs")
+    print("  • Context manager support")
+    print("  • Dict-like access")
+    print("  • UserDataAPI integration for cloud storage")

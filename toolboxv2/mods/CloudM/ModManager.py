@@ -15,6 +15,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import yaml
 from packaging import version as pv
 from packaging.version import Version
 from tqdm import tqdm
@@ -1296,6 +1297,452 @@ async def build_all_mods(app: Optional[App], base: str = "mods",
     })
 
 
+# =================== Registry Integration ===================
+from toolboxv2.utils.extras.registry_client import (
+    RegistryClient,
+    LockFileManager,
+    RegistryError,
+    RegistryConnectionError,
+    RegistryAuthError,
+    PackageNotFoundError,
+    VersionNotFoundError,
+    PublishPermissionError,
+    DownloadError,
+)
+
+
+# Global registry client instance
+_registry_client: Optional["RegistryClient"] = None
+
+
+def get_registry_client(app: App) -> RegistryClient:
+    """Get or create the registry client."""
+    global _registry_client
+    if _registry_client is None:
+        # Get registry URL from config or use default
+        registry_url = getattr(app, "registry_url", "https://registry.simplecore.app")
+        cache_dir = Path(app.start_dir) / ".tb-registry" / "cache"
+        _registry_client = RegistryClient(
+            registry_url=registry_url,
+            cache_dir=cache_dir,
+        )
+    return _registry_client
+
+
+def get_lock_manager(app: App) -> LockFileManager:
+    """Get lock file manager for the app."""
+    lock_path = Path(app.start_dir) / "mods.lock.yaml"
+    return LockFileManager(lock_path)
+
+
+@export(mod_name=Name, name="registry_search", api=True, api_methods=["GET"])
+async def search_registry(
+    app: App,
+    query: str,
+    visibility: Optional[str] = None,
+    publisher: Optional[str] = None,
+) -> Result:
+    """
+    Search packages in the registry.
+
+    Args:
+        app: Application instance
+        query: Search query string
+        visibility: Filter by visibility (public/private)
+        publisher: Filter by publisher
+
+    Returns:
+        Result with list of matching packages
+    """
+    if app is None:
+        app = get_app(f"{Name}.registry_search")
+
+    try:
+        client = get_registry_client(app)
+        filters = {}
+        if visibility:
+            filters["visibility"] = visibility
+        if publisher:
+            filters["publisher"] = publisher
+
+        packages = await client.search(query, filters)
+
+        return Result.ok({
+            "packages": [
+                {
+                    "name": p.name,
+                    "description": p.description,
+                    "latest_version": p.latest_version,
+                    "visibility": p.visibility,
+                    "downloads": p.downloads,
+                    "publisher": p.publisher,
+                }
+                for p in packages
+            ],
+            "count": len(packages),
+        })
+
+    except RegistryConnectionError as e:
+        return Result.default_internal_error(f"Registry connection failed: {e}")
+    except Exception as e:
+        return Result.default_internal_error(f"Search failed: {e}")
+
+
+@export(mod_name=Name, name="registry_install", test=False)
+async def install_from_registry(
+    app: App,
+    package_name: str,
+    version: Optional[str] = None,
+    no_deps: bool = False,
+) -> Result:
+    """
+    Install a package from the registry.
+
+    Args:
+        app: Application instance
+        package_name: Name of package to install
+        version: Specific version (default: latest)
+        no_deps: Skip dependency installation
+
+    Returns:
+        Result with installation status
+    """
+    if app is None:
+        app = get_app(f"{Name}.registry_install")
+
+    try:
+        client = get_registry_client(app)
+        lock_manager = get_lock_manager(app)
+
+        # Get version to install
+        if not version:
+            version = await client.get_latest_version(package_name)
+            if not version:
+                return Result.default_user_error(f"Package '{package_name}' not found")
+
+        # Check if already installed
+        installed_version = lock_manager.get_installed_version(package_name)
+        if installed_version == version:
+            return Result.ok({
+                "message": f"Package '{package_name}@{version}' is already installed",
+                "status": "already_installed",
+            })
+
+        # Download directory
+        download_dir = Path(app.start_dir) / "mods_sto" / "registry"
+        download_dir.mkdir(parents=True, exist_ok=True)
+
+        # Download with or without dependencies
+        if no_deps:
+            downloaded = [await client.download(package_name, version, download_dir)]
+        else:
+            downloaded = await client.download_with_dependencies(
+                package_name, version, download_dir
+            )
+
+        # Install each downloaded package
+        installed = []
+        for zip_path in downloaded:
+            # Extract module name from zip
+            module_name = zip_path.stem.split("-")[0]
+
+            with Spinner(f"Installing {module_name}"):
+                result = unpack_and_move_module(
+                    str(zip_path),
+                    f"{app.start_dir}/mods",
+                    module_name,
+                )
+
+            if result:
+                # Get version detail for checksum
+                version_detail = await client.get_version(module_name, version)
+                checksum = version_detail.checksum_sha256 if version_detail else ""
+
+                # Update lock file
+                lock_manager.add_package(
+                    name=module_name,
+                    version=version,
+                    checksum=checksum,
+                    source=f"{client.registry_url}/packages/{module_name}",
+                    dependencies=[],
+                )
+                installed.append(module_name)
+
+        lock_manager.save()
+
+        # Rebuild state
+        with Spinner("Rebuilding application state"):
+            get_state_from_app(app)
+
+        return Result.ok({
+            "message": f"Successfully installed {len(installed)} package(s)",
+            "installed": installed,
+            "version": version,
+        })
+
+    except PackageNotFoundError as e:
+        return Result.default_user_error(str(e))
+    except VersionNotFoundError as e:
+        return Result.default_user_error(str(e))
+    except DownloadError as e:
+        return Result.default_internal_error(f"Download failed: {e}")
+    except RegistryConnectionError as e:
+        return Result.default_internal_error(f"Registry connection failed: {e}")
+    except Exception as e:
+        return Result.default_internal_error(f"Installation failed: {e}")
+
+
+@export(mod_name=Name, name="registry_publish", test=False)
+async def publish_to_registry(
+    app: App,
+    module_name: str,
+    clerk_token: Optional[str] = None,
+) -> Result:
+    """
+    Publish a module to the registry.
+
+    Args:
+        app: Application instance
+        module_name: Name of module to publish
+        clerk_token: Clerk authentication token
+
+    Returns:
+        Result with publish status
+    """
+    if app is None:
+        app = get_app(f"{Name}.registry_publish")
+
+    if module_name not in app.get_all_mods():
+        return Result.default_user_error(f"Module '{module_name}' not found")
+
+    try:
+        client = get_registry_client(app)
+
+        # Login if token provided
+        if clerk_token:
+            if not await client.login(clerk_token):
+                return Result.default_user_error("Authentication failed")
+        elif not await client.is_authenticated():
+            return Result.default_user_error("Authentication required. Provide clerk_token.")
+
+        # Get module info
+        mod = app.get_mod(module_name)
+        mod_version = getattr(mod, "version", version)
+        mod_path = Path(app.start_dir) / "mods" / module_name
+
+        # Check for tbConfig.yaml
+        config_path = mod_path / "tbConfig.yaml"
+        if not config_path.exists():
+            return Result.default_user_error(
+                f"No tbConfig.yaml found. Run 'tb mods gen-config {module_name}' first."
+            )
+
+        # Load config
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+
+        # Prepare metadata
+        metadata = {
+            "name": module_name,
+            "version": mod_version,
+            "description": config.get("description", ""),
+            "author": config.get("author", ""),
+            "license": config.get("license", "MIT"),
+            "homepage": config.get("homepage", ""),
+            "keywords": config.get("metadata", {}).get("keywords", []),
+        }
+
+        # Publish
+        with Spinner(f"Publishing {module_name}@{mod_version}"):
+            success = await client.publish(mod_path, metadata)
+
+        if success:
+            return Result.ok({
+                "message": f"Successfully published {module_name}@{mod_version}",
+                "package": module_name,
+                "version": mod_version,
+            })
+        else:
+            return Result.default_internal_error("Publish failed")
+
+    except PublishPermissionError as e:
+        return Result.default_user_error(str(e))
+    except RegistryAuthError as e:
+        return Result.default_user_error(str(e))
+    except RegistryConnectionError as e:
+        return Result.default_internal_error(f"Registry connection failed: {e}")
+    except Exception as e:
+        return Result.default_internal_error(f"Publish failed: {e}")
+
+
+@export(mod_name=Name, name="registry_update", test=False)
+async def update_from_registry(
+    app: App,
+    package_name: Optional[str] = None,
+) -> Result:
+    """
+    Update package(s) from the registry.
+
+    Args:
+        app: Application instance
+        package_name: Specific package to update (None = all)
+
+    Returns:
+        Result with update status
+    """
+    if app is None:
+        app = get_app(f"{Name}.registry_update")
+
+    try:
+        client = get_registry_client(app)
+        lock_manager = get_lock_manager(app)
+
+        # Get packages to check
+        if package_name:
+            packages_to_check = {package_name: lock_manager.get_installed_version(package_name)}
+            if not packages_to_check[package_name]:
+                return Result.default_user_error(f"Package '{package_name}' is not installed")
+        else:
+            packages_to_check = lock_manager.get_all_installed()
+
+        updates_available = []
+        updated = []
+        failed = []
+
+        for name, current_version in packages_to_check.items():
+            try:
+                latest = await client.get_latest_version(name)
+                if latest and pv.parse(latest) > pv.parse(current_version):
+                    updates_available.append({
+                        "name": name,
+                        "current": current_version,
+                        "latest": latest,
+                    })
+            except Exception as e:
+                app.print(f"⚠ Failed to check {name}: {e}")
+
+        if not updates_available:
+            return Result.ok({
+                "message": "All packages are up to date",
+                "checked": len(packages_to_check),
+            })
+
+        # Perform updates
+        for update in updates_available:
+            try:
+                result = await install_from_registry(
+                    app,
+                    update["name"],
+                    update["latest"],
+                    no_deps=True,
+                )
+                if result.is_ok():
+                    updated.append(update)
+                else:
+                    failed.append({"name": update["name"], "error": str(result)})
+            except Exception as e:
+                failed.append({"name": update["name"], "error": str(e)})
+
+        return Result.ok({
+            "message": f"Updated {len(updated)} package(s)",
+            "updated": updated,
+            "failed": failed,
+        })
+
+    except RegistryConnectionError as e:
+        return Result.default_internal_error(f"Registry connection failed: {e}")
+    except Exception as e:
+        return Result.default_internal_error(f"Update failed: {e}")
+
+
+@export(mod_name=Name, name="registry_info", api=True, api_methods=["GET"])
+async def get_registry_info(
+    app: App,
+    package_name: str,
+) -> Result:
+    """
+    Get detailed information about a package from the registry.
+
+    Args:
+        app: Application instance
+        package_name: Package name
+
+    Returns:
+        Result with package details
+    """
+    if app is None:
+        app = get_app(f"{Name}.registry_info")
+
+    try:
+        client = get_registry_client(app)
+        package = await client.get_package(package_name)
+
+        if not package:
+            return Result.default_user_error(f"Package '{package_name}' not found")
+
+        return Result.ok({
+            "name": package.name,
+            "description": package.description,
+            "latest_version": package.latest_version,
+            "visibility": package.visibility,
+            "downloads": package.downloads,
+            "publisher": package.publisher,
+            "homepage": package.homepage,
+            "repository": package.repository,
+            "license": package.license,
+            "keywords": package.keywords,
+            "versions": [
+                {
+                    "version": v.version,
+                    "published_at": v.published_at,
+                    "yanked": v.yanked,
+                    "downloads": v.downloads,
+                }
+                for v in package.versions
+            ],
+        })
+
+    except RegistryConnectionError as e:
+        return Result.default_internal_error(f"Registry connection failed: {e}")
+    except Exception as e:
+        return Result.default_internal_error(f"Failed to get package info: {e}")
+
+
+@export(mod_name=Name, name="registry_list_installed", api=True, api_methods=["GET"])
+async def list_installed_packages(app: App) -> Result:
+    """
+    List all installed packages from the registry.
+
+    Args:
+        app: Application instance
+
+    Returns:
+        Result with list of installed packages
+    """
+    if app is None:
+        app = get_app(f"{Name}.registry_list_installed")
+
+    lock_manager = get_lock_manager(app)
+    installed = lock_manager.get_all_installed()
+    pending = lock_manager.get_pending_updates()
+
+    packages = []
+    for name, ver in installed.items():
+        pkg_info = lock_manager.get_package_info(name)
+        packages.append({
+            "name": name,
+            "version": ver,
+            "pending_update": pending.get(name),
+            "installed_at": pkg_info.get("installed_at") if pkg_info else None,
+        })
+
+    return Result.ok({
+        "packages": packages,
+        "count": len(packages),
+        "pending_updates": len(pending),
+    })
+
+
 # =================== Interactive CLI Manager ===================
 import asyncio
 from typing import Optional, List, Dict, Any, Callable
@@ -1631,9 +2078,24 @@ class ModernMenuManager:
             ]
         )
 
+        # =================== REGISTRY ===================
+        registry_ops = MenuCategory(
+            name="REGISTRY",
+            icon="🌍",
+            items=[
+                MenuItem("17", "Search registry", self._registry_search, icon="🔍"),
+                MenuItem("18", "Install from registry", self._registry_install, icon="📥"),
+                MenuItem("19", "Publish to registry", self._registry_publish, icon="📤"),
+                MenuItem("20", "Check for updates", self._registry_update, icon="🔄"),
+                MenuItem("21", "List installed packages", self._registry_list, icon="📋"),
+                MenuItem("22", "Package info", self._registry_info, icon="ℹ️"),
+            ]
+        )
+
         self.add_category(module_ops)
         self.add_category(config_ops)
         self.add_category(platform_ops)
+        self.add_category(registry_ops)
 
     # =================== Action Handlers ===================
 
@@ -2122,6 +2584,250 @@ class ModernMenuManager:
             lines.append("└" + "─" * 60)
 
         await show_message("📚 Available Templates", '\n'.join(lines), "info")
+
+    # =================== Registry Handlers ===================
+
+    async def _registry_search(self):
+        """Search packages in the registry."""
+        query = await show_input("Registry Search", "Enter search query:")
+
+        if not query:
+            return
+
+        await show_progress("Searching", f"Searching registry for '{query}'...")
+
+        result = await search_registry(self.app_instance, query)
+
+        if result.is_error:
+            await show_message("Search Failed", f"Error: {result}", "error")
+            return
+
+        data = result.get()
+        packages = data.get("packages", [])
+
+        if not packages:
+            await show_message("No Results", f"No packages found for '{query}'", "info")
+            return
+
+        lines = [f"\n{'Name':<25} {'Version':<12} {'Downloads':<10} {'Publisher':<20}"]
+        lines.append('─' * 70)
+
+        for pkg in packages:
+            lines.append(
+                f"{pkg['name']:<25} {pkg['latest_version']:<12} "
+                f"{pkg['downloads']:<10} {pkg['publisher']:<20}"
+            )
+
+        lines.append('─' * 70)
+        lines.append(f"\nFound: {len(packages)} packages")
+
+        await show_message(f"🔍 Search Results for '{query}'", '\n'.join(lines), "info")
+
+    async def _registry_install(self):
+        """Install a package from the registry."""
+        package_name = await show_input("Registry Install", "Enter package name:")
+
+        if not package_name:
+            return
+
+        version = await show_input("Version", "Enter version (leave empty for latest):")
+
+        no_deps = not await show_confirm("Dependencies", "Install dependencies?")
+
+        await show_progress("Installing", f"Installing '{package_name}' from registry...")
+
+        result = await install_from_registry(
+            self.app_instance,
+            package_name,
+            version if version else None,
+            no_deps
+        )
+
+        if result.is_error:
+            await show_message("Installation Failed", f"Error: {result}", "error")
+        else:
+            data = result.get()
+            await show_message(
+                "Success",
+                f"{data.get('message', 'Installation complete')}\n\n"
+                f"Installed: {', '.join(data.get('installed', []))}",
+                "success"
+            )
+
+    async def _registry_publish(self):
+        """Publish a module to the registry."""
+        # Get module list
+        mods = self.app_instance.get_all_mods()
+
+        if not mods:
+            await show_message("No Modules", "No modules found.", "warning")
+            return
+
+        # Build choices
+        choices = [(mod, mod) for mod in mods]
+
+        module_name = await show_choice(
+            "Select Module",
+            "Choose module to publish:",
+            choices
+        )
+
+        if not module_name:
+            return
+
+        # Check for config
+        config_path = Path('./mods') / module_name / 'tbConfig.yaml'
+        if not config_path.exists():
+            await show_message(
+                "Config Required",
+                f"No tbConfig.yaml found for '{module_name}'.\n\n"
+                "Please generate a config first using 'Generate config for module'.",
+                "warning"
+            )
+            return
+
+        if not await show_confirm(
+            "Confirm Publish",
+            f"Publish '{module_name}' to the registry?\n\n"
+            "This will make the module publicly available."
+        ):
+            return
+
+        await show_progress("Publishing", f"Publishing '{module_name}' to registry...")
+
+        result = await publish_to_registry(self.app_instance, module_name)
+
+        if result.is_error:
+            await show_message("Publish Failed", f"Error: {result}", "error")
+        else:
+            data = result.get()
+            await show_message(
+                "Success",
+                f"{data.get('message', 'Published successfully')}\n\n"
+                f"Package: {data.get('package')}\n"
+                f"Version: {data.get('version')}",
+                "success"
+            )
+
+    async def _registry_update(self):
+        """Check for and apply updates from the registry."""
+        lock_manager = get_lock_manager(self.app_instance)
+        installed = lock_manager.get_all_installed()
+
+        if not installed:
+            await show_message("No Packages", "No registry packages installed.", "info")
+            return
+
+        # Ask for specific package or all
+        choices = [("all", "🔄 Update all packages")]
+        for name, ver in installed.items():
+            choices.append((name, f"  {name} ({ver})"))
+
+        selection = await show_choice(
+            "Update Packages",
+            "Select package to update:",
+            choices
+        )
+
+        if not selection:
+            return
+
+        package_name = None if selection == "all" else selection
+
+        await show_progress("Checking", "Checking for updates...")
+
+        result = await update_from_registry(self.app_instance, package_name)
+
+        if result.is_error:
+            await show_message("Update Failed", f"Error: {result}", "error")
+        else:
+            data = result.get()
+            updated = data.get("updated", [])
+            failed = data.get("failed", [])
+
+            msg = data.get("message", "Update check complete")
+            if updated:
+                msg += f"\n\nUpdated:\n"
+                for u in updated:
+                    msg += f"  • {u['name']}: {u['current']} → {u['latest']}\n"
+            if failed:
+                msg += f"\nFailed:\n"
+                for f in failed:
+                    msg += f"  • {f['name']}: {f['error']}\n"
+
+            await show_message("Update Complete", msg, "success" if not failed else "warning")
+
+    async def _registry_list(self):
+        """List installed registry packages."""
+        result = await list_installed_packages(self.app_instance)
+
+        if result.is_error:
+            await show_message("Error", f"Failed to list packages: {result}", "error")
+            return
+
+        data = result.get()
+        packages = data.get("packages", [])
+
+        if not packages:
+            await show_message("No Packages", "No registry packages installed.", "info")
+            return
+
+        lines = [f"\n{'Name':<30} {'Version':<15} {'Pending Update':<15}"]
+        lines.append('─' * 65)
+
+        for pkg in packages:
+            pending = pkg.get('pending_update', '')
+            pending_str = f"→ {pending}" if pending else "-"
+            lines.append(f"{pkg['name']:<30} {pkg['version']:<15} {pending_str:<15}")
+
+        lines.append('─' * 65)
+        lines.append(f"\nTotal: {len(packages)} packages")
+        if data.get("pending_updates", 0) > 0:
+            lines.append(f"Pending updates: {data['pending_updates']}")
+
+        await show_message("📋 Installed Registry Packages", '\n'.join(lines), "info")
+
+    async def _registry_info(self):
+        """Get detailed info about a registry package."""
+        package_name = await show_input("Package Info", "Enter package name:")
+
+        if not package_name:
+            return
+
+        await show_progress("Loading", f"Getting info for '{package_name}'...")
+
+        result = await get_registry_info(self.app_instance, package_name)
+
+        if result.is_error:
+            await show_message("Error", f"Failed to get info: {result}", "error")
+            return
+
+        data = result.get()
+
+        lines = [
+            f"\n┌─ {data['name']}",
+            f"│  Description: {data.get('description', 'N/A')}",
+            f"│  Latest Version: {data.get('latest_version', 'N/A')}",
+            f"│  Publisher: {data.get('publisher', 'N/A')}",
+            f"│  License: {data.get('license', 'N/A')}",
+            f"│  Downloads: {data.get('downloads', 0)}",
+            f"│  Homepage: {data.get('homepage', 'N/A')}",
+            f"│  Repository: {data.get('repository', 'N/A')}",
+            f"│  Keywords: {', '.join(data.get('keywords', [])) or 'None'}",
+            "├" + "─" * 60,
+            "│  Versions:",
+        ]
+
+        for v in data.get("versions", [])[:5]:  # Show last 5 versions
+            yanked = " (yanked)" if v.get("yanked") else ""
+            lines.append(f"│    • {v['version']}{yanked} - {v.get('published_at', 'N/A')}")
+
+        if len(data.get("versions", [])) > 5:
+            lines.append(f"│    ... and {len(data['versions']) - 5} more")
+
+        lines.append("└" + "─" * 60)
+
+        await show_message(f"ℹ️ Package: {package_name}", '\n'.join(lines), "info")
 
 
 # =================== Main Export ===================

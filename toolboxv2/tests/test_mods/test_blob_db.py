@@ -12,14 +12,17 @@ from unittest.mock import MagicMock, patch, PropertyMock
 import json
 import time
 
+from toolboxv2.tests.a_util import IsolatedTestCase
 
-class TestBlobDBOfflineFallback(unittest.TestCase):
+
+class TestBlobDBOfflineFallback(IsolatedTestCase):
     """
     Tests for BlobDB automatic offline fallback when MinIO is not available.
     """
 
     def setUp(self):
         """Set up test environment."""
+        super().setUp()  # Important: Reset singletons first
         self.test_dir = tempfile.mkdtemp()
         self.original_env = os.environ.copy()
 
@@ -33,6 +36,7 @@ class TestBlobDBOfflineFallback(unittest.TestCase):
         shutil.rmtree(self.test_dir, ignore_errors=True)
         os.environ.clear()
         os.environ.update(self.original_env)
+        super().tearDown()  # Important: Reset singletons after
 
     def test_initialize_offline_mode(self):
         """Test BlobDB initializes in offline mode when IS_OFFLINE_DB=true."""
@@ -40,6 +44,7 @@ class TestBlobDBOfflineFallback(unittest.TestCase):
 
         Config.reload()
         db = BlobDB()
+
         result = db.initialize(db_path="test_db")
 
         self.assertFalse(result.is_error())
@@ -362,15 +367,17 @@ class TestBlobDBOfflineFallback(unittest.TestCase):
 
         db.exit()
 
-class TestConfigReload(unittest.TestCase):
+class TestConfigReload(IsolatedTestCase):
     """Tests for Config class environment variable handling."""
 
     def setUp(self):
+        super().setUp()
         self.original_env = os.environ.copy()
 
     def tearDown(self):
         os.environ.clear()
         os.environ.update(self.original_env)
+        super().tearDown()
 
     def test_config_defaults(self):
         """Test Config uses defaults when env vars not set."""
@@ -434,15 +441,17 @@ class TestConfigReload(unittest.TestCase):
         self.assertTrue(Config.has_cloud_minio())
 
 
-class TestSQLiteCache(unittest.TestCase):
+class TestSQLiteCache(IsolatedTestCase):
     """Tests for SQLiteCache offline storage."""
 
     def setUp(self):
+        super().setUp()
         self.test_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.test_dir, "test.db")
 
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
+        super().tearDown()
 
     def test_sqlite_put_get(self):
         """Test SQLite put and get operations."""

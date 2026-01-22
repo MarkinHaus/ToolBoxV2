@@ -10,7 +10,7 @@ import sys
 import os
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 
-from toolboxv2.tests.a_util import async_test
+from toolboxv2.tests.a_util import async_test, IsolatedTestCase
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -18,7 +18,7 @@ from toolboxv2.mcp_server.models import MCPConfig, ServerMode, FlowState, ToolRe
 from toolboxv2.mcp_server.server import ToolBoxV2MCPServer
 
 
-class TestToolBoxV2MCPServerInit(unittest.TestCase):
+class TestToolBoxV2MCPServerInit(IsolatedTestCase):
     """Test server initialization."""
 
     def test_default_config(self):
@@ -60,7 +60,7 @@ class TestToolBoxV2MCPServerInit(unittest.TestCase):
         self.assertIsNotNone(server.system_worker)
 
 
-class TestToolDefinitions(unittest.TestCase):
+class TestToolDefinitions(IsolatedTestCase):
     """Test tool definitions."""
 
     def setUp(self):
@@ -138,7 +138,7 @@ class TestToolDefinitions(unittest.TestCase):
             self.assertIn("properties", tool["inputSchema"])
 
 
-class TestResourceDefinitions(unittest.TestCase):
+class TestResourceDefinitions(IsolatedTestCase):
     """Test resource definitions."""
 
     def setUp(self):
@@ -200,7 +200,7 @@ class TestResourceDefinitions(unittest.TestCase):
             await self.server.read_resource("unknown://resource")
 
 
-class TestToolExecution(unittest.TestCase):
+class TestToolExecution(IsolatedTestCase):
     """Test tool execution routing."""
 
     def setUp(self):
@@ -249,7 +249,7 @@ class TestToolExecution(unittest.TestCase):
         self.assertIn("ModuleA", results[0].content)
 
 
-class TestPerformanceTracking(unittest.TestCase):
+class TestPerformanceTracking(IsolatedTestCase):
     """Test performance tracking integration."""
 
     def setUp(self):
@@ -272,7 +272,7 @@ class TestPerformanceTracking(unittest.TestCase):
         )
 
 
-class TestLazyLoading(unittest.TestCase):
+class TestLazyLoading(IsolatedTestCase):
     """Test lazy loading behavior."""
 
     def test_not_initialized_on_creation(self):

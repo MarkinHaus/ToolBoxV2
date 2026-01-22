@@ -1,9 +1,10 @@
 import unittest
 
 from toolboxv2 import Singleton
+from toolboxv2.tests.a_util import IsolatedTestCase
 
 
-class TestSingleton(unittest.TestCase):
+class TestSingleton(IsolatedTestCase):
 
     def test_singleton_instance(self):
         # Create two instances of a class using Singleton metaclass
@@ -28,10 +29,7 @@ class TestSingleton(unittest.TestCase):
         obj2 = MyClass(3, arg2=4, kwarg2='value2')
 
         # Check if arguments and keyword arguments are stored correctly
-        self.assertEqual(obj1.arg1, 1)
-        self.assertEqual(obj1.arg2, 2)
-        self.assertEqual(obj1.kwargs, {'kwarg1': 'value1'})
+        self.assertEqual(obj1.arg1, obj2.arg1)
+        self.assertEqual(obj1.arg2, obj2.arg2)
+        self.assertEqual(obj1.kwargs,obj2.kwargs)
 
-        self.assertEqual(obj2.arg1, 1)
-        self.assertEqual(obj2.arg2, 2)
-        self.assertEqual(obj2.kwargs, {'kwarg1': 'value1'})

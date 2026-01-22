@@ -49,6 +49,8 @@ class App(AppType, metaclass=Singleton):
         if "test" not in prefix:
             self.logger_prefix = self.REFIX = prefix
             prefix = "main"
+        else:
+            self.logger_prefix = self.REFIX = "test"
         super().__init__(prefix, args)
         self._web_context = None
         t0 = time.perf_counter()
@@ -978,55 +980,71 @@ class App(AppType, metaclass=Singleton):
                 await self.load_all_mods_in_file(mod_path)
 
     async def load_all_mods_in_file(self, working_dir="mods"):
+        """
+        Load all modules from a directory.
+
+        NOTE: Module imports are done SEQUENTIALLY to avoid Python import deadlocks.
+        Python's import system uses a global lock (_ModuleLock) that can cause deadlocks
+        when multiple threads try to import interdependent modules simultaneously.
+        Only async initialization is done in parallel after all imports complete.
+        """
         print(f"LOADING ALL MODS FROM FOLDER : {working_dir}")
         t0 = time.perf_counter()
+
         # Get the list of all modules
         module_list = self.get_all_mods(working_dir)
-        open_modules = self.functions.keys()
+        open_modules = list(self.functions.keys())
         start_len = len(open_modules)
 
+        # Remove already loaded modules
         for om in open_modules:
             if om in module_list:
                 module_list.remove(om)
 
-        tasks: set[Task] = set()
-
-        _ = {tasks.add(asyncio.create_task(asyncio.to_thread(self.save_load, mod, 'app'))) for mod in module_list}
-        for t in asyncio.as_completed(tasks):
+        # Phase 1: Load modules SEQUENTIALLY to avoid import deadlocks
+        # Python's import_module() uses a global lock that causes deadlocks
+        # when multiple threads import interdependent modules
+        loaded_results = []
+        for mod in module_list:
             try:
-                result = await t
-                if hasattr(result, 'Name'):
-                    self.print('Opened :', result.Name)
-                elif hasattr(result, 'name'):
-                    if hasattr(result, 'async_initialized'):
-                        if not result.async_initialized:
-                            async def _():
-                                try:
-                                    if asyncio.iscoroutine(result):
-                                        await result
-                                    if hasattr(result, 'Name'):
-                                        self.print('Opened :', result.Name)
-                                    elif hasattr(result, 'name'):
-                                        self.print('Opened :', result.name)
-                                except Exception as e:
-                                    self.debug_rains(e)
-                                    if hasattr(result, 'Name'):
-                                        self.print('Error opening :', result.Name)
-                                    elif hasattr(result, 'name'):
-                                        self.print('Error opening :', result.name)
-                            asyncio.create_task(_())
-                        else:
-                            self.print('Opened :', result.name)
-                else:
-                    if result:
-                        self.print('Opened :', result)
+                result = self.save_load(mod, 'app')
+                if result:
+                    loaded_results.append(result)
+                    mod_name = getattr(result, 'Name', None) or getattr(result, 'name', None)
+                    if mod_name:
+                        self.print('Loaded :', mod_name)
             except Exception as e:
-                self.logger.error(Style.RED(f"An Error occurred while opening all modules error: {str(e)}"))
+                self.logger.error(Style.RED(f"Error loading module {mod}: {str(e)}"))
                 self.debug_rains(e)
-        opened = len(self.functions.keys()) - start_len
 
-        self.logger.info(f"Opened {opened} modules in {time.perf_counter() - t0:.2f}s")
-        return f"Opened {opened} modules in {time.perf_counter() - t0:.2f}s"
+        # Phase 2: Initialize async modules in parallel (safe - no imports here)
+        async_init_tasks = []
+        for result in loaded_results:
+            if hasattr(result, 'async_initialized') and not result.async_initialized:
+                async def init_module(mod_result):
+                    try:
+                        if asyncio.iscoroutine(mod_result):
+                            await mod_result
+                        mod_name = getattr(mod_result, 'Name', None) or getattr(mod_result, 'name', None)
+                        if mod_name:
+                            self.print('Initialized :', mod_name)
+                    except Exception as e:
+                        self.debug_rains(e)
+                        mod_name = getattr(mod_result, 'Name', None) or getattr(mod_result, 'name', None)
+                        if mod_name:
+                            self.print('Error initializing :', mod_name)
+
+                async_init_tasks.append(asyncio.create_task(init_module(result)))
+
+        # Wait for all async initializations to complete
+        if async_init_tasks:
+            await asyncio.gather(*async_init_tasks, return_exceptions=True)
+
+        opened = len(self.functions.keys()) - start_len
+        elapsed = time.perf_counter() - t0
+
+        self.logger.info(f"Opened {opened} modules in {elapsed:.2f}s")
+        return f"Opened {opened} modules in {elapsed:.2f}s"
 
     def get_all_mods(self, working_dir="mods", path_to="./runtime", use_wd=True):
         self.logger.info(f"collating all mods in working directory {working_dir}")
@@ -1065,23 +1083,54 @@ class App(AppType, metaclass=Singleton):
         return mods_list
 
     def remove_all_modules(self, delete=False):
+        """Remove all loaded modules synchronously."""
         for mod in list(self.functions.keys()):
             self.logger.info(f"closing: {mod}")
             self.remove_mod(mod, delete=delete)
 
+    async def a_remove_all_modules(self, delete=False):
+        """Remove all loaded modules asynchronously."""
+        for mod in list(self.functions.keys()):
+            self.logger.info(f"closing: {mod}")
+            await self.a_remove_mod(mod, delete=delete)
+
+    def _cleanup_module_instances(self, mod_name: str, spec: str):
+        """Clean up module instances for a given spec."""
+        if f"{spec}_instance" in self.functions[mod_name]:
+            del self.functions[mod_name][f"{spec}_instance"]
+        if f"{spec}_instance_type" in self.functions[mod_name]:
+            del self.functions[mod_name][f"{spec}_instance_type"]
+
+    def _delete_module(self, mod_name: str):
+        """Delete a module from the functions registry."""
+        self.functions[mod_name] = {}
+        del self.functions[mod_name]
+
+    def _get_exit_function(self, mod_name: str, f, spec: str, index: int = 0):
+        """
+        Get the exit function and error code.
+        Returns (function, error_code, function_name).
+        """
+        if isinstance(f, str):
+            f_, e = self.get_function((mod_name, f), state=True, specification=spec, i=index)
+            return f_, e, f
+        elif isinstance(f, Callable):
+            return f, 0, f.__name__
+        return None, 1, str(f)
+
     def remove_mod(self, mod_name, spec='app', delete=True):
+        """
+        Remove a module synchronously.
+        For async contexts, use a_remove_mod() instead.
+        """
         if mod_name not in self.functions:
             self.logger.info(f"mod not active {mod_name}")
             return
 
         on_exit = self.functions[mod_name].get("on_exit")
         self.logger.info(f"closing: {on_exit}")
-        def helper():
-            if f"{spec}_instance" in self.functions[mod_name]:
-                del self.functions[mod_name][f"{spec}_instance"]
-            if f"{spec}_instance_type" in self.functions[mod_name]:
-                del self.functions[mod_name][f"{spec}_instance_type"]
 
+        # Handle BC (backwards compatible) instances
         if on_exit is None and self.functions[mod_name].get(f"{spec}_instance_type", "").endswith("/BC"):
             instance = self.functions[mod_name].get(f"{spec}_instance", None)
             if instance is not None and hasattr(instance, 'on_exit'):
@@ -1090,21 +1139,20 @@ class App(AppType, metaclass=Singleton):
                 else:
                     instance.on_exit()
 
-        if on_exit is None and delete:
-            self.functions[mod_name] = {}
-            del self.functions[mod_name]
-            return
+        # No exit handlers
         if on_exit is None:
-            helper()
+            if delete:
+                self._delete_module(mod_name)
+            else:
+                self._cleanup_module_instances(mod_name, spec)
             return
 
-        i = 1
-
-        for j, f in enumerate(on_exit):
+        # Run exit handlers
+        for i, f in enumerate(on_exit, 1):
             try:
-                f_, e = self.get_function((mod_name, f), state=True, specification=spec, i=j)
+                f_, e, f_name = self._get_exit_function(mod_name, f, spec, i - 1)
                 if e == 0:
-                    self.logger.info(Style.GREY(f"Running On exit {f} {i}/{len(on_exit)}"))
+                    self.logger.info(Style.GREY(f"Running On exit {f_name} {i}/{len(on_exit)}"))
                     if asyncio.iscoroutinefunction(f_):
                         self.exit_tasks.append(f_)
                         o = None
@@ -1117,34 +1165,26 @@ class App(AppType, metaclass=Singleton):
             except Exception as e:
                 self.logger.debug(
                     Style.YELLOW(Style.Bold(f"modular:{mod_name}.{f} on_exit error {i}/{len(on_exit)} -> {e}")))
-
                 self.debug_rains(e)
-            finally:
-                i += 1
 
-        helper()
+        self._cleanup_module_instances(mod_name, spec)
 
         if delete:
-            self.functions[mod_name] = {}
-            del self.functions[mod_name]
-
-    async def a_remove_all_modules(self, delete=False):
-        for mod in list(self.functions.keys()):
-            self.logger.info(f"closing: {mod}")
-            await self.a_remove_mod(mod, delete=delete)
+            self._delete_module(mod_name)
 
     async def a_remove_mod(self, mod_name, spec='app', delete=True):
+        """
+        Remove a module asynchronously.
+        Properly awaits async exit handlers.
+        """
         if mod_name not in self.functions:
             self.logger.info(f"mod not active {mod_name}")
             return
+
         on_exit = self.functions[mod_name].get("on_exit")
         self.logger.info(f"closing: {on_exit}")
-        def helper():
-            if f"{spec}_instance" in self.functions[mod_name]:
-                del self.functions[mod_name][f"{spec}_instance"]
-            if f"{spec}_instance_type" in self.functions[mod_name]:
-                del self.functions[mod_name][f"{spec}_instance_type"]
 
+        # Handle BC (backwards compatible) instances
         if on_exit is None and self.functions[mod_name].get(f"{spec}_instance_type", "").endswith("/BC"):
             instance = self.functions[mod_name].get(f"{spec}_instance", None)
             if instance is not None and hasattr(instance, 'on_exit'):
@@ -1153,24 +1193,20 @@ class App(AppType, metaclass=Singleton):
                 else:
                     instance.on_exit()
 
-        if on_exit is None and delete:
-            self.functions[mod_name] = {}
-            del self.functions[mod_name]
-            return
+        # No exit handlers
         if on_exit is None:
-            helper()
+            if delete:
+                self._delete_module(mod_name)
+            else:
+                self._cleanup_module_instances(mod_name, spec)
             return
 
-        i = 1
-        for f in on_exit:
+        # Run exit handlers
+        for i, f in enumerate(on_exit, 1):
             try:
-                e = 1
-                if isinstance(f, str):
-                    f_, e = self.get_function((mod_name, f), state=True, specification=spec)
-                elif isinstance(f, Callable):
-                    f_, e, f  = f, 0, f.__name__
+                f_, e, f_name = self._get_exit_function(mod_name, f, spec, i - 1)
                 if e == 0:
-                    self.logger.info(Style.GREY(f"Running On exit {f} {i}/{len(on_exit)}"))
+                    self.logger.info(Style.GREY(f"Running On exit {f_name} {i}/{len(on_exit)}"))
                     if asyncio.iscoroutinefunction(f_):
                         o = await f_()
                     else:
@@ -1183,58 +1219,88 @@ class App(AppType, metaclass=Singleton):
                 self.logger.debug(
                     Style.YELLOW(Style.Bold(f"modular:{mod_name}.{f} on_exit error {i}/{len(on_exit)} -> {e}")))
                 self.debug_rains(e)
-            finally:
-                i += 1
 
-        helper()
+        self._cleanup_module_instances(mod_name, spec)
 
         if delete:
-            self.functions[mod_name] = {}
-            del self.functions[mod_name]
+            self._delete_module(mod_name)
+
+    def _cleanup_threads(self):
+        """Clean up daemon threads on exit."""
+        if not hasattr(self, 'daemon_app'):
+            return
+
+        import threading
+        for thread in threading.enumerate()[::-1]:
+            if thread.name == "MainThread":
+                continue
+            try:
+                timeout = 0.751 if not self.debug else 0.6
+                with Spinner(f"closing Thread {thread.name:^50}|", symbols="s",
+                             count_down=True, time_in_s=timeout):
+                    thread.join(timeout=timeout)
+            except TimeoutError as e:
+                self.logger.error(f"Timeout error on exit {thread.name} {str(e)}")
+                print(str(e), f"Timeout {thread.name}")
+            except KeyboardInterrupt:
+                print("Unsafe Exit")
+                break
+
+    def _cleanup_event_loop(self):
+        """Clean up the event loop on exit."""
+        if not hasattr(self, 'loop') or self.loop is None:
+            return
+
+        try:
+            running_loop = asyncio.get_running_loop()
+            if running_loop is not self.loop:
+                with Spinner("closing Event loop:", symbols="+"):
+                    self.loop.stop()
+            # If we're inside the loop, it will stop naturally when the coroutine completes
+        except RuntimeError:
+            # No running loop - safe to stop
+            with Spinner("closing Event loop:", symbols="+"):
+                self.loop.stop()
 
     def exit(self, remove_all=True):
+        """
+        Exit the ToolBox interface synchronously.
+        For async contexts, use a_exit() instead.
+        """
         if not self.alive:
             return
+
         if self.args_sto.debug:
             self.hide_console()
+
         self.disconnect()
+
         if remove_all:
             self.remove_all_modules()
+
         self.logger.info("Exiting ToolBox interface")
         self.alive = False
         self.called_exit = True, time.time()
         self.save_exit()
-        # if hasattr(self, 'root_blob_storage') and self.root_blob_storage:
-        #     self.root_blob_storage.exit()
+
         try:
             self.config_fh.save_file_handler()
         except SystemExit:
-            print("If u ar testing this is fine else ...")
+            print("If you are testing this is fine, else ...")
 
-        if hasattr(self, 'daemon_app'):
-            import threading
-
-            for thread in threading.enumerate()[::-1]:
-                if thread.name == "MainThread":
-                    continue
-                try:
-                    with Spinner(f"closing Thread {thread.name:^50}|", symbols="s", count_down=True,
-                                 time_in_s=0.751 if not self.debug else 0.6):
-                        thread.join(timeout=0.751 if not self.debug else 0.6)
-                except TimeoutError as e:
-                    self.logger.error(f"Timeout error on exit {thread.name} {str(e)}")
-                    print(str(e), f"Timeout {thread.name}")
-                except KeyboardInterrupt:
-                    print("Unsave Exit")
-                    break
-        if hasattr(self, 'loop') and self.loop is not None:
-            with Spinner("closing Event loop:", symbols="+"):
-                self.loop.stop()
+        self._cleanup_threads()
+        self._cleanup_event_loop()
 
     async def a_exit(self):
-
+        """
+        Exit the ToolBox interface asynchronously.
+        Properly cleans up async resources before calling sync exit.
+        """
         import inspect
-        self.sprint(f"exit requested from: {inspect.stack()[1].filename}::{inspect.stack()[1].lineno} function: {inspect.stack()[1].function}")
+        self.sprint(
+            f"exit requested from: {inspect.stack()[1].filename}::"
+            f"{inspect.stack()[1].lineno} function: {inspect.stack()[1].function}"
+        )
 
         # Cleanup session before removing modules
         try:
@@ -1243,11 +1309,21 @@ class App(AppType, metaclass=Singleton):
         except Exception as e:
             self.logger.debug(f"Session cleanup error (ignored): {e}")
 
+        # Remove all modules asynchronously
         await self.a_remove_all_modules(delete=True)
-        results = await asyncio.gather(
-            *[asyncio.create_task(f()) for f in self.exit_tasks if asyncio.iscoroutinefunction(f)])
-        for result in results:
-            self.print(f"Function On Exit result: {result}")
+
+        # Run async exit tasks
+        async_exit_tasks = [
+            asyncio.create_task(f())
+            for f in self.exit_tasks
+            if asyncio.iscoroutinefunction(f)
+        ]
+        if async_exit_tasks:
+            results = await asyncio.gather(*async_exit_tasks)
+            for result in results:
+                self.print(f"Function On Exit result: {result}")
+
+        # Call sync exit without removing modules (already done)
         self.exit(remove_all=False)
 
     def save_load(self, modname, spec='app'):
@@ -1277,18 +1353,23 @@ class App(AppType, metaclass=Singleton):
         else:
             return self._get_function(name, **kwargs)
 
-    async def a_run_function(self, mod_function_name: Enum or tuple,
-                             tb_run_function_with_state=True,
-                             tb_run_with_specification='app',
-                             args_=None,
-                             kwargs_=None,
-                             *args,
-                             **kwargs) -> Result:
-
+    def _parse_mod_function_name(
+        self,
+        mod_function_name: Enum | tuple | list,
+        args_: tuple | None,
+        kwargs_: dict | None,
+        args: tuple,
+        kwargs: dict
+    ) -> tuple[str, str, tuple, dict]:
+        """
+        Parse mod_function_name into (modular_name, function_name) and merge args/kwargs.
+        Returns (modular_name, function_name, args, kwargs).
+        """
         if kwargs_ is not None and not kwargs:
             kwargs = kwargs_
         if args_ is not None and not args:
             args = args_
+
         if isinstance(mod_function_name, tuple):
             modular_name, function_name = mod_function_name
         elif isinstance(mod_function_name, list):
@@ -1298,62 +1379,89 @@ class App(AppType, metaclass=Singleton):
         else:
             raise TypeError("Unknown function type")
 
-        if tb_run_with_specification == 'ws_internal':
-            modular_name = modular_name.split('/')[0]
-            if not self.mod_online(modular_name, installed=True):
-                self.get_mod(modular_name)
-            handler_id, event_name = mod_function_name
-            if handler_id in self.websocket_handlers and event_name in self.websocket_handlers[handler_id]:
-                handler_func = self.websocket_handlers[handler_id][event_name]
-                try:
-                    # Führe den asynchronen Handler aus
-                    res = None
-                    if inspect.iscoroutinefunction(handler_func):
-                        res = await handler_func(self, **kwargs)
+        return modular_name, function_name, args, kwargs
+
+    def _handle_ws_internal(
+        self,
+        mod_function_name: tuple,
+        modular_name: str,
+        kwargs: dict,
+        is_async: bool = False
+    ) -> Result | None:
+        """
+        Handle WebSocket internal specification.
+        Returns Result if handled, None if not a ws_internal call.
+        """
+        handler_id, event_name = mod_function_name
+        if handler_id in self.websocket_handlers and event_name in self.websocket_handlers[handler_id]:
+            handler_func = self.websocket_handlers[handler_id][event_name]
+            try:
+                res = None
+                if inspect.iscoroutinefunction(handler_func):
+                    if is_async:
+                        # Will be awaited by caller
+                        return handler_func(self, **kwargs)
                     else:
-                        res = handler_func(self, **kwargs)  # Für synchrone Handler
-                    if isinstance(res, Result) or isinstance(res, ApiResult):
-                        return res
-                    return Result.ok(info=f"WS handler '{event_name}' executed.", data=res)
-                except Exception as e:
-                    self.logger.error(f"Error in WebSocket handler '{handler_id}/{event_name}': {e}", exc_info=True)
-                    return Result.default_internal_error(info=str(e))
-            else:
-                # Kein Handler registriert, aber das ist kein Fehler (z.B. on_connect ist optional)
-                return Result.ok(info=f"No WS handler for '{event_name}'.")
+                        res = self.loop.run_until_complete(handler_func(self, **kwargs))
+                else:
+                    res = handler_func(self, **kwargs)
+                if isinstance(res, (Result, ApiResult)):
+                    return res
+                return Result.ok(info=f"WS handler '{event_name}' executed.", data=res)
+            except Exception as e:
+                self.logger.error(f"Error in WebSocket handler '{handler_id}/{event_name}': {e}", exc_info=True)
+                return Result.default_internal_error(info=str(e))
+        else:
+            return Result.ok(info=f"No WS handler for '{event_name}'.")
 
-        if not self.mod_online(modular_name, installed=True):
-            self.get_mod(modular_name)
-
-        function_data, error_code = self.get_function(mod_function_name, state=tb_run_function_with_state,
-                                                      metadata=True, specification=tb_run_with_specification)
-        self.logger.info(f"Received fuction : {mod_function_name}, with execode: {error_code}")
-        if error_code == 404:
-            mod = self.get_mod(modular_name)
-            if hasattr(mod, "async_initialized") and not mod.async_initialized:
-                await mod
-            function_data, error_code = self.get_function(mod_function_name, state=tb_run_function_with_state,
-                                                          metadata=True, specification=tb_run_with_specification)
-
-        if error_code == 404:
+    def _handle_error_code(
+        self,
+        error_code: int,
+        mod_function_name: tuple,
+        modular_name: str,
+        function_name: str
+    ) -> Result | None:
+        """
+        Handle error codes from get_function.
+        Returns Result if error, None if no error.
+        Unified error codes: 404 (not found), 300 (no state), others (internal error).
+        """
+        # Map legacy error codes to unified codes
+        # Legacy: 2 -> 404, -1 -> 300, 1/3/400 -> retry needed
+        if error_code in (2, 404):
             self.logger.warning(Style.RED("Function Not Found"))
-            return (Result.default_user_error(interface=self.interface_type,
-                                              exec_code=404,
-                                              info="function not found function is not decorated").
-                    set_origin(mod_function_name))
+            return (Result.default_user_error(
+                interface=self.interface_type,
+                exec_code=404,
+                info="function not found - function is not decorated"
+            ).set_origin(mod_function_name))
 
-        if error_code == 300:
-            return Result.default_internal_error(interface=self.interface_type,
-                                                 info=f"module {modular_name}"
-                                                      f" has no state (instance)").set_origin(mod_function_name)
+        if error_code in (-1, 300):
+            return Result.default_internal_error(
+                interface=self.interface_type,
+                info=f"module {modular_name} has no state (instance)"
+            ).set_origin(mod_function_name)
 
         if error_code != 0:
-            return Result.default_internal_error(interface=self.interface_type,
-                                                 exec_code=error_code,
-                                                 info=f"Internal error"
-                                                      f" {modular_name}."
-                                                      f"{function_name}").set_origin(mod_function_name)
+            return Result.default_internal_error(
+                interface=self.interface_type,
+                exec_code=error_code,
+                info=f"Internal error {modular_name}.{function_name}"
+            ).set_origin(mod_function_name)
 
+        return None
+
+    def _extract_function(
+        self,
+        function_data: tuple,
+        tb_run_function_with_state: bool,
+        mod_function_name: tuple,
+        function_name: str
+    ) -> tuple[dict, callable] | Result:
+        """
+        Extract function from function_data.
+        Returns (function_data_dict, function) or Result on error.
+        """
         if not tb_run_function_with_state:
             function_data, _ = function_data
             function = function_data.get('func')
@@ -1362,10 +1470,73 @@ class App(AppType, metaclass=Singleton):
 
         if not function:
             self.logger.warning(Style.RED(f"Function {function_name} not found"))
-            return Result.default_internal_error(interface=self.interface_type,
-                                                 exec_code=404,
-                                                 info="function not found function").set_origin(mod_function_name)
+            return Result.default_internal_error(
+                interface=self.interface_type,
+                exec_code=404,
+                info="function not found"
+            ).set_origin(mod_function_name)
 
+        return function_data, function
+
+    async def a_run_function(self, mod_function_name: Enum | tuple,
+                             tb_run_function_with_state=True,
+                             tb_run_with_specification='app',
+                             args_=None,
+                             kwargs_=None,
+                             *args,
+                             **kwargs) -> Result:
+        """
+        Run a module function asynchronously.
+        """
+        modular_name, function_name, args, kwargs = self._parse_mod_function_name(
+            mod_function_name, args_, kwargs_, args, kwargs
+        )
+
+        # Handle WebSocket internal
+        if tb_run_with_specification == 'ws_internal':
+            modular_name = modular_name.split('/')[0]
+            if not self.mod_online(modular_name, installed=True):
+                self.get_mod(modular_name)
+            result = self._handle_ws_internal(mod_function_name, modular_name, kwargs, is_async=True)
+            if inspect.iscoroutine(result):
+                result = await result
+            return result
+
+        # Ensure module is loaded
+        if not self.mod_online(modular_name, installed=True):
+            self.get_mod(modular_name)
+
+        # Get function
+        function_data, error_code = self.get_function(
+            mod_function_name, state=tb_run_function_with_state,
+            metadata=True, specification=tb_run_with_specification
+        )
+        self.logger.info(f"Received function: {mod_function_name}, with execode: {error_code}")
+
+        # Retry if module needs async initialization
+        if error_code in (1, 3, 400, 404):
+            mod = self.get_mod(modular_name)
+            if hasattr(mod, "async_initialized") and not mod.async_initialized:
+                await mod
+            function_data, error_code = self.get_function(
+                mod_function_name, state=tb_run_function_with_state,
+                metadata=True, specification=tb_run_with_specification
+            )
+
+        # Handle errors
+        error_result = self._handle_error_code(error_code, mod_function_name, modular_name, function_name)
+        if error_result:
+            return error_result
+
+        # Extract function
+        extract_result = self._extract_function(
+            function_data, tb_run_function_with_state, mod_function_name, function_name
+        )
+        if isinstance(extract_result, Result):
+            return extract_result
+        function_data, function = extract_result
+
+        # Run function
         self.logger.info("Profiling function")
         t0 = time.perf_counter()
         if asyncio.iscoroutinefunction(function):
@@ -1373,91 +1544,58 @@ class App(AppType, metaclass=Singleton):
         else:
             return self.fuction_runner(function, function_data, args, kwargs, t0)
 
-
-    def run_function(self, mod_function_name: Enum or tuple,
+    def run_function(self, mod_function_name: Enum | tuple,
                      tb_run_function_with_state=True,
                      tb_run_with_specification='app',
                      args_=None,
                      kwargs_=None,
                      *args,
                      **kwargs) -> Result:
+        """
+        Run a module function synchronously.
+        For async functions, use a_run_function() instead.
+        """
+        modular_name, function_name, args, kwargs = self._parse_mod_function_name(
+            mod_function_name, args_, kwargs_, args, kwargs
+        )
 
-        if kwargs_ is not None and not kwargs:
-            kwargs = kwargs_
-        if args_ is not None and not args:
-            args = args_
-        if isinstance(mod_function_name, tuple):
-            modular_name, function_name = mod_function_name
-        elif isinstance(mod_function_name, list):
-            modular_name, function_name = mod_function_name[0], mod_function_name[1]
-        elif isinstance(mod_function_name, Enum):
-            modular_name, function_name = mod_function_name.__class__.NAME.value, mod_function_name.value
-        else:
-            raise TypeError("Unknown function type")
-
+        # Ensure module is loaded
         if not self.mod_online(modular_name, installed=True):
             self.get_mod(modular_name)
 
+        # Handle WebSocket internal
         if tb_run_with_specification == 'ws_internal':
-            handler_id, event_name = mod_function_name
-            if handler_id in self.websocket_handlers and event_name in self.websocket_handlers[handler_id]:
-                handler_func = self.websocket_handlers[handler_id][event_name]
-                try:
-                    # Führe den asynchronen Handler aus
-                    res = None
-                    if inspect.iscoroutinefunction(handler_func):
-                        res = self.loop.run_until_complete(handler_func(self, **kwargs))
-                    else:
-                        res = handler_func(self, **kwargs)  # Für synchrone Handler
-                    if isinstance(res, Result) or isinstance(res, ApiResult):
-                        return res
-                    return Result.ok(info=f"WS handler '{event_name}' executed.", data=res)
-                except Exception as e:
-                    self.logger.error(f"Error in WebSocket handler '{handler_id}/{event_name}': {e}", exc_info=True)
-                    return Result.default_internal_error(info=str(e))
-            else:
-                # Kein Handler registriert, aber das ist kein Fehler (z.B. on_connect ist optional)
-                return Result.ok(info=f"No WS handler for '{event_name}'.")
+            return self._handle_ws_internal(mod_function_name, modular_name, kwargs, is_async=False)
 
-        function_data, error_code = self.get_function(mod_function_name, state=tb_run_function_with_state,
-                                                      metadata=True, specification=tb_run_with_specification)
-        self.logger.info(f"Received fuction : {mod_function_name}, with execode: {error_code}")
-        if error_code == 1 or error_code == 3 or error_code == 400:
+        # Get function
+        function_data, error_code = self.get_function(
+            mod_function_name, state=tb_run_function_with_state,
+            metadata=True, specification=tb_run_with_specification
+        )
+        self.logger.info(f"Received function: {mod_function_name}, with execode: {error_code}")
+
+        # Retry if needed
+        if error_code in (1, 3, 400, 404):
             self.get_mod(modular_name)
-            function_data, error_code = self.get_function(mod_function_name, state=tb_run_function_with_state,
-                                                          metadata=True, specification=tb_run_with_specification)
+            function_data, error_code = self.get_function(
+                mod_function_name, state=tb_run_function_with_state,
+                metadata=True, specification=tb_run_with_specification
+            )
 
-        if error_code == 2:
-            self.logger.warning(Style.RED("Function Not Found"))
-            return (Result.default_user_error(interface=self.interface_type,
-                                              exec_code=404,
-                                              info="function not found function is not decorated").
-                    set_origin(mod_function_name))
+        # Handle errors
+        error_result = self._handle_error_code(error_code, mod_function_name, modular_name, function_name)
+        if error_result:
+            return error_result
 
-        if error_code == -1:
-            return Result.default_internal_error(interface=self.interface_type,
-                                                 info=f"module {modular_name}"
-                                                      f" has no state (instance)").set_origin(mod_function_name)
+        # Extract function
+        extract_result = self._extract_function(
+            function_data, tb_run_function_with_state, mod_function_name, function_name
+        )
+        if isinstance(extract_result, Result):
+            return extract_result
+        function_data, function = extract_result
 
-        if error_code != 0:
-            return Result.default_internal_error(interface=self.interface_type,
-                                                 exec_code=error_code,
-                                                 info=f"Internal error"
-                                                      f" {modular_name}."
-                                                      f"{function_name}").set_origin(mod_function_name)
-
-        if not tb_run_function_with_state:
-            function_data, _ = function_data
-            function = function_data.get('func')
-        else:
-            function_data, function = function_data
-
-        if not function:
-            self.logger.warning(Style.RED(f"Function {function_name} not found"))
-            return Result.default_internal_error(interface=self.interface_type,
-                                                 exec_code=404,
-                                                 info="function not found function").set_origin(mod_function_name)
-
+        # Run function
         self.logger.info("Profiling function")
         t0 = time.perf_counter()
         if asyncio.iscoroutinefunction(function):
@@ -1465,10 +1603,12 @@ class App(AppType, metaclass=Singleton):
                 return asyncio.run(self.a_fuction_runner(function, function_data, args, kwargs, t0))
             except RuntimeError:
                 try:
-                    return self.loop.run_until_complete(self.a_fuction_runner(function, function_data, args, kwargs, t0))
+                    return self.loop.run_until_complete(
+                        self.a_fuction_runner(function, function_data, args, kwargs, t0)
+                    )
                 except RuntimeError:
                     pass
-            raise ValueError(f"Fuction {function_name} is Async use a_run_any")
+            raise ValueError(f"Function {function_name} is async - use a_run_any instead")
         else:
             return self.fuction_runner(function, function_data, args, kwargs, t0)
 
@@ -1715,14 +1855,19 @@ class App(AppType, metaclass=Singleton):
     async def a_run_local(self, *args, **kwargs):
         return await self.a_run_any(*args, **kwargs)
 
-    def run_any(self, mod_function_name: Enum or str or tuple, backwords_compability_variabel_string_holder=None,
-                get_results=False, tb_run_function_with_state=True, tb_run_with_specification='app', args_=None,
-                kwargs_=None,
-                *args, **kwargs):
-
-        # if self.debug:
-        #     self.logger.info(f'Called from: {getouterframes(currentframe(), 2)}')
-
+    def _prepare_mod_function_name(
+        self,
+        mod_function_name: Enum | str | tuple,
+        backwords_compability_variabel_string_holder: str | None,
+        args_: tuple | None,
+        kwargs_: dict | None,
+        args: tuple,
+        kwargs: dict
+    ) -> tuple[tuple, tuple, dict]:
+        """
+        Shared helper to normalize mod_function_name and merge args/kwargs.
+        Returns (normalized_mod_function_name, args, kwargs).
+        """
         if kwargs_ is not None and not kwargs:
             kwargs = kwargs_
         if args_ is not None and not args:
@@ -1735,17 +1880,20 @@ class App(AppType, metaclass=Singleton):
         if isinstance(mod_function_name, str) and isinstance(backwords_compability_variabel_string_holder, str):
             mod_function_name = (mod_function_name, backwords_compability_variabel_string_holder)
 
-        res: Result = self.run_function(mod_function_name,
-                                        tb_run_function_with_state=tb_run_function_with_state,
-                                        tb_run_with_specification=tb_run_with_specification,
-                                        args_=args, kwargs_=kwargs).as_result()
+        return mod_function_name, args, kwargs
+
+    def _process_run_result(self, res: Result, get_results: bool) -> Result:
+        """
+        Shared helper to process the result of run_function/a_run_function.
+        Handles background tasks, debug logging, and result extraction.
+        """
         if isinstance(res, ApiResult):
             res = res.as_result()
 
         if isinstance(res, Result) and res.bg_task is not None:
             self.run_bg_task(res.bg_task)
 
-        if self.debug:
+        if self.debug and isinstance(res, Result):
             res.log(show_data=False)
 
         if not get_results and isinstance(res, Result):
@@ -1756,47 +1904,50 @@ class App(AppType, metaclass=Singleton):
 
         return res
 
-    async def a_run_any(self, mod_function_name: Enum or str or tuple,
+    def run_any(self, mod_function_name: Enum | str | tuple, backwords_compability_variabel_string_holder=None,
+                get_results=False, tb_run_function_with_state=True, tb_run_with_specification='app', args_=None,
+                kwargs_=None,
+                *args, **kwargs):
+        """
+        Run a module function synchronously.
+        For async functions, use a_run_any() instead.
+        """
+        mod_function_name, args, kwargs = self._prepare_mod_function_name(
+            mod_function_name, backwords_compability_variabel_string_holder,
+            args_, kwargs_, args, kwargs
+        )
+
+        res: Result = self.run_function(
+            mod_function_name,
+            tb_run_function_with_state=tb_run_function_with_state,
+            tb_run_with_specification=tb_run_with_specification,
+            args_=args, kwargs_=kwargs
+        ).as_result()
+
+        return self._process_run_result(res, get_results)
+
+    async def a_run_any(self, mod_function_name: Enum | str | tuple,
                         backwords_compability_variabel_string_holder=None,
                         get_results=False, tb_run_function_with_state=True, tb_run_with_specification='app', args_=None,
                         kwargs_=None,
                         *args, **kwargs):
+        """
+        Run a module function asynchronously.
+        Preferred method for async contexts.
+        """
+        mod_function_name, args, kwargs = self._prepare_mod_function_name(
+            mod_function_name, backwords_compability_variabel_string_holder,
+            args_, kwargs_, args, kwargs
+        )
 
-        # if self.debug:
-        #     self.logger.info(f'Called from: {getouterframes(currentframe(), 2)}')
+        res: Result = await self.a_run_function(
+            mod_function_name,
+            tb_run_function_with_state=tb_run_function_with_state,
+            tb_run_with_specification=tb_run_with_specification,
+            args_=args, kwargs_=kwargs
+        )
 
-        if kwargs_ is not None and not kwargs:
-            kwargs = kwargs_
-        if args_ is not None and not args:
-            args = args_
-
-        if isinstance(mod_function_name, str) and backwords_compability_variabel_string_holder is None:
-            backwords_compability_variabel_string_holder = mod_function_name.split('.')[-1]
-            mod_function_name = mod_function_name.replace(f".{backwords_compability_variabel_string_holder}", "")
-
-        if isinstance(mod_function_name, str) and isinstance(backwords_compability_variabel_string_holder, str):
-            mod_function_name = (mod_function_name, backwords_compability_variabel_string_holder)
-
-        res: Result = await self.a_run_function(mod_function_name,
-                                                tb_run_function_with_state=tb_run_function_with_state,
-                                                tb_run_with_specification=tb_run_with_specification,
-                                                args_=args, kwargs_=kwargs)
-        if isinstance(res, ApiResult):
-            res = res.as_result()
-
-        if isinstance(res, Result) and res.bg_task is not None:
-            self.run_bg_task(res.bg_task)
-
-        if self.debug:
-            res.print()
-            res.log(show_data=False) if isinstance(res, Result) else self.logger.debug(res)
-        if not get_results and isinstance(res, Result):
-            return res.get()
-
-        if get_results and not isinstance(res, Result):
-            return Result.ok(data=res)
-
-        return res
+        return self._process_run_result(res, get_results)
 
 
     def web_context(self):

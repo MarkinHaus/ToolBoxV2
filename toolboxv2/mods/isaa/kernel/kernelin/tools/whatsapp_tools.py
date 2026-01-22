@@ -176,40 +176,40 @@ class WhatsAppKernelTools:
         agent = self.kernel.agent
 
         # Buttons
-        await agent.add_tool(
+        agent.add_tool(
             self.send_buttons,
             "whatsapp_send_buttons",
             description="Sendet eine Nachricht mit bis zu 3 Buttons. Args: user_id, text, buttons=[{'id': '1', 'title': 'Yes'}]."
         )
 
         # Listen
-        await agent.add_tool(
+        agent.add_tool(
             self.send_menu_list,
             "whatsapp_send_list",
             description="Sendet ein Auswahlmenü. Args: user_id, text, button_text, sections=[{'title': 'Main', 'rows': [{'id': '1', 'title': 'Option'}]}]."
         )
 
         # Broadcasts
-        await agent.add_tool(
+        agent.add_tool(
             self.create_broadcast_list,
             "whatsapp_create_group",
             description="Erstellt eine Broadcast-Gruppe. Args: name, user_ids list."
         )
 
-        await agent.add_tool(
+        agent.add_tool(
             self.add_to_broadcast,
             "whatsapp_add_to_group",
             description="Fügt User zur Gruppe hinzu. Args: list_name, user_id."
         )
 
-        await agent.add_tool(
+        agent.add_tool(
             self.send_broadcast,
             "whatsapp_send_to_group",
             description="Sendet Nachricht an alle in der Gruppe. Args: list_name, content."
         )
 
         # Kontakt
-        await agent.add_tool(
+        agent.add_tool(
             self.send_contact,
             "whatsapp_send_contact",
             description="Teilt einen Kontakt. Args: user_id, contact_name, contact_phone."

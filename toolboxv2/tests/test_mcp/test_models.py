@@ -11,6 +11,8 @@ from dataclasses import FrozenInstanceError
 import sys
 import os
 
+from toolboxv2.tests.a_util import IsolatedTestCase
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from toolboxv2.mcp_server.models import (
@@ -30,7 +32,7 @@ from toolboxv2.mcp_server.models import (
 )
 
 
-class TestEnums(unittest.TestCase):
+class TestEnums(IsolatedTestCase):
     """Test enum definitions."""
 
     def test_response_format_values(self):
@@ -65,7 +67,7 @@ class TestEnums(unittest.TestCase):
         self.assertEqual(ServerMode.STDIO, "stdio")
 
 
-class TestAPIKeyInfo(unittest.TestCase):
+class TestAPIKeyInfo(IsolatedTestCase):
     """Test APIKeyInfo dataclass."""
 
     def setUp(self):
@@ -101,7 +103,7 @@ class TestAPIKeyInfo(unittest.TestCase):
         self.assertFalse(hasattr(self.key_info, "__dict__"))
 
 
-class TestFlowSession(unittest.TestCase):
+class TestFlowSession(IsolatedTestCase):
     """Test FlowSession dataclass."""
 
     def setUp(self):
@@ -142,7 +144,7 @@ class TestFlowSession(unittest.TestCase):
         self.assertFalse(hasattr(self.session, "__dict__"))
 
 
-class TestToolResult(unittest.TestCase):
+class TestToolResult(IsolatedTestCase):
     """Test ToolResult dataclass."""
 
     def test_success_result(self):
@@ -175,7 +177,7 @@ class TestToolResult(unittest.TestCase):
         self.assertFalse(hasattr(result, "__dict__"))
 
 
-class TestCacheEntry(unittest.TestCase):
+class TestCacheEntry(IsolatedTestCase):
     """Test CacheEntry dataclass."""
 
     def test_creation(self):
@@ -206,7 +208,7 @@ class TestCacheEntry(unittest.TestCase):
         self.assertEqual(entry.ttl, 60)
 
 
-class TestPerformanceMetrics(unittest.TestCase):
+class TestPerformanceMetrics(IsolatedTestCase):
     """Test PerformanceMetrics dataclass."""
 
     def setUp(self):
@@ -257,7 +259,7 @@ class TestPerformanceMetrics(unittest.TestCase):
         self.assertEqual(self.metrics.errors, 1)
 
 
-class TestMCPConfig(unittest.TestCase):
+class TestMCPConfig(IsolatedTestCase):
     """Test MCPConfig dataclass."""
 
     def test_default_values(self):
@@ -309,7 +311,7 @@ class TestMCPConfig(unittest.TestCase):
         self.assertTrue(d["performance"]["lazy_load"])
 
 
-class TestTemplates(unittest.TestCase):
+class TestTemplates(IsolatedTestCase):
     """Test resource templates."""
 
     def test_discovery_template_exists(self):

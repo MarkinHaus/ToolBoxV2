@@ -134,6 +134,134 @@ For more specific build and run commands, please consult the `scripts` section i
     python -m toolboxv2 --help
 ```
 
+## 3. Configuration with tb-manifest.yaml
+
+ToolBoxV2 uses a unified configuration system based on a single `tb-manifest.yaml` file. This file controls all aspects of your ToolBoxV2 installation.
+
+### Quick Start
+
+Initialize a new manifest in your project:
+
+```bash
+tb manifest init
+# or with a specific environment
+tb manifest init --env production
+```
+
+This creates a `tb-manifest.yaml` file with sensible defaults.
+
+### Manifest Structure
+
+```yaml
+manifest_version: "1.0"
+
+# Application settings
+app:
+  name: "ToolBoxV2"
+  version: "0.1.0"
+  debug: false
+  log_level: "INFO"
+
+# Autostart configuration
+autostart:
+  enabled: true
+  services:
+    - workers
+    - db
+  commands:
+    - "echo 'ToolBoxV2 started'"
+
+# Module configuration
+mods:
+  installed: []
+  exclude: []
+  auto_load: true
+
+# Database settings
+database:
+  mode: "lc"  # lc, lca, rca, lcs, rcs
+  name: "toolboxv2"
+  host: "${DB_HOST:-localhost}"
+  port: 5432
+
+# External services
+services:
+  redis:
+    enabled: false
+    host: "${REDIS_HOST:-localhost}"
+    port: 6379
+  minio:
+    enabled: false
+    endpoint: "${MINIO_ENDPOINT:-localhost:9000}"
+
+# Worker processes
+workers:
+  http:
+    enabled: true
+    instances: 2
+    port: 5000
+  ws:
+    enabled: true
+    instances: 1
+    port: 6587
+
+# Environment-specific overrides
+environments:
+  production:
+    app:
+      debug: false
+      log_level: "WARNING"
+    workers:
+      http:
+        instances: 4
+  development:
+    app:
+      debug: true
+      log_level: "DEBUG"
+```
+
+### Environment Variables
+
+Use `${VAR}` or `${VAR:-default}` syntax for environment variables:
+
+```yaml
+database:
+  password: "${DB_PASSWORD}"           # Required - fails if not set
+  host: "${DB_HOST:-localhost}"        # Optional - uses default if not set
+```
+
+### CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `tb manifest init` | Create a new manifest file |
+| `tb manifest show` | Display current configuration |
+| `tb manifest show --section workers` | Show specific section |
+| `tb manifest show --json` | Output as JSON |
+| `tb manifest validate` | Check for configuration errors |
+| `tb manifest validate --strict` | Strict validation mode |
+| `tb manifest apply` | Generate sub-config files |
+| `tb manifest apply --dry-run` | Preview changes without writing |
+| `tb manifest apply --env` | Append missing env vars to .env |
+| `tb manifest status` | Show service status |
+| `tb manifest sync` | Synchronize running services |
+| `tb manifest sync --restart` | Restart services to apply changes |
+
+### Generated Files
+
+Running `tb manifest apply` generates:
+
+- **`.config.yaml`** - Worker configuration for Python processes
+- **`config.toml`** - Rust server configuration
+- **`services.json`** - Service definitions for the service manager
+
+### Best Practices
+
+1. **Never commit secrets** - Use environment variables for passwords and API keys
+2. **Use environment overrides** - Define production/development differences in `environments` section
+3. **Validate before deploy** - Run `tb manifest validate --strict` in CI/CD
+4. **Dry-run first** - Use `--dry-run` flag before applying changes
+
 ### developing tip use to activate all hooks
 ```bash
     bash .github/hooks/setup_hooks.sh

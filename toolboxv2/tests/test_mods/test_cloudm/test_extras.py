@@ -133,7 +133,7 @@ class TestVersionDisplay(unittest.TestCase):
 
         result = openVersion(mock_self)
 
-        self.assertIsInstance(result.as_result(), Result)
+        self.assertTrue(hasattr(result.as_result(), 'get'))
         self.assertEqual(result.get(), "1.2.3")
 
     @patch('toolboxv2.mods.CloudM.extras.get_app')

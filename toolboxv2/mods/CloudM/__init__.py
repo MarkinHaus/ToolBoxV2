@@ -11,6 +11,7 @@ from .UserDashboard import Name as UserDashboardName
 from .UserInstances import UserInstances
 from .LogInSystem import open_web_login_web
 from .extras import Name as ExtrasName
+from .RegistryServer import Name as RegistryServerName
 
 tools = Tools
 Name = 'CloudM'

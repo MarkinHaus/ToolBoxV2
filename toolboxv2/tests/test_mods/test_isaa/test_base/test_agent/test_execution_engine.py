@@ -914,8 +914,8 @@ class TestExecutionEngineIntegration(unittest.TestCase):
 
         prompt = engine._build_system_prompt(ctx, session)
 
-        self.assertIn("effizienter, ehrlicher Assistent", prompt)
-        self.assertIn("spawn_sub_agent", prompt)
+        self.assertIn("IDENTITY: You are FlowAgent, an autonomous execution unit capable of", prompt)
+        self.assertIn("vfs", prompt)
 
     def test_build_system_prompt_sub_agent(self):
         """Test System Prompt für Sub-Agent"""
@@ -936,7 +936,7 @@ class TestExecutionEngineIntegration(unittest.TestCase):
 
         self.assertIn("SUB-AGENT", prompt)
         self.assertIn("/sub/task", prompt)
-        self.assertIn("KANNST KEINE weiteren Sub-Agents", prompt)
+        self.assertIn("You are a focused SUB-AGENT", prompt)
 
 
 # =============================================================================

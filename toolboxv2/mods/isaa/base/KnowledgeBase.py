@@ -457,58 +457,577 @@ DEP_TO_RELATION: dict[str, str] = {
 # LOCAL CONCEPT EXTRACTOR
 # ============================================================================
 
-class LocalConceptExtractor:
-    """
-    Lokaler, deterministischer Konzept-Extraktor basierend auf spaCy NLP.
-    Ersetzt LLM-basierte Extraktion für maximale Geschwindigkeit.
-    """
+"""
+LocalConceptExtractor - Optimierte Version mit:
+- Fast Mode (ohne ML-Models)
+- Auto-Batching für große Texte
+- Robuster Fallback wenn spaCy Model fehlt
+- Multi-Processing Support
 
-    _nlp_instance = None
+Author: Refactored for ToolBoxV2
+"""
+
+import re
+import logging
+from collections import Counter, defaultdict
+from typing import Any
+from dataclasses import dataclass, field
+
+try:
+    import spacy
+    from spacy.tokens import Doc
+
+    SPACY_AVAILABLE = True
+except ImportError:
+    SPACY_AVAILABLE = False
+    Doc = Any  # Type hint fallback
+
+
+# ============================================================================
+# Configuration
+# ============================================================================
+
+@dataclass
+class ExtractorConfig:
+    """Konfiguration für den Concept Extractor"""
+    max_concepts: int = 5
+    fast_mode: bool = False  # True = keine ML-Models, nur Heuristiken
+    auto_batch: bool = True  # Automatisches Batching bei großen Texten
+    batch_threshold: int = 10000  # Zeichen ab denen Batching aktiviert wird
+    batch_size: int = 5000  # Zeichen pro Batch
+    n_process: int = 1  # Multiprocessing (1 = single process)
+    disable_ner: bool = False  # NER deaktivieren für Speed
+    disable_parser: bool = False  # Parser deaktivieren für Speed
+    model_name: str = "en_core_web_sm"  # spaCy Model
+
+
+# ============================================================================
+# Domain Ontology (aus deinem Original-Code)
+# ============================================================================
+
+# Beispiel Domain-Terme - erweitere nach Bedarf
+DOMAIN_ONTOLOGY = {
+    "technology": [
+        "machine learning", "neural network", "deep learning", "artificial intelligence",
+        "natural language processing", "computer vision", "reinforcement learning",
+        "transformer", "attention mechanism", "embedding", "tokenization",
+        "api", "database", "server", "cloud", "kubernetes", "docker",
+        "python", "javascript", "rust", "typescript", "react", "vue",
+    ],
+    "business": [
+        "revenue", "profit", "market share", "stakeholder", "roi",
+        "kpi", "strategy", "investment", "acquisition", "merger",
+    ],
+    "science": [
+        "hypothesis", "experiment", "data", "analysis", "research",
+        "methodology", "theory", "evidence", "conclusion",
+    ],
+}
+
+ALL_DOMAIN_TERMS: set[str] = set()
+TERM_TO_CATEGORY: dict[str, str] = {}
+
+for category, terms in DOMAIN_ONTOLOGY.items():
+    for term in terms:
+        ALL_DOMAIN_TERMS.add(term.lower())
+        TERM_TO_CATEGORY[term.lower()] = category
+
+# Dependency to Relation mapping
+DEP_TO_RELATION = {
+    "nsubj": "subject_of",
+    "dobj": "object_of",
+    "pobj": "related_to",
+    "amod": "has_property",
+    "compound": "part_of",
+    "prep": "related_to",
+    "attr": "is_a",
+    "appos": "is_a",
+    "nmod": "related_to",
+    "poss": "belongs_to",
+}
+
+# Stopwords für Fast-Mode
+STOPWORDS = {
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "must", "shall", "can", "need", "dare",
+    "ought", "used", "to", "of", "in", "for", "on", "with", "at", "by",
+    "from", "as", "into", "through", "during", "before", "after", "above",
+    "below", "between", "under", "again", "further", "then", "once", "here",
+    "there", "when", "where", "why", "how", "all", "each", "few", "more",
+    "most", "other", "some", "such", "no", "nor", "not", "only", "own",
+    "same", "so", "than", "too", "very", "just", "also", "now", "it",
+    "its", "this", "that", "these", "those", "i", "you", "he", "she",
+    "we", "they", "what", "which", "who", "whom", "this", "that", "am",
+    "and", "but", "if", "or", "because", "until", "while", "although",
+}
+
+
+# ============================================================================
+# NLP Manager (Singleton mit Fallback)
+# ============================================================================
+
+class NLPManager:
+    """
+    Singleton Manager für spaCy NLP Pipeline.
+    Handhabt Model-Loading mit robustem Fallback.
+    """
+    _instance = None
+    _nlp = None
+    _is_blank = False
+    _is_fast = False
+    _config: ExtractorConfig = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
     @classmethod
-    def get_nlp(cls):
-        """Lazy-load spaCy model (Singleton)"""
-        if cls._nlp_instance is None:
-            try:
-                cls._nlp_instance = spacy.load("en_core_web_sm")
-            except OSError:
-                # Fallback: Download if not installed
-                import subprocess
-                subprocess.run([sys.executable, "-m", "spacy", "download", "en_core_web_sm"], check=True)
-                cls._nlp_instance = spacy.load("en_core_web_sm")
-        return cls._nlp_instance
+    def get_nlp(cls, config: ExtractorConfig = None):
+        """
+        Lazy-load spaCy Pipeline mit Fallback-Kette:
+        1. Vollständiges Model (en_core_web_sm)
+        2. Blank Model mit Sentencizer
+        3. Fast-Mode (nur Regex, kein spaCy)
+        """
+        if config is None:
+            config = ExtractorConfig()
+
+        cls._config = config
+
+        # Fast mode - kein spaCy nötig
+        if config.fast_mode:
+            cls._is_fast = True
+            cls._is_blank = True
+            if SPACY_AVAILABLE:
+                cls._nlp = spacy.blank("en")
+                cls._nlp.add_pipe("sentencizer")
+            else:
+                cls._nlp = None
+            return cls._nlp
+
+        # Bereits geladen?
+        if cls._nlp is not None:
+            return cls._nlp
+
+        if not SPACY_AVAILABLE:
+            logging.warning("spaCy not installed. Using fast mode.")
+            cls._is_fast = True
+            cls._is_blank = True
+            return None
+
+        # Versuche Model zu laden
+        try:
+            # Disable components für Speed
+            disable = []
+            if config.disable_ner:
+                disable.append("ner")
+            if config.disable_parser:
+                disable.append("parser")
+
+            cls._nlp = spacy.load(config.model_name, disable=disable if disable else None)
+            cls._is_blank = False
+            logging.info(f"Loaded spaCy model: {config.model_name}")
+
+        except OSError as e:
+            logging.warning(f"Could not load spaCy model '{config.model_name}': {e}")
+
+            # Fallback 1: Versuche Download (nur wenn pip verfügbar)
+            if cls._try_download_model(config.model_name):
+                try:
+                    cls._nlp = spacy.load(config.model_name)
+                    cls._is_blank = False
+                    logging.info(f"Successfully downloaded and loaded: {config.model_name}")
+                    return cls._nlp
+                except Exception:
+                    pass
+
+            # Fallback 2: Blank Model
+            logging.warning("Falling back to blank spaCy model (limited functionality)")
+            cls._nlp = spacy.blank("en")
+            cls._nlp.add_pipe("sentencizer")
+            cls._is_blank = True
+
+        return cls._nlp
+
+    @classmethod
+    def _try_download_model(cls, model_name: str) -> bool:
+        """Versucht Model herunterzuladen - nur wenn pip verfügbar"""
+        try:
+            import subprocess
+            import sys
+
+            # Check if pip is available
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "--version"],
+                capture_output=True,
+                timeout=5
+            )
+
+            if result.returncode != 0:
+                logging.debug("pip not available, skipping download attempt")
+                return False
+
+            # Try download
+            logging.info(f"Attempting to download {model_name}...")
+            result = subprocess.run(
+                [sys.executable, "-m", "spacy", "download", model_name],
+                capture_output=True,
+                timeout=300  # 5 min timeout
+            )
+
+            return result.returncode == 0
+
+        except Exception as e:
+            logging.debug(f"Download attempt failed: {e}")
+            return False
+
+    @classmethod
+    def is_blank(cls) -> bool:
+        return cls._is_blank
+
+    @classmethod
+    def is_fast(cls) -> bool:
+        return cls._is_fast
+
+    @classmethod
+    def reset(cls):
+        """Reset für Tests oder Config-Änderung"""
+        cls._nlp = None
+        cls._is_blank = False
+        cls._is_fast = False
+
+
+# ============================================================================
+# Fast Concept Extractor (No ML)
+# ============================================================================
+
+# ============================================================================
+# Relationship Patterns
+# ============================================================================
+
+RELATION_PATTERNS = [
+    # "X is a Y", "X is a type of Y", "X is a subset of Y"
+    (r'\b({term1})\s+(?:is|are)\s+(?:a|an|the)?\s*(?:type|subset|form|kind)?\s*(?:of\s+)?({term2})\b', 'is_a'),
+    # "X uses Y", "X using Y", "X utilizes Y"
+    (r'\b({term1})\s+(?:uses?|using|utilizes?|employs?)\s+({term2})\b', 'uses'),
+    # "X requires Y", "X needs Y", "X depends on Y"
+    (r'\b({term1})\s+(?:requires?|needs?|depends?\s+on)\s+({term2})\b', 'depends_on'),
+    # "X enables Y", "X allows Y"
+    (r'\b({term1})\s+(?:enables?|allows?|supports?)\s+({term2})\b', 'enables'),
+    # "X and Y" - schwache Relation
+    (r'\b({term1})\s+and\s+({term2})\b', 'related_to'),
+    # "X for Y", "X in Y", "X with Y"
+    (r'\b({term1})\s+(?:for|in|with)\s+({term2})\b', 'related_to'),
+    # "X based on Y", "X built on Y"
+    (r'\b({term1})\s+(?:based|built)\s+on\s+({term2})\b', 'depends_on'),
+    # "X such as Y", "X like Y", "X including Y"
+    (r'\b({term1})\s+(?:such\s+as|like|including)\s+({term2})\b', 'has_example'),
+    # "X similar to Y"
+    (r'\b({term1})\s+similar\s+to\s+({term2})\b', 'similar_to'),
+    # "X consists of Y", "X contains Y"
+    (r'\b({term1})\s+(?:consists?\s+of|contains?)\s+({term2})\b', 'has_part'),
+    # "X trains Y", "X trains on Y"
+    (r'\b({term1})\s+trains?\s+(?:on\s+)?({term2})\b', 'trains'),
+    # "X processes Y"
+    (r'\b({term1})\s+(?:processes?|handles?|analyzes?)\s+({term2})\b', 'processes'),
+]
+
+# Inverse Relationships für bidirektionale Graphen
+INVERSE_RELATIONS = {
+    'is_a': 'has_instance',
+    'uses': 'used_by',
+    'depends_on': 'dependency_of',
+    'enables': 'enabled_by',
+    'has_part': 'part_of',
+    'has_example': 'example_of',
+    'similar_to': 'similar_to',  # Symmetrisch
+    'related_to': 'related_to',  # Symmetrisch
+    'co_occurs_with': 'co_occurs_with',  # Symmetrisch
+}
+
+
+class FastConceptExtractor:
+    """
+    Schneller Extraktor MIT Relationship-Extraktion.
+
+    Ersetzt die ursprüngliche Version die relationships={} zurückgab.
+    Nutzt Co-Occurrence und Pattern-Matching statt Dependency Parsing.
+
+    Performance: ~2-5ms für 20k Zeichen
+    """
 
     def __init__(self, max_concepts: int = 5):
-        self.nlp = self.get_nlp()
         self.max_concepts = max_concepts
+        self._nlp = None  # Für Kompatibilität
 
     def extract(self, text: str) -> dict[str, Any]:
+        """Extrahiert Konzepte MIT Relationships"""
+        if not text or not text.strip():
+            return {"concepts": []}
+
+        candidates: dict[str, float] = {}
+        text_lower = text.lower()
+        text_len = len(text) or 1
+
+        # 1. Domain-Terme (höchste Priorität)
+        for term in ALL_DOMAIN_TERMS:
+            if term in text_lower:
+                count = text_lower.count(term)
+                candidates[term] = (count / 10) + 0.4
+
+        # 2. Kapitalisierte Phrasen (potentielle Named Entities)
+        cap_pattern = r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})\b'
+        for match in re.finditer(cap_pattern, text):
+            phrase = match.group(1).lower()
+            if len(phrase) > 2 and phrase not in STOPWORDS:
+                pos = match.start()
+                pos_score = 1.0 - (pos / text_len)
+                candidates[phrase] = candidates.get(phrase, 0) + 0.3 + (pos_score * 0.1)
+
+        # 3. Häufige Wörter (TF-basiert)
+        words = re.findall(r'\b[a-z]{3,}\b', text_lower)
+        word_freq = Counter(w for w in words if w not in STOPWORDS)
+        max_freq = max(word_freq.values()) if word_freq else 1
+
+        for word, count in word_freq.most_common(30):
+            if count > 1:
+                freq_score = count / max_freq
+                candidates[word] = candidates.get(word, 0) + (freq_score * 0.3)
+
+        # 4. Compound Terms (Bi-grams)
+        for i in range(len(words) - 1):
+            bigram = f"{words[i]} {words[i + 1]}"
+            if bigram in ALL_DOMAIN_TERMS:
+                candidates[bigram] = candidates.get(bigram, 0) + 0.5
+
+        # Sort und dedupliziere
+        sorted_candidates = sorted(candidates.items(), key=lambda x: x[1], reverse=True)
+
+        selected = []
+        selected_set = set()
+        for term, score in sorted_candidates:
+            is_subset = any(term in s or s in term for s in selected_set if term != s)
+            if not is_subset:
+                selected.append((term, score))
+                selected_set.add(term)
+            if len(selected) >= self.max_concepts * 3:  # Mehr für Relationship-Matching
+                break
+
+        # ============ RELATIONSHIP EXTRACTION ============
+        selected_terms = {name for name, _ in selected}
+        relationships = self._extract_relationships_fast(text_lower, selected_terms)
+
+        # Format output - nur top max_concepts
+        concepts = []
+        for name, score in selected[:self.max_concepts]:
+            concepts.append({
+                "name": name,
+                "category": TERM_TO_CATEGORY.get(name, "concept"),
+                "relationships": relationships.get(name, {}),
+                "importance_score": round(min(score, 1.0), 2),
+                "context_snippets": self._extract_context_fast(text, name),
+            })
+
+        return {"concepts": concepts}
+
+    def _extract_relationships_fast(
+        self,
+        text_lower: str,
+        terms: set[str]
+    ) -> dict[str, dict[str, list[str]]]:
         """
-        Extrahiert Konzepte aus Text mittels NLP-Analyse.
+        Extrahiert Relationships zwischen Termen via:
+        1. Pattern Matching (spezifische Relationen)
+        2. Sentence Co-Occurrence (generische Relationen)
 
         Returns:
-            Dict im Format {"concepts": [rConcept, ...]}
+            {term: {rel_type: [related_terms]}}
         """
-        doc = self.nlp(text)
+        relationships: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
 
-        # 1. Kandidaten sammeln
-        candidates = self._collect_candidates(doc)
+        terms_list = list(terms)
 
-        # 2. Beziehungen aus Dependency Tree extrahieren
-        relationships = self._extract_relationships(doc, candidates)
+        # 1. Pattern-basierte Extraktion
+        for term1 in terms_list:
+            for term2 in terms_list:
+                if term1 == term2:
+                    continue
 
-        # 3. Wichtigkeit berechnen
-        importance_scores = self._calculate_importance(doc, candidates)
+                for pattern_template, rel_type in RELATION_PATTERNS:
+                    t1_escaped = re.escape(term1)
+                    t2_escaped = re.escape(term2)
 
-        # 4. Kontext-Snippets extrahieren
-        context_snippets = self._extract_context(doc, candidates)
+                    pattern = pattern_template.format(term1=t1_escaped, term2=t2_escaped)
 
-        # 5. Top-N Konzepte auswählen
-        top_concepts = self._select_top_concepts(
-            candidates, importance_scores, relationships
+                    if re.search(pattern, text_lower, re.IGNORECASE):
+                        if term2 not in relationships[term1][rel_type]:
+                            relationships[term1][rel_type].append(term2)
+
+                        # Inverse Relation hinzufügen
+                        inverse = INVERSE_RELATIONS.get(rel_type)
+                        if inverse and term1 not in relationships[term2][inverse]:
+                            relationships[term2][inverse].append(term1)
+
+        # 2. Sentence Co-Occurrence
+        sentences = re.split(r'[.!?]+', text_lower)
+
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if len(sentence) < 10:
+                continue
+
+            terms_in_sentence = [t for t in terms_list if t in sentence]
+
+            for i, t1 in enumerate(terms_in_sentence):
+                for t2 in terms_in_sentence[i + 1:]:
+                    if t1 != t2:
+                        # Nur co_occurs_with wenn keine stärkere Relation existiert
+                        has_stronger_rel = any(
+                            t2 in rels
+                            for rel_type, rels in relationships[t1].items()
+                            if rel_type != 'co_occurs_with'
+                        )
+                        if not has_stronger_rel:
+                            if t2 not in relationships[t1]['co_occurs_with']:
+                                relationships[t1]['co_occurs_with'].append(t2)
+                            if t1 not in relationships[t2]['co_occurs_with']:
+                                relationships[t2]['co_occurs_with'].append(t1)
+
+        return {k: dict(v) for k, v in relationships.items()}
+
+    def _extract_context_fast(self, text: str, term: str, max_snippets: int = 2) -> list[str]:
+        """Schnelle Kontext-Extraktion mit Regex"""
+        snippets = []
+        pattern = re.compile(
+            rf'[^.!?]*\b{re.escape(term)}\b[^.!?]*[.!?]',
+            re.IGNORECASE
         )
 
-        # 6. In Output-Format konvertieren
+        for match in pattern.finditer(text):
+            snippet = match.group().strip()
+            if 10 < len(snippet) < 250:
+                snippets.append(snippet)
+                if len(snippets) >= max_snippets:
+                    break
+
+        return snippets
+
+
+# ============================================================================
+# Full Concept Extractor (with spaCy)
+# ============================================================================
+
+class LocalConceptExtractor:
+    """
+    Lokaler, deterministischer Konzept-Extraktor.
+
+    Features:
+    - Fast Mode: Nur Heuristiken, kein ML (~10x schneller)
+    - Auto-Batch: Automatisches Chunking großer Texte
+    - Fallback: Graceful degradation wenn Model fehlt
+    - Multi-Processing: Parallele Verarbeitung
+
+    Usage:
+        # Standard
+        extractor = LocalConceptExtractor(max_concepts=5)
+        result = extractor.extract(text)
+
+        # Fast mode
+        extractor = LocalConceptExtractor(max_concepts=5, fast=True)
+
+        # With config
+        config = ExtractorConfig(fast_mode=True, auto_batch=True)
+        extractor = LocalConceptExtractor(config=config)
+    """
+
+    def __init__(
+        self,
+        max_concepts: int = 5,
+        fast: bool = True,
+        config: ExtractorConfig = None
+    ):
+        # Config erstellen/übernehmen
+        if config is not None:
+            self.config = config
+        else:
+            self.config = ExtractorConfig(
+                max_concepts=max_concepts,
+                fast_mode=fast,
+            )
+
+        self.max_concepts = self.config.max_concepts
+
+        # Fast-Mode Shortcut
+        if self.config.fast_mode:
+            self._fast_extractor = FastConceptExtractor(max_concepts)
+            self.nlp = None
+            self._using_blank = True
+        else:
+            self._fast_extractor = None
+            self.nlp = NLPManager.get_nlp(self.config)
+            self._using_blank = NLPManager.is_blank()
+
+    def extract(self, text: str) -> dict[str, Any]:
+        """Extrahiert Konzepte - wählt automatisch beste Strategie"""
+        if not text or not text.strip():
+            return {"concepts": []}
+
+        # Fast mode
+        if self._fast_extractor is not None and (self.config.fast_mode or self._using_blank):
+            return self._fast_extractor.extract(text)
+
+        # Fallback wenn nlp None
+        if self.nlp is None:
+            return FastConceptExtractor(self.max_concepts).extract(text)
+
+        # Auto-batch für große Texte
+        if self.config.auto_batch and len(text) > self.config.batch_threshold:
+            return self._extract_batched(text)
+
+        # Full extraction mit spaCy
+        result = self._extract_single(text)
+
+        # FALLBACK: Wenn keine Relationships gefunden, nutze Fast-Extractor
+        has_relationships = any(
+            c.get('relationships')
+            for c in result.get('concepts', [])
+        )
+        if not has_relationships and self._fast_extractor:
+            fast_result = self._fast_extractor.extract(text)
+            # Merge relationships from fast extractor
+            fast_rels = {c['name']: c['relationships'] for c in fast_result.get('concepts', [])}
+            for concept in result.get('concepts', []):
+                if concept['name'] in fast_rels:
+                    concept['relationships'] = fast_rels[concept['name']]
+
+        return result
+
+    def _extract_single(self, text: str) -> dict[str, Any]:
+        """Standard extraction mit spaCy"""
+        doc = self.nlp(text)
+
+        candidates = self._collect_candidates(doc)
+
+        if not self._using_blank and doc.has_annotation("DEP"):
+            relationships = self._extract_relationships(doc, candidates)
+        else:
+            # FALLBACK: Fast relationship extraction
+            relationships = defaultdict(lambda: defaultdict(set))
+            if self._fast_extractor:
+                fast_rels = self._fast_extractor._extract_relationships_fast(
+                    doc.text.lower(),
+                    candidates
+                )
+                for term, rels in fast_rels.items():
+                    for rel_type, targets in rels.items():
+                        relationships[term][rel_type] = set(targets)
+
+        importance_scores = self._calculate_importance(doc, candidates)
+        context_snippets = self._extract_context(doc, candidates)
+        top_concepts = self._select_top_concepts(candidates, importance_scores, relationships)
+
         concepts = []
         for name in top_concepts[:self.max_concepts]:
             concept = {
@@ -522,95 +1041,219 @@ class LocalConceptExtractor:
 
         return {"concepts": concepts}
 
+    def _extract_batched(self, text: str) -> dict[str, Any]:
+        """
+        Batch-Extraktion für große Texte.
+        Splittet in Chunks, extrahiert parallel, merged Ergebnisse.
+        """
+        # Text in Chunks splitten (an Satzgrenzen wenn möglich)
+        chunks = self._split_into_chunks(text)
+
+        logging.debug(f"Auto-batching: {len(text)} chars -> {len(chunks)} chunks")
+
+        # Parallel processing wenn aktiviert
+        if self.config.n_process > 1 and len(chunks) > 1:
+            all_concepts = self._extract_parallel(chunks)
+        else:
+            all_concepts = []
+            for chunk in chunks:
+                result = self._extract_single(chunk)
+                all_concepts.extend(result.get("concepts", []))
+
+        # Merge und dedupliziere
+        return self._merge_concepts(all_concepts)
+
+    def _split_into_chunks(self, text: str) -> list[str]:
+        """Splittet Text in Chunks an Satzgrenzen"""
+        chunks = []
+
+        # Versuche Satz-basiertes Splitting
+        if self.nlp is not None:
+            # Nur Sentencizer für Speed
+            if self._using_blank:
+                doc = self.nlp(text)
+            else:
+                doc = self.nlp.make_doc(text)
+                # Nur sentencizer anwenden
+                for name, proc in self.nlp.pipeline:
+                    if name == "sentencizer" or name == "senter":
+                        doc = proc(doc)
+                        break
+
+            current_chunk = []
+            current_len = 0
+
+            for sent in doc.sents:
+                sent_text = sent.text
+                sent_len = len(sent_text)
+
+                if current_len + sent_len > self.config.batch_size and current_chunk:
+                    chunks.append(" ".join(current_chunk))
+                    current_chunk = [sent_text]
+                    current_len = sent_len
+                else:
+                    current_chunk.append(sent_text)
+                    current_len += sent_len
+
+            if current_chunk:
+                chunks.append(" ".join(current_chunk))
+
+        else:
+            # Fallback: Einfaches Character-Splitting
+            for i in range(0, len(text), self.config.batch_size):
+                chunk = text[i:i + self.config.batch_size]
+                # Versuche am Satzende zu brechen
+                if i + self.config.batch_size < len(text):
+                    last_period = chunk.rfind('.')
+                    if last_period > self.config.batch_size // 2:
+                        chunk = chunk[:last_period + 1]
+                chunks.append(chunk)
+
+        return chunks if chunks else [text]
+
+    def _extract_parallel(self, chunks: list[str]) -> list[dict]:
+        """Parallele Extraktion mit nlp.pipe"""
+        all_concepts = []
+
+        # nlp.pipe für effiziente Batch-Verarbeitung
+        for doc in self.nlp.pipe(chunks, n_process=self.config.n_process):
+            candidates = self._collect_candidates(doc)
+            importance = self._calculate_importance(doc, candidates)
+            context = self._extract_context(doc, candidates)
+
+            for name in list(candidates)[:self.max_concepts * 2]:
+                all_concepts.append({
+                    "name": name,
+                    "category": self._determine_category(name, doc),
+                    "relationships": {},
+                    "importance_score": round(importance.get(name, 0.1), 2),
+                    "context_snippets": context.get(name, [])[:2],
+                })
+
+        return all_concepts
+
+    def _merge_concepts(self, concepts: list[dict]) -> dict[str, Any]:
+        """Merged und dedupliziert Konzepte aus mehreren Chunks"""
+        # Gruppiere nach Name
+        by_name: dict[str, list[dict]] = defaultdict(list)
+        for c in concepts:
+            by_name[c["name"]].append(c)
+
+        # Merge
+        merged = []
+        for name, instances in by_name.items():
+            # Höchsten Score nehmen
+            best = max(instances, key=lambda x: x["importance_score"])
+
+            # Frequenz-Bonus
+            freq_bonus = min(len(instances) * 0.1, 0.3)
+            best["importance_score"] = min(best["importance_score"] + freq_bonus, 1.0)
+
+            # Alle Kontext-Snippets sammeln
+            all_snippets = []
+            for inst in instances:
+                all_snippets.extend(inst.get("context_snippets", []))
+            best["context_snippets"] = list(set(all_snippets))[:3]
+
+            merged.append(best)
+
+        # Sort by importance
+        merged.sort(key=lambda x: x["importance_score"], reverse=True)
+
+        # Dedupliziere ähnliche Terms
+        final = []
+        final_names = set()
+
+        for concept in merged:
+            name = concept["name"]
+            is_subset = any(name in n or n in name for n in final_names if name != n)
+            if not is_subset:
+                final.append(concept)
+                final_names.add(name)
+
+            if len(final) >= self.max_concepts:
+                break
+
+        return {"concepts": final}
+
     def _collect_candidates(self, doc: Doc) -> set[str]:
-        """Sammelt Konzept-Kandidaten aus dem Text"""
+        """Sammelt Konzept-Kandidaten"""
         candidates = set()
 
-        # 1. Named Entities
-        for ent in doc.ents:
-            if ent.label_ in {"ORG", "PRODUCT", "GPE", "WORK_OF_ART", "EVENT", "LAW"}:
-                candidates.add(ent.text.lower())
+        # 1. Named Entities (nur wenn verfügbar)
+        if not self._using_blank and doc.ents:
+            for ent in doc.ents:
+                if ent.label_ in {"ORG", "PRODUCT", "GPE", "WORK_OF_ART", "EVENT", "LAW", "PERSON"}:
+                    candidates.add(ent.text.lower())
 
-        # 2. Noun Chunks (Nominalphrasen)
-        for chunk in doc.noun_chunks:
-            # Filtere zu generische Chunks
-            chunk_text = chunk.text.lower().strip()
-            if len(chunk_text) > 2 and chunk_text not in {"it", "this", "that", "they", "we"}:
-                candidates.add(chunk_text)
-                # Auch den Root des Chunks
-                candidates.add(chunk.root.lemma_.lower())
+        # 2. Noun Chunks (nur mit Parser)
+        if not self._using_blank and doc.has_annotation("DEP"):
+            try:
+                for chunk in doc.noun_chunks:
+                    chunk_text = chunk.text.lower().strip()
+                    if len(chunk_text) > 2 and chunk_text not in STOPWORDS:
+                        candidates.add(chunk_text)
+                        candidates.add(chunk.root.lemma_.lower())
+            except Exception:
+                pass  # noun_chunks nicht verfügbar
 
-        # 3. Domain-Terme aus Ontologie (Multi-Word matching)
+        # 3. Domain-Terme (funktioniert immer)
         text_lower = doc.text.lower()
         for term in ALL_DOMAIN_TERMS:
             if term in text_lower:
                 candidates.add(term)
 
-        # 4. Wichtige Nomen (basierend auf POS-Tags)
+        # 4. POS-basierte Extraktion oder Heuristik
         for token in doc:
-            if token.pos_ in {"NOUN", "PROPN"} and len(token.text) > 2:
-                if not token.is_stop:
-                    candidates.add(token.lemma_.lower())
+            if self._using_blank:
+                # Heuristik: Kapitalisierte Wörter
+                if token.text and token.text[0].isupper() and len(token.text) > 2:
+                    if token.text.lower() not in STOPWORDS:
+                        candidates.add(token.text.lower())
+            else:
+                # Mit POS-Tags
+                if token.pos_ in {"NOUN", "PROPN"} and len(token.text) > 2:
+                    if not token.is_stop:
+                        candidates.add(token.lemma_.lower())
 
         return candidates
 
     def _extract_relationships(
         self, doc: Doc, candidates: set[str]
     ) -> dict[str, dict[str, set[str]]]:
-        """Extrahiert Beziehungen aus dem Dependency Tree"""
+        """Extrahiert Beziehungen aus Dependency Tree"""
         relationships: dict[str, dict[str, set[str]]] = defaultdict(
             lambda: defaultdict(set)
         )
+
+        if self._using_blank:
+            return relationships
 
         for token in doc:
             token_text = token.lemma_.lower()
             head_text = token.head.lemma_.lower()
 
-            # Nur relevante Kandidaten
             if token_text not in candidates and head_text not in candidates:
                 continue
 
-            # Map dependency to relation type
-            rel_type = DEP_TO_RELATION.get(token.dep_, None)
+            rel_type = DEP_TO_RELATION.get(token.dep_)
 
             if rel_type and token_text in candidates and head_text in candidates:
                 if token_text != head_text:
                     relationships[token_text][rel_type].add(head_text)
-                    # Inverse Beziehung
-                    inverse_rel = self._get_inverse_relation(rel_type)
-                    if inverse_rel:
-                        relationships[head_text][inverse_rel].add(token_text)
+                    inverse = self._get_inverse_relation(rel_type)
+                    if inverse:
+                        relationships[head_text][inverse].add(token_text)
 
-            # Compound-Beziehungen (z.B. "neural network")
+            # Compound terms
             if token.dep_ == "compound":
-                compound_term = f"{token.text.lower()} {token.head.text.lower()}"
-                if compound_term in candidates:
-                    relationships[token_text]["part_of"].add(compound_term)
-                    relationships[compound_term]["has_part"].add(token_text)
+                compound = f"{token.text.lower()} {token.head.text.lower()}"
+                if compound in candidates:
+                    relationships[token_text]["part_of"].add(compound)
 
-            # Verb-basierte Beziehungen
-            if token.pos_ == "VERB":
-                subjects = [c for c in token.children if c.dep_ in {"nsubj", "nsubjpass"}]
-                objects = [c for c in token.children if c.dep_ in {"dobj", "pobj"}]
-
-                for subj in subjects:
-                    subj_text = subj.lemma_.lower()
-                    for obj in objects:
-                        obj_text = obj.lemma_.lower()
-                        if subj_text in candidates and obj_text in candidates:
-                            # z.B. "GPU accelerates training"
-                            verb_rel = f"{token.lemma_.lower()}s"  # Simple verb form
-                            if verb_rel in {"uses", "requires", "needs", "enables", "supports"}:
-                                relationships[subj_text]["uses"].add(obj_text)
-                            else:
-                                relationships[subj_text]["related_to"].add(obj_text)
-
-        # Kookkurrenz-basierte Beziehungen (gleicher Satz)
+        # Co-occurrence
         for sent in doc.sents:
-            sent_concepts = [
-                c for c in candidates
-                if c in sent.text.lower()
-            ]
+            sent_concepts = [c for c in candidates if c in sent.text.lower()]
             for i, c1 in enumerate(sent_concepts):
                 for c2 in sent_concepts[i + 1:]:
                     if c1 != c2:
@@ -620,7 +1263,7 @@ class LocalConceptExtractor:
         return relationships
 
     def _get_inverse_relation(self, rel_type: str) -> str | None:
-        """Gibt die inverse Beziehung zurück"""
+        """Inverse Beziehung"""
         inverses = {
             "uses": "used_by",
             "part_of": "has_part",
@@ -634,12 +1277,12 @@ class LocalConceptExtractor:
     def _calculate_importance(
         self, doc: Doc, candidates: set[str]
     ) -> dict[str, float]:
-        """Berechnet Wichtigkeits-Score basierend auf mehreren Faktoren"""
+        """Berechnet Importance Scores"""
         scores: dict[str, float] = {}
         text_lower = doc.text.lower()
-        total_tokens = len(doc)
+        text_len = len(text_lower) or 1
 
-        # Frequenz-Counter
+        # Frequenzen
         term_freq = Counter()
         for term in candidates:
             term_freq[term] = text_lower.count(term)
@@ -650,35 +1293,34 @@ class LocalConceptExtractor:
             score = 0.0
 
             # 1. Frequenz (normalisiert)
-            freq_score = term_freq[term] / max_freq
-            score += freq_score * 0.3
+            score += (term_freq[term] / max_freq) * 0.3
 
-            # 2. Domain-Relevanz (aus Ontologie)
+            # 2. Domain-Relevanz
             if term in ALL_DOMAIN_TERMS:
                 score += 0.3
 
-            # 3. Position im Text (früher = wichtiger)
+            # 3. Position
             first_pos = text_lower.find(term)
             if first_pos != -1:
-                position_score = 1.0 - (first_pos / len(text_lower))
-                score += position_score * 0.2
+                score += (1.0 - first_pos / text_len) * 0.2
 
-            # 4. Syntaktische Rolle
-            for token in doc:
-                if token.lemma_.lower() == term or term in token.text.lower():
-                    if token.dep_ in {"nsubj", "ROOT", "dobj"}:
-                        score += 0.1
-                    if token.pos_ in {"PROPN"}:
-                        score += 0.05
-                    break
+            # 4. Syntaktische Rolle (wenn verfügbar)
+            if not self._using_blank:
+                for token in doc:
+                    if token.lemma_.lower() == term or term in token.text.lower():
+                        if token.dep_ in {"nsubj", "ROOT", "dobj"}:
+                            score += 0.1
+                        if token.pos_ == "PROPN":
+                            score += 0.05
+                        break
 
             # 5. Named Entity Bonus
-            for ent in doc.ents:
-                if term in ent.text.lower():
-                    score += 0.1
-                    break
+            if not self._using_blank:
+                for ent in doc.ents:
+                    if term in ent.text.lower():
+                        score += 0.1
+                        break
 
-            # Normalisiere auf [0, 1]
             scores[term] = min(score, 1.0)
 
         return scores
@@ -686,7 +1328,7 @@ class LocalConceptExtractor:
     def _extract_context(
         self, doc: Doc, candidates: set[str]
     ) -> dict[str, list[str]]:
-        """Extrahiert Kontext-Snippets für jeden Kandidaten"""
+        """Extrahiert Kontext-Snippets"""
         context: dict[str, list[str]] = defaultdict(list)
 
         for sent in doc.sents:
@@ -697,7 +1339,6 @@ class LocalConceptExtractor:
             sent_lower = sent_text.lower()
             for term in candidates:
                 if term in sent_lower:
-                    # Kürze zu lange Sätze
                     snippet = sent_text[:200] + "..." if len(sent_text) > 200 else sent_text
                     if snippet not in context[term]:
                         context[term].append(snippet)
@@ -705,27 +1346,28 @@ class LocalConceptExtractor:
         return context
 
     def _determine_category(self, term: str, doc: Doc) -> str:
-        """Bestimmt die Kategorie eines Konzepts"""
-        # 1. Prüfe Ontologie
+        """Bestimmt Kategorie eines Konzepts"""
+        # 1. Ontologie
         if term in TERM_TO_CATEGORY:
             return TERM_TO_CATEGORY[term]
 
-        # 2. Prüfe Teil-Matches in Ontologie
+        # 2. Teil-Match
         for domain_term, category in TERM_TO_CATEGORY.items():
             if term in domain_term or domain_term in term:
                 return category
 
-        # 3. Fallback: POS-basierte Kategorisierung
-        for token in doc:
-            if token.lemma_.lower() == term or term in token.text.lower():
-                if token.pos_ == "PROPN":
-                    return "entity"
-                elif token.pos_ == "VERB":
-                    return "method"
-                elif token.pos_ == "ADJ":
-                    return "property"
+        # 3. POS-basiert
+        if not self._using_blank:
+            for token in doc:
+                if token.lemma_.lower() == term or term in token.text.lower():
+                    if token.pos_ == "PROPN":
+                        return "entity"
+                    elif token.pos_ == "VERB":
+                        return "method"
+                    elif token.pos_ == "ADJ":
+                        return "property"
+                    break
 
-        # 4. Default
         return "concept"
 
     def _format_relationships(
@@ -737,7 +1379,6 @@ class LocalConceptExtractor:
 
         formatted = {}
         for rel_type, targets in relationships[name].items():
-            # Filtere self-references und limitiere
             filtered = [t for t in targets if t != name][:5]
             if filtered:
                 formatted[rel_type] = filtered
@@ -750,44 +1391,96 @@ class LocalConceptExtractor:
         importance_scores: dict[str, float],
         relationships: dict[str, dict[str, set[str]]]
     ) -> list[str]:
-        """Wählt die wichtigsten Konzepte aus"""
+        """Wählt Top-N Konzepte"""
         scored = []
 
         for term in candidates:
             base_score = importance_scores.get(term, 0.0)
 
-            # Bonus für Konzepte mit vielen Beziehungen
-            rel_count = sum(len(targets) for targets in relationships.get(term, {}).values())
+            # Relationship Bonus
+            rel_count = sum(len(t) for t in relationships.get(term, {}).values())
             rel_bonus = min(rel_count * 0.05, 0.2)
 
-            # Bonus für Domain-Terme
+            # Domain Bonus
             domain_bonus = 0.15 if term in ALL_DOMAIN_TERMS else 0.0
 
-            final_score = base_score + rel_bonus + domain_bonus
-            scored.append((term, final_score))
+            scored.append((term, base_score + rel_bonus + domain_bonus))
 
-        # Sortiere nach Score
         scored.sort(key=lambda x: x[1], reverse=True)
 
-        # Dedupliziere ähnliche Terme (z.B. "network" vs "neural network")
+        # Dedupliziere
         selected = []
         selected_lower = set()
 
         for term, score in scored:
-            # Skip wenn ein ähnlicher Term bereits ausgewählt
-            is_subset = any(
-                term in s or s in term
-                for s in selected_lower
-                if term != s
-            )
+            is_subset = any(term in s or s in term for s in selected_lower if term != s)
             if not is_subset:
                 selected.append(term)
                 selected_lower.add(term)
 
-            if len(selected) >= self.max_concepts * 2:  # Buffer für Filtering
+            if len(selected) >= self.max_concepts * 2:
                 break
 
         return selected
+
+
+# ============================================================================
+# Convenience Functions
+# ============================================================================
+
+def get_local_extractor(
+    max_concepts: int = 5,
+    fast: bool = False,
+    config: ExtractorConfig = None
+) -> LocalConceptExtractor:
+    """
+    Factory function für LocalConceptExtractor.
+
+    Args:
+        max_concepts: Maximale Anzahl Konzepte
+        fast: Fast mode aktivieren (keine ML-Models)
+        config: Vollständige Konfiguration (überschreibt andere Args)
+
+    Returns:
+        Konfigurierter Extractor
+    """
+    if config is not None:
+        return LocalConceptExtractor(config=config)
+
+    return LocalConceptExtractor(max_concepts=max_concepts, fast=fast)
+
+
+def extract_concepts_fast(text: str, max_concepts: int = 5) -> dict[str, Any]:
+    """Schnelle Konzept-Extraktion ohne ML-Models"""
+    extractor = FastConceptExtractor(max_concepts=max_concepts)
+    return extractor.extract(text)
+
+
+def extract_concepts(
+    text: str,
+    max_concepts: int = 5,
+    fast: bool = False,
+    auto_batch: bool = True
+) -> dict[str, Any]:
+    """
+    Convenience function für Konzept-Extraktion.
+
+    Args:
+        text: Input Text
+        max_concepts: Maximale Anzahl
+        fast: Fast mode (keine ML)
+        auto_batch: Automatisches Batching
+
+    Returns:
+        {"concepts": [{"name": ..., "category": ..., ...}, ...]}
+    """
+    config = ExtractorConfig(
+        max_concepts=max_concepts,
+        fast_mode=fast,
+        auto_batch=auto_batch,
+    )
+    extractor = LocalConceptExtractor(config=config)
+    return extractor.extract(text)
 
 
 # ============================================================================
@@ -2631,6 +3324,10 @@ async def main():
 
     return kb
 
+# ============================================================================
+# Tests
+# ============================================================================
+
 text = "test 123".encode("utf-8", errors="replace").decode("utf-8")
 
 
@@ -2791,9 +3488,8 @@ async def test_graph_enhanced_retrieval():
     print(f"  Edges: {nx_graph.number_of_edges()}")
 
     # Save visualization
-    html_output = await kb.vis(output_file="test_graph_enhanced.html", get_output_html=True)
-    if html_output:
-        print(f"  ✓ Graph visualization saved")
+    await kb.vis(output_file="test_graph_enhanced.html", get_output_html=False)
+    print(f"  ✓ Graph visualization saved")
 
     print("\n" + "=" * 80)
     print("TEST COMPLETED SUCCESSFULLY")
@@ -2877,8 +3573,119 @@ if __name__ == "__main__":
     get_app(name="test_graph_enhanced")
     asyncio.run(run_all_tests())
 
-#if __name__ == "__main__":
-#    get_app(name="main2")
-#
-#    asyncio.run(main())
+if __name__ == "__main__2":
+    import time
+
+    # Test text
+    test_text = """
+    Machine learning is a subset of artificial intelligence that enables systems
+    to learn from data. Deep learning uses neural networks with multiple layers.
+    TensorFlow and PyTorch are popular frameworks for building machine learning models.
+    Natural language processing (NLP) is used for text analysis and understanding.
+    Companies like Google and OpenAI are leading research in artificial intelligence.
+    The transformer architecture revolutionized NLP with attention mechanisms.
+    """ * 10  # Repeat for larger text
+
+    print(f"Text length: {len(test_text)} characters\n")
+
+    # Test 1: Fast mode
+    print("=" * 50)
+    print("TEST 1: Fast Mode")
+    print("=" * 50)
+    start = time.time()
+    result = extract_concepts(test_text, max_concepts=5, fast=True)
+    elapsed = time.time() - start
+    print(f"Time: {elapsed:.3f}s")
+    for c in result["concepts"]:
+        print(f"  - {c['name']} ({c['category']}): {c['importance_score']}")
+
+    # Test 2: Full mode (if available)
+    print("\n" + "=" * 50)
+    print("TEST 2: Full Mode (with auto-batch)")
+    print("=" * 50)
+    start = time.time()
+    result = extract_concepts(test_text, max_concepts=5, fast=False, auto_batch=True)
+    elapsed = time.time() - start
+    print(f"Time: {elapsed:.3f}s")
+    for c in result["concepts"]:
+        print(f"  - {c['name']} ({c['category']}): {c['importance_score']}")
+        if c.get("relationships"):
+            for rel, targets in c["relationships"].items():
+                print(f"      {rel}: {targets}")
+
+    # Test 3: Config-based
+    print("\n" + "=" * 50)
+    print("TEST 3: Custom Config")
+    print("=" * 50)
+    config = ExtractorConfig(
+        max_concepts=3,
+        fast_mode=False,
+        auto_batch=True,
+        batch_threshold=500,
+        disable_parser=True,  # Faster without parser
+    )
+    extractor = LocalConceptExtractor(config=config)
+    start = time.time()
+    result = extractor.extract(test_text)
+    elapsed = time.time() - start
+    print(f"Time: {elapsed:.3f}s")
+    print(f"Concepts: {[c['name'] for c in result['concepts']]}")
+
+if __name__ == "__main__2":
+    # Definiere benötigte Globals für Standalone-Test
+    ALL_DOMAIN_TERMS = {
+        "machine learning", "deep learning", "neural network", "neural networks",
+        "artificial intelligence", "natural language processing", "nlp",
+        "transformer", "transformers", "bert", "gpt", "gpu", "gpus",
+        "tensorflow", "pytorch", "training", "inference",
+    }
+
+    TERM_TO_CATEGORY = {term: "technology" for term in ALL_DOMAIN_TERMS}
+
+
+    test_text = """
+    Machine Learning is a subset of Artificial Intelligence.
+    Deep Learning uses Neural Networks with multiple layers.
+    TensorFlow and PyTorch are popular frameworks for training models.
+    Natural Language Processing requires Machine Learning techniques.
+    GPUs accelerate Deep Learning training significantly.
+    Transformers like BERT and GPT revolutionized NLP.
+    The Transformer architecture enables parallel processing.
+    Neural Networks consist of interconnected layers.
+    """
+
+    print("=" * 70)
+    print("TEST: FastConceptExtractor with Relationship Extraction")
+    print("=" * 70)
+
+    extractor = FastConceptExtractor(max_concepts=10)
+    result = extractor.extract(test_text)
+
+    print(f"\nExtracted {len(result['concepts'])} concepts:\n")
+
+    total_rels = 0
+    for concept in result['concepts']:
+        rels = concept['relationships']
+        rel_count = sum(len(v) for v in rels.values())
+        total_rels += rel_count
+
+        print(f"• {concept['name']} ({concept['category']}) - Score: {concept['importance_score']}")
+
+        if rels:
+            for rel_type, targets in rels.items():
+                print(f"    └─ {rel_type}: {targets}")
+        else:
+            print(f"    └─ (no relationships)")
+
+    print(f"\n{'=' * 70}")
+    print(f"✓ Total relationships found: {total_rels}")
+    print(f"{'=' * 70}")
+
+    # Verify edges would be created
+    print(f"\n[Graph Edge Preview]")
+    for concept in result['concepts']:
+        for rel_type, targets in concept['relationships'].items():
+            for target in targets:
+                print(f"  {concept['name']} --[{rel_type}]--> {target}")
+
 

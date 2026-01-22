@@ -71,30 +71,76 @@ class GGUFExporter:
         self.convert_script = self.llama_cpp_path / "convert_hf_to_gguf.py"
 
     def _find_or_install_llama_cpp(self) -> Path:
-        """Find existing llama.cpp or install it"""
-        # Check common locations
-        common_paths = [
-            Path.home() / "llama.cpp",
-            Path.home() / ".local" / "llama.cpp",
-            Path("/opt/llama.cpp"),
-        ]
+        """Find existing llama.cpp or install it.
 
-        # Also check toolboxv2 data dir
+        Search order:
+        1. LLAMA_CPP_PATH environment variable
+        2. llm-gateway/build/llama.cpp (shared installation)
+        3. toolboxv2 data dir
+        4. Common system locations
+        """
+        common_paths = []
+
+        # 1. Check environment variable first
+        env_path = os.environ.get("LLAMA_CPP_PATH")
+        if env_path:
+            common_paths.append(Path(env_path))
+
+        # 2. Check llm-gateway installation (shared with gateway)
         try:
-            from toolboxv2 import get_app
-            common_paths.insert(0, Path(get_app().data_dir) / "llama.cpp")
+            # Find llm-gateway relative to toolboxv2
+            import toolboxv2
+            toolbox_root = Path(toolboxv2.__file__).parent.parent
+            gateway_llama = toolbox_root / "llm-gateway" / "build" / "llama.cpp"
+            common_paths.append(gateway_llama)
         except:
             pass
 
+        # Also try relative to current file
+        current_file = Path(__file__).resolve()
+        # Go up from: toolboxv2/mods/isaa/base/rl/export.py -> ToolBoxV2/
+        project_root = current_file.parent.parent.parent.parent.parent.parent
+        gateway_llama_alt = project_root / "llm-gateway" / "build" / "llama.cpp"
+        if gateway_llama_alt not in common_paths:
+            common_paths.append(gateway_llama_alt)
+
+        # 3. Check toolboxv2 data dir
+        try:
+            from toolboxv2 import get_app
+            common_paths.append(Path(get_app().data_dir) / "llama.cpp")
+        except:
+            pass
+
+        # 4. Common system locations
+        common_paths.extend([
+            Path.home() / "llama.cpp",
+            Path.home() / ".local" / "llama.cpp",
+            Path("/opt/llama.cpp"),
+        ])
+
+        # Windows-specific paths
+        if os.name == 'nt':
+            common_paths.extend([
+                Path(os.environ.get("LOCALAPPDATA", "")) / "llama.cpp",
+                Path(os.environ.get("PROGRAMFILES", "")) / "llama.cpp",
+            ])
+
         for path in common_paths:
-            if (path / "convert_hf_to_gguf.py").exists():
+            if path and path.exists() and (path / "convert_hf_to_gguf.py").exists():
                 print(f"Found llama.cpp at {path}")
                 return path
 
-        # Need to install
-        install_path = common_paths[0]
-        print(f"llama.cpp not found. Installing to {install_path}...")
+        # Need to install - prefer llm-gateway location if it exists
+        install_path = None
+        for path in common_paths[:3]:  # Prefer first 3 paths (env, gateway, data_dir)
+            if path and path.parent.exists():
+                install_path = path
+                break
 
+        if install_path is None:
+            install_path = Path.home() / "llama.cpp"
+
+        print(f"llama.cpp not found. Installing to {install_path}...")
         self._install_llama_cpp(install_path)
         return install_path
 
@@ -233,6 +279,7 @@ class GGUFExporter:
         # Find llama-quantize executable
         quantize_exe = None
         possible_paths = [
+            # Standard llama.cpp build paths
             self.llama_cpp_path / "build" / "bin" / "llama-quantize",
             self.llama_cpp_path / "build" / "bin" / "llama-quantize.exe",
             self.llama_cpp_path / "llama-quantize",
@@ -241,6 +288,25 @@ class GGUFExporter:
             self.llama_cpp_path / "build" / "Release" / "bin" / "llama-quantize.exe",
         ]
 
+        # Also check llm-gateway root (binaries are copied there by setup scripts)
+        gateway_root = self.llama_cpp_path.parent.parent  # llm-gateway/build/llama.cpp -> llm-gateway
+        if gateway_root.name == "llm-gateway":
+            possible_paths.extend([
+                gateway_root / "llama-quantize",
+                gateway_root / "llama-quantize.exe",
+            ])
+
+        # Check project root llm-gateway
+        try:
+            current_file = Path(__file__).resolve()
+            project_root = current_file.parent.parent.parent.parent.parent.parent
+            possible_paths.extend([
+                project_root / "llm-gateway" / "llama-quantize",
+                project_root / "llm-gateway" / "llama-quantize.exe",
+            ])
+        except:
+            pass
+
         for path in possible_paths:
             if path.exists():
                 quantize_exe = path
@@ -248,7 +314,7 @@ class GGUFExporter:
 
         if quantize_exe is None:
             print("Warning: llama-quantize not found. Returning F16 file instead.")
-            print("To enable quantization, build llama.cpp with: cmake --build build --config Release")
+            print("To enable quantization, run llm-gateway/win_setup.ps1 or build llama.cpp manually")
             return str(input_file)
 
         print(f"Quantizing with: {quantize_exe}")

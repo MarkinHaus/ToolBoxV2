@@ -11,6 +11,8 @@ import time
 import sys
 import os
 
+from toolboxv2.tests.a_util import IsolatedTestCase
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from toolboxv2.mcp_server.flow_manager import (
@@ -35,7 +37,7 @@ def async_test(coro):
     return wrapper
 
 
-class TestFlowSession(unittest.TestCase):
+class TestFlowSession(IsolatedTestCase):
     """Test FlowSession dataclass."""
 
     def test_creation(self):
@@ -108,7 +110,7 @@ class TestFlowSession(unittest.TestCase):
         self.assertEqual(d["state"], "running")
 
 
-class TestIOEntry(unittest.TestCase):
+class TestIOEntry(IsolatedTestCase):
     """Test IOEntry dataclass."""
 
     def test_creation(self):
@@ -137,7 +139,7 @@ class TestIOEntry(unittest.TestCase):
         self.assertEqual(d["timestamp"], 123456.789)
 
 
-class TestFlowSessionManager(unittest.TestCase):
+class TestFlowSessionManager(IsolatedTestCase):
     """Test FlowSessionManager."""
 
     def setUp(self):
@@ -305,7 +307,7 @@ class TestFlowSessionManager(unittest.TestCase):
         self.assertEqual(self.manager.count, 0)
 
 
-class TestFlowExecution(unittest.TestCase):
+class TestFlowExecution(IsolatedTestCase):
     """Test actual flow execution with I/O capture."""
 
     def setUp(self):
@@ -353,7 +355,7 @@ class TestFlowExecution(unittest.TestCase):
         self.assertEqual(status["result"]["status"], "completed")
 
 
-class TestFlowHandlers(unittest.TestCase):
+class TestFlowHandlers(IsolatedTestCase):
     """Test FlowHandlers integration."""
 
     def setUp(self):

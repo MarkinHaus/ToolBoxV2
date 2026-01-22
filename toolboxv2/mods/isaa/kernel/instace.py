@@ -605,7 +605,6 @@ class Kernel(IProAKernel):
         self.main_task: Optional[asyncio.Task] = None
         self.heartbeat_task: Optional[asyncio.Task] = None
 
-
         self._register_tools()
 
     # =========================================================================
@@ -648,6 +647,7 @@ class Kernel(IProAKernel):
 
     def _register_tools(self):
         """Register kernel tools with proper category and flags."""
+        print("Registering kernel tools...")
         kernel_tools = [
             (
                 self.integration.schedule_task,
@@ -764,6 +764,7 @@ class Kernel(IProAKernel):
         ]
 
         for func, name, desc, category, flags in kernel_tools:
+            print("Registering tool:", self.agent.tool_manager.register)
             self.agent.tool_manager.register(func, name, description=desc, category=category, flags=flags)
 
     # =========================================================================
@@ -825,7 +826,7 @@ class Kernel(IProAKernel):
             plan = await self.decision_engine.decide(event, salience, user_model, session)
             print("Plan:", plan)
             # 5. ACT
-            await self.agent.init_session_tools(session)
+            self.agent.init_session_tools(session)
             success, response = await self._execute_plan(event, plan, session)
             # 6. LEARN
             outcome = InteractionOutcome(

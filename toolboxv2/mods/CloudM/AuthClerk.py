@@ -51,27 +51,67 @@ class LocalUserData:
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
+# =================== Environment Detection ===================
+
+def is_production() -> bool:
+    """Check if running in production mode based on TB_ENV"""
+    return os.getenv('TB_ENV', 'development').lower() == 'production'
+
+
 # =================== Clerk Client ===================
 
 _clerk_client: Optional[Clerk] = None
+_clerk_client_env: Optional[str] = None  # Track which env the client was created for
 
 def get_clerk_client() -> Clerk:
-    """Get or create Clerk client instance"""
-    global _clerk_client
+    """Get or create Clerk client instance based on TB_ENV"""
+    global _clerk_client, _clerk_client_env
+
+    current_env = 'production' if is_production() else 'development'
+
+    # Recreate client if environment changed
+    if _clerk_client is not None and _clerk_client_env != current_env:
+        _clerk_client = None
+
     if _clerk_client is None:
-        secret_key = os.getenv('CLERK_SECRET_KEY')
+        # Select key based on TB_ENV
+        if is_production():
+            secret_key = os.getenv('CLERK_SECRET_KEY_PROD')
+            key_name = 'CLERK_SECRET_KEY_PROD'
+        else:
+            secret_key = os.getenv('CLERK_SECRET_KEY')
+            key_name = 'CLERK_SECRET_KEY'
+
         if not secret_key:
-            raise ValueError("CLERK_SECRET_KEY not set in environment. Please add it to your .env file.")
+            raise ValueError(f"{key_name} not set in environment. Please add it to your .env file. (TB_ENV={current_env})")
+
         _clerk_client = Clerk(bearer_auth=secret_key)
+        _clerk_client_env = current_env
+        get_logger().info(f"[{Name}] Clerk client initialized for {current_env} environment")
+
     return _clerk_client
 
 
 def get_publishable_key() -> str:
-    """Get Clerk publishable key for frontend"""
-    key = os.getenv('CLERK_PUBLISHABLE_KEY')
+    """Get Clerk publishable key for frontend based on TB_ENV"""
+    if is_production():
+        key = os.getenv('CLERK_PUBLISHABLE_KEY_PROD')
+        key_name = 'CLERK_PUBLISHABLE_KEY_PROD'
+    else:
+        key = os.getenv('CLERK_PUBLISHABLE_KEY')
+        key_name = 'CLERK_PUBLISHABLE_KEY'
+
     if not key:
-        raise ValueError("CLERK_PUBLISHABLE_KEY not set in environment")
+        env = 'production' if is_production() else 'development'
+        raise ValueError(f"{key_name} not set in environment (TB_ENV={env})")
     return key
+
+
+def get_clerk_domain() -> str:
+    """Get Clerk domain based on TB_ENV"""
+    if is_production():
+        return os.getenv('CLERK_DOMAIN_PROD', '')
+    return os.getenv('CLERK_DOMAIN', '')
 
 
 # =================== Local Storage (BlobFile) ===================
@@ -114,13 +154,26 @@ def load_local_user_data(clerk_user_id: str) -> Optional[LocalUserData]:
     return None
 
 
-def save_session_token(identifier: str, token: str, username: str) -> bool:
-    """Save session token to BlobFile"""
+def save_session_token(
+    identifier: str,
+    token: str,
+    username: str,
+    session_id: str = None
+) -> bool:
+    """Save session token to BlobFile
+
+    Args:
+        identifier: User identifier (clerk_user_id)
+        token: JWT token
+        username: Username
+        session_id: Clerk session ID for token refresh
+    """
     try:
         blob_path = _get_session_blob_path(identifier)
         session_data = {
             "token": token,
             "username": username,
+            "session_id": session_id,  # For token refresh
             "created_at": time.time()
         }
         with BlobFile(blob_path, key=Code.DK()(), mode="w") as blob:
@@ -265,22 +318,37 @@ def verify_session_token(token: str, authorized_parties: list = None) -> TokenVe
             headers={"Authorization": f"Bearer {token}"}
         )
 
-        # Konfiguriere authorized_parties (CSRF-Schutz)
+        # Konfiguriere authorized_parties (CSRF-Schutz) basierend auf TB_ENV
         if authorized_parties is None:
-            # Fallback: Erlaube localhost für Entwicklung
+            # Tauri Desktop App origins (immer erlaubt)
             authorized_parties = [
-                "http://localhost:8080",
-                "http://localhost:3000",
-                "http://127.0.0.1:8080",
-                # Tauri Desktop App origins
                 "https://tauri.localhost",
                 "http://tauri.localhost",
                 "tauri://localhost",
             ]
-            # Füge Produktions-Domain hinzu falls konfiguriert
-            prod_domain = os.getenv('APP_BASE_URL')
-            if prod_domain:
-                authorized_parties.append(prod_domain)
+
+            if is_production():
+                # Production: Nur Produktions-Domain erlauben
+                prod_domain = os.getenv('APP_BASE_URL_PROD')
+                if prod_domain:
+                    authorized_parties.append(prod_domain)
+                    # Auch ohne Port-Suffix
+                    if ':' not in prod_domain.split('://')[-1]:
+                        authorized_parties.append(prod_domain)
+            else:
+                # Development: Localhost-Varianten erlauben
+                authorized_parties.extend([
+                    "http://localhost",
+                    "http://localhost:8080",
+                    "http://localhost:3000",
+                    "http://localhost:5000",
+                    "http://127.0.0.1:8080",
+                    "http://127.0.0.1:5000",
+                ])
+                # Auch Dev APP_BASE_URL hinzufügen
+                dev_domain = os.getenv('APP_BASE_URL')
+                if dev_domain and dev_domain not in authorized_parties:
+                    authorized_parties.append(dev_domain)
 
         if CLERK_SDK_AUTH_AVAILABLE:
             # Nutze die offizielle SDK-Methode
@@ -662,18 +730,34 @@ async def cli_verify_code(
             # Create session
             session = clerk.sessions.create(request=CreateSessionRequestBody(user_id=session_data["user_id"]))
 
-            # Get session token
-            session_token = session.id  # In real implementation, get JWT
+            # Generate JWT token from template for CLI/Registry authentication
+            # The template "cli" must be created in Clerk Dashboard with:
+            # - Audience: "tb-registry"
+            # - Claims: sub, email, username
+            try:
+                token_response = clerk.sessions.create_token_from_template(
+                    session_id=session.id,
+                    template_name="cli",
+                    expires_in_seconds=3600  # 1 hour validity
+                )
+                session_token = token_response.jwt
+                get_logger().info(f"[{Name}] Generated JWT token for CLI session")
+            except Exception as jwt_error:
+                # Fallback: Use session ID if JWT template not configured
+                get_logger().warning(f"[{Name}] JWT template 'cli' not found, using session ID: {jwt_error}")
+                session_token = session.id
 
             # Update verification data
             session_data["verified"] = True
             session_data["session_token"] = session_token
+            session_data["session_id"] = session.id  # Keep session ID for refresh
 
             # Save to BlobFile
             save_session_token(
                 session_data["user_id"],
                 session_token,
-                session_data["username"]
+                session_data["username"],
+                session_id=session.id
             )
 
             # Create/update local user data
@@ -697,7 +781,8 @@ async def cli_verify_code(
                 "authenticated": True,
                 "user_id": session_data["user_id"],
                 "username": session_data["username"],
-                "session_token": session_token
+                "session_token": session_token,
+                "session_id": session.id  # For token refresh
             })
         else:
             return Result.default_user_error("Invalid verification code")
@@ -732,6 +817,96 @@ async def cli_check_auth(app: App = None, cli_session_id: str = None) -> ApiResu
         return Result.ok(result)
 
     return Result.ok({"authenticated": False})
+
+
+# =================== JWT Token Refresh ===================
+
+@export(mod_name=Name, version=version, api=True)
+async def refresh_jwt_token(
+    app: App = None,
+    session_id: str = None,
+    clerk_user_id: str = None
+) -> ApiResult:
+    """
+    Refresh JWT token for CLI/Registry authentication.
+
+    Args:
+        session_id: Clerk session ID (from previous login)
+        clerk_user_id: User ID to look up session
+
+    Returns:
+        New JWT token if successful
+    """
+    if app is None:
+        app = get_app(f"{Name}.refresh_jwt_token")
+
+    logger = get_logger()
+
+    if not session_id and not clerk_user_id:
+        return Result.default_user_error("Session ID or User ID required")
+
+    try:
+        clerk = get_clerk_client()
+
+        # If we have user_id but no session_id, try to find active session
+        if not session_id and clerk_user_id:
+            # Load from local storage
+            session_data = load_session_token(clerk_user_id)
+            if session_data:
+                session_id = session_data.get("session_id")
+
+        if not session_id:
+            return Result.default_user_error("No active session found. Please login again.")
+
+        # Verify session is still active
+        try:
+            session = clerk.sessions.get(session_id=session_id)
+            if session.status != "active":
+                return Result.default_user_error(f"Session expired (status: {session.status}). Please login again.")
+        except Exception as e:
+            logger.warning(f"[{Name}] Session lookup failed: {e}")
+            return Result.default_user_error("Session not found. Please login again.")
+
+        # Generate new JWT token
+        try:
+            token_response = clerk.sessions.create_token_from_template(
+                session_id=session_id,
+                template_name="cli",
+                expires_in_seconds=3600  # 1 hour
+            )
+            new_token = token_response.jwt
+
+            # Update local storage
+            if clerk_user_id or session.user_id:
+                user_id = clerk_user_id or session.user_id
+                local_data = load_local_user_data(user_id)
+                if local_data:
+                    local_data.session_token = new_token
+                    save_local_user_data(local_data)
+
+                # Also update session token storage
+                save_session_token(
+                    user_id,
+                    new_token,
+                    local_data.username if local_data else "",
+                    session_id=session_id
+                )
+
+            logger.info(f"[{Name}] JWT token refreshed successfully")
+
+            return Result.ok({
+                "success": True,
+                "session_token": new_token,
+                "expires_in": 3600
+            })
+
+        except Exception as jwt_error:
+            logger.error(f"[{Name}] Failed to generate JWT: {jwt_error}")
+            return Result.default_internal_error(f"Failed to generate token: {jwt_error}")
+
+    except Exception as e:
+        logger.error(f"[{Name}] Error refreshing token: {e}")
+        return Result.default_internal_error(str(e))
 
 
 # =================== Web Authentication Callbacks ===================

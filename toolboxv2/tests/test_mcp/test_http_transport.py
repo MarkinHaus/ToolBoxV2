@@ -11,7 +11,7 @@ import sys
 import os
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 
-from toolboxv2.tests.a_util import async_test
+from toolboxv2.tests.a_util import async_test, IsolatedTestCase
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -30,7 +30,7 @@ except ImportError:
 
 
 @unittest.skipIf(SKIP_HTTP_TESTS, "aiohttp not available")
-class TestHTTPTransportInit(unittest.TestCase):
+class TestHTTPTransportInit(IsolatedTestCase):
     """Test HTTP transport initialization."""
 
     def setUp(self):
@@ -71,7 +71,7 @@ class TestHTTPTransportInit(unittest.TestCase):
 
 
 @unittest.skipIf(SKIP_HTTP_TESTS, "aiohttp not available")
-class TestHTTPTransportAuthentication(unittest.TestCase):
+class TestHTTPTransportAuthentication(IsolatedTestCase):
     """Test HTTP transport authentication."""
 
     def setUp(self):
@@ -161,7 +161,7 @@ class TestHTTPTransportAuthentication(unittest.TestCase):
 
 
 @unittest.skipIf(SKIP_HTTP_TESTS, "aiohttp not available")
-class TestHTTPTransportPermissions(unittest.TestCase):
+class TestHTTPTransportPermissions(IsolatedTestCase):
     """Test HTTP transport permission checking."""
 
     def setUp(self):
@@ -199,7 +199,7 @@ class TestHTTPTransportPermissions(unittest.TestCase):
 
 
 @unittest.skipIf(SKIP_HTTP_TESTS, "aiohttp not available")
-class TestHTTPTransportResponses(unittest.TestCase):
+class TestHTTPTransportResponses(IsolatedTestCase):
     """Test HTTP transport response helpers."""
 
     def setUp(self):
@@ -245,7 +245,7 @@ class TestHTTPTransportResponses(unittest.TestCase):
 
 
 @unittest.skipIf(SKIP_HTTP_TESTS, "aiohttp not available")
-class TestHTTPTransportToolFiltering(unittest.TestCase):
+class TestHTTPTransportToolFiltering(IsolatedTestCase):
     """Test HTTP transport tool filtering based on permissions."""
 
     def setUp(self):
@@ -323,7 +323,7 @@ class TestHTTPTransportToolFiltering(unittest.TestCase):
 
 
 @unittest.skipIf(SKIP_HTTP_TESTS, "aiohttp not available")
-class TestHTTPTransportHealthEndpoint(unittest.TestCase):
+class TestHTTPTransportHealthEndpoint(IsolatedTestCase):
     """Test HTTP transport health endpoint."""
 
     def setUp(self):
@@ -360,7 +360,7 @@ class TestHTTPTransportHealthEndpoint(unittest.TestCase):
 
 
 @unittest.skipIf(SKIP_HTTP_TESTS, "aiohttp not available")
-class TestHTTPTransportToolExecution(unittest.TestCase):
+class TestHTTPTransportToolExecution(IsolatedTestCase):
     """Test HTTP transport tool execution."""
 
     def setUp(self):

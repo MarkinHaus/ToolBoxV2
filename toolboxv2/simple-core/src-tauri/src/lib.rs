@@ -66,6 +66,17 @@ async fn check_worker_health(state: State<'_, AppState>) -> Result<bool, String>
     Ok(manager.is_healthy())
 }
 
+/// Get the current API URLs (for frontend configuration)
+#[tauri::command]
+fn get_api_urls(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let manager = state.worker_manager.lock().map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "api_url": manager.get_api_url(),
+        "ws_url": manager.get_ws_url(),
+        "is_remote": manager.is_remote(),
+    }))
+}
+
 /// Update system tray status
 #[tauri::command]
 fn update_tray_status(status: String) -> Result<(), String> {
@@ -135,6 +146,7 @@ pub fn run() {
             set_api_endpoint,
             get_data_paths,
             check_worker_health,
+            get_api_urls,
             update_tray_status,
             save_settings,
             load_settings

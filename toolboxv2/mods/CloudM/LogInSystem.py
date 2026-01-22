@@ -196,6 +196,7 @@ async def _wait_for_code_input(app: App, cli_session_id: str, email: str) -> Res
         username = data.get("username", email.split("@")[0])
         session_token = data.get("session_token", "")
         user_id = data.get("user_id", "")
+        session_id = data.get("session_id", "")  # Clerk session ID for token refresh
 
         # Save session
         session_data = {
@@ -203,6 +204,7 @@ async def _wait_for_code_input(app: App, cli_session_id: str, email: str) -> Res
             "email": email,
             "user_id": user_id,
             "session_token": session_token,
+            "session_id": session_id,  # Store for token refresh
             "authenticated_at": time.time()
         }
         _save_cli_session(username, session_data)

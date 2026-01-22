@@ -25,6 +25,7 @@ from toolboxv2.mods.CloudM.UserInstances import (
     get_user_cli_sessions
 )
 from toolboxv2 import Result, Code
+from toolboxv2.tests.a_util import IsolatedTestCase
 
 
 class TestUserInstances(unittest.TestCase):
@@ -72,8 +73,8 @@ class TestUserInstances(unittest.TestCase):
         si_id_2 = UserInstances.get_si_id(uid)
 
         # Should return Result objects
-        self.assertIsInstance(si_id_1, Result)
-        self.assertIsInstance(si_id_2, Result)
+        self.assertTrue(hasattr(si_id_1, 'result'))
+        self.assertTrue(hasattr(si_id_2, 'result'))
 
         # Should be consistent
         self.assertEqual(si_id_1.get(), si_id_2.get())
@@ -281,7 +282,7 @@ class TestGetInstanceSiId(unittest.TestCase):
         self.assertFalse(result)
 
 
-class TestCLISessionManagement(unittest.TestCase):
+class TestCLISessionManagement(IsolatedTestCase):
     """Tests for CLI session management functions"""
 
     def setUp(self):

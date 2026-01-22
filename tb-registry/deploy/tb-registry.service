@@ -1,0 +1,53 @@
+[Unit]
+Description=ToolBoxV2 Package Registry Server
+Documentation=https://github.com/MarkinHaus/ToolBoxV2
+After=network.target network-online.target
+Wants=network-online.target
+Requires=minio.service
+After=minio.service
+
+[Service]
+Type=simple
+User=tbregistry
+Group=tbregistry
+WorkingDirectory=/opt/tb-registry
+Environment="PATH=/opt/tb-registry/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=-/opt/tb-registry/.env
+
+# Main command - uses uv to run the registry
+ExecStart=/usr/local/bin/uv run python -m registry
+
+# Restart configuration
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/tb-registry/data
+ReadWritePaths=/var/log/tb-registry
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+MemoryMax=2G
+CPUQuota=200%
+
+# Logging
+StandardOutput=append:/var/log/tb-registry/registry.log
+StandardError=append:/var/log/tb-registry/error.log
+SyslogIdentifier=tb-registry
+
+# Graceful shutdown
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target
+

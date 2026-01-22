@@ -209,7 +209,7 @@ class TestModuleListingMocked(unittest.TestCase):
         # list_modules returns ApiResult
         self.assertIsNotNone(result)
         if hasattr(result, 'result'):
-            data = result.result.data
+            data = result.get()
             self.assertIn("modules", data)
             self.assertIn("count", data)
             self.assertEqual(data["count"], 3)
@@ -228,9 +228,9 @@ class TestModuleListingMocked(unittest.TestCase):
         # list_modules returns ApiResult
         self.assertIsNotNone(result)
         if hasattr(result, 'result'):
-            data = result.result.data
-            self.assertEqual(data["count"], 0)
-            self.assertEqual(len(data["modules"]), 0)
+            data = result.get()
+            self.assertEqual(result.get("count"), 0)
+            self.assertEqual(len(result.get("modules")), 0)
 
 
 class TestModuleUploadMocked(unittest.TestCase):

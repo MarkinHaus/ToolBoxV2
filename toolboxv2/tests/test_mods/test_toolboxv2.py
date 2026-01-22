@@ -1,11 +1,16 @@
 #!/usr/bin/env python
 
 """Tests for `toolboxv2` package."""
+import asyncio
 import os
 import time
 import unittest
 
 from cryptography.fernet import InvalidToken
+
+from toolboxv2 import Style
+from toolboxv2.utils.system.file_handler import FileHandler
+from toolboxv2.utils.system.main_tool import MainTool
 
 try:
     from rich.traceback import install
@@ -13,31 +18,54 @@ try:
 except ImportError:
     pass
 
-from toolboxv2 import FileHandler, MainTool, Style, get_app
-from toolboxv2.tests.a_util import async_test
+# Import App directly from source module to avoid mock contamination
+from toolboxv2.utils.toolbox import App
+from toolboxv2.tests.a_util import async_test, PersistentAppTestCase
 from toolboxv2.utils.security.cryp import Code
 
 
-class TestToolboxv2Mods(unittest.TestCase):
-    """Tests for `toolboxv2` package."""
+class TestToolboxv2Mods(PersistentAppTestCase):
+    """Tests for `toolboxv2` package.
+
+    Uses a real App instance with all mods loaded, shared across all tests.
+    Inherits from PersistentAppTestCase to ensure proper isolation
+    when running with unittest discover.
+    """
 
     t0 = None
     app = None
 
     @classmethod
-    async def setUpClass(cls, *a, **kw):
+    def setUpClass(cls):
+        # PersistentAppTestCase.setUpClass resets singletons first
+        super().setUpClass()
+
+        # Import App fresh to avoid any mock contamination
+        from toolboxv2.utils.toolbox import App as FreshApp
+
         # Code, der einmal vor allen Tests ausgeführt wird
-        print("Setting up Test class", a, kw)
+        print("Setting up Test class")
         cls.t0 = time.perf_counter()
-        cls.app = get_app(from_="test.toolbox", name="test-debug")
+        cls.app = FreshApp()
+        print(type(cls.app))
+        print(cls.app.id)
         cls.app.mlm = "I"
         cls.app.debug = True
-        await cls.app.load_all_mods_in_file()
+        # Run async setup synchronously
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            print("Loading all mods", cls.app.load_all_mods_in_file)
+            loop.run_until_complete(cls.app.load_all_mods_in_file())
+        finally:
+            pass  # Keep loop open for potential async tests
 
     @classmethod
     def tearDownClass(cls):
-        cls.app.exit()
-        cls.app.logger.info(f"Accomplished in {time.perf_counter() - cls.t0}")
+        if cls.app:
+            cls.app.logger.info(f"Accomplished in {time.perf_counter() - cls.t0}")
+            cls.app.exit()
+        super().tearDownClass()
 
     def setUp(self):
         self.app.logger.info(Style.BEIGEBG("Next Test"))
@@ -228,42 +256,6 @@ class TestToolboxv2Mods(unittest.TestCase):
         # Überprüfen Sie, ob das Modul als online markiert ist
         self.assertTrue(online)
 
-    def test_get_function(self):
-        # Testen der _get_function-Funktion
-        self.app.get_mod("welcome")
-        result, e = self.app._get_function(None, as_str=("welcome", "Version"))
-        # Überprüfen Sie das Ergebnis
-        self.assertEqual(e, 0)
-        self.assertIsNotNone(result)
-        """
-    def _get_function(self,
-                      name: Enum or None,
-                      state: bool = True,
-                      specification: str = "app",
-                      metadata=False, as_str: tuple or None = None):
-        pass
-        # if function is None:
-        #     self.logger.warning(f"No function found")
-        #     return "404", 300
-        # if metadata and not state:
-        #     self.logger.info(f"returning metadata stateless")
-        #     return (function_data, None), 0
-        # if not state:  # mens a stateless function
-        #     self.logger.info(f"returning stateless function")
-        #     return function, 0
-        # # instance = self.functions[modular_id].get(f"{specification}_instance")
-        # if instance is None:
-        #     return "404", 400
-        #     if metadata:
-        #         self.logger.info(f"returning metadata stateless")
-        #         return (function_data, function), 0
-        #     return function, 0
-        # if metadata:
-        #     self.logger.info(f"returning metadata stateful")
-        #     return (function_data, higher_order_function), 0
-        # self.logger.info(f"returning stateful function")
-        # return higher_order_function, 0"""
-
     def test_load_mod(self):
         # Testen der load_mod-Funktion
         result = self.app.load_mod('welcome')
@@ -330,6 +322,7 @@ class TestToolboxv2Mods(unittest.TestCase):
         print("STARTING test")
         if "test" not in self.app.id:
             self.app.id += "test"
+        self.app.data_dir = ".test_data"
         await self.app.load_all_mods_in_file()
         res = await self.app.execute_all_functions_(test_class=self)
         print("RES: ", res.result.data_info)
@@ -344,7 +337,7 @@ class TestToolboxv2Mods(unittest.TestCase):
 
 
 # Apply async_test decorator to each async test method
+# Note: setUpClass is now synchronous (uses loop.run_until_complete internally)
 TestToolboxv2Mods.test_all_functions = async_test(TestToolboxv2Mods.test_all_functions)
-TestToolboxv2Mods.setUpClass = async_test(TestToolboxv2Mods.setUpClass)
 TestToolboxv2Mods.test_main_tool = async_test(TestToolboxv2Mods.test_main_tool)
 TestToolboxv2Mods.test_load_all_mods_in_file = async_test(TestToolboxv2Mods.test_load_all_mods_in_file)

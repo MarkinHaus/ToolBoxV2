@@ -68,6 +68,8 @@ GOOGLE_CSE_ID=
 
 DISCORD_BOT_TOKEN=
 TELEGRAM_BOT_TOKEN=
+DISCORD_AID=
+TELEGRAM_AID=
 
 OBSIDIAN_VAULT_PATH=
 
@@ -136,3 +138,8 @@ CLERK_PUBLISHABLE_KEY=pk_test_...
 CLERK_SECRET_KEY=sk_test_...
 CLERK_DOMAIN=your-clerk-instance.clerk.accounts.dev
 
+
+CLERK_DOMAIN_PROD="your-clerk-instance.clerk.accounts.dev"
+CLERK_SECRET_KEY_PROD="sk_live_...."
+CLERK_PUBLISHABLE_KEY_PROD="pk_live_..."
+APP_BASE_URL_PROD="https://simplecore.app"

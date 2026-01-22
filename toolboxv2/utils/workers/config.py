@@ -331,13 +331,18 @@ def load_config(config_path: Optional[str] = None) -> Config:
             loaded = yaml.safe_load(f) or {}
             config_data = _resolve_env_vars(loaded)
 
+    # Determine which Clerk keys to use based on TB_ENV
+    is_prod = Environment.is_production()
+    clerk_secret_key_env = "CLERK_SECRET_KEY_PROD" if is_prod else "CLERK_SECRET_KEY"
+    clerk_publishable_key_env = "CLERK_PUBLISHABLE_KEY_PROD" if is_prod else "CLERK_PUBLISHABLE_KEY"
+
     env_mapping = {
         "TB_ENV": ["environment"],
         "TB_DEBUG": ["debug"],
         "TB_LOG_LEVEL": ["log_level"],
         "TB_COOKIE_SECRET": ["session", "cookie_secret"],
-        "CLERK_SECRET_KEY": ["auth", "clerk_secret_key"],
-        "CLERK_PUBLISHABLE_KEY": ["auth", "clerk_publishable_key"],
+        clerk_secret_key_env: ["auth", "clerk_secret_key"],
+        clerk_publishable_key_env: ["auth", "clerk_publishable_key"],
         "TB_HTTP_HOST": ["http_worker", "host"],
         "TB_HTTP_PORT": ["http_worker", "port"],
         "TB_HTTP_WORKERS": ["http_worker", "workers"],

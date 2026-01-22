@@ -747,7 +747,7 @@ def setup_main():
         print()
         print_box_content("Quick Start Commands:", "info")
         print_box_content("  tb login          # Login to ToolBoxV2", "")
-        print_box_content("  tb --sm           # Manage as service (auto-start/restart)", "")
+        print_box_content("  tb manifest init  # Create default manifest interactively", "")
         print_box_content("  tb --ipy          # Interactive Python shell", "")
         print_box_content("  tb gui            # Launch GUI", "")
         print_box_content("  tb api start      # Start API server", "")
