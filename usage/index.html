@@ -2305,6 +2305,363 @@
 <li>Regular API: <code>/api/MOD_NAME/{function_name}?param1=value1&amp;param2=value2</code></li>
 <li>Server-Sent Events (streaming): <code>/sse/MOD_NAME/{function_name}?param1=value1&amp;param2=value2</code></li>
 </ul>
+<p>"""
+FileHandlerV2 Integration Example
+==================================</p>
+<p>This file shows how to integrate FileHandlerV2 into ToolBoxV2 modules.</p>
+<p>Directory structure:
+    toolboxv2/
+    ├── utils/
+    │   └── system/
+    │       └── file_handler_v2.py  &lt;-- Put file_handler_v2.py here
+    └── mods/
+        └── YourMod/
+            └── <strong>init</strong>.py         &lt;-- Your module using FileHandlerV2
+"""</p>
+<h1 id="_1">=============================================================================<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
+<h1 id="example-1-basic-module-usage">Example 1: Basic Module Usage<a class="headerlink" href="#example-1-basic-module-usage" title="Permanent link">&para;</a></h1>
+<h1 id="_2">=============================================================================<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h1>
+<p>"""</p>
+<h1 id="in-your-module-initpy">In your module (<strong>init</strong>.py):<a class="headerlink" href="#in-your-module-initpy" title="Permanent link">&para;</a></h1>
+<p>from toolboxv2 import get_app
+from toolboxv2.utils.system.file_handler_v2 import (
+    FileHandlerV2,
+    StorageScope,
+    create_config_handler,
+    create_data_handler,
+    set_current_context,
+)</p>
+<p>app = get_app("MyModule")
+Name = "MyModule"
+version = "1.0.0"
+export = app.tb</p>
+<h1 id="configuration-handler-always-local-encrypted">Configuration handler (always local, encrypted)<a class="headerlink" href="#configuration-handler-always-local-encrypted" title="Permanent link">&para;</a></h1>
+<p>config = create_config_handler(Name)
+config.load()</p>
+<p>@export(mod_name=Name, api=True, version=version)
+def get_setting(key: str, default=None):
+    '''Get a configuration setting.'''
+    return config.get(key, default)</p>
+<p>@export(mod_name=Name, api=True, version=version)
+def set_setting(key: str, value):
+    '''Set a configuration setting.'''
+    config.set(key, value)
+    config.save()
+    return {"status": "ok"}
+"""</p>
+<h1 id="_3">=============================================================================<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h1>
+<h1 id="example-2-user-scoped-data-with-request-context">Example 2: User-Scoped Data with Request Context<a class="headerlink" href="#example-2-user-scoped-data-with-request-context" title="Permanent link">&para;</a></h1>
+<h1 id="_4">=============================================================================<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h1>
+<p>"""</p>
+<h1 id="in-your-module">In your module:<a class="headerlink" href="#in-your-module" title="Permanent link">&para;</a></h1>
+<p>from toolboxv2 import App, get_app, RequestData
+from toolboxv2.utils.system.file_handler_v2 import (
+    FileHandlerV2,
+    StorageScope,
+    set_current_context,
+)</p>
+<p>app = get_app("UserDataModule")
+Name = "UserDataModule"
+version = "1.0.0"
+export = app.tb</p>
+<p>@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
+async def save_user_preferences(
+    app: App,
+    request: RequestData,
+    preferences: dict
+):
+    '''Save user preferences (private, encrypted, synced to cloud).'''</p>
+<div class="highlight"><pre><span></span><code># Set context from request (enables user-scoped storage)
+set_current_context(request)
+
+# Create handler with USER_PRIVATE scope
+fh = FileHandlerV2(
+    &quot;private.data&quot;,  # Filename triggers USER_PRIVATE scope
+    name=Name,
+    request=request,  # Alternative: pass request directly
+)
+
+async with fh:  # Auto-loads and saves
+    fh.update(preferences)
+
+return {&quot;status&quot;: &quot;saved&quot;, &quot;scope&quot;: &quot;user_private&quot;}
+</code></pre></div>
+<p>@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
+async def get_user_preferences(app: App, request: RequestData):
+    '''Get user preferences.'''</p>
+<div class="highlight"><pre><span></span><code>fh = FileHandlerV2(&quot;private.data&quot;, name=Name, request=request)
+await fh.aload()
+
+return {&quot;preferences&quot;: fh.to_dict()}
+</code></pre></div>
+<p>@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
+async def share_profile(app: App, request: RequestData, profile: dict):
+    '''Save profile that others can read (but only owner can write).'''</p>
+<div class="highlight"><pre><span></span><code>fh = FileHandlerV2(
+    &quot;public.data&quot;,  # USER_PUBLIC scope
+    name=Name,
+    request=request,
+)
+
+await fh.aload()
+fh.update(profile)
+await fh.asave()
+
+return {&quot;status&quot;: &quot;shared&quot;, &quot;scope&quot;: &quot;user_public&quot;}
+</code></pre></div>
+<p>"""</p>
+<h1 id="_5">=============================================================================<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h1>
+<h1 id="example-3-server-wide-shared-data">Example 3: Server-Wide Shared Data<a class="headerlink" href="#example-3-server-wide-shared-data" title="Permanent link">&para;</a></h1>
+<h1 id="_6">=============================================================================<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h1>
+<p>"""</p>
+<h1 id="in-your-module_1">In your module:<a class="headerlink" href="#in-your-module_1" title="Permanent link">&para;</a></h1>
+<p>from toolboxv2 import get_app
+from toolboxv2.utils.system.file_handler_v2 import FileHandlerV2, StorageScope</p>
+<p>app = get_app("GlobalModule")
+Name = "GlobalModule"
+version = "1.0.0"
+export = app.tb</p>
+<p>@export(mod_name=Name, api=True, version=version)
+def get_announcements():
+    '''Get server-wide announcements (anyone can read).'''</p>
+<div class="highlight"><pre><span></span><code>fh = FileHandlerV2(
+    &quot;global.data&quot;,  # PUBLIC_READ scope (detected from filename)
+    name=Name,
+)
+fh.load()
+
+return fh.get(&quot;announcements&quot;, [])
+</code></pre></div>
+<p>@export(mod_name=Name, api=True, version=version, level=10)  # Admin only
+def set_announcement(title: str, message: str):
+    '''Set announcement (admin only).'''</p>
+<div class="highlight"><pre><span></span><code>fh = FileHandlerV2(&quot;global.data&quot;, name=Name)
+fh.load()
+
+announcements = fh.get(&quot;announcements&quot;, [])
+announcements.append({
+    &quot;title&quot;: title,
+    &quot;message&quot;: message,
+    &quot;timestamp&quot;: time.time(),
+})
+
+fh.set(&quot;announcements&quot;, announcements)
+fh.save()
+
+return {&quot;status&quot;: &quot;announced&quot;}
+</code></pre></div>
+<p>"""</p>
+<h1 id="_7">=============================================================================<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h1>
+<h1 id="example-4-explicit-backend-selection">Example 4: Explicit Backend Selection<a class="headerlink" href="#example-4-explicit-backend-selection" title="Permanent link">&para;</a></h1>
+<h1 id="_8">=============================================================================<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h1>
+<p>"""</p>
+<h1 id="force-local-storage-never-cloud">Force local storage (never cloud):<a class="headerlink" href="#force-local-storage-never-cloud" title="Permanent link">&para;</a></h1>
+<p>fh = FileHandlerV2(
+    "cache.data",
+    name=Name,
+    backend="local",  # Always local, regardless of manifest
+)</p>
+<h1 id="force-cloud-storage-if-available">Force cloud storage (if available):<a class="headerlink" href="#force-cloud-storage-if-available" title="Permanent link">&para;</a></h1>
+<p>fh = FileHandlerV2(
+    "important.data",
+    name=Name,
+    backend="cloud",  # Always use UserDataAPI
+    scope="user_private",  # Explicit scope
+)</p>
+<h1 id="auto-detect-from-manifest-default">Auto-detect from manifest (default):<a class="headerlink" href="#auto-detect-from-manifest-default" title="Permanent link">&para;</a></h1>
+<p>fh = FileHandlerV2(
+    "auto.data",
+    name=Name,
+    backend="auto",  # Reads database.mode from tb-manifest.yaml
+)</p>
+<h1 id="lc-mode-local-storage">LC mode → local storage<a class="headerlink" href="#lc-mode-local-storage" title="Permanent link">&para;</a></h1>
+<h1 id="cb-mode-userdataapi-cloud">CB mode → UserDataAPI (cloud)<a class="headerlink" href="#cb-mode-userdataapi-cloud" title="Permanent link">&para;</a></h1>
+<p>"""</p>
+<h1 id="_9">=============================================================================<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h1>
+<h1 id="example-5-context-manager-patterns">Example 5: Context Manager Patterns<a class="headerlink" href="#example-5-context-manager-patterns" title="Permanent link">&para;</a></h1>
+<h1 id="_10">=============================================================================<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h1>
+<p>"""</p>
+<h1 id="sync-context-manager-loads-on-enter-saves-on-exit">Sync context manager (loads on enter, saves on exit):<a class="headerlink" href="#sync-context-manager-loads-on-enter-saves-on-exit" title="Permanent link">&para;</a></h1>
+<p>with FileHandlerV2("settings.config", name=Name) as fh:
+    fh["theme"] = "dark"
+    fh["language"] = "de"</p>
+<h1 id="auto-saved-here">Auto-saved here<a class="headerlink" href="#auto-saved-here" title="Permanent link">&para;</a></h1>
+<h1 id="async-context-manager">Async context manager:<a class="headerlink" href="#async-context-manager" title="Permanent link">&para;</a></h1>
+<p>async with FileHandlerV2("async.data", name=Name, request=request) as fh:
+    await fh.aset("key", "value")</p>
+<h1 id="auto-saved-here_1">Auto-saved here<a class="headerlink" href="#auto-saved-here_1" title="Permanent link">&para;</a></h1>
+<h1 id="error-handling-no-save-on-error">Error handling (no save on error):<a class="headerlink" href="#error-handling-no-save-on-error" title="Permanent link">&para;</a></h1>
+<p>try:
+    with FileHandlerV2("risky.data", name=Name) as fh:
+        fh["step1"] = "done"
+        raise ValueError("Oops!")
+        fh["step2"] = "done"
+except ValueError:
+    pass</p>
+<h1 id="data-not-saved-because-of-error">Data NOT saved because of error<a class="headerlink" href="#data-not-saved-because-of-error" title="Permanent link">&para;</a></h1>
+<p>"""</p>
+<h1 id="_11">=============================================================================<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h1>
+<h1 id="example-6-app-integration-set_ctx-function">Example 6: App Integration (set_ctx function)<a class="headerlink" href="#example-6-app-integration-set_ctx-function" title="Permanent link">&para;</a></h1>
+<h1 id="_12">=============================================================================<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h1>
+<p>"""</p>
+<h1 id="in-toolboxv2utilssystemtypespy-add-to-app-class">In toolboxv2/utils/system/types.py, add to App class:<a class="headerlink" href="#in-toolboxv2utilssystemtypespy-add-to-app-class" title="Permanent link">&para;</a></h1>
+<p>class App:
+    # ... existing code ...</p>
+<div class="highlight"><pre><span></span><code>_current_file_handler_context = None
+
+@staticmethod
+def set_ctx(ctx):
+    &#39;&#39;&#39;
+    Set the current user context for FileHandler operations.
+
+    Can be called with:
+    - RequestData object
+    - Session object
+    - UserContext object
+    - None (clears context)
+    &#39;&#39;&#39;
+    from toolboxv2.utils.system.file_handler_v2 import set_current_context
+    set_current_context(ctx)
+
+@staticmethod
+def get_ctx():
+    &#39;&#39;&#39;Get the current user context.&#39;&#39;&#39;
+    from toolboxv2.utils.system.file_handler_v2 import get_current_context
+    return get_current_context()
+</code></pre></div>
+<h1 id="usage-in-modules">Usage in modules:<a class="headerlink" href="#usage-in-modules" title="Permanent link">&para;</a></h1>
+<p>@export(mod_name=Name, api=True, request_as_kwarg=True)
+async def my_api_function(app: App, request: RequestData):
+    # Set context at start of request
+    App.set_ctx(request)</p>
+<div class="highlight"><pre><span></span><code># Now all FileHandlerV2 instances use this context
+fh = FileHandlerV2(&quot;user.data&quot;, name=Name)
+# ... operations ...
+
+# Context is automatically associated with the current user
+</code></pre></div>
+<p>"""</p>
+<h1 id="_13">=============================================================================<a class="headerlink" href="#_13" title="Permanent link">&para;</a></h1>
+<h1 id="example-7-migration-from-old-filehandler">Example 7: Migration from Old FileHandler<a class="headerlink" href="#example-7-migration-from-old-filehandler" title="Permanent link">&para;</a></h1>
+<h1 id="_14">=============================================================================<a class="headerlink" href="#_14" title="Permanent link">&para;</a></h1>
+<p>"""</p>
+<h1 id="old-code">Old code:<a class="headerlink" href="#old-code" title="Permanent link">&para;</a></h1>
+<p>from toolboxv2.utils.system.file_handler import FileHandler</p>
+<p>fh = FileHandler("mymod.config", name="MyMod")
+fh.load_file_handler()
+value = fh.get_file_handler("key")
+fh.add_to_save_file_handler("key", "value")
+fh.save_file_handler()</p>
+<h1 id="new-code-drop-in-replacement">New code (drop-in replacement):<a class="headerlink" href="#new-code-drop-in-replacement" title="Permanent link">&para;</a></h1>
+<p>from toolboxv2.utils.system.file_handler_v2 import FileHandler  # Same name!</p>
+<p>fh = FileHandler("mymod.config", name="MyMod")  # Identical
+fh.load_file_handler()                          # Identical
+value = fh.get_file_handler("key")              # Identical
+fh.add_to_save_file_handler("key", "value")     # Identical
+fh.save_file_handler()                          # Identical</p>
+<h1 id="but-now-you-can-also-use-the-new-api">But now you can also use the new API:<a class="headerlink" href="#but-now-you-can-also-use-the-new-api" title="Permanent link">&para;</a></h1>
+<p>fh.load()                    # Shorter
+value = fh.get("key")        # Shorter
+fh["key"] = "value"          # Dict-like
+fh.save()                    # Shorter</p>
+<h1 id="and-async">And async:<a class="headerlink" href="#and-async" title="Permanent link">&para;</a></h1>
+<p>await fh.aload()
+value = await fh.aget("key")
+await fh.asave()
+"""</p>
+<h1 id="_15">=============================================================================<a class="headerlink" href="#_15" title="Permanent link">&para;</a></h1>
+<h1 id="scope-reference">Scope Reference<a class="headerlink" href="#scope-reference" title="Permanent link">&para;</a></h1>
+<h1 id="_16">=============================================================================<a class="headerlink" href="#_16" title="Permanent link">&para;</a></h1>
+<p>"""
+STORAGE SCOPES:
+===============</p>
+<table>
+<thead>
+<tr>
+<th>Scope</th>
+<th>Filename Pattern</th>
+<th>Encryption</th>
+<th>Who Can Read</th>
+<th>Who Can Write</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CONFIG</td>
+<td>*.config</td>
+<td>Yes</td>
+<td>Local only</td>
+<td>Local only</td>
+</tr>
+<tr>
+<td>USER_PRIVATE</td>
+<td>private.*</td>
+<td>Yes</td>
+<td>User only</td>
+<td>User only</td>
+</tr>
+<tr>
+<td>USER_PUBLIC</td>
+<td>public.*</td>
+<td>No</td>
+<td>Everyone</td>
+<td>User only</td>
+</tr>
+<tr>
+<td>PUBLIC_READ</td>
+<td>global.*</td>
+<td>No</td>
+<td>Everyone</td>
+<td>Admin only</td>
+</tr>
+<tr>
+<td>PUBLIC_RW</td>
+<td>shared.*</td>
+<td>No</td>
+<td>Everyone</td>
+<td>Everyone</td>
+</tr>
+<tr>
+<td>SERVER_SCOPE</td>
+<td>server.*</td>
+<td>No</td>
+<td>Server</td>
+<td>Server</td>
+</tr>
+<tr>
+<td>MOD_DATA</td>
+<td>*.data (default)</td>
+<td>No</td>
+<td>Mod scope</td>
+<td>Mod scope</td>
+</tr>
+</tbody>
+</table>
+<h1 id="backend-selection">BACKEND SELECTION:<a class="headerlink" href="#backend-selection" title="Permanent link">&para;</a></h1>
+<p>backend="auto" (default):
+  - Reads database.mode from tb-manifest.yaml
+  - LC (LOCAL_DICT) → Local storage
+  - CB (CLUSTER_BLOB) → UserDataAPI (cloud)
+  - .config files → Always local</p>
+<p>backend="local":
+  - Always uses local JSON files
+  - Good for caches, temporary data</p>
+<p>backend="cloud":
+  - Always uses UserDataAPI
+  - Requires MinIO or Redis configured
+  - Falls back to local if unavailable
+"""</p>
+<p>if <strong>name</strong> == "<strong>main</strong>":
+    print("FileHandlerV2 Integration Examples")
+    print("=" * 50)
+    print("\nSee the docstrings in this file for usage examples.")
+    print("\nKey features:")
+    print("  • Backward compatible with FileHandler")
+    print("  • Automatic scope detection from filename")
+    print("  • Both sync and async APIs")
+    print("  • Context manager support")
+    print("  • Dict-like access")
+    print("  • UserDataAPI integration for cloud storage")</p>
 
 
 
