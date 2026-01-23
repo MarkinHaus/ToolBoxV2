@@ -7,6 +7,8 @@ import './styles/tbjs-main.css';
 
 import * as coreModules from './core/index.js';
 import * as uiModules from './ui/index.js';
+import * as hudModules from './hud/index.js';
+import * as mobileModules from './mobile/index.js';
 
 // Queue for functions to be run once initialization is complete.
 const onceAfterInitQueue = [];
@@ -16,6 +18,8 @@ const onceRunFunctions = new Set();
 const TB = {
     ...coreModules, // Includes config, state, router, api, env, events, logger, crypto, utils, sse, sw
     ui: uiModules,  // Includes theme, htmxIntegration, and all components
+    hud: hudModules, // HUD components for Desktop mode
+    mobile: mobileModules, // Mobile components (Tab Bar, etc.)
     VERSION: '0.1.0-alpha', // Framework version
     isInit: false,
 

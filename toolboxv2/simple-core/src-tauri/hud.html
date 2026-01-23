@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SimpleCore HUD</title>
+
+    <style>
+        :root {
+            --hud-opacity: 0.92;
+            --hud-bg: rgba(15, 15, 25, var(--hud-opacity));
+            --hud-border: rgba(100, 100, 140, 0.4);
+            --hud-text: #e8e8f0;
+            --hud-accent: #6366f1;
+            --hud-success: #22c55e;
+            --hud-warning: #f59e0b;
+            --hud-error: #ef4444;
+            --hud-muted: rgba(255, 255, 255, 0.5);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            background: transparent !important;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            color: var(--hud-text);
+            font-size: 13px;
+        }
+
+        #hud-root {
+            background: var(--hud-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--hud-border);
+            border-radius: 12px;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        .hud-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: rgba(0, 0, 0, 0.25);
+            border-bottom: 1px solid var(--hud-border);
+            cursor: grab;
+            user-select: none;
+        }
+
+        .hud-header:active {
+            cursor: grabbing;
+        }
+
+        .hud-header .drag-hint {
+            font-size: 10px;
+            color: var(--hud-muted);
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .hud-header:hover .drag-hint {
+            opacity: 1;
+        }
+
+        .hud-title {
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .hud-controls {
+            display: flex;
+            gap: 4px;
+        }
+
+        .hud-btn {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--hud-text);
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            transition: all 0.15s ease;
+        }
+
+        .hud-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .hud-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: rgba(0, 0, 0, 0.15);
+            font-size: 10px;
+            border-bottom: 1px solid var(--hud-border);
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--hud-error);
+            transition: background 0.3s ease;
+        }
+
+        .status-dot.connected {
+            background: var(--hud-success);
+            box-shadow: 0 0 6px var(--hud-success);
+        }
+
+        .status-text {
+            color: var(--hud-muted);
+        }
+
+        .status-divider {
+            color: var(--hud-border);
+        }
+
+        .hud-widgets {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .widget {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--hud-border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .widget-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 10px;
+            background: rgba(0, 0, 0, 0.2);
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .widget-type {
+            font-size: 8px;
+            color: var(--hud-muted);
+            font-weight: normal;
+        }
+
+        .widget-content {
+            padding: 10px;
+        }
+
+        .widget-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 3px 0;
+            font-size: 11px;
+        }
+
+        .widget-label {
+            color: var(--hud-muted);
+        }
+
+        .widget-value {
+            font-weight: 500;
+        }
+
+        .widget-value.success { color: var(--hud-success); }
+        .widget-value.error { color: var(--hud-error); }
+        .widget-value.warning { color: var(--hud-warning); }
+
+        .hud-settings {
+            display: none;
+            padding: 10px 12px;
+            background: rgba(0, 0, 0, 0.25);
+            border-top: 1px solid var(--hud-border);
+        }
+
+        .hud-settings.visible {
+            display: block;
+        }
+
+        .settings-title {
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+            color: var(--hud-muted);
+        }
+
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .setting-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .setting-label {
+            font-size: 11px;
+            color: var(--hud-muted);
+        }
+
+        .setting-input {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--hud-border);
+            border-radius: 4px;
+            color: var(--hud-text);
+            padding: 4px 8px;
+            font-size: 10px;
+            cursor: pointer;
+        }
+
+        .setting-input:focus {
+            outline: none;
+            border-color: var(--hud-accent);
+        }
+
+        .setting-input[type="range"] {
+            width: 80px;
+            cursor: pointer;
+        }
+
+        .setting-value {
+            font-size: 10px;
+            color: var(--hud-text);
+            min-width: 35px;
+            text-align: right;
+        }
+
+        .hud-actions {
+            display: flex;
+            gap: 6px;
+            padding: 8px 12px;
+            border-top: 1px solid var(--hud-border);
+        }
+
+        .action-btn {
+            flex: 1;
+            padding: 8px;
+            background: rgba(99, 102, 241, 0.15);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: 4px;
+            color: var(--hud-text);
+            cursor: pointer;
+            font-size: 10px;
+            font-weight: 500;
+            transition: all 0.15s ease;
+        }
+
+        .action-btn:hover {
+            background: rgba(99, 102, 241, 0.25);
+            border-color: rgba(99, 102, 241, 0.5);
+        }
+
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 30px 15px;
+            color: var(--hud-muted);
+            text-align: center;
+        }
+
+        .empty-icon {
+            font-size: 28px;
+            margin-bottom: 10px;
+            opacity: 0.5;
+        }
+
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--hud-border);
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div id="hud-root">
+        <div class="hud-header" id="drag-header">
+            <span class="hud-title">
+                <span>⋮⋮</span>
+                <span>SimpleCore HUD</span>
+                <span class="drag-hint">drag to move</span>
+            </span>
+            <div class="hud-controls">
+                <button class="hud-btn" id="btn-settings" title="Settings">⚙️</button>
+                <button class="hud-btn" id="btn-app" title="Switch to App">📺</button>
+            </div>
+        </div>
+
+        <div class="hud-status">
+            <div class="status-dot" id="status-dot"></div>
+            <span class="status-text" id="status-text">Connecting...</span>
+            <span class="status-divider">│</span>
+            <span class="status-text" id="status-mode">-</span>
+            <span class="status-divider">│</span>
+            <span class="status-text" id="status-info">-</span>
+        </div>
+
+        <div class="hud-widgets" id="widget-area">
+            <div class="empty-state">
+                <div class="empty-icon">📦</div>
+                <div>Connecting to ToolBoxV2...</div>
+            </div>
+        </div>
+
+        <div class="hud-settings" id="settings-panel">
+            <div class="settings-title">HUD Settings</div>
+            <div class="setting-row">
+                <span class="setting-label">Opacity</span>
+                <input type="range" class="setting-input" id="setting-opacity" min="10" max="100" value="92">
+                <span class="setting-value" id="opacity-value">92%</span>
+            </div>
+        </div>
+
+        <div class="hud-actions">
+            <button class="action-btn" id="btn-refresh">🔄 Refresh</button>
+            <button class="action-btn" id="btn-switch">📱 App Mode</button>
+        </div>
+    </div>
+
+    <script type="module">
+        class HudApp {
+            constructor() {
+                this.ws = null;
+                this.connected = false;
+                this.widgets = [];
+                this.reconnectAttempts = 0;
+                this.maxReconnects = 10;
+                this.startTime = Date.now();
+                this.wsUrl = 'ws://localhost:5001';
+
+                // Drag state
+                this.isDragging = false;
+                this.dragStartX = 0;
+                this.dragStartY = 0;
+                this.windowStartX = 0;
+                this.windowStartY = 0;
+                this.saveTimeout = null;
+            }
+
+            async init() {
+                console.log('[HUD] Initializing...');
+                this.bindEvents();
+                this.setupDrag();
+                await this.loadSettings();
+                await this.connect();
+                this.setupTauriEvents();
+            }
+
+            setupDrag() {
+                const header = document.getElementById('drag-header');
+                if (!header) return;
+
+                header.addEventListener('mousedown', (e) => this.onDragStart(e));
+                document.addEventListener('mousemove', (e) => this.onDragMove(e));
+                document.addEventListener('mouseup', (e) => this.onDragEnd(e));
+            }
+
+            async onDragStart(e) {
+                // Don't drag if clicking on buttons
+                if (e.target.closest('.hud-btn')) return;
+
+                this.isDragging = true;
+                this.dragStartX = e.screenX;
+                this.dragStartY = e.screenY;
+
+                console.log('[HUD] Drag started at screen:', this.dragStartX, this.dragStartY);
+
+                // Get current window position
+                if (window.__TAURI__) {
+                    try {
+                        const { getCurrentWindow } = window.__TAURI__.window;
+                        const win = getCurrentWindow();
+                        const pos = await win.outerPosition();
+                        this.windowStartX = pos.x;
+                        this.windowStartY = pos.y;
+                        console.log('[HUD] Window position:', this.windowStartX, this.windowStartY);
+                    } catch (err) {
+                        console.error('[HUD] Failed to get window position:', err);
+                        this.isDragging = false;
+                    }
+                } else {
+                    console.warn('[HUD] No Tauri API available');
+                    this.isDragging = false;
+                }
+            }
+
+            async onDragMove(e) {
+                if (!this.isDragging) return;
+
+                const deltaX = e.screenX - this.dragStartX;
+                const deltaY = e.screenY - this.dragStartY;
+
+                const newX = this.windowStartX + deltaX;
+                const newY = this.windowStartY + deltaY;
+
+                if (window.__TAURI__) {
+                    try {
+                        const { getCurrentWindow, PhysicalPosition } = window.__TAURI__.window;
+                        const win = getCurrentWindow();
+                        await win.setPosition(new PhysicalPosition(newX, newY));
+                    } catch (err) {
+                        console.error('[HUD] Move error:', err);
+                    }
+                }
+            }
+
+            async onDragEnd(e) {
+                if (!this.isDragging) return;
+                this.isDragging = false;
+
+                // Save position after drag ends (debounced)
+                if (this.saveTimeout) clearTimeout(this.saveTimeout);
+                this.saveTimeout = setTimeout(() => this.savePosition(), 300);
+            }
+
+            async savePosition() {
+                if (!window.__TAURI__) return;
+
+                try {
+                    const { getCurrentWindow } = window.__TAURI__.window;
+                    const { invoke } = window.__TAURI__.core;
+
+                    const win = getCurrentWindow();
+                    const pos = await win.outerPosition();
+
+                    console.log('[HUD] Saving position:', pos.x, pos.y);
+                    await invoke('save_hud_position', { x: pos.x, y: pos.y });
+                } catch (err) {
+                    console.error('[HUD] Failed to save position:', err);
+                }
+            }
+
+            bindEvents() {
+                document.getElementById('btn-settings')?.addEventListener('click', () => this.toggleSettings());
+                document.getElementById('btn-app')?.addEventListener('click', () => this.switchToApp());
+                document.getElementById('btn-refresh')?.addEventListener('click', () => this.refresh());
+                document.getElementById('btn-switch')?.addEventListener('click', () => this.switchToApp());
+
+                // Opacity change - live update!
+                document.getElementById('setting-opacity')?.addEventListener('input', (e) => {
+                    const value = parseInt(e.target.value, 10);
+                    document.getElementById('opacity-value').textContent = value + '%';
+                    this.setOpacity(value / 100);
+                });
+            }
+
+            setupTauriEvents() {
+                if (window.__TAURI__) {
+                    const { listen } = window.__TAURI__.event;
+                    listen('hud-opacity-changed', (event) => {
+                        this.applyOpacity(event.payload);
+                    });
+                }
+            }
+
+            applyOpacity(opacity) {
+                document.documentElement.style.setProperty('--hud-opacity', opacity);
+                const slider = document.getElementById('setting-opacity');
+                const valueDisplay = document.getElementById('opacity-value');
+                if (slider) slider.value = Math.round(opacity * 100);
+                if (valueDisplay) valueDisplay.textContent = Math.round(opacity * 100) + '%';
+            }
+
+            async loadSettings() {
+                try {
+                    if (window.__TAURI__) {
+                        const { invoke } = window.__TAURI__.core;
+
+                        // Get API URLs from worker manager
+                        const urls = await invoke('get_api_urls');
+                        this.wsUrl = urls.ws_url;
+                        console.log('[HUD] Using WebSocket URL:', this.wsUrl);
+
+                        // Get HUD settings
+                        const hudSettings = await invoke('get_hud_settings');
+                        console.log('[HUD] Settings:', hudSettings);
+
+                        // Apply opacity
+                        if (hudSettings.opacity !== undefined) {
+                            this.applyOpacity(hudSettings.opacity);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[HUD] Could not load settings:', e);
+                }
+            }
+
+            async connect() {
+                try {
+                    console.log('[HUD] Connecting to:', this.wsUrl);
+                    this.ws = new WebSocket(this.wsUrl);
+
+                    this.ws.onopen = () => this.onConnect();
+                    this.ws.onclose = () => this.onDisconnect();
+                    this.ws.onmessage = (e) => this.onMessage(e);
+                    this.ws.onerror = (e) => this.onError(e);
+
+                } catch (e) {
+                    console.error('[HUD] Connection failed:', e);
+                    this.scheduleReconnect();
+                }
+            }
+
+            onConnect() {
+                console.log('[HUD] Connected to worker');
+                this.connected = true;
+                this.reconnectAttempts = 0;
+                this.startTime = Date.now();
+                this.updateStatus(true);
+
+                this.send({ type: 'get_status' });
+                this.send({ type: 'get_widgets' });
+            }
+
+            onDisconnect() {
+                console.log('[HUD] Disconnected');
+                this.connected = false;
+                this.updateStatus(false);
+                this.scheduleReconnect();
+            }
+
+            onMessage(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    const msgType = data.type || data.event;
+
+                    switch (msgType) {
+                        case 'status':
+                        case 'system_status':
+                        case 'worker_status':
+                            this.handleStatus(data.data || data);
+                            break;
+                        case 'widgets':
+                        case 'widget_list':
+                            this.handleWidgets(data.widgets || data.data || []);
+                            break;
+                        case 'widget_update':
+                            this.handleWidgetUpdate(data);
+                            break;
+                        case 'pong':
+                            break;
+                        default:
+                            this.handleGenericMessage(data);
+                    }
+                } catch (e) {
+                    console.error('[HUD] Parse error:', e);
+                }
+            }
+
+            onError(error) {
+                console.error('[HUD] WebSocket error:', error);
+            }
+
+            scheduleReconnect() {
+                if (this.reconnectAttempts >= this.maxReconnects) {
+                    this.showError('Connection lost. Click refresh to retry.');
+                    return;
+                }
+
+                this.reconnectAttempts++;
+                const delay = Math.min(1000 * this.reconnectAttempts, 5000);
+                setTimeout(() => this.connect(), delay);
+            }
+
+            send(data) {
+                if (this.ws && this.connected) {
+                    this.ws.send(JSON.stringify(data));
+                }
+            }
+
+            handleStatus(data) {
+                const modeEl = document.getElementById('status-mode');
+                const infoEl = document.getElementById('status-info');
+
+                if (modeEl) {
+                    const isRemote = data.is_remote || data.mode === 'remote';
+                    modeEl.textContent = isRemote ? 'Remote' : 'Local';
+                }
+
+                if (infoEl) {
+                    const modCount = data.active_mods || data.mod_count || data.mods || 0;
+                    infoEl.textContent = `${modCount} Mods`;
+                }
+
+                this.updateSystemWidget(data);
+            }
+
+            handleWidgets(widgets) {
+                this.widgets = widgets;
+                this.renderWidgets();
+            }
+
+            handleWidgetUpdate(data) {
+                if (data.widgets) {
+                    this.widgets = data.widgets;
+                    this.renderWidgets();
+                }
+            }
+
+            handleGenericMessage(data) {
+                if (data.running !== undefined || data.worker_running !== undefined) {
+                    this.handleStatus(data);
+                }
+            }
+
+            updateStatus(connected) {
+                const dot = document.getElementById('status-dot');
+                const text = document.getElementById('status-text');
+
+                if (dot) dot.classList.toggle('connected', connected);
+                if (text) text.textContent = connected ? 'Connected' : 'Disconnected';
+            }
+
+            updateSystemWidget(data) {
+                const area = document.getElementById('widget-area');
+                if (!area) return;
+
+                let widget = document.getElementById('widget-system');
+
+                if (!widget) {
+                    widget = document.createElement('div');
+                    widget.id = 'widget-system';
+                    widget.className = 'widget';
+                    widget.innerHTML = `
+                        <div class="widget-header">
+                            <span>System Status</span>
+                            <span class="widget-type">CORE</span>
+                        </div>
+                        <div class="widget-content" id="system-content"></div>
+                    `;
+
+                    const empty = area.querySelector('.empty-state');
+                    if (empty) empty.remove();
+                    area.prepend(widget);
+                }
+
+                const content = document.getElementById('system-content');
+                if (content) {
+                    const workerRunning = data.worker_running ?? data.running ?? data.healthy ?? true;
+                    const uptimeSeconds = data.uptime_seconds || data.uptime ||
+                        Math.floor((Date.now() - this.startTime) / 1000);
+                    const uptime = this.formatUptime(uptimeSeconds);
+                    const isRemote = data.is_remote || data.mode === 'remote';
+
+                    content.innerHTML = `
+                        <div class="widget-row">
+                            <span class="widget-label">Mode</span>
+                            <span class="widget-value">${isRemote ? 'Remote' : 'Local'}</span>
+                        </div>
+                        <div class="widget-row">
+                            <span class="widget-label">Worker</span>
+                            <span class="widget-value ${workerRunning ? 'success' : 'error'}">
+                                ${workerRunning ? 'Running' : 'Stopped'}
+                            </span>
+                        </div>
+                        <div class="widget-row">
+                            <span class="widget-label">Uptime</span>
+                            <span class="widget-value">${uptime}</span>
+                        </div>
+                    `;
+                }
+            }
+
+            renderWidgets() {
+                const area = document.getElementById('widget-area');
+                if (!area) return;
+
+                Array.from(area.children).forEach(child => {
+                    if (child.id !== 'widget-system') child.remove();
+                });
+
+                for (const widget of this.widgets) {
+                    const el = this.createWidgetElement(widget);
+                    area.appendChild(el);
+                }
+            }
+
+            createWidgetElement(widget) {
+                const el = document.createElement('div');
+                el.className = 'widget';
+                el.id = `widget-${widget.widget_id || widget.id || Math.random().toString(36).slice(2)}`;
+
+                const title = widget.title || widget.name || 'Widget';
+                const type = widget.type || widget.mod_name || 'MOD';
+                const content = widget.html || widget.content || '<span style="opacity:0.5">Loading...</span>';
+
+                el.innerHTML = `
+                    <div class="widget-header">
+                        <span>${this.escapeHtml(title)}</span>
+                        <span class="widget-type">${this.escapeHtml(type.toUpperCase())}</span>
+                    </div>
+                    <div class="widget-content">${content}</div>
+                `;
+
+                return el;
+            }
+
+            escapeHtml(str) {
+                const div = document.createElement('div');
+                div.textContent = str;
+                return div.innerHTML;
+            }
+
+            showError(message) {
+                const area = document.getElementById('widget-area');
+                if (area) {
+                    area.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-icon">⚠️</div>
+                            <div>${this.escapeHtml(message)}</div>
+                        </div>
+                    `;
+                }
+            }
+
+            formatUptime(seconds) {
+                if (!seconds || seconds < 0) return '0s';
+                if (seconds < 60) return `${Math.floor(seconds)}s`;
+                if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+                if (seconds < 86400) {
+                    const h = Math.floor(seconds / 3600);
+                    const m = Math.floor((seconds % 3600) / 60);
+                    return `${h}h ${m}m`;
+                }
+                return `${Math.floor(seconds / 86400)}d`;
+            }
+
+            toggleSettings() {
+                const panel = document.getElementById('settings-panel');
+                if (panel) panel.classList.toggle('visible');
+            }
+
+            async switchToApp() {
+                try {
+                    if (window.__TAURI__) {
+                        const { invoke } = window.__TAURI__.core;
+                        await invoke('switch_mode', { mode: 'app' });
+                    }
+                } catch (e) {
+                    console.error('[HUD] Switch failed:', e);
+                }
+            }
+
+            async setOpacity(opacity) {
+                try {
+                    this.applyOpacity(opacity);
+                    if (window.__TAURI__) {
+                        const { invoke } = window.__TAURI__.core;
+                        await invoke('set_hud_opacity', { opacity });
+                    }
+                } catch (e) {
+                    console.error('[HUD] Set opacity failed:', e);
+                }
+            }
+
+            refresh() {
+                this.reconnectAttempts = 0;
+                if (this.ws) this.ws.close();
+                this.connect();
+            }
+        }
+
+        const app = new HudApp();
+        app.init();
+    </script>
+</body>
+</html>

@@ -320,7 +320,7 @@ RUNNER_KEYS = [
     "venv", "ipy", "db", "gui", "p2p", "default",
     "status", "browser", "mcp", "login", "logout",
     "run", "mods", "flow", "user", "workers",
-    "config","session","broker","http_worker","ws_worker",
+    "session","broker","http_worker","ws_worker",
     "services", "registry", "manifest"
 ]
 
@@ -1537,13 +1537,10 @@ async def main(App=TbApp, do_exit=True):
         exit_code = run_config_wizard()
         await tb_app.a_exit()
         exit(exit_code)
-    elif args.init == "manifest":
-        from .utils.clis.manifest_cli import cmd_init
-        exit_code = cmd_init(args)
-        await tb_app.a_exit()
-        exit(exit_code)
     elif args.init is not None:
         tb_app.print("No init action specified valid options are ['main', 'config', 'manifest']")
+        await tb_app.a_exit()
+        exit(1)
 
     if args.lm:
         edit_logs()
@@ -2018,6 +2015,7 @@ def main_runner():
         runner = runner_setup()
         runner_keys = list(RUNNER_KEYS)
         main_args, runner_name, runner_args = split_args_by_runner(sys.argv[1:], runner_keys)
+        print(main_args, runner_name, runner_args)
         # Check for unknown runner (argument that looks like a runner but isn't in RUNNER_KEYS)
         # This catches cases like `tb xyz` where xyz is not a valid runner
         unknown_runner = None

@@ -291,31 +291,47 @@ jobs:
         shell: bash
         run: |
           mkdir -p ./toolboxv2/simple-core/src-tauri/binaries
+
+          # Install ToolBoxV2 and PyInstaller
           pip install pyinstaller
-          cat > worker_runner.py << 'EOF'
-          import sys, os, argparse
-          def main():
-              parser = argparse.ArgumentParser()
-              parser.add_argument('--http-port', type=int, default=5000)
-              parser.add_argument('--ws-port', type=int, default=5001)
-              parser.add_argument('--mode', default='tauri')
-              args, _ = parser.parse_known_args()
-              try:
-                  from toolboxv2.utils.workers.server_worker import run_http_worker
-                  run_http_worker(port=args.http_port, ws_port=args.ws_port, mode=args.mode)
-              except ImportError:
-                  import subprocess
-                  subprocess.run([sys.executable, "-m", "toolboxv2", "workers", "start", "http"] + sys.argv[1:])
-          if __name__ == "__main__": main()
-          EOF
+          pip install -e . || pip install .
+
+          # Use the real tauri_integration.py as entry point
+          WORKER_ENTRY="./toolboxv2/utils/workers/tauri_integration.py"
+
+          # Build with PyInstaller including all ToolBoxV2 dependencies
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            pyinstaller --onefile --name "tb-worker-${{ matrix.target_triple }}" --console worker_runner.py
+            pyinstaller --onefile \
+              --name "tb-worker-${{ matrix.target_triple }}" \
+              --console \
+              --collect-all toolboxv2 \
+              --hidden-import toolboxv2.utils.workers \
+              --hidden-import toolboxv2.utils.workers.server_worker \
+              --hidden-import toolboxv2.utils.workers.ws_worker \
+              --hidden-import toolboxv2.utils.workers.config \
+              --hidden-import toolboxv2.utils.workers.session \
+              --hidden-import toolboxv2.utils.workers.event_manager \
+              --hidden-import toolboxv2.utils.system.getting_and_closing_app \
+              "$WORKER_ENTRY"
             cp dist/tb-worker-${{ matrix.target_triple }}.exe ./toolboxv2/simple-core/src-tauri/binaries/
           else
-            pyinstaller --onefile --name "tb-worker-${{ matrix.target_triple }}" worker_runner.py
+            pyinstaller --onefile \
+              --name "tb-worker-${{ matrix.target_triple }}" \
+              --collect-all toolboxv2 \
+              --hidden-import toolboxv2.utils.workers \
+              --hidden-import toolboxv2.utils.workers.server_worker \
+              --hidden-import toolboxv2.utils.workers.ws_worker \
+              --hidden-import toolboxv2.utils.workers.config \
+              --hidden-import toolboxv2.utils.workers.session \
+              --hidden-import toolboxv2.utils.workers.event_manager \
+              --hidden-import toolboxv2.utils.system.getting_and_closing_app \
+              "$WORKER_ENTRY"
             cp dist/tb-worker-${{ matrix.target_triple }} ./toolboxv2/simple-core/src-tauri/binaries/
             chmod +x ./toolboxv2/simple-core/src-tauri/binaries/tb-worker-${{ matrix.target_triple }}
           fi
+
+          # Verify the binary was created
+          ls -la ./toolboxv2/simple-core/src-tauri/binaries/
 
       - name: Update Cargo Dependencies
         working-directory: ./toolboxv2/simple-core/src-tauri

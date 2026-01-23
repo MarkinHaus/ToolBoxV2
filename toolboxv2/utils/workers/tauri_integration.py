@@ -314,6 +314,8 @@ def main():
                         help="HTTP server port (default: 5000)")
     parser.add_argument("--ws-port", type=int, default=5001,
                         help="WebSocket server port (default: 5001)")
+    parser.add_argument("--mode", default="tauri",
+                        help="Run mode (tauri, standalone)")
     parser.add_argument("--no-ws", action="store_true",
                         help="Disable WebSocket server")
     parser.add_argument("-v", "--verbose", action="store_true",
@@ -338,6 +340,7 @@ def main():
         os.environ["TOOLBOX_LOGGING_LEVEL"] = "DEBUG"
 
     logger.info(f"Starting Tauri Worker Manager")
+    logger.info(f"  Mode: {args.mode}")
     logger.info(f"  HTTP Port: {args.http_port}")
     logger.info(f"  WS Port: {args.ws_port}")
     logger.info(f"  WS Enabled: {not args.no_ws}")

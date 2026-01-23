@@ -4,7 +4,7 @@
 # This is the single source of truth for your ToolBox installation.
 # Changes here are applied to all sub-configs when saved.
 #
-# Generate with: tb init config
+# Generate with: tb -init config
 # Validate with: tb manifest validate
 # Apply with:    tb manifest apply
 #

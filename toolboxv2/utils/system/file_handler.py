@@ -986,6 +986,8 @@ class FileHandlerV2:
 
     def __len__(self) -> int:
         """Get number of keys."""
+        if not hasattr(self, "_data"):
+            return 0
         return len(self._data)
 
     def __iter__(self):

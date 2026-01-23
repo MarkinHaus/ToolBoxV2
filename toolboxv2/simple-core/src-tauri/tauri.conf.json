@@ -1,13 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2.0.0",
-  "productName": "simple-core",
+  "productName": "SimpleCore",
   "version": "0.1.0",
   "identifier": "com.simple-core.app",
   "build": {
     "frontendDist": "../../dist"
   },
   "app": {
-      "withGlobalTauri": true,
+    "withGlobalTauri": true,
     "windows": [],
     "security": {
       "csp": {
@@ -43,7 +43,8 @@
     ],
     "resources": [
       "setup.html",
-      "starting.html"
+      "starting.html",
+      "hud.html"
     ],
     "externalBin": [
       "binaries/tb-worker"
@@ -51,6 +52,26 @@
     "android": {
       "versionCode": 100,
       "minSdkVersion": 28
+    },
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "installMode": "currentUser",
+        "languages": ["English", "German"],
+        "displayLanguageSelector": true,
+        "startMenuFolder": "SimpleCore"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    },
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": false
+      },
+      "deb": {
+        "section": "utils"
+      }
     }
   }
 }

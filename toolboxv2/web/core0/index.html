@@ -168,6 +168,11 @@
         .page-footer {
             padding: var(--space-8) var(--space-4);
             text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            box-sizing: border-box;
         }
 
         .footer-nav {
@@ -175,6 +180,10 @@
             flex-direction: column;
             gap: var(--space-4);
             margin-bottom: var(--space-6);
+
+            align-items: center;
+            width: 100%;
+            max-width: 400px
         }
 
         .footer-link {
@@ -200,6 +209,7 @@
                 transform var(--duration-fast) var(--ease-default),
                 box-shadow var(--duration-fast) var(--ease-default),
                 background-color var(--duration-fast) var(--ease-default);
+            width: 100%;
         }
 
         .footer-link:hover {
