@@ -320,7 +320,7 @@ RUNNER_KEYS = [
     "venv", "ipy", "db", "gui", "p2p", "default",
     "status", "browser", "mcp", "login", "logout",
     "run", "mods", "flow", "user", "workers",
-    "session","broker","http_worker","ws_worker",
+    "session", "event", "broker", "http_worker", "ws_worker",
     "services", "registry", "manifest"
 ]
 
@@ -381,14 +381,16 @@ def show_interactive_guide():
     ┌─ QUICK START ──────────────────────────────────────────────────────────────┐
     │                                                                            │
     │  First Time Setup:                                                         │
-    │    $ tb -init system              # Initialize ToolBoxV2                   │
+    │    $ tb -init main                # Initialize ToolBoxV2                   │
+    │    $ tb -init config              # Initialize ToolBoxV2 manifest          │
     │    $ tb -c helper init_system     # Setup system configuration             │
+    │    $ tb -u main                   # Update to the latest version           │
     │                                                                            │
     │  Start ToolBoxV2:                                                          │
     │    $ tb                           # Start in CLI mode                      │
-    │    $ tb x                         # Toolbox - Lan                          │
+    │    $ tb --sm                      # Start all Services from config         │
     │    $ tb gui                       # Start with GUI                         │
-    │    $ tb workers                   # Start API server                       │
+    │    $ tb workers start             # Start API server                       │
     │                                                                            │
     └────────────────────────────────────────────────────────────────────────────┘
 
@@ -405,12 +407,20 @@ def show_interactive_guide():
     │    $ tb -u [MODULE]               # Update module                          │
     │    $ tb -r [MODULE]               # Remove module                          │
     │                                                                            │
-    │  🌐 Services:                                                              │
-    │    $ tb {tp args} 'Service' {Service args}                                 │
-    │    $ tb workers [start|stop|status]   # Manage API server                  │
+    │  🌐 Services & Workers:                                                    │
+    │    $ tb workers [start|stop|status]   # Manage worker system               │
+    │    $ tb session [generate-secret|test]# Session management                 │
+    │    $ tb event                         # Event broker management            │
+    │    $ tb broker                        # ZMQ event broker                   │
+    │    $ tb http_worker                   # HTTP worker                        │
+    │    $ tb ws_worker                     # WebSocket worker                   │
+    │    $ tb services                      # Service manager                    │
+    │    $ tb manifest                      # Manifest configuration             │
+    │                                                                            │
+    │  🖥️  Interfaces:                                                           │
     │    $ tb gui                           # Launch GUI interface               │
-    │    $ tb p2p [start|stop]              # Manage P2P client                  │
     │    $ tb mcp                           # Start MCP server (for agents)      │
+    │    $ tb p2p [start|stop]              # Manage P2P client                  │
     │                                                                            │
     │  🗄️  Database:                                                             │
     │    $ tb db [command]              # Manage r_blob_db                       │
@@ -419,11 +429,12 @@ def show_interactive_guide():
     │    $ tb browser build             # Build browser extension                │
     │    $ tb browser install           # Install extension                      │
     │                                                                            │
-    │  📦 Conda Environment:                                                     │
+    │  📦 Virtual Environment:                                                   │
     │    $ tb venv [command]           # Run venv commands                       │
     │                                                                            │
     │  ▶️  Flow Execution:                                                       │
-    │    $ tb run          # ToolBox TBX Lang                                    │
+    │    $ tb run              # ToolBox TBX Lang                                │
+    │    $ tb -m [flow name]   # Run Flow from default flow folder               │
     │    $ tb flow --flow [file] # Execute flows from file or --remote + .gist   │
     │                                                                            │
     └────────────────────────────────────────────────────────────────────────────┘
@@ -609,7 +620,7 @@ def parse_args():
         Quick Start:
           $ tb                    # Start CLI interface
           $ tb gui                # Launch GUI
-          $ tb --guide            # Show interactive guide
+          $ tb --guide            # Show guide
           $ tb -c [MOD] [FUNC]    # Execute module function
 
         """),
@@ -722,22 +733,17 @@ def parse_args():
                             const=True,
                             default=False)
     extensions.add_argument("workers",
-                            help="Worker management",
-                            nargs='?',
-                            const=True,
-                            default=False)
-    extensions.add_argument("config",
-                            help="Manage configuration for Worker system",
+                            help="Worker management (use: tb workers -h)",
                             nargs='?',
                             const=True,
                             default=False)
     extensions.add_argument("session",
-                            help="Session management for workers",
+                            help="Session management for workers (use: tb session -h)",
                             nargs='?',
                             const=True,
                             default=False)
-    extensions.add_argument("event",
-                            help="Event management for workers",
+    extensions.add_argument("broker",
+                            help="ZMQ event broker (use: tb broker -h)",
                             nargs='?',
                             const=True,
                             default=False)
@@ -989,17 +995,28 @@ def _parse_args():
         Extensions Commands:
 
           login           ▶ Login to ToolBoxV2
-          run             ▶ Run flow from file or load all flows and mods from dir
+          logout          ▶ Logout from ToolBoxV2
           status          ▶ Get status of ToolBoxV2
+          run             ▶ Run flow from file or load all flows and mods from dir
           mods            ▶ Run mod manager
-          workers         ▶ Run Api workers manager
           gui             ▶ Launch graphical interface
+          mcp             ▶ Run MCP server (for agent)
+
+        Worker System:
+          services        ▶ Service manager
+          manifest        ▶ Manifest configuration
+          workers         ▶ Worker management (start|stop|status)
+          session         ▶ Session management (generate-secret|test)
+          - automatically used
+          broker          ▶ ZMQ event broker
+          http_worker     ▶ HTTP worker
+          ws_worker       ▶ WebSocket worker
+
+        Other:
           p2p             ▶ Launch p2p client
           venv            ▶ Run venv commands
           db              ▶ Run r_blob_db commands
-          mcp             ▶ Run MCP server (for agent)
           browser         ▶ Run browser extension installer
-          logout          ▶ Logout from ToolBoxV2
 
 
 
@@ -1933,8 +1950,10 @@ def runner_setup():
         app = get_app("CloudM.cli_web_login")
         return await app.a_run_any("CloudM", "cli_logout")
 
-    async def run_flow_from_file_or_load_all_flows_and_mods_from_dir(app):
+    async def run_flow_from_file_or_load_all_flows_and_mods_from_dir(app=None):
         from toolboxv2 import init_cwd
+        if app is None:
+            app = get_app("app.Flows")
         parser = argparse.ArgumentParser(
             prog='tb flow',
             description='Run flow from file or load all flows and mods from dir',
@@ -2015,7 +2034,6 @@ def main_runner():
         runner = runner_setup()
         runner_keys = list(RUNNER_KEYS)
         main_args, runner_name, runner_args = split_args_by_runner(sys.argv[1:], runner_keys)
-        print(main_args, runner_name, runner_args)
         # Check for unknown runner (argument that looks like a runner but isn't in RUNNER_KEYS)
         # This catches cases like `tb xyz` where xyz is not a valid runner
         unknown_runner = None
