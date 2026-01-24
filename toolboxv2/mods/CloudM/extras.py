@@ -133,6 +133,10 @@ def hud_status(app: App=None):
     module_count = len(app.functions)
     uptime = "Running"
 
+    from .hud_ui import cloudm_hud
+
+    print(cloudm_hud)
+
     html = '''
     <div style="padding: 12px; font-family: system-ui, sans-serif;">
         <h3 style="margin: 0 0 12px 0; color: #6366f1; font-size: 14px;">

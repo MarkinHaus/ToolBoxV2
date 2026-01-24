@@ -8,6 +8,7 @@
 import { isTauri, isDesktop, isMobile, tauriAPI } from '../../../core/platform.js';
 import './Desktop.css';
 
+
 /**
  * Quick Capture Popup - Floating capture window (Ctrl+Shift+C)
  */
