@@ -20,9 +20,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Any
 
-import discord
-from discord import VoiceClient
-from discord.ext import commands
+try:
+    import discord
+    from discord import VoiceClient
+    from discord.ext import commands
+except ImportError:
+    print("pip install discord.py")
+    discord = None
+    commands = None
+    VoiceClient = None
 
 from toolboxv2.mods.isaa.kernel.types import (
     Signal, SignalType, IOutputRouter, UserState

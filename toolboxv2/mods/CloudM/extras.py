@@ -54,7 +54,7 @@ def add_ui(app: App, name: str, title: str, path: str, description: str, auth: b
 
 
 @export(mod_name=Name, api=True, version=version)
-def openui(app: App):
+def openui(app: App=None):
     """Get all registered UIs"""
     if app is None:
         app = get_app("openui")
@@ -62,6 +62,208 @@ def openui(app: App):
     x = app.config_fh.get_file_handler("CloudM::UI", "{}")
     uis = json.loads(x)
     return [uis[name] for name in uis]
+
+
+@export(mod_name=Name, api=True, version=version)
+def get_hud_functions(app: App=None):
+    """
+    Get all functions with 'hud' prefix from all modules.
+    These functions are designed to return HTML for the HUD display.
+
+    Returns:
+        List of HUD function info: [{mod_name, func_name, display_name, path}, ...]
+    """
+    if app is None:
+        app = get_app("get_hud_functions")
+
+    hud_functions = []
+
+    for module_name, functions in app.functions.items():
+        if not isinstance(functions, dict):
+            continue
+
+        # Skip internal module names
+        if module_name.startswith("APP_INSTANCE"):
+            continue
+
+        for func_name, func_data in functions.items():
+            if not isinstance(func_data, dict):
+                continue
+
+            # Check if function name starts with 'hud' (case insensitive)
+            if not func_name.lower().startswith('hud'):
+                continue
+
+            # Only include API-enabled functions
+            if not func_data.get("api", False):
+                continue
+
+            # Create display name by removing 'hud' prefix
+            display_name = func_name[3:] if len(func_name) > 3 else func_name
+            display_name = display_name.lstrip('_').replace('_', ' ').title()
+            if not display_name:
+                display_name = func_name
+
+            hud_functions.append({
+                "mod_name": module_name,
+                "func_name": func_name,
+                "display_name": display_name,
+                "path": f"/api/{module_name}/{func_name}",
+                "api": True,
+                "description": func_data.get("helper", ""),
+            })
+
+    return hud_functions
+
+
+# =================== HUD Widget Functions ===================
+# Functions prefixed with 'hud' are automatically discovered by get_hud_functions
+# and displayed in the Tauri HUD overlay
+
+@export(mod_name=Name, api=True, version=version, row=True, state=False)
+def hud_status(app: App=None):
+    """
+    HUD Status Widget - Shows system status in the HUD overlay.
+    Returns HTML content for display.
+    """
+    if app is None:
+        app = get_app("hud_status")
+
+    # Get some basic stats
+    module_count = len(app.functions)
+    uptime = "Running"
+
+    html = '''
+    <div style="padding: 12px; font-family: system-ui, sans-serif;">
+        <h3 style="margin: 0 0 12px 0; color: #6366f1; font-size: 14px;">
+            ⚡ System Status
+        </h3>
+        <div style="display: grid; gap: 8px;">
+            <div style="background: rgba(99, 102, 241, 0.1); padding: 8px 12px; border-radius: 6px; border-left: 3px solid #6366f1;">
+                <div style="font-size: 10px; color: #888; text-transform: uppercase;">Modules</div>
+                <div style="font-size: 18px; font-weight: 600; color: #fff;">''' + str(module_count) + '''</div>
+            </div>
+            <div style="background: rgba(34, 197, 94, 0.1); padding: 8px 12px; border-radius: 6px; border-left: 3px solid #22c55e;">
+                <div style="font-size: 10px; color: #888; text-transform: uppercase;">Status</div>
+                <div style="font-size: 14px; font-weight: 500; color: #22c55e;">''' + uptime + '''</div>
+            </div>
+        </div>
+    </div>
+    '''
+    return html
+
+
+@export(mod_name=Name, api=True, version=version, row=True, state=False, request_as_kwarg=True)
+def hud_quick_actions(app: App=None, request=None):
+    """
+    HUD Quick Actions Widget - Provides quick action buttons.
+    Returns HTML content with interactive buttons using the HUD API.
+    """
+    # Check if user is authenticated for personalized content
+    user_name = "Guest"
+    if request and hasattr(request, 'session'):
+        session = request.session
+        if session.get('validated') and not session.get('anonymous'):
+            user_name = session.get('user_name', 'User')
+
+    html = f'''
+    <div style="padding: 12px; font-family: system-ui, sans-serif;">
+        <h3 style="margin: 0 0 8px 0; color: #6366f1; font-size: 14px;">
+            🚀 Quick Actions
+        </h3>
+        <div style="font-size: 10px; color: #64748b; margin-bottom: 12px;">
+            Hello, {user_name}!
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+            <button onclick=HUD.action('quick_actions', 'refresh') style="
+                background: linear-gradient(135deg, #6366f1, #8b5cf6);
+                border: none;
+                color: white;
+                padding: 8px 12px;
+                border-radius: 6px;
+                font-size: 11px;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+            ">🔄 Refresh</button>
+            <button onclick=HUD.action('quick_actions', 'show_docs') style="
+                background: rgba(255,255,255,0.1);
+                border: 1px solid rgba(255,255,255,0.2);
+                color: white;
+                padding: 8px 12px;
+                border-radius: 6px;
+                font-size: 11px;
+                cursor: pointer;
+            ">📚 API Docs</button>
+            <button onclick=HUD.action('quick_actions', 'test_notify') style="
+                background: rgba(34, 197, 94, 0.2);
+                border: 1px solid rgba(34, 197, 94, 0.4);
+                color: #22c55e;
+                padding: 8px 12px;
+                border-radius: 6px;
+                font-size: 11px;
+                cursor: pointer;
+            ">🔔 Test Notify</button>
+        </div>
+    </div>
+    '''
+    return html
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
+async def hud_action(action: str, payload: dict = None, conn_id: str = None, request=None):
+    """
+    Handle HUD widget actions for CloudM widgets.
+    This is called when a user interacts with a widget button/input.
+
+    Args:
+        app: Application instance
+        action: The action name (e.g., 'refresh', 'show_docs', 'test_notify')
+        payload: Action payload data
+        conn_id: WebSocket connection ID for push responses
+        request: Request object with session data
+    """
+
+    app = get_app("hud_action")
+
+    payload = payload or {}
+
+    if action == "refresh":
+        # Trigger a widget refresh
+        return {"action": "refresh", "message": "Refreshing..."}
+
+    elif action == "show_docs":
+        # Return navigation instruction
+        return {
+            "action": "navigate",
+            "path": "/api/CloudM/docs",
+            "message": "Opening API docs..."
+        }
+
+    elif action == "test_notify":
+        # Send a test notification via WebSocket
+        if conn_id and hasattr(app, 'ws_send'):
+            await app.ws_send(conn_id, {
+                "type": "hud_notification",
+                "message": "🎉 HUD Actions are working!",
+                "level": "success",
+                "duration": 3000
+            })
+        return {"action": "test_notify", "sent": True}
+
+    elif action == "copy_test":
+        # Test clipboard functionality
+        if conn_id and hasattr(app, 'ws_send'):
+            await app.ws_send(conn_id, {
+                "type": "hud_clipboard",
+                "text": "Hello from ToolBoxV2 HUD!",
+                "notification": "Text copied to clipboard!"
+            })
+        return {"action": "copy_test", "sent": True}
+
+    else:
+        return {"error": f"Unknown action: {action}"}
 
 
 @export(mod_name=Name, api=True, version=version)
@@ -288,50 +490,7 @@ async def register_initial_loot_user(app: App, email: str = None, user_name: str
 
         return Result.ok(signup_url)
 
-    # Legacy: No Clerk, use old AuthManager
-    from .AuthManager import get_invitation
-
-    root_key = app.config_fh.get_file_handler("Pk" + Code.one_way_hash(user_name, "dvp-k")[:8])
-
-    if root_key is not None:
-        return Result.default_user_error(info=f"{user_name} user already registered")
-
-    if email is None:
-        email = input("Enter your email: ")
-
-    invitation = get_invitation(app=app, username=user_name).get()
-
-    rport = app.run_any(
-        TBEF.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
-        username=user_name,
-        email=email,
-        invitation=invitation,
-        get_results=True
-    )
-
-    if rport.as_result().is_error():
-        return rport
-
-    await asyncio.sleep(1)
-
-    user = await app.a_run_any(
-        TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME,
-        username=user_name,
-        get_results=True
-    )
-
-    user = user.get()
-    key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
-    url = f"{os.getenv('APP_BASE_URL', 'http://localhost:8080')}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
-
-    try:
-        from ...utils.extras.qr import print_qrcode_to_console
-        print_qrcode_to_console(url)
-    except:
-        pass
-
-    print(url)
-    return Result.ok(url)
+    return Result.default_user_error("Clerk not configured")
 
 
 @no_test

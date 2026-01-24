@@ -164,11 +164,11 @@ class TestRefreshJwtToken(unittest.IsolatedAsyncioTestCase):
 
         mock_app = MagicMock()
 
-        result = await refresh_jwt_token(
+        result = (await refresh_jwt_token(
             mock_app,
             session_id=None,
             clerk_user_id=None
-        ).print()
+        )).print()
 
         self.assertTrue(result.is_error())
 

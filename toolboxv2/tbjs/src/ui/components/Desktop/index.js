@@ -518,11 +518,9 @@ export function initPlatformUI(options = {}) {
         // Mobile: Bottom navigation
         components.bottomNav = new MobileBottomNav({
             items: options.navItems || [
-                { icon: '🏠', label: 'Home', route: '/' },
-                { icon: '📝', label: 'Notes', route: '/vault' },
-                { icon: '⚡', label: 'Capture', route: '/capture' },
-                { icon: '🤖', label: 'Bots', route: '/bots' },
-                { icon: '⚙️', label: 'Settings', route: '/settings' }
+                { icon: '🎯', label: 'Hud', route: '/hud.html' },
+                { icon: '🏠', label: 'App', route: '/' },
+                { icon: '⚙️', label: 'Settings', route: '/api/CloudM.UI.widget/get_widget' }
             ],
             onNavigate: options.onNavigate || ((route) => {
                 window.location.hash = route;

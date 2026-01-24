@@ -127,9 +127,9 @@ async fn animate_to_hud(app: &AppHandle, hud_settings: &mut HudSettings) -> Resu
 
     log::info!("[Mode] HUD target position: ({}, {}) {}x{}", target_x, target_y, target_w, target_h);
 
-    // Animate
-    let steps = 20u32;
-    let delay = Duration::from_millis(15);
+    // Animate with configurable parameters
+    let (steps, delay_ms) = hud_settings.get_animation_params();
+    let delay = Duration::from_millis(delay_ms as u64);
 
     for i in 1..=steps {
         let t = i as f64 / steps as f64;
@@ -181,9 +181,9 @@ async fn animate_to_app(app: &AppHandle, hud_settings: &HudSettings) -> Result<(
     hud_window.hide().map_err(|e| e.to_string())?;
     main_window.show().map_err(|e| e.to_string())?;
 
-    // Animate
-    let steps = 20u32;
-    let delay = Duration::from_millis(15);
+    // Animate with configurable parameters
+    let (steps, delay_ms) = hud_settings.get_animation_params();
+    let delay = Duration::from_millis(delay_ms as u64);
 
     for i in 1..=steps {
         let t = i as f64 / steps as f64;
@@ -217,4 +217,122 @@ pub async fn switch_mode_animated(
 
 fn lerp(start: f64, end: f64, t: f64) -> f64 {
     start + (end - start) * t
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_app_mode_as_str() {
+        assert_eq!(AppMode::App.as_str(), "app");
+        assert_eq!(AppMode::Hud.as_str(), "hud");
+    }
+
+    #[test]
+    fn test_app_mode_from_str() {
+        assert_eq!(AppMode::from_str("app"), Some(AppMode::App));
+        assert_eq!(AppMode::from_str("App"), Some(AppMode::App));
+        assert_eq!(AppMode::from_str("APP"), Some(AppMode::App));
+        assert_eq!(AppMode::from_str("hud"), Some(AppMode::Hud));
+        assert_eq!(AppMode::from_str("Hud"), Some(AppMode::Hud));
+        assert_eq!(AppMode::from_str("HUD"), Some(AppMode::Hud));
+        assert_eq!(AppMode::from_str("invalid"), None);
+        assert_eq!(AppMode::from_str(""), None);
+    }
+
+    #[test]
+    fn test_app_mode_default() {
+        assert_eq!(AppMode::default(), AppMode::App);
+    }
+
+    #[test]
+    fn test_mode_manager_new() {
+        let manager = ModeManager::new();
+        assert_eq!(manager.get_current_mode(), AppMode::App);
+        assert!(!manager.is_animating());
+    }
+
+    #[test]
+    fn test_mode_manager_default() {
+        let manager = ModeManager::default();
+        assert_eq!(manager.get_current_mode(), AppMode::App);
+        assert!(!manager.is_animating());
+    }
+
+    #[test]
+    fn test_mode_manager_set_current_mode() {
+        let mut manager = ModeManager::new();
+
+        manager.set_current_mode(AppMode::Hud);
+        assert_eq!(manager.get_current_mode(), AppMode::Hud);
+
+        manager.set_current_mode(AppMode::App);
+        assert_eq!(manager.get_current_mode(), AppMode::App);
+    }
+
+    #[test]
+    fn test_mode_manager_set_animating() {
+        let mut manager = ModeManager::new();
+
+        manager.set_animating(true);
+        assert!(manager.is_animating());
+
+        manager.set_animating(false);
+        assert!(!manager.is_animating());
+    }
+
+    #[test]
+    fn test_mode_manager_get_toggle_target() {
+        let mut manager = ModeManager::new();
+
+        // Starting in App mode, toggle target should be Hud
+        assert_eq!(manager.get_toggle_target(), AppMode::Hud);
+
+        // Switch to Hud mode, toggle target should be App
+        manager.set_current_mode(AppMode::Hud);
+        assert_eq!(manager.get_toggle_target(), AppMode::App);
+    }
+
+    #[test]
+    fn test_lerp() {
+        // Test start value
+        assert!((lerp(0.0, 100.0, 0.0) - 0.0).abs() < 0.001);
+
+        // Test end value
+        assert!((lerp(0.0, 100.0, 1.0) - 100.0).abs() < 0.001);
+
+        // Test midpoint
+        assert!((lerp(0.0, 100.0, 0.5) - 50.0).abs() < 0.001);
+
+        // Test quarter
+        assert!((lerp(0.0, 100.0, 0.25) - 25.0).abs() < 0.001);
+
+        // Test with negative values
+        assert!((lerp(-100.0, 100.0, 0.5) - 0.0).abs() < 0.001);
+
+        // Test with same start and end
+        assert!((lerp(50.0, 50.0, 0.5) - 50.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_app_mode_equality() {
+        assert_eq!(AppMode::App, AppMode::App);
+        assert_eq!(AppMode::Hud, AppMode::Hud);
+        assert_ne!(AppMode::App, AppMode::Hud);
+    }
+
+    #[test]
+    fn test_app_mode_clone() {
+        let mode = AppMode::Hud;
+        let cloned = mode.clone();
+        assert_eq!(mode, cloned);
+    }
+
+    #[test]
+    fn test_app_mode_copy() {
+        let mode = AppMode::App;
+        let copied: AppMode = mode; // Copy trait
+        assert_eq!(mode, copied);
+    }
 }

@@ -1,11 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main and HUD windows",
-  "windows": [
-    "main",
-    "hud"
-  ],
+  "description": "Capability for all windows",
+  "windows": ["*"],
   "permissions": [
     "core:default",
     "core:window:allow-set-position",
@@ -36,6 +33,35 @@
     "global-shortcut:allow-unregister-all",
     "autostart:allow-enable",
     "autostart:allow-disable",
-    "autostart:allow-is-enabled"
+    "autostart:allow-is-enabled",
+
+    "allow-greet",
+    "allow-start-worker",
+    "allow-stop-worker",
+    "allow-get-worker-status",
+    "allow-set-api-endpoint",
+    "allow-get-data-paths",
+    "allow-check-worker-health",
+    "allow-get-api-urls",
+    "allow-update-tray-status",
+    "allow-save-settings",
+    "allow-load-settings",
+    "allow-switch-mode",
+    "allow-get-current-mode",
+    "allow-toggle-mode",
+    "allow-get-hud-settings",
+    "allow-save-hud-position",
+    "allow-set-hud-opacity",
+    "allow-is-mobile",
+    "allow-is-hud-available",
+    "allow-set-animation-steps",
+    "allow-set-animation-delay",
+    "allow-set-selected-miniui-app",
+    "allow-get-selected-miniui-app",
+    "allow-is-autostart-enabled",
+    "allow-set-autostart",
+    "allow-is-started-minimized",
+    "allow-get-hud-functions",
+    "allow-call-hud-function"
   ]
 }

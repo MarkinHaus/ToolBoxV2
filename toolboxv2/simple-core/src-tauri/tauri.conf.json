@@ -19,6 +19,7 @@
         "img-src": "'self' data: https: asset: http://asset.localhost",
         "connect-src": "'self' http://localhost:* ws://localhost:* https://simplecore.app https://*.simplecore.app wss://*.simplecore.app ipc: http://ipc.localhost https://unpkg.com https://cdn.jsdelivr.net https://*.clerk.accounts.dev https://*.clerk.com https://clerk.accounts.dev https://clerk-telemetry.com https://*.clerk-telemetry.com"
       },
+      "capabilities": ["default"],
       "dangerousDisableAssetCspModification": ["style-src", "script-src", "worker-src"]
     }
   },

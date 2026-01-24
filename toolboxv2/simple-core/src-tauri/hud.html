@@ -4,8 +4,24 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SimpleCore HUD</title>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 
     <style>
+        /* Material Icons styling */
+        .material-icons {
+            font-family: 'Material Icons';
+            font-weight: normal;
+            font-style: normal;
+            font-size: 18px;
+            display: inline-block;
+            line-height: 1;
+            text-transform: none;
+            letter-spacing: normal;
+            word-wrap: normal;
+            white-space: nowrap;
+            direction: ltr;
+            -webkit-font-smoothing: antialiased;
+        }
         :root {
             --hud-opacity: 0.92;
             --hud-bg: rgba(15, 15, 25, var(--hud-opacity));
@@ -27,10 +43,15 @@
         html, body {
             background: transparent !important;
             height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
             overflow: hidden;
             font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
             color: var(--hud-text);
             font-size: 13px;
+            /* Ensure no browser chrome or borders */
+            -webkit-app-region: no-drag;
         }
 
         #hud-root {
@@ -40,10 +61,19 @@
             border: 1px solid var(--hud-border);
             border-radius: 12px;
             height: 100%;
+            width: 100%;
             display: flex;
             flex-direction: column;
             overflow: hidden;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            /* Prevent any margin/padding issues */
+            margin: 0;
+            padding: 0;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
         }
 
         .hud-header {
@@ -306,6 +336,200 @@
             background: var(--hud-border);
             border-radius: 2px;
         }
+
+        /* HUD Function Selector */
+        .hud-func-selector {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: rgba(0, 0, 0, 0.15);
+            border-bottom: 1px solid var(--hud-border);
+        }
+
+        .hud-func-toggle {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--hud-text);
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            transition: all 0.15s ease;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .hud-func-toggle:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .hud-func-toggle.active {
+            background: var(--hud-accent);
+            border-color: var(--hud-accent);
+        }
+
+        .hud-func-current {
+            font-size: 10px;
+            color: var(--hud-muted);
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .hud-func-current-name {
+            color: var(--hud-text);
+            font-weight: 500;
+        }
+
+        .hud-func-close {
+            background: transparent;
+            border: none;
+            color: var(--hud-muted);
+            cursor: pointer;
+            padding: 2px 6px;
+            font-size: 12px;
+            border-radius: 3px;
+        }
+
+        .hud-func-close:hover {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--hud-error);
+        }
+
+        /* HUD Function Panel (collapsible) */
+        .hud-func-panel {
+            display: none;
+            max-height: 250px;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.2);
+            border-bottom: 1px solid var(--hud-border);
+        }
+
+        .hud-func-panel.visible {
+            display: block;
+        }
+
+        /* Search Bar */
+        .hud-func-search {
+            padding: 8px;
+            border-bottom: 1px solid var(--hud-border);
+        }
+
+        .hud-func-search-input {
+            width: 100%;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--hud-border);
+            border-radius: 4px;
+            color: var(--hud-text);
+            padding: 6px 10px;
+            font-size: 11px;
+            outline: none;
+            transition: border-color 0.15s ease;
+        }
+
+        .hud-func-search-input:focus {
+            border-color: var(--hud-accent);
+        }
+
+        .hud-func-search-input::placeholder {
+            color: var(--hud-muted);
+        }
+
+        .hud-func-list {
+            padding: 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .hud-func-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid transparent;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .hud-func-item:hover {
+            background: rgba(99, 102, 241, 0.15);
+            border-color: rgba(99, 102, 241, 0.3);
+        }
+
+        .hud-func-item.selected {
+            background: rgba(99, 102, 241, 0.2);
+            border-color: var(--hud-accent);
+        }
+
+        .hud-func-item.hidden {
+            display: none;
+        }
+
+        .hud-func-icon {
+            font-size: 14px;
+            color: var(--hud-accent);
+        }
+
+        .hud-func-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .hud-func-title {
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--hud-text);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .hud-func-path {
+            font-size: 9px;
+            color: var(--hud-muted);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-family: monospace;
+        }
+
+        .hud-func-loading {
+            padding: 20px;
+            text-align: center;
+            color: var(--hud-muted);
+            font-size: 10px;
+        }
+
+        .hud-func-empty {
+            padding: 15px;
+            text-align: center;
+            color: var(--hud-muted);
+            font-size: 10px;
+        }
+
+        /* HUD Function Content Area */
+        .hud-func-content {
+            flex: 1;
+            overflow: auto;
+            background: rgba(0, 0, 0, 0.1);
+            display: none;
+        }
+
+        .hud-func-content.visible {
+            display: block;
+        }
+
+        .hud-func-content-inner {
+            padding: 8px;
+            height: 100%;
+            overflow: auto;
+        }
     </style>
 </head>
 <body>
@@ -319,6 +543,7 @@
             <div class="hud-controls">
                 <button class="hud-btn" id="btn-settings" title="Settings">⚙️</button>
                 <button class="hud-btn" id="btn-app" title="Switch to App">📺</button>
+                <button class="hud-btn" title="Refresh HUD" id="btn-refresh">🔄</button>
             </div>
         </div>
 
@@ -329,6 +554,33 @@
             <span class="status-text" id="status-mode">-</span>
             <span class="status-divider">│</span>
             <span class="status-text" id="status-info">-</span>
+        </div>
+
+        <!-- HUD Function Selector -->
+        <div class="hud-func-selector" id="hud-func-selector">
+            <button class="hud-func-toggle" id="hud-func-toggle" title="Select HUD Function">
+                <span class="material-icons" style="font-size: 14px;">widgets</span>
+                <span id="hud-func-arrow">▼</span>
+            </button>
+            <span class="hud-func-current" id="hud-func-current">
+                <span id="hud-func-current-label">No function selected</span>
+            </span>
+            <button class="hud-func-close" id="hud-func-close" title="Close HUD Function" style="display: none;">✕</button>
+        </div>
+
+        <!-- HUD Function List Panel (collapsible) -->
+        <div class="hud-func-panel" id="hud-func-panel">
+            <div class="hud-func-search">
+                <input type="text" class="hud-func-search-input" id="hud-func-search" placeholder="🔍 Search functions..." autocomplete="off">
+            </div>
+            <div class="hud-func-list" id="hud-func-list">
+                <div class="hud-func-loading">Loading functions...</div>
+            </div>
+        </div>
+
+        <!-- HUD Function Content Area (shows selected function output) -->
+        <div class="hud-func-content" id="hud-func-content">
+            <div class="hud-func-content-inner" id="hud-func-content-inner"></div>
         </div>
 
         <div class="hud-widgets" id="widget-area">
@@ -345,11 +597,16 @@
                 <input type="range" class="setting-input" id="setting-opacity" min="10" max="100" value="92">
                 <span class="setting-value" id="opacity-value">92%</span>
             </div>
-        </div>
-
-        <div class="hud-actions">
-            <button class="action-btn" id="btn-refresh">🔄 Refresh</button>
-            <button class="action-btn" id="btn-switch">📱 App Mode</button>
+            <div class="setting-row">
+                <span class="setting-label">Animation Steps</span>
+                <input type="range" class="setting-input" id="setting-animation-steps" min="5" max="50" value="20">
+                <span class="setting-value" id="animation-steps-value">20</span>
+            </div>
+            <div class="setting-row">
+                <span class="setting-label">Animation Speed</span>
+                <input type="range" class="setting-input" id="setting-animation-delay" min="5" max="50" value="15">
+                <span class="setting-value" id="animation-delay-value">15ms</span>
+            </div>
         </div>
     </div>
 
@@ -363,6 +620,7 @@
                 this.maxReconnects = 10;
                 this.startTime = Date.now();
                 this.wsUrl = 'ws://localhost:5001';
+                this.apiUrl = 'http://localhost:5000';
 
                 // Drag state
                 this.isDragging = false;
@@ -371,15 +629,30 @@
                 this.windowStartX = 0;
                 this.windowStartY = 0;
                 this.saveTimeout = null;
+
+                // HUD Functions state
+                this.hudFunctions = [];
+                this.selectedHudFunc = null;
+                this.hudFuncPanelOpen = false;
+                this.searchQuery = '';
+
+                // HUD Action System state
+                this.connId = null;
+                this.widgetCallbacks = {};
+                this.pendingActions = new Map();
+                this.actionIdCounter = 0;
             }
 
             async init() {
                 console.log('[HUD] Initializing...');
                 this.bindEvents();
                 this.setupDrag();
+                this.setupHudFunctions();
                 await this.loadSettings();
                 await this.connect();
                 this.setupTauriEvents();
+                await this.loadHudFunctions();
+                await this.restoreSelectedHudFunc();
             }
 
             setupDrag() {
@@ -478,6 +751,20 @@
                     document.getElementById('opacity-value').textContent = value + '%';
                     this.setOpacity(value / 100);
                 });
+
+                // Animation Steps change
+                document.getElementById('setting-animation-steps')?.addEventListener('input', (e) => {
+                    const value = parseInt(e.target.value, 10);
+                    document.getElementById('animation-steps-value').textContent = value;
+                    this.setAnimationSteps(value);
+                });
+
+                // Animation Delay change
+                document.getElementById('setting-animation-delay')?.addEventListener('input', (e) => {
+                    const value = parseInt(e.target.value, 10);
+                    document.getElementById('animation-delay-value').textContent = value + 'ms';
+                    this.setAnimationDelay(value);
+                });
             }
 
             setupTauriEvents() {
@@ -488,6 +775,283 @@
                     });
                 }
             }
+
+            // ============================================================
+            // HUD Functions System
+            // ============================================================
+
+            setupHudFunctions() {
+                const toggle = document.getElementById('hud-func-toggle');
+                const closeBtn = document.getElementById('hud-func-close');
+                const searchInput = document.getElementById('hud-func-search');
+
+                toggle?.addEventListener('click', () => this.toggleHudFuncPanel());
+                closeBtn?.addEventListener('click', () => this.closeHudFunc());
+
+                // Live search
+                searchInput?.addEventListener('input', (e) => {
+                    this.searchQuery = e.target.value.toLowerCase();
+                    this.filterHudFuncList();
+                });
+            }
+
+            toggleHudFuncPanel() {
+                this.hudFuncPanelOpen = !this.hudFuncPanelOpen;
+                const panel = document.getElementById('hud-func-panel');
+                const arrow = document.getElementById('hud-func-arrow');
+                const toggle = document.getElementById('hud-func-toggle');
+
+                if (panel) panel.classList.toggle('visible', this.hudFuncPanelOpen);
+                if (arrow) arrow.textContent = this.hudFuncPanelOpen ? '▲' : '▼';
+                if (toggle) toggle.classList.toggle('active', this.hudFuncPanelOpen);
+
+                // Focus search when opening
+                if (this.hudFuncPanelOpen) {
+                    setTimeout(() => {
+                        document.getElementById('hud-func-search')?.focus();
+                    }, 100);
+                }
+            }
+
+            async loadHudFunctions() {
+                const listEl = document.getElementById('hud-func-list');
+                if (!listEl) return;
+
+                try {
+                    // Try Tauri invoke first, fallback to HTTP
+                    if (window.__TAURI__) {
+                        const { invoke } = window.__TAURI__.core;
+                        const funcs = await invoke('get_hud_functions');
+                        this.hudFunctions = Array.isArray(funcs) ? funcs : [];
+                    } else {
+                        const response = await fetch(`${this.apiUrl}/api/CloudM/get_hud_functions`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'include'
+                        });
+
+                        if (!response.ok) throw new Error('Failed to fetch functions');
+
+                        const data = await response.json();
+                        const funcs = data?.result?.data || data?.data || data || [];
+                        this.hudFunctions = Array.isArray(funcs) ? funcs : [];
+                    }
+
+                    console.log('[HUD] Loaded functions:', this.hudFunctions.length);
+                    this.renderHudFuncList();
+                } catch (e) {
+                    console.error('[HUD] Failed to load HUD functions:', e);
+                    listEl.innerHTML = '<div class="hud-func-loading">Failed to load functions</div>';
+                }
+            }
+
+            renderHudFuncList() {
+                const listEl = document.getElementById('hud-func-list');
+                if (!listEl) return;
+
+                if (this.hudFunctions.length === 0) {
+                    listEl.innerHTML = '<div class="hud-func-empty">No HUD functions available.<br><small>Create functions with "hud" prefix.</small></div>';
+                    return;
+                }
+
+                listEl.innerHTML = this.hudFunctions.map(func => {
+                    const isSelected = this.selectedHudFunc?.path === func.path;
+                    const title = this.escapeHtml(func.display_name || func.func_name);
+                    const path = this.escapeHtml(func.path || '');
+                    const modName = this.escapeHtml(func.mod_name || '');
+
+                    return `
+                        <div class="hud-func-item ${isSelected ? 'selected' : ''}"
+                             data-func-path="${this.escapeHtml(func.path)}"
+                             data-mod-name="${modName}"
+                             data-func-name="${this.escapeHtml(func.func_name)}">
+                            <span class="hud-func-icon material-icons">code</span>
+                            <div class="hud-func-info">
+                                <div class="hud-func-title">${title}</div>
+                                <div class="hud-func-path">${modName}.${this.escapeHtml(func.func_name)}</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                // Bind click events
+                listEl.querySelectorAll('.hud-func-item').forEach(item => {
+                    item.addEventListener('click', () => {
+                        const funcPath = item.dataset.funcPath;
+                        const func = this.hudFunctions.find(f => f.path === funcPath);
+                        if (func) this.selectHudFunc(func);
+                    });
+                });
+            }
+
+            filterHudFuncList() {
+                const listEl = document.getElementById('hud-func-list');
+                if (!listEl) return;
+
+                const items = listEl.querySelectorAll('.hud-func-item');
+                let visibleCount = 0;
+
+                items.forEach(item => {
+                    const title = item.querySelector('.hud-func-title')?.textContent?.toLowerCase() || '';
+                    const path = item.querySelector('.hud-func-path')?.textContent?.toLowerCase() || '';
+                    const matches = title.includes(this.searchQuery) || path.includes(this.searchQuery);
+
+                    item.classList.toggle('hidden', !matches);
+                    if (matches) visibleCount++;
+                });
+
+                // Show empty message if no results
+                let emptyMsg = listEl.querySelector('.hud-func-empty');
+                if (visibleCount === 0 && this.hudFunctions.length > 0) {
+                    if (!emptyMsg) {
+                        emptyMsg = document.createElement('div');
+                        emptyMsg.className = 'hud-func-empty';
+                        listEl.appendChild(emptyMsg);
+                    }
+                    emptyMsg.textContent = 'No matching functions';
+                    emptyMsg.style.display = 'block';
+                } else if (emptyMsg) {
+                    emptyMsg.style.display = 'none';
+                }
+            }
+
+            async selectHudFunc(func) {
+                console.log('[HUD] Selecting function:', func.display_name);
+                this.selectedHudFunc = func;
+
+                // Update UI
+                this.renderHudFuncList();
+                this.updateHudFuncCurrentLabel();
+                this.toggleHudFuncPanel(); // Close panel
+
+                // Show content area, hide widgets
+                const contentEl = document.getElementById('hud-func-content');
+                const widgetEl = document.getElementById('widget-area');
+                const closeBtn = document.getElementById('hud-func-close');
+
+                if (contentEl) contentEl.classList.add('visible');
+                if (widgetEl) widgetEl.style.display = 'none';
+                if (closeBtn) closeBtn.style.display = 'block';
+
+                // Load function content
+                await this.loadHudFuncContent(func);
+
+                // Save selection persistently
+                await this.saveHudFuncSelection(func.path);
+            }
+
+            async loadHudFuncContent(func) {
+                const innerEl = document.getElementById('hud-func-content-inner');
+                if (!innerEl) return;
+
+                innerEl.innerHTML = '<div class="hud-func-loading">Loading...</div>';
+
+                try {
+                    let html;
+
+                    // Try Tauri invoke first, fallback to HTTP
+                    if (window.__TAURI__) {
+                        const { invoke } = window.__TAURI__.core;
+                        html = await invoke('call_hud_function', {
+                            modName: func.mod_name,
+                            funcName: func.func_name
+                        });
+                    } else {
+                        const response = await fetch(`${this.apiUrl}${func.path}`, {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+
+                        if (!response.ok) throw new Error('Failed to load function');
+                        html = await response.text();
+                    }
+
+                    innerEl.innerHTML = html;
+
+                    // Execute any scripts in the loaded content
+                    innerEl.querySelectorAll('script').forEach(oldScript => {
+                        const newScript = document.createElement('script');
+                        Array.from(oldScript.attributes).forEach(attr => {
+                            newScript.setAttribute(attr.name, attr.value);
+                        });
+                        newScript.textContent = oldScript.textContent;
+                        oldScript.parentNode.replaceChild(newScript, oldScript);
+                    });
+
+                } catch (e) {
+                    console.error('[HUD] Failed to load HUD function content:', e);
+                    innerEl.innerHTML = `<div class="hud-func-loading">Failed to load: ${this.escapeHtml(e.message)}</div>`;
+                }
+            }
+
+            closeHudFunc() {
+                console.log('[HUD] Closing HUD function');
+                this.selectedHudFunc = null;
+
+                // Update UI
+                this.updateHudFuncCurrentLabel();
+                this.renderHudFuncList();
+
+                // Hide content area, show widgets
+                const contentEl = document.getElementById('hud-func-content');
+                const widgetEl = document.getElementById('widget-area');
+                const closeBtn = document.getElementById('hud-func-close');
+                const innerEl = document.getElementById('hud-func-content-inner');
+
+                if (contentEl) contentEl.classList.remove('visible');
+                if (widgetEl) widgetEl.style.display = '';
+                if (closeBtn) closeBtn.style.display = 'none';
+                if (innerEl) innerEl.innerHTML = '';
+
+                // Clear saved selection
+                this.saveHudFuncSelection(null);
+            }
+
+            updateHudFuncCurrentLabel() {
+                const labelEl = document.getElementById('hud-func-current-label');
+                if (!labelEl) return;
+
+                if (this.selectedHudFunc) {
+                    labelEl.innerHTML = `<span class="hud-func-current-name">${this.escapeHtml(this.selectedHudFunc.display_name || this.selectedHudFunc.func_name)}</span>`;
+                } else {
+                    labelEl.textContent = 'No function selected';
+                }
+            }
+
+            async saveHudFuncSelection(funcPath) {
+                if (!window.__TAURI__) return;
+
+                try {
+                    const { invoke } = window.__TAURI__.core;
+                    await invoke('set_selected_miniui_app', { appName: funcPath });
+                    console.log('[HUD] Function selection saved:', funcPath);
+                } catch (e) {
+                    console.warn('[HUD] Failed to save function selection:', e);
+                }
+            }
+
+            async restoreSelectedHudFunc() {
+                if (!window.__TAURI__) return;
+
+                try {
+                    const { invoke } = window.__TAURI__.core;
+                    const funcPath = await invoke('get_selected_miniui_app');
+
+                    if (funcPath && this.hudFunctions.length > 0) {
+                        const func = this.hudFunctions.find(f => f.path === funcPath);
+                        if (func) {
+                            console.log('[HUD] Restoring HUD function:', funcPath);
+                            await this.selectHudFunc(func);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[HUD] Failed to restore function selection:', e);
+                }
+            }
+
+            // ============================================================
+            // End HUD Functions System
+            // ============================================================
 
             applyOpacity(opacity) {
                 document.documentElement.style.setProperty('--hud-opacity', opacity);
@@ -505,7 +1069,9 @@
                         // Get API URLs from worker manager
                         const urls = await invoke('get_api_urls');
                         this.wsUrl = urls.ws_url;
+                        this.apiUrl = urls.api_url;
                         console.log('[HUD] Using WebSocket URL:', this.wsUrl);
+                        console.log('[HUD] Using API URL:', this.apiUrl);
 
                         // Get HUD settings
                         const hudSettings = await invoke('get_hud_settings');
@@ -514,6 +1080,22 @@
                         // Apply opacity
                         if (hudSettings.opacity !== undefined) {
                             this.applyOpacity(hudSettings.opacity);
+                        }
+
+                        // Apply animation steps
+                        if (hudSettings.animation_steps !== undefined) {
+                            const stepsSlider = document.getElementById('setting-animation-steps');
+                            const stepsValue = document.getElementById('animation-steps-value');
+                            if (stepsSlider) stepsSlider.value = hudSettings.animation_steps;
+                            if (stepsValue) stepsValue.textContent = hudSettings.animation_steps;
+                        }
+
+                        // Apply animation delay
+                        if (hudSettings.animation_delay_ms !== undefined) {
+                            const delaySlider = document.getElementById('setting-animation-delay');
+                            const delayValue = document.getElementById('animation-delay-value');
+                            if (delaySlider) delaySlider.value = hudSettings.animation_delay_ms;
+                            if (delayValue) delayValue.textContent = hudSettings.animation_delay_ms + 'ms';
                         }
                     }
                 } catch (e) {
@@ -574,6 +1156,26 @@
                             this.handleWidgetUpdate(data);
                             break;
                         case 'pong':
+                            break;
+                        // === HUD Action System Messages ===
+                        case 'connected':
+                            this.connId = data.conn_id;
+                            console.log('[HUD] Connection ID:', this.connId);
+                            break;
+                        case 'widget_response':
+                            this.handleWidgetResponse(data);
+                            break;
+                        case 'hud_notification':
+                            this.showNotification(data.message, data.level || 'info', data.duration || 3000);
+                            break;
+                        case 'hud_clipboard':
+                            this.copyToClipboard(data.text, data.notification);
+                            break;
+                        case 'hud_navigate':
+                            this.navigateTo(data.path);
+                            break;
+                        case 'single_widget_update':
+                            this.handleSingleWidgetUpdate(data);
                             break;
                         default:
                             this.handleGenericMessage(data);
@@ -637,6 +1239,156 @@
                 if (data.running !== undefined || data.worker_running !== undefined) {
                     this.handleStatus(data);
                 }
+            }
+
+            // === HUD Action System Methods ===
+
+            handleWidgetResponse(data) {
+                const actionId = data.action_id;
+                const widgetId = data.widget_id;
+
+                // Resolve pending action promise if exists
+                if (actionId && this.pendingActions.has(actionId)) {
+                    const { resolve } = this.pendingActions.get(actionId);
+                    this.pendingActions.delete(actionId);
+                    resolve(data.result);
+                }
+
+                // Call widget-specific callback if registered
+                if (widgetId && this.widgetCallbacks[widgetId]) {
+                    this.widgetCallbacks[widgetId](data);
+                }
+
+                console.log('[HUD] Widget response:', data);
+            }
+
+            handleSingleWidgetUpdate(data) {
+                const widgetId = data.widget_id;
+                const html = data.html;
+
+                if (!widgetId || !html) return;
+
+                // Find and update the specific widget
+                const widgetEl = document.getElementById(`widget-${widgetId}`);
+                if (widgetEl) {
+                    const contentEl = widgetEl.querySelector('.widget-content');
+                    if (contentEl) {
+                        contentEl.innerHTML = html;
+                    }
+                }
+
+                // Call widget callback if registered
+                if (this.widgetCallbacks[widgetId]) {
+                    this.widgetCallbacks[widgetId](data);
+                }
+            }
+
+            showNotification(message, level = 'info', duration = 3000) {
+                // Create notification element
+                let container = document.getElementById('hud-notifications');
+                if (!container) {
+                    container = document.createElement('div');
+                    container.id = 'hud-notifications';
+                    container.style.cssText = 'position:fixed;top:10px;right:10px;z-index:10000;display:flex;flex-direction:column;gap:8px;';
+                    document.body.appendChild(container);
+                }
+
+                const colors = {
+                    info: '#3b82f6',
+                    success: '#22c55e',
+                    warning: '#f59e0b',
+                    error: '#ef4444'
+                };
+
+                const notification = document.createElement('div');
+                notification.style.cssText = `
+                    background: ${colors[level] || colors.info};
+                    color: white;
+                    padding: 10px 16px;
+                    border-radius: 6px;
+                    font-size: 12px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                    animation: slideIn 0.2s ease-out;
+                    max-width: 280px;
+                `;
+                notification.textContent = message;
+                container.appendChild(notification);
+
+                setTimeout(() => {
+                    notification.style.animation = 'slideOut 0.2s ease-in';
+                    setTimeout(() => notification.remove(), 200);
+                }, duration);
+            }
+
+            async copyToClipboard(text, notificationMsg) {
+                try {
+                    if (window.__TAURI__) {
+                        // Use Tauri clipboard API if available
+                        // For now, fall back to browser API
+                        await navigator.clipboard.writeText(text);
+                    } else {
+                        await navigator.clipboard.writeText(text);
+                    }
+                    if (notificationMsg) {
+                        this.showNotification(notificationMsg, 'success');
+                    }
+                } catch (e) {
+                    console.error('[HUD] Clipboard error:', e);
+                    this.showNotification('Failed to copy to clipboard', 'error');
+                }
+            }
+
+            navigateTo(path) {
+                // Navigate to a path in the main app
+                console.log('[HUD] Navigate to:', path);
+                this.switchToApp();
+            }
+
+            // Send widget action to backend
+            sendWidgetAction(widgetId, action, payload = {}) {
+                const actionId = ++this.actionIdCounter;
+
+                return new Promise((resolve, reject) => {
+                    // Store pending action
+                    this.pendingActions.set(actionId, { resolve, reject, timestamp: Date.now() });
+
+                    // Send action message
+                    this.send({
+                        type: 'widget_action',
+                        action_id: actionId,
+                        widget_id: widgetId,
+                        action: action,
+                        payload: payload,
+                        conn_id: this.connId
+                    });
+
+                    // Timeout after 30 seconds
+                    setTimeout(() => {
+                        if (this.pendingActions.has(actionId)) {
+                            this.pendingActions.delete(actionId);
+                            reject(new Error('Action timeout'));
+                        }
+                    }, 30000);
+                });
+            }
+
+            // Request single widget refresh
+            refreshWidget(widgetId) {
+                this.send({
+                    type: 'get_widget',
+                    widget_id: widgetId,
+                    conn_id: this.connId
+                });
+            }
+
+            // Register callback for widget updates
+            onWidgetUpdate(widgetId, callback) {
+                this.widgetCallbacks[widgetId] = callback;
+            }
+
+            // Unregister widget callback
+            offWidgetUpdate(widgetId) {
+                delete this.widgetCallbacks[widgetId];
             }
 
             updateStatus(connected) {
@@ -789,6 +1541,30 @@
                 }
             }
 
+            async setAnimationSteps(steps) {
+                try {
+                    if (window.__TAURI__) {
+                        const { invoke } = window.__TAURI__.core;
+                        await invoke('set_animation_steps', { steps });
+                        console.log('[HUD] Animation steps set to:', steps);
+                    }
+                } catch (e) {
+                    console.error('[HUD] Set animation steps failed:', e);
+                }
+            }
+
+            async setAnimationDelay(delayMs) {
+                try {
+                    if (window.__TAURI__) {
+                        const { invoke } = window.__TAURI__.core;
+                        await invoke('set_animation_delay', { delayMs });
+                        console.log('[HUD] Animation delay set to:', delayMs, 'ms');
+                    }
+                } catch (e) {
+                    console.error('[HUD] Set animation delay failed:', e);
+                }
+            }
+
             refresh() {
                 this.reconnectAttempts = 0;
                 if (this.ws) this.ws.close();
@@ -798,6 +1574,101 @@
 
         const app = new HudApp();
         app.init();
+
+        // === Global HUD API for Widget Interactivity ===
+        // This API is exposed to widget HTML content for interactive elements
+        window.HUD = {
+            /**
+             * Send an action to the backend for a specific widget
+             * @param {string} widgetId - The widget identifier
+             * @param {string} action - The action name
+             * @param {object} payload - Optional payload data
+             * @returns {Promise} - Resolves with the action result
+             */
+            action: (widgetId, action, payload = {}) => {
+                return app.sendWidgetAction(widgetId, action, payload);
+            },
+
+            /**
+             * Request a widget refresh from the backend
+             * @param {string} widgetId - The widget to refresh
+             */
+            refresh: (widgetId) => {
+                app.refreshWidget(widgetId);
+            },
+
+            /**
+             * Show a notification toast
+             * @param {string} message - The message to display
+             * @param {string} level - 'info', 'success', 'warning', 'error'
+             * @param {number} duration - Duration in milliseconds
+             */
+            notify: (message, level = 'info', duration = 3000) => {
+                app.showNotification(message, level, duration);
+            },
+
+            /**
+             * Copy text to clipboard
+             * @param {string} text - Text to copy
+             * @param {string} notification - Optional notification message
+             */
+            copy: (text, notification) => {
+                app.copyToClipboard(text, notification);
+            },
+
+            /**
+             * Get the current WebSocket connection ID
+             * @returns {string|null} - The connection ID
+             */
+            getConnId: () => app.connId,
+
+            /**
+             * Register a callback for widget updates
+             * @param {string} widgetId - The widget to listen for
+             * @param {function} callback - Called with update data
+             */
+            onUpdate: (widgetId, callback) => {
+                app.onWidgetUpdate(widgetId, callback);
+            },
+
+            /**
+             * Unregister a widget update callback
+             * @param {string} widgetId - The widget to stop listening for
+             */
+            offUpdate: (widgetId) => {
+                app.offWidgetUpdate(widgetId);
+            },
+
+            /**
+             * Send raw message via WebSocket
+             * @param {object} data - Data to send
+             */
+            send: (data) => {
+                app.send(data);
+            },
+
+            /**
+             * Check if connected to backend
+             * @returns {boolean}
+             */
+            isConnected: () => app.connected
+        };
+
+        // Add CSS animations for notifications
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes slideIn {
+                from { transform: translateX(100%); opacity: 0; }
+                to { transform: translateX(0); opacity: 1; }
+            }
+            @keyframes slideOut {
+                from { transform: translateX(0); opacity: 1; }
+                to { transform: translateX(100%); opacity: 0; }
+            }
+        `;
+        document.head.appendChild(style);
+
+        console.log('[HUD] Global HUD API initialized. Use window.HUD.action(), HUD.notify(), etc.');
     </script>
 </body>
 </html>

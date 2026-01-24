@@ -1,12 +1,44 @@
-[[permission]]
-identifier = "my-identifier"
-description = "This describes the impact and more."
-commands.allow = [
-    "read_file"
+# Default permissions set for SimpleCore
+# This combines all necessary permissions for the application
+
+[[set]]
+identifier = "default"
+description = "Default permissions for all SimpleCore commands"
+permissions = [
+
+    "core:default",
+    "commands:default",
+    "shell:allow-open",
+
+    "allow-greet",
+    "allow-start-worker",
+    "allow-stop-worker",
+    "allow-get-worker-status",
+    "allow-set-api-endpoint",
+    "allow-get-data-paths",
+    "allow-check-worker-health",
+    "allow-get-api-urls",
+    "allow-update-tray-status",
+    "allow-save-settings",
+    "allow-load-settings",
+    "allow-switch-mode",
+    "allow-get-current-mode",
+    "allow-toggle-mode",
+    "allow-get-hud-settings",
+    "allow-save-hud-position",
+    "save_hud_position",
+
+    "allow-set-hud-opacity",
+    "allow-is-mobile",
+    "allow-is-hud-available",
+    "allow-set-animation-steps",
+    "allow-set-animation-delay",
+    "allow-set-selected-miniui-app",
+    "allow-get-selected-miniui-app",
+    "allow-get-hud-functions",
+    "allow-call-hud-function",
+    "allow-is-autostart-enabled",
+    "allow-set-autostart",
+    "allow-is-started-minimized",
+
 ]
-
-[[scope.allow]]
-my-scope = "$HOME/*"
-
-[[scope.deny]]
-my-scope = "$HOME/secret"

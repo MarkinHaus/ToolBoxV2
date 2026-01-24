@@ -619,3 +619,17 @@ def colorize_ascii_art(ascii_art):
         full_str+=colored_line
     return full_str
 
+
+@export(name="hudwelcome", test=False)
+def welcome_hud():
+    from toolboxv2.utils.system.types import Result
+    return Result.html(
+        data="""
+        <div style="background-color: var(--background-color); border-radius: 5px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); padding: 2px;">
+            <div style="background-color: var(--background-color); padding: 5px;text-align:center">
+                <p>======== Welcome to ToolBoxV2 ========</p>
+                <p>This is the HUD welcome message</p>
+                <p>---------------------------------------</p>
+            </div>
+        </div>"""
+    )

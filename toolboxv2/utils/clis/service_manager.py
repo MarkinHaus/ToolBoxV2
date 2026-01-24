@@ -94,6 +94,15 @@ class ServiceRegistry:
             is_async=True,
             runner_key="db"
         ))
+        self.register(ServiceDefinition(
+            name="isaaK",
+            description="Discord & Telegram Kernel Agent",
+            category="core",
+            module="toolboxv2.mods.isaa.kernel.kernelin.run_unified_kernels",
+            entry_point="run",
+            is_async=True,
+            runner_key="isaaK"
+        ))
         #self.register(ServiceDefinition(
         #    name="user",
         #    description="Interaktives User Dashboard",

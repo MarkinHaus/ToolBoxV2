@@ -476,11 +476,11 @@ class Tools(MainTool):
 
     def on_start(self):
         """Initialize the WebSocketManager."""
-        self.logger.info("🚀 WebSocketManager started")
+        self.logger.info("WebSocketManager started")
 
     async def on_exit(self):
         """Cleanup on exit."""
-        self.logger.info("🔄 Shutting down WebSocketManager")
+        self.logger.info("Shutting down WebSocketManager")
 
         # Stop server
         if self.server:

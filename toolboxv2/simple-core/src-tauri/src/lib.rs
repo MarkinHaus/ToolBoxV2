@@ -300,6 +300,141 @@ fn is_hud_available() -> bool {
     cfg!(not(any(target_os = "android", target_os = "ios")))
 }
 
+/// Set animation steps for mode transitions
+#[tauri::command]
+async fn set_animation_steps(
+    steps: u32,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut settings = state.hud_settings.lock().map_err(|e| e.to_string())?;
+    settings.set_animation_steps(steps)?;
+    log::info!("[HUD] Animation steps set to: {}", steps);
+    Ok(())
+}
+
+/// Set animation delay for mode transitions
+#[tauri::command]
+async fn set_animation_delay(
+    delay_ms: u32,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut settings = state.hud_settings.lock().map_err(|e| e.to_string())?;
+    settings.set_animation_delay(delay_ms)?;
+    log::info!("[HUD] Animation delay set to: {}ms", delay_ms);
+    Ok(())
+}
+
+/// Set selected MiniUI app (legacy - now used for HUD function)
+#[tauri::command]
+async fn set_selected_miniui_app(
+    app_name: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut settings = state.hud_settings.lock().map_err(|e| e.to_string())?;
+    settings.set_selected_miniui_app(app_name.clone())?;
+    log::info!("[HUD] Selected HUD function: {:?}", app_name);
+    Ok(())
+}
+
+/// Get selected MiniUI app (legacy - now used for HUD function)
+#[tauri::command]
+fn get_selected_miniui_app(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let settings = state.hud_settings.lock().map_err(|e| e.to_string())?;
+    Ok(settings.get_selected_miniui_app())
+}
+
+/// Get all HUD functions from ToolBox API
+#[tauri::command]
+async fn get_hud_functions(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let api_url = {
+        let manager = state.worker_manager.lock().map_err(|e| e.to_string())?;
+        manager.get_api_url()
+    };
+
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/CloudM/get_hud_functions", api_url);
+
+    match client.post(&url)
+        .header("Content-Type", "application/json")
+        .send()
+        .await
+    {
+        Ok(response) => {
+            if response.status().is_success() {
+                match response.json::<serde_json::Value>().await {
+                    Ok(json) => {
+                        // Extract the data from the result structure
+                        if let Some(result) = json.get("result") {
+                            if let Some(data) = result.get("data") {
+                                return Ok(data.clone());
+                            }
+                        }
+                        // Fallback: return the whole response
+                        Ok(json)
+                    }
+                    Err(e) => Err(format!("Failed to parse response: {}", e))
+                }
+            } else {
+                Err(format!("API returned status: {}", response.status()))
+            }
+        }
+        Err(e) => Err(format!("Failed to fetch HUD functions: {}", e))
+    }
+}
+
+/// Call a HUD function and return its HTML content
+#[tauri::command]
+async fn call_hud_function(
+    mod_name: String,
+    func_name: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let api_url = {
+        let manager = state.worker_manager.lock().map_err(|e| e.to_string())?;
+        manager.get_api_url()
+    };
+
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/{}/{}", api_url, mod_name, func_name);
+
+    match client.get(&url).send().await {
+        Ok(response) => {
+            if response.status().is_success() {
+                // Check content type
+                let content_type = response.headers()
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+
+                if content_type.contains("text/html") {
+                    // Direct HTML response
+                    response.text().await.map_err(|e| e.to_string())
+                } else {
+                    // JSON response - extract HTML from result
+                    match response.json::<serde_json::Value>().await {
+                        Ok(json) => {
+                            // Try to extract HTML from various response formats
+                            if let Some(result) = json.get("result") {
+                                if let Some(data) = result.get("data") {
+                                    if let Some(html) = data.as_str() {
+                                        return Ok(html.to_string());
+                                    }
+                                }
+                            }
+                            // Fallback: stringify the JSON
+                            Ok(format!("<pre>{}</pre>", serde_json::to_string_pretty(&json).unwrap_or_default()))
+                        }
+                        Err(e) => Err(format!("Failed to parse response: {}", e))
+                    }
+                }
+            } else {
+                Err(format!("API returned status: {}", response.status()))
+            }
+        }
+        Err(e) => Err(format!("Failed to call HUD function: {}", e))
+    }
+}
+
 // ============================================================================
 // System Tray Setup (Desktop only)
 // ============================================================================
@@ -626,6 +761,15 @@ pub fn run() {
             set_hud_opacity,
             is_mobile,
             is_hud_available,
+            // Animation settings
+            set_animation_steps,
+            set_animation_delay,
+            // MiniUI app selection (legacy, now used for HUD functions)
+            set_selected_miniui_app,
+            get_selected_miniui_app,
+            // HUD functions API
+            get_hud_functions,
+            call_hud_function,
             // Autostart commands
             is_autostart_enabled,
             set_autostart,
@@ -661,7 +805,7 @@ pub fn run() {
 
                     // Create HUD window (hidden initially)
                     let hud_settings = HudSettings::load();
-                    let hud_builder = WebviewWindowBuilder::new(
+                    let mut hud_builder = WebviewWindowBuilder::new(
                         app,
                         "hud",
                         WebviewUrl::App("hud.html".into()),
@@ -669,10 +813,15 @@ pub fn run() {
                     .title("SimpleCore HUD")
                     .inner_size(hud_settings.width as f64, hud_settings.height as f64)
                     .decorations(false)
-                    .transparent(true)
                     .always_on_top(true)
                     .skip_taskbar(true)
                     .visible(false);
+
+                    // transparent() is not available on macOS
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        hud_builder = hud_builder.transparent(true);
+                    }
 
                     match hud_builder.build() {
                         Ok(_) => log::info!("[Setup] HUD window created (hidden)"),
