@@ -814,115 +814,70 @@ def list_modules(app: App = None) -> Result:
 async def upload_mod(app: App, request: RequestData,
                      form_data: Optional[Dict[str, Any]] = None) -> Result:
     """
-    Uploads a module ZIP file to the server.
+    DEPRECATED: This endpoint is deprecated and will be removed in a future version.
+    Use the TB Registry API instead: POST /api/v1/packages/{name}/versions
 
-    Args:
-        app: Application instance
-        request: Request data
-        form_data: Form data containing file
+    For CLI usage, use: tb mods registry_publish <module_name>
 
-    Returns:
-        Result with upload status
+    This endpoint now returns an error directing users to the new Registry-based upload.
     """
-    if not isinstance(form_data, dict):
-        return Result.default_user_error("No form data provided")
-
-    if form_data is None or 'files' not in form_data:
-        return Result.default_user_error("No file provided")
-
-    try:
-        uploaded_file = form_data.get('files')[0]
-        file_name = uploaded_file.filename
-        file_bytes = uploaded_file.file.read()
-
-        # Security validation
-        if not file_name.endswith('.zip'):
-            return Result.default_user_error("Only ZIP files are allowed")
-
-        if not file_name.startswith('RST$'):
-            return Result.default_user_error("Invalid module ZIP format")
-
-        # Save file
-        save_path = Path(app.start_dir) / "mods_sto" / file_name
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        save_path.write_bytes(file_bytes)
-
-        # Extract module info
-        module_name = file_name.split('$')[1].split('&')[0]
-        module_version = file_name.split('§')[1].replace('.zip', '')
-
-        return Result.ok({
-            "message": f"Successfully uploaded {file_name}",
-            "module": module_name,
-            "version": module_version,
-            "size": len(file_bytes)
-        })
-
-    except Exception as e:
-        return Result.default_internal_error(f"Upload failed: {str(e)}")
+    return Result.default_user_error(
+        "This endpoint is deprecated. Use the TB Registry for uploads:\n"
+        "  - CLI: tb mods registry_publish <module_name>\n"
+        "  - API: POST /api/v1/packages/{name}/versions\n"
+        "  - Registry URL: https://registry.simplecore.app",
+        exec_code=410  # HTTP 410 Gone
+    )
 
 
 @export(mod_name=Name, name="download_mod", api=True, api_methods=['GET'])
 async def download_mod(app: App, module_name: str,
                        platform: Optional[str] = None) -> Result:
     """
-    Downloads a module ZIP file.
+    DEPRECATED: This endpoint is deprecated and will be removed in a future version.
+    Use the TB Registry API instead: GET /api/v1/packages/{name}/versions/{version}/download
 
-    Args:
-        app: Application instance
-        module_name: Name of module to download
-        platform: Optional platform filter
+    For CLI usage, use: tb mods registry_install <package_name>
 
-    Returns:
-        Binary result with ZIP file
+    This endpoint now returns an error directing users to the new Registry-based download.
     """
-    try:
-        zip_path_str = find_highest_zip_version(module_name)
-
-        if not zip_path_str:
-            return Result.default_user_error(
-                f"Module '{module_name}' not found",
-                exec_code=404
-            )
-
-        zip_path = Path(zip_path_str)
-
-        if not zip_path.exists():
-            return Result.default_user_error(
-                f"Module file not found: {zip_path}",
-                exec_code=404
-            )
-
-        return Result.binary(
-            data=zip_path.read_bytes(),
-            content_type="application/zip",
-            download_name=zip_path.name
-        )
-
-    except Exception as e:
-        return Result.default_internal_error(f"Download failed: {str(e)}")
+    return Result.default_user_error(
+        "This endpoint is deprecated. Use the TB Registry for downloads:\n"
+        "  - CLI: tb mods registry_install <package_name>\n"
+        "  - API: GET /api/v1/packages/{name}/versions/{version}/download\n"
+        "  - Registry URL: https://registry.simplecore.app",
+        exec_code=410  # HTTP 410 Gone
+    )
 
 
 @export(mod_name=Name, name="getModVersion", api=True, api_methods=['GET'])
 async def get_mod_version(app: App, module_name: str) -> Result:
     """
-    Gets the latest version of a module.
+    Gets the latest version of a module from the TB Registry.
+
+    This endpoint now queries the TB Registry for version information.
 
     Args:
         app: Application instance
-        module_name: Name of module
+        module_name: Name of module/package
 
     Returns:
         Result with version string
     """
     try:
-        version_str = find_highest_zip_version(module_name, version_only=True)
+        client = get_registry_client(app)
+        version_str = await client.get_latest_version(module_name)
 
         if version_str:
             return Result.text(version_str)
 
+        # Fallback to local version if not in registry
+        local_version = find_highest_zip_version(module_name, version_only=True)
+        if local_version:
+            return Result.text(local_version)
+
         return Result.default_user_error(
-            f"No build found for module '{module_name}'",
+            f"Package '{module_name}' not found in registry",
             exec_code=404
         )
 
@@ -1070,7 +1025,13 @@ def uninstaller(app: Optional[App], module_name: str) -> Result:
 @export(mod_name=Name, name="upload", test=False)
 async def upload(app: Optional[App], module_name: str) -> Result:
     """
-    Uploads an existing module package to the server.
+    Uploads a module to the TB Registry.
+
+    This function now uses the TB Registry for secure uploads with:
+    - Clerk authentication
+    - Publisher verification
+    - Checksum validation
+    - MinIO storage
 
     Args:
         app: Application instance
@@ -1082,25 +1043,9 @@ async def upload(app: Optional[App], module_name: str) -> Result:
     if app is None:
         app = get_app(f"{Name}.upload")
 
-    try:
-        zip_path = find_highest_zip_version(module_name)
-
-        if not zip_path:
-            return Result.default_user_error(f"No package found for module '{module_name}'")
-
-        confirm = input(f"Upload ZIP file {zip_path}? (y/n): ")
-        if 'y' not in confirm.lower():
-            return Result.ok("Upload cancelled")
-
-        res = await app.session.upload_file(zip_path, f'/api/{Name}/upload_mod')
-
-        return Result.ok({
-            "message": "Upload completed",
-            "response": res
-        })
-
-    except Exception as e:
-        return Result.default_internal_error(f"Upload failed: {str(e)}")
+    # Redirect to registry_publish
+    app.print("📦 Using TB Registry for upload...")
+    return await publish_to_registry(app, module_name)
 
 
 @export(mod_name=Name, name="install", test=False)
@@ -1108,7 +1053,13 @@ async def installer(app: Optional[App], module_name: str,
                     build_state: bool = True,
                     platform: Optional[Platform] = None) -> Result:
     """
-    Installs or updates a module from the server.
+    Installs or updates a module from the TB Registry.
+
+    This function now uses the TB Registry for secure downloads with:
+    - Visibility-based access control (public/unlisted/private)
+    - Checksum verification
+    - Dependency resolution
+    - Lock file management
 
     Args:
         app: Application instance
@@ -1122,73 +1073,24 @@ async def installer(app: Optional[App], module_name: str,
     if app is None:
         app = get_app(f"{Name}.install")
 
-    if not app.session.valid and not await app.session.login():
-        return Result.default_user_error("Please login with CloudM")
+    # Redirect to registry_install
+    app.print("📦 Using TB Registry for installation...")
+    result = await install_from_registry(app, module_name)
 
-    try:
-        # Get remote version
-        response = await app.session.fetch(
-            f"/api/{Name}/getModVersion?module_name={module_name}",
-            method="GET"
-        )
-        remote_version = await response.text()
-        remote_version = None if remote_version == "None" else remote_version.strip('"')
+    # Rebuild state if requested and installation was successful
+    if not result.is_error() and build_state:
+        with Spinner("Rebuilding state"):
+            get_state_from_app(app)
 
-        # Get local version
-        local_version = find_highest_zip_version(module_name, version_only=True)
-
-        if not local_version and not remote_version:
-            return Result.default_user_error(f"Module '{module_name}' not found (404)")
-
-        # Compare versions
-        local_ver = pv.parse(local_version) if local_version else pv.parse("0.0.0")
-        remote_ver = pv.parse(remote_version) if remote_version else pv.parse("0.0.0")
-
-        app.print(f"Module versions - Local: {local_ver}, Remote: {remote_ver}")
-
-        if remote_ver > local_ver:
-            download_path = Path(app.start_dir) / 'mods_sto'
-            download_url = f"/api/{Name}/download_mod?module_name={module_name}"
-
-            if platform:
-                download_url += f"&platform={platform.value}"
-
-            app.print(f"Downloading from {app.session.base}{download_url}")
-
-            if not await app.session.download_file(download_url, str(download_path)):
-                app.print("⚠ Automatic download failed")
-                manual = input("Download manually and place in mods_sto folder. Done? (y/n): ")
-                if 'y' not in manual.lower():
-                    return Result.default_user_error("Installation cancelled")
-
-            zip_name = f"RST${module_name}&{app.version}§{remote_version}.zip"
-
-            with Spinner("Installing from ZIP"):
-                success = install_from_zip(app, zip_name, target_platform=platform)
-
-            if not success:
-                return Result.default_internal_error("Installation failed")
-
-            if build_state:
-                with Spinner("Rebuilding state"):
-                    get_state_from_app(app)
-
-            return Result.ok({
-                "message": f"Module '{module_name}' installed successfully",
-                "version": remote_version
-            })
-
-        app.print("✓ Module is already up to date")
-        return Result.ok("Module is up to date")
-
-    except Exception as e:
-        return Result.default_internal_error(f"Installation failed: {str(e)}")
+    return result
 
 
 @export(mod_name=Name, name="update_all", test=False)
 async def update_all_mods(app: Optional[App]) -> Result:
     """
-    Updates all installed modules.
+    Updates all installed modules from the TB Registry.
+
+    Uses the TB Registry to check for updates and install newer versions.
 
     Args:
         app: Application instance
@@ -1202,17 +1104,20 @@ async def update_all_mods(app: Optional[App]) -> Result:
     all_mods = app.get_all_mods()
     results = {"updated": [], "failed": [], "up_to_date": []}
 
+    # Get registry client
+    registry = get_registry_client(app)
+
     async def check_and_update(mod_name: str):
         try:
-            # Get remote version
-            response = await app.session.fetch(
-                f"/api/{Name}/getModVersion?module_name={mod_name}"
-            )
-            remote_version = await response.text()
-            remote_version = remote_version.strip('"') if remote_version != "None" else None
+            # Get package info from registry
+            package = await registry.get_package(mod_name)
+            if not package:
+                results["failed"].append({"module": mod_name, "reason": "Not found in registry"})
+                return
 
+            remote_version = package.latest_version
             if not remote_version:
-                results["failed"].append({"module": mod_name, "reason": "Version not found"})
+                results["failed"].append({"module": mod_name, "reason": "No version available"})
                 return
 
             local_mod = app.get_mod(mod_name)
@@ -1223,8 +1128,8 @@ async def update_all_mods(app: Optional[App]) -> Result:
             local_version = getattr(local_mod, 'version', '0.0.0')
 
             if pv.parse(remote_version) > pv.parse(local_version):
-                result = await installer(app, mod_name, build_state=False)
-                if result.is_error:
+                result = await install_from_registry(app, mod_name, remote_version)
+                if result.is_error():
                     results["failed"].append({"module": mod_name, "reason": str(result)})
                 else:
                     results["updated"].append({"module": mod_name, "version": remote_version})
@@ -1316,8 +1221,26 @@ _registry_client: Optional["RegistryClient"] = None
 
 
 def get_registry_client(app: App) -> RegistryClient:
-    """Get or create the registry client."""
+    """
+    Get or create the registry client.
+
+    Prefers using the CloudM Tools registry client if available,
+    otherwise creates a standalone instance.
+
+    Args:
+        app: Application instance
+
+    Returns:
+        RegistryClient instance
+    """
     global _registry_client
+
+    # Try to get registry client from CloudM Tools
+    cloudm_mod = app.get_mod("CloudM")
+    if cloudm_mod and hasattr(cloudm_mod, 'registry'):
+        return cloudm_mod.registry
+
+    # Fallback to global instance
     if _registry_client is None:
         # Get registry URL from config or use default
         registry_url = getattr(app, "registry_url", "https://registry.simplecore.app")
@@ -1327,6 +1250,29 @@ def get_registry_client(app: App) -> RegistryClient:
             cache_dir=cache_dir,
         )
     return _registry_client
+
+
+async def ensure_registry_auth(app: App) -> bool:
+    """
+    Ensure the registry client is authenticated.
+
+    Tries to authenticate via CloudM Tools first, then falls back
+    to direct authentication.
+
+    Args:
+        app: Application instance
+
+    Returns:
+        True if authenticated, False otherwise
+    """
+    # Try CloudM Tools authentication
+    cloudm_mod = app.get_mod("CloudM")
+    if cloudm_mod and hasattr(cloudm_mod, 'ensure_registry_auth'):
+        return await cloudm_mod.ensure_registry_auth()
+
+    # Fallback: check if client is already authenticated
+    client = get_registry_client(app)
+    return await client.is_authenticated()
 
 
 def get_lock_manager(app: App) -> LockFileManager:

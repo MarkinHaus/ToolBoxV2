@@ -290,21 +290,32 @@ async def get_download_url(
     name: str,
     version: str,
     prefer_mirror: bool = Query(False),
+    user: Optional[User] = Depends(get_optional_user),
     service: PackageService = Depends(get_package_service),
 ) -> DownloadUrlResponse:
     """Get download URL for a version.
+
+    Download permissions based on visibility:
+    - PUBLIC: Anyone can download
+    - UNLISTED: Only authenticated users can download
+    - PRIVATE: Only owner can download
 
     Args:
         name: Package name.
         version: Version string.
         prefer_mirror: Prefer mirror URL.
+        user: Optional current user for visibility check.
         service: Package service.
 
     Returns:
         Download URL response.
+
+    Raises:
+        HTTPException: If package not found, version not found, or access denied.
     """
     try:
-        url = await service.get_download_url(name, version, prefer_mirror)
+        viewer_id = user.id if user else None
+        url = await service.get_download_url(name, version, prefer_mirror, viewer_id)
         if not url:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -323,6 +334,11 @@ async def get_download_url(
     except VersionNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except PermissionDeniedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
             detail=str(e),
         )
 

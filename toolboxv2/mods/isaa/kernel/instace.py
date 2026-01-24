@@ -827,7 +827,9 @@ class Kernel(IProAKernel):
             print("Plan:", plan)
             # 5. ACT
             self.agent.init_session_tools(session)
+            print("Session init")
             success, response = await self._execute_plan(event, plan, session)
+            print(f"Success: {success}, Response: {response}")
             # 6. LEARN
             outcome = InteractionOutcome(
                 event=event,
@@ -844,6 +846,8 @@ class Kernel(IProAKernel):
 
         except Exception as e:
             self.metrics.errors += 1
+            import traceback
+            traceback.print_exc()
         finally:
             self._current_user_id = None
 

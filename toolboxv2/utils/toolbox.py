@@ -137,7 +137,7 @@ class App(AppType, metaclass=Singleton):
 
         self.print(f"Starting ToolBox as {prefix} from :", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
-        pid_file = f"{self.start_dir}\\.info\\{args.modi}-{self.REFIX}.pid"
+        pid_file = f"{self.start_dir}\\.info\\pids\\{args.modi}-{self.REFIX}.pid"
         app_pid = str(os.getpid())
         with open(pid_file, "w", encoding="utf8") as f:
             f.write(app_pid)

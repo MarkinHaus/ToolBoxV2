@@ -931,6 +931,249 @@ class RegistryClient:
         except httpx.RequestError as e:
             raise RegistryConnectionError(f"Connection failed: {e}") from e
 
+    async def create_package(
+        self,
+        name: str,
+        display_name: str,
+        package_type: str = "mod",
+        visibility: str = "public",
+        description: str = "",
+        readme: str = "",
+        homepage: Optional[str] = None,
+        repository: Optional[str] = None,
+        license: Optional[str] = None,
+        keywords: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Create a new package in the registry.
+
+        Args:
+            name: Unique package name (lowercase, alphanumeric, hyphens, underscores)
+            display_name: Human-readable display name
+            package_type: Type of package (mod, artifact, library, theme, plugin)
+            visibility: Package visibility (public, private, unlisted)
+            description: Short description (max 500 chars)
+            readme: Full README content
+            homepage: Homepage URL
+            repository: Repository URL
+            license: License identifier
+            keywords: Search keywords
+
+        Returns:
+            Created package data or None on failure
+
+        Raises:
+            RegistryAuthError: If not authenticated
+            PublishPermissionError: If user cannot create packages
+            RegistryError: If creation fails
+        """
+        if not self.auth_token:
+            raise RegistryAuthError("Authentication required to create packages")
+
+        try:
+            client = await self._get_client()
+
+            payload = {
+                "name": name,
+                "display_name": display_name,
+                "package_type": package_type,
+                "visibility": visibility,
+                "description": description,
+                "readme": readme,
+            }
+
+            if homepage:
+                payload["homepage"] = homepage
+            if repository:
+                payload["repository"] = repository
+            if license:
+                payload["license"] = license
+            if keywords:
+                payload["keywords"] = keywords
+
+            response = await self._request_with_retry("POST", "/api/v1/packages", json=payload)
+
+            if response.status_code == 401:
+                raise RegistryAuthError("Authentication failed")
+
+            if response.status_code == 403:
+                raise PublishPermissionError("Must be a registered publisher to create packages")
+
+            if response.status_code == 409:
+                data = response.json() if response.content else {}
+                raise RegistryError(data.get("detail", "Package already exists"))
+
+            if response.status_code not in (200, 201):
+                data = response.json() if response.content else {}
+                raise RegistryError(data.get("detail", f"Create failed: {response.status_code}"))
+
+            return response.json()
+
+        except httpx.RequestError as e:
+            raise RegistryConnectionError(f"Connection failed: {e}") from e
+
+    async def get_my_packages(self) -> List[PackageSummary]:
+        """
+        Get all packages owned by the current user.
+
+        Returns:
+            List of packages owned by the authenticated user
+
+        Raises:
+            RegistryAuthError: If not authenticated
+        """
+        if not self.auth_token:
+            raise RegistryAuthError("Authentication required")
+
+        try:
+            user = await self.get_current_user()
+            if not user:
+                raise RegistryAuthError("Could not get current user")
+
+            client = await self._get_client()
+
+            # Get packages filtered by publisher
+            response = await self._request_with_retry(
+                "GET",
+                "/api/v1/packages",
+                params={"publisher": user.publisher_id} if user.publisher_id else {}
+            )
+
+            if response.status_code != 200:
+                self.logger.warning(f"Get my packages failed: {response.status_code}")
+                return []
+
+            data = response.json()
+            packages = data.get("packages", [])
+
+            return [
+                PackageSummary(
+                    name=p.get("name", ""),
+                    description=p.get("description", ""),
+                    latest_version=p.get("latest_version", ""),
+                    visibility=p.get("visibility", "public"),
+                    downloads=p.get("total_downloads", 0),
+                    publisher=p.get("publisher_id", ""),
+                )
+                for p in packages
+            ]
+
+        except httpx.RequestError as e:
+            raise RegistryConnectionError(f"Connection failed: {e}") from e
+
+    async def delete_package(self, name: str) -> bool:
+        """
+        Delete a package from the registry.
+
+        Args:
+            name: Package name to delete
+
+        Returns:
+            True if deleted successfully
+
+        Raises:
+            RegistryAuthError: If not authenticated
+            PublishPermissionError: If user cannot delete this package
+            PackageNotFoundError: If package not found
+        """
+        if not self.auth_token:
+            raise RegistryAuthError("Authentication required to delete packages")
+
+        try:
+            response = await self._request_with_retry("DELETE", f"/api/v1/packages/{name}")
+
+            if response.status_code == 401:
+                raise RegistryAuthError("Authentication failed")
+
+            if response.status_code == 403:
+                raise PublishPermissionError("Not authorized to delete this package")
+
+            if response.status_code == 404:
+                raise PackageNotFoundError(f"Package '{name}' not found")
+
+            return response.status_code == 204
+
+        except httpx.RequestError as e:
+            raise RegistryConnectionError(f"Connection failed: {e}") from e
+
+    async def update_package(
+        self,
+        name: str,
+        display_name: Optional[str] = None,
+        visibility: Optional[str] = None,
+        description: Optional[str] = None,
+        readme: Optional[str] = None,
+        homepage: Optional[str] = None,
+        repository: Optional[str] = None,
+        license: Optional[str] = None,
+        keywords: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Update an existing package.
+
+        Args:
+            name: Package name to update
+            display_name: New display name
+            visibility: New visibility (public, private, unlisted)
+            description: New description
+            readme: New README content
+            homepage: New homepage URL
+            repository: New repository URL
+            license: New license identifier
+            keywords: New keywords
+
+        Returns:
+            Updated package data or None on failure
+
+        Raises:
+            RegistryAuthError: If not authenticated
+            PublishPermissionError: If user cannot update this package
+            PackageNotFoundError: If package not found
+        """
+        if not self.auth_token:
+            raise RegistryAuthError("Authentication required to update packages")
+
+        try:
+            payload = {}
+            if display_name is not None:
+                payload["display_name"] = display_name
+            if visibility is not None:
+                payload["visibility"] = visibility
+            if description is not None:
+                payload["description"] = description
+            if readme is not None:
+                payload["readme"] = readme
+            if homepage is not None:
+                payload["homepage"] = homepage
+            if repository is not None:
+                payload["repository"] = repository
+            if license is not None:
+                payload["license"] = license
+            if keywords is not None:
+                payload["keywords"] = keywords
+
+            if not payload:
+                return None  # Nothing to update
+
+            response = await self._request_with_retry("PATCH", f"/api/v1/packages/{name}", json=payload)
+
+            if response.status_code == 401:
+                raise RegistryAuthError("Authentication failed")
+
+            if response.status_code == 403:
+                raise PublishPermissionError("Not authorized to update this package")
+
+            if response.status_code == 404:
+                raise PackageNotFoundError(f"Package '{name}' not found")
+
+            if response.status_code != 200:
+                return None
+
+            return response.json()
+
+        except httpx.RequestError as e:
+            raise RegistryConnectionError(f"Connection failed: {e}") from e
+
     # =================== Artifacts ===================
 
     async def get_artifact(self, name: str) -> Optional[ArtifactDetail]:

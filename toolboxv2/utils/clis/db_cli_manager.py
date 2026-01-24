@@ -16,37 +16,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # --- Enhanced UI Imports ---
-try:
-    from toolboxv2.utils.extras.Style import Spinner, Style
-except ImportError:
-    try:
-        from toolboxv2.extras.Style import Spinner, Style
-    except ImportError:
-        # Fallback minimal Style class
-        class Style:
-            @staticmethod
-            def RED(s): return f"\033[91m{s}\033[0m"
-            @staticmethod
-            def GREEN(s): return f"\033[92m{s}\033[0m"
-            @staticmethod
-            def YELLOW(s): return f"\033[93m{s}\033[0m"
-            @staticmethod
-            def BLUE(s): return f"\033[94m{s}\033[0m"
-            @staticmethod
-            def CYAN(s): return f"\033[96m{s}\033[0m"
-            @staticmethod
-            def GREY(s): return f"\033[90m{s}\033[0m"
-            @staticmethod
-            def BOLD(s): return f"\033[1m{s}\033[0m"
+from toolboxv2.utils.extras.Style import Spinner, Style
 
-        class Spinner:
-            def __init__(self, message="", **kwargs):
-                self.message = message
-            def __enter__(self):
-                print(f"⏳ {self.message}...")
-                return self
-            def __exit__(self, *args):
-                pass
 
 # --- CLI Printing Utilities ---
 try:

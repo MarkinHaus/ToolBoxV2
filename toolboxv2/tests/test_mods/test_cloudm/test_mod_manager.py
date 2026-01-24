@@ -385,6 +385,172 @@ class TestModManagerIntegration(unittest.TestCase):
         self.assertEqual(extracted_version, "1.0.0")
 
 
+# =================== Registry Integration Tests ===================
+
+class TestRegistryDeprecatedEndpoints(unittest.TestCase):
+    """Tests for deprecated endpoints that now redirect to Registry"""
+
+    @patch('toolboxv2.mods.CloudM.ModManager.get_app')
+    async def test_upload_mod_returns_deprecated_error(self, mock_get_app):
+        """Test that upload_mod returns deprecation error"""
+        from toolboxv2.mods.CloudM.ModManager import upload_mod
+
+        mock_app = MagicMock()
+        mock_request = MagicMock()
+
+        result = await upload_mod(mock_app, mock_request, form_data={'files': []})
+
+        self.assertIsInstance(result, Result)
+        self.assertTrue(result.is_error())
+        # Should return HTTP 410 Gone
+        self.assertEqual(result.info.exec_code, 410)
+
+    @patch('toolboxv2.mods.CloudM.ModManager.get_app')
+    async def test_download_mod_returns_deprecated_error(self, mock_get_app):
+        """Test that download_mod returns deprecation error"""
+        from toolboxv2.mods.CloudM.ModManager import download_mod
+
+        mock_app = MagicMock()
+
+        result = await download_mod(mock_app, "TestModule")
+
+        self.assertIsInstance(result, Result)
+        self.assertTrue(result.is_error())
+        # Should return HTTP 410 Gone
+        self.assertEqual(result.info.exec_code, 410)
+
+
+class TestRegistryClientIntegration(unittest.TestCase):
+    """Tests for Registry Client integration in ModManager"""
+
+    @patch('toolboxv2.mods.CloudM.ModManager.get_app')
+    def test_get_registry_client_creates_instance(self, mock_get_app):
+        """Test that get_registry_client creates a RegistryClient instance"""
+        from toolboxv2.mods.CloudM.ModManager import get_registry_client, _registry_client
+        from toolboxv2.utils.extras.registry_client import RegistryClient
+
+        mock_app = MagicMock()
+        mock_app.start_dir = tempfile.mkdtemp()
+        mock_app.get_mod.return_value = None  # No CloudM module
+
+        # Reset global client
+        import toolboxv2.mods.CloudM.ModManager as mm
+        mm._registry_client = None
+
+        client = get_registry_client(mock_app)
+
+        self.assertIsInstance(client, RegistryClient)
+
+        # Cleanup
+        shutil.rmtree(mock_app.start_dir, ignore_errors=True)
+
+    @patch('toolboxv2.mods.CloudM.ModManager.get_app')
+    def test_get_registry_client_uses_cloudm_if_available(self, mock_get_app):
+        """Test that get_registry_client uses CloudM's registry if available"""
+        from toolboxv2.mods.CloudM.ModManager import get_registry_client
+
+        mock_registry = MagicMock()
+        mock_cloudm = MagicMock()
+        mock_cloudm.registry = mock_registry
+
+        mock_app = MagicMock()
+        mock_app.get_mod.return_value = mock_cloudm
+
+        client = get_registry_client(mock_app)
+
+        self.assertEqual(client, mock_registry)
+
+
+class TestRegistryVersionLookup(unittest.TestCase):
+    """Tests for version lookup via Registry"""
+
+    @patch('toolboxv2.mods.CloudM.ModManager.get_registry_client')
+    @patch('toolboxv2.mods.CloudM.ModManager.find_highest_zip_version')
+    async def test_get_mod_version_uses_registry(self, mock_find_zip, mock_get_client):
+        """Test that get_mod_version queries the registry first"""
+        from toolboxv2.mods.CloudM.ModManager import get_mod_version
+
+        mock_client = MagicMock()
+        mock_client.get_latest_version = MagicMock(return_value="2.0.0")
+        mock_get_client.return_value = mock_client
+
+        mock_app = MagicMock()
+
+        result = await get_mod_version(mock_app, "TestPackage")
+
+        # Should have called registry
+        mock_client.get_latest_version.assert_called_once_with("TestPackage")
+        # Should not have fallen back to local
+        mock_find_zip.assert_not_called()
+
+    @patch('toolboxv2.mods.CloudM.ModManager.get_registry_client')
+    @patch('toolboxv2.mods.CloudM.ModManager.find_highest_zip_version')
+    async def test_get_mod_version_falls_back_to_local(self, mock_find_zip, mock_get_client):
+        """Test that get_mod_version falls back to local if not in registry"""
+        from toolboxv2.mods.CloudM.ModManager import get_mod_version
+
+        mock_client = MagicMock()
+        mock_client.get_latest_version = MagicMock(return_value=None)
+        mock_get_client.return_value = mock_client
+
+        mock_find_zip.return_value = "1.5.0"
+
+        mock_app = MagicMock()
+
+        result = await get_mod_version(mock_app, "LocalOnlyPackage")
+
+        # Should have tried registry first
+        mock_client.get_latest_version.assert_called_once()
+        # Should have fallen back to local
+        mock_find_zip.assert_called_once_with("LocalOnlyPackage", version_only=True)
+
+
+class TestRegistryInstallRedirect(unittest.TestCase):
+    """Tests for install function redirecting to registry"""
+
+    @patch('toolboxv2.mods.CloudM.ModManager.install_from_registry')
+    @patch('toolboxv2.mods.CloudM.ModManager.get_state_from_app')
+    @patch('toolboxv2.mods.CloudM.ModManager.get_app')
+    async def test_installer_uses_registry(self, mock_get_app, mock_get_state, mock_install):
+        """Test that installer() redirects to install_from_registry()"""
+        from toolboxv2.mods.CloudM.ModManager import installer
+
+        mock_app = MagicMock()
+        mock_app.print = MagicMock()
+        mock_get_app.return_value = mock_app
+
+        mock_result = MagicMock()
+        mock_result.is_error.return_value = False
+        mock_install.return_value = mock_result
+
+        result = await installer(mock_app, "TestPackage")
+
+        # Should have called install_from_registry
+        mock_install.assert_called_once_with(mock_app, "TestPackage")
+
+
+class TestRegistryPublishRedirect(unittest.TestCase):
+    """Tests for upload function redirecting to registry"""
+
+    @patch('toolboxv2.mods.CloudM.ModManager.publish_to_registry')
+    @patch('toolboxv2.mods.CloudM.ModManager.get_app')
+    async def test_upload_uses_registry(self, mock_get_app, mock_publish):
+        """Test that upload() redirects to publish_to_registry()"""
+        from toolboxv2.mods.CloudM.ModManager import upload
+
+        mock_app = MagicMock()
+        mock_app.print = MagicMock()
+        mock_get_app.return_value = mock_app
+
+        mock_result = MagicMock()
+        mock_publish.return_value = mock_result
+
+        result = await upload(mock_app, "TestModule")
+
+        # Should have called publish_to_registry
+        mock_publish.assert_called_once_with(mock_app, "TestModule")
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
 

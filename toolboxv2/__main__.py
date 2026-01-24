@@ -197,12 +197,11 @@ Description=ToolBoxService
 After=network.target
 
 [Service]
+Type=oneshot
 User={user}
 Group={group}
 WorkingDirectory={working_dir}
-ExecStart=tb -bgr {runner}
-Restart=always
-RestartSec=5
+ExecStart=tb --sm
 
 [Install]
 WantedBy=multi-user.target
@@ -321,7 +320,7 @@ RUNNER_KEYS = [
     "status", "browser", "mcp", "login", "logout",
     "run", "mods", "flow", "user", "workers",
     "session", "event", "broker", "http_worker", "ws_worker",
-    "services", "registry", "manifest"
+    "services", "registry", "manifest", "llm-gateway"
 ]
 
 DEFAULT_MODI = "cli"
@@ -878,6 +877,10 @@ def parse_args():
     # =================== SERVICE MANAGEMENT ===================
     services = parser.add_argument_group('🔧 Service Management')
 
+    services.add_argument("--init-sm",
+                          action="store_true",
+                          help=f"Service Manager for '{system()}' (auto-start/restart)")
+
     services.add_argument("--sm",
                           action="store_true",
                           help=f"Service Manager for '{system()}' (auto-start/restart)")
@@ -967,319 +970,6 @@ def parse_args():
         args.kwargs = [{}]
 
     return args
-
-
-def _parse_args():
-    import argparse
-    import textwrap
-
-    main_args, runner_name, runner_args = split_args_by_runner(sys.argv[1:], RUNNER_KEYS)
-
-    # Wenn Runner gefunden, temporär sys.argv anpassen für main parsing
-    if runner_name:
-        original_argv = sys.argv.copy()
-        sys.argv = [sys.argv[0]] + main_args
-
-    class ASCIIHelpFormatter(argparse.RawDescriptionHelpFormatter):
-        pass
-
-    parser = argparse.ArgumentParser(
-        description=textwrap.dedent("""
-        +----------------------------------------------------------------------------+
-                                  🧰 ToolBoxV2 CLI Helper 🧰
-        +----------------------------------------------------------------------------+
-
-        Usage:
-          tb [Optional-Extensions] [options]
-
-        Extensions Commands:
-
-          login           ▶ Login to ToolBoxV2
-          logout          ▶ Logout from ToolBoxV2
-          status          ▶ Get status of ToolBoxV2
-          run             ▶ Run flow from file or load all flows and mods from dir
-          mods            ▶ Run mod manager
-          gui             ▶ Launch graphical interface
-          mcp             ▶ Run MCP server (for agent)
-
-        Worker System:
-          services        ▶ Service manager
-          manifest        ▶ Manifest configuration
-          workers         ▶ Worker management (start|stop|status)
-          session         ▶ Session management (generate-secret|test)
-          - automatically used
-          broker          ▶ ZMQ event broker
-          http_worker     ▶ HTTP worker
-          ws_worker       ▶ WebSocket worker
-
-        Other:
-          p2p             ▶ Launch p2p client
-          venv            ▶ Run venv commands
-          db              ▶ Run r_blob_db commands
-          browser         ▶ Run browser extension installer
-
-
-
-        (for details: tb {command} -h)
-        Core Options:
-          -h, --help      ▶ Show this help message and exit
-          -v, --version   ▶ Print ToolBoxV2 version and installed modules
-
-          -l, --load-all-mod-in-files
-                          ▶ Start all mods during start of the instance
-
-          -c, --command   ▶ Execute mod $ tb -c CloudM Version
-          --ipy           ▶ Enter IPython toolbox shell
-
-        Module Management:
-          --sm            ▶ Service Manager (auto-start/restart)
-          --lm            ▶ Log Manager (remove/edit logs)
-          -m, --modi      ▶ Select interface mode (default: CLI)
-          --docker        ▶ Use Docker backend (modes: test, live, dev)
-          --build         ▶ Build Docker image from local source
-
-        Installation & Updates:
-          -i, --install   ▶ Install module/interface by name
-          -u, --update    ▶ Update module/interface by name
-          -r, --remove    ▶ Uninstall module/interface by name
-
-        Runtime Control:
-          --kill          ▶ Kill running tb instance
-          -bg             ▶ Run interface in background
-          -fg             ▶ Run interface in foreground
-          --remote        ▶ Start in remote mode
-          --debug         ▶ Enable debug (hot-reload) mode
-
-        Networking:
-          -n, --name      ▶ ToolBox instance ID
-          -p, --port      ▶ Interface port
-          -w, --host      ▶ Interface host
-
-        File & Data Operations:
-          --delete-config-all   ▶ !!! DANGER: wipe all config !!!
-          --delete-data-all     ▶ !!! DANGER: wipe all data !!!
-          --delete-config       ▶ ⚠ Delete named config folder
-          --delete-data         ▶ ⚠ Delete named data folder
-
-        Utilities:
-          -sfe, --save-function-enums-in-file
-                            ▶ Generate all_function_enums.py and Save enums to file (requires -l)
-          --test         ▶ Run test suite
-          --profiler     ▶ Profile registered functions
-          --sysPrint     ▶ Enable verbose system prints
-
-        IPython Integration only work in ipython:
-          In [X]:tb save NAME   ▶ Save session to <NAME>
-          In [X]:tb inject NAME ▶ Inject session <NAME> into file
-          In [X]:tb loadx NAME  ▶ Load & run session in IPython
-          In [X]:tb loade NAME  ▶ Reload session into IPython
-          In [X]:tb open NAME   ▶ Open saved session in Jupyter
-
-        Key-Value Kwargs:
-          --kwargs key=value [...]
-                            ▶ Pass arbitrary kwargs to functions
-
-        Examples:
-          $ tb venv install numpy
-          $ tb --docker -m dev -p 8000 -w 0.0.0.0
-          $ tb workers start
-          $ tb gui
-          $ tb status -> get db workers and p2p status
-          $ tb --ipy
-          $ tb -c CloudM Version -c CloudM get_mod_snapshot CloudM
-          $ tb -c CloudM get_mod_snapshot --kwargs mod_name:CloudM
-
-        Account Management:
-          $ tb -c helper init_system
-          $ tb -c helper create-user <username> <email>
-          $ tb -c helper delete-user <username>
-          $ tb -c helper list-users
-          $ tb -c helper create-invitation <username>
-          $ tb -c helper send-magic-link <username>
-
-        +----------------------------------------------------------------------------+
-        """),
-        formatter_class=ASCIIHelpFormatter
-    )
-
-    parser.add_argument("gui", help="start gui no args", default=False,
-                        action='store_true')
-
-    parser.add_argument("mcp", help="run MCP server", default=False, action='store_true')
-
-    # argument named browser called like tb browser build
-    parser.add_argument("browser", help="run browser extension installer", default=False,
-                        action='store_true')
-
-    parser.add_argument("mods", help="run mod manager", default=False,
-                        action='store_true')
-
-    parser.add_argument("p2p", help="run rust p2p for mor infos run tb p2p -h", default=False,
-                        action='store_true')
-
-    parser.add_argument("venv", help="run venv commands for mor infos run tb venv -h", default=False,
-                        action='store_true')
-
-    parser.add_argument("db", help="run r_blob_db commands for mor infos run tb db -h", default=False,
-                        action='store_true')
-
-    parser.add_argument("run", help="run flow from file or load all flows and mods from dir", default=False,
-                        action='store_true')
-
-    parser.add_argument("login", help="login to ToolBoxV2", default=False,
-                        action='store_true')
-    parser.add_argument("logout", help="logout from ToolBoxV2", default=False,
-                        action='store_true')
-    parser.add_argument("status", help="get status of ToolBoxV2", default=False,
-                        action='store_true')
-
-
-    parser.add_argument("-init",
-                        help="ToolBoxV2 init (name) -> options ['main', 'config', 'venv', 'system', 'docker', 'uninstall']", type=str or None, default=None)
-
-    parser.add_argument("-v", "--get-version",
-                        help="get version of ToolBox and all mods with -l",
-                        action="store_true")
-
-    parser.add_argument("--sm", help=f"Service Manager for {system()} manage auto start and auto restart",
-                        default=False,
-                        action="store_true")
-
-    parser.add_argument("--lm", help="Log Manager remove and edit log files", default=False,
-                        action="store_true")
-
-    parser.add_argument("-m", "--modi",
-                        type=str,
-                        help="Start a ToolBox interface default build in cli",
-                        default=DEFAULT_MODI)
-
-    parser.add_argument("--kill", help="Kill current local tb instance", default=False,
-                        action="store_true")
-
-    parser.add_argument("-bg", "--background-application", help="Start an interface in the background",
-                        default=False,
-                        action="store_true")
-
-    parser.add_argument("-bgr", "--background-application-runner",
-                        help="The Flag to run the background runner in the current terminal/process",
-                        default=False,
-                        action="store_true")
-
-    parser.add_argument("-fg", "--live-application",
-                        help="Start an Proxy interface optional using -p -w",
-                        action="store_true",  # Ändere zu store_true
-                        default=False)
-
-    parser.add_argument("--docker", help="start the toolbox in docker Enables 3 modi [test,live,dev]\n\trun as "
-                                         "$ tb --docker -m [modi] optional -p -w\n\tvalid with -fg", default=False,
-                        action="store_true")
-    parser.add_argument("--build", help="build docker image from local source", default=False,
-                        action="store_true")
-
-    parser.add_argument("-i", "--install", help="Install a mod or interface via name", type=str or None, default=None)
-    parser.add_argument("-r", "--remove", help="Uninstall a mod or interface via name", type=str or None, default=None)
-    parser.add_argument("-u", "--update", help="Update a mod or interface via name", type=str or None, default=None)
-
-    parser.add_argument('-n', '--name',
-                        metavar="name",
-                        type=str,
-                        help="Specify an id for the ToolBox instance",
-                        default="main")
-
-    parser.add_argument("-p", "--port",
-                        metavar="port",
-                        type=int,
-                        help="Specify a port for interface",
-                        default=5000)  # 1268945
-
-    parser.add_argument("-w", "--host",
-                        metavar="host",
-                        type=str,
-                        help="Specify a host for interface",
-                        default="0.0.0.0")
-
-    parser.add_argument("-l", "--load-all-mod-in-files",
-                        help="load all modules in mod file",
-                        action="store_true")
-
-    parser.add_argument("-sfe", "--save-function-enums-in-file",
-                        help="run with -l to gather to generate all_function_enums.py files",
-                        action="store_true")
-
-    # parser.add_argument("--mods-folder",
-    #                     help="specify loading package folder",
-    #                     type=str,
-    #                     default="toolboxv2.mods.")
-
-    parser.add_argument("--debug",
-                        help="start in debug mode",
-                        action="store_true")
-
-    parser.add_argument("--remote",
-                        help="start in remote mode",
-                        action="store_true")
-
-    parser.add_argument("--delete-config-all",
-                        help="!!! DANGER !!! deletes all config files. incoming data loss",
-                        action="store_true")
-
-    parser.add_argument("--delete-data-all",
-                        help="!!! DANGER !!! deletes all data folders. incoming data loss",
-                        action="store_true")
-
-    parser.add_argument("--delete-config",
-                        help="!! Warning !! deletes named data folders."
-                             " incoming data loss. useful if an tb instance is not working properly",
-                        action="store_true")
-
-    parser.add_argument("--delete-data",
-                        help="!! Warning !! deletes named data folders."
-                             " incoming data loss. useful if an tb instance is not working properly",
-                        action="store_true")
-
-    parser.add_argument("--test",
-                        help="run all tests",
-                        action="store_true")
-
-    parser.add_argument("--profiler",
-                        help="run all registered functions and make measurements",
-                        action="store_true")
-
-    parser.add_argument("-c", "--command", nargs='*', action='append',
-                        help="run all registered functions and make measurements")
-
-    parser.add_argument("--sysPrint", action="store_true", default=False,
-                        help="activate system prints / verbose output")
-
-    parser.add_argument("--ipy", action="store_true", default=False,
-                        help="activate toolbox in IPython Commands in IPython tb [ModName] [fuctionName] [args...] | "
-                             "ipy_magic command only work in IPython")
-
-    parser.add_argument('--kwargs', nargs='*', default=[], type=str, action='append',
-                        help='Key-value pairs to pass as kwargs, format: key=value')
-
-    args = parser.parse_args()
-
-    # Runner-Info hinzufügen
-    if runner_name:
-        args.runner_name = runner_name
-        args.runner_args = runner_args
-        sys.argv = original_argv  # Wiederherstellen für Runner
-    else:
-        args.runner_name = None
-        args.runner_args = []
-
-    # Wandelt die Liste in ein dict um
-    if args.kwargs:
-        kwargs = args.kwargs.copy()
-        args.kwargs = []
-        for k in kwargs:
-            args.kwargs.append(parse_kwargs(k))
-    if not args.kwargs or len(args.kwargs) == 0:
-        args.kwargs = [{}]
-    # args.live_application = not args.live_application
-    return args
-
 
 def edit_logs():
     name = input(f"Name of logger \ndefault {loggerNameOfToolboxv2}\n:")
@@ -1404,7 +1094,8 @@ async def setup_app(ov_name=None, App=TbApp):
         exit(0)
 
     abspath = os.path.dirname(os.path.abspath(__file__))
-    info_folder = abspath + '\\.info\\'
+    info_folder = abspath + '\\.info\\pids\\'
+    os.makedirs(info_folder, exist_ok=True)
     if not args.sysPrint and not (args.debug or args.background_application_runner or args.install or args.kill):
         TbApp.sprint = lambda text, *_args, **kwargs: False
     tb_app = get_app(from_="InitialStartUp", name=args.name, args=args, app_con=TbApp)
@@ -1530,7 +1221,7 @@ async def main(App=TbApp, do_exit=True):
     __version__ = get_version_from_pyproject()
 
     abspath = os.path.dirname(os.path.abspath(__file__))
-    info_folder = abspath + '\\.info\\'
+    info_folder = abspath + '\\.info\\pids\\'
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
 
     async def log_in(app):
@@ -1564,11 +1255,13 @@ async def main(App=TbApp, do_exit=True):
         await tb_app.a_exit()
         exit(0)
 
-    if args.sm:
+    if args.init_sm:
         if tb_app.system_flag == "Linux":
             setup_service_linux()
-        if tb_app.system_flag == "Windows":
+        elif tb_app.system_flag == "Windows":
             await setup_service_windows()
+        else:
+            tb_app.print(f"Service manager not supported on this platform {tb_app.system_flag or system()}")
         args.command = []
 
     if args.load_all_mod_in_files or args.save_function_enums_in_file or args.get_version or args.profiler or args.background_application_runner or args.test:
@@ -2006,6 +1699,7 @@ def runner_setup():
         "ws_worker": cli_ws_worker,
         "services": lambda: __import__('toolboxv2.utils.clis.service_manager', fromlist=['cli_services']).cli_services(),
         "manifest": lambda: __import__('toolboxv2.utils.clis.manifest_cli', fromlist=['cli_manifest_main']).cli_manifest_main(),
+        "llm-gateway": lambda: __import__('toolboxv2.utils.clis.llm_gateway_cli', fromlist=['cli_llm_gateway']).cli_llm_gateway(),
     }
 
     return runner

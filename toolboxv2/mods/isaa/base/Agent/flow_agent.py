@@ -880,7 +880,7 @@ class FlowAgent:
         name: str | None = None,
         description: str | None = None,
         category: list[str] | str | None = None,
-        flags: dict[str, bool] | None = None
+        flags: dict[str, bool] | None = None, **kwargs
     ):
         """Register a tool."""
         self.tool_manager.register(
@@ -1685,53 +1685,53 @@ class FlowAgent:
 
         tools = [
             # VFS File Operations
-            {"function": vfs_list, "name": "vfs_list", "category": ["vfs", "read"]},
-            {"function": vfs_read, "name": "vfs_read", "category": ["vfs", "read"]},
-            {"function": vfs_create, "name": "vfs_create", "category": ["vfs", "write"]},
-            {"function": vfs_write, "name": "vfs_write", "category": ["vfs", "write"]},
-            {"function": vfs_edit, "name": "vfs_edit", "category": ["vfs", "write"]},
-            {"function": vfs_append, "name": "vfs_append", "category": ["vfs", "write"]},
-            {"function": vfs_delete, "name": "vfs_delete", "category": ["vfs", "write"]},
+            {"tool_func":vfs_list, "name": "vfs_list", "category": ["vfs", "read"]},
+            {"tool_func":vfs_read, "name": "vfs_read", "category": ["vfs", "read"]},
+            {"tool_func":vfs_create, "name": "vfs_create", "category": ["vfs", "write"]},
+            {"tool_func":vfs_write, "name": "vfs_write", "category": ["vfs", "write"]},
+            {"tool_func":vfs_edit, "name": "vfs_edit", "category": ["vfs", "write"]},
+            {"tool_func":vfs_append, "name": "vfs_append", "category": ["vfs", "write"]},
+            {"tool_func":vfs_delete, "name": "vfs_delete", "category": ["vfs", "write"]},
 
             # VFS Directory Operations
-            {"function": vfs_mkdir, "name": "vfs_mkdir", "category": ["vfs", "write"]},
-            {"function": vfs_rmdir, "name": "vfs_rmdir", "category": ["vfs", "write"]},
-            {"function": vfs_mv, "name": "vfs_mv", "category": ["vfs", "write"]},
+            {"tool_func":vfs_mkdir, "name": "vfs_mkdir", "category": ["vfs", "write"]},
+            {"tool_func":vfs_rmdir, "name": "vfs_rmdir", "category": ["vfs", "write"]},
+            {"tool_func":vfs_mv, "name": "vfs_mv", "category": ["vfs", "write"]},
 
             # VFS Open/Close
-            {"function": vfs_open, "name": "vfs_open", "category": ["vfs", "context"]},
-            {"function": vfs_close, "name": "vfs_close", "category": ["vfs", "context"], "is_async": True},
-            {"function": vfs_view, "name": "vfs_view", "category": ["vfs", "context"]},
+            {"tool_func":vfs_open, "name": "vfs_open", "category": ["vfs", "context"]},
+            {"tool_func":vfs_close, "name": "vfs_close", "category": ["vfs", "context"], "is_async": True},
+            {"tool_func":vfs_view, "name": "vfs_view", "category": ["vfs", "context"]},
 
             # VFS Info & Diagnostics
-            {"function": vfs_info, "name": "vfs_info", "category": ["vfs", "read"]},
-            {"function": vfs_diagnostics, "name": "vfs_diagnostics", "category": ["vfs", "lsp"], "is_async": True},
-            {"function": vfs_executables, "name": "vfs_executables", "category": ["vfs", "read"]},
+            {"tool_func":vfs_info, "name": "vfs_info", "category": ["vfs", "read"]},
+            {"tool_func":vfs_diagnostics, "name": "vfs_diagnostics", "category": ["vfs", "lsp"], "is_async": True},
+            {"tool_func":vfs_executables, "name": "vfs_executables", "category": ["vfs", "read"]},
 
             # Filesystem Copy (Flag-based)
             {
-                "function": fs_copy_to_vfs,
+                "tool_func": fs_copy_to_vfs,
                 "name": "fs_copy_to_vfs",
                 "category": ["filesystem", "vfs"],
                 "flags": {"filesystem_access": True},
                 "description": "Copy file from real filesystem to VFS"
             },
             {
-                "function": fs_copy_from_vfs,
+                "tool_func": fs_copy_from_vfs,
                 "name": "fs_copy_from_vfs",
                 "category": ["filesystem", "vfs"],
                 "flags": {"filesystem_access": True},
                 "description": "Copy file from VFS to real filesystem"
             },
             {
-                "function": fs_copy_folder_to_vfs,
+                "tool_func": fs_copy_folder_to_vfs,
                 "name": "fs_copy_folder_to_vfs",
                 "category": ["filesystem", "vfs"],
                 "flags": {"filesystem_access": True},
                 "description": "Copy folder from real filesystem to VFS recursively"
             },
             {
-                "function": fs_copy_folder_from_vfs,
+                "tool_func": fs_copy_folder_from_vfs,
                 "name": "fs_copy_folder_from_vfs",
                 "category": ["filesystem", "vfs"],
                 "flags": {"filesystem_access": True},
@@ -1740,47 +1740,47 @@ class FlowAgent:
 
             # Docker (Flag-based)
             {
-                "function": docker_run,
+                "tool_func": docker_run,
                 "name": "docker_run",
                 "category": ["docker", "execute"],
                 "flags": {"requires_docker": True},
                 "is_async": True
             },
             {
-                "function": docker_start_app,
+                "tool_func": docker_start_app,
                 "name": "docker_start_app",
                 "category": ["docker", "web"],
                 "flags": {"requires_docker": True},
                 "is_async": True
             },
             {
-                "function": docker_stop_app,
+                "tool_func": docker_stop_app,
                 "name": "docker_stop_app",
                 "category": ["docker", "web"],
                 "flags": {"requires_docker": True},
                 "is_async": True
             },
             {
-                "function": docker_logs,
+                "tool_func": docker_logs,
                 "name": "docker_logs",
                 "category": ["docker", "read"],
                 "flags": {"requires_docker": True},
                 "is_async": True
             },
             {
-                "function": docker_status,
+                "tool_func": docker_status,
                 "name": "docker_status",
                 "category": ["docker", "read"],
                 "flags": {"requires_docker": True}
             },
 
             # Memory/RAG
-            {"function": recall, "name": "recall", "category": ["memory", "rag"], "is_async": True},
-            {"function": history, "name": "history", "category": ["memory", "history"]},
+            {"tool_func": recall, "name": "recall", "category": ["memory", "rag"], "is_async": True},
+            {"tool_func": history, "name": "history", "category": ["memory", "history"]},
 
             # Situation/Behavior
-            {"function": set_agent_situation, "name": "set_agent_situation", "category": ["situation"]},
-            {"function": check_permissions, "name": "check_permissions", "category": ["situation", "rules"]},
+            {"tool_func": set_agent_situation, "name": "set_agent_situation", "category": ["situation"]},
+            {"tool_func": check_permissions, "name": "check_permissions", "category": ["situation", "rules"]},
         ]
 
         # Register all tools

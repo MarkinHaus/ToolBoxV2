@@ -89,7 +89,7 @@ async def a_save_closing_app():
     if app.start_dir != "test":
         os.chdir(app.start_dir)
 
-    pid_file = f"{app.start_dir}\\.info\\{app.args_sto.modi}-{app.REFIX}.pid"
+    pid_file = f"{app.start_dir}\\.info\\pids\\{app.args_sto.modi}-{app.REFIX}.pid"
     if os.path.exists(pid_file):
         os.remove(pid_file)
 

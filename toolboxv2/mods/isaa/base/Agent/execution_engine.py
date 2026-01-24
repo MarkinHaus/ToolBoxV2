@@ -1348,8 +1348,7 @@ class ExecutionEngine:
             vfs_context = session.build_vfs_context()
             if vfs_context and len(vfs_context) > 10:
                 prompt_parts.append("")
-                prompt_parts.append("DATEIEN IM KONTEXT:")
-                prompt_parts.append(vfs_context[:500])
+                prompt_parts.append(vfs_context)
         except:
             pass
 

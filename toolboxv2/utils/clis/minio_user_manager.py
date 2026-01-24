@@ -20,6 +20,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from enum import Enum
 
+from toolboxv2.utils.clis.db_cli_manager import DEFAULT_BASE_DIR
+
 # ToolBoxV2 imports
 try:
     from toolboxv2.utils.security.cryp import Code
@@ -180,19 +182,22 @@ class MinIOAdminClient:
             "/usr/local/bin/mc",
             os.path.expanduser("~/.local/bin/mc"),
             os.path.expanduser("~/minio-binaries/mc"),
-            "C:\\minio\\mc.exe"
+            "C:\\minio\\mc",
+            os.path.join(os.environ.get("LOCALAPPDATA", "."), "minio"),
+            os.path.expanduser("~/.local/bin"),
+            DEFAULT_BASE_DIR+"/bin/mc"
         ]
+
+        file_name = ".exe" if os.name == "nt" else ""
 
         for path in possible_paths:
             try:
-                result = subprocess.run(
-                    [path, "--version"],
-                    capture_output=True,
-                    timeout=5
-                )
-                if result.returncode == 0:
-                    return path
+                if os.path.exists(path+file_name):
+                    result = subprocess.run([path+file_name, "--help"], capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0:
+                        return path
             except:
+                print("Error")
                 continue
 
         return None

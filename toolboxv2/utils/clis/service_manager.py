@@ -70,6 +70,14 @@ class ServiceRegistry:
         """Registriere alle Built-in Services"""
         # Core Services
         self.register(ServiceDefinition(
+            name="custom",
+            description="Running a custom service",
+            category="core",
+            module="toolboxv2.__main__",
+            entry_point="main_runner",
+            runner_key="custom"
+        ))
+        self.register(ServiceDefinition(
             name="workers",
             description="Worker-Orchestrierung (HTTP, WS, Broker)",
             category="core",
@@ -86,41 +94,33 @@ class ServiceRegistry:
             is_async=True,
             runner_key="db"
         ))
-        self.register(ServiceDefinition(
-            name="user",
-            description="Interaktives User Dashboard",
-            category="core",
-            module="toolboxv2.utils.clis.user_dashboard",
-            entry_point="interactive_user_dashboard",
-            is_async=True,
-            runner_key="user"
-        ))
-        self.register(ServiceDefinition(
-            name="run",
-            description="TB Language Build/Run/Compile",
-            category="core",
-            module="toolboxv2.utils.clis.tb_lang_cli",
-            entry_point="cli_tbx_main",
-            runner_key="run"
-        ))
+        #self.register(ServiceDefinition(
+        #    name="user",
+        #    description="Interaktives User Dashboard",
+        #    category="core",
+        #    module="toolboxv2.utils.clis.user_dashboard",
+        #    entry_point="interactive_user_dashboard",
+        #    is_async=True,
+        #    runner_key="user"
+        #))
+        #self.register(ServiceDefinition(
+        #    name="run",
+        #    description="TB Language Build/Run/Compile",
+        #    category="core",
+        #    module="toolboxv2.utils.clis.tb_lang_cli",
+        #    entry_point="cli_tbx_main",
+        #    runner_key="run"
+        #))
 
         # Infrastructure Services
-        self.register(ServiceDefinition(
-            name="config",
-            description="Worker-Konfigurationsmanagement",
-            category="infrastructure",
-            module="toolboxv2.utils.workers",
-            entry_point="cli_config",
-            runner_key="config"
-        ))
-        self.register(ServiceDefinition(
-            name="session",
-            description="Session-Management für Workers",
-            category="infrastructure",
-            module="toolboxv2.utils.workers",
-            entry_point="cli_session",
-            runner_key="session"
-        ))
+        # self.register(ServiceDefinition(
+        #     name="session",
+        #     description="Session-Management für Workers",
+        #     category="infrastructure",
+        #     module="toolboxv2.utils.workers",
+        #     entry_point="cli_session",
+        #     runner_key="session"
+        # ))
         self.register(ServiceDefinition(
             name="broker",
             description="Event-Management (ZMQ)",
@@ -170,6 +170,14 @@ class ServiceRegistry:
             module="toolboxv2.__main__",
             entry_point="helper_gui",
             runner_key="gui"
+        ))
+        self.register(ServiceDefinition(
+            name="llm-gateway",
+            description="OpenAI-kompatible LLM API (llama.cpp)",
+            category="extension",
+            module="toolboxv2.utils.clis.llm_gateway_cli",
+            entry_point="cli_llm_gateway",
+            runner_key="llm-gateway"
         ))
 
     def register(self, service: ServiceDefinition) -> None:
@@ -270,12 +278,18 @@ class ServiceManager:
         except (ValueError, FileNotFoundError):
             return False, None
 
-    def start_service(self, name: str) -> ServiceStartResult:
+    def start_service(self, name: str, args: Optional[List[str]] = None,
+                      save_args: bool = True) -> ServiceStartResult:
         """
         Starte einen Service als Subprocess
 
-        Services werden über `tb <service_name>` gestartet.
+        Services werden über `tb <service_name> [args...]` gestartet.
         Der Prozess wird detached (läuft weiter nach Script-Ende).
+
+        Args:
+            name: Service-Name
+            args: Argumente für den Service (None = gespeicherte Args verwenden)
+            save_args: Wenn True und args übergeben, speichere Args für Restart
         """
         # Check if already running
         running, existing_pid = self.is_service_running(name)
@@ -287,15 +301,26 @@ class ServiceManager:
                 error="Already running"
             )
 
+        # Determine args to use
+        if args is None:
+            # Use saved args from config
+            args = self.get_service_args(name)
+        elif save_args and args:
+            # Save new args for future restarts
+            self.configure_service(name, args=args)
+
         # Build command - use tb CLI for actual start
+        if name != "custom":
+            cmd = [sys.executable, "-m", "toolboxv2", name] + (args or [])
+        else:
+            cmd = [sys.executable, "-m", "toolboxv2"] + (args or [])
+
         if IS_WINDOWS:
-            # Windows: pythonw für headless, oder CREATE_NO_WINDOW
-            cmd = [sys.executable, "-m", "toolboxv2", name, "-bgr"]
+            # Windows: CREATE_NO_WINDOW für headless
             creation_flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
             kwargs = {"creationflags": creation_flags}
         else:
             # Unix: nohup-style detach
-            cmd = [sys.executable, "-m", "toolboxv2", name, "-bgr"]
             kwargs = {
                 "start_new_session": True,
                 "stdout": subprocess.DEVNULL,
@@ -430,7 +455,8 @@ class ServiceManager:
         }
 
     def configure_service(self, name: str, auto_start: Optional[bool] = None,
-                          auto_restart: Optional[bool] = None) -> None:
+                          auto_restart: Optional[bool] = None,
+                          args: Optional[List[str]] = None) -> None:
         """Konfiguriere einen Service"""
         config = self.load_config()
         if "services" not in config:
@@ -442,8 +468,15 @@ class ServiceManager:
             config["services"][name]["auto_start"] = auto_start
         if auto_restart is not None:
             config["services"][name]["auto_restart"] = auto_restart
+        if args is not None:
+            config["services"][name]["args"] = args
 
         self.save_config(config)
+
+    def get_service_args(self, name: str) -> List[str]:
+        """Hole gespeicherte Argumente für einen Service"""
+        config = self.load_config()
+        return config.get("services", {}).get(name, {}).get("args", [])
 
 
 def run_service_manager_startup() -> int:
@@ -554,6 +587,9 @@ def cli_services() -> None:
     # start
     p_start = subparsers.add_parser("start", help="Start service(s)")
     p_start.add_argument("name", nargs="?", help="Service name (all auto-start if omitted)")
+    p_start.add_argument("--auto-start", action="store_true",
+                         help="Enable auto-start for this service")
+    p_start.add_argument("service_args", nargs="*", help="Arguments to pass to the service")
 
     # stop
     p_stop = subparsers.add_parser("stop", help="Stop service(s)")
@@ -567,6 +603,10 @@ def cli_services() -> None:
                           help="Enable/disable auto-start")
     p_config.add_argument("--auto-restart", choices=["true", "false"],
                           help="Enable/disable auto-restart")
+    p_config.add_argument("--args", nargs="*", metavar="ARG",
+                          help="Set default arguments for the service")
+    p_config.add_argument("--clear-args", action="store_true",
+                          help="Clear saved arguments")
 
     # list
     subparsers.add_parser("list", help="List all configured services")
@@ -579,6 +619,7 @@ def cli_services() -> None:
     p_restart = subparsers.add_parser("restart", help="Restart service(s)")
     p_restart.add_argument("name", nargs="?", help="Service name (all running if omitted)")
     p_restart.add_argument("--force", "-f", action="store_true", help="Force restart")
+    p_restart.add_argument("service_args", nargs="*", help="New arguments (overrides saved)")
 
     # registry
     subparsers.add_parser("registry", help="Show all registered (built-in) services")
@@ -611,14 +652,27 @@ def _cmd_start(manager: ServiceManager, args) -> None:
     from toolboxv2.utils.clis.cli_printing import print_status
 
     if args.name:
+        # Get service args from CLI (None if empty = use saved args)
+        service_args = getattr(args, "service_args", None)
+        if service_args is not None and len(service_args) == 0:
+            service_args = None  # Empty list means use saved args
+
+        # Handle --auto-start flag (configure, don't pass to service)
+        if getattr(args, "auto_start", False):
+            manager.configure_service(args.name, auto_start=True)
+            print_status(f"Auto-start enabled for {args.name}", "info")
+
         print_status(f"Starting {args.name}...", "progress")
-        result = manager.start_service(args.name)
+        if service_args:
+            print_status(f"  Args: {' '.join(service_args)}", "info")
+
+        result = manager.start_service(args.name, args=service_args)
         if result.success:
             print_status(f"{args.name} started (PID {result.pid})", "success")
         else:
             print_status(f"Failed to start {args.name}: {result.error}", "error")
     else:
-        # Start all auto-start services
+        # Start all auto-start services (with their saved args)
         exit_code = run_service_manager_startup()
         if exit_code != 0:
             print_status("Some services failed to start", "warning")
@@ -653,13 +707,24 @@ def _cmd_config(manager: ServiceManager, args) -> None:
 
     auto_start = None
     auto_restart = None
+    service_args = None
 
     if args.auto_start:
         auto_start = args.auto_start == "true"
     if args.auto_restart:
         auto_restart = args.auto_restart == "true"
 
-    manager.configure_service(args.name, auto_start=auto_start, auto_restart=auto_restart)
+    # Handle args
+    if getattr(args, "clear_args", False):
+        service_args = []  # Empty list clears args
+        print_status(f"Clearing saved args for {args.name}", "info")
+    elif getattr(args, "args", None) is not None:
+        service_args = args.args
+        if service_args:
+            print_status(f"Setting args: {' '.join(service_args)}", "info")
+
+    manager.configure_service(args.name, auto_start=auto_start,
+                              auto_restart=auto_restart, args=service_args)
     print_status(f"Configuration for {args.name} updated", "success")
 
 
@@ -683,7 +748,12 @@ def _cmd_list(manager: ServiceManager) -> None:
             if cfg.get("auto_restart"):
                 flags.append("auto-restart")
             flag_str = f" [{', '.join(flags)}]" if flags else ""
-            print(f"  • {name}{flag_str}")
+
+            # Show saved args if any
+            saved_args = cfg.get("args", [])
+            args_str = f" -- {' '.join(saved_args)}" if saved_args else ""
+
+            print(f"  • {name}{flag_str}{args_str}")
 
     print_box_footer()
 
@@ -717,6 +787,13 @@ def _cmd_info(manager: ServiceManager, args) -> None:
     print(f"  Auto-Start:  {'✓' if info['auto_start'] else '✗'}")
     print(f"  Auto-Restart: {'✓' if info['auto_restart'] else '✗'}")
 
+    # Saved args
+    saved_args = manager.get_service_args(args.name)
+    if saved_args:
+        print(f"  Saved Args:  {' '.join(saved_args)}")
+    else:
+        print(f"  Saved Args:  (none)")
+
     if info.get("module"):
         print()
         print(f"  Module:      {info['module']}")
@@ -734,9 +811,16 @@ def _cmd_restart(manager: ServiceManager, args) -> None:
 
     graceful = not getattr(args, "force", False)
 
+    # Get new args if provided (overrides saved args)
+    service_args = getattr(args, "service_args", None)
+    if service_args is not None and len(service_args) == 0:
+        service_args = None  # Empty = use saved args
+
     if args.name:
         # Restart single service
         print_status(f"Restarting {args.name}...", "progress")
+        if service_args:
+            print_status(f"  New args: {' '.join(service_args)}", "info")
 
         # Stop
         running, _ = manager.is_service_running(args.name)
@@ -744,14 +828,14 @@ def _cmd_restart(manager: ServiceManager, args) -> None:
             manager.stop_service(args.name, graceful=graceful)
             time.sleep(1)
 
-        # Start
-        result = manager.start_service(args.name)
+        # Start with new args (or saved args if None)
+        result = manager.start_service(args.name, args=service_args)
         if result.success:
             print_status(f"{args.name} restarted (PID {result.pid})", "success")
         else:
             print_status(f"Failed to restart {args.name}: {result.error}", "error")
     else:
-        # Restart all running services
+        # Restart all running services (with their saved args)
         status = manager.get_all_status(include_registry=False)
         running_services = [name for name, info in status.items() if info["running"]]
 
@@ -763,7 +847,8 @@ def _cmd_restart(manager: ServiceManager, args) -> None:
             print_status(f"Restarting {name}...", "progress")
             manager.stop_service(name, graceful=graceful)
             time.sleep(1)
-            result = manager.start_service(name)
+            # Use saved args for each service
+            result = manager.start_service(name, args=None)
             if result.success:
                 print_status(f"{name} restarted (PID {result.pid})", "success")
             else:

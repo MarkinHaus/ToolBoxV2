@@ -25,12 +25,13 @@ class ModelManager:
 
     # Model type capabilities
     MODEL_CAPABILITIES = {
-        "text": {"text": True, "vision": False, "audio": False, "embedding": False},
-        "vision": {"text": True, "vision": True, "audio": False, "embedding": False},
-        "omni": {"text": True, "vision": True, "audio": True, "embedding": False},
-        "embedding": {"text": True, "vision": False, "audio": False, "embedding": True},
-        "vision-embedding": {"text": True, "vision": True, "audio": False, "embedding": True},
-        "audio": {"text": False, "vision": False, "audio": True, "embedding": False},  # Legacy whisper
+        "text": {"text": True, "vision": False, "audio": False, "embedding": False, "tts": False},
+        "vision": {"text": True, "vision": True, "audio": False, "embedding": False, "tts": False},
+        "omni": {"text": True, "vision": True, "audio": True, "embedding": False, "tts": False},
+        "embedding": {"text": True, "vision": False, "audio": False, "embedding": True, "tts": False},
+        "vision-embedding": {"text": True, "vision": True, "audio": False, "embedding": True, "tts": False},
+        "audio": {"text": False, "vision": False, "audio": True, "embedding": False, "tts": False},  # Legacy whisper
+        "tts": {"text": False, "vision": False, "audio": False, "embedding": False, "tts": True},  # Text-to-Speech
     }
 
     def __init__(self, base_dir: Path, models_dir: Path, config: Dict):
@@ -99,6 +100,8 @@ class ModelManager:
         # Legacy whisper-server for audio-only
         if model_type == "audio":
             cmd = self._build_whisper_command(full_path, slot, thr)
+        elif model_type == "tts":
+            cmd = self._build_tts_command(full_path, slot, ctx, thr)
         else:
             cmd = self._build_llama_command(full_path, slot, ctx, thr, model_type, mmproj_path)
 
@@ -116,10 +119,13 @@ class ModelManager:
         # - text: 180s (3 min)
         # - embedding: 600s (10 min) - 8B embedding models are slow on CPU
         # - vision/omni/vision-embedding: 300s (5 min)
+        # - tts: 120s (2 min) - TTS models are typically smaller
         if model_type in ("embedding",):
             timeout = 600  # 10 minutes for large embedding models
         elif model_type in ("omni", "vision", "vision-embedding"):
             timeout = 300  # 5 minutes
+        elif model_type == "tts":
+            timeout = 120  # 2 minutes for TTS
         else:
             timeout = 180  # 3 minutes
         ready = await self._wait_for_ready(slot, timeout=timeout, model_type=model_type)
@@ -266,6 +272,51 @@ class ModelManager:
             "--threads", str(threads),
             "--host", "127.0.0.1"
         ]
+
+    def _build_tts_command(
+        self,
+        model_path: Path,
+        slot: int,
+        ctx: int,
+        threads: int
+    ) -> List[str]:
+        """Build llama-server command for TTS models with --tts flag"""
+
+        if not self.llama_server.exists():
+            raise FileNotFoundError("llama-server not found. Run setup.sh")
+
+        # Get optimization settings from config
+        perf_config = self.config.get("performance", {})
+        use_flash_attn = perf_config.get("flash_attention", True)
+        use_mlock = perf_config.get("mlock", True)
+
+        cmd = [
+            str(self.llama_server),
+            "--model", str(model_path),
+            "--port", str(slot),
+            "--threads", str(threads),
+            "--host", "127.0.0.1",
+            "--tts",  # Enable TTS mode
+        ]
+
+        # ⚡ Flash Attention
+        if use_flash_attn:
+            cmd.extend(["--flash-attn", "on"])
+
+        # 🔒 mlock
+        if use_mlock:
+            cmd.append("--mlock")
+
+        # TTS-specific settings
+        # Use smaller context for TTS (text input is typically short)
+        tts_ctx = min(ctx, 2048)
+        cmd.extend([
+            "--ctx-size", str(tts_ctx),
+            "--batch-size", "256",
+            "--ubatch-size", "256",
+        ])
+
+        return cmd
 
     def _find_mmproj(self, model_path: Path) -> Optional[Path]:
         """Find mmproj file for vision/omni model with fuzzy name matching"""
@@ -582,6 +633,14 @@ class ModelManager:
                 return info
         return None
 
+    def find_tts_slot(self) -> Optional[Dict]:
+        """Find slot capable of text-to-speech (tts type)"""
+        for info in self.slot_info.values():
+            caps = info.get("capabilities", {})
+            if caps.get("tts"):
+                return info
+        return None
+
     # === Status Methods ===
 
     def get_slots_status(self) -> List[Dict]:
@@ -700,6 +759,10 @@ class ModelManager:
         # Check for mmproj (not a loadable model)
         if "mmproj" in name:
             return "mmproj"
+
+        # TTS models (text-to-speech)
+        if "tts" in name or "speech" in name or "vocoder" in name:
+            return "tts"
 
         # Omni models (audio + vision + text)
         if "omni" in name:

@@ -17,13 +17,17 @@ from typing import Optional, List, Dict, Any, AsyncGenerator
 import aiosqlite
 import httpx
 import psutil
-from fastapi import FastAPI, HTTPException, Header, Request, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Header, Request, Depends, BackgroundTasks, WebSocket
 from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from model_manager import ModelManager
+from live_handler import (
+    LiveHandler, LiveSessionRequest, LiveSessionResponse,
+    create_live_handler
+)
 
 # === Config ===
 BASE_DIR = Path(__file__).parent
@@ -309,6 +313,7 @@ def save_config(config: Dict):
 
 # === Model Manager Instance ===
 model_manager: ModelManager = None
+live_handler: LiveHandler = None
 uptime_task: asyncio.Task = None
 
 async def uptime_checker():
@@ -365,7 +370,7 @@ async def uptime_checker():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global model_manager, uptime_task
+    global model_manager, live_handler, uptime_task
     await init_db()
     config = load_config()
     model_manager = ModelManager(
@@ -373,6 +378,10 @@ async def lifespan(app: FastAPI):
         models_dir=DATA_DIR / "models",
         config=config
     )
+
+    # Initialize Live Handler
+    live_handler = create_live_handler(str(DB_PATH), model_manager)
+    await live_handler.init_db()
 
     # Restore slots in background (don't block startup)
     async def restore_in_background():
@@ -720,6 +729,158 @@ async def transcriptions(
             return resp.json()
         except httpx.HTTPStatusError as e:
             raise HTTPException(e.response.status_code, f"Backend error: {e.response.text}")
+        except Exception as e:
+            raise HTTPException(500, str(e))
+
+# === Live Voice API ===
+
+@app.post("/v1/audio/live", response_model=LiveSessionResponse)
+async def create_live_session(
+    request: LiveSessionRequest,
+    auth: Dict = Depends(verify_api_key)
+):
+    """
+    Create a new live voice session.
+
+    Returns a session token and WebSocket URL for real-time voice conversation.
+    Requires both a TTS model and an LLM model to be loaded.
+    """
+    return await live_handler.create_session(request, auth["user_id"])
+
+
+@app.websocket("/v1/audio/live/ws/{session_token}")
+async def live_websocket(websocket: WebSocket, session_token: str):
+    """
+    WebSocket endpoint for live voice sessions.
+
+    Client -> Server messages:
+    - {"type": "audio", "transcript": "text", "is_final": bool}
+    - {"type": "end_turn", "transcript": "full text"}
+    - {"type": "interrupt"}
+    - {"type": "ping"}
+    - {"type": "close"}
+
+    Server -> Client messages:
+    - {"type": "ready", "session_token": str, "config": {...}}
+    - {"type": "transcript", "text": str, "is_input": bool, "is_final": bool}
+    - {"type": "text", "text": str, "is_final": bool}
+    - {"type": "audio", "audio": base64, "format": str, "text": str}
+    - {"type": "turn_complete", "input_transcript": str, "output_transcript": str, ...}
+    - {"type": "interrupted", "partial_output": str}
+    - {"type": "error", "message": str}
+    - {"type": "pong"}
+    """
+    await live_handler.handle_websocket(websocket, session_token)
+
+
+@app.delete("/v1/audio/live/{session_token}")
+async def close_live_session(
+    session_token: str,
+    auth: Dict = Depends(verify_api_key)
+):
+    """Close a live voice session"""
+    session = await live_handler.get_session(session_token)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    if session.user_id != auth["user_id"] and auth["tier"] != "admin":
+        raise HTTPException(403, "Not authorized")
+
+    await live_handler.close_session(session_token)
+    return {"status": "closed", "session_token": session_token}
+
+
+@app.get("/v1/audio/live/{session_token}")
+async def get_live_session_info(
+    session_token: str,
+    auth: Dict = Depends(verify_api_key)
+):
+    """Get info about a live session"""
+    session = await live_handler.get_session(session_token)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    if session.user_id != auth["user_id"] and auth["tier"] != "admin":
+        raise HTTPException(403, "Not authorized")
+
+    return {
+        "session_token": session.token,
+        "created_at": datetime.fromtimestamp(session.created_at).isoformat(),
+        "expires_at": datetime.fromtimestamp(session.expires_at).isoformat(),
+        "is_active": session.is_active,
+        "history_length": len(session.history),
+        "config": {
+            "audio": session.audio_config.model_dump(),
+            "wake_word": session.wake_word_config.model_dump(),
+            "voice": session.voice_config.model_dump(),
+            "llm": {
+                "model": session.llm_config.model,
+                "history_length": session.llm_config.history_length
+            }
+        }
+    }
+
+
+# === TTS Endpoint (OpenAI Compatible) ===
+
+class TTSRequest(BaseModel):
+    model: str = "tts"
+    input: str
+    voice: str = "default"
+    speed: float = 1.0
+    response_format: str = "opus"
+
+
+@app.post("/v1/audio/speech")
+async def text_to_speech(
+    request: TTSRequest,
+    background_tasks: BackgroundTasks,
+    auth: Dict = Depends(verify_api_key)
+):
+    """
+    Text-to-Speech endpoint (OpenAI compatible).
+
+    Requires a TTS model to be loaded (model_type='tts').
+    """
+    # Find TTS slot
+    tts_slot = model_manager.find_tts_slot()
+    if not tts_slot:
+        raise HTTPException(
+            503,
+            "No TTS model loaded. Load a TTS model (type='tts') first."
+        )
+
+    backend_url = f"http://127.0.0.1:{tts_slot['port']}/v1/audio/speech"
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        try:
+            # Forward to llama-server TTS
+            payload = {
+                "input": request.input,
+                "voice": request.voice,
+                "speed": request.speed,
+                "response_format": request.response_format
+            }
+
+            resp = await client.post(backend_url, json=payload)
+            resp.raise_for_status()
+
+            # Return audio stream
+            content_type = {
+                "opus": "audio/opus",
+                "mp3": "audio/mpeg",
+                "wav": "audio/wav",
+                "pcm": "audio/pcm"
+            }.get(request.response_format, "audio/opus")
+
+            return StreamingResponse(
+                iter([resp.content]),
+                media_type=content_type,
+                headers={
+                    "Content-Disposition": f"attachment; filename=speech.{request.response_format}"
+                }
+            )
+
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(e.response.status_code, f"TTS error: {e.response.text}")
         except Exception as e:
             raise HTTPException(500, str(e))
 
@@ -1277,7 +1438,16 @@ async def admin_reject_signup(request_id: int, auth: Dict = Depends(verify_admin
         await db.commit()
     return {"status": "rejected"}
 
+# === Live Voice Playground ===
+
+@app.get("/live", response_class=HTMLResponse)
+async def live_playground():
+    """Serve Live Voice Playground"""
+    live_page = STATIC_DIR / "live-playground.html"
+    if live_page.exists():
+        return live_page.read_text()
+    raise HTTPException(404, "Live playground not found")
+
 # === Static Files ===
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-

@@ -324,13 +324,20 @@ class PackageService:
         name: str,
         version: str,
         prefer_mirror: bool = False,
+        viewer_id: Optional[str] = None,
     ) -> Optional[str]:
         """Get download URL for a version.
+
+        Download permissions based on visibility:
+        - PUBLIC: Anyone can download
+        - UNLISTED: Only authenticated users can download
+        - PRIVATE: Only owner can download
 
         Args:
             name: Package name.
             version: Version string.
             prefer_mirror: Prefer mirror URL.
+            viewer_id: Optional viewer user ID for visibility check.
 
         Returns:
             Presigned download URL.
@@ -338,10 +345,24 @@ class PackageService:
         Raises:
             PackageNotFoundError: If package not found.
             VersionNotFoundError: If version not found.
+            PermissionDeniedError: If viewer cannot download package.
         """
         package = await self.repo.get_by_name(name)
         if not package:
             raise PackageNotFoundError(name)
+
+        # Check visibility permissions for download
+        if package.visibility == Visibility.PRIVATE:
+            # Private: Only owner can download
+            if not viewer_id or viewer_id != package.owner_id:
+                raise PermissionDeniedError("Cannot download private package")
+        elif package.visibility == Visibility.UNLISTED:
+            # Unlisted: Only authenticated users can download
+            if not viewer_id:
+                raise PermissionDeniedError(
+                    "Authentication required to download unlisted package"
+                )
+        # PUBLIC: Anyone can download (no check needed)
 
         pkg_version = await self.repo.get_version(name, version)
         if not pkg_version:
