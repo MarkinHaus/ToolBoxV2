@@ -1,0 +1,143 @@
+# Custom Commands Permissions for SimpleCore
+# This file defines individual permissions for all custom Tauri commands
+# The default set is defined in default.toml
+
+[[permission]]
+identifier = "allow-greet"
+description = "Allow greet command"
+commands.allow = ["greet"]
+
+[[permission]]
+identifier = "allow-start-worker"
+description = "Allow starting the worker"
+commands.allow = ["start_worker"]
+
+[[permission]]
+identifier = "allow-stop-worker"
+description = "Allow stopping the worker"
+commands.allow = ["stop_worker"]
+
+[[permission]]
+identifier = "allow-get-worker-status"
+description = "Allow getting worker status"
+commands.allow = ["get_worker_status"]
+
+[[permission]]
+identifier = "allow-set-api-endpoint"
+description = "Allow setting API endpoint"
+commands.allow = ["set_api_endpoint"]
+
+[[permission]]
+identifier = "allow-get-data-paths"
+description = "Allow getting data paths"
+commands.allow = ["get_data_paths"]
+
+[[permission]]
+identifier = "allow-check-worker-health"
+description = "Allow checking worker health"
+commands.allow = ["check_worker_health"]
+
+[[permission]]
+identifier = "allow-get-api-urls"
+description = "Allow getting API URLs"
+commands.allow = ["get_api_urls"]
+
+[[permission]]
+identifier = "allow-update-tray-status"
+description = "Allow updating tray status"
+commands.allow = ["update_tray_status"]
+
+[[permission]]
+identifier = "allow-save-settings"
+description = "Allow saving settings"
+commands.allow = ["save_settings"]
+
+[[permission]]
+identifier = "allow-load-settings"
+description = "Allow loading settings"
+commands.allow = ["load_settings"]
+
+[[permission]]
+identifier = "allow-switch-mode"
+description = "Allow switching between App and HUD mode"
+commands.allow = ["switch_mode"]
+
+[[permission]]
+identifier = "allow-get-current-mode"
+description = "Allow getting current mode"
+commands.allow = ["get_current_mode"]
+
+[[permission]]
+identifier = "allow-toggle-mode"
+description = "Allow toggling mode"
+commands.allow = ["toggle_mode"]
+
+[[permission]]
+identifier = "allow-get-hud-settings"
+description = "Allow getting HUD settings"
+commands.allow = ["get_hud_settings"]
+
+[[permission]]
+identifier = "allow-save-hud-position"
+description = "Allow saving HUD position"
+commands.allow = ["save_hud_position"]
+
+[[permission]]
+identifier = "allow-set-hud-opacity"
+description = "Allow setting HUD opacity"
+commands.allow = ["set_hud_opacity"]
+
+[[permission]]
+identifier = "allow-is-mobile"
+description = "Allow checking if mobile"
+commands.allow = ["is_mobile"]
+
+[[permission]]
+identifier = "allow-is-hud-available"
+description = "Allow checking if HUD is available"
+commands.allow = ["is_hud_available"]
+
+[[permission]]
+identifier = "allow-set-animation-steps"
+description = "Allow setting animation steps"
+commands.allow = ["set_animation_steps"]
+
+[[permission]]
+identifier = "allow-set-animation-delay"
+description = "Allow setting animation delay"
+commands.allow = ["set_animation_delay"]
+
+[[permission]]
+identifier = "allow-set-selected-miniui-app"
+description = "Allow setting selected MiniUI app"
+commands.allow = ["set_selected_miniui_app"]
+
+[[permission]]
+identifier = "allow-get-selected-miniui-app"
+description = "Allow getting selected MiniUI app"
+commands.allow = ["get_selected_miniui_app"]
+
+[[permission]]
+identifier = "allow-is-autostart-enabled"
+description = "Allow checking autostart status"
+commands.allow = ["is_autostart_enabled"]
+
+[[permission]]
+identifier = "allow-set-autostart"
+description = "Allow setting autostart"
+commands.allow = ["set_autostart"]
+
+[[permission]]
+identifier = "allow-is-started-minimized"
+description = "Allow checking if started minimized"
+commands.allow = ["is_started_minimized"]
+
+[[permission]]
+identifier = "allow-get-hud-functions"
+description = "Allow getting HUD functions from ToolBox API"
+commands.allow = ["get_hud_functions"]
+
+[[permission]]
+identifier = "allow-call-hud-function"
+description = "Allow calling a HUD function"
+commands.allow = ["call_hud_function"]

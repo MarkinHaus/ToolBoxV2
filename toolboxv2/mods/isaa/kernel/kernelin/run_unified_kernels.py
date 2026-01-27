@@ -30,14 +30,26 @@ from toolboxv2.mods.isaa.kernel.types import (
 from toolboxv2.mods.isaa.kernel.models import MultiChannelRouter
 
 # Import transports
-from toolboxv2.mods.isaa.kernel.kernelin.kernelin_discord  import (
-    DiscordTransport, DiscordConfig, DiscordOutputRouter,
-    create_discord_transport
-)
-from toolboxv2.mods.isaa.kernel.kernelin.kernelin_telegram import (
-    TelegramTransport, TelegramConfig, TelegramOutputRouter,
-    create_telegram_transport
-)
+try:
+    from toolboxv2.mods.isaa.kernel.kernelin.kernelin_discord  import (
+        DiscordTransport, DiscordConfig, DiscordOutputRouter,
+        create_discord_transport
+    )
+    from toolboxv2.mods.isaa.kernel.kernelin.kernelin_telegram import (
+        TelegramTransport, TelegramConfig, TelegramOutputRouter,
+        create_telegram_transport
+    )
+except ImportError:
+    print("pip install discord.py")
+    print("pip install python-telegram-bot")
+    DiscordTransport = None
+    TelegramTransport = None
+    DiscordConfig = None
+    TelegramConfig = None
+    DiscordOutputRouter = None
+    TelegramOutputRouter = None
+    create_discord_transport = lambda *args, **kwargs: None
+    create_telegram_transport = lambda *args, **kwargs: None
 
 if TYPE_CHECKING:
     from toolboxv2.mods.isaa.base.Agent.flow_agent import FlowAgent

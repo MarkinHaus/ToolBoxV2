@@ -20,7 +20,8 @@
         {
           "args": true,
           "name": "binaries/tb-worker",
-          "sidecar": true
+          "sidecar": true,
+          "cwd": ""
         }
       ]
     },

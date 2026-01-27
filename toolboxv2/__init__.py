@@ -197,6 +197,7 @@ __all__ = [
     "ToolBoxResultBM",
     "__init_cwd__",
     "TBxSetup",
+    "__version__"
 ]
 
 # Restore stdout/stderr after import

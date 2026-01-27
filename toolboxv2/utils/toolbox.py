@@ -139,6 +139,8 @@ class App(AppType, metaclass=Singleton):
 
         pid_file = f"{self.start_dir}\\.info\\pids\\{args.modi}-{self.REFIX}.pid"
         app_pid = str(os.getpid())
+        if not os.path.exists(f"{self.start_dir}\\.info\\pids"):
+            os.makedirs(f"{self.start_dir}\\.info\\pids", exist_ok=True)
         with open(pid_file, "w", encoding="utf8") as f:
             f.write(app_pid)
 
