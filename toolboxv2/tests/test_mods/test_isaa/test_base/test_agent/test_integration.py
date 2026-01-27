@@ -14,13 +14,13 @@ class TestIntegration(AsyncTestCase):
         with patch('toolboxv2.mods.isaa.base.Agent.session_manager.SessionManager'), \
             patch('toolboxv2.mods.isaa.base.Agent.tool_manager.ToolManager'), \
             patch('toolboxv2.mods.isaa.base.Agent.checkpoint_manager.CheckpointManager'), \
-            patch('toolboxv2.mods.isaa.base.Agent.bind_manager.BindManager'), \
-            patch('toolboxv2.mods.isaa.base.IntelligentRateLimiter.intelligent_rate_limiter.LiteLLMRateLimitHandler'):
+            patch('toolboxv2.mods.isaa.base.Agent.bind_manager.BindManager'):
             self.agent = FlowAgent(self.amd, auto_load_checkpoint=False)
 
             # Re-mock execution engine factory to return a mock or partial
             # Use AsyncMock for the execution engine since it has async methods
             self.agent._execution_engine = AsyncMock()
+            self.agent.session_manager.get_or_create = AsyncMock()
 
     def test_01_initialization(self):
         self.assertIsNotNone(self.agent.session_manager)

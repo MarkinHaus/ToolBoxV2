@@ -170,7 +170,7 @@ class TestRefreshJwtToken(unittest.IsolatedAsyncioTestCase):
             clerk_user_id=None
         )).print()
 
-        self.assertTrue(result.is_error())
+        self.assertEqual(result.result.data.info.help_text,"Session ID or User ID required")
 
 
 if __name__ == "__main__":

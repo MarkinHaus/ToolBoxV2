@@ -88,10 +88,10 @@ class GatewayProvider(CustomLLM):
     Supports both sync and async operations including streaming.
     """
 
-    def __init__(self):
+    def __init__(self, gateway_url: str=None, api_key: str=None):
         super().__init__()
-        self.gateway_url = GW_URL.rstrip('/v1')  # Remove /v1 if present
-        self.api_key = GW_KEY
+        self.gateway_url = gateway_url or GW_URL # Remove /v1 if present
+        self.api_key = api_key or GW_KEY
         self._available_models = None
 
     def get_available_models(self) -> List[str]:
@@ -102,7 +102,7 @@ class GatewayProvider(CustomLLM):
         try:
             headers = {"Authorization": f"Bearer {self.api_key}"}
             response = requests.get(
-                f"{self.gateway_url}/v1/models",
+                f"{self.gateway_url}/models",
                 headers=headers,
                 timeout=2
             )
@@ -110,7 +110,7 @@ class GatewayProvider(CustomLLM):
             if response.status_code == 200:
                 data = response.json()
                 self._available_models = [m['id'] for m in data.get('data', [])]
-                print(f"✅ Gateway models: {self._available_models}")
+                # print(f"✅ Gateway models: {self._available_models}")
             else:
                 print(f"⚠️ Gateway responded with status {response.status_code}")
                 self._available_models = []
@@ -131,7 +131,7 @@ class GatewayProvider(CustomLLM):
 
             async with httpx.AsyncClient(timeout=2.0) as client:
                 response = await client.get(
-                    f"{self.gateway_url}/v1/models",
+                    f"{self.gateway_url}/models",
                     headers=headers
                 )
 
@@ -232,7 +232,7 @@ class GatewayProvider(CustomLLM):
         clean_kwargs.pop('stream', None)  # Ensure no streaming
 
         actual_model = self._extract_model(model)
-        base_url = api_base or f"{self.gateway_url}/v1"
+        base_url = api_base or f"{self.gateway_url}"
 
         payload = {
             "model": actual_model,
@@ -263,7 +263,7 @@ class GatewayProvider(CustomLLM):
         clean_kwargs.pop('stream', None)  # Ensure no streaming
 
         actual_model = self._extract_model(model)
-        base_url = api_base or f"{self.gateway_url}/v1"
+        base_url = api_base or f"{self.gateway_url}"
 
         payload = {
             "model": actual_model,
@@ -301,7 +301,7 @@ class GatewayProvider(CustomLLM):
         clean_kwargs['stream'] = True  # Ensure streaming is enabled
 
         actual_model = self._extract_model(model)
-        base_url = api_base or f"{self.gateway_url}/v1"
+        base_url = api_base or f"{self.gateway_url}"
 
         payload = {
             "model": actual_model,
@@ -345,7 +345,7 @@ class GatewayProvider(CustomLLM):
         clean_kwargs['stream'] = True  # Ensure streaming is enabled
 
         actual_model = self._extract_model(model)
-        base_url = api_base or f"{self.gateway_url}/v1"
+        base_url = api_base or f"{self.gateway_url}"
 
         payload = {
             "model": actual_model,
@@ -382,7 +382,7 @@ class GatewayProvider(CustomLLM):
         clean_kwargs = {k: v for k, v in kwargs.items() if k in allowed_params and v is not None}
 
         actual_model = self._extract_model(model)
-        base_url = api_base or f"{self.gateway_url}/v1"
+        base_url = api_base or f"{self.gateway_url}"
 
         payload = {
             "model": actual_model,
@@ -412,7 +412,7 @@ class GatewayProvider(CustomLLM):
         clean_kwargs = {k: v for k, v in kwargs.items() if k in allowed_params and v is not None}
 
         actual_model = self._extract_model(model)
-        base_url = api_base or f"{self.gateway_url}/v1"
+        base_url = api_base or f"{self.gateway_url}"
 
         payload = {
             "model": actual_model,
@@ -457,30 +457,30 @@ def setup_gateway_provider():
     Call this at the start of your application.
     """
 
-    # Create provider instance
-    gateway = GatewayProvider()
+    return setup_custom_provider("gateway", GW_URL, GW_KEY)
 
-    # Register with LiteLLM
-    litellm.custom_provider_map = [
+# === Setup Function ===
+def setup_custom_provider(prefix: str, api_base: str, api_key: str):
+    """
+    Register gateway provider with LiteLLM
+
+    Call this at the start of your application.
+    """
+    provider = GatewayProvider(api_base, api_key)
+    if litellm.custom_provider_map is None:
+        litellm.custom_provider_map = []
+    litellm.custom_provider_map.append(
         {
-            "provider": "gateway",
-            "custom_handler": gateway
+            "provider": prefix,
+            "custom_handler": provider
         }
-    ]
-
-    # Fetch available models
-    models = gateway.get_available_models()
-
-    print("✅ Gateway provider registered!")
-    print(f"📡 URL: {GW_URL}")
-    print(f"🔑 Key: {GW_KEY[:12]}...")
-    print(f"🤖 Models: {models if models else 'Could not fetch (using fallback)'}")
-
-    return gateway
+    )
+    print(f"Registered custom provider {prefix} with api_base {api_base}")
+    return provider
 
 
 # === Usage Examples ===
-if __name__ == "__main__":
+if __name__ == "__main__2":
     print("🚀 LiteLLM Gateway Provider Setup\n")
 
     # Method 1: Show JSON config (manual addition)
@@ -529,3 +529,106 @@ response = litellm.completion(
 """.format(GW_URL=GW_URL, GW_KEY=GW_KEY[:12] + "..."))
 
     print("\n✅ All methods ready to use!")
+
+if __name__ == "__main__":
+    import dotenv
+    dotenv.load_dotenv(r"C:\Users\Markin\Workspace\ToolBoxV2\.env")
+    setup_custom_provider("zglm", os.getenv("ZAI_API_BASE"), os.getenv("ZAI_API_KEY"))
+    # 2. Definition des Tools (OpenAI Standard Format)
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_current_weather",
+                "description": "Ruft das aktuelle Wetter für einen Standort ab",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "Die Stadt und das Land, z.B. Berlin, DE",
+                        },
+                        "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]},
+                    },
+                    "required": ["location"],
+                },
+            },
+        }
+    ]
+
+
+    def run_test():
+        print("\n🚀 Starte Tool Calling Test mit GLM-4.7...")
+
+        # Initiale Nachricht
+        messages = [{"role": "user", "content": "Wie ist das Wetter in München heute? nutze die get_current_weather function"}]
+
+        try:
+            # --- SCHRITT 1: Erste Anfrage an das Modell ---
+            response = litellm.completion(
+                model="zglm/GLM-4.7",
+                messages=messages,
+                functions=tools,
+                function_call="auto"
+            )
+
+            print(response)
+
+            response_message = response.choices[0].message
+            tool_calls = response_message.tool_calls
+
+            # Überprüfen, ob das Modell das Tool nutzen will
+            if tool_calls:
+                print(f"✅ Modell möchte Tool nutzen: {tool_calls[0].function.name}")
+                print(f"   Argumente: {tool_calls[0].function.arguments}")
+
+                # Die Nachricht des Modells zum Verlauf hinzufügen
+                messages.append(response_message)
+
+                # --- SCHRITT 2: Tool Ausführung simulieren ---
+                for tool_call in tool_calls:
+                    function_name = tool_call.function.name
+
+                    if function_name == "get_current_weather":
+                        function_args = json.loads(tool_call.function.arguments)
+
+                        # Simuliertes Ergebnis (Mock)
+                        print("⚙️  Führe (fake) Wetter-API aus...")
+                        function_response = json.dumps({
+                            "location": function_args.get("location"),
+                            "temperature": "18",
+                            "unit": "celsius",
+                            "condition": "Leicht bewölkt"
+                        })
+
+                        # Das Ergebnis als 'tool' role zurückgeben
+                        messages.append({
+                            "tool_call_id": tool_call.id,
+                            "role": "tool",
+                            "name": function_name,
+                            "content": function_response,
+                        })
+
+                # --- SCHRITT 3: Zweite Anfrage (Antwort generieren) ---
+                print("📨 Sende Tool-Ergebnis zurück an GLM-4.7...")
+                second_response = litellm.completion(
+                    model="zglm/GLM-4.7",
+                    messages=messages
+                )
+
+                final_content = second_response.choices[0].message.content
+                print("\n🏁 Finale Antwort des Modells:")
+                print("-" * 40)
+                print(final_content)
+                print("-" * 40)
+
+            else:
+                print("⚠️ Modell hat kein Tool aufgerufen. Test fehlgeschlagen (oder Frage zu simpel).")
+                print("Antwort:", response_message.content)
+
+        except Exception as e:
+            print(f"\n❌ Fehler beim Test: {e}")
+            import traceback
+            traceback.print_exc()
+
+    run_test()

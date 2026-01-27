@@ -154,6 +154,8 @@ class ToolManager:
 
         # Statistics
         self._total_calls = 0
+        # Pending checkpoint data for tools not yet registered by code
+        self._pending_checkpoint_data: dict[str, dict[str, Any]] = {}
 
     # =========================================================================
     # REGISTRATION
@@ -243,6 +245,25 @@ class ToolManager:
             metadata=metadata or {}
         )
 
+        if tool_name in self._pending_checkpoint_data:
+            pending_data = self._pending_checkpoint_data.pop(tool_name)
+
+            # Übernehme Laufzeit-Statistiken aus Checkpoint
+            entry.call_count = pending_data.get('call_count', 0)
+
+            # Übernehme Timestamps
+            if pending_data.get('last_called'):
+                entry.last_called = datetime.fromisoformat(pending_data['last_called'])
+            if pending_data.get('created_at'):
+                entry.created_at = datetime.fromisoformat(pending_data['created_at'])
+
+            # Merge metadata (pending ergänzt das aktuelle metadata)
+            pending_metadata = pending_data.get('metadata', {})
+            if pending_metadata:
+                # Aktuelles metadata hat Priorität, pending füllt Lücken
+                merged_metadata = {**pending_metadata, **entry.metadata}
+                entry.metadata = merged_metadata
+
         # Build LiteLLM schema
         entry.litellm_schema = self._build_litellm_schema(entry)
 
@@ -256,7 +277,6 @@ class ToolManager:
         if self._rule_set:
             self._sync_tool_to_ruleset(entry)
 
-        print(f"Registered tool: {tool_name}",tool_name in self.list_names())
         return entry
 
     def register_mcp_tools(
@@ -908,58 +928,53 @@ class ToolManager:
         function_registry: dict[str, Callable] | None = None
     ):
         """
-        Restore registry from checkpoint.
+        Restore registry state from checkpoint using hybrid/overlay approach.
+
+        This method does NOT blindly create ToolEntry objects. Instead:
+        - For tools already registered by code: overlay checkpoint metadata
+        - For tools not yet registered: store in pending data for later merge
+
+        This prevents "ghost tools" (tools without functions) from appearing.
 
         Args:
             data: Checkpoint data
             function_registry: Optional dict mapping tool names to functions
-                              (for restoring local tool functions)
+                              (for restoring local tool functions) - kept for compatibility
         """
-        function_registry = function_registry or {}
-
-        # Clear current registry
-        self._registry.clear()
-        self._category_index.clear()
-        self._flags_index.clear()
-        self._source_index.clear()
-
-        # Restore tools
-        for name, tool_data in data.get('tools', {}).items():
-            # Get function if available
-            func = function_registry.get(name)
-
-            entry = ToolEntry(
-                name=tool_data['name'],
-                description=tool_data['description'],
-                args_schema=tool_data['args_schema'],
-                category=tool_data['category'],
-                flags=tool_data['flags'],
-                source=tool_data['source'],
-                function=func,
-                server_name=tool_data.get('server_name'),
-                original_name=tool_data.get('original_name'),
-                metadata=tool_data.get('metadata', {}),
-                call_count=tool_data.get('call_count', 0),
-                litellm_schema=tool_data.get('litellm_schema')
-            )
-
-            # Restore timestamps
-            if tool_data.get('created_at'):
-                entry.created_at = datetime.fromisoformat(tool_data['created_at'])
-            if tool_data.get('last_called'):
-                entry.last_called = datetime.fromisoformat(tool_data['last_called'])
-
-            # Rebuild schema if missing
-            if not entry.litellm_schema:
-                entry.litellm_schema = self._build_litellm_schema(entry)
-
-            self._registry[name] = entry
-            self._update_indexes(entry)
-
-        # Restore stats
+        # Restore global stats
         self._total_calls = data.get('stats', {}).get('total_calls', 0)
 
-        # Sync to RuleSet
+        # Clear pending data from previous checkpoint loads
+        self._pending_checkpoint_data.clear()
+
+        # Process each tool from checkpoint
+        for name, tool_data in data.get('tools', {}).items():
+            if name in self._registry:
+                # Fall A: Tool existiert bereits in Registry (wurde per Code geladen)
+                # -> Overlay: Aktualisiere Laufzeit-Metadaten aus Checkpoint
+                entry = self._registry[name]
+
+                # Übernehme call statistics
+                entry.call_count = tool_data.get('call_count', 0)
+
+                # Übernehme timestamps
+                if tool_data.get('last_called'):
+                    entry.last_called = datetime.fromisoformat(tool_data['last_called'])
+                if tool_data.get('created_at'):
+                    entry.created_at = datetime.fromisoformat(tool_data['created_at'])
+
+                # Merge metadata (checkpoint metadata ergänzt, überschreibt nicht komplett)
+                checkpoint_metadata = tool_data.get('metadata', {})
+                if checkpoint_metadata:
+                    entry.metadata.update(checkpoint_metadata)
+
+            else:
+                # Fall B: Tool existiert NICHT in Registry
+                # -> Speichere in pending data für spätere Registrierung
+                # Erstelle KEINEN Registry-Eintrag (verhindert Geister-Tools)
+                self._pending_checkpoint_data[name] = tool_data
+
+        # Sync to RuleSet if available (nur für bereits existierende Tools)
         if self._rule_set:
             self._sync_all_to_ruleset()
 

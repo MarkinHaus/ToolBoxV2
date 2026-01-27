@@ -16,45 +16,54 @@ import json
 import os
 import time
 import uuid
-from pathlib import Path
-
-import yaml
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import Any, AsyncGenerator, Callable, Generator, Coroutine, Union
+from pathlib import Path
+from typing import Any, AsyncGenerator, Callable, Coroutine, Generator, Union
 
+import yaml
 from pydantic import BaseModel, ValidationError
 
-from toolboxv2 import get_logger
+from toolboxv2 import get_logger, Style
 from toolboxv2.mods.isaa.base.Agent.chain import Chain, ConditionalChain
 from toolboxv2.mods.isaa.base.Agent.types import (
     AgentModelData,
+    NodeStatus,
     PersonaConfig,
     ProgressEvent,
-    NodeStatus,
 )
 
 # Framework imports
 try:
     import litellm
+
     LITELLM_AVAILABLE = True
 except ImportError:
     LITELLM_AVAILABLE = False
 
 try:
     from python_a2a import A2AServer, AgentCard
+
     A2A_AVAILABLE = True
 except ImportError:
     A2A_AVAILABLE = False
-    class A2AServer: pass
-    class AgentCard: pass
+
+    class A2AServer:
+        pass
+
+    class AgentCard:
+        pass
+
 
 try:
     from mcp.server.fastmcp import FastMCP
+
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
-    class FastMCP: pass
+
+    class FastMCP:
+        pass
 
 
 logger = get_logger()
@@ -73,7 +82,7 @@ class FlowAgent:
         rule_config_path: str | None = None,
         progress_callback: Callable | None = None,
         stream: bool = True,
-        **kwargs
+        **kwargs,
     ):
         self.amd = amd
         self.verbose = verbose
@@ -105,11 +114,11 @@ class FlowAgent:
         logger.info(f"FlowAgent '{amd.name}' initialized")
 
     def _init_managers(self, auto_load_checkpoint: bool):
+        from toolboxv2.mods.isaa.base.Agent.bind_manager import BindManager
+        from toolboxv2.mods.isaa.base.Agent.checkpoint_manager import CheckpointManager
+        from toolboxv2.mods.isaa.base.Agent.docker_vfs import DockerConfig
         from toolboxv2.mods.isaa.base.Agent.session_manager import SessionManager
         from toolboxv2.mods.isaa.base.Agent.tool_manager import ToolManager
-        from toolboxv2.mods.isaa.base.Agent.checkpoint_manager import CheckpointManager
-        from toolboxv2.mods.isaa.base.Agent.bind_manager import BindManager
-        from toolboxv2.mods.isaa.base.Agent.docker_vfs import DockerConfig
 
         self.session_manager = SessionManager(
             agent_name=self.amd.name,
@@ -117,21 +126,20 @@ class FlowAgent:
             vfs_max_window_lines=self.amd.vfs_max_window_lines,
             rule_config_path=self._rule_config_path,
             summarizer=self._create_summarizer(),
-
-            enable_lsp = self.amd.enable_lsp,
-            enable_docker = self.amd.enable_docker,
-            docker_config = self.amd.docker_config or DockerConfig(
-                memory_limit="4g",
-                timeout_seconds=600
+            enable_lsp=self.amd.enable_lsp,
+            enable_docker=self.amd.enable_docker,
+            docker_config=self.amd.docker_config
+            or DockerConfig(memory_limit="4g", timeout_seconds=600),
+            toolboxv2_wheel_path=os.getenv(
+                "TOOLBV2_WHEEL_PATH",
+                "C:/Users/Markin/Workspace/ToolBoxV2/dist/toolboxv2-0.1.24-py2.py3-none-any.whl",
             ),
-            toolboxv2_wheel_path = os.getenv("TOOLBV2_WHEEL_PATH", "C:/Users/Markin/Workspace/ToolBoxV2/dist/toolboxv2-0.1.24-py2.py3-none-any.whl")
         )
 
         self.tool_manager = ToolManager()
 
         self.checkpoint_manager = CheckpointManager(
-            agent=self,
-            auto_load=auto_load_checkpoint
+            agent=self, auto_load=auto_load_checkpoint
         )
 
         self.bind_manager = BindManager(agent=self)
@@ -139,13 +147,15 @@ class FlowAgent:
     def _init_rate_limiter(self):
         from toolboxv2.mods.isaa.base.IntelligentRateLimiter.intelligent_rate_limiter import (
             LiteLLMRateLimitHandler,
-            load_handler_from_file,
             create_handler_from_config,
+            load_handler_from_file,
         )
 
         if isinstance(self.amd.handler_path_or_dict, dict):
             self.llm_handler = create_handler_from_config(self.amd.handler_path_or_dict)
-        elif isinstance(self.amd.handler_path_or_dict, str) and os.path.exists(self.amd.handler_path_or_dict):
+        elif isinstance(self.amd.handler_path_or_dict, str) and os.path.exists(
+            self.amd.handler_path_or_dict
+        ):
             self.llm_handler = load_handler_from_file(self.amd.handler_path_or_dict)
         else:
             self.llm_handler = LiteLLMRateLimitHandler(max_retries=3)
@@ -154,27 +164,23 @@ class FlowAgent:
         async def summarize(content: str) -> str:
             try:
                 result = await self.a_run_llm_completion(
-                    messages=[{"role": "user", "content": f"Summarize in 1-2 sentences:\n\n{content[:2000]}"}],
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": f"Summarize in 1-2 sentences:\n\n{content[:2000]}",
+                        }
+                    ],
                     max_tokens=100,
                     temperature=0.3,
                     with_context=False,
                     model_preference="fast",
-                    task_id="vfs_summarize"
+                    task_id="vfs_summarize",
                 )
                 return result.strip()
             except Exception:
                 return f"[{len(content)} chars]"
+
         return summarize
-
-    def _get_execution_engine(self, **kwargs):
-        """Get or create execution engine"""
-        from toolboxv2.mods.isaa.base.Agent.execution_engine import ExecutionEngine
-
-        return ExecutionEngine(
-            agent=self,
-            human_online=kwargs.get('human_online', False),
-            callback=kwargs.get('intermediate_callback')
-        )
 
     # =========================================================================
     # CORE: a_run_llm_completion
@@ -190,17 +196,24 @@ class FlowAgent:
         task_id: str = "unknown",
         session_id: str | None = None,
         do_tool_execution: bool = False,
-        **kwargs
+        **kwargs,
     ) -> str | Any:
         if not LITELLM_AVAILABLE:
             raise RuntimeError("LiteLLM required")
 
-        model = kwargs.pop('model', None) or (
-            self.amd.fast_llm_model if model_preference == "fast" else self.amd.complex_llm_model
+        model = kwargs.pop("model", None) or (
+            self.amd.fast_llm_model
+            if model_preference == "fast"
+            else self.amd.complex_llm_model
         )
         use_stream = stream if stream is not None else self.stream
 
-        llm_kwargs = {'model': model, 'messages': messages.copy(), 'stream': use_stream, **kwargs}
+        llm_kwargs = {
+            "model": model,
+            "messages": messages.copy(),
+            "stream": use_stream,
+            **kwargs,
+        }
         session_id = session_id or self.active_session
         system_msg = self.amd.get_system_message()
         session = None
@@ -208,47 +221,56 @@ class FlowAgent:
             session = self.session_manager.get(session_id)
             if session:
                 await session.initialize()
-                system_msg += "\n\n"+  session.build_vfs_context()
+                system_msg += "\n\n" + session.build_vfs_context()
         if with_context:
             if session:
                 sysmsg = [{"role": "system", "content": f"{system_msg}"}]
                 full_history = session.get_history(kwargs.get("history_size", 6))
-                current_msg = llm_kwargs['messages']
+                current_msg = llm_kwargs["messages"]
                 for msg in full_history:
-
                     if not current_msg:
                         break
 
-                    if msg['role'] != 'user':
+                    if msg["role"] != "user":
                         continue
 
-                    content = msg['content']
+                    content = msg["content"]
 
-                    if current_msg[0]['role'] == 'user' and current_msg[0]['content'] == content:
+                    if (
+                        current_msg[0]["role"] == "user"
+                        and current_msg[0]["content"] == content
+                    ):
                         current_msg = current_msg[1:]
                         break
 
-                    if len(current_msg) > 1 and current_msg[-1]['role'] == 'user' and current_msg[-1]['content'] == content:
+                    if (
+                        len(current_msg) > 1
+                        and current_msg[-1]["role"] == "user"
+                        and current_msg[-1]["content"] == content
+                    ):
                         current_msg = current_msg[:-1]
                         break
 
-                llm_kwargs['messages'] = sysmsg + full_history + current_msg
+                llm_kwargs["messages"] = sysmsg + full_history + current_msg
             else:
-                llm_kwargs['messages'] = [{"role": "system", "content": f"{system_msg}"}] + llm_kwargs['messages']
-
-        if 'api_key' not in llm_kwargs:
-            llm_kwargs['api_key'] = self._get_api_key_for_model(model)
+                llm_kwargs["messages"] = [
+                    {"role": "system", "content": f"{system_msg}"}
+                ] + llm_kwargs["messages"]
 
         try:
             if use_stream:
                 llm_kwargs["stream_options"] = {"include_usage": True}
 
-            response = await self.llm_handler.completion_with_rate_limiting(litellm, **llm_kwargs)
+            response = await self.llm_handler.completion_with_rate_limiting(
+                litellm, **llm_kwargs
+            )
 
             if use_stream:
-                if 'true_stream' in llm_kwargs and llm_kwargs['true_stream']:
+                if "true_stream" in llm_kwargs and llm_kwargs["true_stream"]:
                     return response
-                result, usage = await self._process_streaming_response(response, task_id, model, get_response_message)
+                result, usage = await self._process_streaming_response(
+                    response, task_id, model, get_response_message
+                )
             else:
                 result = response.choices[0].message.content
                 usage = response.usage
@@ -264,39 +286,69 @@ class FlowAgent:
             self.total_cost_accumulated += cost
             self.total_llm_calls += 1
 
-            if do_tool_execution and 'tools' in llm_kwargs:
-                tool_response = await self.run_tool_response(result if get_response_message else response.choices[0].message, session_id)
-                llm_kwargs['messages'] += [{"role": "assistant", "content":result.content if get_response_message else result}]+tool_response
-                del kwargs['tools']
-                return await self.a_run_llm_completion(llm_kwargs['messages'], model_preference, with_context, stream, get_response_message, task_id, session_id, **kwargs)
+            if do_tool_execution and "tools" in llm_kwargs:
+                tool_response = await self.run_tool_response(
+                    result if get_response_message else response.choices[0].message,
+                    session_id,
+                )
+                llm_kwargs["messages"] += [
+                    {
+                        "role": "assistant",
+                        "content": result.content if get_response_message else result,
+                    }
+                ] + tool_response
+                del kwargs["tools"]
+                return await self.a_run_llm_completion(
+                    llm_kwargs["messages"],
+                    model_preference,
+                    with_context,
+                    stream,
+                    get_response_message,
+                    task_id,
+                    session_id,
+                    **kwargs,
+                )
 
             return result
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             raise
 
-
-    def calculate_llm_cost(self, model: str, input_tokens: int, output_tokens: int,completion_response:Any=None) -> float:
+    @staticmethod
+    def calculate_llm_cost(
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        completion_response: Any = None,
+    ) -> float:
         """Calculate approximate LLM cost"""
         cost = (input_tokens / 1000) * 0.002 + (output_tokens / 1000) * 0.01
         if hasattr(completion_response, "_hidden_params"):
             cost = completion_response._hidden_params.get("response_cost", 0)
         try:
             import litellm
-            cost = litellm.completion_cost(model=model, completion_response=completion_response)
+
+            cost = litellm.completion_cost(
+                model=model, completion_response=completion_response
+            )
         except ImportError:
             pass
         except Exception as e:
             try:
                 import litellm
-                cost = litellm.completion_cost(model=model.split('/')[-1], completion_response=completion_response)
+
+                cost = litellm.completion_cost(
+                    model=model.split("/")[-1], completion_response=completion_response
+                )
             except Exception:
                 pass
         return cost or (input_tokens / 1000) * 0.002 + (output_tokens / 1000) * 0.01
 
-
-    async def _process_streaming_response(self, response, task_id, model, get_response_message):
-        from litellm.types.utils import Message, ChatCompletionMessageToolCall, Function
+    @staticmethod
+    async def _process_streaming_response(
+        response, task_id, model, get_response_message
+    ):
+        from litellm.types.utils import ChatCompletionMessageToolCall, Function, Message
 
         result = ""
         tool_calls_acc = {}
@@ -311,23 +363,32 @@ class FlowAgent:
                 for tc in delta.tool_calls:
                     idx = tc.index
                     if idx not in tool_calls_acc:
-                        tool_calls_acc[idx] = ChatCompletionMessageToolCall(id=tc.id, type="function", function=Function(name="", arguments=""))
+                        tool_calls_acc[idx] = ChatCompletionMessageToolCall(
+                            id=tc.id,
+                            type="function",
+                            function=Function(name="", arguments=""),
+                        )
                     if tc.function:
                         if tc.function.name:
                             tool_calls_acc[idx].function.name = tc.function.name
                         if tc.function.arguments:
-                            tool_calls_acc[idx].function.arguments += tc.function.arguments
+                            tool_calls_acc[
+                                idx
+                            ].function.arguments += tc.function.arguments
             final_chunk = chunk
 
         usage = final_chunk.usage if hasattr(final_chunk, "usage") else None
 
         if get_response_message:
-            result = Message(role="assistant", content=result or None, tool_calls=list(tool_calls_acc.values()) if tool_calls_acc else [])
+            result = Message(
+                role="assistant",
+                content=result or None,
+                tool_calls=list(tool_calls_acc.values()) if tool_calls_acc else [],
+            )
 
         return result, usage
 
     async def run_tool_response(self, response, session_id):
-
         tool_calls = response.tool_calls
         session = None
         if session_id:
@@ -343,18 +404,13 @@ class FlowAgent:
             tool_response = {
                 "role": "tool",
                 "tool_call_id": tc.id,
-                "content": str(result)
+                "content": str(result),
             }
             all_results.append(tool_response)
             if session:
                 await session.add_message(tool_response)
         return all_results
 
-    def _get_api_key_for_model(self, model: str) -> str | None:
-        prefix = model.split("/")[0]
-        return {"openrouter": os.getenv("OPENROUTER_API_KEY"), "openai": os.getenv("OPENAI_API_KEY"),
-                "anthropic": os.getenv("ANTHROPIC_API_KEY"), "google": os.getenv("GOOGLE_API_KEY"),
-                "groq": os.getenv("GROQ_API_KEY")}.get(prefix)
 
     # =========================================================================
     # CORE: arun_function
@@ -364,7 +420,9 @@ class FlowAgent:
         if self.active_session:
             session = self.session_manager.get(self.active_session)
             if session and not session.is_tool_allowed(function_name):
-                raise PermissionError(f"Tool '{function_name}' restricted in session '{self.active_session}'")
+                raise PermissionError(
+                    f"Tool '{function_name}' restricted in session '{self.active_session}'"
+                )
 
         start_time = time.perf_counter()
         result = await self.tool_manager.execute(function_name, **kwargs)
@@ -384,45 +442,67 @@ class FlowAgent:
         model_preference: str = "fast",
         auto_context: bool = False,
         max_tokens: int | None = None,
-        **kwargs
+        **kwargs,
     ) -> dict[str, Any]:
         schema = pydantic_model.model_json_schema()
         model_name = pydantic_model.__name__
 
         props = schema.get("properties", {})
         required = set(schema.get("required", []))
-        fields_desc = [f"  {name}{'*' if name in required else ''}: {info.get('type', 'string')}" for name, info in props.items()]
+        fields_desc = [
+            f"  {name}{'*' if name in required else ''}: {info.get('type', 'string')}"
+            for name, info in props.items()
+        ]
 
         enhanced_prompt = f"{prompt}"
 
         try:
             from litellm import supports_response_schema
 
-            for mp in [model_preference, "complex" if model_preference == "fast" else "fast"]:
+            for mp in [
+                model_preference,
+                "complex" if model_preference == "fast" else "fast",
+            ]:
                 data = await self.a_run_llm_completion(
-                    messages=[{"role": "user", "content": enhanced_prompt}], model_preference=mp, stream=False,
+                    messages=[{"role": "user", "content": enhanced_prompt}],
+                    model_preference=mp,
+                    stream=False,
                     with_context=auto_context,
-                    max_tokens=max_tokens, task_id=f"format_{model_name.lower()}", response_format=pydantic_model
+                    max_tokens=max_tokens,
+                    task_id=f"format_{model_name.lower()}",
+                    response_format=pydantic_model,
                 )
                 if isinstance(data, str):
                     data = json.loads(data)
                 validated = pydantic_model.model_validate(data)
                 return validated.model_dump()
 
-
         except ImportError as e:
             logger.error(f"LLM call failed: {e}")
             print("LLM call failed:", e, "falling back to YAML")
 
-
-        messages = (message_context or []) + [{"role": "system", "content": "You are a YAML formatter. format the input to valid YAML."}, {"role": "user", "content": enhanced_prompt} , {"role": "system", "content": "Return YAML with fields:\n" + "\n".join(fields_desc)}]
+        messages = (message_context or []) + [
+            {
+                "role": "system",
+                "content": "You are a YAML formatter. format the input to valid YAML.",
+            },
+            {"role": "user", "content": enhanced_prompt},
+            {
+                "role": "system",
+                "content": "Return YAML with fields:\n" + "\n".join(fields_desc),
+            },
+        ]
 
         for attempt in range(max_retries + 1):
             try:
                 response = await self.a_run_llm_completion(
-                    messages=messages, model_preference=model_preference, stream=False,
-                    with_context=auto_context, temperature=0.1 + (attempt * 0.1),
-                    max_tokens=max_tokens, task_id=f"format_{model_name.lower()}_{attempt}"
+                    messages=messages,
+                    model_preference=model_preference,
+                    stream=False,
+                    with_context=auto_context,
+                    temperature=0.1 + (attempt * 0.1),
+                    max_tokens=max_tokens,
+                    task_id=f"format_{model_name.lower()}_{attempt}",
                 )
 
                 if not response or not response.strip():
@@ -445,7 +525,8 @@ class FlowAgent:
                 else:
                     raise RuntimeError(f"Failed after {max_retries + 1} attempts: {e}")
 
-    def _extract_yaml_content(self, response: str) -> str:
+    @staticmethod
+    def _extract_yaml_content(response: str) -> str:
         if "```yaml" in response:
             try:
                 return response.split("```yaml")[1].split("```")[0].strip()
@@ -455,10 +536,14 @@ class FlowAgent:
             parts = response.split("```")
             for i, part in enumerate(parts):
                 if i % 2 == 1:
-                    lines = part.strip().split('\n')
+                    lines = part.strip().split("\n")
                     if len(lines) > 1:
-                        return '\n'.join(lines[1:]).strip() if lines[0].strip().isalpha() else part.strip()
-        if ':' in response and not response.strip().startswith('<'):
+                        return (
+                            "\n".join(lines[1:]).strip()
+                            if lines[0].strip().isalpha()
+                            else part.strip()
+                        )
+        if ":" in response and not response.strip().startswith("<"):
             return response.strip()
         return ""
 
@@ -467,10 +552,8 @@ class FlowAgent:
     # =========================================================================
     def _get_execution_engine(
         self,
-        use_native_tools: bool = True,
         human_online: bool = False,
-        intermediate_callback: Callable[[str], None] | None = None
-    ) -> 'ExecutionEngine':
+    ) -> "ExecutionEngine":
         """
         Get or create ExecutionEngine instance.
 
@@ -478,9 +561,7 @@ class FlowAgent:
         Creates a new engine only if parameters change significantly.
 
         Args:
-            use_native_tools: Use LiteLLM native tool calling
             human_online: Allow human-in-the-loop
-            intermediate_callback: Callback for status messages
 
         Returns:
             ExecutionEngine instance
@@ -491,15 +572,13 @@ class FlowAgent:
         if self._execution_engine_cache is not None:
             # Update dynamic parameters
             self._execution_engine_cache.human_online = human_online
-            self._execution_engine_cache.callback = intermediate_callback
             return self._execution_engine_cache
 
         # Create new engine
         engine = ExecutionEngine(
             agent=self,
             human_online=human_online,
-            callback=intermediate_callback,
-            is_sub_agent=False
+            is_sub_agent=False,
         )
 
         self._execution_engine_cache = engine
@@ -514,12 +593,10 @@ class FlowAgent:
         query: str,
         session_id: str = "default",
         execution_id: str | None = None,
-        use_native_tools: bool = True,
         human_online: bool = False,
-        intermediate_callback: Callable[[str], None] | None = None,
         max_iterations: int = 15,
         get_ctx: bool = False,
-        **kwargs
+        **kwargs,
     ) -> str | tuple[str, Any]:
         """
         Main entry point for agent execution.
@@ -528,12 +605,8 @@ class FlowAgent:
             query: User query
             session_id: Session identifier
             execution_id: For continuing paused execution
-            use_native_tools: LiteLLM native tool calling
             human_online: Allow human-in-the-loop
-            intermediate_callback: User-facing status messages
-            human_response: Response from human (for continuation)
             max_iterations: Max ReAct iterations (default 15)
-            token_budget: Token budget per iteration
             get_ctx: Return (result, ExecutionContext) tuple
             **kwargs: Additional options
 
@@ -543,28 +616,27 @@ class FlowAgent:
         # Handle defaults
         if not session_id:
             session_id = "default"
-        if session_id == "default" and getattr(self, 'active_session', None):
+        if session_id == "default" and getattr(self, "active_session", None):
             session_id = self.active_session
 
         self.active_session = session_id
         self.is_running = True
 
+        session = await self.session_manager.get_or_create(session_id)
+        self.init_session_tools(session)
+
         # Check for resume
         ctx = None
         if execution_id:
             engine = self._get_execution_engine(
-                use_native_tools=use_native_tools,
                 human_online=human_online,
-                intermediate_callback=intermediate_callback
             )
             ctx = engine.get_execution(execution_id)
 
         try:
             # Get or create execution engine
             engine = self._get_execution_engine(
-                use_native_tools=use_native_tools,
                 human_online=human_online,
-                intermediate_callback=intermediate_callback
             )
 
             # Execute
@@ -573,7 +645,7 @@ class FlowAgent:
                 session_id=session_id,
                 max_iterations=max_iterations,
                 ctx=ctx,
-                get_ctx=get_ctx
+                get_ctx=get_ctx,
             )
 
             return result
@@ -581,6 +653,7 @@ class FlowAgent:
         except Exception as e:
             import logging
             import traceback
+
             logging.error(f"a_run failed: {e}")
             traceback.print_exc()
             return f"Error: {str(e)}"
@@ -628,11 +701,7 @@ class FlowAgent:
         engine = self._get_execution_engine()
         return engine.list_executions()
 
-    async def resume_execution(
-        self,
-        execution_id: str,
-        max_iterations: int = 15
-    ) -> str:
+    async def resume_execution(self, execution_id: str, max_iterations: int = 15) -> str:
         """
         Resume a paused execution.
 
@@ -669,12 +738,10 @@ class FlowAgent:
         query: str,
         session_id: str = "default",
         execution_id: str | None = None,
-        use_native_tools: bool = True,
         human_online: bool = False,
-        intermediate_callback: Callable[[str], None] | None = None,
         max_iterations: int = 15,
-        **kwargs
-    ):
+        **kwargs,
+    ) -> AsyncGenerator[dict, None]:
         """
         Streaming execution - yields chunks during execution.
 
@@ -695,29 +762,26 @@ class FlowAgent:
         self.active_session = session_id
         self.is_running = True
 
+        session = await self.session_manager.get_or_create(session_id)
+        self.init_session_tools(session)
+
+
         # Check for resume
         ctx = None
         if execution_id:
             engine = self._get_execution_engine(
-                use_native_tools=use_native_tools,
                 human_online=human_online,
-                intermediate_callback=intermediate_callback
             )
             ctx = engine.get_execution(execution_id)
 
         try:
             engine = self._get_execution_engine(
-                use_native_tools=use_native_tools,
                 human_online=human_online,
-                intermediate_callback=intermediate_callback
             )
 
             # Get stream generator
             stream_func, ctx = await engine.execute_stream(
-                query=query,
-                session_id=session_id,
-                max_iterations=max_iterations,
-                ctx=ctx
+                query=query, session_id=session_id, max_iterations=max_iterations, ctx=ctx
             )
 
             # Yield all chunks
@@ -726,6 +790,7 @@ class FlowAgent:
 
         except Exception as e:
             import traceback
+
             traceback.print_exc()
             yield {"type": "error", "error": str(e)}
         finally:
@@ -736,12 +801,10 @@ class FlowAgent:
         query: str,
         session_id: str = "default",
         execution_id: str | None = None,
-        use_native_tools: bool = True,
         human_online: bool = False,
-        intermediate_callback: Callable[[str], None] | None = None,
         max_iterations: int = 15,
-        **kwargs
-    ):
+        **kwargs,
+    ) -> AsyncGenerator[str, None]:
         """
         Vereinfachtes Streaming - gibt nur Strings zurück.
 
@@ -752,16 +815,17 @@ class FlowAgent:
             query=query,
             session_id=session_id,
             execution_id=execution_id,
-            use_native_tools=use_native_tools,
             human_online=human_online,
-            intermediate_callback=intermediate_callback,
             max_iterations=max_iterations,
-            **kwargs
+            **kwargs,
         ):
             chunk_type = chunk.get("type", "")
 
             if chunk_type == "content":
                 yield chunk["chunk"]
+
+            elif chunk_type == "reasoning":
+                yield Style.GREEN(chunk["chunk"])
 
             elif chunk_type == "tool_start":
                 yield f"\n🔧 Nutze Tool: {chunk['name']}\n"
@@ -788,7 +852,6 @@ class FlowAgent:
                 status = "✅" if chunk.get("success") else "⚠️"
                 yield f"\n{status} Fertig\n"
 
-
     # =========================================================================
     # audio processing
     # =========================================================================
@@ -798,7 +861,7 @@ class FlowAgent:
         audio_chunks: Generator[bytes, None, None],
         session_id: str = "default",
         language: str = "en",
-        **kwargs
+        **kwargs,
     ) -> AsyncGenerator[bytes, None]:
         """
         Process a stream of audio chunks through the agent.
@@ -828,7 +891,7 @@ class FlowAgent:
         audio: Union[bytes, Path, str],
         session_id: str = "default",
         language: str = "en",
-        **kwargs
+        **kwargs,
     ) -> tuple[bytes | None, str, list, dict]:
         """
         Process a complete audio file/buffer through the agent.
@@ -849,8 +912,9 @@ class FlowAgent:
             Audio bytes for playback
         """
         from toolboxv2.mods.isaa.base.audio_io.audioIo import process_audio_raw
+
         self.active_session = session_id
-        result = await process_audio_raw(audio, self.a_run, language=language, **kwargs)
+        result = await process_audio_raw(audio, self.a_stream_verbose, language=language, **kwargs)
         # text_input = result.text_input
         text_output = result.text_output
         audio_output = result.audio_output
@@ -860,15 +924,18 @@ class FlowAgent:
         return audio_output, text_output, tool_calls, metadata
 
     @staticmethod
-    async def tts(text: str, language: str = "en", **kwargs) -> 'TTSResult':
-        from toolboxv2.mods.isaa.base.audio_io.Tts import synthesize, TTSResult
+    async def tts(text: str, language: str = "en", **kwargs) -> "TTSResult":
+        from toolboxv2.mods.isaa.base.audio_io.Tts import TTSResult, synthesize
+
         return synthesize(text, language=language, **kwargs)
 
     @staticmethod
-    async def stt(audio: Union[bytes, Path, str], language: str = "en", **kwargs) -> 'STTResult':
-        from toolboxv2.mods.isaa.base.audio_io.Stt import transcribe, STTResult
-        return transcribe(audio, language=language, **kwargs)
+    async def stt(
+        audio: Union[bytes, Path, str], language: str = "en", **kwargs
+    ) -> "STTResult":
+        from toolboxv2.mods.isaa.base.audio_io.Stt import STTResult, transcribe
 
+        return transcribe(audio, language=language, **kwargs)
 
     # =========================================================================
     # TOOL MANAGEMENT
@@ -880,7 +947,8 @@ class FlowAgent:
         name: str | None = None,
         description: str | None = None,
         category: list[str] | str | None = None,
-        flags: dict[str, bool] | None = None, **kwargs
+        flags: dict[str, bool] | None = None,
+        **kwargs,
     ):
         """Register a tool."""
         self.tool_manager.register(
@@ -888,9 +956,8 @@ class FlowAgent:
             name=name,
             description=description,
             category=category,
-            flags=flags
+            flags=flags,
         )
-
 
     def get_tool(self, name: str) -> Callable | None:
         """Get tool function by name."""
@@ -906,7 +973,7 @@ class FlowAgent:
         if _session:
             _session.clear_history()
 
-    def init_session_tools(self, session: 'AgentSession'):
+    def init_session_tools(self, session: "AgentSession"):
         """
         Initialize session-specific tools for VFS V2, Docker, and filesystem operations.
 
@@ -917,6 +984,9 @@ class FlowAgent:
         - memory: RAG and history
         - situation: Behavior control
         """
+
+        if session.tools_initialized:
+            return
 
         # =========================================================================
         # VFS TOOLS (V2)
@@ -1141,7 +1211,7 @@ class FlowAgent:
             local_path: str,
             vfs_path: str | None = None,
             allowed_dirs: list[str] | None = None,
-            max_size_bytes: int = 1024 * 1024
+            max_size_bytes: int = 1024 * 1024,
         ) -> dict:
             """
             Copy a file from real filesystem into VFS.
@@ -1163,7 +1233,7 @@ class FlowAgent:
                 local_path=local_path,
                 vfs_path=vfs_path,
                 allowed_dirs=allowed_dirs,
-                max_size_bytes=max_size_bytes
+                max_size_bytes=max_size_bytes,
             )
 
         def fs_copy_from_vfs(
@@ -1171,7 +1241,7 @@ class FlowAgent:
             local_path: str,
             allowed_dirs: list[str] | None = None,
             overwrite: bool = False,
-            create_dirs: bool = True
+            create_dirs: bool = True,
         ) -> dict:
             """
             Copy a file from VFS to real filesystem.
@@ -1195,7 +1265,7 @@ class FlowAgent:
                 local_path=local_path,
                 allowed_dirs=allowed_dirs,
                 overwrite=overwrite,
-                create_dirs=create_dirs
+                create_dirs=create_dirs,
             )
 
         def fs_copy_folder_to_vfs(
@@ -1205,7 +1275,7 @@ class FlowAgent:
             max_size_bytes: int = 1024 * 1024,
             max_files: int = 100,
             include_patterns: list[str] | None = None,
-            exclude_patterns: list[str] | None = None
+            exclude_patterns: list[str] | None = None,
         ) -> dict:
             """
             Copy a folder from real filesystem into VFS recursively.
@@ -1226,8 +1296,8 @@ class FlowAgent:
                 Requires filesystem_access flag.
                 Only reads from allowed_dirs if specified.
             """
-            import os
             import fnmatch
+            import os
 
             results = {
                 "success": True,
@@ -1235,15 +1305,24 @@ class FlowAgent:
                 "copied_dirs": [],
                 "skipped": [],
                 "errors": [],
-                "total_size": 0
+                "total_size": 0,
             }
 
             # Default exclude patterns
             if exclude_patterns is None:
                 exclude_patterns = [
-                    "__pycache__", "*.pyc", "*.pyo", ".git", ".svn",
-                    "node_modules", ".venv", "venv", "*.egg-info",
-                    ".DS_Store", "Thumbs.db", "*.log"
+                    "__pycache__",
+                    "*.pyc",
+                    "*.pyo",
+                    ".git",
+                    ".svn",
+                    "node_modules",
+                    ".venv",
+                    "venv",
+                    "*.egg-info",
+                    ".DS_Store",
+                    "Thumbs.db",
+                    "*.log",
                 ]
 
             try:
@@ -1258,7 +1337,10 @@ class FlowAgent:
                     for d in allowed_dirs
                 )
                 if not allowed:
-                    return {"success": False, "error": f"Path not in allowed directories: {resolved_path}"}
+                    return {
+                        "success": False,
+                        "error": f"Path not in allowed directories: {resolved_path}",
+                    }
 
             if not os.path.exists(resolved_path):
                 return {"success": False, "error": f"Folder not found: {resolved_path}"}
@@ -1270,13 +1352,16 @@ class FlowAgent:
                 """Check if file should be included based on patterns"""
                 # Check exclude patterns first
                 for pattern in exclude_patterns:
-                    if fnmatch.fnmatch(filename, pattern) or fnmatch.fnmatch(os.path.basename(filename), pattern):
+                    if fnmatch.fnmatch(filename, pattern) or fnmatch.fnmatch(
+                        os.path.basename(filename), pattern
+                    ):
                         return False
 
                 # If include patterns specified, file must match at least one
                 if include_patterns:
                     return any(
-                        fnmatch.fnmatch(filename, p) or fnmatch.fnmatch(os.path.basename(filename), p)
+                        fnmatch.fnmatch(filename, p)
+                        or fnmatch.fnmatch(os.path.basename(filename), p)
                         for p in include_patterns
                     )
 
@@ -1318,7 +1403,9 @@ class FlowAgent:
                 # Copy files
                 for filename in files:
                     if file_count >= max_files:
-                        results["skipped"].append(f"{root}/{filename} (max files reached)")
+                        results["skipped"].append(
+                            f"{root}/{filename} (max files reached)"
+                        )
                         continue
 
                     local_file = os.path.join(root, filename)
@@ -1331,34 +1418,42 @@ class FlowAgent:
                     try:
                         file_size = os.path.getsize(local_file)
                         if file_size > max_size_bytes:
-                            results["skipped"].append(f"{local_file} (too large: {file_size} bytes)")
+                            results["skipped"].append(
+                                f"{local_file} (too large: {file_size} bytes)"
+                            )
                             continue
                     except Exception as e:
                         results["errors"].append(f"{local_file}: {e}")
                         continue
 
                     # Build VFS path
-                    vfs_file_path = f"{vfs_dir}/{filename}" if vfs_dir != "/" else f"/{filename}"
+                    vfs_file_path = (
+                        f"{vfs_dir}/{filename}" if vfs_dir != "/" else f"/{filename}"
+                    )
 
                     # Copy file
                     copy_result = session.vfs.load_from_local(
                         local_path=local_file,
                         vfs_path=vfs_file_path,
                         allowed_dirs=allowed_dirs,
-                        max_size_bytes=max_size_bytes
+                        max_size_bytes=max_size_bytes,
                     )
 
                     if copy_result.get("success"):
-                        results["copied_files"].append({
-                            "local": local_file,
-                            "vfs": vfs_file_path,
-                            "size": copy_result.get("size_bytes", 0),
-                            "type": copy_result.get("file_type", "Unknown")
-                        })
+                        results["copied_files"].append(
+                            {
+                                "local": local_file,
+                                "vfs": vfs_file_path,
+                                "size": copy_result.get("size_bytes", 0),
+                                "type": copy_result.get("file_type", "Unknown"),
+                            }
+                        )
                         results["total_size"] += copy_result.get("size_bytes", 0)
                         file_count += 1
                     else:
-                        results["errors"].append(f"{local_file}: {copy_result.get('error')}")
+                        results["errors"].append(
+                            f"{local_file}: {copy_result.get('error')}"
+                        )
 
             results["files_copied"] = len(results["copied_files"])
             results["dirs_created"] = len(results["copied_dirs"])
@@ -1375,7 +1470,7 @@ class FlowAgent:
             overwrite: bool = False,
             create_dirs: bool = True,
             include_patterns: list[str] | None = None,
-            exclude_patterns: list[str] | None = None
+            exclude_patterns: list[str] | None = None,
         ) -> dict:
             """
             Copy a folder from VFS to real filesystem recursively.
@@ -1396,8 +1491,8 @@ class FlowAgent:
                 Requires filesystem_access flag.
                 Only writes to allowed_dirs if specified.
             """
-            import os
             import fnmatch
+            import os
 
             results = {
                 "success": True,
@@ -1405,7 +1500,7 @@ class FlowAgent:
                 "created_dirs": [],
                 "skipped": [],
                 "errors": [],
-                "total_size": 0
+                "total_size": 0,
             }
 
             # Default exclude patterns
@@ -1435,7 +1530,10 @@ class FlowAgent:
                     for d in allowed_dirs
                 )
                 if not allowed:
-                    return {"success": False, "error": f"Path not in allowed directories: {resolved_local}"}
+                    return {
+                        "success": False,
+                        "error": f"Path not in allowed directories: {resolved_local}",
+                    }
 
             def should_include(filename: str) -> bool:
                 """Check if file should be included based on patterns"""
@@ -1443,7 +1541,9 @@ class FlowAgent:
 
                 # Check exclude patterns
                 for pattern in exclude_patterns:
-                    if fnmatch.fnmatch(basename, pattern) or fnmatch.fnmatch(filename, pattern):
+                    if fnmatch.fnmatch(basename, pattern) or fnmatch.fnmatch(
+                        filename, pattern
+                    ):
                         return False
 
                 # If include patterns specified, must match at least one
@@ -1473,7 +1573,9 @@ class FlowAgent:
                 # List VFS directory contents
                 ls_result = session.vfs.ls(vfs_dir, recursive=False)
                 if not ls_result.get("success"):
-                    results["errors"].append(f"Cannot list {vfs_dir}: {ls_result.get('error')}")
+                    results["errors"].append(
+                        f"Cannot list {vfs_dir}: {ls_result.get('error')}"
+                    )
                     return
 
                 for item in ls_result.get("contents", []):
@@ -1486,7 +1588,9 @@ class FlowAgent:
                         skip = False
                         for pattern in exclude_patterns:
                             if fnmatch.fnmatch(item_name, pattern):
-                                results["skipped"].append(f"{item_vfs_path} (excluded directory)")
+                                results["skipped"].append(
+                                    f"{item_vfs_path} (excluded directory)"
+                                )
                                 skip = True
                                 break
 
@@ -1495,7 +1599,9 @@ class FlowAgent:
 
                     else:  # file
                         if not should_include(item_name):
-                            results["skipped"].append(f"{item_vfs_path} (excluded by pattern)")
+                            results["skipped"].append(
+                                f"{item_vfs_path} (excluded by pattern)"
+                            )
                             continue
 
                         # Skip readonly/system files
@@ -1506,7 +1612,9 @@ class FlowAgent:
 
                         # Check if local file exists
                         if os.path.exists(item_local_path) and not overwrite:
-                            results["skipped"].append(f"{item_vfs_path} (file exists, overwrite=False)")
+                            results["skipped"].append(
+                                f"{item_vfs_path} (file exists, overwrite=False)"
+                            )
                             continue
 
                         # Copy file
@@ -1515,18 +1623,22 @@ class FlowAgent:
                             local_path=item_local_path,
                             allowed_dirs=allowed_dirs,
                             overwrite=overwrite,
-                            create_dirs=create_dirs
+                            create_dirs=create_dirs,
                         )
 
                         if save_result.get("success"):
-                            results["copied_files"].append({
-                                "vfs": item_vfs_path,
-                                "local": item_local_path,
-                                "size": save_result.get("size_bytes", 0)
-                            })
+                            results["copied_files"].append(
+                                {
+                                    "vfs": item_vfs_path,
+                                    "local": item_local_path,
+                                    "size": save_result.get("size_bytes", 0),
+                                }
+                            )
                             results["total_size"] += save_result.get("size_bytes", 0)
                         else:
-                            results["errors"].append(f"{item_vfs_path}: {save_result.get('error')}")
+                            results["errors"].append(
+                                f"{item_vfs_path}: {save_result.get('error')}"
+                            )
 
             # Start recursive copy
             copy_vfs_directory(vfs_path, resolved_local)
@@ -1547,7 +1659,7 @@ class FlowAgent:
             command: str,
             timeout: int = 300,
             sync_before: bool = True,
-            sync_after: bool = True
+            sync_after: bool = True,
         ) -> dict:
             """
             Execute a command in the Docker container.
@@ -1564,12 +1676,12 @@ class FlowAgent:
             Returns:
                 Dict with stdout, stderr, exit_code, duration, success
             """
-            return await session.docker_run_command(command, timeout, sync_before, sync_after)
+            return await session.docker_run_command(
+                command, timeout, sync_before, sync_after
+            )
 
         async def docker_start_app(
-            entrypoint: str,
-            port: int = 8080,
-            env: dict[str, str] | None = None
+            entrypoint: str, port: int = 8080, env: dict[str, str] | None = None
         ) -> dict:
             """
             Start a web application in the Docker container.
@@ -1676,7 +1788,7 @@ class FlowAgent:
             return {
                 "allowed": result.allowed,
                 "reason": result.reason,
-                "rule": result.rule_name
+                "rule": result.rule_name,
             }
 
         # =========================================================================
@@ -1685,102 +1797,122 @@ class FlowAgent:
 
         tools = [
             # VFS File Operations
-            {"tool_func":vfs_list, "name": "vfs_list", "category": ["vfs", "read"]},
-            {"tool_func":vfs_read, "name": "vfs_read", "category": ["vfs", "read"]},
-            {"tool_func":vfs_create, "name": "vfs_create", "category": ["vfs", "write"]},
-            {"tool_func":vfs_write, "name": "vfs_write", "category": ["vfs", "write"]},
-            {"tool_func":vfs_edit, "name": "vfs_edit", "category": ["vfs", "write"]},
-            {"tool_func":vfs_append, "name": "vfs_append", "category": ["vfs", "write"]},
-            {"tool_func":vfs_delete, "name": "vfs_delete", "category": ["vfs", "write"]},
-
+            {"tool_func": vfs_list, "name": "vfs_list", "category": ["vfs", "read"]},
+            {"tool_func": vfs_read, "name": "vfs_read", "category": ["vfs", "read"]},
+            {"tool_func": vfs_create, "name": "vfs_create", "category": ["vfs", "write"]},
+            {"tool_func": vfs_write, "name": "vfs_write", "category": ["vfs", "write"]},
+            {"tool_func": vfs_edit, "name": "vfs_edit", "category": ["vfs", "write"]},
+            {"tool_func": vfs_append, "name": "vfs_append", "category": ["vfs", "write"]},
+            {"tool_func": vfs_delete, "name": "vfs_delete", "category": ["vfs", "write"]},
             # VFS Directory Operations
-            {"tool_func":vfs_mkdir, "name": "vfs_mkdir", "category": ["vfs", "write"]},
-            {"tool_func":vfs_rmdir, "name": "vfs_rmdir", "category": ["vfs", "write"]},
-            {"tool_func":vfs_mv, "name": "vfs_mv", "category": ["vfs", "write"]},
-
+            {"tool_func": vfs_mkdir, "name": "vfs_mkdir", "category": ["vfs", "write"]},
+            {"tool_func": vfs_rmdir, "name": "vfs_rmdir", "category": ["vfs", "write"]},
+            {"tool_func": vfs_mv, "name": "vfs_mv", "category": ["vfs", "write"]},
             # VFS Open/Close
-            {"tool_func":vfs_open, "name": "vfs_open", "category": ["vfs", "context"]},
-            {"tool_func":vfs_close, "name": "vfs_close", "category": ["vfs", "context"], "is_async": True},
-            {"tool_func":vfs_view, "name": "vfs_view", "category": ["vfs", "context"]},
-
+            {"tool_func": vfs_open, "name": "vfs_open", "category": ["vfs", "context"]},
+            {
+                "tool_func": vfs_close,
+                "name": "vfs_close",
+                "category": ["vfs", "context"],
+                "is_async": True,
+            },
+            {"tool_func": vfs_view, "name": "vfs_view", "category": ["vfs", "context"]},
             # VFS Info & Diagnostics
-            {"tool_func":vfs_info, "name": "vfs_info", "category": ["vfs", "read"]},
-            {"tool_func":vfs_diagnostics, "name": "vfs_diagnostics", "category": ["vfs", "lsp"], "is_async": True},
-            {"tool_func":vfs_executables, "name": "vfs_executables", "category": ["vfs", "read"]},
-
+            {"tool_func": vfs_info, "name": "vfs_info", "category": ["vfs", "read"]},
+            {
+                "tool_func": vfs_diagnostics,
+                "name": "vfs_diagnostics",
+                "category": ["vfs", "lsp"],
+                "is_async": True,
+            },
+            {
+                "tool_func": vfs_executables,
+                "name": "vfs_executables",
+                "category": ["vfs", "read"],
+            },
             # Filesystem Copy (Flag-based)
             {
                 "tool_func": fs_copy_to_vfs,
                 "name": "fs_copy_to_vfs",
                 "category": ["filesystem", "vfs"],
                 "flags": {"filesystem_access": True},
-                "description": "Copy file from real filesystem to VFS"
+                "description": "Copy file from real filesystem to VFS",
             },
             {
                 "tool_func": fs_copy_from_vfs,
                 "name": "fs_copy_from_vfs",
                 "category": ["filesystem", "vfs"],
                 "flags": {"filesystem_access": True},
-                "description": "Copy file from VFS to real filesystem"
+                "description": "Copy file from VFS to real filesystem",
             },
             {
                 "tool_func": fs_copy_folder_to_vfs,
                 "name": "fs_copy_folder_to_vfs",
                 "category": ["filesystem", "vfs"],
                 "flags": {"filesystem_access": True},
-                "description": "Copy folder from real filesystem to VFS recursively"
+                "description": "Copy folder from real filesystem to VFS recursively",
             },
             {
                 "tool_func": fs_copy_folder_from_vfs,
                 "name": "fs_copy_folder_from_vfs",
                 "category": ["filesystem", "vfs"],
                 "flags": {"filesystem_access": True},
-                "description": "Copy folder from VFS to real filesystem recursively"
+                "description": "Copy folder from VFS to real filesystem recursively",
             },
-
             # Docker (Flag-based)
             {
                 "tool_func": docker_run,
                 "name": "docker_run",
                 "category": ["docker", "execute"],
                 "flags": {"requires_docker": True},
-                "is_async": True
+                "is_async": True,
             },
             {
                 "tool_func": docker_start_app,
                 "name": "docker_start_app",
                 "category": ["docker", "web"],
                 "flags": {"requires_docker": True},
-                "is_async": True
+                "is_async": True,
             },
             {
                 "tool_func": docker_stop_app,
                 "name": "docker_stop_app",
                 "category": ["docker", "web"],
                 "flags": {"requires_docker": True},
-                "is_async": True
+                "is_async": True,
             },
             {
                 "tool_func": docker_logs,
                 "name": "docker_logs",
                 "category": ["docker", "read"],
                 "flags": {"requires_docker": True},
-                "is_async": True
+                "is_async": True,
             },
             {
                 "tool_func": docker_status,
                 "name": "docker_status",
                 "category": ["docker", "read"],
-                "flags": {"requires_docker": True}
+                "flags": {"requires_docker": True},
             },
-
             # Memory/RAG
-            {"tool_func": recall, "name": "recall", "category": ["memory", "rag"], "is_async": True},
+            {
+                "tool_func": recall,
+                "name": "recall",
+                "category": ["memory", "rag"],
+                "is_async": True,
+            },
             {"tool_func": history, "name": "history", "category": ["memory", "history"]},
-
             # Situation/Behavior
-            {"tool_func": set_agent_situation, "name": "set_agent_situation", "category": ["situation"]},
-            {"tool_func": check_permissions, "name": "check_permissions", "category": ["situation", "rules"]},
+            {
+                "tool_func": set_agent_situation,
+                "name": "set_agent_situation",
+                "category": ["situation"],
+            },
+            {
+                "tool_func": check_permissions,
+                "name": "check_permissions",
+                "category": ["situation", "rules"],
+            },
         ]
 
         # Register all tools
@@ -1788,6 +1920,7 @@ class FlowAgent:
             self.add_tool(**tool_def)
 
         session.tools_initialized = True
+        logger.info(f"Tools initialized for session {session.session_id}")
 
         return tools
 
@@ -1795,7 +1928,9 @@ class FlowAgent:
     # CONTEXT AWARENESS & ANALYTICS
     # =========================================================================
 
-    async def context_overview(self, session_id: str | None = None, print_visual: bool = True) -> dict:
+    async def context_overview(
+        self, session_id: str | None = None, print_visual: bool = True
+    ) -> dict:
         """
         Analysiert den aktuellen Token-Verbrauch des Kontexts und gibt eine Übersicht zurück.
 
@@ -1812,12 +1947,18 @@ class FlowAgent:
 
         # 1. Setup & Defaults
         target_session = session_id or self.active_session or "default"
-        model = self.amd.fast_llm_model.split("/")[-1]  # Wir nutzen das schnelle Modell für die Tokenizer-Logik
+        model = self.amd.fast_llm_model.split("/")[
+            -1
+        ]  # Wir nutzen das schnelle Modell für die Tokenizer-Logik
 
         # Holen der Context Window Size (Fallback auf 128k wenn unbekannt)
         try:
             model_info = litellm.get_model_info(model)
-            context_limit = model_info.get("max_input_tokens") or model_info.get("max_tokens") or 128000
+            context_limit = (
+                model_info.get("max_input_tokens")
+                or model_info.get("max_tokens")
+                or 128000
+            )
         except Exception:
             context_limit = 128000
 
@@ -1830,7 +1971,7 @@ class FlowAgent:
             "overhead": 0,
             "total": 0,
             "limit": context_limit,
-            "session_id": target_session if session_id else "NONE (Base Config)"
+            "session_id": target_session if session_id else "NONE (Base Config)",
         }
 
         # 2. System Prompt Berechnung
@@ -1838,12 +1979,34 @@ class FlowAgent:
         base_system_msg = self.amd.get_system_message()
         # Hinweis: ExecutionEngine fügt oft noch spezifische Prompts hinzu (Immediate/React)
         # Wir nehmen hier eine repräsentative Größe an.
-        full_sys_msg = f"{base_system_msg}"
+
+        full_sys_msg = f"{base_system_msg}" + "".join([
+            "IDENTITY: You are FlowAgent, an autonomous execution unit capable of file operations, code execution, and data processing.",
+            "",
+            "OPERATING PROTOCOL:",
+            "1. INITIATIVE: Do not complain about missing tools. If a task requires file access, USE `vfs_list` or `vfs_read`. If you need to search, USE the search tools.",
+            "2. FORMAT: When asked for data, output ONLY data (JSON/Markdown). Do not use conversational filler ('Here is the data').",
+            "3. HONESTY: Differentiate between 'Information missing in context' (Unknown) and 'Factually non-existent' (False). Never apologize.",
+            "4. ITERATION: If a step fails, analyze the error in `think()`, then try a different approach. Do not give up immediately.",
+            "",
+            "CAPABILITIES:",
+            "- Loaded Tools: ({len(ctx.dynamic_tools)}/{ctx.max_dynamic_tools}): [{active_str}]",
+            "- Context Access: {cat_list}",
+            "",
+            "MANDATORY WORKFLOW:",
+            "A. PLAN: Use `think()` to decompose the request.",
+            "B. ACT: Use tools (`load_tools`, `vfs_*`, etc.) to gather info or execute changes.",
+            "C. VERIFY: Check if the tool output matches expectations.",
+            "D. REPORT: Use `final_answer()` only when the objective is met or definitively impossible.",
+        ])
         metrics["system_prompt"] = litellm.token_counter(model=model, text=full_sys_msg)
 
         # 3. Tools Definitions Berechnung
         # Wir sammeln alle Tools + Standard VFS Tools um die Definition-Größe zu berechnen
-        from toolboxv2.mods.isaa.base.Agent.execution_engine import STATIC_TOOLS, DISCOVERY_TOOLS
+        from toolboxv2.mods.isaa.base.Agent.execution_engine import (
+            DISCOVERY_TOOLS,
+            STATIC_TOOLS,
+        )
 
         # System Tools die immer injected werden
         all_tools = STATIC_TOOLS + DISCOVERY_TOOLS
@@ -1851,9 +2014,13 @@ class FlowAgent:
         # LiteLLM Token Counter kann Tools nicht direkt, wir dumpen das JSON als Näherungswert
         # (Dies ist oft genauer als man denkt, da Definitionen als Text/JSON injected werden)
         tools_json = json.dumps(all_tools)
-        metrics["system_tool_definitions"] = litellm.token_counter(model=model, text=tools_json)
+        metrics["system_tool_definitions"] = litellm.token_counter(
+            model=model, text=tools_json
+        )
         tools_json = json.dumps(self.tool_manager.get_all_litellm())
-        metrics["user_tool_definitions"] = litellm.token_counter(model=model, text=tools_json)
+        metrics["user_tool_definitions"] = litellm.token_counter(
+            model=model, text=tools_json
+        )
 
         # 4. Session Specific Data (VFS & History)
         if session_id:
@@ -1863,12 +2030,10 @@ class FlowAgent:
             # Wir rufen build_context_string auf, um genau zu sehen, was das LLM sieht
             vfs_str = session.build_vfs_context()
             # Plus Auto-Focus (Letzte Änderungen)
-            if self._execution_engine:  # Falls Engine instanziiert, holen wir AutoFocus
-                # Wir müssen hier tricksen, da AutoFocus in der Engine Instanz liegt
-                # und private ist. Wir nehmen an, dass es leer ist oder klein,
-                # oder wir instanziieren eine temporäre Engine.
-                # Für Performance nehmen wir hier nur den VFS String.
-                pass
+            # Wir müssen hier tricksen, da AutoFocus in der Engine Instanz liegt
+            # und private ist. Wir nehmen an, dass es leer ist oder klein,
+            # oder wir instanziieren eine temporäre Engine.
+            # Für Performance nehmen wir hier nur den VFS String.
 
             metrics["vfs_context"] = litellm.token_counter(model=model, text=vfs_str)
 
@@ -1881,7 +2046,12 @@ class FlowAgent:
         # Puffer für Protokoll-Overhead (Role-Tags, JSON-Formatierung) ~50 Tokens
         metrics["overhead"] = 50
         metrics["total"] = sum(
-            [v for k, v in metrics.items() if isinstance(v, (int, float)) and k not in ["limit", "total"]])
+            [
+                v
+                for k, v in metrics.items()
+                if isinstance(v, (int, float)) and k not in ["limit", "total"]
+            ]
+        )
 
         # 6. Visualisierung
         if print_visual:
@@ -1906,25 +2076,33 @@ class FlowAgent:
 
         # Farbe basierend auf Auslastung
         bar_color = C_GREEN
-        if percent > 70: bar_color = C_YELLOW
-        if percent > 90: bar_color = C_RED
+        if percent > 70:
+            bar_color = C_YELLOW
+        if percent > 90:
+            bar_color = C_RED
 
         # Progress Bar bauen (Breite 30 Zeichen)
         bar_width = 30
         filled = int((percent / 100) * bar_width)
         bar = "█" * filled + "░" * (bar_width - filled)
 
-        print(f"\n{C_BOLD}CONTEXT OVERVIEW{C_RESET} | Session: {C_BLUE}{metrics['session_id']}{C_RESET}")
+        print(
+            f"\n{C_BOLD}CONTEXT OVERVIEW{C_RESET} | Session: {C_BLUE}{metrics['session_id']}{C_RESET}"
+        )
         print(f"{C_GRAY}Model: {model_name} | Limit: {limit:,} tokens{C_RESET}\n")
 
         print(f"Usage:")
-        print(f"{bar_color}[{bar}]{C_RESET} {C_BOLD}{percent:.1f}%{C_RESET} ({total:,} / {limit:,})")
+        print(
+            f"{bar_color}[{bar}]{C_RESET} {C_BOLD}{percent:.1f}%{C_RESET} ({total:,} / {limit:,})"
+        )
 
         print(f"\n{C_BOLD}Breakdown:{C_RESET}")
 
         def print_row(label, value, color=C_RESET):
             pct = (value / total * 100) if total > 0 else 0
-            print(f" • {label:<18} {color}{value:>6,}{C_RESET} tokens {C_GRAY}({pct:>4.1f}%){C_RESET}")
+            print(
+                f" • {label:<18} {color}{value:>6,}{C_RESET} tokens {C_GRAY}({pct:>4.1f}%){C_RESET}"
+            )
 
         print_row("System Prompts", metrics["system_prompt"], C_YELLOW)
         print_row("Tools (Sys)", metrics["system_tool_definitions"], C_BLUE)
@@ -1957,7 +2135,9 @@ class FlowAgent:
     # BINDING
     # =========================================================================
 
-    async def bind(self, partner: 'FlowAgent', mode: str = 'public', session_id: str = 'default'):
+    async def bind(
+        self, partner: "FlowAgent", mode: str = "public", session_id: str = "default"
+    ):
         """Bind to another agent."""
         return await self.bind_manager.bind(partner, mode, session_id)
 
@@ -1987,8 +2167,11 @@ class FlowAgent:
             return
 
         self.a2a_server = A2AServer(
-            host=host, port=port,
-            agent_card=AgentCard(name=self.amd.name, description="FlowAgent", version="2.0")
+            host=host,
+            port=port,
+            agent_card=AgentCard(
+                name=self.amd.name, description="FlowAgent", version="2.0"
+            ),
         )
 
     # =========================================================================
@@ -2022,19 +2205,18 @@ class FlowAgent:
 
     def get_stats(self) -> dict:
         return {
-            'agent_name': self.amd.name,
-            'total_tokens_in': self.total_tokens_in,
-            'total_tokens_out': self.total_tokens_out,
-            'total_cost': self.total_cost_accumulated,
-            'total_llm_calls': self.total_llm_calls,
-            'sessions': self.session_manager.get_stats(),
-            'tools': self.tool_manager.get_stats(),
-            'bindings': self.bind_manager.get_stats(),
+            "agent_name": self.amd.name,
+            "total_tokens_in": self.total_tokens_in,
+            "total_tokens_out": self.total_tokens_out,
+            "total_cost": self.total_cost_accumulated,
+            "total_llm_calls": self.total_llm_calls,
+            "sessions": self.session_manager.get_stats(),
+            "tools": self.tool_manager.get_stats(),
+            "bindings": self.bind_manager.get_stats(),
         }
 
     def __repr__(self) -> str:
         return f"<FlowAgent '{self.amd.name}' [{len(self.session_manager.sessions)} sessions]>"
-
 
     def __rshift__(self, other):
         return Chain(self) >> other

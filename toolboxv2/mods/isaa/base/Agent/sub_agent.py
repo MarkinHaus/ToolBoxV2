@@ -376,7 +376,6 @@ class SubAgentManager:
             sub_engine = ExecutionEngine(
                 agent=self.parent_engine.agent,
                 human_online=False,
-                callback=None,
                 is_sub_agent=True,
                 sub_agent_output_dir=state.output_dir,
                 sub_agent_budget=state.config.max_tokens

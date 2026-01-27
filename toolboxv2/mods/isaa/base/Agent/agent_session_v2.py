@@ -66,7 +66,6 @@ class AgentSessionV2:
     - Tool restrictions per session
     """
 
-    tools_initialized = False
 
     def __init__(
         self,
@@ -102,6 +101,8 @@ class AgentSessionV2:
         self.session_id = session_id
         self.agent_name = agent_name
         self._memory = memory_instance
+
+        self.tools_initialized = False
 
         # Timestamps
         self.created_at = datetime.now()
@@ -580,3 +581,6 @@ class AgentSessionV2:
             features.append("Docker")
         features_str = f" [{', '.join(features)}]" if features else ""
         return f"<AgentSessionV2 {self.session_id} [{status}]{features_str}>"
+
+
+AgentSession = AgentSessionV2

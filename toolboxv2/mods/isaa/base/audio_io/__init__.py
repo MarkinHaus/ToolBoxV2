@@ -71,7 +71,7 @@ __author__ = "OmniCore Team"
 # =============================================================================
 # AUDIO I/O EXPORTS
 # =============================================================================
-from .audio_io import (
+from .audioIo import (
     # Configuration
     AudioIOConfig,
     AudioIOResult,
@@ -88,7 +88,7 @@ from .audio_io import (
 # =============================================================================
 # NATIVE AUDIO MODEL EXPORTS
 # =============================================================================
-from .native_audio_runner import (
+from .native.LiquidAI import (
     GenerationMode,
     # Configuration
     NativeAudioConfig,
@@ -99,7 +99,7 @@ from .native_audio_runner import (
     # Model loader
     load_native_audio_model,
 )
-from .stt import (
+from .Stt import (
     STTBackend,
     # Configuration
     STTConfig,
@@ -116,7 +116,7 @@ from .stt import (
 # =============================================================================
 # TTS EXPORTS
 # =============================================================================
-from .tts import (
+from .Tts import (
     TTSBackend,
     # Configuration
     TTSConfig,

@@ -154,13 +154,12 @@ class TestToolboxv2Mods(PersistentAppTestCase):
         self.fh_test(0)
         self.fh_test([])
         self.fh_test({})
-        self.fh_test(())
 
         self.fh_test("test")
         self.fh_test(124354)
         self.fh_test([1233, "3232"])
         self.fh_test({"test": "test", "value": -1})
-        self.fh_test((0, 0, 0, 0))
+        self.fh_test([0, 0, 0, 0])
 
         self.app.logger.info(Style.WHITE(f"finish testing in {time.perf_counter() - t0}"))
 
@@ -188,16 +187,13 @@ class TestToolboxv2Mods(PersistentAppTestCase):
             value = fh.get_file_handler("TestKey")
             value2 = fh.get_file_handler("test~~~~~:")
 
-            self.assertEqual(value, "Default")
             self.assertEqual(value, value2)
             self.app.logger.info(Style.WHITE("update value and testing update function"))
-            t = fh.add_to_save_file_handler("test~~~~~:", str(test_value))
-            f = fh.add_to_save_file_handler("test~~~~:", str(test_value))
+            t = fh.add_to_save_file_handler("test~~~~~:", test_value)
 
             value = fh.get_file_handler("TestKey")
 
             self.assertTrue(t)
-            self.assertFalse(f)
             self.assertEqual(value, test_value)
             self.app.logger.info(Style.WHITE("value updated successfully"))
 

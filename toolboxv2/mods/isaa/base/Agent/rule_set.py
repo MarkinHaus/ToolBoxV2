@@ -1101,7 +1101,6 @@ def create_default_ruleset(config_path: str | None = None) -> RuleSet:
     """
     Create a RuleSet with sensible defaults.
     """
-    print("Creating default ruleset", config_path)
     ruleset = RuleSet(config_path=config_path)
 
     if not ruleset.situation_rules:

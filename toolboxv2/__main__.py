@@ -1,4 +1,5 @@
 """Console script for toolboxv2."""
+
 import argparse
 import asyncio
 import pprint
@@ -22,37 +23,40 @@ from toolboxv2.setup_helper import run_command
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils import get_app
 from toolboxv2.utils.clis.cli_worker_manager import main as cli_worker_manager
-from toolboxv2.utils.workers import cli_session, cli_event, cli_http_worker, cli_ws_worker
-from toolboxv2.utils.clis.tb_lang_cli import cli_tbx_main
+from toolboxv2.utils.clis.db_cli_manager import cli_db_runner
 from toolboxv2.utils.clis.minio_user_manager import main as minio_user_manager_main
+from toolboxv2.utils.clis.tb_lang_cli import cli_tbx_main
+from toolboxv2.utils.clis.tcm_p2p_cli import cli_tcm_runner
+
 # TEMPORARY FIX: Disabled user_dashboard import due to pywintypes dependency issue
 from toolboxv2.utils.clis.user_dashboard import interactive_user_dashboard
 from toolboxv2.utils.daemon import DaemonApp
 from toolboxv2.utils.extras.Style import Spinner, Style
 from toolboxv2.utils.proxy import ProxyApp
 from toolboxv2.utils.system import CallingObject, get_state_from_app
-from toolboxv2.utils.clis.db_cli_manager import cli_db_runner
 from toolboxv2.utils.system.exe_bg import run_executable_in_background
 from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
-from toolboxv2.utils.clis.tcm_p2p_cli import cli_tcm_runner
+from toolboxv2.utils.workers import cli_event, cli_http_worker, cli_session, cli_ws_worker
+
 from .utils.toolbox import App as TbApp
+
 try:
     from .mcp_server.__main__ import main as cli_mcp_server
 except ImportError:
-    cli_mcp_server = lambda :None
+    cli_mcp_server = lambda: None
 
 load_dotenv()
 
-import sys
 import os
+import sys
 
 # Set UTF-8 encoding for Windows console (place at top of your script)
-if sys.platform == 'win32':
-    os.system('chcp 65001 >nul 2>&1')  # Change console to UTF-8
-    if hasattr(sys.stdout, 'reconfigure'):
-        sys.stdout.reconfigure(encoding='utf-8')
-        sys.stderr.reconfigure(encoding='utf-8')
+if sys.platform == "win32":
+    os.system("chcp 65001 >nul 2>&1")  # Change console to UTF-8
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
 
 DEFAULT_MODI = "cli"
 
@@ -70,8 +74,7 @@ try:
     import io
     import pstats
 
-
-    def profile_execute_all_functions(app=None, m_query='', f_query=''):
+    def profile_execute_all_functions(app=None, m_query="", f_query=""):
         # Erstellen Sie eine Instanz Ihrer Klasse
         instance = app if app is not None else get_app(from_="Profiler")
 
@@ -87,7 +90,9 @@ try:
                 end_time = time.perf_counter()
                 profiler.disable()
                 total_time_ = end_time - start_time
-                print(f'Function {func_.__name__}{args} {kwargs} Took {total_time_:.4f} seconds')
+                print(
+                    f"Function {func_.__name__}{args} {kwargs} Took {total_time_:.4f} seconds"
+                )
                 return result
 
             return timeit_wrapper
@@ -102,24 +107,28 @@ try:
                     continue
                 if not function_name.startswith(f_query):
                     continue
-                test: list = function_data.get('do_test')
+                test: list = function_data.get("do_test")
                 print(test, module_name, function_name, function_data)
                 if test is False:
                     continue
-                instance.functions[module_name][function_name]['func'] = timeit(function_data.get('func'))
+                instance.functions[module_name][function_name]["func"] = timeit(
+                    function_data.get("func")
+                )
 
                 # Starten des Profilers und Ausführen der Funktion
         instance.execute_all_functions(m_query=m_query, f_query=f_query)
 
         s = io.StringIO()
-        sortby = 'cumulative'
+        sortby = "cumulative"
         ps = pstats.Stats(profiler, stream=s).sort_stats(sortby)
         ps.print_stats()
         print(s.getvalue())
 
         print("\n================================" * 12)
         s = io.StringIO()
-        sortby = 'time'  # Sortierung nach der Gesamtzeit, die in jeder Funktion verbracht wird
+        sortby = (
+            "time"  # Sortierung nach der Gesamtzeit, die in jeder Funktion verbracht wird
+        )
 
         # Erstellen eines pstats-Objekts und Ausgabe der Top-Funktionen
         ps = pstats.Stats(profiler, stream=s).sort_stats(sortby)
@@ -131,8 +140,10 @@ try:
         # Erstellen eines Streams für die Profilergebnisse
 
 except ImportError:
+
     def profile_execute_all_functions(*args):
         return print(args)
+
     raise ValueError("Failed to import function for profiling")
 
 try:
@@ -157,7 +168,7 @@ def start(pidname, args, filename):
     args = args[1:]
     args = ["-bgr" if arg == "-bg" else arg for arg in args]
 
-    if caller.endswith('tb'):
+    if caller.endswith("tb"):
         args = ["tb"] + args
     else:
         args = [sys.executable, "-m", "tb"] + args
@@ -165,8 +176,7 @@ def start(pidname, args, filename):
         DETACHED_PROCESS = 0x00000008
         p = subprocess.Popen(args, creationflags=DETACHED_PROCESS)
     else:  # sys.executable, "-m",
-        p = subprocess.Popen(args, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE)
+        p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     pid = p.pid
     with open(filename, "w", encoding="utf8") as f:
         f.write(str(pid))
@@ -183,9 +193,9 @@ def stop(pidfile, pidname):
 
     if procID:
         if system() == "Windows":
-            subprocess.Popen(['taskkill', '/PID', procID, '/F'])
+            subprocess.Popen(["taskkill", "/PID", procID, "/F"])
         else:
-            subprocess.Popen(['kill', '-SIGTERM', procID])
+            subprocess.Popen(["kill", "-SIGTERM", procID])
 
         get_app().logger.info(f"Service {pidname} {procID} stopped")
         os.remove(pidfile)
@@ -260,16 +270,14 @@ async def setup_service_windows():
         runner = "bg"
         if runner_ := input("enter a runner default bg/or gui: ").strip():
             runner = runner_
-        if os.path.exists(path + '/tb_start.bat'):
-            os.remove(path + '/tb_start.bat')
-        with open(path + '/tb_start.bat', "a", encoding="utf8") as f:
+        if os.path.exists(path + "/tb_start.bat"):
+            os.remove(path + "/tb_start.bat")
+        with open(path + "/tb_start.bat", "a", encoding="utf8") as f:
             if runner.upper().strip() == "GUI":
                 command = '-c "from toolboxv2.__gui__ import start; start()"'
             else:
                 command = f"-m toolboxv2 -bgr {runner}"
-            f.write(
-                f"""{sys.executable} {command}"""
-            )
+            f.write(f"""{sys.executable} {command}""")
         print(f"Init Service in {path}")
     elif mode == "3":
         await get_app().show_console()
@@ -278,7 +286,7 @@ async def setup_service_windows():
     elif mode == "0":
         pass
     elif mode == "2":
-        os.remove(path + '/tb_start.bat')
+        os.remove(path + "/tb_start.bat")
         print(f"Removed Service from {path}")
     else:
         await setup_service_windows()
@@ -316,11 +324,31 @@ def setup_service_linux():
 # =================== Constants ===================
 
 RUNNER_KEYS = [
-    "venv", "ipy", "db", "gui", "p2p", "default",
-    "status", "browser", "mcp", "login", "logout",
-    "run", "mods", "flow", "user", "workers",
-    "session", "event", "broker", "http_worker", "ws_worker",
-    "services", "registry", "manifest", "llm-gateway"
+    "venv",
+    "ipy",
+    "db",
+    "gui",
+    "p2p",
+    "default",
+    "status",
+    "browser",
+    "mcp",
+    "login",
+    "logout",
+    "run",
+    "mods",
+    "flow",
+    "user",
+    "workers",
+    "session",
+    "event",
+    "broker",
+    "http_worker",
+    "ws_worker",
+    "services",
+    "registry",
+    "manifest",
+    "llm-gateway",
 ]
 
 DEFAULT_MODI = "cli"
@@ -328,11 +356,14 @@ DEFAULT_MODI = "cli"
 
 # =================== Helper Functions ===================
 
-def split_args_by_runner(args: List[str], runner_keys: List[str]) -> Tuple[List[str], str, List[str]]:
+
+def split_args_by_runner(
+    args: List[str], runner_keys: List[str]
+) -> Tuple[List[str], str, List[str]]:
     """Split arguments into main args, runner name, and runner args."""
     for i, arg in enumerate(args):
         if arg in runner_keys:
-            return args[:i], arg, args[i + 1:]
+            return args[:i], arg, args[i + 1 :]
     return args, None, []
 
 
@@ -340,16 +371,17 @@ def parse_kwargs(kwargs_list: List[str]) -> dict:
     """Parse key=value pairs into dictionary."""
     kwargs = {}
     for item in kwargs_list:
-        if '=' in item:
-            key, value = item.split('=', 1)
+        if "=" in item:
+            key, value = item.split("=", 1)
             kwargs[key.strip()] = value.strip()
-        elif ':' in item:
-            key, value = item.split(':', 1)
+        elif ":" in item:
+            key, value = item.split(":", 1)
             kwargs[key.strip()] = value.strip()
     return kwargs
 
 
 # =================== Modern Help Formatter ===================
+
 
 class ModernHelpFormatter(argparse.RawDescriptionHelpFormatter):
     """Modern help formatter with better spacing and alignment."""
@@ -369,6 +401,7 @@ class ModernHelpFormatter(argparse.RawDescriptionHelpFormatter):
 
 
 # =================== Guide System ===================
+
 
 def show_interactive_guide():
     """Show interactive guide with examples and tips."""
@@ -594,6 +627,7 @@ def show_interactive_guide():
 
 # =================== Modern Parser ===================
 
+
 def parse_args():
     """Create modern argument parser with improved help text."""
 
@@ -608,7 +642,7 @@ def parse_args():
 
     # Create parser with modern help
     parser = argparse.ArgumentParser(
-        prog='tb',
+        prog="tb",
         description=textwrap.dedent("""
         ╔════════════════════════════════════════════════════════════════════════╗
         ║                   🧰 ToolBoxV2 - CLI Interface 🧰                        ║
@@ -648,23 +682,27 @@ def parse_args():
         For command help: tb [command] -h
         """),
         formatter_class=ModernHelpFormatter,
-        add_help=False  # We'll add custom help
+        add_help=False,  # We'll add custom help
     )
 
     # =================== EXTENSION COMMANDS ===================
-    extensions = parser.add_argument_group('🚀 Extension Commands')
+    extensions = parser.add_argument_group("🚀 Extension Commands")
 
-    extensions.add_argument("gui",
-                            help="Launch graphical user interface",
-                            nargs='?',
-                            const=True,
-                            default=False)
+    extensions.add_argument(
+        "gui",
+        help="Launch graphical user interface",
+        nargs="?",
+        const=True,
+        default=False,
+    )
 
-    extensions.add_argument("mods",
-                            help="Open interactive module manager",
-                            nargs='?',
-                            const=True,
-                            default=False)
+    extensions.add_argument(
+        "mods",
+        help="Open interactive module manager",
+        nargs="?",
+        const=True,
+        default=False,
+    )
 
     # extensions.add_argument("p2p",
     #                         help="Manage P2P client (use: tb p2p -h)",
@@ -672,270 +710,321 @@ def parse_args():
     #                         const=True,
     #                         default=False)
 
-    extensions.add_argument("db",
-                            help="Database commands (use: tb db -h)",
-                            nargs='?',
-                            const=True,
-                            default=False)
+    extensions.add_argument(
+        "db",
+        help="Database commands (use: tb db -h)",
+        nargs="?",
+        const=True,
+        default=False,
+    )
 
-    extensions.add_argument("venv",
-                            help="Conda environment commands (use: tb venv -h)",
-                            nargs='?',
-                            const=True,
-                            default=False)
+    extensions.add_argument(
+        "venv",
+        help="Conda environment commands (use: tb venv -h)",
+        nargs="?",
+        const=True,
+        default=False,
+    )
 
-    extensions.add_argument("mcp",
-                            help="Start MCP server for agents",
-                            nargs='?',
-                            const=True,
-                            default=False)
+    extensions.add_argument(
+        "mcp", help="Start MCP server for agents", nargs="?", const=True, default=False
+    )
 
-    extensions.add_argument("browser",
-                            help="Browser extension installer",
-                            nargs='?',
-                            const=True,
-                            default=False)
+    extensions.add_argument(
+        "browser",
+        help="Browser extension installer",
+        nargs="?",
+        const=True,
+        default=False,
+    )
 
-    extensions.add_argument("flow",
-                            help="Execute flows/mod from file or directory",
-                            nargs='?',
-                            const=True,
-                            default=False)
+    extensions.add_argument(
+        "flow",
+        help="Execute flows/mod from file or directory",
+        nargs="?",
+        const=True,
+        default=False,
+    )
 
+    extensions.add_argument(
+        "run", help="Execute .tbx file and setup", nargs="?", const=True, default=False
+    )
 
-    extensions.add_argument("run",
-                            help="Execute .tbx file and setup",
-                            nargs='?',
-                            const=True,
-                            default=False)
+    extensions.add_argument(
+        "login", help="Login to ToolBoxV2", nargs="?", const=True, default=False
+    )
 
-    extensions.add_argument("login",
-                            help="Login to ToolBoxV2",
-                            nargs='?',
-                            const=True,
-                            default=False)
+    extensions.add_argument(
+        "logout", help="Logout from ToolBoxV2", nargs="?", const=True, default=False
+    )
 
-    extensions.add_argument("logout",
-                            help="Logout from ToolBoxV2",
-                            nargs='?',
-                            const=True,
-                            default=False)
-
-    extensions.add_argument("status",
-                            help="Display system status (DB, API, P2P, Workers)",
-                            nargs='?',
-                            const=True,
-                            default=False)
-    extensions.add_argument("user",
-                            help="User management",
-                            nargs='?',
-                            const=True,
-                            default=False)
-    extensions.add_argument("workers",
-                            help="Worker management (use: tb workers -h)",
-                            nargs='?',
-                            const=True,
-                            default=False)
-    extensions.add_argument("session",
-                            help="Session management for workers (use: tb session -h)",
-                            nargs='?',
-                            const=True,
-                            default=False)
-    extensions.add_argument("broker",
-                            help="ZMQ event broker (use: tb broker -h)",
-                            nargs='?',
-                            const=True,
-                            default=False)
-    extensions.add_argument("http_worker",
-                            help="HTTP worker",
-                            nargs='?',
-                            const=True,
-                            default=False)
-    extensions.add_argument("ws_worker",
-                            help="WebSocket worker",
-                            nargs='?',
-                            const=True,
-                            default=False)
+    extensions.add_argument(
+        "status",
+        help="Display system status (DB, API, P2P, Workers)",
+        nargs="?",
+        const=True,
+        default=False,
+    )
+    extensions.add_argument(
+        "user", help="User management", nargs="?", const=True, default=False
+    )
+    extensions.add_argument(
+        "workers",
+        help="Worker management (use: tb workers -h)",
+        nargs="?",
+        const=True,
+        default=False,
+    )
+    extensions.add_argument(
+        "session",
+        help="Session management for workers (use: tb session -h)",
+        nargs="?",
+        const=True,
+        default=False,
+    )
+    extensions.add_argument(
+        "broker",
+        help="ZMQ event broker (use: tb broker -h)",
+        nargs="?",
+        const=True,
+        default=False,
+    )
+    extensions.add_argument(
+        "http_worker", help="HTTP worker", nargs="?", const=True, default=False
+    )
+    extensions.add_argument(
+        "ws_worker", help="WebSocket worker", nargs="?", const=True, default=False
+    )
 
     # =================== CORE OPTIONS ===================
-    core = parser.add_argument_group('⚙️  Core Options')
+    core = parser.add_argument_group("⚙️  Core Options")
 
-    core.add_argument("-h", "--help",
-                      action="store_true",
-                      help="Show this help message")
+    core.add_argument("-h", "--help", action="store_true", help="Show this help message")
 
-    core.add_argument("--guide",
-                      action="store_true",
-                      help="Show interactive usage guide")
+    core.add_argument("--guide", action="store_true", help="Show interactive usage guide")
 
-    core.add_argument("-v", "--get-version",
-                      action="store_true",
-                      help="Display ToolBox version and modules (use with -l for all)")
+    core.add_argument(
+        "-v",
+        "--get-version",
+        action="store_true",
+        help="Display ToolBox version and modules (use with -l for all)",
+    )
 
-    core.add_argument("-init",
-                      type=str,
-                      metavar="TYPE",
-                      help="Initialize ToolBoxV2 [main|config|manifest]")
+    core.add_argument(
+        "-init",
+        type=str,
+        metavar="TYPE",
+        help="Initialize ToolBoxV2 [main|config|manifest]",
+    )
 
-    core.add_argument("-l", "--load-all-mod-in-files",
-                      action="store_true",
-                      help="Load all modules from mod directory")
+    core.add_argument(
+        "-l",
+        "--load-all-mod-in-files",
+        action="store_true",
+        help="Load all modules from mod directory",
+    )
 
-    core.add_argument("-c", "--command",
-                      nargs='*',
-                      action='append',
-                      metavar=('MODULE', 'FUNCTION'),
-                      help="Execute module command: -c MODULE FUNCTION [ARGS...]")
+    core.add_argument(
+        "-c",
+        "--command",
+        nargs="*",
+        action="append",
+        metavar=("MODULE", "FUNCTION"),
+        help="Execute module command: -c MODULE FUNCTION [ARGS...]",
+    )
 
-    core.add_argument("--ipy",
-                      action="store_true",
-                      help="Enter IPython toolbox shell with magic commands")
+    core.add_argument(
+        "--ipy",
+        action="store_true",
+        help="Enter IPython toolbox shell with magic commands",
+    )
 
     # =================== MODULE MANAGEMENT ===================
-    modules = parser.add_argument_group('📦 Module Management')
+    modules = parser.add_argument_group("📦 Module Management")
 
-    modules.add_argument("-i", "--install",
-                         type=str,
-                         metavar="MODULE",
-                         help="Install module or interface by name")
+    modules.add_argument(
+        "-i",
+        "--install",
+        type=str,
+        metavar="MODULE",
+        help="Install module or interface by name",
+    )
 
-    modules.add_argument("-u", "--update",
-                         type=str,
-                         metavar="MODULE",
-                         help="Update module or interface by name")
+    modules.add_argument(
+        "-u",
+        "--update",
+        type=str,
+        metavar="MODULE",
+        help="Update module or interface by name",
+    )
 
-    modules.add_argument("-r", "--remove",
-                         type=str,
-                         metavar="MODULE",
-                         help="Uninstall module or interface by name")
+    modules.add_argument(
+        "-r",
+        "--remove",
+        type=str,
+        metavar="MODULE",
+        help="Uninstall module or interface by name",
+    )
 
-    modules.add_argument("-m", "--modi",
-                         type=str,
-                         metavar="MODE",
-                         default=DEFAULT_MODI,
-                         help=f"Interface mode (default: {DEFAULT_MODI})")
+    modules.add_argument(
+        "-m",
+        "--modi",
+        type=str,
+        metavar="MODE",
+        default=DEFAULT_MODI,
+        help=f"Interface mode (default: {DEFAULT_MODI})",
+    )
 
     # =================== RUNTIME CONTROL ===================
-    runtime = parser.add_argument_group('🎮 Runtime Control')
+    runtime = parser.add_argument_group("🎮 Runtime Control")
 
-    runtime.add_argument("--kill",
-                         action="store_true",
-                         help="Terminate running ToolBox instance")
+    runtime.add_argument(
+        "--kill", action="store_true", help="Terminate running ToolBox instance"
+    )
 
-    runtime.add_argument("-bg", "--background-application",
-                         action="store_true",
-                         help="Run interface in background mode")
+    runtime.add_argument(
+        "-bg",
+        "--background-application",
+        action="store_true",
+        help="Run interface in background mode",
+    )
 
-    runtime.add_argument("-bgr", "--background-application-runner",
-                         action="store_true",
-                         help="Background runner flag for current process")
+    runtime.add_argument(
+        "-bgr",
+        "--background-application-runner",
+        action="store_true",
+        help="Background runner flag for current process",
+    )
 
-    runtime.add_argument("-fg", "--live-application",
-                         action="store_true",
-                         help="Run proxy interface in foreground")
+    runtime.add_argument(
+        "-fg",
+        "--live-application",
+        action="store_true",
+        help="Run proxy interface in foreground",
+    )
 
-    runtime.add_argument("--remote",
-                         action="store_true",
-                         help="Enable remote access mode")
+    runtime.add_argument(
+        "--remote", action="store_true", help="Enable remote access mode"
+    )
 
-    runtime.add_argument("--debug",
-                         action="store_true",
-                         help="Enable debug mode with hot-reload")
+    runtime.add_argument(
+        "--debug", action="store_true", help="Enable debug mode with hot-reload"
+    )
 
     # =================== DOCKER ===================
-    docker = parser.add_argument_group('🐳 Docker Options')
+    docker = parser.add_argument_group("🐳 Docker Options")
 
-    docker.add_argument("--docker",
-                        action="store_true",
-                        help="Run in Docker container [test|live|dev]")
+    docker.add_argument(
+        "--docker", action="store_true", help="Run in Docker container [test|live|dev]"
+    )
 
-    docker.add_argument("--build",
-                        action="store_true",
-                        help="Build Docker image from local source")
+    docker.add_argument(
+        "--build", action="store_true", help="Build Docker image from local source"
+    )
 
     # =================== NETWORKING ===================
-    network = parser.add_argument_group('🌐 Network Configuration')
+    network = parser.add_argument_group("🌐 Network Configuration")
 
-    network.add_argument("-n", "--name",
-                         type=str,
-                         metavar="ID",
-                         default="main",
-                         help="Instance identifier (default: main)")
+    network.add_argument(
+        "-n",
+        "--name",
+        type=str,
+        metavar="ID",
+        default="main",
+        help="Instance identifier (default: main)",
+    )
 
-    network.add_argument("-p", "--port",
-                         type=int,
-                         metavar="PORT",
-                         default=5000,
-                         help="Interface port number (default: 5000)")
+    network.add_argument(
+        "-p",
+        "--port",
+        type=int,
+        metavar="PORT",
+        default=5000,
+        help="Interface port number (default: 5000)",
+    )
 
-    network.add_argument("-w", "--host",
-                         type=str,
-                         metavar="HOST",
-                         default="0.0.0.0",
-                         help="Interface host address (default: 0.0.0.0)")
+    network.add_argument(
+        "-w",
+        "--host",
+        type=str,
+        metavar="HOST",
+        default="0.0.0.0",
+        help="Interface host address (default: 0.0.0.0)",
+    )
 
     # =================== SERVICE MANAGEMENT ===================
-    services = parser.add_argument_group('🔧 Service Management')
+    services = parser.add_argument_group("🔧 Service Management")
 
-    services.add_argument("--init-sm",
-                          action="store_true",
-                          help=f"Service Manager for '{system()}' (auto-start/restart)")
+    services.add_argument(
+        "--init-sm",
+        action="store_true",
+        help=f"Service Manager for '{system()}' (auto-start/restart)",
+    )
 
-    services.add_argument("--sm",
-                          action="store_true",
-                          help=f"Service Manager for '{system()}' (auto-start/restart)")
+    services.add_argument(
+        "--sm",
+        action="store_true",
+        help=f"Service Manager for '{system()}' (auto-start/restart)",
+    )
 
-    services.add_argument("--lm",
-                          action="store_true",
-                          help="Log Manager (view/remove/edit logs)")
+    services.add_argument(
+        "--lm", action="store_true", help="Log Manager (view/remove/edit logs)"
+    )
 
     # =================== DATA OPERATIONS ===================
-    data_ops = parser.add_argument_group('💾 Data Operations (⚠️  Use with caution!)')
+    data_ops = parser.add_argument_group("💾 Data Operations (⚠️  Use with caution!)")
 
-    data_ops.add_argument("--delete-config",
-                          action="store_true",
-                          help="⚠️  Delete named config folder")
+    data_ops.add_argument(
+        "--delete-config", action="store_true", help="⚠️  Delete named config folder"
+    )
 
-    data_ops.add_argument("--delete-data",
-                          action="store_true",
-                          help="⚠️  Delete named data folder")
+    data_ops.add_argument(
+        "--delete-data", action="store_true", help="⚠️  Delete named data folder"
+    )
 
-    data_ops.add_argument("--delete-config-all",
-                          action="store_true",
-                          help="🚨 DANGER: Delete ALL config files (DATA LOSS!)")
+    data_ops.add_argument(
+        "--delete-config-all",
+        action="store_true",
+        help="🚨 DANGER: Delete ALL config files (DATA LOSS!)",
+    )
 
-    data_ops.add_argument("--delete-data-all",
-                          action="store_true",
-                          help="🚨 DANGER: Delete ALL data folders (DATA LOSS!)")
+    data_ops.add_argument(
+        "--delete-data-all",
+        action="store_true",
+        help="🚨 DANGER: Delete ALL data folders (DATA LOSS!)",
+    )
 
     # =================== DEVELOPMENT ===================
-    dev = parser.add_argument_group('🔬 Development & Testing')
+    dev = parser.add_argument_group("🔬 Development & Testing")
 
-    dev.add_argument("--test",
-                     action="store_true",
-                     help="Run complete test suite")
+    dev.add_argument("--test", action="store_true", help="Run complete test suite")
 
-    dev.add_argument("--profiler",
-                     action="store_true",
-                     help="Profile all registered functions")
+    dev.add_argument(
+        "--profiler", action="store_true", help="Profile all registered functions"
+    )
 
-    dev.add_argument("-sfe", "--save-function-enums-in-file",
-                     action="store_true",
-                     help="Generate all_function_enums.py (requires -l)")
+    dev.add_argument(
+        "-sfe",
+        "--save-function-enums-in-file",
+        action="store_true",
+        help="Generate all_function_enums.py (requires -l)",
+    )
 
-    dev.add_argument("--sysPrint",
-                     action="store_true",
-                     help="Enable verbose system output")
+    dev.add_argument(
+        "--sysPrint", action="store_true", help="Enable verbose system output"
+    )
 
     # =================== ADVANCED ===================
-    advanced = parser.add_argument_group('🎯 Advanced Options')
+    advanced = parser.add_argument_group("🎯 Advanced Options")
 
-    advanced.add_argument('--kwargs',
-                          nargs='*',
-                          action='append',
-                          default=[],
-                          metavar='KEY=VALUE',
-                          help='Pass key-value pairs: --kwargs key1=value1 key2=value2')
+    advanced.add_argument(
+        "--kwargs",
+        nargs="*",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Pass key-value pairs: --kwargs key1=value1 key2=value2",
+    )
 
     # Parse arguments
     args = parser.parse_args()
@@ -971,12 +1060,13 @@ def parse_args():
 
     return args
 
+
 def edit_logs():
     name = input(f"Name of logger \ndefault {loggerNameOfToolboxv2}\n:")
     name = name if name else loggerNameOfToolboxv2
 
     def date_in_format(_date):
-        ymd = _date.split('-')
+        ymd = _date.split("-")
         if len(ymd) != 3:
             print("Not enough segments")
             return False
@@ -990,9 +1080,10 @@ def edit_logs():
         return True
 
     def level_in_format(_level):
-
-        if _level in ['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET']:
-            _level = [50, 40, 30, 20, 10, 0][['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'].index(_level)]
+        if _level in ["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"]:
+            _level = [50, 40, 30, 20, 10, 0][
+                ["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"].index(_level)
+            ]
             return True, _level
         try:
             _level = int(_level)
@@ -1001,14 +1092,17 @@ def edit_logs():
             return False, -1
         return _level in [50, 40, 30, 20, 10, 0], _level
 
-    date = input("Date of log format : YYYY-MM-DD replace M||D with xx for multiple editing\n:")
+    date = input(
+        "Date of log format : YYYY-MM-DD replace M||D with xx for multiple editing\n:"
+    )
 
     while not date_in_format(date):
         date = input("Date of log format : YYYY-MM-DD :")
 
     level = input(
         f"Level : {list(zip(['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'], [50, 40, 30, 20, 10, 0], strict=False))}"
-        f" : enter number\n:")
+        f" : enter number\n:"
+    )
 
     while not level_in_format(level)[0]:
         level = input("Level : ")
@@ -1016,7 +1110,7 @@ def edit_logs():
     level = level_in_format(level)[1]
 
     do = input("Do function : default remove (r) or uncoler (uc)")
-    if do == 'uc':
+    if do == "uc":
         edit_log_files(name=name, date=date, level=level, n=0, do=unstyle_log_files)
     else:
         edit_log_files(name=name, date=date, level=level, n=0)
@@ -1028,7 +1122,7 @@ def run_tests(test_path):
 
     # Führe den Befehl mit subprocess aus
     try:
-        result = subprocess.run(command, check=True, encoding='cp850')
+        result = subprocess.run(command, check=True, encoding="cp850")
         # Überprüfe den Rückgabewert des Prozesses und gib entsprechend True oder False zurück
         if result.returncode != 0:
             return False
@@ -1061,11 +1155,11 @@ async def setup_app(ov_name=None, App=TbApp):
 
     abspath = os.path.dirname(os.path.abspath(__file__))
 
-    identification = args.name + '-' + node() + '\\'
+    identification = args.name + "-" + node() + "\\"
 
-    data_folder = abspath + '\\.data\\'
-    config_folder = abspath + '\\.config\\'
-    info_folder = abspath + '\\.info\\'
+    data_folder = abspath + "\\.data\\"
+    config_folder = abspath + "\\.config\\"
+    info_folder = abspath + "\\.info\\"
 
     os.makedirs(info_folder, exist_ok=True)
 
@@ -1094,9 +1188,11 @@ async def setup_app(ov_name=None, App=TbApp):
         exit(0)
 
     abspath = os.path.dirname(os.path.abspath(__file__))
-    info_folder = abspath + '\\.info\\pids\\'
+    info_folder = abspath + "\\.info\\pids\\"
     os.makedirs(info_folder, exist_ok=True)
-    if not args.sysPrint and not (args.debug or args.background_application_runner or args.install or args.kill):
+    if not args.sysPrint and not (
+        args.debug or args.background_application_runner or args.install or args.kill
+    ):
         TbApp.sprint = lambda text, *_args, **kwargs: False
     tb_app = get_app(from_="InitialStartUp", name=args.name, args=args, app_con=TbApp)
 
@@ -1105,13 +1201,17 @@ async def setup_app(ov_name=None, App=TbApp):
     if args.load_all_mod_in_files:
         _min_info = await tb_app.load_all_mods_in_file()
         with Spinner("Crating State"):
-
             import threading
-            st = threading.Thread(target=get_state_from_app, args=(tb_app,
-                                                                   os.environ.get("TOOLBOXV2_REMOTE_BASE",
-                                                                                  "https://simplecore.app"),
-                                                                   "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/"),
-                                  daemon=True)
+
+            st = threading.Thread(
+                target=get_state_from_app,
+                args=(
+                    tb_app,
+                    os.environ.get("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app"),
+                    "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/",
+                ),
+                daemon=True,
+            )
         st.start()
         # tb_app.print_functions()
         if _min_info:
@@ -1124,13 +1224,22 @@ async def setup_app(ov_name=None, App=TbApp):
             tb_app.run_any("CloudM", "update_core")
             run_command("npm run build:tbjs && npm run build:web")
         else:
-            res = await tb_app.a_run_any("CloudM", "install", module_name=args.update, get_results=True)
+            res = await tb_app.a_run_any(
+                "CloudM", "install", module_name=args.update, get_results=True
+            )
             res.print()
 
     if args.background_application_runner:
         from toolboxv2.utils.extras.notification import quick_info
-        quick_info("Background Application", f"Starting background application {sys.argv}", timeout=12000)
-        daemon_app = await DaemonApp(tb_app, args.host, args.port if args.port != 5000 else 6587, t=False)
+
+        quick_info(
+            "Background Application",
+            f"Starting background application {sys.argv}",
+            timeout=12000,
+        )
+        daemon_app = await DaemonApp(
+            tb_app, args.host, args.port if args.port != 5000 else 6587, t=False
+        )
         tb_app.daemon_app = daemon_app
         args.live_application = False
     elif args.background_application:
@@ -1145,11 +1254,15 @@ async def setup_app(ov_name=None, App=TbApp):
                 tb_app.sprint(f"Background process spawned. Exiting parent.")
                 sys.exit(0)
         else:
-            if '-m ' not in sys.argv:
+            if "-m " not in sys.argv:
                 pid_file = f"{info_folder}bg-{args.name}.pid"
             try:
-                _ = await ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
-                                   args.port if args.port != 5000 else 6587, timeout=4)
+                _ = await ProxyApp(
+                    tb_app,
+                    args.host if args.host != "0.0.0.0" else "localhost",
+                    args.port if args.port != 5000 else 6587,
+                    timeout=4,
+                )
                 res = await _.verify()
                 if await _.exit_main() != "No data look later":
                     stop(pid_file, args.name)
@@ -1158,13 +1271,19 @@ async def setup_app(ov_name=None, App=TbApp):
                 stop(pid_file, args.name)
     elif args.live_application:
         try:
-            tb_app = await a_get_proxy_app(tb_app, host=args.host if args.host != "0.0.0.0" else "localhost",
-                                           port=args.port if args.port != 5000 else 6587,
-                                           key=os.getenv("TB_R_KEY", "user@phfrase"))
+            tb_app = await a_get_proxy_app(
+                tb_app,
+                host=args.host if args.host != "0.0.0.0" else "localhost",
+                port=args.port if args.port != 5000 else 6587,
+                key=os.getenv("TB_R_KEY", "user@phfrase"),
+            )
         except:
             import traceback
+
             print(traceback.format_exc())
-            tb_app.sprint("No bg instance found starting local, to run in the background use -bg")
+            tb_app.sprint(
+                "No bg instance found starting local, to run in the background use -bg"
+            )
 
     return tb_app, args
 
@@ -1173,12 +1292,13 @@ async def command_runner(tb_app, command, **kwargs):
     if len(command) < 1:
         tb_app.print_functions()
         tb_app.print(
-            "minimum command length is 2 {module_name} {function_name} optional args... Com^C to exit")
+            "minimum command length is 2 {module_name} {function_name} optional args... Com^C to exit"
+        )
         return await tb_app.a_idle()
 
     tb_app.print(f"Running command: {' '.join(command)} {kwargs}")
     call = CallingObject().empty()
-    mod = tb_app.get_mod(command[0], spec='app')
+    mod = tb_app.get_mod(command[0], spec="app")
     if hasattr(mod, "async_initialized") and not mod.async_initialized:
         await mod
     call.module_name = command[0]
@@ -1186,29 +1306,38 @@ async def command_runner(tb_app, command, **kwargs):
     if len(command) < 2:
         tb_app.print_functions(command[0])
         tb_app.print(
-            "minimum command length is 2 {module_name} {function_name} optional args...")
+            "minimum command length is 2 {module_name} {function_name} optional args..."
+        )
         return
 
     call.function_name = command[1]
     call.args = command[2:]
     call.kwargs = kwargs
 
-    if 'help' in call.kwargs and call.kwargs.get('help', False) or 'h' in call.kwargs and call.kwargs.get('h', False):
+    if (
+        "help" in call.kwargs
+        and call.kwargs.get("help", False)
+        or "h" in call.kwargs
+        and call.kwargs.get("h", False)
+    ):
         data = tb_app.get_function((call.module_name, call.function_name), metadata=True)
         pprint.pprint(data)
         return data
 
-    spec = 'app'  #  if not args.live_application else tb_app.id
-    r = await tb_app.a_run_any((call.module_name, call.function_name), tb_run_with_specification=spec,
-                               args_=call.args,
-                               get_results=True)
+    spec = "app"  #  if not args.live_application else tb_app.id
+    r = await tb_app.a_run_any(
+        (call.module_name, call.function_name),
+        tb_run_with_specification=spec,
+        args_=call.args,
+        get_results=True,
+    )
     if asyncio.iscoroutine(r):
         r = await r
     if isinstance(r, asyncio.Task):
         r = await r
 
     tb_app.print("Running in", spec)
-    if hasattr(r, 'print'):
+    if hasattr(r, "print"):
         r.print(full_data=True)
     else:
         tb_app.print(r)
@@ -1221,7 +1350,7 @@ async def main(App=TbApp, do_exit=True):
     __version__ = get_version_from_pyproject()
 
     abspath = os.path.dirname(os.path.abspath(__file__))
-    info_folder = abspath + '\\.info\\pids\\'
+    info_folder = abspath + "\\.info\\pids\\"
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
 
     async def log_in(app):
@@ -1232,21 +1361,25 @@ async def main(App=TbApp, do_exit=True):
     tb_app.run_bg_task_advanced(log_in, tb_app)
 
     if args.install:
-        report = await tb_app.a_run_any("CloudM",
-                                        "install",
-                                        module_name=args.install, get_results=True)
+        report = await tb_app.a_run_any(
+            "CloudM", "install", module_name=args.install, get_results=True
+        )
         report.print()
 
     if args.init == "main":
         from .setup_helper import setup_main
+
         setup_main()
     elif args.init == "config":
         from .utils.clis.config_wizard import run_config_wizard
+
         exit_code = run_config_wizard()
         await tb_app.a_exit()
         exit(exit_code)
     elif args.init is not None:
-        tb_app.print("No init action specified valid options are ['main', 'config', 'manifest']")
+        tb_app.print(
+            "No init action specified valid options are ['main', 'config', 'manifest']"
+        )
         await tb_app.a_exit()
         exit(1)
 
@@ -1261,10 +1394,19 @@ async def main(App=TbApp, do_exit=True):
         elif tb_app.system_flag == "Windows":
             await setup_service_windows()
         else:
-            tb_app.print(f"Service manager not supported on this platform {tb_app.system_flag or system()}")
+            tb_app.print(
+                f"Service manager not supported on this platform {tb_app.system_flag or system()}"
+            )
         args.command = []
 
-    if args.load_all_mod_in_files or args.save_function_enums_in_file or args.get_version or args.profiler or args.background_application_runner or args.test:
+    if (
+        args.load_all_mod_in_files
+        or args.save_function_enums_in_file
+        or args.get_version
+        or args.profiler
+        or args.background_application_runner
+        or args.test
+    ):
         if args.save_function_enums_in_file:
             tb_app.save_registry_as_enums("utils\\system", "all_functions_enums.py")
             tb_app.alive = False
@@ -1272,17 +1414,23 @@ async def main(App=TbApp, do_exit=True):
             return 0
         if args.get_version:
             print(
-                f"\n{' Version ':-^45}\n\n{Style.Bold(Style.CYAN(Style.ITALIC('RE'))) + Style.ITALIC('Simple') + 'ToolBox':<35}:{__version__:^10}\n")
+                f"\n{' Version ':-^45}\n\n{Style.Bold(Style.CYAN(Style.ITALIC('RE'))) + Style.ITALIC('Simple') + 'ToolBox':<35}:{__version__:^10}\n"
+            )
             for mod_name in tb_app.functions:
                 if isinstance(tb_app.functions[mod_name].get("app_instance"), MainTool):
-                    print(f"{mod_name:^35}:{tb_app.functions[mod_name]['app_instance'].version:^10}")
+                    print(
+                        f"{mod_name:^35}:{tb_app.functions[mod_name]['app_instance'].version:^10}"
+                    )
                 else:
                     try:
-                        v = tb_app.functions[mod_name].get(list(tb_app.functions[mod_name].keys())[0]).get("version",
-                                                                                                           "unknown (functions only)").replace(
-                            f"{__version__}:", '')
+                        v = (
+                            tb_app.functions[mod_name]
+                            .get(list(tb_app.functions[mod_name].keys())[0])
+                            .get("version", "unknown (functions only)")
+                            .replace(f"{__version__}:", "")
+                        )
                     except AttributeError:
-                        v = 'unknown'
+                        v = "unknown"
                     print(f"{mod_name:^35}:{v:^10}")
             print("\n")
             tb_app.alive = False
@@ -1301,10 +1449,19 @@ async def main(App=TbApp, do_exit=True):
         await tb_app.a_exit()
         return 0
 
-    if not args.kill and not args.docker and tb_app.alive and not args.background_application and '-m' in sys.argv:
-
+    if (
+        not args.kill
+        and not args.docker
+        and tb_app.alive
+        and not args.background_application
+        and "-m" in sys.argv
+    ):
         tb_app.save_autocompletion_dict()
-        if args.background_application_runner and args.modi == 'bg' and hasattr(tb_app, 'daemon_app'):
+        if (
+            args.background_application_runner
+            and args.modi == "bg"
+            and hasattr(tb_app, "daemon_app")
+        ):
             await tb_app.daemon_app.online
 
         if args.remote:
@@ -1312,29 +1469,32 @@ async def main(App=TbApp, do_exit=True):
 
         flows_dict = flows_dict_func(remote=False, flows_dict_=tb_app.flows)
         if args.modi not in flows_dict:
-            flows_dict = {**flows_dict, **flows_dict_func(s=args.modi, remote=True, flows_dict_=tb_app.flows)}
+            flows_dict = {
+                **flows_dict,
+                **flows_dict_func(s=args.modi, remote=True, flows_dict_=tb_app.flows),
+            }
         tb_app.set_flows(flows_dict)
         if args.modi not in flows_dict:
-            print(f"Modi : [{args.modi}] not found on device installed modi : {list(flows_dict.keys())}")
+            print(
+                f"Modi : [{args.modi}] not found on device installed modi : {list(flows_dict.keys())}"
+            )
             exit(1)
         # open(f"./config/{args.modi}.pid", "w").write(app_pid)
         await tb_app.run_flows(args.modi, **args.kwargs[0])
 
     elif args.docker:
+        flows_dict = flows_dict_func("docker")
 
-        flows_dict = flows_dict_func('docker')
-
-        if 'docker' not in flows_dict:
+        if "docker" not in flows_dict:
             print("No docker")
             return 1
 
-        flows_dict['docker'](tb_app, args)
+        flows_dict["docker"](tb_app, args)
 
     elif args.kill and not args.background_application:
         if not os.path.exists(pid_file):
             print("You must first run the mode")
         else:
-
             try:
                 tb_app.cluster_manager.stop_all()
             except Exception as e:
@@ -1349,7 +1509,8 @@ async def main(App=TbApp, do_exit=True):
                 print(Style.YELLOW(f"Error stopping workers manager: {e}"))
             try:
                 from toolboxv2.utils.clis.tcm_p2p_cli import handle_stop
-                _ = lambda :None
+
+                _ = lambda: None
                 _.names = None
                 handle_stop(_)
             except Exception as e:
@@ -1363,11 +1524,17 @@ async def main(App=TbApp, do_exit=True):
             else:
                 os.system(f"kill -9 {app_pid}")
 
-
     if args.command and not args.background_application:
         for command in args.command:
-            await command_runner(tb_app, command, **args.kwargs[
-                args.command.index(command) if args.command.index(command) < len(args.kwargs) - 1 else 0])
+            await command_runner(
+                tb_app,
+                command,
+                **args.kwargs[
+                    args.command.index(command)
+                    if args.command.index(command) < len(args.kwargs) - 1
+                    else 0
+                ],
+            )
 
     if args.live_application and args.debug:
         hide = tb_app.hide_console()
@@ -1386,14 +1553,14 @@ async def main(App=TbApp, do_exit=True):
 
 
 def install_ipython():
-    os.system('pip install ipython prompt_toolkit')
+    os.system("pip install ipython prompt_toolkit")
 
 
 def tb_pre_ipy(app, eo):
     # print(f"In Data:  \n\t{eo.raw_cell}\n\t{eo.store_history}\n\t{eo.silent}\n\t{eo.shell_futures}\n\t{eo.cell_id}")
     # app.print(f"{eo.raw_cell=}{eo.raw_cell.split(' ')=}")
-    if eo.raw_cell != 'exit':
-        eo.raw_cell = ''
+    if eo.raw_cell != "exit":
+        eo.raw_cell = ""
     # start information getering
 
 
@@ -1406,9 +1573,9 @@ def tb_post_ipy(app, rest):
 
 
 def line_magic_ipy(app, ipython, line):
-    app.mod_online(line.split(' ')[0].strip(), True)
-    if line.split(' ')[0].strip() in app.functions:
-        async_test(command_runner)(app, line.split(' '))
+    app.mod_online(line.split(" ")[0].strip(), True)
+    if line.split(" ")[0].strip() in app.functions:
+        async_test(command_runner)(app, line.split(" "))
     else:
         app.print_functions()
 
@@ -1424,18 +1591,19 @@ def configure_ipython(argv):
     # Enable contextual help
     c.InteractiveShellApp.exec_lines = []
 
-    c.TerminalInteractiveShell.editor = 'nano'
+    c.TerminalInteractiveShell.editor = "nano"
 
     c.PrefilterManager.multi_line_specials = True
 
-    c.InteractiveShell.colors = 'LightBG'
+    c.InteractiveShell.colors = "LightBG"
     c.InteractiveShell.confirm_exit = True
     c.TerminalIPythonApp.display_banner = False
     c.AliasManager.user_aliases = [
         ("TB", "tb"),
         ("@", "!tb -c "),
     ]
-    c.InteractiveShellApp.exec_lines.append("""import os
+    c.InteractiveShellApp.exec_lines.append(
+        """import os
 import sys
 import toolboxv2 as tb
 from toolboxv2.tests.a_util import async_test
@@ -1443,7 +1611,9 @@ from threading import Thread
 # from toolboxv2.utils.system.ipy_completer import get_completer
 
 from IPython.core.magic import register_line_magic, register_cell_magic
-sys.argv = """ + str(argv) + """
+sys.argv = """
+        + str(argv)
+        + """
 app, args = await tb.__main__.setup_app()
 if hasattr(app, "daemon_app"):
     Thread(target=async_test(app.daemon_app.connect), args=(app,), daemon=True).start()
@@ -1516,22 +1686,23 @@ load_ipython_extension(get_ipython())
 get_ipython().events.register("pre_run_cell", pre_run_code_hook)
 get_ipython().events.register("post_run_cell", post_run_code_hook)
 
-""")
+"""
+    )
     ()
     return c
 
 
 def start_ipython_session(argv):
     from IPython import start_ipython
+
     config = configure_ipython(argv)
 
     start_ipython(argv=None, config=config)
 
 
 def runner_setup():
-
     def helper_gui():
-        __import__('toolboxv2.utils.clis.tauri_cli', fromlist=['main']).main()
+        __import__("toolboxv2.utils.clis.tauri_cli", fromlist=["main"]).main()
 
     async def status_helper():
         print("🔍 ToolBoxV2 System Status")
@@ -1539,25 +1710,26 @@ def runner_setup():
 
         # Check login status
         try:
-
             from toolboxv2.utils.system.session import get_app
+
             app = get_app("status_check")
-
-
 
             # Check if user is logged in
             try:
-                from toolboxv2.utils.system.session import BlobFile
                 from toolboxv2.utils.security.cryp import Code
+                from toolboxv2.utils.system.session import BlobFile
+
                 username = app.get_username()
 
-                with BlobFile(f"claim/{username}/jwt.c", key=Code.DK()(), mode="r") as blob:
+                with BlobFile(
+                    f"claim/{username}/jwt.c", key=Code.DK()(), mode="r"
+                ) as blob:
                     claim = blob.read()
-                    if claim and claim != b'Error decoding':
+                    if claim and claim != b"Error decoding":
                         print(f"🔐 Authentication: ✅ Logged in as {username}")
 
                         # Try to determine server
-                        base_url = getattr(app, 'base_url', None) or "Unknown"
+                        base_url = getattr(app, "base_url", None) or "Unknown"
                         print(f"🌐 Server: {base_url}")
                     else:
                         print("🔐 Authentication: ❌ Not logged in")
@@ -1565,11 +1737,10 @@ def runner_setup():
                 print("🔐 Authentication: ❌ Not logged in")
 
             from toolboxv2.mods.CloudM.mini import get_service_status
-            str1 = get_service_status(app.info_dir.replace(app.id,
-                                                           ''))
+
+            str1 = get_service_status(app.info_dir.replace(app.id, ""))
 
             print(str1)
-
 
         except Exception as e:
             print(f"🔐 Authentication: ❌ Status check failed: {e}")
@@ -1591,11 +1762,11 @@ def runner_setup():
         import argparse
 
         # Clear screen for clean start
-        print('\033[2J\033[H')
+        print("\033[2J\033[H")
 
         parser = argparse.ArgumentParser(
-            prog='tb login',
-            description='🔐 Login to ToolBoxV2',
+            prog="tb login",
+            description="🔐 Login to ToolBoxV2",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="""
     ╔════════════════════════════════════════════════════════════════════════════╗
@@ -1612,31 +1783,43 @@ def runner_setup():
     ║    $ tb login                                                              ║
     ║                                                                            ║
     ╚════════════════════════════════════════════════════════════════════════════╝
-            """
+            """,
         )
 
-        parser.add_argument("--remote",
-                            help="Force remote login to SimpleCore Hub",
-                            action="store_true",
-                            default=False)
+        parser.add_argument(
+            "--remote",
+            help="Force remote login to SimpleCore Hub",
+            action="store_true",
+            default=False,
+        )
 
-        parser.add_argument("--local",
-                            help="Force local server login",
-                            action="store_true",
-                            default=False)
+        parser.add_argument(
+            "--local", help="Force local server login", action="store_true", default=False
+        )
 
         args = parser.parse_args()
 
         # Visual feedback
-        print("╔════════════════════════════════════════════════════════════════════════════╗")
-        print("║                  🔐 ToolBoxV2 Authentication                               ║")
-        print("╚════════════════════════════════════════════════════════════════════════════╝\n")
+        print(
+            "╔════════════════════════════════════════════════════════════════════════════╗"
+        )
+        print(
+            "║                  🔐 ToolBoxV2 Authentication                               ║"
+        )
+        print(
+            "╚════════════════════════════════════════════════════════════════════════════╝\n"
+        )
 
         async def helper():
-
             app = get_app("CloudM.cli_web_login")
-            res = await app.a_run_any("CloudM", "cli_web_login", force_remote=args.remote, force_local=args.local)
+            res = await app.a_run_any(
+                "CloudM",
+                "cli_web_login",
+                force_remote=args.remote,
+                force_local=args.local,
+            )
             return res
+
         return await helper()
 
     async def logout():
@@ -1645,20 +1828,23 @@ def runner_setup():
 
     async def run_flow_from_file_or_load_all_flows_and_mods_from_dir(app=None):
         from toolboxv2 import init_cwd
+
         if app is None:
             app = get_app("app.Flows")
         parser = argparse.ArgumentParser(
-            prog='tb flow',
-            description='Run flow from file or load all flows and mods from dir',
+            prog="tb flow",
+            description="Run flow from file or load all flows and mods from dir",
         )
         parser.add_argument("--flow", help="Run flow from file", default=None)
-        parser.add_argument("--remote", help="Force remote login", action="store_true", default=False)
+        parser.add_argument(
+            "--remote", help="Force remote login", action="store_true", default=False
+        )
 
         args = parser.parse_args()
 
         app.print(Style.VIOLET2(f"Loading externals from {init_cwd}"))
         await app.load_all_mods_in_file(init_cwd)
-        app.flows = flows_dict_func(args.flow or '.py', args.remote, init_cwd, app.flows)
+        app.flows = flows_dict_func(args.flow or ".py", args.remote, init_cwd, app.flows)
         if args.flow:
             await app.run_flows(args.flow)
 
@@ -1673,36 +1859,44 @@ def runner_setup():
         await app.a_run_any("CloudM.RegistryServer", "start")
 
     runner = {
-        "venv": lambda: __import__('toolboxv2.utils.system.venv_runner', fromlist=['main']).main(),
+        "venv": lambda: __import__(
+            "toolboxv2.utils.system.venv_runner", fromlist=["main"]
+        ).main(),
         "ipy": start_ipython_session,
         "db": cli_db_runner,
         "gui": helper_gui,
         "p2p": cli_tcm_runner,
         "status": status_helper,
-
-        "browser": lambda: __import__('toolboxv2.tb_browser.install', fromlist=['main']).main(),
+        "browser": lambda: __import__(
+            "toolboxv2.tb_browser.install", fromlist=["main"]
+        ).main(),
         "mcp": cli_mcp_server,
         "login": cli_web_login,
         "logout": logout,
         "flow": run_c,
         "mods": mods_manager,
         "registry": registry,
-
         "run": cli_tbx_main,
         "user": minio_user_manager_main,
         "default": interactive_user_dashboard,
-
         "workers": cli_worker_manager,
         "session": cli_session,
         "broker": cli_event,
         "http_worker": cli_http_worker,
         "ws_worker": cli_ws_worker,
-        "services": lambda: __import__('toolboxv2.utils.clis.service_manager', fromlist=['cli_services']).cli_services(),
-        "manifest": lambda: __import__('toolboxv2.utils.clis.manifest_cli', fromlist=['cli_manifest_main']).cli_manifest_main(),
-        "llm-gateway": lambda: __import__('toolboxv2.utils.clis.llm_gateway_cli', fromlist=['cli_llm_gateway']).cli_llm_gateway(),
+        "services": lambda: __import__(
+            "toolboxv2.utils.clis.service_manager", fromlist=["cli_services"]
+        ).cli_services(),
+        "manifest": lambda: __import__(
+            "toolboxv2.utils.clis.manifest_cli", fromlist=["cli_manifest_main"]
+        ).cli_manifest_main(),
+        "llm-gateway": lambda: __import__(
+            "toolboxv2.utils.clis.llm_gateway_cli", fromlist=["cli_llm_gateway"]
+        ).cli_llm_gateway(),
     }
 
     return runner
+
 
 def main_runner():
     # The fuck is uv not PyO3 compatible
@@ -1712,14 +1906,15 @@ def main_runner():
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     # IPython special case
-    if '--ipy' in sys.argv:
+    if "--ipy" in sys.argv:
         argv = sys.argv[1:]
         sys.argv = sys.argv[:1]
         start_ipython_session(argv)
 
     # Service Manager special case - start all auto-start services and exit
-    elif '--sm' in sys.argv:
+    elif "--sm" in sys.argv:
         from toolboxv2.utils.clis.service_manager import run_service_manager_startup
+
         sys.exit(run_service_manager_startup())
 
     # Normale Main-App
@@ -1727,7 +1922,9 @@ def main_runner():
         # Clear screen for clean start
         runner = runner_setup()
         runner_keys = list(RUNNER_KEYS)
-        main_args, runner_name, runner_args = split_args_by_runner(sys.argv[1:], runner_keys)
+        main_args, runner_name, runner_args = split_args_by_runner(
+            sys.argv[1:], runner_keys
+        )
         # Check for unknown runner (argument that looks like a runner but isn't in RUNNER_KEYS)
         # This catches cases like `tb xyz` where xyz is not a valid runner
         unknown_runner = None
@@ -1735,23 +1932,19 @@ def main_runner():
             # Check if first non-flag argument could be an unknown runner
             continue_flag = False
             for arg in sys.argv[1:]:
-                if arg.startswith('-c'):
-                    runner_name = ''
-                    break
-                if arg.startswith('-v'):
-                    runner_name = ''
+                if arg in ["-c", "-v", "-m"]:
+                    runner_name = ""
                     break
                 if continue_flag:
                     continue_flag = False
                     continue
-                if not arg.startswith('-') and '=' not in arg:
+                if not arg.startswith("-") and "=" not in arg:
                     # This looks like a runner name but wasn't found in RUNNER_KEYS
                     unknown_runner = arg
                     break
 
                 else:
                     continue_flag = True
-
 
         if unknown_runner:
             print(f"\n\033[1;31m❌ Unknown command: '{unknown_runner}'\033[0m")
@@ -1760,7 +1953,11 @@ def main_runner():
             core_runners = ["user", "run", "db", "workers", "services", "registry"]
             util_runners = ["login", "logout", "status", "session", "manifest"]
             dev_runners = ["venv", "ipy", "mcp", "gui", "browser"]
-            other_runners = [r for r in runner_keys if r not in core_runners + util_runners + dev_runners]
+            other_runners = [
+                r
+                for r in runner_keys
+                if r not in core_runners + util_runners + dev_runners
+            ]
 
             print(f"  \033[36mCore:\033[0m      {', '.join(core_runners)}")
             print(f"  \033[36mUtility:\033[0m   {', '.join(util_runners)}")
@@ -1773,8 +1970,8 @@ def main_runner():
         try:
             loop = asyncio.new_event_loop()
             if runner_name == "flows":
-                _hook[0] = runner['flows']
-                runner['flows'] = lambda : None
+                _hook[0] = runner["flows"]
+                runner["flows"] = lambda: None
             if runner_name == "mcp":
                 TbApp.print = lambda *a, **k: None
 
@@ -1801,6 +1998,7 @@ def main_runner():
             loop.run_until_complete(main_helper(runner_name))
         except KeyboardInterrupt:
             import traceback
+
             traceback.print_exc()
             pass
 
@@ -1815,26 +2013,28 @@ def get_real_python_executable():
         exe_path = ctypes.pythonapi.Py_GetProgramFullPath()
         print(exe_path)
         if exe_path:
-            return exe_path.decode('utf-8')
+            return exe_path.decode("utf-8")
     except Exception as e:
         # If anything goes wrong, fall back to sys.executable
         print(f"Error detecting real executable: {e}")
     return sys.executable
 
 
-def server_helper(instance_id:str="main", db_mode=None):
+def server_helper(instance_id: str = "main", db_mode=None):
     # real_exe = get_real_python_executable()
     from pathlib import Path
+
     sys.executable = str(Path(os.getenv("PYTHON_EXECUTABLE", sys.executable)))
     print("Using Python executable env:", sys.executable)
     loop = asyncio.new_event_loop()
-    sys.argv.append('-l')
-    sys.argv.append('--debug')
+    sys.argv.append("-l")
+    sys.argv.append("--debug")
     app, _ = loop.run_until_complete(setup_app(instance_id))
     app.loop = loop
     if db_mode is None:
         db_mode = os.getenv("DB_MODE_KEY", "LC")
     app.is_server = True
+
     # db = app.get_mod("DB")
     # db.edit_cli(db_mode)
     # db.initialize_database()
@@ -1846,9 +2046,11 @@ def server_helper(instance_id:str="main", db_mode=None):
             if flow.startswith("server"):
                 print(f"Starting server flow: {flow}")
 
-                app.run_bg_task_advanced(app.run_flows,flow)
+                app.run_bg_task_advanced(app.run_flows, flow)
+
     # app.run_bg_task_advanced(task)
     return app
+
 
 if __name__ == "__main__":
     # print("STARTED START FROM __main__")

@@ -17,26 +17,31 @@ Compression Triggers:
 Author: FlowAgent V3
 """
 
-import json
 import asyncio
+import json
 import uuid
-from datetime import datetime
-from typing import Any, List, Optional, Union, Dict, Tuple, Set, Callable
 from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+
+from litellm.types.utils import ModelResponseStream
 
 # Import Skills System
-from toolboxv2.mods.isaa.base.Agent.skills import SkillsManager, Skill, auto_group_tools_by_name_pattern
+from toolboxv2.mods.isaa.base.Agent.skills import (
+    Skill,
+    SkillsManager,
+    auto_group_tools_by_name_pattern,
+)
 
 # Import Sub-Agent System
 from toolboxv2.mods.isaa.base.Agent.sub_agent import (
-    SubAgentManager,
-    SubAgentResult,
+    PARALLEL_SUBTASKS_SKILL,
     SUB_AGENT_TOOLS,
     RestrictedVFSWrapper,
-    PARALLEL_SUBTASKS_SKILL
+    SubAgentManager,
+    SubAgentResult,
 )
-
-
+from litellm.types.utils import ChatCompletionMessageToolCall, Function
 # =============================================================================
 # STATIC TOOL DEFINITIONS (separate from dynamic limit)
 # =============================================================================
@@ -52,12 +57,12 @@ STATIC_TOOLS = [
                 "properties": {
                     "thought": {
                         "type": "string",
-                        "description": "Your reasoning, plan, or analysis"
+                        "description": "Your reasoning, plan, or analysis",
                     }
                 },
-                "required": ["thought"]
-            }
-        }
+                "required": ["thought"],
+            },
+        },
     },
     {
         "type": "function",
@@ -69,17 +74,17 @@ STATIC_TOOLS = [
                 "properties": {
                     "answer": {
                         "type": "string",
-                        "description": "Your final response to the user"
+                        "description": "Your final response to the user",
                     },
                     "success": {
                         "type": "boolean",
-                        "description": "Whether you successfully completed the task (true/false)"
-                    }
+                        "description": "Whether you successfully completed the task (true/false)",
+                    },
                 },
-                "required": ["answer"]
-            }
-        }
-    }
+                "required": ["answer"],
+            },
+        },
+    },
 ]
 
 DISCOVERY_TOOLS = [
@@ -93,11 +98,11 @@ DISCOVERY_TOOLS = [
                 "properties": {
                     "category": {
                         "type": "string",
-                        "description": "Optional category filter (e.g., 'discord', 'vfs', 'memory')"
+                        "description": "Optional category filter (e.g., 'discord', 'vfs', 'memory')",
                     }
-                }
-            }
-        }
+                },
+            },
+        },
     },
     {
         "type": "function",
@@ -110,15 +115,15 @@ DISCOVERY_TOOLS = [
                     "tools": {
                         "anyOf": [
                             {"type": "string"},
-                            {"type": "array", "items": {"type": "string"}}
+                            {"type": "array", "items": {"type": "string"}},
                         ],
-                        "description": "Tool name or list of tool names to load"
+                        "description": "Tool name or list of tool names to load",
                     }
                 },
-                "required": ["tools"]
-            }
-        }
-    }
+                "required": ["tools"],
+            },
+        },
+    },
 ]
 
 # VFS Tools - always available for file navigation (part of static)
@@ -129,6 +134,7 @@ VFS_TOOL_NAMES = ["vfs_read", "vfs_write", "vfs_list", "vfs_navigate", "vfs_cont
 # HELPER COMPONENTS
 # =============================================================================
 
+
 @dataclass
 class AutoFocusTracker:
     """
@@ -137,6 +143,7 @@ class AutoFocusTracker:
 
     This prevents "I forgot what I just did" errors in small models.
     """
+
     max_actions: int = 5
     max_chars: int = 500
     actions: List[str] = field(default_factory=list)
@@ -156,17 +163,17 @@ class AutoFocusTracker:
 
         # File operations
         if "write" in tool_lower or "create" in tool_lower:
-            path = args.get('path', args.get('filename', args.get('name', '?')))
-            lines = len(result.split('\n')) if result else 0
+            path = args.get("path", args.get("filename", args.get("name", "?")))
+            lines = len(result.split("\n")) if result else 0
             return f"✏️ Wrote {path} ({lines} lines)"
 
         elif "read" in tool_lower:
-            path = args.get('path', '?')
+            path = args.get("path", "?")
             chars = len(result) if result else 0
             return f"📖 Read {path} ({chars} chars)"
 
         elif "list" in tool_lower or "navigate" in tool_lower:
-            count = result.count('\n') + 1 if result else 0
+            count = result.count("\n") + 1 if result else 0
             return f"📋 Listed {count} items"
 
         # Execution
@@ -176,7 +183,7 @@ class AutoFocusTracker:
 
         # Search/Query
         elif "search" in tool_lower or "query" in tool_lower:
-            count = result.count('\n') + 1 if result else 0
+            count = result.count("\n") + 1 if result else 0
             return f"🔍 Searched, found {count} results"
 
         # Memory
@@ -185,16 +192,16 @@ class AutoFocusTracker:
 
         # Think
         elif tool_name == "think":
-            thought_preview = args.get('thought', '')[:40]
+            thought_preview = args.get("thought", "")[:40]
             return f"💭 Thought: {thought_preview}..."
 
         # Discovery
         elif tool_name == "list_tools":
-            category = args.get('category', 'all')
+            category = args.get("category", "all")
             return f"📋 Listed tools (category: {category})"
 
         elif tool_name == "load_tools":
-            tools = args.get('tools', [])
+            tools = args.get("tools", [])
             if isinstance(tools, str):
                 tools = [tools]
             return f"📦 Loaded: {', '.join(tools[:3])}"
@@ -208,10 +215,12 @@ class AutoFocusTracker:
         if not self.actions:
             return None
 
-        content = "LETZTE AKTIONEN (zur Erinnerung):\n" + "\n".join(f"- {a}" for a in self.actions)
+        content = "LETZTE AKTIONEN (zur Erinnerung):\n" + "\n".join(
+            f"- {a}" for a in self.actions
+        )
 
         if len(content) > self.max_chars:
-            content = content[:self.max_chars] + "..."
+            content = content[: self.max_chars] + "..."
 
         return {"role": "system", "content": content}
 
@@ -229,6 +238,7 @@ class LoopDetector:
     - Same tool 3x with same args (exact repeat)
     - Ping-pong pattern (A-B-A-B)
     """
+
     max_repeats: int = 3
     history: List[Tuple[str, int]] = field(default_factory=list)  # (tool_name, args_hash)
 
@@ -250,7 +260,7 @@ class LoopDetector:
 
         # Check: Exact same call N times in a row
         if len(self.history) >= self.max_repeats:
-            last_n = self.history[-self.max_repeats:]
+            last_n = self.history[-self.max_repeats :]
             if all(e == entry for e in last_n):
                 return True
 
@@ -283,6 +293,7 @@ WIEDERHOLE NICHT die gleiche Aktion. Sei ehrlich wenn du nicht weiterkommst."""
 @dataclass
 class ToolSlot:
     """Represents a dynamically loaded tool slot with relevance tracking"""
+
     name: str
     relevance_score: float
     category: str = "unknown"
@@ -293,12 +304,14 @@ class ToolSlot:
 # EXECUTION CONTEXT
 # =============================================================================
 
+
 @dataclass
 class ExecutionContext:
     """
     Complete state for one execution run.
     Separates working_history (temporary) from permanent history.
     """
+
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
 
     # Execution metadata (for pause/resume)
@@ -342,11 +355,14 @@ class ExecutionContext:
         if not self.dynamic_tools:
             return None
 
-        categories = [slot.category for slot in self.dynamic_tools if slot.category != "unknown"]
+        categories = [
+            slot.category for slot in self.dynamic_tools if slot.category != "unknown"
+        ]
         if not categories:
             return None
 
         from collections import Counter
+
         return Counter(categories).most_common(1)[0][0]
 
     def remove_tool(self, name: str) -> bool:
@@ -357,21 +373,19 @@ class ExecutionContext:
                 return True
         return False
 
-    def add_tool(self, name: str, relevance_score: float, category: str = "unknown") -> bool:
+    def add_tool(
+        self, name: str, relevance_score: float, category: str = "unknown"
+    ) -> bool:
         """Add a tool to dynamic slots"""
         # Check if already loaded
         if name in self.get_dynamic_tool_names():
             return False
 
-        # Check limit
+        self.dynamic_tools.append(
+            ToolSlot(name=name, relevance_score=relevance_score, category=category)
+        )
         if len(self.dynamic_tools) >= self.max_dynamic_tools:
-            return False
-
-        self.dynamic_tools.append(ToolSlot(
-            name=name,
-            relevance_score=relevance_score,
-            category=category
-        ))
+            _ = self.dynamic_tools.pop(1)
         return True
 
     def to_checkpoint(self) -> dict:
@@ -382,7 +396,11 @@ class ExecutionContext:
             "query": self.query,
             "status": self.status,
             "dynamic_tools": [
-                {"name": t.name, "relevance_score": t.relevance_score, "category": t.category}
+                {
+                    "name": t.name,
+                    "relevance_score": t.relevance_score,
+                    "category": t.category,
+                }
                 for t in self.dynamic_tools
             ],
             "max_dynamic_tools": self.max_dynamic_tools,
@@ -392,18 +410,22 @@ class ExecutionContext:
             "current_iteration": self.current_iteration,
             "loop_warning_given": self.loop_warning_given,
             "auto_focus_actions": self.auto_focus.actions,
-            "loop_detector_history": self.loop_detector.history
+            "loop_detector_history": self.loop_detector.history,
         }
 
     @classmethod
-    def from_checkpoint(cls, data: dict) -> 'ExecutionContext':
+    def from_checkpoint(cls, data: dict) -> "ExecutionContext":
         """Restore context from checkpoint"""
         ctx = cls(run_id=data.get("run_id", uuid.uuid4().hex[:8]))
         ctx.session_id = data.get("session_id", "")
         ctx.query = data.get("query", "")
         ctx.status = data.get("status", "paused")
         ctx.dynamic_tools = [
-            ToolSlot(name=t["name"], relevance_score=t["relevance_score"], category=t.get("category", "unknown"))
+            ToolSlot(
+                name=t["name"],
+                relevance_score=t["relevance_score"],
+                category=t.get("category", "unknown"),
+            )
             for t in data.get("dynamic_tools", [])
         ]
         ctx.max_dynamic_tools = data.get("max_dynamic_tools", 5)
@@ -420,6 +442,7 @@ class ExecutionContext:
 # =============================================================================
 # HISTORY COMPRESSOR
 # =============================================================================
+
 
 class HistoryCompressor:
     """
@@ -453,10 +476,10 @@ class HistoryCompressor:
             if role == "assistant":
                 tool_calls = msg.get("tool_calls", [])
                 for tc in tool_calls:
-                    if hasattr(tc, 'function'):
+                    if hasattr(tc, "function"):
                         tools_used.add(tc.function.name)
-                    elif isinstance(tc, dict) and 'function' in tc:
-                        tools_used.add(tc['function'].get('name', ''))
+                    elif isinstance(tc, dict) and "function" in tc:
+                        tools_used.add(tc["function"].get("name", ""))
 
             # Analyze tool results
             elif role == "tool":
@@ -474,10 +497,14 @@ class HistoryCompressor:
                     files_created.append(tool_name)
                 elif "read" in tool_lower:
                     files_read.append(tool_name)
-                elif "modify" in tool_lower or "edit" in tool_lower or "update" in tool_lower:
+                elif (
+                    "modify" in tool_lower
+                    or "edit" in tool_lower
+                    or "update" in tool_lower
+                ):
                     files_modified.append(tool_name)
                 elif "search" in tool_lower or "query" in tool_lower:
-                    result_count = content.count('\n') + 1 if content else 0
+                    result_count = content.count("\n") + 1 if content else 0
                     searches.append(f"{tool_name} ({result_count} results)")
                 elif tool_name == "think":
                     # Extract thought preview
@@ -503,7 +530,12 @@ class HistoryCompressor:
                 lines.append(f"  - {err[:60]}...")
 
         # Tool summary
-        meaningful_tools = tools_used - {'think', 'final_answer', 'list_tools', 'load_tools'}
+        meaningful_tools = tools_used - {
+            "think",
+            "final_answer",
+            "list_tools",
+            "load_tools",
+        }
         if meaningful_tools:
             lines.append(f"• Tools genutzt: {', '.join(list(meaningful_tools)[:5])}")
 
@@ -512,16 +544,12 @@ class HistoryCompressor:
         return {
             "role": "system",
             "content": "\n".join(lines),
-            "metadata": {
-                "type": "action_summary",
-                "run_id": run_id
-            }
+            "metadata": {"type": "action_summary", "run_id": run_id},
         }
 
     @staticmethod
     def compress_partial(
-        working_history: List[dict],
-        keep_last_n: int = 3
+        working_history: List[dict], keep_last_n: int = 3
     ) -> Tuple[Optional[dict], List[dict]]:
         """
         Partially compress working history, keeping last N messages.
@@ -533,7 +561,9 @@ class HistoryCompressor:
             return None, working_history
 
         # Find where to split (keep system prompt + last N)
-        system_msg = working_history[0] if working_history[0].get("role") == "system" else None
+        system_msg = (
+            working_history[0] if working_history[0].get("role") == "system" else None
+        )
 
         if system_msg:
             to_compress = working_history[1:-keep_last_n]
@@ -561,7 +591,7 @@ class HistoryCompressor:
 
         summary = {
             "role": "system",
-            "content": f"FRÜHERE AKTIONEN: {', '.join(unique_tools[:5])}{'...' if len(unique_tools) > 5 else ''} ({len(tool_names)} calls)"
+            "content": f"FRÜHERE AKTIONEN: {', '.join(unique_tools[:5])}{'...' if len(unique_tools) > 5 else ''} ({len(tool_names)} calls)",
         }
 
         # Insert summary after system prompt
@@ -574,6 +604,7 @@ class HistoryCompressor:
 # =============================================================================
 # EXECUTION ENGINE V3
 # =============================================================================
+
 
 class ExecutionEngine:
     """
@@ -600,7 +631,7 @@ class ExecutionEngine:
         # Sub-agent parameters
         is_sub_agent: bool = False,
         sub_agent_output_dir: str | None = None,
-        sub_agent_budget: int = 5000
+        sub_agent_budget: int = 5000,
     ):
         """
         Initialize ExecutionEngine.
@@ -608,14 +639,12 @@ class ExecutionEngine:
         Args:
             agent: FlowAgent instance
             human_online: Whether human is actively monitoring
-            callback: Optional callback for progress updates
             is_sub_agent: If True, this is a sub-agent (cannot spawn further sub-agents)
             sub_agent_output_dir: If sub-agent, the only directory where writes are allowed
             sub_agent_budget: Token budget for sub-agent execution
         """
         self.agent = agent
         self.human_online = human_online
-        self.callback = callback
 
         # Sub-agent state
         self.is_sub_agent = is_sub_agent
@@ -632,12 +661,11 @@ class ExecutionEngine:
         self._current_session = None
 
         # Get or create SkillsManager
-        if hasattr(agent, 'skills_manager') and agent.skills_manager:
+        if hasattr(agent, "skills_manager") and agent.skills_manager:
             self.skills_manager = agent.skills_manager
         else:
             self.skills_manager = SkillsManager(
-                agent_name=agent.amd.name,
-                memory_instance=self._get_memory_instance()
+                agent_name=agent.amd.name, memory_instance=self._get_memory_instance()
             )
             # Store back on agent
             agent.skills_manager = self.skills_manager
@@ -645,6 +673,7 @@ class ExecutionEngine:
         # Add parallel_subtasks skill if not present
         if "parallel_subtasks" not in self.skills_manager.skills:
             from toolboxv2.mods.isaa.base.Agent.skills import Skill
+
             self.skills_manager.skills["parallel_subtasks"] = Skill(
                 **PARALLEL_SUBTASKS_SKILL
             )
@@ -666,7 +695,7 @@ class ExecutionEngine:
             groups = auto_group_tools_by_name_pattern(
                 tool_manager=self.agent.tool_manager,
                 skills_manager=self.skills_manager,
-                min_group_size=2
+                min_group_size=2,
             )
             if groups:
                 print(f"[ExecutionEngine] Auto-created {len(groups)} tool groups")
@@ -682,9 +711,9 @@ class ExecutionEngine:
         query: str,
         session_id: str,
         max_iterations: int = 15,
-        ctx: 'ExecutionContext | None' = None,
-        get_ctx: bool = False
-    ) -> 'tuple[str, ExecutionContext] | str':
+        ctx: "ExecutionContext | None" = None,
+        get_ctx: bool = False,
+    ) -> "tuple[str, ExecutionContext] | str":
         """
         Main execution loop.
 
@@ -723,17 +752,12 @@ class ExecutionEngine:
         # Initialize SubAgentManager (only if NOT a sub-agent)
         if not self.is_sub_agent:
             self._sub_agent_manager = SubAgentManager(
-                parent_engine=self,
-                parent_session=session,
-                is_sub_agent=False
+                parent_engine=self, parent_session=session, is_sub_agent=False
             )
         else:
             # Sub-agent: Apply VFS write restriction
             if self.sub_agent_output_dir:
-                session.vfs = RestrictedVFSWrapper(
-                    session.vfs,
-                    self.sub_agent_output_dir
-                )
+                session.vfs = RestrictedVFSWrapper(session.vfs, self.sub_agent_output_dir)
             # Limit iterations for sub-agents
             max_iterations = min(max_iterations, 10)
 
@@ -744,9 +768,13 @@ class ExecutionEngine:
         if not is_resume:
             # 1. Match skills (hybrid: keyword + embedding)
             try:
-                ctx.matched_skills = await self.skills_manager.match_skills_async(query, max_results=2)
+                ctx.matched_skills = await self.skills_manager.match_skills_async(
+                    query, max_results=2
+                )
             except:
-                ctx.matched_skills = self.skills_manager.match_skills(query, max_results=2)
+                ctx.matched_skills = self.skills_manager.match_skills(
+                    query, max_results=2
+                )
 
             # 2. Calculate tool relevance scores (once at start, cached)
             self._calculate_tool_relevance(ctx, query)
@@ -766,7 +794,7 @@ class ExecutionEngine:
             ctx.working_history = [
                 {"role": "system", "content": system_prompt},
                 *permanent_history,
-                {"role": "user", "content": query}
+                {"role": "user", "content": query},
             ]
 
         agent_type = "SUB-AGENT" if self.is_sub_agent else "MAIN"
@@ -786,10 +814,12 @@ class ExecutionEngine:
 
             # Check for loop and inject warning if needed
             if self._should_warn_loop(ctx):
-                ctx.working_history.append({
-                    "role": "system",
-                    "content": ctx.loop_detector.get_intervention_message()
-                })
+                ctx.working_history.append(
+                    {
+                        "role": "system",
+                        "content": ctx.loop_detector.get_intervention_message(),
+                    }
+                )
                 ctx.loop_warning_given = True
 
             # Build current tool list
@@ -807,7 +837,7 @@ class ExecutionEngine:
                     model_preference="fast",
                     stream=False,
                     get_response_message=True,
-                    with_context=False  # We built context manually
+                    with_context=False,  # We built context manually
                 )
             except Exception as e:
                 print(f"❌ LLM Error: {e}")
@@ -818,21 +848,23 @@ class ExecutionEngine:
             # Add assistant message to working history
             if response:
                 msg_dict = {"role": "assistant", "content": response.content}
-                if hasattr(response, 'tool_calls') and response.tool_calls:
+                if hasattr(response, "tool_calls") and response.tool_calls:
                     msg_dict["tool_calls"] = response.tool_calls
                 ctx.working_history.append(msg_dict)
 
             # Process tool calls
-            if hasattr(response, 'tool_calls') and response.tool_calls:
+            if hasattr(response, "tool_calls") and response.tool_calls:
                 for tool_call in response.tool_calls:
-                    result, is_final = await self._execute_tool_call(ctx, tool_call, session)
+                    result, is_final = await self._execute_tool_call(
+                        ctx, tool_call
+                    )
 
                     # Check if final_answer was called
                     if is_final:
                         try:
                             args = json.loads(tool_call.function.arguments)
-                            final_response = args.get('answer', result)
-                            success = args.get('success', True)
+                            final_response = args.get("answer", result)
+                            success = args.get("success", True)
                         except:
                             final_response = result
                             success = True
@@ -863,7 +895,7 @@ class ExecutionEngine:
                     tools_used=ctx.tools_used,
                     final_answer=final_response,
                     success=success,
-                    llm_completion_func=self.agent.a_run_llm_completion
+                    llm_completion_func=self.agent.a_run_llm_completion,
                 )
             except Exception as e:
                 print(f"[ExecutionEngine] Skill learning failed: {e}")
@@ -875,7 +907,9 @@ class ExecutionEngine:
         # Remove from active executions
         self._active_executions.pop(ctx.run_id, None)
 
-        print(f"✅ Execution [{ctx.run_id}] complete (success={success}, iterations={ctx.current_iteration})")
+        print(
+            f"✅ Execution [{ctx.run_id}] complete (success={success}, iterations={ctx.current_iteration})"
+        )
 
         if get_ctx:
             return final_response, ctx
@@ -899,10 +933,7 @@ class ExecutionEngine:
     # =========================================================================
 
     async def _execute_tool_call(
-        self,
-        ctx: ExecutionContext,
-        tool_call,
-        session
+        self, ctx: ExecutionContext, tool_call
     ) -> Tuple[str, bool]:
         """
         Execute a single tool call and update context.
@@ -930,46 +961,45 @@ class ExecutionEngine:
 
         # === STATIC TOOLS ===
         if f_name == "think":
-            thought = f_args.get('thought', '')
+            thought = f_args.get("thought", "")
             result = f"Thought recorded."
             # Record in AutoFocus
             ctx.auto_focus.record(f_name, f_args, thought[:100])
 
         elif f_name == "final_answer":
-            answer = f_args.get('answer', '')
-            success = f_args.get('success', True)
+            answer = f_args.get("answer", "")
+            success = f_args.get("success", True)
             result = answer
             is_final = True
             # Don't record final_answer in AutoFocus
 
         # === DISCOVERY TOOLS ===
         elif f_name == "list_tools":
-            result = self._tool_list_tools(f_args.get('category'))
+            result = self._tool_list_tools(f_args.get("category"))
             ctx.auto_focus.record(f_name, f_args, result[:100])
 
         elif f_name == "load_tools":
-            tools_input = f_args.get('tools') or f_args.get('names')
+            tools_input = f_args.get("tools") or f_args.get("names")
             result = await self._tool_load_tools(ctx, tools_input)
             ctx.auto_focus.record(f_name, f_args, result[:100])
 
         # === SUB-AGENT TOOLS ===
         elif f_name == "spawn_sub_agent":
             if self.is_sub_agent:
-                result = "ERROR: Sub-agents cannot spawn other sub-agents! Max depth is 1."
+                result = (
+                    "ERROR: Sub-agents cannot spawn other sub-agents! Max depth is 1."
+                )
             elif not self._sub_agent_manager:
                 result = "ERROR: SubAgentManager not initialized."
             else:
                 try:
-                    task = f_args.get('task', '')
-                    output_dir = f_args.get('output_dir', f'task_{uuid.uuid4().hex[:6]}')
-                    wait = f_args.get('wait', True)
-                    budget = f_args.get('budget', 5000)
+                    task = f_args.get("task", "")
+                    output_dir = f_args.get("output_dir", f"task_{uuid.uuid4().hex[:6]}")
+                    wait = f_args.get("wait", True)
+                    budget = f_args.get("budget", 5000)
 
                     spawn_result = await self._sub_agent_manager.spawn(
-                        task=task,
-                        output_dir=output_dir,
-                        wait=wait,
-                        budget=budget
+                        task=task, output_dir=output_dir, wait=wait, budget=budget
                     )
 
                     if wait:
@@ -989,8 +1019,10 @@ class ExecutionEngine:
                                 f"Output dir: {sub_result.output_dir}"
                             )
                         # Inject into AutoFocus
-                        focus_text = self._sub_agent_manager.format_results_for_auto_focus(
-                            {sub_result.id: sub_result}
+                        focus_text = (
+                            self._sub_agent_manager.format_results_for_auto_focus(
+                                {sub_result.id: sub_result}
+                            )
                         )
                         ctx.auto_focus.actions.append(focus_text)
                     else:
@@ -1007,12 +1039,11 @@ class ExecutionEngine:
                 result = "ERROR: SubAgentManager not initialized."
             else:
                 try:
-                    sub_agent_ids = f_args.get('sub_agent_ids', [])
-                    timeout = f_args.get('timeout', 300)
+                    sub_agent_ids = f_args.get("sub_agent_ids", [])
+                    timeout = f_args.get("timeout", 300)
 
                     results = await self._sub_agent_manager.wait_for(
-                        sub_agent_ids=sub_agent_ids,
-                        timeout=timeout
+                        sub_agent_ids=sub_agent_ids, timeout=timeout
                     )
 
                     # Format results
@@ -1031,7 +1062,9 @@ class ExecutionEngine:
                     result = "\n".join(result_lines)
 
                     # Inject into AutoFocus
-                    focus_text = self._sub_agent_manager.format_results_for_auto_focus(results)
+                    focus_text = self._sub_agent_manager.format_results_for_auto_focus(
+                        results
+                    )
                     ctx.auto_focus.actions.append(focus_text)
 
                 except Exception as e:
@@ -1040,7 +1073,7 @@ class ExecutionEngine:
             ctx.auto_focus.record(f_name, f_args, result[:200])
 
         # === VFS & DYNAMIC TOOLS ===
-        else:
+        elif f_name:
             is_vfs = f_name in VFS_TOOL_NAMES
             is_loaded = f_name in ctx.get_dynamic_tool_names()
 
@@ -1051,18 +1084,25 @@ class ExecutionEngine:
                 except Exception as e:
                     result = f"Error executing {f_name}: {str(e)}"
             else:
-                result = f"Error: Tool '{f_name}' ist nicht geladen. Nutze list_tools() und load_tools() um es zu aktivieren."
+                try:
+                    result = await self.agent.arun_function(f_name, **f_args)
+                    result = str(result) if result is not None else "Success (no output)"
+                except Exception as e:
+                    ctx.add_tool(f_name, 1, "auto-detect-use")
+                    result = f"Error: Tool '{f_name}' war noch nicht geladen (auto lodet). Nutze list_tools() und load_tools  () um tools dynamisch zu aktivieren. damit du es fehlerfrei verwenden kannst! Aufgetretener fehler : {e}"
 
             ctx.auto_focus.record(f_name, f_args, result[:200])
 
         # Add tool result to working history (if not final_answer)
         if not is_final:
-            ctx.working_history.append({
-                "role": "tool",
-                "tool_call_id": f_id,
-                "name": f_name,
-                "content": str(result)[:4000]  # Truncate long outputs
-            })
+            ctx.working_history.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": f_id,
+                    "name": f_name,
+                    "content": str(result)[:4000],  # Truncate long outputs
+                }
+            )
 
         return result, is_final
 
@@ -1077,14 +1117,14 @@ class ExecutionEngine:
         for tool in all_tools:
             # Calculate relevance
             score = self.skills_manager.score_tool_relevance(
-                query=query,
-                tool_name=tool.name,
-                tool_description=tool.description or ""
+                query=query, tool_name=tool.name, tool_description=tool.description or ""
             )
             ctx.tool_relevance_cache[tool.name] = score
 
             # Cache categories
-            categories = tool.category if isinstance(tool.category, list) else [tool.category]
+            categories = (
+                tool.category if isinstance(tool.category, list) else [tool.category]
+            )
             ctx.tool_category_cache[tool.name] = set(c for c in categories if c)
 
     def _preload_skill_tools(self, ctx: ExecutionContext, query: str):
@@ -1097,7 +1137,12 @@ class ExecutionEngine:
         for skill in ctx.matched_skills:
             # Add tools directly from skill
             for tool_name in skill.tools_used:
-                if tool_name not in tools_to_load and tool_name not in ['think', 'final_answer', 'list_tools', 'load_tools']:
+                if tool_name not in tools_to_load and tool_name not in [
+                    "think",
+                    "final_answer",
+                    "list_tools",
+                    "load_tools",
+                ]:
                     tools_to_load.append(tool_name)
 
             # Add tools from skill's tool_groups
@@ -1106,7 +1151,7 @@ class ExecutionEngine:
                     query=query,
                     tool_groups=[group_name],
                     tool_manager=self.agent.tool_manager,
-                    max_tools=2
+                    max_tools=2,
                 )
                 for tool_name, score in relevant:
                     if tool_name not in tools_to_load:
@@ -1116,17 +1161,19 @@ class ExecutionEngine:
         scored = [(t, ctx.tool_relevance_cache.get(t, 0.5)) for t in tools_to_load]
         scored.sort(key=lambda x: x[1], reverse=True)
 
-        for tool_name, score in scored[:ctx.max_dynamic_tools]:
+        for tool_name, score in scored[: ctx.max_dynamic_tools]:
             tool_entry = self.agent.tool_manager.get(tool_name)
             if tool_entry:
-                categories = tool_entry.category if isinstance(tool_entry.category, list) else [tool_entry.category]
+                categories = (
+                    tool_entry.category
+                    if isinstance(tool_entry.category, list)
+                    else [tool_entry.category]
+                )
                 category = categories[0] if categories else "unknown"
                 ctx.add_tool(tool_name, score, category)
 
     async def _tool_load_tools(
-        self,
-        ctx: ExecutionContext,
-        tools_input: Union[str, List[str]]
+        self, ctx: ExecutionContext, tools_input: Union[str, List[str]]
     ) -> str:
         """
         Load tools with intelligent slot management.
@@ -1161,7 +1208,11 @@ class ExecutionEngine:
             # Get tool info
             tool_entry = self.agent.tool_manager.get(name)
             relevance = ctx.tool_relevance_cache.get(name, 0.5)
-            categories = tool_entry.category if tool_entry and isinstance(tool_entry.category, list) else [tool_entry.category if tool_entry else "unknown"]
+            categories = (
+                tool_entry.category
+                if tool_entry and isinstance(tool_entry.category, list)
+                else [tool_entry.category if tool_entry else "unknown"]
+            )
             new_category = categories[0] if categories else "unknown"
 
             # Check if we need to make room
@@ -1173,12 +1224,13 @@ class ExecutionEngine:
                     # Category change detected - trigger partial compression if len > 3
                     if len(ctx.working_history) > 4:  # system + at least 3 messages
                         summary, new_history = HistoryCompressor.compress_partial(
-                            ctx.working_history,
-                            keep_last_n=3
+                            ctx.working_history, keep_last_n=3
                         )
                         if summary:
                             ctx.working_history = new_history
-                            print(f"  📦 Partial compression triggered (category change: {majority_category} → {new_category})")
+                            print(
+                                f"  📦 Partial compression triggered (category change: {majority_category} → {new_category})"
+                            )
 
                 # Remove least relevant tool
                 least_relevant = ctx.get_least_relevant_tool()
@@ -1217,9 +1269,15 @@ class ExecutionEngine:
                     match = False
 
             if match:
-                desc = t.description.split('\n')[0] if t.description else "No description"
+                desc = t.description.split("\n")[0] if t.description else "No description"
                 desc = desc[:80]
-                cats = ', '.join(str(c) for c in (t.category[:2] if isinstance(t.category, list) else [t.category]) if c)
+                cats = ", ".join(
+                    str(c)
+                    for c in (
+                        t.category[:2] if isinstance(t.category, list) else [t.category]
+                    )
+                    if c
+                )
                 lines.append(f"- {t.name}: {desc} [{cats}]")
 
         if not lines:
@@ -1259,14 +1317,14 @@ class ExecutionEngine:
         # 4. VFS tools (always available, not counted in limit)
         all_tools = self.agent.tool_manager.get_all_litellm()
         for tool in all_tools:
-            t_name = tool['function']['name']
+            t_name = tool["function"]["name"]
             if t_name in VFS_TOOL_NAMES:
                 definitions.append(tool)
 
         # 5. Dynamic tools (from slots)
         dynamic_names = ctx.get_dynamic_tool_names()
         for tool in all_tools:
-            t_name = tool['function']['name']
+            t_name = tool["function"]["name"]
             if t_name in dynamic_names and t_name not in VFS_TOOL_NAMES:
                 definitions.append(tool)
 
@@ -1290,7 +1348,9 @@ class ExecutionEngine:
                     categories.add(t.category)
 
         cat_list = ", ".join(sorted(categories)) if categories else "keine"
-        active_str = ", ".join(ctx.get_dynamic_tool_names()) if ctx.dynamic_tools else "keine"
+        active_str = (
+            ", ".join(ctx.get_dynamic_tool_names()) if ctx.dynamic_tools else "keine"
+        )
 
         # Base prompt - different for sub-agents
         if self.is_sub_agent:
@@ -1340,7 +1400,9 @@ class ExecutionEngine:
 
         # Add skills section if matched
         if ctx.matched_skills:
-            skill_section = self.skills_manager.build_skill_prompt_section(ctx.matched_skills)
+            skill_section = self.skills_manager.build_skill_prompt_section(
+                ctx.matched_skills
+            )
             prompt_parts.append(skill_section)
 
         # Add VFS context if available
@@ -1377,7 +1439,7 @@ class ExecutionEngine:
 
         # Summarize what was done
         summary = HistoryCompressor.compress_to_summary(ctx.working_history, ctx.run_id)
-        summary_text = summary['content'] if summary else "Keine Aktionen durchgeführt."
+        summary_text = summary["content"] if summary else "Keine Aktionen durchgeführt."
 
         return f"""Ich konnte die Aufgabe leider nicht vollständig abschließen.
 
@@ -1394,7 +1456,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
 Ich bin ehrlich mit dir: Ich weiß nicht genau, was schief gelaufen ist.
 Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
 
-*Ursprüngliche Anfrage: {query[:100]}{'...' if len(query) > 100 else ''}*"""
+*Ursprüngliche Anfrage: {query[:100]}{"..." if len(query) > 100 else ""}*"""
 
     async def _commit_run(
         self,
@@ -1402,7 +1464,7 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
         session,
         query: str,
         final_response: str,
-        success: bool
+        success: bool,
     ):
         """
         Compress working history and commit to permanent storage.
@@ -1425,7 +1487,7 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
                 direct=True,
                 type="action_summary",
                 run_id=ctx.run_id,
-                success=success
+                success=success,
             )
 
         # Final response
@@ -1440,10 +1502,10 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
     def get_stats(self) -> dict:
         """Get engine statistics"""
         return {
-            'skills_stats': self.skills_manager.get_stats(),
-            'human_online': self.human_online,
-            'agent_name': self.agent.amd.name,
-            'active_executions': len(self._active_executions)
+            "skills_stats": self.skills_manager.get_stats(),
+            "human_online": self.human_online,
+            "agent_name": self.agent.amd.name,
+            "active_executions": len(self._active_executions),
         }
 
     # =========================================================================
@@ -1506,15 +1568,17 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
         """
         executions = []
         for run_id, ctx in self._active_executions.items():
-            executions.append({
-                "run_id": run_id,
-                "session_id": ctx.session_id,
-                "query": ctx.query[:50] + "..." if len(ctx.query) > 50 else ctx.query,
-                "status": ctx.status,
-                "iteration": ctx.current_iteration,
-                "tools_used": len(ctx.tools_used),
-                "dynamic_tools": ctx.get_dynamic_tool_names()
-            })
+            executions.append(
+                {
+                    "run_id": run_id,
+                    "session_id": ctx.session_id,
+                    "query": ctx.query[:50] + "..." if len(ctx.query) > 50 else ctx.query,
+                    "status": ctx.status,
+                    "iteration": ctx.current_iteration,
+                    "tools_used": len(ctx.tools_used),
+                    "dynamic_tools": ctx.get_dynamic_tool_names(),
+                }
+            )
         return executions
 
     def get_execution(self, execution_id: str) -> ExecutionContext | None:
@@ -1529,11 +1593,7 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
         """
         return self._active_executions.get(execution_id)
 
-    async def resume(
-        self,
-        execution_id: str,
-        max_iterations: int = 15
-    ) -> str:
+    async def resume(self, execution_id: str, max_iterations: int = 15) -> str:
         """
         Resume a paused execution.
 
@@ -1558,7 +1618,7 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
             query=ctx.query,
             session_id=ctx.session_id,
             max_iterations=max_iterations,
-            ctx=ctx
+            ctx=ctx,
         )
 
     async def execute_stream(
@@ -1566,7 +1626,7 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
         query: str,
         session_id: str,
         max_iterations: int = 15,
-        ctx: 'ExecutionContext | None' = None
+        ctx: "ExecutionContext | None" = None,
     ) -> tuple[Callable, ExecutionContext]:
         """
         Initialize execution and return stream generator + context.
@@ -1587,25 +1647,24 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
         # Initialize SubAgentManager
         if not self.is_sub_agent:
             self._sub_agent_manager = SubAgentManager(
-                parent_engine=self,
-                parent_session=session,
-                is_sub_agent=False
+                parent_engine=self, parent_session=session, is_sub_agent=False
             )
         else:
             if self.sub_agent_output_dir:
-                session.vfs = RestrictedVFSWrapper(
-                    session.vfs,
-                    self.sub_agent_output_dir
-                )
+                session.vfs = RestrictedVFSWrapper(session.vfs, self.sub_agent_output_dir)
             max_iterations = min(max_iterations, 10)
 
         self._current_session = session
 
         if not is_resume:
             try:
-                ctx.matched_skills = await self.skills_manager.match_skills_async(query, max_results=2)
+                ctx.matched_skills = await self.skills_manager.match_skills_async(
+                    query, max_results=2
+                )
             except:
-                ctx.matched_skills = self.skills_manager.match_skills(query, max_results=2)
+                ctx.matched_skills = self.skills_manager.match_skills(
+                    query, max_results=2
+                )
 
             self._calculate_tool_relevance(ctx, query)
             self._preload_skill_tools(ctx, query)
@@ -1617,7 +1676,7 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
             ctx.working_history = [
                 {"role": "system", "content": system_prompt},
                 *permanent_history,
-                {"role": "user", "content": query}
+                {"role": "user", "content": query},
             ]
 
         # Return the generator function and context
@@ -1647,35 +1706,66 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
 
                 # Stream LLM response
                 collected_content = ""
-                tool_calls = []
+                tool_calls_buffer = {}
 
                 stream_response = await self.agent.a_run_llm_completion(
                     messages=messages,
                     tools=tool_definitions if tool_definitions else None,
                     stream=True,
-                    true_stream = True
+                    true_stream=True,
                 )
 
                 if asyncio.iscoroutine(stream_response):
                     stream_response = await stream_response
 
                 async for chunk in stream_response:
-                    if hasattr(chunk, 'content') and chunk.content:
-                        collected_content += chunk.content
-                        yield {"type": "content", "chunk": chunk.content}
+                    delta = chunk.choices[0].delta if hasattr(chunk, "choices") and chunk.choices else None
+                    # 1. Content sammeln
+                    if delta and hasattr(delta, "content") and delta.content:
+                        collected_content += delta.content
+                        yield {"type": "content", "chunk": delta.content}
 
-                    if hasattr(chunk, 'tool_calls') and chunk.tool_calls:
-                        tool_calls = chunk.tool_calls
+                    # 2. Reasoning sammeln (falls vorhanden)
+                    if delta and hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                        yield {"type": "reasoning", "chunk": delta.reasoning_content}
+
+                    # 3. Tool Calls SAMMELN (nicht überschreiben!)
+                    if delta and hasattr(delta, "tool_calls") and delta.tool_calls:
+                        for tc_chunk in delta.tool_calls:
+                            idx = tc_chunk.index
+
+                            # Neuen Eintrag anlegen, falls Index noch nicht existiert
+                            if idx not in tool_calls_buffer:
+                                tool_calls_buffer[idx] = ChatCompletionMessageToolCall(
+                                        id=tc_chunk.id,
+                                        type="function",
+                                        function=Function(name=tc_chunk.function.name or "", arguments=tc_chunk.function.arguments or "")
+                                    )
+                            else:
+                                # Bestehenden Eintrag erweitern (Name und Argumente anhängen)
+                                if tc_chunk.function.name:
+                                    tool_calls_buffer[idx]["function"]["name"] += tc_chunk.function.name
+                                if tc_chunk.function.arguments:
+                                    tool_calls_buffer[idx]["function"]["arguments"] += tc_chunk.function.arguments
+
+                # Nach dem Loop: Das Dictionary in eine Liste umwandeln
+                tool_calls = list(tool_calls_buffer.values())
 
                 # Process tool calls
                 if tool_calls:
-                    assistant_msg = {"role": "assistant", "content": collected_content, "tool_calls": tool_calls}
+                    assistant_msg = {
+                        "role": "assistant",
+                        "content": collected_content,
+                        "tool_calls": tool_calls,
+                    }
                     ctx.working_history.append(assistant_msg)
 
                     for tc in tool_calls:
-                        f_name = tc.function.name if hasattr(tc, 'function') else tc.get('function', {}).get('name', '')
-                        f_args = tc.function.arguments if hasattr(tc, 'function') else tc.get('function', {}).get(
-                            'arguments', '{}')
+                        # Achtung: tc ist jetzt ein Dict, kein Objekt mehr, da wir es manuell gebaut haben
+                        # Zugriff daher via ['key'] oder .get()
+                        func_obj = tc.get("function", {})
+                        f_name = func_obj.get("name", "")
+                        f_args = func_obj.get("arguments", "{}")
 
                         yield {"type": "tool_start", "name": f_name}
 
@@ -1690,18 +1780,24 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
                             yield {"type": "final_answer", "answer": final_response}
                             break
 
-                        # Execute tool
-                        result = await self._execute_tool_call(ctx, session, tc)
+                        print(tc)
+                        result = await self._execute_tool_call(ctx, tc)
 
                         tool_msg = {
                             "role": "tool",
-                            "tool_call_id": tc.id if hasattr(tc, 'id') else tc.get('id', ''),
+                            "tool_call_id": tc.id
+                            if hasattr(tc, "id")
+                            else tc.get("id", ""),
                             "name": f_name,
-                            "content": str(result)[:2000]
+                            "content": str(result)[:2000],
                         }
                         ctx.working_history.append(tool_msg)
 
-                        yield {"type": "tool_result", "name": f_name, "result": str(result)[:500]}
+                        yield {
+                            "type": "tool_result",
+                            "name": f_name,
+                            "result": str(result)[:500],
+                        }
 
                     if final_response:
                         break
@@ -1729,7 +1825,7 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
                         tools_used=ctx.tools_used,
                         final_answer=final_response,
                         success=success,
-                        llm_completion_func=self.agent.a_run_llm_completion
+                        llm_completion_func=self.agent.a_run_llm_completion,
                     )
                 except:
                     pass
@@ -1742,3 +1838,4 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
             yield {"type": "done", "success": success, "final_answer": final_response}
 
         return stream_generator, ctx
+

@@ -1012,8 +1012,6 @@ class FlowAgentBuilder:
                 # Step 12: Checkpoint loding
                 if self.config.checkpoint.enabled:
                     res = await agent.checkpoint_manager.auto_restore()
-                    print(
-                        f"Auto-restore result: {res.get('success')} - {res.get('error')} - {res.get('restored_components')=}")
 
                 # Final summary
                 iprint("✓ FlowAgent built successfully!")

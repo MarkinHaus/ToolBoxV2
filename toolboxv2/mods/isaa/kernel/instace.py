@@ -42,7 +42,7 @@ from toolboxv2.mods.isaa.kernel.models import (
 
 if TYPE_CHECKING:
     from toolboxv2.mods.isaa.base.Agent.flow_agent import FlowAgent
-    from toolboxv2.mods.isaa.base.Agent.agent_session import AgentSession
+    from toolboxv2.mods.isaa.base.Agent.agent_session_v2 import AgentSession
     from toolboxv2.mods.isaa.base.Agent.rule_set import RuleSet
 
 

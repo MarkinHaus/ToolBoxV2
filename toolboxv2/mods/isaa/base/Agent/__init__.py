@@ -18,7 +18,8 @@ Author: FlowAgent V2
 from toolboxv2.mods.isaa.base.Agent.flow_agent import FlowAgent
 
 # Session management
-from toolboxv2.mods.isaa.base.Agent.agent_session import AgentSession, VirtualFileSystem, VFSFile
+from toolboxv2.mods.isaa.base.Agent.agent_session_v2 import AgentSession,AgentSessionV2
+from toolboxv2.mods.isaa.base.Agent.vfs_v2 import  VirtualFileSystemV2, VirtualFileSystem, VFSFile
 from toolboxv2.mods.isaa.base.Agent.session_manager import SessionManager
 
 # Tool management

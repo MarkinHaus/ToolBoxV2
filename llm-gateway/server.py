@@ -1170,6 +1170,12 @@ async def playground():
     """Serve playground"""
     return (STATIC_DIR / "playground.html").read_text()
 
+@app.get("/playground-live/", response_class=HTMLResponse)
+async def playground():
+    """Serve playground"""
+    return (STATIC_DIR / "live-playground.html").read_text()
+
+
 @app.get("/user/api/me")
 async def user_me(auth: Dict = Depends(verify_api_key)):
     async with aiosqlite.connect(DB_PATH) as db:

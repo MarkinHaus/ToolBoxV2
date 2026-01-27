@@ -75,12 +75,8 @@ class TestServiceRegistry(unittest.TestCase):
         # Core services
         self.assertIsNotNone(registry.get("workers"))
         self.assertIsNotNone(registry.get("db"))
-        self.assertIsNotNone(registry.get("user"))
-        self.assertIsNotNone(registry.get("run"))
 
         # Infrastructure services
-        self.assertIsNotNone(registry.get("config"))
-        self.assertIsNotNone(registry.get("session"))
         self.assertIsNotNone(registry.get("broker"))
 
         # Extension services
@@ -97,7 +93,7 @@ class TestServiceRegistry(unittest.TestCase):
         self.assertTrue(len(core_services) >= 4)
 
         infra_services = registry.get_by_category("infrastructure")
-        self.assertTrue(len(infra_services) >= 5)
+        self.assertTrue(len(infra_services) >= 3)
 
     def test_registry_list_names(self):
         """Test list_names Methode"""

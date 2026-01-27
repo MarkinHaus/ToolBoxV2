@@ -17,6 +17,7 @@ NEW v2:
 """
 
 import asyncio
+import os
 import time
 import re
 import json
@@ -440,8 +441,6 @@ class ModelFallbackManager:
             cooldown_check_interval=cooldown_check_interval,
             auto_recover=auto_recover,
         )
-
-        logger.info(f"Added fallback chain: {primary_model} -> {fallback_models}")
 
     def add_fallback_model(self, primary_model: str, fallback_model: str) -> None:
         """Füge ein einzelnes Fallback-Model hinzu"""
@@ -1290,7 +1289,6 @@ class IntelligentRateLimiter:
             for key, limit_data in data.get("limits", data).items():
                 self.limits[key] = ProviderModelLimits(**limit_data)
 
-            logger.info(f"[RateLimiter] Loaded {len(self.limits)} limit configurations")
         except Exception as e:
             logger.warning(f"[RateLimiter] Failed to load limits: {e}")
 
@@ -1488,8 +1486,11 @@ class LiteLLMRateLimitHandler:
                 # Execute request
                 response = await litellm_module.acompletion(**kwargs)
 
-                if not kwargs.get("stream", False):
-                    print_prompt(kwargs["messages"]+[{"role": "assistant", "content": response.choices[0].message.content}])
+                if os.getenv("AGENT_VERBOSE", "f").lower() == "true":
+                    if not kwargs.get("stream", False):
+                        print_prompt(kwargs["messages"]+[{"role": "assistant", "content": response.choices[0].message.content}])
+                    else:
+                        print_prompt(kwargs["messages"] + [{"role": "assistant", "content": "streaming"}])
 
                 # Report success
                 if self.enable_rate_limiting:
