@@ -6,20 +6,24 @@ Provides Discord-specific tools for server management, user management,
 voice control, and lifetime management that are exported to the agent.
 """
 
-
-from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 
 try:
     import discord
 except ImportError:
     print("pip install discord.py")
-    discord = None
+    discord = lambda: None
+    discord.Forbidden = Exception
+    discord.TextChannel = str
+    discord.VoiceChannel = str
+    discord.Attachment = str
+
 
 class DiscordKernelTools:
     """Discord-specific tools for kernel integration"""
 
-    def __init__(self, bot: 'discord.discord.ext.commands.Bot', kernel, output_router):
+    def __init__(self, bot: "discord.discord.ext.commands.Bot", kernel, output_router):
         self.bot = bot
         self.kernel = kernel
         self.output_router = output_router
@@ -52,20 +56,16 @@ class DiscordKernelTools:
                 "roles": len(guild.roles),
                 "emojis": len(guild.emojis),
                 "boost_level": guild.premium_tier,
-                "boost_count": guild.premium_subscription_count
+                "boost_count": guild.premium_subscription_count,
             }
         else:
             # Return info for all guilds
             return {
                 "guilds": [
-                    {
-                        "id": g.id,
-                        "name": g.name,
-                        "member_count": g.member_count
-                    }
+                    {"id": g.id, "name": g.name, "member_count": g.member_count}
                     for g in self.bot.guilds
                 ],
-                "total_guilds": len(self.bot.guilds)
+                "total_guilds": len(self.bot.guilds),
             }
 
     async def get_channel_info(self, channel_id: int) -> Dict[str, Any]:
@@ -84,13 +84,13 @@ class DiscordKernelTools:
 
         info = {
             "id": channel.id,
-            "name": getattr(channel, 'name', 'DM Channel'),
+            "name": getattr(channel, "name", "DM Channel"),
             "type": str(channel.type),
-            "created_at": channel.created_at.isoformat()
+            "created_at": channel.created_at.isoformat(),
         }
 
         # Add guild-specific info
-        if hasattr(channel, 'guild') and channel.guild:
+        if hasattr(channel, "guild") and channel.guild:
             info["guild_id"] = channel.guild.id
             info["guild_name"] = channel.guild.name
 
@@ -108,7 +108,9 @@ class DiscordKernelTools:
 
         return info
 
-    async def list_channels(self, guild_id: int, channel_type: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def list_channels(
+        self, guild_id: int, channel_type: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         List all channels in a guild.
 
@@ -126,25 +128,37 @@ class DiscordKernelTools:
         channels = []
         for channel in guild.channels:
             if channel_type:
-                if channel_type == 'text' and not isinstance(channel, discord.TextChannel):
+                if channel_type == "text" and not isinstance(
+                    channel, discord.TextChannel
+                ):
                     continue
-                if channel_type == 'voice' and not isinstance(channel, discord.VoiceChannel):
+                if channel_type == "voice" and not isinstance(
+                    channel, discord.VoiceChannel
+                ):
                     continue
-                if channel_type == 'category' and not isinstance(channel, discord.CategoryChannel):
+                if channel_type == "category" and not isinstance(
+                    channel, discord.CategoryChannel
+                ):
                     continue
-                if channel_type == 'stage' and not isinstance(channel, discord.StageChannel):
+                if channel_type == "stage" and not isinstance(
+                    channel, discord.StageChannel
+                ):
                     continue
 
-            channels.append({
-                "id": channel.id,
-                "name": channel.name,
-                "type": str(channel.type),
-                "position": channel.position
-            })
+            channels.append(
+                {
+                    "id": channel.id,
+                    "name": channel.name,
+                    "type": str(channel.type),
+                    "position": channel.position,
+                }
+            )
 
         return channels
 
-    async def get_user_info(self, user_id: int, guild_id: Optional[int] = None) -> Dict[str, Any]:
+    async def get_user_info(
+        self, user_id: int, guild_id: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
         Get information about a Discord user.
 
@@ -164,7 +178,7 @@ class DiscordKernelTools:
             "name": user.name,
             "display_name": user.display_name,
             "bot": user.bot,
-            "created_at": user.created_at.isoformat()
+            "created_at": user.created_at.isoformat(),
         }
 
         # Add member-specific info if guild provided
@@ -174,10 +188,16 @@ class DiscordKernelTools:
                 member = guild.get_member(user_id)
                 if member:
                     info["nickname"] = member.nick
-                    info["joined_at"] = member.joined_at.isoformat() if member.joined_at else None
-                    info["roles"] = [role.name for role in member.roles if role.name != "@everyone"]
+                    info["joined_at"] = (
+                        member.joined_at.isoformat() if member.joined_at else None
+                    )
+                    info["roles"] = [
+                        role.name for role in member.roles if role.name != "@everyone"
+                    ]
                     info["top_role"] = member.top_role.name
-                    info["voice_channel"] = member.voice.channel.name if member.voice else None
+                    info["voice_channel"] = (
+                        member.voice.channel.name if member.voice else None
+                    )
 
         return info
 
@@ -188,7 +208,7 @@ class DiscordKernelTools:
         channel_id: int,
         content: str,
         embed: Optional[Dict[str, Any]] = None,
-        reply_to: Optional[int] = None
+        reply_to: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Send a message to a Discord channel.
@@ -213,7 +233,7 @@ class DiscordKernelTools:
                 discord_embed = discord.Embed(
                     title=embed.get("title"),
                     description=embed.get("description"),
-                    color=discord.Color(embed.get("color", 0x3498db))
+                    color=discord.Color(embed.get("color", 0x3498DB)),
                 )
 
                 # Add fields
@@ -221,7 +241,7 @@ class DiscordKernelTools:
                     discord_embed.add_field(
                         name=field.get("name", "Field"),
                         value=field.get("value", ""),
-                        inline=field.get("inline", False)
+                        inline=field.get("inline", False),
                     )
 
             # Get reference message if replying
@@ -235,16 +255,14 @@ class DiscordKernelTools:
 
             # Send message
             message = await channel.send(
-                content=content,
-                embed=discord_embed,
-                reference=reference
+                content=content, embed=discord_embed, reference=reference
             )
 
             return {
                 "success": True,
                 "message_id": message.id,
                 "channel_id": message.channel.id,
-                "timestamp": message.created_at.isoformat()
+                "timestamp": message.created_at.isoformat(),
             }
         except Exception as e:
             return {"error": str(e)}
@@ -254,7 +272,7 @@ class DiscordKernelTools:
         channel_id: int,
         message_id: int,
         new_content: Optional[str] = None,
-        new_embed: Optional[Dict[str, Any]] = None
+        new_embed: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Edit an existing message.
@@ -281,14 +299,14 @@ class DiscordKernelTools:
                 discord_embed = discord.Embed(
                     title=new_embed.get("title"),
                     description=new_embed.get("description"),
-                    color=discord.Color(new_embed.get("color", 0x3498db))
+                    color=discord.Color(new_embed.get("color", 0x3498DB)),
                 )
 
                 for field in new_embed.get("fields", []):
                     discord_embed.add_field(
                         name=field.get("name", "Field"),
                         value=field.get("value", ""),
-                        inline=field.get("inline", False)
+                        inline=field.get("inline", False),
                     )
 
             # Edit message
@@ -297,7 +315,7 @@ class DiscordKernelTools:
             return {
                 "success": True,
                 "message_id": message.id,
-                "edited_at": datetime.now().isoformat()
+                "edited_at": datetime.now().isoformat(),
             }
         except discord.NotFound:
             return {"error": f"Message {message_id} not found"}
@@ -306,7 +324,9 @@ class DiscordKernelTools:
         except Exception as e:
             return {"error": str(e)}
 
-    async def delete_message(self, channel_id: int, message_id: int, delay: float = 0) -> Dict[str, Any]:
+    async def delete_message(
+        self, channel_id: int, message_id: int, delay: float = 0
+    ) -> Dict[str, Any]:
         """
         Delete a message.
 
@@ -329,7 +349,7 @@ class DiscordKernelTools:
             return {
                 "success": True,
                 "message_id": message_id,
-                "deleted_at": datetime.now().isoformat()
+                "deleted_at": datetime.now().isoformat(),
             }
         except discord.NotFound:
             return {"error": f"Message {message_id} not found"}
@@ -362,27 +382,20 @@ class DiscordKernelTools:
                 "author": {
                     "id": message.author.id,
                     "name": message.author.name,
-                    "display_name": message.author.display_name
+                    "display_name": message.author.display_name,
                 },
                 "channel_id": message.channel.id,
                 "created_at": message.created_at.isoformat(),
                 "edited_at": message.edited_at.isoformat() if message.edited_at else None,
                 "embeds": len(message.embeds),
                 "attachments": [
-                    {
-                        "filename": att.filename,
-                        "url": att.url,
-                        "size": att.size
-                    }
+                    {"filename": att.filename, "url": att.url, "size": att.size}
                     for att in message.attachments
                 ],
                 "reactions": [
-                    {
-                        "emoji": str(reaction.emoji),
-                        "count": reaction.count
-                    }
+                    {"emoji": str(reaction.emoji), "count": reaction.count}
                     for reaction in message.reactions
-                ]
+                ],
             }
         except discord.NotFound:
             return {"error": f"Message {message_id} not found"}
@@ -394,7 +407,7 @@ class DiscordKernelTools:
         channel_id: int,
         limit: int = 10,
         before: Optional[int] = None,
-        after: Optional[int] = None
+        after: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get recent messages from a channel.
@@ -418,29 +431,24 @@ class DiscordKernelTools:
             # Fetch messages
             messages = []
             async for message in channel.history(limit=limit, before=before, after=after):
-                messages.append({
-                    "id": message.id,
-                    "content": message.content,
-                    "author": {
-                        "id": message.author.id,
-                        "name": message.author.name
-                    },
-                    "created_at": message.created_at.isoformat(),
-                    "has_embeds": len(message.embeds) > 0,
-                    "has_attachments": len(message.attachments) > 0
-                })
+                messages.append(
+                    {
+                        "id": message.id,
+                        "content": message.content,
+                        "author": {"id": message.author.id, "name": message.author.name},
+                        "created_at": message.created_at.isoformat(),
+                        "has_embeds": len(message.embeds) > 0,
+                        "has_attachments": len(message.attachments) > 0,
+                    }
+                )
 
             return messages
         except Exception as e:
             return []
 
-
     #  ===== Message Reaction Tools =====
     async def get_message_reactions(
-        self,
-        channel_id: int,
-        message_id: int,
-        emoji: Optional[str] = None
+        self, channel_id: int, message_id: int, emoji: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Get reactions from a message.
@@ -465,7 +473,7 @@ class DiscordKernelTools:
                     "success": True,
                     "message_id": message_id,
                     "channel_id": channel_id,
-                    "reactions": []
+                    "reactions": [],
                 }
 
             reactions_data = []
@@ -484,18 +492,20 @@ class DiscordKernelTools:
                 # Get users who reacted
                 users = []
                 async for user in reaction.users():
-                    users.append({
-                        "id": user.id,
-                        "name": user.name,
-                        "display_name": user.display_name,
-                        "bot": user.bot
-                    })
+                    users.append(
+                        {
+                            "id": user.id,
+                            "name": user.name,
+                            "display_name": user.display_name,
+                            "bot": user.bot,
+                        }
+                    )
 
                 reaction_info = {
                     "emoji": str(reaction.emoji),
                     "count": reaction.count,
                     "me": reaction.me,  # Whether the bot reacted
-                    "users": users
+                    "users": users,
                 }
 
                 # Add custom emoji details if applicable
@@ -513,13 +523,12 @@ class DiscordKernelTools:
                 "success": True,
                 "message_id": message_id,
                 "channel_id": channel_id,
-                "message_content": message.content[:100] + "..." if len(message.content) > 100 else message.content,
-                "author": {
-                    "id": message.author.id,
-                    "name": message.author.name
-                },
+                "message_content": message.content[:100] + "..."
+                if len(message.content) > 100
+                else message.content,
+                "author": {"id": message.author.id, "name": message.author.name},
                 "reactions": reactions_data,
-                "total_reactions": sum(r["count"] for r in reactions_data)
+                "total_reactions": sum(r["count"] for r in reactions_data),
             }
 
         except discord.NotFound:
@@ -529,7 +538,9 @@ class DiscordKernelTools:
         except Exception as e:
             return {"error": str(e)}
 
-    async def add_reaction(self, channel_id: int, message_id: int, emoji: str) -> Dict[str, Any]:
+    async def add_reaction(
+        self, channel_id: int, message_id: int, emoji: str
+    ) -> Dict[str, Any]:
         """
         Add a reaction to a message.
 
@@ -549,11 +560,7 @@ class DiscordKernelTools:
             message = await channel.fetch_message(message_id)
             await message.add_reaction(emoji)
 
-            return {
-                "success": True,
-                "message_id": message_id,
-                "emoji": emoji
-            }
+            return {"success": True, "message_id": message_id, "emoji": emoji}
         except discord.NotFound:
             return {"error": f"Message {message_id} not found"}
         except discord.HTTPException as e:
@@ -562,11 +569,7 @@ class DiscordKernelTools:
             return {"error": str(e)}
 
     async def remove_reaction(
-        self,
-        channel_id: int,
-        message_id: int,
-        emoji: str,
-        user_id: Optional[int] = None
+        self, channel_id: int, message_id: int, emoji: str, user_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Remove a reaction from a message.
@@ -594,11 +597,7 @@ class DiscordKernelTools:
             else:
                 await message.remove_reaction(emoji, self.bot.user)
 
-            return {
-                "success": True,
-                "message_id": message_id,
-                "emoji": emoji
-            }
+            return {"success": True, "message_id": message_id, "emoji": emoji}
         except discord.NotFound:
             return {"error": f"Message {message_id} not found"}
         except Exception as e:
@@ -633,7 +632,7 @@ class DiscordKernelTools:
                         "success": True,
                         "action": "moved",
                         "channel_id": channel.id,
-                        "channel_name": channel.name
+                        "channel_name": channel.name,
                     }
 
             # Connect to voice channel
@@ -647,7 +646,7 @@ class DiscordKernelTools:
                 "success": True,
                 "action": "joined",
                 "channel_id": channel.id,
-                "channel_name": channel.name
+                "channel_name": channel.name,
             }
         except Exception as e:
             return {"error": str(e)}
@@ -676,10 +675,7 @@ class DiscordKernelTools:
             if guild_id in self.output_router.tts_enabled:
                 del self.output_router.tts_enabled[guild_id]
 
-            return {
-                "success": True,
-                "guild_id": guild_id
-            }
+            return {"success": True, "guild_id": guild_id}
         except Exception as e:
             return {"error": str(e)}
 
@@ -694,10 +690,7 @@ class DiscordKernelTools:
             Dict with voice status information
         """
         if guild_id not in self.output_router.voice_clients:
-            return {
-                "connected": False,
-                "guild_id": guild_id
-            }
+            return {"connected": False, "guild_id": guild_id}
 
         voice_client = self.output_router.voice_clients[guild_id]
 
@@ -707,14 +700,18 @@ class DiscordKernelTools:
             "channel_name": voice_client.channel.name if voice_client.channel else None,
             "playing": voice_client.is_playing(),
             "paused": voice_client.is_paused(),
-            "listening": voice_client.is_listening() if hasattr(voice_client, 'is_listening') else False,
+            "listening": voice_client.is_listening()
+            if hasattr(voice_client, "is_listening")
+            else False,
             "tts_enabled": self.output_router.tts_enabled.get(guild_id, False),
             "tts_mode": self.output_router.tts_mode.get(guild_id, "piper"),
             "latency": voice_client.latency,
-            "guild_id": guild_id
+            "guild_id": guild_id,
         }
 
-    async def toggle_tts(self, guild_id: int, mode: Optional[str] = None) -> Dict[str, Any]:
+    async def toggle_tts(
+        self, guild_id: int, mode: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Toggle TTS (Text-to-Speech) on/off.
 
@@ -727,11 +724,7 @@ class DiscordKernelTools:
         """
         if mode == "off":
             self.output_router.tts_enabled[guild_id] = False
-            return {
-                "success": True,
-                "tts_enabled": False,
-                "guild_id": guild_id
-            }
+            return {"success": True, "tts_enabled": False, "guild_id": guild_id}
         elif mode in ["elevenlabs", "piper"]:
             self.output_router.tts_enabled[guild_id] = True
             self.output_router.tts_mode[guild_id] = mode
@@ -739,7 +732,7 @@ class DiscordKernelTools:
                 "success": True,
                 "tts_enabled": True,
                 "tts_mode": mode,
-                "guild_id": guild_id
+                "guild_id": guild_id,
             }
         elif mode is None:
             # Toggle
@@ -749,12 +742,14 @@ class DiscordKernelTools:
                 "success": True,
                 "tts_enabled": not current,
                 "tts_mode": self.output_router.tts_mode.get(guild_id, "piper"),
-                "guild_id": guild_id
+                "guild_id": guild_id,
             }
         else:
             return {"error": f"Invalid TTS mode: {mode}"}
 
-    async def send_tts_message(self, guild_id: int, text: str, mode: Optional[str] = None) -> Dict[str, Any]:
+    async def send_tts_message(
+        self, guild_id: int, text: str, mode: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Send a TTS (Text-to-Speech) message in the current voice channel.
 
@@ -768,7 +763,9 @@ class DiscordKernelTools:
         """
         # Check if bot is in voice channel
         if guild_id not in self.output_router.voice_clients:
-            return {"error": "Not in a voice channel in this guild. Use discord_join_voice first."}
+            return {
+                "error": "Not in a voice channel in this guild. Use discord_join_voice first."
+            }
 
         voice_client = self.output_router.voice_clients[guild_id]
         if not voice_client.is_connected():
@@ -777,7 +774,9 @@ class DiscordKernelTools:
         # Determine TTS mode
         tts_mode = mode or self.output_router.tts_mode.get(guild_id, "piper")
         if tts_mode not in ["elevenlabs", "piper"]:
-            return {"error": f"Invalid TTS mode: {tts_mode}. Use 'elevenlabs' or 'piper'."}
+            return {
+                "error": f"Invalid TTS mode: {tts_mode}. Use 'elevenlabs' or 'piper'."
+            }
 
         try:
             # Enable TTS temporarily if not enabled
@@ -801,7 +800,7 @@ class DiscordKernelTools:
                 "tts_mode": tts_mode,
                 "guild_id": guild_id,
                 "channel_id": voice_client.channel.id,
-                "channel_name": voice_client.channel.name
+                "channel_name": voice_client.channel.name,
             }
         except Exception as e:
             return {"error": f"Failed to send TTS message: {str(e)}"}
@@ -823,7 +822,7 @@ class DiscordKernelTools:
                 "can_hear": False,
                 "reason": "Not in a voice channel",
                 "guild_id": guild_id,
-                "user_id": user_id
+                "user_id": user_id,
             }
 
         voice_client = self.output_router.voice_clients[guild_id]
@@ -832,18 +831,22 @@ class DiscordKernelTools:
                 "can_hear": False,
                 "reason": "Voice client not connected",
                 "guild_id": guild_id,
-                "user_id": user_id
+                "user_id": user_id,
             }
 
         # Check if listening is enabled
-        is_listening = voice_client.is_listening() if hasattr(voice_client, 'is_listening') else False
+        is_listening = (
+            voice_client.is_listening()
+            if hasattr(voice_client, "is_listening")
+            else False
+        )
         if not is_listening:
             return {
                 "can_hear": False,
                 "reason": "Voice listening is not enabled. Use !listen command to start listening.",
                 "guild_id": guild_id,
                 "user_id": user_id,
-                "voice_channel": voice_client.channel.name
+                "voice_channel": voice_client.channel.name,
             }
 
         # Get guild and user
@@ -853,7 +856,7 @@ class DiscordKernelTools:
                 "can_hear": False,
                 "reason": "Guild not found",
                 "guild_id": guild_id,
-                "user_id": user_id
+                "user_id": user_id,
             }
 
         member = guild.get_member(user_id)
@@ -862,7 +865,7 @@ class DiscordKernelTools:
                 "can_hear": False,
                 "reason": "User not found in guild",
                 "guild_id": guild_id,
-                "user_id": user_id
+                "user_id": user_id,
             }
 
         # Check if user is in the same voice channel
@@ -872,7 +875,7 @@ class DiscordKernelTools:
                 "reason": "User is not in a voice channel",
                 "guild_id": guild_id,
                 "user_id": user_id,
-                "bot_voice_channel": voice_client.channel.name
+                "bot_voice_channel": voice_client.channel.name,
             }
 
         if member.voice.channel.id != voice_client.channel.id:
@@ -882,7 +885,7 @@ class DiscordKernelTools:
                 "guild_id": guild_id,
                 "user_id": user_id,
                 "bot_voice_channel": voice_client.channel.name,
-                "user_voice_channel": member.voice.channel.name
+                "user_voice_channel": member.voice.channel.name,
             }
 
         # Check if user is muted
@@ -894,7 +897,7 @@ class DiscordKernelTools:
                 "user_id": user_id,
                 "voice_channel": voice_client.channel.name,
                 "self_mute": member.voice.self_mute,
-                "server_mute": member.voice.mute
+                "server_mute": member.voice.mute,
             }
 
         # All checks passed - can hear user!
@@ -906,7 +909,9 @@ class DiscordKernelTools:
             "voice_channel": voice_client.channel.name,
             "voice_channel_id": voice_client.channel.id,
             "listening": True,
-            "users_in_channel": [m.display_name for m in voice_client.channel.members if not m.bot]
+            "users_in_channel": [
+                m.display_name for m in voice_client.channel.members if not m.bot
+            ],
         }
 
     # ===== ROLE & PERMISSION MANAGEMENT =====
@@ -936,13 +941,15 @@ class DiscordKernelTools:
                 "name": role.name,
                 "color": role.color.value,
                 "position": role.position,
-                "permissions": role.permissions.value
+                "permissions": role.permissions.value,
             }
             for role in member.roles
             if role.name != "@everyone"
         ]
 
-    async def add_role(self, guild_id: int, user_id: int, role_id: int, reason: Optional[str] = None) -> Dict[str, Any]:
+    async def add_role(
+        self, guild_id: int, user_id: int, role_id: int, reason: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Add a role to a member.
 
@@ -973,14 +980,16 @@ class DiscordKernelTools:
                 "success": True,
                 "user_id": user_id,
                 "role_id": role_id,
-                "role_name": role.name
+                "role_name": role.name,
             }
         except discord.Forbidden:
             return {"error": "No permission to add this role"}
         except Exception as e:
             return {"error": str(e)}
 
-    async def remove_role(self, guild_id: int, user_id: int, role_id: int, reason: Optional[str] = None) -> Dict[str, Any]:
+    async def remove_role(
+        self, guild_id: int, user_id: int, role_id: int, reason: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Remove a role from a member.
 
@@ -1011,7 +1020,7 @@ class DiscordKernelTools:
                 "success": True,
                 "user_id": user_id,
                 "role_id": role_id,
-                "role_name": role.name
+                "role_name": role.name,
             }
         except discord.Forbidden:
             return {"error": "No permission to remove this role"}
@@ -1035,14 +1044,14 @@ class DiscordKernelTools:
             "users": sum(g.member_count for g in self.bot.guilds),
             "voice_connections": len(self.output_router.voice_clients),
             "uptime": "N/A",  # Would need to track start time
-            "kernel_state": str(self.kernel.state)
+            "kernel_state": str(self.kernel.state),
         }
 
     async def set_bot_status(
         self,
         status: str = "online",
         activity_type: str = "playing",
-        activity_name: Optional[str] = None
+        activity_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Set bot's Discord status and activity.
@@ -1061,7 +1070,7 @@ class DiscordKernelTools:
                 "online": discord.Status.online,
                 "idle": discord.Status.idle,
                 "dnd": discord.Status.dnd,
-                "invisible": discord.Status.invisible
+                "invisible": discord.Status.invisible,
             }
 
             discord_status = status_map.get(status, discord.Status.online)
@@ -1072,11 +1081,17 @@ class DiscordKernelTools:
                 if activity_type == "playing":
                     activity = discord.Game(name=activity_name)
                 elif activity_type == "watching":
-                    activity = discord.Activity(type=discord.ActivityType.watching, name=activity_name)
+                    activity = discord.Activity(
+                        type=discord.ActivityType.watching, name=activity_name
+                    )
                 elif activity_type == "listening":
-                    activity = discord.Activity(type=discord.ActivityType.listening, name=activity_name)
+                    activity = discord.Activity(
+                        type=discord.ActivityType.listening, name=activity_name
+                    )
                 elif activity_type == "streaming":
-                    activity = discord.Streaming(name=activity_name, url="https://twitch.tv/placeholder")
+                    activity = discord.Streaming(
+                        name=activity_name, url="https://twitch.tv/placeholder"
+                    )
 
             # Update presence
             await self.bot.change_presence(status=discord_status, activity=activity)
@@ -1085,7 +1100,7 @@ class DiscordKernelTools:
                 "success": True,
                 "status": status,
                 "activity_type": activity_type,
-                "activity_name": activity_name
+                "activity_name": activity_name,
             }
         except Exception as e:
             return {"error": str(e)}
@@ -1105,16 +1120,15 @@ class DiscordKernelTools:
             "proactive_actions": metrics.proactive_actions,
             "scheduled_tasks": metrics.scheduled_tasks,
             "errors": metrics.errors,
-            "avg_response_time": round(metrics.avg_response_time, 3) if metrics.avg_response_time else 0
+            "avg_response_time": round(metrics.avg_response_time, 3)
+            if metrics.avg_response_time
+            else 0,
         }
 
     # ===== SERVER SETUP & MANAGEMENT =====
 
     async def create_server(
-        self,
-        name: str,
-        icon: Optional[str] = None,
-        region: Optional[str] = None
+        self, name: str, icon: Optional[str] = None, region: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Create a new Discord server (guild).
@@ -1133,7 +1147,7 @@ class DiscordKernelTools:
                 "success": True,
                 "guild_id": guild.id,
                 "guild_name": guild.name,
-                "created_at": guild.created_at.isoformat()
+                "created_at": guild.created_at.isoformat(),
             }
         except Exception as e:
             return {"error": str(e)}
@@ -1154,10 +1168,7 @@ class DiscordKernelTools:
 
         try:
             await guild.delete()
-            return {
-                "success": True,
-                "guild_id": guild_id
-            }
+            return {"success": True, "guild_id": guild_id}
         except discord.Forbidden:
             return {"error": "Bot must be server owner to delete"}
         except Exception as e:
@@ -1169,7 +1180,7 @@ class DiscordKernelTools:
         name: Optional[str] = None,
         icon: Optional[str] = None,
         description: Optional[str] = None,
-        verification_level: Optional[int] = None
+        verification_level: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Edit server settings.
@@ -1190,17 +1201,19 @@ class DiscordKernelTools:
 
         try:
             kwargs = {}
-            if name: kwargs['name'] = name
-            if icon: kwargs['icon'] = icon
-            if description: kwargs['description'] = description
+            if name:
+                kwargs["name"] = name
+            if icon:
+                kwargs["icon"] = icon
+            if description:
+                kwargs["description"] = description
             if verification_level is not None:
-                kwargs['verification_level'] = discord.VerificationLevel(str(verification_level))
+                kwargs["verification_level"] = discord.VerificationLevel(
+                    str(verification_level)
+                )
 
             await guild.edit(**kwargs)
-            return {
-                "success": True,
-                "guild_id": guild_id
-            }
+            return {"success": True, "guild_id": guild_id}
         except Exception as e:
             return {"error": str(e)}
 
@@ -1214,7 +1227,7 @@ class DiscordKernelTools:
         category_id: Optional[int] = None,
         topic: Optional[str] = None,
         slowmode_delay: int = 0,
-        nsfw: bool = False
+        nsfw: bool = False,
     ) -> Dict[str, Any]:
         """
         Create a new channel.
@@ -1244,20 +1257,14 @@ class DiscordKernelTools:
                     category=category,
                     topic=topic,
                     slowmode_delay=slowmode_delay,
-                    nsfw=nsfw
+                    nsfw=nsfw,
                 )
             elif channel_type == "voice":
-                channel = await guild.create_voice_channel(
-                    name=name,
-                    category=category
-                )
+                channel = await guild.create_voice_channel(name=name, category=category)
             elif channel_type == "category":
                 channel = await guild.create_category(name=name)
             elif channel_type == "stage":
-                channel = await guild.create_stage_channel(
-                    name=name,
-                    category=category
-                )
+                channel = await guild.create_stage_channel(name=name, category=category)
             else:
                 return {"error": f"Invalid channel type: {channel_type}"}
 
@@ -1265,12 +1272,14 @@ class DiscordKernelTools:
                 "success": True,
                 "channel_id": channel.id,
                 "channel_name": channel.name,
-                "channel_type": str(channel.type)
+                "channel_type": str(channel.type),
             }
         except Exception as e:
             return {"error": str(e)}
 
-    async def delete_channel(self, channel_id: int, reason: Optional[str] = None) -> Dict[str, Any]:
+    async def delete_channel(
+        self, channel_id: int, reason: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Delete a channel.
 
@@ -1287,10 +1296,7 @@ class DiscordKernelTools:
 
         try:
             await channel.delete(reason=reason)
-            return {
-                "success": True,
-                "channel_id": channel_id
-            }
+            return {"success": True, "channel_id": channel_id}
         except Exception as e:
             return {"error": str(e)}
 
@@ -1301,7 +1307,7 @@ class DiscordKernelTools:
         topic: Optional[str] = None,
         slowmode_delay: Optional[int] = None,
         nsfw: Optional[bool] = None,
-        position: Optional[int] = None
+        position: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Edit channel settings.
@@ -1323,19 +1329,21 @@ class DiscordKernelTools:
 
         try:
             kwargs = {}
-            if name: kwargs['name'] = name
-            if position is not None: kwargs['position'] = position
+            if name:
+                kwargs["name"] = name
+            if position is not None:
+                kwargs["position"] = position
 
             if isinstance(channel, discord.TextChannel):
-                if topic is not None: kwargs['topic'] = topic
-                if slowmode_delay is not None: kwargs['slowmode_delay'] = slowmode_delay
-                if nsfw is not None: kwargs['nsfw'] = nsfw
+                if topic is not None:
+                    kwargs["topic"] = topic
+                if slowmode_delay is not None:
+                    kwargs["slowmode_delay"] = slowmode_delay
+                if nsfw is not None:
+                    kwargs["nsfw"] = nsfw
 
             await channel.edit(**kwargs)
-            return {
-                "success": True,
-                "channel_id": channel_id
-            }
+            return {"success": True, "channel_id": channel_id}
         except Exception as e:
             return {"error": str(e)}
 
@@ -1346,7 +1354,7 @@ class DiscordKernelTools:
         channel_id: int,
         name: str,
         message_id: Optional[int] = None,
-        auto_archive_duration: int = 1440
+        auto_archive_duration: int = 1440,
     ) -> Dict[str, Any]:
         """
         Create a thread in a channel.
@@ -1368,20 +1376,14 @@ class DiscordKernelTools:
             if message_id:
                 message = await channel.fetch_message(message_id)
                 thread = await message.create_thread(
-                    name=name,
-                    auto_archive_duration=auto_archive_duration
+                    name=name, auto_archive_duration=auto_archive_duration
                 )
             else:
                 thread = await channel.create_thread(
-                    name=name,
-                    auto_archive_duration=auto_archive_duration
+                    name=name, auto_archive_duration=auto_archive_duration
                 )
 
-            return {
-                "success": True,
-                "thread_id": thread.id,
-                "thread_name": thread.name
-            }
+            return {"success": True, "thread_id": thread.id, "thread_name": thread.name}
         except Exception as e:
             return {"error": str(e)}
 
@@ -1411,7 +1413,9 @@ class DiscordKernelTools:
 
     # ===== MODERATION =====
 
-    async def kick_member(self, guild_id: int, user_id: int, reason: Optional[str] = None) -> Dict[str, Any]:
+    async def kick_member(
+        self, guild_id: int, user_id: int, reason: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Kick a member from the server.
 
@@ -1433,11 +1437,7 @@ class DiscordKernelTools:
 
         try:
             await member.kick(reason=reason)
-            return {
-                "success": True,
-                "user_id": user_id,
-                "action": "kicked"
-            }
+            return {"success": True, "user_id": user_id, "action": "kicked"}
         except discord.Forbidden:
             return {"error": "No permission to kick"}
         except Exception as e:
@@ -1448,7 +1448,7 @@ class DiscordKernelTools:
         guild_id: int,
         user_id: int,
         reason: Optional[str] = None,
-        delete_message_days: int = 0
+        delete_message_days: int = 0,
     ) -> Dict[str, Any]:
         """
         Ban a member from the server.
@@ -1469,17 +1469,15 @@ class DiscordKernelTools:
         try:
             user = await self.bot.fetch_user(user_id)
             await guild.ban(user, reason=reason, delete_message_days=delete_message_days)
-            return {
-                "success": True,
-                "user_id": user_id,
-                "action": "banned"
-            }
+            return {"success": True, "user_id": user_id, "action": "banned"}
         except discord.Forbidden:
             return {"error": "No permission to ban"}
         except Exception as e:
             return {"error": str(e)}
 
-    async def unban_member(self, guild_id: int, user_id: int, reason: Optional[str] = None) -> Dict[str, Any]:
+    async def unban_member(
+        self, guild_id: int, user_id: int, reason: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Unban a member.
 
@@ -1498,11 +1496,7 @@ class DiscordKernelTools:
         try:
             user = await self.bot.fetch_user(user_id)
             await guild.unban(user, reason=reason)
-            return {
-                "success": True,
-                "user_id": user_id,
-                "action": "unbanned"
-            }
+            return {"success": True, "user_id": user_id, "action": "unbanned"}
         except Exception as e:
             return {"error": str(e)}
 
@@ -1511,7 +1505,7 @@ class DiscordKernelTools:
         guild_id: int,
         user_id: int,
         duration_minutes: int,
-        reason: Optional[str] = None
+        reason: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Timeout (mute) a member.
@@ -1539,12 +1533,14 @@ class DiscordKernelTools:
             return {
                 "success": True,
                 "user_id": user_id,
-                "timeout_until": (datetime.now() + duration).isoformat()
+                "timeout_until": (datetime.now() + duration).isoformat(),
             }
         except Exception as e:
             return {"error": str(e)}
 
-    async def remove_timeout(self, guild_id: int, user_id: int, reason: Optional[str] = None) -> Dict[str, Any]:
+    async def remove_timeout(
+        self, guild_id: int, user_id: int, reason: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Remove timeout from member."""
         guild = self.bot.get_guild(guild_id)
         if not guild:
@@ -1556,11 +1552,7 @@ class DiscordKernelTools:
 
         try:
             await member.timeout(None, reason=reason)
-            return {
-                "success": True,
-                "user_id": user_id,
-                "action": "timeout_removed"
-            }
+            return {"success": True, "user_id": user_id, "action": "timeout_removed"}
         except Exception as e:
             return {"error": str(e)}
 
@@ -1569,7 +1561,7 @@ class DiscordKernelTools:
         guild_id: int,
         user_id: int,
         nickname: Optional[str],
-        reason: Optional[str] = None
+        reason: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Change a member's nickname.
@@ -1593,15 +1585,13 @@ class DiscordKernelTools:
 
         try:
             await member.edit(nick=nickname, reason=reason)
-            return {
-                "success": True,
-                "user_id": user_id,
-                "nickname": nickname
-            }
+            return {"success": True, "user_id": user_id, "nickname": nickname}
         except Exception as e:
             return {"error": str(e)}
 
-    async def move_member(self, guild_id: int, user_id: int, channel_id: int) -> Dict[str, Any]:
+    async def move_member(
+        self, guild_id: int, user_id: int, channel_id: int
+    ) -> Dict[str, Any]:
         """
         Move member to different voice channel.
 
@@ -1627,11 +1617,7 @@ class DiscordKernelTools:
 
         try:
             await member.move_to(channel)
-            return {
-                "success": True,
-                "user_id": user_id,
-                "channel_id": channel_id
-            }
+            return {"success": True, "user_id": user_id, "channel_id": channel_id}
         except Exception as e:
             return {"error": str(e)}
 
@@ -1647,11 +1633,7 @@ class DiscordKernelTools:
 
         try:
             await member.move_to(None)
-            return {
-                "success": True,
-                "user_id": user_id,
-                "action": "disconnected"
-            }
+            return {"success": True, "user_id": user_id, "action": "disconnected"}
         except Exception as e:
             return {"error": str(e)}
 
@@ -1662,7 +1644,7 @@ class DiscordKernelTools:
         channel_id: int,
         file_path: str,
         filename: Optional[str] = None,
-        content: Optional[str] = None
+        content: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Send a file to a channel.
@@ -1683,11 +1665,7 @@ class DiscordKernelTools:
         try:
             file = discord.File(file_path, filename=filename)
             message = await channel.send(content=content, file=file)
-            return {
-                "success": True,
-                "message_id": message.id,
-                "channel_id": channel_id
-            }
+            return {"success": True, "message_id": message.id, "channel_id": channel_id}
         except Exception as e:
             return {"error": str(e)}
 
@@ -1700,7 +1678,7 @@ class DiscordKernelTools:
         target_type: str,
         allow: Optional[int] = None,
         deny: Optional[int] = None,
-        reason: Optional[str] = None
+        reason: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Set channel permissions for role or member.
@@ -1738,21 +1716,14 @@ class DiscordKernelTools:
                 overwrite.update(**{p: False for p, v in discord.Permissions(deny) if v})
 
             await channel.set_permissions(target, overwrite=overwrite, reason=reason)
-            return {
-                "success": True,
-                "channel_id": channel_id,
-                "target_id": target_id
-            }
+            return {"success": True, "channel_id": channel_id, "target_id": target_id}
         except Exception as e:
             return {"error": str(e)}
 
     # ===== DM SUPPORT =====
 
     async def send_dm(
-        self,
-        user_id: int,
-        content: str,
-        embed: Optional[Dict[str, Any]] = None
+        self, user_id: int, content: str, embed: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Send a DM to a user.
@@ -1773,15 +1744,11 @@ class DiscordKernelTools:
                 discord_embed = discord.Embed(
                     title=embed.get("title"),
                     description=embed.get("description"),
-                    color=discord.Color(embed.get("color", 0x3498db))
+                    color=discord.Color(embed.get("color", 0x3498DB)),
                 )
 
             message = await user.send(content=content, embed=discord_embed)
-            return {
-                "success": True,
-                "message_id": message.id,
-                "user_id": user_id
-            }
+            return {"success": True, "message_id": message.id, "user_id": user_id}
         except discord.Forbidden:
             return {"error": "Cannot send DM to this user (blocked or privacy settings)"}
         except Exception as e:
@@ -1790,10 +1757,7 @@ class DiscordKernelTools:
     # ===== WEBHOOK MANAGEMENT =====
 
     async def create_webhook(
-        self,
-        channel_id: int,
-        name: str,
-        avatar: Optional[bytes] = None
+        self, channel_id: int, name: str, avatar: Optional[bytes] = None
     ) -> Dict[str, Any]:
         """
         Create a webhook.
@@ -1816,7 +1780,7 @@ class DiscordKernelTools:
                 "success": True,
                 "webhook_id": webhook.id,
                 "webhook_url": webhook.url,
-                "webhook_name": webhook.name
+                "webhook_name": webhook.name,
             }
         except Exception as e:
             return {"error": str(e)}
@@ -1830,7 +1794,7 @@ class DiscordKernelTools:
         max_uses: int = 0,
         temporary: bool = False,
         unique: bool = True,
-        reason: Optional[str] = None
+        reason: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create an invitation link for a channel/server.
@@ -1856,7 +1820,7 @@ class DiscordKernelTools:
                 max_uses=max_uses,
                 temporary=temporary,
                 unique=unique,
-                reason=reason
+                reason=reason,
             )
 
             return {
@@ -1865,14 +1829,17 @@ class DiscordKernelTools:
                 "invite_url": invite.url,
                 "channel_id": channel_id,
                 "channel_name": channel.name,
-                "guild_id": channel.guild.id if hasattr(channel, 'guild') else None,
-                "guild_name": channel.guild.name if hasattr(channel, 'guild') else None,
+                "guild_id": channel.guild.id if hasattr(channel, "guild") else None,
+                "guild_name": channel.guild.name if hasattr(channel, "guild") else None,
                 "max_age": max_age,
                 "max_uses": max_uses,
                 "temporary": temporary,
-                "created_at": invite.created_at.isoformat() if invite.created_at else None,
-                "expires_at": (invite.created_at + timedelta(
-                    seconds=max_age)).isoformat() if invite.created_at and max_age > 0 else None
+                "created_at": invite.created_at.isoformat()
+                if invite.created_at
+                else None,
+                "expires_at": (invite.created_at + timedelta(seconds=max_age)).isoformat()
+                if invite.created_at and max_age > 0
+                else None,
             }
         except discord.Forbidden:
             return {"error": "No permission to create invites"}
@@ -1908,8 +1875,12 @@ class DiscordKernelTools:
                     "max_uses": invite.max_uses,
                     "max_age": invite.max_age,
                     "temporary": invite.temporary,
-                    "created_at": invite.created_at.isoformat() if invite.created_at else None,
-                    "expires_at": invite.expires_at.isoformat() if invite.expires_at else None
+                    "created_at": invite.created_at.isoformat()
+                    if invite.created_at
+                    else None,
+                    "expires_at": invite.expires_at.isoformat()
+                    if invite.expires_at
+                    else None,
                 }
                 for invite in invites
             ]
@@ -1918,7 +1889,9 @@ class DiscordKernelTools:
         except Exception as e:
             return []
 
-    async def delete_invite(self, invite_code: str, reason: Optional[str] = None) -> Dict[str, Any]:
+    async def delete_invite(
+        self, invite_code: str, reason: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Delete/revoke an invite.
 
@@ -1933,11 +1906,7 @@ class DiscordKernelTools:
             invite = await self.bot.fetch_invite(invite_code)
             await invite.delete(reason=reason)
 
-            return {
-                "success": True,
-                "invite_code": invite_code,
-                "action": "deleted"
-            }
+            return {"success": True, "invite_code": invite_code, "action": "deleted"}
         except discord.NotFound:
             return {"error": f"Invite {invite_code} not found"}
         except discord.Forbidden:
@@ -1956,7 +1925,9 @@ class DiscordKernelTools:
             Dict with invite information
         """
         try:
-            invite = await self.bot.fetch_invite(invite_code, with_counts=True, with_expiration=True)
+            invite = await self.bot.fetch_invite(
+                invite_code, with_counts=True, with_expiration=True
+            )
 
             return {
                 "code": invite.code,
@@ -1969,8 +1940,12 @@ class DiscordKernelTools:
                 "inviter_name": invite.inviter.name if invite.inviter else None,
                 "approximate_member_count": invite.approximate_member_count,
                 "approximate_presence_count": invite.approximate_presence_count,
-                "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
-                "created_at": invite.created_at.isoformat() if invite.created_at else None
+                "expires_at": invite.expires_at.isoformat()
+                if invite.expires_at
+                else None,
+                "created_at": invite.created_at.isoformat()
+                if invite.created_at
+                else None,
             }
         except discord.NotFound:
             return {"error": f"Invite {invite_code} not found or expired"}
@@ -1984,7 +1959,7 @@ class DiscordKernelTools:
         template_name: str,
         content: Optional[str] = None,
         embed: Optional[Dict[str, Any]] = None,
-        components: Optional[List[Dict[str, Any]]] = None
+        components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Create a reusable message template.
@@ -1999,7 +1974,7 @@ class DiscordKernelTools:
             Dict with template info
         """
         # Store templates in kernel memory or local storage
-        if not hasattr(self, 'message_templates'):
+        if not hasattr(self, "message_templates"):
             self.message_templates = {}
 
         template = {
@@ -2007,7 +1982,7 @@ class DiscordKernelTools:
             "content": content,
             "embed": embed,
             "components": components,
-            "created_at": datetime.now().isoformat()
+            "created_at": datetime.now().isoformat(),
         }
 
         self.message_templates[template_name] = template
@@ -2017,7 +1992,7 @@ class DiscordKernelTools:
             "template_name": template_name,
             "has_content": content is not None,
             "has_embed": embed is not None,
-            "has_components": components is not None and len(components) > 0
+            "has_components": components is not None and len(components) > 0,
         }
 
     async def get_message_template(self, template_name: str) -> Dict[str, Any]:
@@ -2030,16 +2005,13 @@ class DiscordKernelTools:
         Returns:
             Dict with template data
         """
-        if not hasattr(self, 'message_templates'):
+        if not hasattr(self, "message_templates"):
             self.message_templates = {}
 
         if template_name not in self.message_templates:
             return {"error": f"Template '{template_name}' not found"}
 
-        return {
-            "success": True,
-            "template": self.message_templates[template_name]
-        }
+        return {"success": True, "template": self.message_templates[template_name]}
 
     async def list_message_templates(self) -> List[Dict[str, Any]]:
         """
@@ -2048,7 +2020,7 @@ class DiscordKernelTools:
         Returns:
             List of template names and info
         """
-        if not hasattr(self, 'message_templates'):
+        if not hasattr(self, "message_templates"):
             self.message_templates = {}
 
         return [
@@ -2057,7 +2029,7 @@ class DiscordKernelTools:
                 "has_content": template.get("content") is not None,
                 "has_embed": template.get("embed") is not None,
                 "has_components": template.get("components") is not None,
-                "created_at": template.get("created_at")
+                "created_at": template.get("created_at"),
             }
             for name, template in self.message_templates.items()
         ]
@@ -2072,7 +2044,7 @@ class DiscordKernelTools:
         Returns:
             Dict with success status
         """
-        if not hasattr(self, 'message_templates'):
+        if not hasattr(self, "message_templates"):
             self.message_templates = {}
 
         if template_name not in self.message_templates:
@@ -2080,18 +2052,14 @@ class DiscordKernelTools:
 
         del self.message_templates[template_name]
 
-        return {
-            "success": True,
-            "template_name": template_name,
-            "action": "deleted"
-        }
+        return {"success": True, "template_name": template_name, "action": "deleted"}
 
     async def send_template_message(
         self,
         channel_id: int,
         template_name: str,
         variables: Optional[Dict[str, str]] = None,
-        reply_to: Optional[int] = None
+        reply_to: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Send a message using a template with variable substitution.
@@ -2109,7 +2077,7 @@ class DiscordKernelTools:
         if not channel:
             return {"error": f"Channel {channel_id} not found"}
 
-        if not hasattr(self, 'message_templates'):
+        if not hasattr(self, "message_templates"):
             self.message_templates = {}
 
         if template_name not in self.message_templates:
@@ -2133,22 +2101,30 @@ class DiscordKernelTools:
                 if variables:
                     for key, value in variables.items():
                         if embed_data.get("title"):
-                            embed_data["title"] = embed_data["title"].replace(f"{{{key}}}", str(value))
+                            embed_data["title"] = embed_data["title"].replace(
+                                f"{{{key}}}", str(value)
+                            )
                         if embed_data.get("description"):
-                            embed_data["description"] = embed_data["description"].replace(f"{{{key}}}", str(value))
+                            embed_data["description"] = embed_data["description"].replace(
+                                f"{{{key}}}", str(value)
+                            )
 
                         # Substitute in fields
                         if embed_data.get("fields"):
                             for field in embed_data["fields"]:
                                 if field.get("name"):
-                                    field["name"] = field["name"].replace(f"{{{key}}}", str(value))
+                                    field["name"] = field["name"].replace(
+                                        f"{{{key}}}", str(value)
+                                    )
                                 if field.get("value"):
-                                    field["value"] = field["value"].replace(f"{{{key}}}", str(value))
+                                    field["value"] = field["value"].replace(
+                                        f"{{{key}}}", str(value)
+                                    )
 
                 discord_embed = discord.Embed(
                     title=embed_data.get("title"),
                     description=embed_data.get("description"),
-                    color=discord.Color(embed_data.get("color", 0x3498db))
+                    color=discord.Color(embed_data.get("color", 0x3498DB)),
                 )
 
                 # Add fields
@@ -2156,7 +2132,7 @@ class DiscordKernelTools:
                     discord_embed.add_field(
                         name=field.get("name", "Field"),
                         value=field.get("value", ""),
-                        inline=field.get("inline", False)
+                        inline=field.get("inline", False),
                     )
 
                 # Add footer, author, thumbnail, image if present
@@ -2184,7 +2160,7 @@ class DiscordKernelTools:
                             custom_id=component.get("custom_id"),
                             emoji=component.get("emoji"),
                             url=component.get("url"),
-                            disabled=component.get("disabled", False)
+                            disabled=component.get("disabled", False),
                         )
                         view.add_item(button)
 
@@ -2194,7 +2170,7 @@ class DiscordKernelTools:
                                 label=opt.get("label"),
                                 value=opt.get("value"),
                                 description=opt.get("description"),
-                                emoji=opt.get("emoji")
+                                emoji=opt.get("emoji"),
                             )
                             for opt in component.get("options", [])
                         ]
@@ -2204,7 +2180,7 @@ class DiscordKernelTools:
                             options=options,
                             custom_id=component.get("custom_id"),
                             min_values=component.get("min_values", 1),
-                            max_values=component.get("max_values", 1)
+                            max_values=component.get("max_values", 1),
                         )
                         view.add_item(select)
 
@@ -2219,10 +2195,7 @@ class DiscordKernelTools:
 
             # Send message
             message = await channel.send(
-                content=content,
-                embed=discord_embed,
-                view=view,
-                reference=reference
+                content=content, embed=discord_embed, view=view, reference=reference
             )
 
             return {
@@ -2230,7 +2203,7 @@ class DiscordKernelTools:
                 "message_id": message.id,
                 "channel_id": channel_id,
                 "template_name": template_name,
-                "timestamp": message.created_at.isoformat()
+                "timestamp": message.created_at.isoformat(),
             }
         except Exception as e:
             return {"error": str(e)}
@@ -2240,10 +2213,10 @@ class DiscordKernelTools:
         template_name: str = "welcome",
         title: str = "Welcome to {server_name}!",
         description: str = "Hey {username}, welcome to our server! We're glad to have you here.",
-        color: int = 0x00ff00,
+        color: int = 0x00FF00,
         thumbnail: Optional[str] = None,
         image: Optional[str] = None,
-        fields: Optional[List[Dict[str, Any]]] = None
+        fields: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Create a welcome message template with common variables.
@@ -2267,12 +2240,11 @@ class DiscordKernelTools:
             "fields": fields or [],
             "thumbnail": thumbnail,
             "image": image,
-            "footer": {"text": "Member #{member_count}"}
+            "footer": {"text": "Member #{member_count}"},
         }
 
         return await self.create_message_template(
-            template_name=template_name,
-            embed=embed
+            template_name=template_name, embed=embed
         )
 
     async def create_announcement_template(
@@ -2280,8 +2252,8 @@ class DiscordKernelTools:
         template_name: str = "announcement",
         title: str = "📢 Announcement",
         description: str = "{message}",
-        color: int = 0xff9900,
-        mention_role: Optional[str] = None
+        color: int = 0xFF9900,
+        mention_role: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create an announcement message template.
@@ -2302,20 +2274,18 @@ class DiscordKernelTools:
             "title": title,
             "description": description,
             "color": color,
-            "footer": {"text": "Posted on {date}"}
+            "footer": {"text": "Posted on {date}"},
         }
 
         return await self.create_message_template(
-            template_name=template_name,
-            content=content,
-            embed=embed
+            template_name=template_name, content=content, embed=embed
         )
 
     async def create_poll_template(
         self,
         template_name: str = "poll",
         question: str = "{question}",
-        options: Optional[List[str]] = None
+        options: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Create a poll template with reaction options.
@@ -2341,13 +2311,12 @@ class DiscordKernelTools:
         embed = {
             "title": "📊 Poll",
             "description": description,
-            "color": 0x3498db,
-            "footer": {"text": "React to vote!"}
+            "color": 0x3498DB,
+            "footer": {"text": "React to vote!"},
         }
 
         return await self.create_message_template(
-            template_name=template_name,
-            embed=embed
+            template_name=template_name, embed=embed
         )
 
     async def create_embed_template(
@@ -2355,13 +2324,13 @@ class DiscordKernelTools:
         template_name: str,
         title: Optional[str] = None,
         description: Optional[str] = None,
-        color: int = 0x3498db,
+        color: int = 0x3498DB,
         fields: Optional[List[Dict[str, Any]]] = None,
         footer: Optional[str] = None,
         author: Optional[str] = None,
         thumbnail: Optional[str] = None,
         image: Optional[str] = None,
-        url: Optional[str] = None
+        url: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create a custom embed template with all options.
@@ -2386,7 +2355,7 @@ class DiscordKernelTools:
             "description": description,
             "color": color,
             "fields": fields or [],
-            "url": url
+            "url": url,
         }
 
         if footer:
@@ -2399,15 +2368,14 @@ class DiscordKernelTools:
             embed["image"] = image
 
         return await self.create_message_template(
-            template_name=template_name,
-            embed=embed
+            template_name=template_name, embed=embed
         )
 
     async def create_button_template(
         self,
         template_name: str,
         content: Optional[str] = None,
-        buttons: Optional[List[Dict[str, Any]]] = None
+        buttons: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Create a message template with buttons.
@@ -2430,20 +2398,20 @@ class DiscordKernelTools:
 
         if buttons:
             for button in buttons:
-                components.append({
-                    "type": "button",
-                    "label": button.get("label", "Button"),
-                    "style": button.get("style", "primary"),
-                    "custom_id": button.get("custom_id"),
-                    "emoji": button.get("emoji"),
-                    "url": button.get("url"),
-                    "disabled": button.get("disabled", False)
-                })
+                components.append(
+                    {
+                        "type": "button",
+                        "label": button.get("label", "Button"),
+                        "style": button.get("style", "primary"),
+                        "custom_id": button.get("custom_id"),
+                        "emoji": button.get("emoji"),
+                        "url": button.get("url"),
+                        "disabled": button.get("disabled", False),
+                    }
+                )
 
         return await self.create_message_template(
-            template_name=template_name,
-            content=content,
-            components=components
+            template_name=template_name, content=content, components=components
         )
 
     async def create_select_menu_template(
@@ -2453,7 +2421,7 @@ class DiscordKernelTools:
         placeholder: str = "Select an option",
         options: Optional[List[Dict[str, Any]]] = None,
         min_values: int = 1,
-        max_values: int = 1
+        max_values: int = 1,
     ) -> Dict[str, Any]:
         """
         Create a message template with a select menu.
@@ -2476,19 +2444,19 @@ class DiscordKernelTools:
         if not options:
             options = []
 
-        components = [{
-            "type": "select",
-            "placeholder": placeholder,
-            "options": options,
-            "custom_id": f"select_{template_name}",
-            "min_values": min_values,
-            "max_values": max_values
-        }]
+        components = [
+            {
+                "type": "select",
+                "placeholder": placeholder,
+                "options": options,
+                "custom_id": f"select_{template_name}",
+                "min_values": min_values,
+                "max_values": max_values,
+            }
+        ]
 
         return await self.create_message_template(
-            template_name=template_name,
-            content=content,
-            components=components
+            template_name=template_name, content=content, components=components
         )
 
     # ===== INFORMATION & HELP TOOLS =====
@@ -2502,7 +2470,6 @@ class DiscordKernelTools:
         """
         help_text = {
             "overview": "Message templates allow you to create reusable messages with variable substitution, embeds, buttons, and select menus.",
-
             "variable_substitution": {
                 "description": "Use {variable_name} syntax in templates. Variables are replaced when sending.",
                 "common_variables": {
@@ -2513,11 +2480,10 @@ class DiscordKernelTools:
                     "channel_name": "Channel name",
                     "date": "Current date",
                     "time": "Current time",
-                    "message": "Custom message content"
+                    "message": "Custom message content",
                 },
-                "example": "Title: 'Welcome {username}!' → Becomes: 'Welcome John!'"
+                "example": "Title: 'Welcome {username}!' → Becomes: 'Welcome John!'",
             },
-
             "template_types": {
                 "basic_text": {
                     "description": "Simple text message with variables",
@@ -2525,11 +2491,10 @@ class DiscordKernelTools:
                         "function": "discord_create_message_template",
                         "args": {
                             "template_name": "greeting",
-                            "content": "Hello {username}, welcome to {server_name}!"
-                        }
-                    }
+                            "content": "Hello {username}, welcome to {server_name}!",
+                        },
+                    },
                 },
-
                 "embed": {
                     "description": "Rich embed messages with title, description, fields, colors, images",
                     "structure": {
@@ -2540,7 +2505,7 @@ class DiscordKernelTools:
                         "footer": "Footer text",
                         "thumbnail": "Small image URL (top right)",
                         "image": "Large image URL (bottom)",
-                        "author": "Author name (top)"
+                        "author": "Author name (top)",
                     },
                     "example": {
                         "function": "discord_create_embed_template",
@@ -2548,16 +2513,15 @@ class DiscordKernelTools:
                             "template_name": "user_info",
                             "title": "User: {username}",
                             "description": "Member since {join_date}",
-                            "color": 0x00ff00,
+                            "color": 0x00FF00,
                             "fields": [
                                 {"name": "User ID", "value": "{user_id}", "inline": True},
-                                {"name": "Roles", "value": "{roles}", "inline": True}
+                                {"name": "Roles", "value": "{roles}", "inline": True},
                             ],
-                            "footer": "Server: {server_name}"
-                        }
-                    }
+                            "footer": "Server: {server_name}",
+                        },
+                    },
                 },
-
                 "welcome": {
                     "description": "Pre-configured welcome message template",
                     "variables": ["username", "server_name", "member_count"],
@@ -2567,12 +2531,11 @@ class DiscordKernelTools:
                             "template_name": "new_member",
                             "title": "Welcome {username}!",
                             "description": "Welcome to {server_name}! You are member #{member_count}",
-                            "color": 0x00ff00,
-                            "thumbnail": "https://example.com/welcome.png"
-                        }
-                    }
+                            "color": 0x00FF00,
+                            "thumbnail": "https://example.com/welcome.png",
+                        },
+                    },
                 },
-
                 "announcement": {
                     "description": "Announcement message with optional role mentions",
                     "variables": ["message", "date"],
@@ -2582,12 +2545,11 @@ class DiscordKernelTools:
                             "template_name": "server_update",
                             "title": "📢 Server Update",
                             "description": "{message}",
-                            "color": 0xff9900,
-                            "mention_role": "@everyone"
-                        }
-                    }
+                            "color": 0xFF9900,
+                            "mention_role": "@everyone",
+                        },
+                    },
                 },
-
                 "poll": {
                     "description": "Poll with numbered reaction options",
                     "variables": ["question", "option1", "option2", "option3", "..."],
@@ -2596,11 +2558,14 @@ class DiscordKernelTools:
                         "args": {
                             "template_name": "vote",
                             "question": "What should we do next?",
-                            "options": ["Add new features", "Fix bugs", "Improve performance"]
-                        }
-                    }
+                            "options": [
+                                "Add new features",
+                                "Fix bugs",
+                                "Improve performance",
+                            ],
+                        },
+                    },
                 },
-
                 "buttons": {
                     "description": "Interactive buttons for user actions",
                     "button_styles": {
@@ -2608,7 +2573,7 @@ class DiscordKernelTools:
                         "secondary": "Gray button",
                         "success": "Green button",
                         "danger": "Red button",
-                        "link": "Link button (requires url)"
+                        "link": "Link button (requires url)",
                     },
                     "example": {
                         "function": "discord_create_button_template",
@@ -2619,18 +2584,17 @@ class DiscordKernelTools:
                                 {
                                     "label": "✅ Verify",
                                     "style": "success",
-                                    "custom_id": "verify_button"
+                                    "custom_id": "verify_button",
                                 },
                                 {
                                     "label": "Help",
                                     "style": "link",
-                                    "url": "https://example.com/help"
-                                }
-                            ]
-                        }
-                    }
+                                    "url": "https://example.com/help",
+                                },
+                            ],
+                        },
+                    },
                 },
-
                 "select_menu": {
                     "description": "Dropdown menu for multiple choice selection",
                     "example": {
@@ -2644,65 +2608,62 @@ class DiscordKernelTools:
                                     "label": "Developer",
                                     "value": "dev",
                                     "description": "Programming role",
-                                    "emoji": "💻"
+                                    "emoji": "💻",
                                 },
                                 {
                                     "label": "Designer",
                                     "value": "design",
                                     "description": "Design role",
-                                    "emoji": "🎨"
-                                }
+                                    "emoji": "🎨",
+                                },
                             ],
                             "min_values": 1,
-                            "max_values": 2
-                        }
-                    }
-                }
+                            "max_values": 2,
+                        },
+                    },
+                },
             },
-
             "workflow": {
                 "step_1": {
                     "action": "Create template",
                     "description": "Use one of the create_*_template functions",
-                    "example": "discord_create_welcome_template('welcome', title='Hi {username}!')"
+                    "example": "discord_create_welcome_template('welcome', title='Hi {username}!')",
                 },
                 "step_2": {
                     "action": "List templates",
                     "description": "View all available templates",
-                    "example": "discord_list_message_templates()"
+                    "example": "discord_list_message_templates()",
                 },
                 "step_3": {
                     "action": "Send template",
                     "description": "Send template with variable values",
-                    "example": "discord_send_template_message(channel_id=123, template_name='welcome', variables={'username': 'John', 'member_count': '500'})"
+                    "example": "discord_send_template_message(channel_id=123, template_name='welcome', variables={'username': 'John', 'member_count': '500'})",
                 },
                 "step_4": {
                     "action": "Manage templates",
                     "description": "Get, update, or delete templates as needed",
-                    "example": "discord_delete_message_template('old_template')"
-                }
+                    "example": "discord_delete_message_template('old_template')",
+                },
             },
-
             "color_codes": {
                 "description": "Common color hex codes for embeds",
                 "colors": {
-                    "blue": 0x3498db,
-                    "green": 0x00ff00,
-                    "red": 0xff0000,
-                    "yellow": 0xffff00,
-                    "purple": 0x9b59b6,
-                    "orange": 0xff9900,
-                    "pink": 0xff69b4,
+                    "blue": 0x3498DB,
+                    "green": 0x00FF00,
+                    "red": 0xFF0000,
+                    "yellow": 0xFFFF00,
+                    "purple": 0x9B59B6,
+                    "orange": 0xFF9900,
+                    "pink": 0xFF69B4,
                     "black": 0x000000,
-                    "white": 0xffffff,
+                    "white": 0xFFFFFF,
                     "discord_blurple": 0x5865F2,
                     "discord_green": 0x57F287,
                     "discord_yellow": 0xFEE75C,
                     "discord_fuchsia": 0xEB459E,
-                    "discord_red": 0xED4245
-                }
+                    "discord_red": 0xED4245,
+                },
             },
-
             "best_practices": [
                 "Use clear, descriptive template names",
                 "Include all necessary variables in template documentation",
@@ -2713,9 +2674,8 @@ class DiscordKernelTools:
                 "Use inline fields for compact layouts",
                 "Add emojis for visual appeal",
                 "Include footers for timestamps or additional context",
-                "Use buttons/selects for interactive experiences"
+                "Use buttons/selects for interactive experiences",
             ],
-
             "common_use_cases": {
                 "welcome_messages": "Greet new members with server info",
                 "announcements": "Notify members of updates or events",
@@ -2726,9 +2686,8 @@ class DiscordKernelTools:
                 "moderation_logs": "Formatted mod action logs",
                 "status_updates": "Bot or server status messages",
                 "leaderboards": "Display rankings and scores",
-                "ticket_systems": "User support ticket creation"
+                "ticket_systems": "User support ticket creation",
             },
-
             "tips": [
                 "Variables are case-sensitive: {username} ≠ {Username}",
                 "Use preview mode: Get template first, check structure",
@@ -2739,14 +2698,11 @@ class DiscordKernelTools:
                 "Button rows have max 5 buttons each",
                 "Embeds support markdown formatting",
                 "Use \\n for line breaks in descriptions",
-                "Thumbnails show small (top-right), images show large (bottom)"
-            ]
+                "Thumbnails show small (top-right), images show large (bottom)",
+            ],
         }
 
-        return {
-            "success": True,
-            "help": help_text
-        }
+        return {"success": True, "help": help_text}
 
     async def get_tools_overview(self) -> Dict[str, Any]:
         """
@@ -2757,7 +2713,6 @@ class DiscordKernelTools:
         """
         tools_overview = {
             "total_tools": 56,
-
             "categories": {
                 "server_management": {
                     "description": "Tools for creating and managing Discord servers",
@@ -2765,403 +2720,383 @@ class DiscordKernelTools:
                         {
                             "name": "discord_create_server",
                             "description": "Create a new Discord server",
-                            "usage": "discord_create_server(name='My Server')"
+                            "usage": "discord_create_server(name='My Server')",
                         },
                         {
                             "name": "discord_delete_server",
                             "description": "Delete a server (bot must be owner)",
-                            "usage": "discord_delete_server(guild_id=123)"
+                            "usage": "discord_delete_server(guild_id=123)",
                         },
                         {
                             "name": "discord_edit_server",
                             "description": "Edit server settings",
-                            "usage": "discord_edit_server(guild_id=123, name='New Name')"
+                            "usage": "discord_edit_server(guild_id=123, name='New Name')",
                         },
                         {
                             "name": "discord_get_server_info",
                             "description": "Get server information",
-                            "usage": "discord_get_server_info(guild_id=123)"
-                        }
-                    ]
+                            "usage": "discord_get_server_info(guild_id=123)",
+                        },
+                    ],
                 },
-
                 "channel_management": {
                     "description": "Tools for creating and managing channels",
                     "tools": [
                         {
                             "name": "discord_create_channel",
                             "description": "Create a new channel",
-                            "usage": "discord_create_channel(guild_id=123, name='general', channel_type='text')"
+                            "usage": "discord_create_channel(guild_id=123, name='general', channel_type='text')",
                         },
                         {
                             "name": "discord_delete_channel",
                             "description": "Delete a channel",
-                            "usage": "discord_delete_channel(channel_id=456)"
+                            "usage": "discord_delete_channel(channel_id=456)",
                         },
                         {
                             "name": "discord_edit_channel",
                             "description": "Edit channel settings",
-                            "usage": "discord_edit_channel(channel_id=456, name='new-name', topic='New topic')"
+                            "usage": "discord_edit_channel(channel_id=456, name='new-name', topic='New topic')",
                         },
                         {
                             "name": "discord_list_channels",
                             "description": "List all channels in a server",
-                            "usage": "discord_list_channels(guild_id=123, channel_type='text')"
+                            "usage": "discord_list_channels(guild_id=123, channel_type='text')",
                         },
                         {
                             "name": "discord_get_channel_info",
                             "description": "Get channel information",
-                            "usage": "discord_get_channel_info(channel_id=456)"
-                        }
-                    ]
+                            "usage": "discord_get_channel_info(channel_id=456)",
+                        },
+                    ],
                 },
-
                 "message_management": {
                     "description": "Tools for sending and managing messages",
                     "tools": [
                         {
                             "name": "discord_send_message",
                             "description": "Send a message",
-                            "usage": "discord_send_message(channel_id=456, content='Hello!')"
+                            "usage": "discord_send_message(channel_id=456, content='Hello!')",
                         },
                         {
                             "name": "discord_edit_message",
                             "description": "Edit a message",
-                            "usage": "discord_edit_message(channel_id=456, message_id=789, new_content='Updated')"
+                            "usage": "discord_edit_message(channel_id=456, message_id=789, new_content='Updated')",
                         },
                         {
                             "name": "discord_delete_message",
                             "description": "Delete a message",
-                            "usage": "discord_delete_message(channel_id=456, message_id=789)"
+                            "usage": "discord_delete_message(channel_id=456, message_id=789)",
                         },
                         {
                             "name": "discord_get_message",
                             "description": "Get message information",
-                            "usage": "discord_get_message(channel_id=456, message_id=789)"
+                            "usage": "discord_get_message(channel_id=456, message_id=789)",
                         },
                         {
                             "name": "discord_get_recent_messages",
                             "description": "Get recent messages from channel",
-                            "usage": "discord_get_recent_messages(channel_id=456, limit=10)"
+                            "usage": "discord_get_recent_messages(channel_id=456, limit=10)",
                         },
                         {
                             "name": "discord_send_file",
                             "description": "Send a file",
-                            "usage": "discord_send_file(channel_id=456, file_path='/path/to/file.png')"
-                        }
-                    ]
+                            "usage": "discord_send_file(channel_id=456, file_path='/path/to/file.png')",
+                        },
+                    ],
                 },
-
                 "template_management": {
                     "description": "Tools for creating and using message templates",
                     "tools": [
                         {
                             "name": "discord_create_message_template",
                             "description": "Create a custom template",
-                            "usage": "discord_create_message_template('greeting', content='Hello {username}!')"
+                            "usage": "discord_create_message_template('greeting', content='Hello {username}!')",
                         },
                         {
                             "name": "discord_create_welcome_template",
                             "description": "Create a welcome template",
-                            "usage": "discord_create_welcome_template(title='Welcome {username}!')"
+                            "usage": "discord_create_welcome_template(title='Welcome {username}!')",
                         },
                         {
                             "name": "discord_create_announcement_template",
                             "description": "Create an announcement template",
-                            "usage": "discord_create_announcement_template(description='{message}')"
+                            "usage": "discord_create_announcement_template(description='{message}')",
                         },
                         {
                             "name": "discord_create_poll_template",
                             "description": "Create a poll template",
-                            "usage": "discord_create_poll_template(question='Favorite?', options=['A', 'B'])"
+                            "usage": "discord_create_poll_template(question='Favorite?', options=['A', 'B'])",
                         },
                         {
                             "name": "discord_create_embed_template",
                             "description": "Create a custom embed template",
-                            "usage": "discord_create_embed_template('info', title='{title}', color=0xff0000)"
+                            "usage": "discord_create_embed_template('info', title='{title}', color=0xff0000)",
                         },
                         {
                             "name": "discord_create_button_template",
                             "description": "Create a template with buttons",
-                            "usage": "discord_create_button_template('menu', buttons=[{'label': 'Click', 'style': 'primary'}])"
+                            "usage": "discord_create_button_template('menu', buttons=[{'label': 'Click', 'style': 'primary'}])",
                         },
                         {
                             "name": "discord_create_select_menu_template",
                             "description": "Create a template with dropdown",
-                            "usage": "discord_create_select_menu_template('roles', options=[{'label': 'Role', 'value': 'role1'}])"
+                            "usage": "discord_create_select_menu_template('roles', options=[{'label': 'Role', 'value': 'role1'}])",
                         },
                         {
                             "name": "discord_send_template_message",
                             "description": "Send a template with variables",
-                            "usage": "discord_send_template_message(channel_id=456, template_name='welcome', variables={'username': 'John'})"
+                            "usage": "discord_send_template_message(channel_id=456, template_name='welcome', variables={'username': 'John'})",
                         },
                         {
                             "name": "discord_list_message_templates",
                             "description": "List all templates",
-                            "usage": "discord_list_message_templates()"
+                            "usage": "discord_list_message_templates()",
                         },
                         {
                             "name": "discord_get_message_template",
                             "description": "Get a specific template",
-                            "usage": "discord_get_message_template('welcome')"
+                            "usage": "discord_get_message_template('welcome')",
                         },
                         {
                             "name": "discord_delete_message_template",
                             "description": "Delete a template",
-                            "usage": "discord_delete_message_template('old_template')"
-                        }
-                    ]
+                            "usage": "discord_delete_message_template('old_template')",
+                        },
+                    ],
                 },
-
                 "moderation": {
                     "description": "Tools for moderating users and content",
                     "tools": [
                         {
                             "name": "discord_kick_member",
                             "description": "Kick a member",
-                            "usage": "discord_kick_member(guild_id=123, user_id=789, reason='Spam')"
+                            "usage": "discord_kick_member(guild_id=123, user_id=789, reason='Spam')",
                         },
                         {
                             "name": "discord_ban_member",
                             "description": "Ban a member",
-                            "usage": "discord_ban_member(guild_id=123, user_id=789, reason='Rule violation')"
+                            "usage": "discord_ban_member(guild_id=123, user_id=789, reason='Rule violation')",
                         },
                         {
                             "name": "discord_unban_member",
                             "description": "Unban a member",
-                            "usage": "discord_unban_member(guild_id=123, user_id=789)"
+                            "usage": "discord_unban_member(guild_id=123, user_id=789)",
                         },
                         {
                             "name": "discord_timeout_member",
                             "description": "Timeout a member",
-                            "usage": "discord_timeout_member(guild_id=123, user_id=789, duration_minutes=60)"
+                            "usage": "discord_timeout_member(guild_id=123, user_id=789, duration_minutes=60)",
                         },
                         {
                             "name": "discord_remove_timeout",
                             "description": "Remove timeout",
-                            "usage": "discord_remove_timeout(guild_id=123, user_id=789)"
+                            "usage": "discord_remove_timeout(guild_id=123, user_id=789)",
                         },
                         {
                             "name": "discord_change_nickname",
                             "description": "Change member nickname",
-                            "usage": "discord_change_nickname(guild_id=123, user_id=789, nickname='NewName')"
-                        }
-                    ]
+                            "usage": "discord_change_nickname(guild_id=123, user_id=789, nickname='NewName')",
+                        },
+                    ],
                 },
-
                 "role_management": {
                     "description": "Tools for managing roles",
                     "tools": [
                         {
                             "name": "discord_add_role",
                             "description": "Add role to member",
-                            "usage": "discord_add_role(guild_id=123, user_id=789, role_id=456)"
+                            "usage": "discord_add_role(guild_id=123, user_id=789, role_id=456)",
                         },
                         {
                             "name": "discord_remove_role",
                             "description": "Remove role from member",
-                            "usage": "discord_remove_role(guild_id=123, user_id=789, role_id=456)"
+                            "usage": "discord_remove_role(guild_id=123, user_id=789, role_id=456)",
                         },
                         {
                             "name": "discord_get_member_roles",
                             "description": "Get member's roles",
-                            "usage": "discord_get_member_roles(guild_id=123, user_id=789)"
-                        }
-                    ]
+                            "usage": "discord_get_member_roles(guild_id=123, user_id=789)",
+                        },
+                    ],
                 },
-
                 "voice_management": {
                     "description": "Tools for voice channels and audio",
                     "tools": [
                         {
                             "name": "discord_join_voice",
                             "description": "Join a voice channel",
-                            "usage": "discord_join_voice(channel_id=456)"
+                            "usage": "discord_join_voice(channel_id=456)",
                         },
                         {
                             "name": "discord_leave_voice",
                             "description": "Leave voice channel",
-                            "usage": "discord_leave_voice(guild_id=123)"
+                            "usage": "discord_leave_voice(guild_id=123)",
                         },
                         {
                             "name": "discord_get_voice_status",
                             "description": "Get voice status",
-                            "usage": "discord_get_voice_status(guild_id=123)"
+                            "usage": "discord_get_voice_status(guild_id=123)",
                         },
                         {
                             "name": "discord_toggle_tts",
                             "description": "Toggle text-to-speech",
-                            "usage": "discord_toggle_tts(guild_id=123, mode='piper')"
+                            "usage": "discord_toggle_tts(guild_id=123, mode='piper')",
                         },
                         {
                             "name": "discord_move_member",
                             "description": "Move member to voice channel",
-                            "usage": "discord_move_member(guild_id=123, user_id=789, channel_id=456)"
+                            "usage": "discord_move_member(guild_id=123, user_id=789, channel_id=456)",
                         },
                         {
                             "name": "discord_disconnect_member",
                             "description": "Disconnect member from voice",
-                            "usage": "discord_disconnect_member(guild_id=123, user_id=789)"
-                        }
-                    ]
+                            "usage": "discord_disconnect_member(guild_id=123, user_id=789)",
+                        },
+                    ],
                 },
-
                 "threads": {
                     "description": "Tools for managing threads",
                     "tools": [
                         {
                             "name": "discord_create_thread",
                             "description": "Create a thread",
-                            "usage": "discord_create_thread(channel_id=456, name='Discussion')"
+                            "usage": "discord_create_thread(channel_id=456, name='Discussion')",
                         },
                         {
                             "name": "discord_join_thread",
                             "description": "Join a thread",
-                            "usage": "discord_join_thread(thread_id=789)"
+                            "usage": "discord_join_thread(thread_id=789)",
                         },
                         {
                             "name": "discord_leave_thread",
                             "description": "Leave a thread",
-                            "usage": "discord_leave_thread(thread_id=789)"
-                        }
-                    ]
+                            "usage": "discord_leave_thread(thread_id=789)",
+                        },
+                    ],
                 },
-
                 "invitations": {
                     "description": "Tools for managing server invites",
                     "tools": [
                         {
                             "name": "discord_create_invite",
                             "description": "Create an invite link",
-                            "usage": "discord_create_invite(channel_id=456, max_age=3600, max_uses=10)"
+                            "usage": "discord_create_invite(channel_id=456, max_age=3600, max_uses=10)",
                         },
                         {
                             "name": "discord_get_invites",
                             "description": "Get all server invites",
-                            "usage": "discord_get_invites(guild_id=123)"
+                            "usage": "discord_get_invites(guild_id=123)",
                         },
                         {
                             "name": "discord_delete_invite",
                             "description": "Delete an invite",
-                            "usage": "discord_delete_invite(invite_code='abc123')"
+                            "usage": "discord_delete_invite(invite_code='abc123')",
                         },
                         {
                             "name": "discord_get_invite_info",
                             "description": "Get invite information",
-                            "usage": "discord_get_invite_info(invite_code='abc123')"
-                        }
-                    ]
+                            "usage": "discord_get_invite_info(invite_code='abc123')",
+                        },
+                    ],
                 },
-
                 "reactions": {
                     "description": "Tools for managing reactions",
                     "tools": [
                         {
                             "name": "discord_add_reaction",
                             "description": "Add reaction to message",
-                            "usage": "discord_add_reaction(channel_id=456, message_id=789, emoji='👍')"
+                            "usage": "discord_add_reaction(channel_id=456, message_id=789, emoji='👍')",
                         },
                         {
                             "name": "discord_remove_reaction",
                             "description": "Remove reaction",
-                            "usage": "discord_remove_reaction(channel_id=456, message_id=789, emoji='👍')"
-                        }
-                    ]
+                            "usage": "discord_remove_reaction(channel_id=456, message_id=789, emoji='👍')",
+                        },
+                    ],
                 },
-
                 "permissions": {
                     "description": "Tools for managing permissions",
                     "tools": [
                         {
                             "name": "discord_set_channel_permissions",
                             "description": "Set channel permissions",
-                            "usage": "discord_set_channel_permissions(channel_id=456, target_id=789, target_type='role')"
+                            "usage": "discord_set_channel_permissions(channel_id=456, target_id=789, target_type='role')",
                         }
-                    ]
+                    ],
                 },
-
                 "direct_messages": {
                     "description": "Tools for DMs",
                     "tools": [
                         {
                             "name": "discord_send_dm",
                             "description": "Send a DM to user",
-                            "usage": "discord_send_dm(user_id=789, content='Hello!')"
+                            "usage": "discord_send_dm(user_id=789, content='Hello!')",
                         }
-                    ]
+                    ],
                 },
-
                 "webhooks": {
                     "description": "Tools for webhook management",
                     "tools": [
                         {
                             "name": "discord_create_webhook",
                             "description": "Create a webhook",
-                            "usage": "discord_create_webhook(channel_id=456, name='My Webhook')"
+                            "usage": "discord_create_webhook(channel_id=456, name='My Webhook')",
                         }
-                    ]
+                    ],
                 },
-
                 "bot_status": {
                     "description": "Tools for bot management",
                     "tools": [
                         {
                             "name": "discord_get_bot_status",
                             "description": "Get bot status",
-                            "usage": "discord_get_bot_status()"
+                            "usage": "discord_get_bot_status()",
                         },
                         {
                             "name": "discord_set_bot_status",
                             "description": "Set bot status",
-                            "usage": "discord_set_bot_status(status='online', activity_type='playing', activity_name='with AI')"
+                            "usage": "discord_set_bot_status(status='online', activity_type='playing', activity_name='with AI')",
                         },
                         {
                             "name": "discord_get_kernel_metrics",
                             "description": "Get kernel metrics",
-                            "usage": "discord_get_kernel_metrics()"
-                        }
-                    ]
+                            "usage": "discord_get_kernel_metrics()",
+                        },
+                    ],
                 },
-
                 "user_info": {
                     "description": "Tools for getting user information",
                     "tools": [
                         {
                             "name": "discord_get_user_info",
                             "description": "Get user information",
-                            "usage": "discord_get_user_info(user_id=789, guild_id=123)"
+                            "usage": "discord_get_user_info(user_id=789, guild_id=123)",
                         }
-                    ]
-                }
+                    ],
+                },
             },
-
             "quick_start_examples": {
                 "setup_new_server": [
                     "1. Create server: discord_create_server(name='My Server')",
                     "2. Create channels: discord_create_channel(guild_id=X, name='general', channel_type='text')",
                     "3. Create invite: discord_create_invite(channel_id=Y, max_age=0)",
                     "4. Create welcome template: discord_create_welcome_template()",
-                    "5. Send welcome: discord_send_template_message(channel_id=Y, template_name='welcome', variables={'username': 'User'})"
+                    "5. Send welcome: discord_send_template_message(channel_id=Y, template_name='welcome', variables={'username': 'User'})",
                 ],
-
                 "moderation_workflow": [
                     "1. Get user info: discord_get_user_info(user_id=X, guild_id=Y)",
                     "2. Timeout user: discord_timeout_member(guild_id=Y, user_id=X, duration_minutes=60)",
                     "3. Or kick: discord_kick_member(guild_id=Y, user_id=X, reason='Spam')",
-                    "4. Or ban: discord_ban_member(guild_id=Y, user_id=X, reason='Violation')"
+                    "4. Or ban: discord_ban_member(guild_id=Y, user_id=X, reason='Violation')",
                 ],
-
                 "announcement_workflow": [
                     "1. Create template: discord_create_announcement_template()",
-                    "2. Send announcement: discord_send_template_message(channel_id=X, template_name='announcement', variables={'message': 'Server update!', 'date': '2024-01-01'})"
-                ]
-            }
+                    "2. Send announcement: discord_send_template_message(channel_id=X, template_name='announcement', variables={'message': 'Server update!', 'date': '2024-01-01'})",
+                ],
+            },
         }
 
-        return {
-            "success": True,
-            "overview": tools_overview
-        }
+        return {"success": True, "overview": tools_overview}
 
     async def get_template_examples(self) -> Dict[str, Any]:
         """
@@ -3178,7 +3113,7 @@ class DiscordKernelTools:
                         "step": 1,
                         "action": "Get server info",
                         "tool": "discord_get_server_info",
-                        "args": {"guild_id": 123456789}
+                        "args": {"guild_id": 123456789},
                     },
                     {
                         "step": 2,
@@ -3192,16 +3127,23 @@ class DiscordKernelTools:
                                 "description": "We're excited to have you here! You are member #{member_count}",
                                 "color": 65280,
                                 "fields": [
-                                    {"name": "📜 Read the Rules", "value": "Check out <#rules_channel_id>", "inline": False},
-                                    {"name": "👋 Say Hi", "value": "Introduce yourself in <#intro_channel_id>", "inline": False}
-                                ]
-                            }
-                        }
-                    }
+                                    {
+                                        "name": "📜 Read the Rules",
+                                        "value": "Check out <#rules_channel_id>",
+                                        "inline": False,
+                                    },
+                                    {
+                                        "name": "👋 Say Hi",
+                                        "value": "Introduce yourself in <#intro_channel_id>",
+                                        "inline": False,
+                                    },
+                                ],
+                            },
+                        },
+                    },
                 ],
-                "result": "Rich welcome message with server info and helpful links"
+                "result": "Rich welcome message with server info and helpful links",
             },
-
             "moderation_log": {
                 "description": "Log moderation actions",
                 "workflow": [
@@ -3209,7 +3151,7 @@ class DiscordKernelTools:
                         "step": 1,
                         "action": "Get user info",
                         "tool": "discord_get_user_info",
-                        "args": {"user_id": 111111, "guild_id": 123456789}
+                        "args": {"user_id": 111111, "guild_id": 123456789},
                     },
                     {
                         "step": 2,
@@ -3220,14 +3162,13 @@ class DiscordKernelTools:
                             "embed": {
                                 "title": "🔨 Moderation Action",
                                 "description": "**Action:** Ban\n**User:** Username (111111)\n**Moderator:** ModName\n**Reason:** Repeated rule violations",
-                                "color": 16711680
-                            }
-                        }
-                    }
+                                "color": 16711680,
+                            },
+                        },
+                    },
                 ],
-                "result": "Formatted moderation log entry"
+                "result": "Formatted moderation log entry",
             },
-
             "verification_system": {
                 "description": "Button-based verification (requires interaction handling)",
                 "workflow": [
@@ -3241,9 +3182,9 @@ class DiscordKernelTools:
                             "embed": {
                                 "title": "✅ Verification Required",
                                 "description": "Click the button below to verify and gain access to all channels.",
-                                "color": 3066993
-                            }
-                        }
+                                "color": 3066993,
+                            },
+                        },
                     },
                     {
                         "step": 2,
@@ -3252,13 +3193,12 @@ class DiscordKernelTools:
                         "args": {
                             "channel_id": 999999,
                             "message_id": 777777,
-                            "emoji": "✅"
-                        }
-                    }
+                            "emoji": "✅",
+                        },
+                    },
                 ],
-                "result": "Verification message (button interactions require bot event handlers)"
+                "result": "Verification message (button interactions require bot event handlers)",
             },
-
             "role_assignment": {
                 "description": "Assign role to user",
                 "workflow": [
@@ -3266,7 +3206,7 @@ class DiscordKernelTools:
                         "step": 1,
                         "action": "Get member's current roles",
                         "tool": "discord_get_member_roles",
-                        "args": {"guild_id": 123456789, "user_id": 111111}
+                        "args": {"guild_id": 123456789, "user_id": 111111},
                     },
                     {
                         "step": 2,
@@ -3276,8 +3216,8 @@ class DiscordKernelTools:
                             "guild_id": 123456789,
                             "user_id": 111111,
                             "role_id": 888888,
-                            "reason": "Verified member"
-                        }
+                            "reason": "Verified member",
+                        },
                     },
                     {
                         "step": 3,
@@ -3285,13 +3225,12 @@ class DiscordKernelTools:
                         "tool": "discord_send_message",
                         "args": {
                             "channel_id": 111111,
-                            "content": "You've been assigned the Verified role! 🎉"
-                        }
-                    }
+                            "content": "You've been assigned the Verified role! 🎉",
+                        },
+                    },
                 ],
-                "result": "Role assigned and user notified"
+                "result": "Role assigned and user notified",
             },
-
             "server_announcement": {
                 "description": "Create and send server announcement",
                 "workflow": [
@@ -3307,22 +3246,29 @@ class DiscordKernelTools:
                                 "description": "Important update for all members!",
                                 "color": 15844367,
                                 "fields": [
-                                    {"name": "What's New", "value": "New features added", "inline": False},
-                                    {"name": "When", "value": "Effective immediately", "inline": False}
-                                ]
-                            }
-                        }
+                                    {
+                                        "name": "What's New",
+                                        "value": "New features added",
+                                        "inline": False,
+                                    },
+                                    {
+                                        "name": "When",
+                                        "value": "Effective immediately",
+                                        "inline": False,
+                                    },
+                                ],
+                            },
+                        },
                     },
                     {
                         "step": 2,
                         "action": "Pin the announcement",
                         "tool": "discord_pin_message",
-                        "args": {"channel_id": 123456, "message_id": 999999}
-                    }
+                        "args": {"channel_id": 123456, "message_id": 999999},
+                    },
                 ],
-                "result": "Pinned announcement visible to all members"
+                "result": "Pinned announcement visible to all members",
             },
-
             "poll_with_reactions": {
                 "description": "Create a poll using reactions",
                 "workflow": [
@@ -3335,27 +3281,34 @@ class DiscordKernelTools:
                             "embed": {
                                 "title": "📊 Poll: What feature should we add next?",
                                 "description": "1️⃣ New game modes\n2️⃣ More channels\n3️⃣ Bot improvements\n4️⃣ Events and contests",
-                                "color": 3447003
-                            }
-                        }
+                                "color": 3447003,
+                            },
+                        },
                     },
                     {
                         "step": 2,
                         "action": "Add reaction options",
                         "tool": "discord_add_reaction",
-                        "args": {"channel_id": 123456, "message_id": 999999, "emoji": "1️⃣"}
+                        "args": {
+                            "channel_id": 123456,
+                            "message_id": 999999,
+                            "emoji": "1️⃣",
+                        },
                     },
                     {
                         "step": 3,
                         "action": "Add more reactions",
                         "tool": "discord_add_reaction",
-                        "args": {"channel_id": 123456, "message_id": 999999, "emoji": "2️⃣"}
-                    }
+                        "args": {
+                            "channel_id": 123456,
+                            "message_id": 999999,
+                            "emoji": "2️⃣",
+                        },
+                    },
                 ],
                 "result": "Poll with numbered reactions for voting",
-                "note": "Repeat step 3 for each option (3️⃣, 4️⃣, etc.)"
+                "note": "Repeat step 3 for each option (3️⃣, 4️⃣, etc.)",
             },
-
             "event_announcement": {
                 "description": "Announce server events",
                 "workflow": [
@@ -3370,24 +3323,43 @@ class DiscordKernelTools:
                                 "description": "Join us for a community movie night!",
                                 "color": 16738740,
                                 "fields": [
-                                    {"name": "📅 Date", "value": "Saturday, Jan 15", "inline": True},
-                                    {"name": "🕐 Time", "value": "8:00 PM EST", "inline": True},
-                                    {"name": "📍 Location", "value": "Voice Channel #1", "inline": True},
-                                    {"name": "ℹ️ Details", "value": "We'll be watching a community-voted movie. Bring snacks!", "inline": False}
-                                ]
-                            }
-                        }
+                                    {
+                                        "name": "📅 Date",
+                                        "value": "Saturday, Jan 15",
+                                        "inline": True,
+                                    },
+                                    {
+                                        "name": "🕐 Time",
+                                        "value": "8:00 PM EST",
+                                        "inline": True,
+                                    },
+                                    {
+                                        "name": "📍 Location",
+                                        "value": "Voice Channel #1",
+                                        "inline": True,
+                                    },
+                                    {
+                                        "name": "ℹ️ Details",
+                                        "value": "We'll be watching a community-voted movie. Bring snacks!",
+                                        "inline": False,
+                                    },
+                                ],
+                            },
+                        },
                     },
                     {
                         "step": 2,
                         "action": "Add RSVP reaction",
                         "tool": "discord_add_reaction",
-                        "args": {"channel_id": 789012, "message_id": 888888, "emoji": "✅"}
-                    }
+                        "args": {
+                            "channel_id": 789012,
+                            "message_id": 888888,
+                            "emoji": "✅",
+                        },
+                    },
                 ],
-                "result": "Rich event announcement with all details and RSVP option"
+                "result": "Rich event announcement with all details and RSVP option",
             },
-
             "leaderboard_display": {
                 "description": "Display rankings and scores",
                 "workflow": [
@@ -3402,18 +3374,33 @@ class DiscordKernelTools:
                                 "description": "Top members this week",
                                 "color": 16766720,
                                 "fields": [
-                                    {"name": "🥇 1st Place", "value": "**@User1** - 1,250 points", "inline": False},
-                                    {"name": "🥈 2nd Place", "value": "**@User2** - 980 points", "inline": False},
-                                    {"name": "🥉 3rd Place", "value": "**@User3** - 875 points", "inline": False},
-                                    {"name": "Others", "value": "4. @User4 - 720\n5. @User5 - 650", "inline": False}
-                                ]
-                            }
-                        }
+                                    {
+                                        "name": "🥇 1st Place",
+                                        "value": "**@User1** - 1,250 points",
+                                        "inline": False,
+                                    },
+                                    {
+                                        "name": "🥈 2nd Place",
+                                        "value": "**@User2** - 980 points",
+                                        "inline": False,
+                                    },
+                                    {
+                                        "name": "🥉 3rd Place",
+                                        "value": "**@User3** - 875 points",
+                                        "inline": False,
+                                    },
+                                    {
+                                        "name": "Others",
+                                        "value": "4. @User4 - 720\n5. @User5 - 650",
+                                        "inline": False,
+                                    },
+                                ],
+                            },
+                        },
                     }
                 ],
-                "result": "Formatted leaderboard with rankings"
+                "result": "Formatted leaderboard with rankings",
             },
-
             "voice_session_management": {
                 "description": "Manage voice channel sessions",
                 "workflow": [
@@ -3421,30 +3408,29 @@ class DiscordKernelTools:
                         "step": 1,
                         "action": "Join voice channel",
                         "tool": "discord_join_voice",
-                        "args": {"channel_id": 555555}
+                        "args": {"channel_id": 555555},
                     },
                     {
                         "step": 2,
                         "action": "Enable TTS",
                         "tool": "discord_toggle_tts",
-                        "args": {"guild_id": 123456789, "mode": "piper"}
+                        "args": {"guild_id": 123456789, "mode": "piper"},
                     },
                     {
                         "step": 3,
                         "action": "Check voice status",
                         "tool": "discord_get_voice_status",
-                        "args": {"guild_id": 123456789}
+                        "args": {"guild_id": 123456789},
                     },
                     {
                         "step": 4,
                         "action": "Leave when done",
                         "tool": "discord_leave_voice",
-                        "args": {"guild_id": 123456789}
-                    }
+                        "args": {"guild_id": 123456789},
+                    },
                 ],
-                "result": "Complete voice session with TTS enabled"
+                "result": "Complete voice session with TTS enabled",
             },
-
             "member_info_check": {
                 "description": "Get comprehensive member information",
                 "workflow": [
@@ -3452,24 +3438,23 @@ class DiscordKernelTools:
                         "step": 1,
                         "action": "Get user info",
                         "tool": "discord_get_user_info",
-                        "args": {"user_id": 111111, "guild_id": 123456789}
+                        "args": {"user_id": 111111, "guild_id": 123456789},
                     },
                     {
                         "step": 2,
                         "action": "Get member roles",
                         "tool": "discord_get_member_roles",
-                        "args": {"guild_id": 123456789, "user_id": 111111}
+                        "args": {"guild_id": 123456789, "user_id": 111111},
                     },
                     {
                         "step": 3,
                         "action": "Get recent messages",
                         "tool": "discord_get_recent_messages",
-                        "args": {"channel_id": 987654, "limit": 10}
-                    }
+                        "args": {"channel_id": 987654, "limit": 10},
+                    },
                 ],
-                "result": "Complete member profile with roles and activity"
+                "result": "Complete member profile with roles and activity",
             },
-
             "bot_status_update": {
                 "description": "Display bot status and metrics",
                 "workflow": [
@@ -3477,13 +3462,13 @@ class DiscordKernelTools:
                         "step": 1,
                         "action": "Get bot status",
                         "tool": "discord_get_bot_status",
-                        "args": {}
+                        "args": {},
                     },
                     {
                         "step": 2,
                         "action": "Get kernel metrics",
                         "tool": "discord_get_kernel_metrics",
-                        "args": {}
+                        "args": {},
                     },
                     {
                         "step": 3,
@@ -3496,18 +3481,21 @@ class DiscordKernelTools:
                                 "description": "All systems operational",
                                 "color": 3447003,
                                 "fields": [
-                                    {"name": "Status", "value": "🟢 Online", "inline": True},
+                                    {
+                                        "name": "Status",
+                                        "value": "🟢 Online",
+                                        "inline": True,
+                                    },
                                     {"name": "Latency", "value": "45ms", "inline": True},
                                     {"name": "Guilds", "value": "10", "inline": True},
-                                    {"name": "Users", "value": "1,234", "inline": True}
-                                ]
-                            }
-                        }
-                    }
+                                    {"name": "Users", "value": "1,234", "inline": True},
+                                ],
+                            },
+                        },
+                    },
                 ],
-                "result": "Comprehensive status dashboard with live metrics"
+                "result": "Comprehensive status dashboard with live metrics",
             },
-
             "message_cleanup": {
                 "description": "Clean up old messages",
                 "workflow": [
@@ -3515,25 +3503,25 @@ class DiscordKernelTools:
                         "step": 1,
                         "action": "Get recent messages",
                         "tool": "discord_get_recent_messages",
-                        "args": {"channel_id": 123456, "limit": 50}
+                        "args": {"channel_id": 123456, "limit": 50},
                     },
                     {
                         "step": 2,
                         "action": "Delete specific message",
                         "tool": "discord_delete_message",
-                        "args": {"channel_id": 123456, "message_id": 999999, "delay": 0}
-                    }
+                        "args": {"channel_id": 123456, "message_id": 999999, "delay": 0},
+                    },
                 ],
                 "result": "Messages cleaned up",
-                "note": "Repeat step 2 for each message to delete"
-            }
+                "note": "Repeat step 2 for each message to delete",
+            },
         }
 
         return {
             "success": True,
             "examples": examples,
             "total_examples": len(examples),
-            "usage_note": "Each example shows a workflow with specific tool calls and arguments. Use these as templates for common Discord tasks."
+            "usage_note": "Each example shows a workflow with specific tool calls and arguments. Use these as templates for common Discord tasks.",
         }
 
     # ===== EXPORT TO AGENT =====
@@ -3549,64 +3537,88 @@ class DiscordKernelTools:
         read_flags = {"read": True, "write": False, "dangerous": False}
 
         agent.add_tool(
-            self.get_server_info, "discord_get_server_info",
+            self.get_server_info,
+            "discord_get_server_info",
             description="Get information about Discord server(s). Args: guild_id (int, optional). Returns: Dict with server info.",
-            category=read_category, flags=read_flags
+            category=read_category,
+            flags=read_flags,
         )
         agent.add_tool(
-            self.get_channel_info, "discord_get_channel_info",
+            self.get_channel_info,
+            "discord_get_channel_info",
             description="Get information about a Discord channel. Args: channel_id (int). Returns: Dict with channel info.",
-            category=read_category, flags=read_flags
+            category=read_category,
+            flags=read_flags,
         )
         agent.add_tool(
-            self.list_channels, "discord_list_channels",
+            self.list_channels,
+            "discord_list_channels",
             description="List all channels in a guild. Args: guild_id (int), channel_type (str, optional). Returns: List of channel dicts.",
-            category=read_category, flags=read_flags
+            category=read_category,
+            flags=read_flags,
         )
         agent.add_tool(
-            self.get_user_info, "discord_get_user_info",
+            self.get_user_info,
+            "discord_get_user_info",
             description="Get information about a Discord user. Args: user_id (int), guild_id (int, optional). Returns: Dict with user info.",
-            category=read_category, flags=read_flags
+            category=read_category,
+            flags=read_flags,
         )
         agent.add_tool(
-            self.get_message, "discord_get_message",
+            self.get_message,
+            "discord_get_message",
             description="Get information about a specific message. Args: channel_id (int), message_id (int). Returns: Dict with message info.",
-            category=read_category, flags=read_flags
+            category=read_category,
+            flags=read_flags,
         )
         agent.add_tool(
-            self.get_recent_messages, "discord_get_recent_messages",
+            self.get_recent_messages,
+            "discord_get_recent_messages",
             description="Get recent messages from a channel. Args: channel_id (int), limit (int, default 10). Returns: List of message dicts.",
-            category=read_category, flags=read_flags
+            category=read_category,
+            flags=read_flags,
         )
         agent.add_tool(
-            self.get_message_reactions, "discord_get_message_reactions",
+            self.get_message_reactions,
+            "discord_get_message_reactions",
             description="Get reactions from a Discord message. Args: channel_id (int), message_id (int), emoji (str, optional). Returns: Dict with reaction data.",
-            category=read_category, flags=read_flags
+            category=read_category,
+            flags=read_flags,
         )
         agent.add_tool(
-            self.get_member_roles, "discord_get_member_roles",
+            self.get_member_roles,
+            "discord_get_member_roles",
             description="Get all roles of a member in a guild. Args: guild_id (int), user_id (int). Returns: List of role dicts.",
-            category=read_category, flags=read_flags
+            category=read_category,
+            flags=read_flags,
         )
         agent.add_tool(
-            self.get_bot_status, "discord_get_bot_status",
+            self.get_bot_status,
+            "discord_get_bot_status",
             description="Get current bot status and statistics. Returns: Dict with bot info.",
-            category=read_category, flags=read_flags
+            category=read_category,
+            flags=read_flags,
         )
         agent.add_tool(
-            self.get_kernel_metrics, "discord_get_kernel_metrics",
+            self.get_kernel_metrics,
+            "discord_get_kernel_metrics",
             description="Get kernel performance metrics. Returns: Dict with metrics.",
-            category=read_category, flags=read_flags
+            category=read_category,
+            flags=read_flags,
         )
         agent.add_tool(
-            self.get_voice_status, "discord_get_voice_status",
+            self.get_voice_status,
+            "discord_get_voice_status",
             description="Get voice connection status for a guild. Args: guild_id (int). Returns: Dict with voice status.",
-            category=["discord", "discord_read", "discord_voice"], flags=read_flags
+            category=["discord", "discord_read", "discord_voice"],
+            flags=read_flags,
         )
         agent.add_tool(
-            self.can_hear_user, "discord_can_hear_user",
+            self.can_hear_user,
+            "discord_can_hear_user",
             description="Check if the bot can hear a specific user. Args: guild_id (int), user_id (int). Returns: Dict with can_hear status.",
-            category=["discord", "discord_read", "discord_voice"], flags=read_flags
+            category=["discord", "discord_read", "discord_voice"],
+            flags=read_flags,
         )
 
         # =================================================================
@@ -3616,49 +3628,67 @@ class DiscordKernelTools:
         write_flags = {"read": False, "write": True, "dangerous": False}
 
         agent.add_tool(
-            self.send_message, "discord_send_message",
+            self.send_message,
+            "discord_send_message",
             description="Send a message to a Discord channel. Args: channel_id (int), content (str), embed (dict, optional), reply_to (int, optional). Returns: Dict with message_id.",
-            category=write_category, flags=write_flags
+            category=write_category,
+            flags=write_flags,
         )
         agent.add_tool(
-            self.output_router.send_media, "discord_send_media",
+            self.output_router.send_media,
+            "discord_send_media",
             description="Send media (images, files) to a Discord user. Args: user_id (str), file_path (str, optional), url (str, optional), caption (str, optional). Returns: Dict with success status.",
-            category=write_category, flags=write_flags
+            category=write_category,
+            flags=write_flags,
         )
         agent.add_tool(
-            self.edit_message, "discord_edit_message",
+            self.edit_message,
+            "discord_edit_message",
             description="Edit an existing message. Args: channel_id (int), message_id (int), new_content (str, optional), new_embed (dict, optional). Returns: Dict with success status.",
-            category=write_category, flags=write_flags
+            category=write_category,
+            flags=write_flags,
         )
         agent.add_tool(
-            self.delete_message, "discord_delete_message",
+            self.delete_message,
+            "discord_delete_message",
             description="Delete a message. Args: channel_id (int), message_id (int), delay (float, optional). Returns: Dict with success status.",
-            category=write_category, flags=write_flags
+            category=write_category,
+            flags=write_flags,
         )
         agent.add_tool(
-            self.add_reaction, "discord_add_reaction",
+            self.add_reaction,
+            "discord_add_reaction",
             description="Add a reaction emoji to a message. Args: channel_id (int), message_id (int), emoji (str). Returns: Dict with success status.",
-            category=write_category, flags=write_flags
+            category=write_category,
+            flags=write_flags,
         )
         agent.add_tool(
-            self.remove_reaction, "discord_remove_reaction",
+            self.remove_reaction,
+            "discord_remove_reaction",
             description="Remove a reaction from a message. Args: channel_id (int), message_id (int), emoji (str), user_id (int, optional). Returns: Dict with success status.",
-            category=write_category, flags=write_flags
+            category=write_category,
+            flags=write_flags,
         )
         agent.add_tool(
-            self.send_dm, "discord_send_dm",
+            self.send_dm,
+            "discord_send_dm",
             description="Send a DM to user. Args: user_id (int), content (str), embed (dict, optional). Returns: Dict with message info.",
-            category=write_category, flags=write_flags
+            category=write_category,
+            flags=write_flags,
         )
         agent.add_tool(
-            self.send_file, "discord_send_file",
+            self.send_file,
+            "discord_send_file",
             description="Send a file. Args: channel_id (int), file_path (str), filename (str, optional), content (str, optional). Returns: Dict with message info.",
-            category=write_category, flags=write_flags
+            category=write_category,
+            flags=write_flags,
         )
         agent.add_tool(
-            self.set_bot_status, "discord_set_bot_status",
+            self.set_bot_status,
+            "discord_set_bot_status",
             description="Set bot's Discord status and activity. Args: status (str), activity_type (str), activity_name (str, optional). Returns: Dict with success status.",
-            category=write_category, flags=write_flags
+            category=write_category,
+            flags=write_flags,
         )
 
         # =================================================================
@@ -3668,24 +3698,32 @@ class DiscordKernelTools:
         voice_flags = {"read": False, "write": True, "dangerous": False, "voice": True}
 
         agent.add_tool(
-            self.join_voice_channel, "discord_join_voice",
+            self.join_voice_channel,
+            "discord_join_voice",
             description="Join a voice channel. Args: channel_id (int). Returns: Dict with success status and channel info.",
-            category=voice_category, flags=voice_flags
+            category=voice_category,
+            flags=voice_flags,
         )
         agent.add_tool(
-            self.leave_voice_channel, "discord_leave_voice",
+            self.leave_voice_channel,
+            "discord_leave_voice",
             description="Leave the current voice channel in a guild. Args: guild_id (int). Returns: Dict with success status.",
-            category=voice_category, flags=voice_flags
+            category=voice_category,
+            flags=voice_flags,
         )
         agent.add_tool(
-            self.toggle_tts, "discord_toggle_tts",
+            self.toggle_tts,
+            "discord_toggle_tts",
             description="Toggle TTS (Text-to-Speech) on/off. Args: guild_id (int), mode (str, optional). Returns: Dict with TTS status.",
-            category=voice_category, flags=voice_flags
+            category=voice_category,
+            flags=voice_flags,
         )
         agent.add_tool(
-            self.send_tts_message, "discord_send_tts_message",
+            self.send_tts_message,
+            "discord_send_tts_message",
             description="Send a TTS message in the current voice channel. Args: guild_id (int), text (str), mode (str, optional). Returns: Dict with success status.",
-            category=voice_category, flags=voice_flags
+            category=voice_category,
+            flags=voice_flags,
         )
 
         # =================================================================
@@ -3695,63 +3733,85 @@ class DiscordKernelTools:
         admin_flags = {"read": False, "write": True, "dangerous": True, "admin": True}
 
         agent.add_tool(
-            self.create_server, "discord_create_server",
+            self.create_server,
+            "discord_create_server",
             description="Create a new Discord server. Args: name (str), icon (str, optional), region (str, optional). Returns: Dict with guild_id.",
-            category=admin_category, flags=admin_flags
+            category=admin_category,
+            flags=admin_flags,
         )
         agent.add_tool(
-            self.delete_server, "discord_delete_server",
+            self.delete_server,
+            "discord_delete_server",
             description="Delete a Discord server (bot must be owner). Args: guild_id (int). Returns: Dict with success status.",
-            category=admin_category, flags={**admin_flags, "destructive": True}
+            category=admin_category,
+            flags={**admin_flags, "destructive": True},
         )
         agent.add_tool(
-            self.edit_server, "discord_edit_server",
+            self.edit_server,
+            "discord_edit_server",
             description="Edit server settings. Args: guild_id (int), name (str, optional), icon (str, optional), description (str, optional). Returns: Dict with success status.",
-            category=admin_category, flags=admin_flags
+            category=admin_category,
+            flags=admin_flags,
         )
 
         # Channel Management (admin category continued)
         agent.add_tool(
-            self.create_channel, "discord_create_channel",
+            self.create_channel,
+            "discord_create_channel",
             description="Create a channel. Args: guild_id (int), name (str), channel_type (str), category_id (int, optional). Returns: Dict with channel info.",
-            category=admin_category, flags=admin_flags
+            category=admin_category,
+            flags=admin_flags,
         )
         agent.add_tool(
-            self.delete_channel, "discord_delete_channel",
+            self.delete_channel,
+            "discord_delete_channel",
             description="Delete a channel. Args: channel_id (int), reason (str, optional). Returns: Dict with success status.",
-            category=admin_category, flags={**admin_flags, "destructive": True}
+            category=admin_category,
+            flags={**admin_flags, "destructive": True},
         )
         agent.add_tool(
-            self.edit_channel, "discord_edit_channel",
+            self.edit_channel,
+            "discord_edit_channel",
             description="Edit channel settings. Args: channel_id (int), name (str, optional), topic (str, optional). Returns: Dict with success status.",
-            category=admin_category, flags=admin_flags
+            category=admin_category,
+            flags=admin_flags,
         )
         agent.add_tool(
-            self.set_channel_permissions, "discord_set_channel_permissions",
+            self.set_channel_permissions,
+            "discord_set_channel_permissions",
             description="Set channel permissions. Args: channel_id (int), target_id (int), target_type (str), allow (int, optional), deny (int, optional). Returns: Dict with success status.",
-            category=admin_category, flags=admin_flags
+            category=admin_category,
+            flags=admin_flags,
         )
         agent.add_tool(
-            self.create_webhook, "discord_create_webhook",
+            self.create_webhook,
+            "discord_create_webhook",
             description="Create a webhook. Args: channel_id (int), name (str), avatar (bytes, optional). Returns: Dict with webhook URL and info.",
-            category=admin_category, flags=admin_flags
+            category=admin_category,
+            flags=admin_flags,
         )
 
         # Thread Management (admin category)
         agent.add_tool(
-            self.create_thread, "discord_create_thread",
+            self.create_thread,
+            "discord_create_thread",
             description="Create a thread. Args: channel_id (int), name (str), message_id (int, optional). Returns: Dict with thread info.",
-            category=admin_category, flags=admin_flags
+            category=admin_category,
+            flags=admin_flags,
         )
         agent.add_tool(
-            self.join_thread, "discord_join_thread",
+            self.join_thread,
+            "discord_join_thread",
             description="Join a thread. Args: thread_id (int). Returns: Dict with success status.",
-            category=write_category, flags=write_flags
+            category=write_category,
+            flags=write_flags,
         )
         agent.add_tool(
-            self.leave_thread, "discord_leave_thread",
+            self.leave_thread,
+            "discord_leave_thread",
             description="Leave a thread. Args: thread_id (int). Returns: Dict with success status.",
-            category=write_category, flags=write_flags
+            category=write_category,
+            flags=write_flags,
         )
 
         # =================================================================
@@ -3761,54 +3821,74 @@ class DiscordKernelTools:
         mod_flags = {"read": False, "write": True, "dangerous": True, "moderation": True}
 
         agent.add_tool(
-            self.kick_member, "discord_kick_member",
+            self.kick_member,
+            "discord_kick_member",
             description="Kick a member. Args: guild_id (int), user_id (int), reason (str, optional). Returns: Dict with success status.",
-            category=mod_category, flags=mod_flags
+            category=mod_category,
+            flags=mod_flags,
         )
         agent.add_tool(
-            self.ban_member, "discord_ban_member",
+            self.ban_member,
+            "discord_ban_member",
             description="Ban a member. Args: guild_id (int), user_id (int), reason (str, optional), delete_message_days (int, optional). Returns: Dict with success status.",
-            category=mod_category, flags={**mod_flags, "destructive": True}
+            category=mod_category,
+            flags={**mod_flags, "destructive": True},
         )
         agent.add_tool(
-            self.unban_member, "discord_unban_member",
+            self.unban_member,
+            "discord_unban_member",
             description="Unban a member. Args: guild_id (int), user_id (int), reason (str, optional). Returns: Dict with success status.",
-            category=mod_category, flags=mod_flags
+            category=mod_category,
+            flags=mod_flags,
         )
         agent.add_tool(
-            self.timeout_member, "discord_timeout_member",
+            self.timeout_member,
+            "discord_timeout_member",
             description="Timeout (mute) a member. Args: guild_id (int), user_id (int), duration_minutes (int). Returns: Dict with timeout info.",
-            category=mod_category, flags=mod_flags
+            category=mod_category,
+            flags=mod_flags,
         )
         agent.add_tool(
-            self.remove_timeout, "discord_remove_timeout",
+            self.remove_timeout,
+            "discord_remove_timeout",
             description="Remove timeout from member. Args: guild_id (int), user_id (int), reason (str, optional). Returns: Dict with success status.",
-            category=mod_category, flags=mod_flags
+            category=mod_category,
+            flags=mod_flags,
         )
         agent.add_tool(
-            self.change_nickname, "discord_change_nickname",
+            self.change_nickname,
+            "discord_change_nickname",
             description="Change member nickname. Args: guild_id (int), user_id (int), nickname (str or None). Returns: Dict with success status.",
-            category=mod_category, flags=mod_flags
+            category=mod_category,
+            flags=mod_flags,
         )
         agent.add_tool(
-            self.move_member, "discord_move_member",
+            self.move_member,
+            "discord_move_member",
             description="Move member to voice channel. Args: guild_id (int), user_id (int), channel_id (int). Returns: Dict with success status.",
-            category=mod_category, flags=mod_flags
+            category=mod_category,
+            flags=mod_flags,
         )
         agent.add_tool(
-            self.disconnect_member, "discord_disconnect_member",
+            self.disconnect_member,
+            "discord_disconnect_member",
             description="Disconnect member from voice. Args: guild_id (int), user_id (int). Returns: Dict with success status.",
-            category=mod_category, flags=mod_flags
+            category=mod_category,
+            flags=mod_flags,
         )
         agent.add_tool(
-            self.add_role, "discord_add_role",
+            self.add_role,
+            "discord_add_role",
             description="Add a role to a member. Args: guild_id (int), user_id (int), role_id (int), reason (str, optional). Returns: Dict with success status.",
-            category=mod_category, flags=mod_flags
+            category=mod_category,
+            flags=mod_flags,
         )
         agent.add_tool(
-            self.remove_role, "discord_remove_role",
+            self.remove_role,
+            "discord_remove_role",
             description="Remove a role from a member. Args: guild_id (int), user_id (int), role_id (int), reason (str, optional). Returns: Dict with success status.",
-            category=mod_category, flags=mod_flags
+            category=mod_category,
+            flags=mod_flags,
         )
 
         # =================================================================
@@ -3817,87 +3897,122 @@ class DiscordKernelTools:
         invite_category = ["discord", "discord_invites"]
 
         agent.add_tool(
-            self.create_invite, "discord_create_invite",
+            self.create_invite,
+            "discord_create_invite",
             description="Create a server invitation link. Args: channel_id (int), max_age (int, optional), max_uses (int, optional). Returns: Dict with invite info.",
-            category=invite_category, flags=admin_flags
+            category=invite_category,
+            flags=admin_flags,
         )
         agent.add_tool(
-            self.get_invites, "discord_get_invites",
+            self.get_invites,
+            "discord_get_invites",
             description="Get all invites for a server. Args: guild_id (int). Returns: List of invite dicts.",
-            category=invite_category, flags=read_flags
+            category=invite_category,
+            flags=read_flags,
         )
         agent.add_tool(
-            self.delete_invite, "discord_delete_invite",
+            self.delete_invite,
+            "discord_delete_invite",
             description="Delete/revoke an invite. Args: invite_code (str), reason (str, optional). Returns: Dict with success status.",
-            category=invite_category, flags=admin_flags
+            category=invite_category,
+            flags=admin_flags,
         )
         agent.add_tool(
-            self.get_invite_info, "discord_get_invite_info",
+            self.get_invite_info,
+            "discord_get_invite_info",
             description="Get information about an invite. Args: invite_code (str). Returns: Dict with invite info.",
-            category=invite_category, flags=read_flags
+            category=invite_category,
+            flags=read_flags,
         )
 
         # =================================================================
         # CATEGORY: discord_templates - Message template tools
         # =================================================================
         template_category = ["discord", "discord_templates"]
-        template_flags = {"read": False, "write": True, "dangerous": False, "templates": True}
+        template_flags = {
+            "read": False,
+            "write": True,
+            "dangerous": False,
+            "templates": True,
+        }
 
         agent.add_tool(
-            self.create_message_template, "discord_create_message_template",
+            self.create_message_template,
+            "discord_create_message_template",
             description="Create a reusable message template. Args: template_name (str), content (str, optional), embed (dict, optional). Returns: Dict with template info.",
-            category=template_category, flags=template_flags
+            category=template_category,
+            flags=template_flags,
         )
         agent.add_tool(
-            self.get_message_template, "discord_get_message_template",
+            self.get_message_template,
+            "discord_get_message_template",
             description="Get a message template by name. Args: template_name (str). Returns: Dict with template data.",
-            category=template_category, flags=read_flags
+            category=template_category,
+            flags=read_flags,
         )
         agent.add_tool(
-            self.list_message_templates, "discord_list_message_templates",
+            self.list_message_templates,
+            "discord_list_message_templates",
             description="List all available message templates. Returns: List of template info dicts.",
-            category=template_category, flags=read_flags
+            category=template_category,
+            flags=read_flags,
         )
         agent.add_tool(
-            self.delete_message_template, "discord_delete_message_template",
+            self.delete_message_template,
+            "discord_delete_message_template",
             description="Delete a message template. Args: template_name (str). Returns: Dict with success status.",
-            category=template_category, flags=template_flags
+            category=template_category,
+            flags=template_flags,
         )
         agent.add_tool(
-            self.send_template_message, "discord_send_template_message",
+            self.send_template_message,
+            "discord_send_template_message",
             description="Send a message using a template. Args: channel_id (int), template_name (str), variables (dict, optional). Returns: Dict with message info.",
-            category=template_category, flags=template_flags
+            category=template_category,
+            flags=template_flags,
         )
         agent.add_tool(
-            self.create_welcome_template, "discord_create_welcome_template",
+            self.create_welcome_template,
+            "discord_create_welcome_template",
             description="Create a welcome message template. Args: template_name (str), title (str), description (str), color (int). Returns: Dict with template info.",
-            category=template_category, flags=template_flags
+            category=template_category,
+            flags=template_flags,
         )
         agent.add_tool(
-            self.create_announcement_template, "discord_create_announcement_template",
+            self.create_announcement_template,
+            "discord_create_announcement_template",
             description="Create an announcement template. Args: template_name (str), title (str), description (str), color (int). Returns: Dict with template info.",
-            category=template_category, flags=template_flags
+            category=template_category,
+            flags=template_flags,
         )
         agent.add_tool(
-            self.create_poll_template, "discord_create_poll_template",
+            self.create_poll_template,
+            "discord_create_poll_template",
             description="Create a poll template. Args: template_name (str), question (str), options (list). Returns: Dict with template info.",
-            category=template_category, flags=template_flags
+            category=template_category,
+            flags=template_flags,
         )
 
         agent.add_tool(
-            self.create_embed_template, "discord_create_embed_template",
+            self.create_embed_template,
+            "discord_create_embed_template",
             description="Create a custom embed template. Args: template_name (str), title (str, optional), description (str, optional), color (int). Returns: Dict with template info.",
-            category=template_category, flags=template_flags
+            category=template_category,
+            flags=template_flags,
         )
         agent.add_tool(
-            self.create_button_template, "discord_create_button_template",
+            self.create_button_template,
+            "discord_create_button_template",
             description="Create a message template with buttons. Args: template_name (str), content (str, optional), buttons (list). Returns: Dict with template info.",
-            category=template_category, flags=template_flags
+            category=template_category,
+            flags=template_flags,
         )
         agent.add_tool(
-            self.create_select_menu_template, "discord_create_select_menu_template",
+            self.create_select_menu_template,
+            "discord_create_select_menu_template",
             description="Create a message template with a select menu. Args: template_name (str), placeholder (str), options (list). Returns: Dict with template info.",
-            category=template_category, flags=template_flags
+            category=template_category,
+            flags=template_flags,
         )
 
         # =================================================================
@@ -3907,21 +4022,25 @@ class DiscordKernelTools:
         help_flags = {"read": True, "write": False, "dangerous": False, "help": True}
 
         agent.add_tool(
-            self.get_template_help, "discord_get_template_help",
+            self.get_template_help,
+            "discord_get_template_help",
             description="Get comprehensive help on creating and using message templates. Returns: Dict with template documentation.",
-            category=help_category, flags=help_flags
+            category=help_category,
+            flags=help_flags,
         )
         agent.add_tool(
-            self.get_tools_overview, "discord_get_tools_overview",
+            self.get_tools_overview,
+            "discord_get_tools_overview",
             description="Get overview of all available Discord tools organized by category. Returns: Dict with categorized tool information.",
-            category=help_category, flags=help_flags
+            category=help_category,
+            flags=help_flags,
         )
         agent.add_tool(
-            self.get_template_examples, "discord_get_template_examples",
+            self.get_template_examples,
+            "discord_get_template_examples",
             description="Get practical, ready-to-use template examples for common scenarios. Returns: Dict with template examples.",
-            category=help_category, flags=help_flags
+            category=help_category,
+            flags=help_flags,
         )
 
         print("✓ Discord tools exported to agent with categories (59 tools total)")
-
-

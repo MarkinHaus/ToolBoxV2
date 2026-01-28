@@ -12,15 +12,26 @@ from unittest.mock import MagicMock, AsyncMock, patch, mock_open
 
 # Importiere die zu testenden Klassen
 # HINWEIS: Passe den Import-Pfad an deine Struktur an!
-from toolboxv2.mods.isaa.kernel.kernelin.kernelin_telegram import (
-    TelegramConfig,
-    TelegramOutputRouter,
-    TelegramTransport,
-    TelegramMediaHandler,
-    MarkdownV2Escaper
-)
+try:
+    from toolboxv2.mods.isaa.kernel.kernelin.kernelin_telegram import (
+        TelegramConfig,
+        TelegramOutputRouter,
+        TelegramTransport,
+        TelegramMediaHandler,
+        MarkdownV2Escaper
+    )
+    import importlib.util
+    TELEGRAM_AVAILABLE = importlib.util.find_spec("telegram") is not None
+except ImportError:
+    print("⚠️ Telegram not installed. Telegram kernel disabled.")
+    TelegramConfig = None
+    TelegramOutputRouter = None
+    TelegramTransport = None
+    TelegramMediaHandler = None
+    MarkdownV2Escaper = None
+    TELEGRAM_AVAILABLE = False
 
-
+@unittest.skipUnless(TELEGRAM_AVAILABLE, "telegram not installed")
 class TestMarkdownEscaper(unittest.TestCase):
     """Test MarkdownV2 escaping logic"""
 
@@ -45,7 +56,7 @@ class TestMarkdownEscaper(unittest.TestCase):
         # ` darf nicht doppelt escaped werden, text davor schon
         self.assertIn("`print()`", formatted) # Backticks werden escaped innerhalb der Logik für Code-Blöcke
 
-
+@unittest.skipUnless(TELEGRAM_AVAILABLE, "telegram not installed")
 class TestTelegramOutputRouter(unittest.IsolatedAsyncioTestCase):
     """Test TelegramOutputRouter with correct Config injection"""
 
@@ -90,7 +101,7 @@ class TestTelegramOutputRouter(unittest.IsolatedAsyncioTestCase):
         # Should be called twice (4000 + 1000)
         self.assertEqual(self.mock_bot.send_message.call_count, 2)
 
-
+@unittest.skipUnless(TELEGRAM_AVAILABLE, "telegram not installed")
 class TestTelegramMediaHandler(unittest.IsolatedAsyncioTestCase):
     """Test Media Handler logic"""
 
@@ -125,7 +136,7 @@ class TestTelegramMediaHandler(unittest.IsolatedAsyncioTestCase):
         path = await self.handler.download_document(mock_doc)
         self.assertIsNone(path)  # Should fail due to size limit (20MB default)
 
-
+@unittest.skipUnless(TELEGRAM_AVAILABLE, "telegram not installed")
 class TestTelegramTransport(unittest.IsolatedAsyncioTestCase):
     """Test the main Transport Layer"""
 

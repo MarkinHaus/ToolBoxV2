@@ -22,7 +22,8 @@ from typing import Dict, Any, List, Optional
 
 # Import the real DiscordKernelTools
 from toolboxv2.mods.isaa.kernel.kernelin.tools.discord_tools import DiscordKernelTools
-
+import importlib.util
+DISCORD_AVAILABLE = importlib.util.find_spec("discord") is not None
 
 # ===== MOCK DISCORD OBJECTS =====
 
@@ -281,6 +282,7 @@ def create_discord_mock():
 
 # ===== UNIT TESTS: DiscordKernelTools with Real Code =====
 
+@unittest.skipUnless(DISCORD_AVAILABLE, "discord.py not installed")
 class TestDiscordKernelToolsReal(unittest.IsolatedAsyncioTestCase):
     """
     Unit tests using the real DiscordKernelTools class
@@ -505,6 +507,7 @@ class TestDiscordKernelToolsReal(unittest.IsolatedAsyncioTestCase):
 
 # ===== UNIT TESTS: Template System =====
 
+@unittest.skipUnless(DISCORD_AVAILABLE, "discord.py not installed")
 class TestDiscordTemplates(unittest.IsolatedAsyncioTestCase):
     """Tests for Discord message template system"""
 
@@ -622,6 +625,7 @@ class TestDiscordTemplates(unittest.IsolatedAsyncioTestCase):
 
 # ===== UNIT TESTS: Export to Agent =====
 
+@unittest.skipUnless(DISCORD_AVAILABLE, "discord.py not installed")
 class TestExportToAgent(unittest.IsolatedAsyncioTestCase):
     """Tests for export_to_agent with categories and flags"""
 
@@ -715,6 +719,7 @@ class TestExportToAgent(unittest.IsolatedAsyncioTestCase):
 
 # ===== UNIT TESTS: Member Roles =====
 
+@unittest.skipUnless(DISCORD_AVAILABLE, "discord.py not installed")
 class TestMemberRoles(unittest.IsolatedAsyncioTestCase):
     """Tests for role management"""
 
@@ -758,6 +763,7 @@ class TestMemberRoles(unittest.IsolatedAsyncioTestCase):
 
 # ===== UNIT TESTS: Invite Management =====
 
+@unittest.skipUnless(DISCORD_AVAILABLE, "discord.py not installed")
 class TestInviteManagement(unittest.IsolatedAsyncioTestCase):
     """Tests for invite management"""
 
@@ -783,6 +789,7 @@ class TestInviteManagement(unittest.IsolatedAsyncioTestCase):
 
 # ===== UNIT TESTS: Output Router State =====
 
+@unittest.skipUnless(DISCORD_AVAILABLE, "discord.py not installed")
 class TestOutputRouterState(unittest.TestCase):
     """Tests for output router state tracking"""
 
@@ -819,6 +826,7 @@ class TestOutputRouterState(unittest.TestCase):
 
 # ===== UNIT TESTS: Message Reactions =====
 
+@unittest.skipUnless(DISCORD_AVAILABLE, "discord.py not installed")
 class TestMessageReactions(unittest.IsolatedAsyncioTestCase):
     """Tests for message reaction handling"""
 

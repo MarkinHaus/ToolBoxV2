@@ -19,21 +19,32 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Any
+from typing import TYPE_CHECKING, Any, Optional
 
-from telegram import Update, Bot, Message
-from telegram.ext import (
-    Application,
-    ApplicationBuilder,
-    ContextTypes,
-    MessageHandler,
-    filters
-)
-from telegram.constants import ParseMode, ChatAction
+try:
+    from telegram import Bot, Message, Update
+    from telegram.constants import ChatAction, ParseMode
+    from telegram.ext import (
+        Application,
+        ApplicationBuilder,
+        ContextTypes,
+        MessageHandler,
+        filters,
+    )
+except ImportError as e:
+    print("Install telegram via pip install telegram")
+    Update = None
+    Bot = None
+    Message = None
+    Application = None
+    ApplicationBuilder = None
+    ContextTypes = None
+    MessageHandler = None
+    filters = None
+    ParseMode = None
+    ChatAction = None
 
-from toolboxv2.mods.isaa.kernel.types import (
-    Signal, SignalType, IOutputRouter, UserState
-)
+from toolboxv2.mods.isaa.kernel.types import IOutputRouter, Signal, SignalType, UserState
 
 if TYPE_CHECKING:
     from toolboxv2.mods.isaa.kernel.instace import Kernel
@@ -41,6 +52,7 @@ if TYPE_CHECKING:
 # Optional dependencies
 try:
     from groq import AsyncGroq
+
     GROQ_AVAILABLE = True
 except ImportError:
     GROQ_AVAILABLE = False
@@ -51,9 +63,11 @@ except ImportError:
 # CONFIGURATION
 # =============================================================================
 
+
 @dataclass
 class TelegramConfig:
     """Telegram transport configuration"""
+
     token: str
     admin_whitelist: list[int] = field(default_factory=list)
 
@@ -73,6 +87,7 @@ class TelegramConfig:
 # MARKDOWN V2 ESCAPER
 # =============================================================================
 
+
 class MarkdownV2Escaper:
     """
     Handles MarkdownV2 escaping for Telegram.
@@ -81,21 +96,21 @@ class MarkdownV2Escaper:
     _ * [ ] ( ) ~ ` > # + - = | { } . !
     """
 
-    SPECIAL_CHARS = r'_*[]()~`>#+-=|{}.!'
+    SPECIAL_CHARS = r"_*[]()~`>#+-=|{}.!"
 
     @classmethod
     def escape(cls, text: str) -> str:
         """Escape text for MarkdownV2"""
         # Escape all special characters
         for char in cls.SPECIAL_CHARS:
-            text = text.replace(char, f'\\{char}')
+            text = text.replace(char, f"\\{char}")
         return text
 
     @classmethod
     def escape_code(cls, text: str) -> str:
         """Escape text inside code blocks (only ` and \)"""
-        text = text.replace('\\', '\\\\')
-        text = text.replace('`', '\\`')
+        text = text.replace("\\", "\\\\")
+        text = text.replace("`", "\\`")
         return text
 
     @classmethod
@@ -105,8 +120,8 @@ class MarkdownV2Escaper:
         Preserves code blocks and escapes the rest.
         """
         # Pattern for code blocks
-        code_pattern = r'```(\w*)\n?(.*?)```'
-        inline_code_pattern = r'`([^`]+)`'
+        code_pattern = r"```(\w*)\n?(.*?)```"
+        inline_code_pattern = r"`([^`]+)`"
 
         result = []
         last_end = 0
@@ -114,14 +129,14 @@ class MarkdownV2Escaper:
         # Handle multi-line code blocks first
         for match in re.finditer(code_pattern, text, re.DOTALL):
             # Escape text before code block
-            before = text[last_end:match.start()]
+            before = text[last_end : match.start()]
             result.append(cls.escape(before))
 
             # Format code block
-            lang = match.group(1) or ''
+            lang = match.group(1) or ""
             code = match.group(2)
             escaped_code = cls.escape_code(code)
-            result.append(f'```{lang}\n{escaped_code}```')
+            result.append(f"```{lang}\n{escaped_code}```")
 
             last_end = match.end()
 
@@ -133,13 +148,13 @@ class MarkdownV2Escaper:
         inline_last_end = 0
         for match in re.finditer(inline_code_pattern, remaining):
             # Escape text before inline code
-            before = remaining[inline_last_end:match.start()]
+            before = remaining[inline_last_end : match.start()]
             inline_result.append(cls.escape(before))
 
             # Format inline code
             code = match.group(1)
             escaped_code = cls.escape_code(code)
-            inline_result.append(f'`{escaped_code}`')
+            inline_result.append(f"`{escaped_code}`")
 
             inline_last_end = match.end()
 
@@ -147,14 +162,15 @@ class MarkdownV2Escaper:
         if inline_last_end < len(remaining):
             inline_result.append(cls.escape(remaining[inline_last_end:]))
 
-        result.append(''.join(inline_result))
+        result.append("".join(inline_result))
 
-        return ''.join(result)
+        return "".join(result)
 
 
 # =============================================================================
 # MEDIA HANDLER
 # =============================================================================
+
 
 class TelegramMediaHandler:
     """Handles media downloads and processing"""
@@ -187,7 +203,9 @@ class TelegramMediaHandler:
             print(f"[Telegram] Failed to download voice: {e}")
             return None
 
-    async def download_photo(self, photo_file_id: str, filename_hint: str = "") -> Optional[str]:
+    async def download_photo(
+        self, photo_file_id: str, filename_hint: str = ""
+    ) -> Optional[str]:
         """Download photo to temp file"""
         try:
             file = await self.bot.get_file(photo_file_id)
@@ -232,7 +250,7 @@ class TelegramMediaHandler:
                 transcription = await self._groq.audio.transcriptions.create(
                     model="whisper-large-v3",
                     file=audio_file,
-                    language=self.config.voice_language
+                    language=self.config.voice_language,
                 )
             return transcription.text
         except Exception as e:
@@ -254,6 +272,7 @@ class TelegramMediaHandler:
 # TELEGRAM OUTPUT ROUTER
 # =============================================================================
 
+
 class TelegramOutputRouter(IOutputRouter):
     """Routes Kernel outputs to Telegram"""
 
@@ -271,11 +290,7 @@ class TelegramOutputRouter(IOutputRouter):
         self._user_chats[user_id] = chat_id
 
     async def send_response(
-        self,
-        user_id: str,
-        content: str,
-        role: str = "assistant",
-        metadata: dict = None
+        self, user_id: str, content: str, role: str = "assistant", metadata: dict = None
     ):
         """Send response to user via Telegram"""
         metadata = metadata or {}
@@ -292,11 +307,7 @@ class TelegramOutputRouter(IOutputRouter):
         await self._send_text(chat_id, content)
 
     async def send_notification(
-        self,
-        user_id: str,
-        content: str,
-        priority: int = 5,
-        metadata: dict = None
+        self, user_id: str, content: str, priority: int = 5, metadata: dict = None
     ):
         """Send proactive notification"""
         metadata = metadata or {}
@@ -325,27 +336,27 @@ class TelegramOutputRouter(IOutputRouter):
                 await self.bot.send_message(
                     chat_id=chat_id,
                     text=formatted,
-                    parse_mode=self.config.parse_mode if self.config.parse_mode != "MarkdownV2" else ParseMode.MARKDOWN_V2,
-                    disable_web_page_preview=self.config.disable_web_preview
+                    parse_mode=self.config.parse_mode
+                    if self.config.parse_mode != "MarkdownV2"
+                    else ParseMode.MARKDOWN_V2,
+                    disable_web_page_preview=self.config.disable_web_preview,
                 )
             else:
                 # Split into chunks (simple split, not preserving formatting)
-                chunks = [formatted[i:i+4000] for i in range(0, len(formatted), 4000)]
+                chunks = [formatted[i : i + 4000] for i in range(0, len(formatted), 4000)]
                 for i, chunk in enumerate(chunks):
-                    prefix = f"({i+1}/{len(chunks)}) " if len(chunks) > 1 else ""
+                    prefix = f"({i + 1}/{len(chunks)}) " if len(chunks) > 1 else ""
                     try:
                         await self.bot.send_message(
                             chat_id=chat_id,
                             text=prefix + chunk,
                             parse_mode=None,  # Plain text for chunked
-                            disable_web_page_preview=True
+                            disable_web_page_preview=True,
                         )
                     except Exception:
                         # Fallback to plain text
                         await self.bot.send_message(
-                            chat_id=chat_id,
-                            text=prefix + chunk,
-                            parse_mode=None
+                            chat_id=chat_id, text=prefix + chunk, parse_mode=None
                         )
                     await asyncio.sleep(0.5)
         except Exception as e:
@@ -353,19 +364,12 @@ class TelegramOutputRouter(IOutputRouter):
             # Fallback: send as plain text
             try:
                 await self.bot.send_message(
-                    chat_id=chat_id,
-                    text=content,
-                    parse_mode=None
+                    chat_id=chat_id, text=content, parse_mode=None
                 )
             except Exception as e2:
                 print(f"[Telegram] Fallback also failed: {e2}")
 
-    async def send_file(
-        self,
-        user_id: str,
-        filepath: str,
-        caption: str = ""
-    ):
+    async def send_file(self, user_id: str, filepath: str, caption: str = ""):
         """Send file to user"""
         chat_id = self._user_chats.get(user_id)
         if not chat_id:
@@ -376,17 +380,12 @@ class TelegramOutputRouter(IOutputRouter):
                 await self.bot.send_document(
                     chat_id=chat_id,
                     document=f,
-                    caption=caption[:1024] if caption else None
+                    caption=caption[:1024] if caption else None,
                 )
         except Exception as e:
             print(f"[Telegram] Failed to send file: {e}")
 
-    async def send_photo(
-        self,
-        user_id: str,
-        filepath: str,
-        caption: str = ""
-    ):
+    async def send_photo(self, user_id: str, filepath: str, caption: str = ""):
         """Send photo to user"""
         chat_id = self._user_chats.get(user_id)
         if not chat_id:
@@ -395,9 +394,7 @@ class TelegramOutputRouter(IOutputRouter):
         try:
             with open(filepath, "rb") as f:
                 await self.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=f,
-                    caption=caption[:1024] if caption else None
+                    chat_id=chat_id, photo=f, caption=caption[:1024] if caption else None
                 )
         except Exception as e:
             print(f"[Telegram] Failed to send photo: {e}")
@@ -429,6 +426,7 @@ class TelegramOutputRouter(IOutputRouter):
 # TELEGRAM TRANSPORT
 # =============================================================================
 
+
 class TelegramTransport:
     """
     Telegram Transport Layer for ProA Kernel
@@ -445,8 +443,8 @@ class TelegramTransport:
     def __init__(
         self,
         config: TelegramConfig,
-        kernel: 'Kernel',
-        identity_map: Optional[dict] = None
+        kernel: "Kernel",
+        identity_map: Optional[dict] = None,
     ):
         self.config = config
         self.kernel = kernel
@@ -466,34 +464,23 @@ class TelegramTransport:
     def _register_handlers(self):
         """Register Telegram message handlers"""
         # Text messages
-        self.app.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            self._handle_text
-        ))
+        self.app.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_text)
+        )
 
         # Voice messages
-        self.app.add_handler(MessageHandler(
-            filters.VOICE | filters.AUDIO,
-            self._handle_voice
-        ))
+        self.app.add_handler(
+            MessageHandler(filters.VOICE | filters.AUDIO, self._handle_voice)
+        )
 
         # Photos
-        self.app.add_handler(MessageHandler(
-            filters.PHOTO,
-            self._handle_photo
-        ))
+        self.app.add_handler(MessageHandler(filters.PHOTO, self._handle_photo))
 
         # Documents
-        self.app.add_handler(MessageHandler(
-            filters.Document.ALL,
-            self._handle_document
-        ))
+        self.app.add_handler(MessageHandler(filters.Document.ALL, self._handle_document))
 
         # Video notes (circular videos)
-        self.app.add_handler(MessageHandler(
-            filters.VIDEO_NOTE,
-            self._handle_video_note
-        ))
+        self.app.add_handler(MessageHandler(filters.VIDEO_NOTE, self._handle_video_note))
 
     def _is_authorized(self, user_id: int) -> bool:
         """Check if user is authorized"""
@@ -534,20 +521,20 @@ class TelegramTransport:
             "author_name": message.from_user.full_name,
             "username": message.from_user.username,
             "voice_input": False,
-            "attachments": []
+            "attachments": [],
         }
 
         # Send to kernel
         try:
             await self.kernel.handle_user_input(
-                user_id=user_id,
-                content=message.text,
-                metadata=metadata
+                user_id=user_id, content=message.text, metadata=metadata
             )
         except Exception as e:
             print(f"[Telegram] Kernel error: {e}")
             self.output_router._cancel_typing(message.chat_id)
-            await message.reply_text("⚠️ I'm having trouble thinking right now. Please try again.")
+            await message.reply_text(
+                "⚠️ I'm having trouble thinking right now. Please try again."
+            )
 
     async def _handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle voice messages"""
@@ -590,15 +577,13 @@ class TelegramTransport:
             "author_name": message.from_user.full_name,
             "voice_input": True,
             "original_audio_path": audio_path,
-            "attachments": []
+            "attachments": [],
         }
 
         # Send to kernel
         try:
             await self.kernel.handle_user_input(
-                user_id=user_id,
-                content=transcription,
-                metadata=metadata
+                user_id=user_id, content=transcription, metadata=metadata
             )
         except Exception as e:
             print(f"[Telegram] Kernel error: {e}")
@@ -630,7 +615,11 @@ class TelegramTransport:
 
         # Build content
         caption = message.caption or ""
-        content = f"{caption}\n\n[System: User uploaded image at {photo_path}]" if caption else f"[System: User uploaded image at {photo_path}]"
+        content = (
+            f"{caption}\n\n[System: User uploaded image at {photo_path}]"
+            if caption
+            else f"[System: User uploaded image at {photo_path}]"
+        )
 
         metadata = {
             "user_id": user_id,
@@ -639,19 +628,19 @@ class TelegramTransport:
             "message_id": message.message_id,
             "author_name": message.from_user.full_name,
             "voice_input": False,
-            "attachments": [{
-                "path": photo_path,
-                "type": "photo",
-                "width": photo.width,
-                "height": photo.height
-            }]
+            "attachments": [
+                {
+                    "path": photo_path,
+                    "type": "photo",
+                    "width": photo.width,
+                    "height": photo.height,
+                }
+            ],
         }
 
         try:
             await self.kernel.handle_user_input(
-                user_id=user_id,
-                content=content,
-                metadata=metadata
+                user_id=user_id, content=content, metadata=metadata
             )
         except Exception as e:
             print(f"[Telegram] Kernel error: {e}")
@@ -676,13 +665,19 @@ class TelegramTransport:
 
         if not doc_path:
             self.output_router._cancel_typing(message.chat_id)
-            await message.reply_text("⚠️ Failed to download document (too large or error).")
+            await message.reply_text(
+                "⚠️ Failed to download document (too large or error)."
+            )
             return
 
         # Build content
         caption = message.caption or ""
         doc_name = message.document.file_name or "document"
-        content = f"{caption}\n\n[System: User uploaded document '{doc_name}' at {doc_path}]" if caption else f"[System: User uploaded document '{doc_name}' at {doc_path}]"
+        content = (
+            f"{caption}\n\n[System: User uploaded document '{doc_name}' at {doc_path}]"
+            if caption
+            else f"[System: User uploaded document '{doc_name}' at {doc_path}]"
+        )
 
         metadata = {
             "user_id": user_id,
@@ -691,27 +686,29 @@ class TelegramTransport:
             "message_id": message.message_id,
             "author_name": message.from_user.full_name,
             "voice_input": False,
-            "attachments": [{
-                "path": doc_path,
-                "type": "document",
-                "filename": doc_name,
-                "mime_type": message.document.mime_type,
-                "size": message.document.file_size
-            }]
+            "attachments": [
+                {
+                    "path": doc_path,
+                    "type": "document",
+                    "filename": doc_name,
+                    "mime_type": message.document.mime_type,
+                    "size": message.document.file_size,
+                }
+            ],
         }
 
         try:
             await self.kernel.handle_user_input(
-                user_id=user_id,
-                content=content,
-                metadata=metadata
+                user_id=user_id, content=content, metadata=metadata
             )
         except Exception as e:
             print(f"[Telegram] Kernel error: {e}")
             self.output_router._cancel_typing(message.chat_id)
             await message.reply_text("⚠️ I'm having trouble processing this document.")
 
-    async def _handle_video_note(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def _handle_video_note(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
         """Handle video notes (circular videos)"""
         message = update.message
         if not message or not message.video_note:
@@ -724,7 +721,9 @@ class TelegramTransport:
         self.output_router.register_user_chat(user_id, message.chat_id)
 
         # For now, just acknowledge - could extract audio for transcription
-        await message.reply_text("📹 Video note received. I can see that you sent a video, but I can't process video content directly yet.")
+        await message.reply_text(
+            "📹 Video note received. I can see that you sent a video, but I can't process video content directly yet."
+        )
 
     async def start(self):
         """Start the Telegram bot"""
@@ -761,12 +760,13 @@ class TelegramTransport:
 # FACTORY FUNCTION
 # =============================================================================
 
+
 def create_telegram_transport(
-    kernel: 'Kernel',
+    kernel: "Kernel",
     token: str,
     admin_ids: list[int],
     identity_map: Optional[dict] = None,
-    **config_kwargs
+    **config_kwargs,
 ) -> TelegramTransport:
     """
     Factory function to create Telegram transport.
@@ -781,11 +781,7 @@ def create_telegram_transport(
     Returns:
         Configured TelegramTransport instance
     """
-    config = TelegramConfig(
-        token=token,
-        admin_whitelist=admin_ids,
-        **config_kwargs
-    )
+    config = TelegramConfig(token=token, admin_whitelist=admin_ids, **config_kwargs)
 
     return TelegramTransport(config, kernel, identity_map)
 
@@ -794,11 +790,8 @@ def create_telegram_transport(
 # STANDALONE RUNNER (for testing)
 # =============================================================================
 
-async def run_telegram_standalone(
-    kernel: 'Kernel',
-    token: str,
-    admin_ids: list[int]
-):
+
+async def run_telegram_standalone(kernel: "Kernel", token: str, admin_ids: list[int]):
     """Run Telegram transport standalone (for testing)"""
     transport = create_telegram_transport(kernel, token, admin_ids)
 

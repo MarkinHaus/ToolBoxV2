@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 try:
     import discord
@@ -26,13 +26,14 @@ try:
     from discord.ext import commands
 except ImportError:
     print("pip install discord.py")
-    discord = None
+    discord = lambda: None
+    discord.Attachment = None
+    discord.Forbidden = Exception
+    discord.TextChannel = str
     commands = None
     VoiceClient = None
 
-from toolboxv2.mods.isaa.kernel.types import (
-    Signal, SignalType, IOutputRouter, UserState
-)
+from toolboxv2.mods.isaa.kernel.types import IOutputRouter, Signal, SignalType, UserState
 
 if TYPE_CHECKING:
     from toolboxv2.mods.isaa.kernel.instace import Kernel
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
 # Optional voice dependencies
 try:
     from groq import AsyncGroq
+
     GROQ_AVAILABLE = True
 except ImportError:
     GROQ_AVAILABLE = False
@@ -47,6 +49,7 @@ except ImportError:
 
 try:
     import pyttsx3
+
     TTS_LOCAL_AVAILABLE = True
 except ImportError:
     TTS_LOCAL_AVAILABLE = False
@@ -55,9 +58,11 @@ except ImportError:
 # CONFIGURATION
 # =============================================================================
 
+
 @dataclass
 class DiscordConfig:
     """Discord transport configuration"""
+
     token: str
     admin_whitelist: list[int] = field(default_factory=list)
     command_prefix: str = "!"  # Ignored - no commands, just for bot init
@@ -81,6 +86,7 @@ class DiscordConfig:
 # =============================================================================
 # MEDIA HANDLER
 # =============================================================================
+
 
 class MediaHandler:
     """Handles media downloads and processing"""
@@ -125,7 +131,7 @@ class MediaHandler:
                 transcription = await self._groq.audio.transcriptions.create(
                     model="whisper-large-v3",
                     file=audio_file,
-                    language=self.config.voice_language
+                    language=self.config.voice_language,
                 )
             return transcription.text
         except Exception as e:
@@ -147,10 +153,13 @@ class MediaHandler:
 # VOICE HANDLER
 # =============================================================================
 
+
 class VoiceHandler:
     """Handles Discord voice channel interactions"""
 
-    def __init__(self, bot: commands.Bot, config: DiscordConfig, media_handler: MediaHandler):
+    def __init__(
+        self, bot: commands.Bot, config: DiscordConfig, media_handler: MediaHandler
+    ):
         self.bot = bot
         self.config = config
         self.media_handler = media_handler
@@ -242,6 +251,7 @@ class VoiceHandler:
         """Generate TTS using local pyttsx3"""
         try:
             import pyttsx3
+
             engine = pyttsx3.init()
 
             filepath = self.media_handler.temp_dir / f"tts_{int(time.time())}.wav"
@@ -263,13 +273,13 @@ class VoiceHandler:
                     f"https://api.elevenlabs.io/v1/text-to-speech/{self.config.elevenlabs_voice_id}",
                     headers={
                         "xi-api-key": self.config.elevenlabs_api_key,
-                        "Content-Type": "application/json"
+                        "Content-Type": "application/json",
                     },
                     json={
                         "text": text,
                         "model_id": "eleven_multilingual_v2",
-                        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
-                    }
+                        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+                    },
                 )
 
                 if response.status_code == 200:
@@ -285,6 +295,7 @@ class VoiceHandler:
 # DISCORD OUTPUT ROUTER
 # =============================================================================
 
+
 class DiscordOutputRouter(IOutputRouter):
     """Routes Kernel outputs to Discord"""
 
@@ -292,7 +303,7 @@ class DiscordOutputRouter(IOutputRouter):
         self,
         bot: commands.Bot,
         voice_handler: VoiceHandler,
-        default_channel_id: Optional[int] = None
+        default_channel_id: Optional[int] = None,
     ):
         self.bot = bot
         self.voice_handler = voice_handler
@@ -305,7 +316,9 @@ class DiscordOutputRouter(IOutputRouter):
         # User voice mode preference
         self._user_voice_mode: dict[str, bool] = {}
 
-    def register_user_channel(self, user_id: str, channel_id: int, guild_id: Optional[int] = None):
+    def register_user_channel(
+        self, user_id: str, channel_id: int, guild_id: Optional[int] = None
+    ):
         """Register which channel a user last interacted in"""
         self._user_channels[user_id] = channel_id
         if guild_id:
@@ -316,16 +329,21 @@ class DiscordOutputRouter(IOutputRouter):
         self._user_voice_mode[user_id] = enabled
 
     async def send_response(
-        self,
-        user_id: str,
-        content: str,
-        role: str = "assistant",
-        metadata: dict = None
+        self, user_id: str, content: str, role: str = "assistant", metadata: dict = None
     ):
         """Send response to user via Discord"""
         metadata = metadata or {}
-        channel_id = metadata.get("channel_id") or self._user_channels.get(user_id) or self.default_channel_id
-        print(f"[Discord] Sending response to {channel_id} {user_id}", metadata.get("channel_id") , self._user_channels.get(user_id) , self.default_channel_id)
+        channel_id = (
+            metadata.get("channel_id")
+            or self._user_channels.get(user_id)
+            or self.default_channel_id
+        )
+        print(
+            f"[Discord] Sending response to {channel_id} {user_id}",
+            metadata.get("channel_id"),
+            self._user_channels.get(user_id),
+            self.default_channel_id,
+        )
         if not channel_id:
             print(f"[Discord] No channel for user {user_id}")
             return
@@ -359,17 +377,22 @@ class DiscordOutputRouter(IOutputRouter):
             await self._send_text(channel, content)
 
     async def send_notification(
-        self,
-        user_id: str,
-        content: str,
-        priority: int = 5,
-        metadata: dict = None
+        self, user_id: str, content: str, priority: int = 5, metadata: dict = None
     ):
         """Send proactive notification"""
         metadata = metadata or {}
-        channel_id = metadata.get("channel_id") or self._user_channels.get(user_id) or self.default_channel_id
+        channel_id = (
+            metadata.get("channel_id")
+            or self._user_channels.get(user_id)
+            or self.default_channel_id
+        )
 
-        print(f"[Discord] Sending response to {channel_id} {user_id}", metadata.get("channel_id") , self._user_channels.get(user_id) , self.default_channel_id)
+        print(
+            f"[Discord] Sending response to {channel_id} {user_id}",
+            metadata.get("channel_id"),
+            self._user_channels.get(user_id),
+            self.default_channel_id,
+        )
         if not channel_id:
             print(f"[Discord] No channel for user {user_id}")
             return
@@ -399,9 +422,9 @@ class DiscordOutputRouter(IOutputRouter):
             await channel.send(content)
         else:
             # Split into chunks
-            chunks = [content[i:i+1990] for i in range(0, len(content), 1990)]
+            chunks = [content[i : i + 1990] for i in range(0, len(content), 1990)]
             for i, chunk in enumerate(chunks):
-                prefix = f"({i+1}/{len(chunks)}) " if len(chunks) > 1 else ""
+                prefix = f"({i + 1}/{len(chunks)}) " if len(chunks) > 1 else ""
                 await channel.send(prefix + chunk)
                 await asyncio.sleep(0.5)  # Rate limit safety
 
@@ -410,7 +433,7 @@ class DiscordOutputRouter(IOutputRouter):
         user_id: str,
         filepath: str,
         filename: Optional[str] = None,
-        content: str = ""
+        content: str = "",
     ):
         """Send file to user"""
         channel_id = self._user_channels.get(user_id) or self.default_channel_id
@@ -432,6 +455,7 @@ class DiscordOutputRouter(IOutputRouter):
 # DISCORD TRANSPORT
 # =============================================================================
 
+
 class DiscordTransport:
     """
     Discord Transport Layer for ProA Kernel
@@ -446,10 +470,7 @@ class DiscordTransport:
     """
 
     def __init__(
-        self,
-        config: DiscordConfig,
-        kernel: 'Kernel',
-        identity_map: Optional[dict] = None
+        self, config: DiscordConfig, kernel: "Kernel", identity_map: Optional[dict] = None
     ):
         self.config = config
         self.kernel = kernel
@@ -465,7 +486,7 @@ class DiscordTransport:
         self.bot = commands.Bot(
             command_prefix=config.command_prefix,
             intents=intents,
-            help_command=None  # No help command
+            help_command=None,  # No help command
         )
 
         # Setup handlers
@@ -490,9 +511,7 @@ class DiscordTransport:
 
         @self.bot.event
         async def on_voice_state_update(
-            member: discord.Member,
-            before: discord.VoiceState,
-            after: discord.VoiceState
+            member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
         ):
             await self._handle_voice_state(member, before, after)
 
@@ -526,9 +545,7 @@ class DiscordTransport:
 
         # Register channel for responses
         self.output_router.register_user_channel(
-            user_id,
-            message.channel.id,
-            message.guild.id if message.guild else None
+            user_id, message.channel.id, message.guild.id if message.guild else None
         )
 
         # Build metadata
@@ -540,7 +557,7 @@ class DiscordTransport:
             "message_id": message.id,
             "author_name": str(message.author),
             "voice_input": False,
-            "attachments": []
+            "attachments": [],
         }
 
         # Check if bot is in voice channel
@@ -556,19 +573,21 @@ class DiscordTransport:
             path = await self.media_handler.download_attachment(attachment)
             if path:
                 attachment_paths.append(path)
-                metadata["attachments"].append({
-                    "path": path,
-                    "filename": attachment.filename,
-                    "content_type": attachment.content_type,
-                    "size": attachment.size
-                })
+                metadata["attachments"].append(
+                    {
+                        "path": path,
+                        "filename": attachment.filename,
+                        "content_type": attachment.content_type,
+                        "size": attachment.size,
+                    }
+                )
 
         # Build content
         content = message.content
         if attachment_paths:
-            attachment_info = "\n".join([
-                f"[System: User uploaded file at {p}]" for p in attachment_paths
-            ])
+            attachment_info = "\n".join(
+                [f"[System: User uploaded file at {p}]" for p in attachment_paths]
+            )
             content = f"{content}\n\n{attachment_info}" if content else attachment_info
 
         # Skip empty messages
@@ -578,19 +597,19 @@ class DiscordTransport:
         # Send to kernel
         try:
             await self.kernel.handle_user_input(
-                user_id=user_id,
-                content=content,
-                metadata=metadata
+                user_id=user_id, content=content, metadata=metadata
             )
         except Exception as e:
             print(f"[Discord] Kernel error: {e}")
-            await message.channel.send("⚠️ I'm having trouble thinking right now. Please try again.")
+            await message.channel.send(
+                "⚠️ I'm having trouble thinking right now. Please try again."
+            )
 
     async def _handle_voice_state(
         self,
         member: discord.Member,
         before: discord.VoiceState,
-        after: discord.VoiceState
+        after: discord.VoiceState,
     ):
         """Handle voice state changes"""
         if member.bot:
@@ -604,7 +623,9 @@ class DiscordTransport:
         # User joined voice channel
         if after.channel and (not before.channel or before.channel != after.channel):
             # Update state monitor
-            await self.kernel.set_user_location(user_id, f"discord_voice:{after.channel.name}")
+            await self.kernel.set_user_location(
+                user_id, f"discord_voice:{after.channel.name}"
+            )
 
             # Auto-join if configured and same channel as user
             # (Optional: could be controlled by user preference)
@@ -637,12 +658,13 @@ class DiscordTransport:
 # FACTORY FUNCTION
 # =============================================================================
 
+
 def create_discord_transport(
-    kernel: 'Kernel',
+    kernel: "Kernel",
     token: str,
     admin_ids: list[int],
     identity_map: Optional[dict] = None,
-    **config_kwargs
+    **config_kwargs,
 ) -> DiscordTransport:
     """
     Factory function to create Discord transport.
@@ -657,11 +679,7 @@ def create_discord_transport(
     Returns:
         Configured DiscordTransport instance
     """
-    config = DiscordConfig(
-        token=token,
-        admin_whitelist=admin_ids,
-        **config_kwargs
-    )
+    config = DiscordConfig(token=token, admin_whitelist=admin_ids, **config_kwargs)
 
     return DiscordTransport(config, kernel, identity_map)
 
@@ -670,11 +688,8 @@ def create_discord_transport(
 # STANDALONE RUNNER (for testing)
 # =============================================================================
 
-async def run_discord_standalone(
-    kernel: 'Kernel',
-    token: str,
-    admin_ids: list[int]
-):
+
+async def run_discord_standalone(kernel: "Kernel", token: str, admin_ids: list[int]):
     """Run Discord transport standalone (for testing)"""
     transport = create_discord_transport(kernel, token, admin_ids)
 
@@ -683,10 +698,7 @@ async def run_discord_standalone(
     kernel.output_router = transport.get_router()
 
     try:
-        await asyncio.gather(
-            kernel.start(),
-            transport.start()
-        )
+        await asyncio.gather(kernel.start(), transport.start())
     except KeyboardInterrupt:
         pass
     finally:
