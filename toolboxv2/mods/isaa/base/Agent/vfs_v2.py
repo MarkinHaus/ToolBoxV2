@@ -9,32 +9,30 @@ Features:
 
 Author: FlowAgent V2
 """
+
 from __future__ import annotations
 
 import os
 import re
 import sys
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum, auto
-from pathlib import PurePosixPath
-from typing import Any, Callable, TYPE_CHECKING
-from enum import Enum, auto
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Callable
-import os
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
-    from toolboxv2.mods.isaa.base.Agent.lsp_manager import LSPManager, Diagnostic
+    from toolboxv2.mods.isaa.base.Agent.lsp_manager import Diagnostic, LSPManager
 
 
 # =============================================================================
 # FILE TYPES
 # =============================================================================
 
+
 class FileCategory(Enum):
     """High-level file categories"""
+
     CODE = auto()
     WEB = auto()
     DATA = auto()
@@ -47,6 +45,7 @@ class FileCategory(Enum):
 @dataclass
 class FileTypeInfo:
     """Information about a file type"""
+
     extension: str
     category: FileCategory
     language_id: str  # LSP language identifier
@@ -60,75 +59,370 @@ class FileTypeInfo:
 # File type registry
 FILE_TYPES: dict[str, FileTypeInfo] = {
     # Python
-    ".py": FileTypeInfo(".py", FileCategory.CODE, "python", "text/x-python", True, "pylsp", "🐍", "Python"),
-    ".pyw": FileTypeInfo(".pyw", FileCategory.CODE, "python", "text/x-python", True, "pylsp", "🐍", "Python (Windows)"),
-    ".pyi": FileTypeInfo(".pyi", FileCategory.CODE, "python", "text/x-python", False, "pylsp", "🐍", "Python Stub"),
-
+    ".py": FileTypeInfo(
+        ".py", FileCategory.CODE, "python", "text/x-python", True, "pylsp", "🐍", "Python"
+    ),
+    ".pyw": FileTypeInfo(
+        ".pyw",
+        FileCategory.CODE,
+        "python",
+        "text/x-python",
+        True,
+        "pylsp",
+        "🐍",
+        "Python (Windows)",
+    ),
+    ".pyi": FileTypeInfo(
+        ".pyi",
+        FileCategory.CODE,
+        "python",
+        "text/x-python",
+        False,
+        "pylsp",
+        "🐍",
+        "Python Stub",
+    ),
     # JavaScript/TypeScript
-    ".js": FileTypeInfo(".js", FileCategory.CODE, "javascript", "application/javascript", True, "typescript-language-server", "📜", "JavaScript"),
-    ".mjs": FileTypeInfo(".mjs", FileCategory.CODE, "javascript", "application/javascript", True, "typescript-language-server", "📜", "JavaScript Module"),
-    ".jsx": FileTypeInfo(".jsx", FileCategory.CODE, "javascriptreact", "text/jsx", True, "typescript-language-server", "⚛️", "React JSX"),
-    ".ts": FileTypeInfo(".ts", FileCategory.CODE, "typescript", "application/typescript", True, "typescript-language-server", "📘", "TypeScript"),
-    ".tsx": FileTypeInfo(".tsx", FileCategory.CODE, "typescriptreact", "text/tsx", True, "typescript-language-server", "⚛️", "React TSX"),
-
+    ".js": FileTypeInfo(
+        ".js",
+        FileCategory.CODE,
+        "javascript",
+        "application/javascript",
+        True,
+        "typescript-language-server",
+        "📜",
+        "JavaScript",
+    ),
+    ".mjs": FileTypeInfo(
+        ".mjs",
+        FileCategory.CODE,
+        "javascript",
+        "application/javascript",
+        True,
+        "typescript-language-server",
+        "📜",
+        "JavaScript Module",
+    ),
+    ".jsx": FileTypeInfo(
+        ".jsx",
+        FileCategory.CODE,
+        "javascriptreact",
+        "text/jsx",
+        True,
+        "typescript-language-server",
+        "⚛️",
+        "React JSX",
+    ),
+    ".ts": FileTypeInfo(
+        ".ts",
+        FileCategory.CODE,
+        "typescript",
+        "application/typescript",
+        True,
+        "typescript-language-server",
+        "📘",
+        "TypeScript",
+    ),
+    ".tsx": FileTypeInfo(
+        ".tsx",
+        FileCategory.CODE,
+        "typescriptreact",
+        "text/tsx",
+        True,
+        "typescript-language-server",
+        "⚛️",
+        "React TSX",
+    ),
     # Rust
-    ".rs": FileTypeInfo(".rs", FileCategory.CODE, "rust", "text/x-rust", True, "rust-analyzer", "🦀", "Rust"),
-
+    ".rs": FileTypeInfo(
+        ".rs",
+        FileCategory.CODE,
+        "rust",
+        "text/x-rust",
+        True,
+        "rust-analyzer",
+        "🦀",
+        "Rust",
+    ),
     # Go
-    ".go": FileTypeInfo(".go", FileCategory.CODE, "go", "text/x-go", True, "gopls", "🐹", "Go"),
-
+    ".go": FileTypeInfo(
+        ".go", FileCategory.CODE, "go", "text/x-go", True, "gopls", "🐹", "Go"
+    ),
     # C/C++
-    ".c": FileTypeInfo(".c", FileCategory.CODE, "c", "text/x-c", True, "clangd", "🔧", "C"),
-    ".h": FileTypeInfo(".h", FileCategory.CODE, "c", "text/x-c", False, "clangd", "🔧", "C Header"),
-    ".cpp": FileTypeInfo(".cpp", FileCategory.CODE, "cpp", "text/x-c++", True, "clangd", "🔧", "C++"),
-    ".hpp": FileTypeInfo(".hpp", FileCategory.CODE, "cpp", "text/x-c++", False, "clangd", "🔧", "C++ Header"),
-    ".cc": FileTypeInfo(".cc", FileCategory.CODE, "cpp", "text/x-c++", True, "clangd", "🔧", "C++"),
-
+    ".c": FileTypeInfo(
+        ".c", FileCategory.CODE, "c", "text/x-c", True, "clangd", "🔧", "C"
+    ),
+    ".h": FileTypeInfo(
+        ".h", FileCategory.CODE, "c", "text/x-c", False, "clangd", "🔧", "C Header"
+    ),
+    ".cpp": FileTypeInfo(
+        ".cpp", FileCategory.CODE, "cpp", "text/x-c++", True, "clangd", "🔧", "C++"
+    ),
+    ".hpp": FileTypeInfo(
+        ".hpp",
+        FileCategory.CODE,
+        "cpp",
+        "text/x-c++",
+        False,
+        "clangd",
+        "🔧",
+        "C++ Header",
+    ),
+    ".cc": FileTypeInfo(
+        ".cc", FileCategory.CODE, "cpp", "text/x-c++", True, "clangd", "🔧", "C++"
+    ),
     # Web
-    ".html": FileTypeInfo(".html", FileCategory.WEB, "html", "text/html", False, "vscode-html-language-server", "🌐", "HTML"),
-    ".htm": FileTypeInfo(".htm", FileCategory.WEB, "html", "text/html", False, "vscode-html-language-server", "🌐", "HTML"),
-    ".css": FileTypeInfo(".css", FileCategory.WEB, "css", "text/css", False, "vscode-css-language-server", "🎨", "CSS"),
-    ".scss": FileTypeInfo(".scss", FileCategory.WEB, "scss", "text/x-scss", False, "vscode-css-language-server", "🎨", "SCSS"),
-    ".less": FileTypeInfo(".less", FileCategory.WEB, "less", "text/x-less", False, "vscode-css-language-server", "🎨", "Less"),
-    ".vue": FileTypeInfo(".vue", FileCategory.WEB, "vue", "text/x-vue", False, "volar", "💚", "Vue"),
-    ".svelte": FileTypeInfo(".svelte", FileCategory.WEB, "svelte", "text/x-svelte", False, "svelte-language-server", "🔥", "Svelte"),
-
+    ".html": FileTypeInfo(
+        ".html",
+        FileCategory.WEB,
+        "html",
+        "text/html",
+        False,
+        "vscode-html-language-server",
+        "🌐",
+        "HTML",
+    ),
+    ".htm": FileTypeInfo(
+        ".htm",
+        FileCategory.WEB,
+        "html",
+        "text/html",
+        False,
+        "vscode-html-language-server",
+        "🌐",
+        "HTML",
+    ),
+    ".css": FileTypeInfo(
+        ".css",
+        FileCategory.WEB,
+        "css",
+        "text/css",
+        False,
+        "vscode-css-language-server",
+        "🎨",
+        "CSS",
+    ),
+    ".scss": FileTypeInfo(
+        ".scss",
+        FileCategory.WEB,
+        "scss",
+        "text/x-scss",
+        False,
+        "vscode-css-language-server",
+        "🎨",
+        "SCSS",
+    ),
+    ".less": FileTypeInfo(
+        ".less",
+        FileCategory.WEB,
+        "less",
+        "text/x-less",
+        False,
+        "vscode-css-language-server",
+        "🎨",
+        "Less",
+    ),
+    ".vue": FileTypeInfo(
+        ".vue", FileCategory.WEB, "vue", "text/x-vue", False, "volar", "💚", "Vue"
+    ),
+    ".svelte": FileTypeInfo(
+        ".svelte",
+        FileCategory.WEB,
+        "svelte",
+        "text/x-svelte",
+        False,
+        "svelte-language-server",
+        "🔥",
+        "Svelte",
+    ),
     # Data
-    ".json": FileTypeInfo(".json", FileCategory.DATA, "json", "application/json", False, "vscode-json-language-server", "📋", "JSON"),
-    ".jsonc": FileTypeInfo(".jsonc", FileCategory.DATA, "jsonc", "application/json", False, "vscode-json-language-server", "📋", "JSON with Comments"),
-    ".xml": FileTypeInfo(".xml", FileCategory.DATA, "xml", "application/xml", False, None, "📋", "XML"),
-    ".csv": FileTypeInfo(".csv", FileCategory.DATA, "csv", "text/csv", False, None, "📊", "CSV"),
-    ".tsv": FileTypeInfo(".tsv", FileCategory.DATA, "tsv", "text/tab-separated-values", False, None, "📊", "TSV"),
-
+    ".json": FileTypeInfo(
+        ".json",
+        FileCategory.DATA,
+        "json",
+        "application/json",
+        False,
+        "vscode-json-language-server",
+        "📋",
+        "JSON",
+    ),
+    ".jsonc": FileTypeInfo(
+        ".jsonc",
+        FileCategory.DATA,
+        "jsonc",
+        "application/json",
+        False,
+        "vscode-json-language-server",
+        "📋",
+        "JSON with Comments",
+    ),
+    ".xml": FileTypeInfo(
+        ".xml", FileCategory.DATA, "xml", "application/xml", False, None, "📋", "XML"
+    ),
+    ".csv": FileTypeInfo(
+        ".csv", FileCategory.DATA, "csv", "text/csv", False, None, "📊", "CSV"
+    ),
+    ".tsv": FileTypeInfo(
+        ".tsv",
+        FileCategory.DATA,
+        "tsv",
+        "text/tab-separated-values",
+        False,
+        None,
+        "📊",
+        "TSV",
+    ),
     # Config
-    ".yaml": FileTypeInfo(".yaml", FileCategory.CONFIG, "yaml", "text/yaml", False, "yaml-language-server", "⚙️", "YAML"),
-    ".yml": FileTypeInfo(".yml", FileCategory.CONFIG, "yaml", "text/yaml", False, "yaml-language-server", "⚙️", "YAML"),
-    ".toml": FileTypeInfo(".toml", FileCategory.CONFIG, "toml", "text/x-toml", False, "taplo", "⚙️", "TOML"),
-    ".ini": FileTypeInfo(".ini", FileCategory.CONFIG, "ini", "text/x-ini", False, None, "⚙️", "INI"),
-    ".env": FileTypeInfo(".env", FileCategory.CONFIG, "dotenv", "text/plain", False, None, "🔐", "Environment"),
-    ".editorconfig": FileTypeInfo(".editorconfig", FileCategory.CONFIG, "editorconfig", "text/plain", False, None, "⚙️", "EditorConfig"),
-
+    ".yaml": FileTypeInfo(
+        ".yaml",
+        FileCategory.CONFIG,
+        "yaml",
+        "text/yaml",
+        False,
+        "yaml-language-server",
+        "⚙️",
+        "YAML",
+    ),
+    ".yml": FileTypeInfo(
+        ".yml",
+        FileCategory.CONFIG,
+        "yaml",
+        "text/yaml",
+        False,
+        "yaml-language-server",
+        "⚙️",
+        "YAML",
+    ),
+    ".toml": FileTypeInfo(
+        ".toml", FileCategory.CONFIG, "toml", "text/x-toml", False, "taplo", "⚙️", "TOML"
+    ),
+    ".ini": FileTypeInfo(
+        ".ini", FileCategory.CONFIG, "ini", "text/x-ini", False, None, "⚙️", "INI"
+    ),
+    ".env": FileTypeInfo(
+        ".env",
+        FileCategory.CONFIG,
+        "dotenv",
+        "text/plain",
+        False,
+        None,
+        "🔐",
+        "Environment",
+    ),
+    ".editorconfig": FileTypeInfo(
+        ".editorconfig",
+        FileCategory.CONFIG,
+        "editorconfig",
+        "text/plain",
+        False,
+        None,
+        "⚙️",
+        "EditorConfig",
+    ),
     # Docs
-    ".md": FileTypeInfo(".md", FileCategory.DOCS, "markdown", "text/markdown", False, None, "📝", "Markdown"),
-    ".mdx": FileTypeInfo(".mdx", FileCategory.DOCS, "mdx", "text/mdx", False, None, "📝", "MDX"),
-    ".rst": FileTypeInfo(".rst", FileCategory.DOCS, "restructuredtext", "text/x-rst", False, None, "📝", "reStructuredText"),
-    ".txt": FileTypeInfo(".txt", FileCategory.DOCS, "plaintext", "text/plain", False, None, "📄", "Plain Text"),
-
+    ".md": FileTypeInfo(
+        ".md",
+        FileCategory.DOCS,
+        "markdown",
+        "text/markdown",
+        False,
+        None,
+        "📝",
+        "Markdown",
+    ),
+    ".mdx": FileTypeInfo(
+        ".mdx", FileCategory.DOCS, "mdx", "text/mdx", False, None, "📝", "MDX"
+    ),
+    ".rst": FileTypeInfo(
+        ".rst",
+        FileCategory.DOCS,
+        "restructuredtext",
+        "text/x-rst",
+        False,
+        None,
+        "📝",
+        "reStructuredText",
+    ),
+    ".txt": FileTypeInfo(
+        ".txt",
+        FileCategory.DOCS,
+        "plaintext",
+        "text/plain",
+        False,
+        None,
+        "📄",
+        "Plain Text",
+    ),
     # Shell
-    ".sh": FileTypeInfo(".sh", FileCategory.CODE, "shellscript", "text/x-shellscript", True, "bash-language-server", "🐚", "Shell Script"),
-    ".bash": FileTypeInfo(".bash", FileCategory.CODE, "shellscript", "text/x-shellscript", True, "bash-language-server", "🐚", "Bash Script"),
-    ".zsh": FileTypeInfo(".zsh", FileCategory.CODE, "shellscript", "text/x-shellscript", True, None, "🐚", "Zsh Script"),
-    ".ps1": FileTypeInfo(".ps1", FileCategory.CODE, "powershell", "text/x-powershell", True, None, "💠", "PowerShell"),
-
+    ".sh": FileTypeInfo(
+        ".sh",
+        FileCategory.CODE,
+        "shellscript",
+        "text/x-shellscript",
+        True,
+        "bash-language-server",
+        "🐚",
+        "Shell Script",
+    ),
+    ".bash": FileTypeInfo(
+        ".bash",
+        FileCategory.CODE,
+        "shellscript",
+        "text/x-shellscript",
+        True,
+        "bash-language-server",
+        "🐚",
+        "Bash Script",
+    ),
+    ".zsh": FileTypeInfo(
+        ".zsh",
+        FileCategory.CODE,
+        "shellscript",
+        "text/x-shellscript",
+        True,
+        None,
+        "🐚",
+        "Zsh Script",
+    ),
+    ".ps1": FileTypeInfo(
+        ".ps1",
+        FileCategory.CODE,
+        "powershell",
+        "text/x-powershell",
+        True,
+        None,
+        "💠",
+        "PowerShell",
+    ),
     # SQL
-    ".sql": FileTypeInfo(".sql", FileCategory.CODE, "sql", "text/x-sql", True, None, "🗃️", "SQL"),
-
+    ".sql": FileTypeInfo(
+        ".sql", FileCategory.CODE, "sql", "text/x-sql", True, None, "🗃️", "SQL"
+    ),
     # Docker
-    "Dockerfile": FileTypeInfo("Dockerfile", FileCategory.CONFIG, "dockerfile", "text/x-dockerfile", False, "dockerfile-language-server", "🐳", "Dockerfile"),
-    ".dockerfile": FileTypeInfo(".dockerfile", FileCategory.CONFIG, "dockerfile", "text/x-dockerfile", False, "dockerfile-language-server", "🐳", "Dockerfile"),
-
+    "Dockerfile": FileTypeInfo(
+        "Dockerfile",
+        FileCategory.CONFIG,
+        "dockerfile",
+        "text/x-dockerfile",
+        False,
+        "dockerfile-language-server",
+        "🐳",
+        "Dockerfile",
+    ),
+    ".dockerfile": FileTypeInfo(
+        ".dockerfile",
+        FileCategory.CONFIG,
+        "dockerfile",
+        "text/x-dockerfile",
+        False,
+        "dockerfile-language-server",
+        "🐳",
+        "Dockerfile",
+    ),
     # TB (ToolBoxV2 Language)
-    ".tb": FileTypeInfo(".tb", FileCategory.CODE, "tb", "text/x-tb", True, None, "🧰", "TB Language"),
+    ".tb": FileTypeInfo(
+        ".tb", FileCategory.CODE, "tb", "text/x-tb", True, None, "🧰", "TB Language"
+    ),
 }
 
 
@@ -146,7 +440,16 @@ def get_file_type(filename: str) -> FileTypeInfo:
         return FILE_TYPES[ext_lower]
 
     # Default unknown type
-    return FileTypeInfo(ext_lower or "", FileCategory.UNKNOWN, "plaintext", "text/plain", False, None, "📄", "Unknown")
+    return FileTypeInfo(
+        ext_lower or "",
+        FileCategory.UNKNOWN,
+        "plaintext",
+        "text/plain",
+        False,
+        None,
+        "📄",
+        "Unknown",
+    )
 
 
 # =============================================================================
@@ -154,10 +457,10 @@ def get_file_type(filename: str) -> FileTypeInfo:
 # =============================================================================
 
 
-
 @dataclass
 class VFSDirectory:
     """Represents a directory in the Virtual File System"""
+
     name: str
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -166,6 +469,7 @@ class VFSDirectory:
 
 class FileBackingType(Enum):
     """Wo lebt die Datei wirklich?"""
+
     MEMORY = auto()  # Nur im VFS (wie bisher)
     SHADOW = auto()  # Lazy-loaded vom lokalen FS
     MODIFIED = auto()  # Shadow, aber mit lokalen Änderungen (dirty)
@@ -174,12 +478,20 @@ class FileBackingType(Enum):
 @dataclass
 class ShadowMount:
     """Ein gemounteter lokaler Ordner"""
+
     vfs_path: str  # z.B. "/project"
     local_path: str  # z.B. "/home/user/myproject"
     allowed_extensions: list[str] | None = None
-    exclude_patterns: list[str] = field(default_factory=lambda: [
-        "__pycache__", "*.pyc", ".git", "node_modules", ".venv", "*.log"
-    ])
+    exclude_patterns: list[str] = field(
+        default_factory=lambda: [
+            "__pycache__",
+            "*.pyc",
+            ".git",
+            "node_modules",
+            ".venv",
+            "*.log",
+        ]
+    )
     max_file_size: int = 1024 * 1024  # 1MB
     readonly: bool = False
     auto_sync: bool = True  # Änderungen sofort schreiben
@@ -188,6 +500,7 @@ class ShadowMount:
 @dataclass
 class VFSFile:
     """Erweiterte VFS-Datei mit Shadow-Support"""
+
     filename: str
     backing_type: FileBackingType = FileBackingType.MEMORY
 
@@ -217,12 +530,19 @@ class VFSFile:
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
     @property
+    def size(self) -> int:
+        return self.size_bytes if not self.is_loaded else len(self.content)
+
+    @property
     def content(self) -> str:
         """Lazy content access - lädt bei Shadow on-demand"""
         if self._content is None and self.backing_type == FileBackingType.SHADOW:
             ContentNotLoadedError = Exception
+            # print(f"File not opened: {self.filename}")
+            # return f"open file ({self.local_path or self.filename}) first"
             raise ContentNotLoadedError(f"File not opened: {self.filename}")
         return self._content or ""
+
 
     @content.setter
     def content(self, value: str):
@@ -254,6 +574,7 @@ class VFSFile:
 # VIRTUAL FILE SYSTEM V2
 # =============================================================================
 
+
 class VirtualFileSystemV2:
     """
     Virtual File System V2 with hierarchical directories and LSP integration.
@@ -273,7 +594,7 @@ class VirtualFileSystemV2:
         agent_name: str,
         max_window_lines: int = 250,
         summarizer: Callable[[str], str] | None = None,
-        lsp_manager: 'LSPManager | None' = None
+        lsp_manager: "LSPManager | None" = None,
     ):
         self.session_id = session_id
         self.agent_name = agent_name
@@ -302,16 +623,16 @@ class VirtualFileSystemV2:
         """Initialize read-only system files"""
         self.files["/system_context"] = VFSFile(
             filename="system_context",
-            content=self._build_system_context(),
+            _content=self._build_system_context(),
             state="open",
-            readonly=True
+            readonly=True,
         )
 
     def _build_system_context(self) -> str:
         """Build system context content"""
         now = datetime.now()
         return f"""# System Context
-Current Time: {now.strftime('%Y-%m-%d %H:%M:%S')}
+Current Time: {now.strftime("%Y-%m-%d %H:%M:%S")}
 Agent: {self.agent_name}
 Session: {self.session_id}
 """
@@ -328,10 +649,7 @@ Session: {self.session_id}
         path = "/active_rules"
         if path not in self.files:
             self.files[path] = VFSFile(
-                filename="active_rules",
-                content=content,
-                state="open",
-                readonly=True
+                filename="active_rules", _content=content, state="open", readonly=True
             )
         else:
             self.files[path].content = content
@@ -389,7 +707,10 @@ Session: {self.session_id}
         """Ensure parent directory exists, return error dict if not"""
         parent = self._get_parent_path(path)
         if parent != "/" and not self._is_directory(parent):
-            return {"success": False, "error": f"Parent directory does not exist: {parent}"}
+            return {
+                "success": False,
+                "error": f"Parent directory does not exist: {parent}",
+            }
         return None
 
     # =========================================================================
@@ -424,7 +745,10 @@ Session: {self.session_id}
                 if not result["success"]:
                     return result
             else:
-                return {"success": False, "error": f"Parent directory does not exist: {parent}"}
+                return {
+                    "success": False,
+                    "error": f"Parent directory does not exist: {parent}",
+                }
 
         # Create directory
         self.directories[path] = VFSDirectory(name=self._get_basename(path))
@@ -452,13 +776,19 @@ Session: {self.session_id}
             return {"success": False, "error": f"Not a directory: {path}"}
 
         if self.directories[path].readonly:
-            return {"success": False, "error": f"Cannot remove readonly directory: {path}"}
+            return {
+                "success": False,
+                "error": f"Cannot remove readonly directory: {path}",
+            }
 
         # Check if directory is empty
         contents = self._list_directory_contents(path)
 
         if contents and not force:
-            return {"success": False, "error": f"Directory not empty: {path} (use force=True to remove)"}
+            return {
+                "success": False,
+                "error": f"Directory not empty: {path} (use force=True to remove)",
+            }
 
         if force and contents:
             # Recursively remove contents
@@ -490,32 +820,36 @@ Session: {self.session_id}
                 continue
             if dir_path.startswith(prefix):
                 # Check if it's a direct child
-                relative = dir_path[len(prefix):]
+                relative = dir_path[len(prefix) :]
                 if "/" not in relative:
-                    contents.append({
-                        "name": relative,
-                        "type": "directory",
-                        "path": dir_path
-                    })
+                    contents.append(
+                        {"name": relative, "type": "directory", "path": dir_path}
+                    )
 
         # Check files
         for file_path in self.files:
             if file_path.startswith(prefix):
-                relative = file_path[len(prefix):]
+                relative = file_path[len(prefix) :]
                 if "/" not in relative:
                     f = self.files[file_path]
-                    contents.append({
-                        "name": relative,
-                        "type": "file",
-                        "path": file_path,
-                        "size": len(f.content),
-                        "state": f.state,
-                        "file_type": f.file_type.description if f.file_type else "Unknown"
-                    })
+                    contents.append(
+                        {
+                            "name": relative,
+                            "type": "file",
+                            "path": file_path,
+                            "size": f.size,
+                            "state": f.state,
+                            "file_type": f.file_type.description
+                            if f.file_type
+                            else "Unknown",
+                        }
+                    )
 
         return sorted(contents, key=lambda x: (x["type"] != "directory", x["name"]))
 
-    def ls(self, path: str = "/", recursive: bool = False, show_hidden: bool = False) -> dict:
+    def ls(
+        self, path: str = "/", recursive: bool = False, show_hidden: bool = False
+    ) -> dict:
         """
         List directory contents.
 
@@ -550,7 +884,9 @@ Session: {self.session_id}
 
             return items
 
-        contents = list_recursive(path) if recursive else self._list_directory_contents(path)
+        contents = (
+            list_recursive(path) if recursive else self._list_directory_contents(path)
+        )
 
         if not show_hidden:
             contents = [c for c in contents if not c["name"].startswith(".")]
@@ -559,7 +895,7 @@ Session: {self.session_id}
             "success": True,
             "path": path,
             "contents": contents,
-            "total_items": len(contents)
+            "total_items": len(contents),
         }
 
     def mv(self, source: str, destination: str) -> dict:
@@ -586,14 +922,20 @@ Session: {self.session_id}
         if self._is_file(source) and self.files[source].readonly:
             return {"success": False, "error": f"Cannot move readonly file: {source}"}
         if self._is_directory(source) and self.directories[source].readonly:
-            return {"success": False, "error": f"Cannot move readonly directory: {source}"}
+            return {
+                "success": False,
+                "error": f"Cannot move readonly directory: {source}",
+            }
 
         # If destination is existing directory, move into it
         if self._is_directory(destination):
             destination = f"{destination}/{self._get_basename(source)}"
 
         if self._path_exists(destination):
-            return {"success": False, "error": f"Destination already exists: {destination}"}
+            return {
+                "success": False,
+                "error": f"Destination already exists: {destination}",
+            }
 
         # Ensure destination parent exists
         error = self._ensure_parent_exists(destination)
@@ -606,7 +948,9 @@ Session: {self.session_id}
             self.files[destination].filename = self._get_basename(destination)
             self.files[destination].updated_at = datetime.now().isoformat()
             # Update file type based on new name
-            self.files[destination].file_type = get_file_type(self._get_basename(destination))
+            self.files[destination].file_type = get_file_type(
+                self._get_basename(destination)
+            )
             del self.files[source]
         else:
             # Move directory and all contents
@@ -619,12 +963,12 @@ Session: {self.session_id}
 
             for dir_path in list(self.directories.keys()):
                 if dir_path.startswith(old_prefix):
-                    new_path = new_prefix + dir_path[len(old_prefix):]
+                    new_path = new_prefix + dir_path[len(old_prefix) :]
                     dirs_to_move.append((dir_path, new_path))
 
             for file_path in list(self.files.keys()):
                 if file_path.startswith(old_prefix):
-                    new_path = new_prefix + file_path[len(old_prefix):]
+                    new_path = new_prefix + file_path[len(old_prefix) :]
                     files_to_move.append((file_path, new_path))
 
             # Move directories
@@ -654,7 +998,10 @@ Session: {self.session_id}
 
         if self._path_exists(path):
             if self._is_file(path) and self.files[path].readonly:
-                return {"success": False, "error": f"Cannot overwrite system file: {path}"}
+                return {
+                    "success": False,
+                    "error": f"Cannot overwrite system file: {path}",
+                }
             if self._is_directory(path):
                 return {"success": False, "error": f"Path is a directory: {path}"}
 
@@ -664,10 +1011,14 @@ Session: {self.session_id}
             return error
 
         filename = self._get_basename(path)
-        self.files[path] = VFSFile(filename=filename, content=content, state="closed")
+        self.files[path] = VFSFile(filename=filename, _content=content, state="closed")
         self._dirty = True
 
-        return {"success": True, "message": f"Created '{path}' ({len(content)} chars)", "file_type": self.files[path].file_type.description}
+        return {
+            "success": True,
+            "message": f"Created '{path}' ({len(content)} chars)",
+            "file_type": self.files[path].file_type.description,
+        }
 
     def read(self, path: str) -> dict:
         """Read file content"""
@@ -716,7 +1067,7 @@ Session: {self.session_id}
                         return {
                             "success": True,
                             "message": f"Updated and synced '{path}'",
-                            "synced_to": f.local_path
+                            "synced_to": f.local_path,
                         }
             else:
                 f.content = content
@@ -745,7 +1096,7 @@ Session: {self.session_id}
             # Ensure parent directory exists
             os.makedirs(os.path.dirname(f.local_path), exist_ok=True)
 
-            with open(f.local_path, 'w', encoding='utf-8') as file:
+            with open(f.local_path, "w", encoding="utf-8") as file:
                 file.write(f._content)
 
             f.local_mtime = os.path.getmtime(f.local_path)
@@ -778,11 +1129,7 @@ Session: {self.session_id}
                 else:
                     errors.append(f"{path}: {result['error']}")
 
-        return {
-            "success": len(errors) == 0,
-            "synced": synced,
-            "errors": errors
-        }
+        return {"success": len(errors) == 0, "synced": synced, "errors": errors}
 
     def append(self, path: str, content: str) -> dict:
         """Append to file - mit Shadow auto-sync"""
@@ -797,7 +1144,11 @@ Session: {self.session_id}
             return {"success": False, "error": f"Read-only: {path}"}
 
         # Shadow: erst laden falls nötig
-        if isinstance(f, VFSFile) and f.backing_type == FileBackingType.SHADOW and not f.is_loaded:
+        if (
+            isinstance(f, VFSFile)
+            and f.backing_type == FileBackingType.SHADOW
+            and not f.is_loaded
+        ):
             load_result = self._load_shadow_content(path)
             if not load_result["success"]:
                 return load_result
@@ -834,20 +1185,24 @@ Session: {self.session_id}
             return {"success": False, "error": f"Read-only: {path}"}
 
         # Shadow: erst laden falls nötig
-        if isinstance(f, VFSFile) and f.backing_type == FileBackingType.SHADOW and not f.is_loaded:
+        if (
+            isinstance(f, VFSFile)
+            and f.backing_type == FileBackingType.SHADOW
+            and not f.is_loaded
+        ):
             load_result = self._load_shadow_content(path)
             if not load_result["success"]:
                 return load_result
 
         # Edit
         content = f._content if isinstance(f, VFSFile) else f.content
-        lines = content.split('\n')
+        lines = content.split("\n")
         start_idx = max(0, line_start - 1)
         end_idx = min(len(lines), line_end)
 
-        new_lines = new_content.split('\n')
+        new_lines = new_content.split("\n")
         lines = lines[:start_idx] + new_lines + lines[end_idx:]
-        new_full_content = '\n'.join(lines)
+        new_full_content = "\n".join(lines)
 
         if isinstance(f, VFSFile):
             f._content = new_full_content
@@ -865,7 +1220,10 @@ Session: {self.session_id}
         f.updated_at = datetime.now().isoformat()
         self._dirty = True
 
-        return {"success": True, "message": f"Edited {path} lines {line_start}-{line_end}"}
+        return {
+            "success": True,
+            "message": f"Edited {path} lines {line_start}-{line_end}",
+        }
 
     def delete(self, path: str) -> dict:
         """Delete a file - löscht auch lokale Shadow-Datei"""
@@ -928,17 +1286,17 @@ Session: {self.session_id}
         f.view_start = max(0, line_start - 1)
         f.view_end = line_end
 
-        lines = f.content.split('\n')
+        lines = f.content.split("\n")
         end = line_end if line_end > 0 else len(lines)
-        visible = lines[f.view_start:end]
+        visible = lines[f.view_start : end]
 
         self._dirty = True
 
         return {
             "success": True,
             "message": f"Opened '{path}' (lines {line_start}-{end})",
-            "preview": '\n'.join(visible[:5]) + ("..." if len(visible) > 5 else ""),
-            "file_type": f.file_type.description if f.file_type else "Unknown"
+            "preview": "\n".join(visible[:5]) + ("..." if len(visible) > 5 else ""),
+            "file_type": f.file_type.description if f.file_type else "Unknown",
         }
 
     def _load_shadow_content(self, path: str) -> dict:
@@ -957,13 +1315,13 @@ Session: {self.session_id}
             # Check if file changed on disk
             current_mtime = os.path.getmtime(f.local_path)
 
-            with open(f.local_path, 'r', encoding='utf-8', errors='replace') as file:
+            with open(f.local_path, "r", encoding="utf-8", errors="replace") as file:
                 content = file.read()
 
             f._content = content
             f.local_mtime = current_mtime
             f.line_count = len(content.splitlines())
-            f.size_bytes = len(content.encode('utf-8'))
+            f.size_bytes = len(content.encode("utf-8"))
 
             return {"success": True, "loaded_bytes": f.size_bytes}
 
@@ -982,16 +1340,18 @@ Session: {self.session_id}
             return {"success": False, "error": f"Cannot close system file: {path}"}
 
         # Generate summary
-        if len(f.content) > 100 and self._summarizer:
+        if f.size > 100 and self._summarizer:
             try:
                 summary = self._summarizer(f.content[:2000])
-                if hasattr(summary, '__await__'):
+                if hasattr(summary, "__await__"):
                     summary = await summary
                 f.mini_summary = str(summary).strip()
             except Exception:
-                f.mini_summary = f"[{len(f.content)} chars, {len(f.content.splitlines())} lines]"
+                f.mini_summary = (
+                    f"[{f.size} chars, {len(f.content.splitlines())} lines]"
+                )
         else:
-            f.mini_summary = f"[{len(f.content)} chars]"
+            f.mini_summary = f"[{f.size} chars]"
 
         f.state = "closed"
         self._dirty = True
@@ -1012,12 +1372,12 @@ Session: {self.session_id}
         f.view_start = max(0, line_start - 1)
         f.view_end = line_end
 
-        lines = f.content.split('\n')
+        lines = f.content.split("\n")
         end = line_end if line_end > 0 else len(lines)
 
         self._dirty = True
 
-        return {"success": True, "content": '\n'.join(lines[f.view_start:end])}
+        return {"success": True, "content": "\n".join(lines[f.view_start : end])}
 
     def list_files(self) -> dict:
         """List all files with metadata (legacy compatibility)"""
@@ -1028,11 +1388,11 @@ Session: {self.session_id}
                 "filename": f.filename,
                 "state": f.state,
                 "readonly": f.readonly,
-                "size": len(f.content),
+                "size": f.size,
                 "lines": len(f.content.splitlines()),
                 "file_type": f.file_type.description if f.file_type else "Unknown",
                 "is_executable": f.is_executable,
-                "lsp_enabled": f.lsp_enabled
+                "lsp_enabled": f.lsp_enabled,
             }
             if f.state == "closed" and f.mini_summary:
                 info["summary"] = f.mini_summary
@@ -1063,10 +1423,18 @@ Session: {self.session_id}
         f = self.files[path]
 
         if not f.lsp_enabled:
-            return {"success": True, "diagnostics": [], "message": "LSP not available for this file type"}
+            return {
+                "success": True,
+                "diagnostics": [],
+                "message": "LSP not available for this file type",
+            }
 
         if not self._lsp_manager:
-            return {"success": True, "diagnostics": [], "message": "LSP manager not configured"}
+            return {
+                "success": True,
+                "diagnostics": [],
+                "message": "LSP manager not configured",
+            }
 
         # Get diagnostics from LSP manager
         if force_refresh or not f.diagnostics:
@@ -1074,9 +1442,11 @@ Session: {self.session_id}
                 diagnostics = await self._lsp_manager.get_diagnostics(
                     path,
                     f.content,
-                    f.file_type.language_id if f.file_type else "plaintext"
+                    f.file_type.language_id if f.file_type else "plaintext",
                 )
-                f.diagnostics = [d.to_dict() if hasattr(d, 'to_dict') else d for d in diagnostics]
+                f.diagnostics = [
+                    d.to_dict() if hasattr(d, "to_dict") else d for d in diagnostics
+                ]
             except Exception as e:
                 return {"success": False, "error": f"LSP error: {str(e)}"}
 
@@ -1085,7 +1455,9 @@ Session: {self.session_id}
             "diagnostics": f.diagnostics,
             "errors": len([d for d in f.diagnostics if d.get("severity") == "error"]),
             "warnings": len([d for d in f.diagnostics if d.get("severity") == "warning"]),
-            "hints": len([d for d in f.diagnostics if d.get("severity") in ("hint", "information")])
+            "hints": len(
+                [d for d in f.diagnostics if d.get("severity") in ("hint", "information")]
+            ),
         }
 
     def get_file_info(self, path: str) -> dict:
@@ -1102,7 +1474,7 @@ Session: {self.session_id}
                     "name": d.name,
                     "readonly": d.readonly,
                     "created_at": d.created_at,
-                    "updated_at": d.updated_at
+                    "updated_at": d.updated_at,
                 }
             return {"success": False, "error": f"Path not found: {path}"}
 
@@ -1114,7 +1486,7 @@ Session: {self.session_id}
             "filename": f.filename,
             "state": f.state,
             "readonly": f.readonly,
-            "size": len(f.content),
+            "size": f.size,
             "lines": len(f.content.splitlines()),
             "summary": f.mini_summary if f.state == "closed" else None,
             "created_at": f.created_at,
@@ -1125,7 +1497,7 @@ Session: {self.session_id}
             "is_executable": f.is_executable,
             "lsp_enabled": f.lsp_enabled,
             "lsp_server": f.file_type.lsp_server if f.file_type else None,
-            "icon": f.file_type.icon if f.file_type else "📄"
+            "icon": f.file_type.icon if f.file_type else "📄",
         }
 
     # =========================================================================
@@ -1137,7 +1509,7 @@ Session: {self.session_id}
         local_path: str,
         vfs_path: str | None = None,
         allowed_dirs: list[str] | None = None,
-        max_size_bytes: int = 1024 * 1024
+        max_size_bytes: int = 1024 * 1024,
     ) -> dict:
         """Safely load a local file into VFS"""
         try:
@@ -1151,7 +1523,10 @@ Session: {self.session_id}
                 for d in allowed_dirs
             )
             if not allowed:
-                return {"success": False, "error": f"Path not in allowed directories: {resolved_path}"}
+                return {
+                    "success": False,
+                    "error": f"Path not in allowed directories: {resolved_path}",
+                }
 
         if not os.path.exists(resolved_path):
             return {"success": False, "error": f"File not found: {resolved_path}"}
@@ -1161,27 +1536,32 @@ Session: {self.session_id}
 
         file_size = os.path.getsize(resolved_path)
         if file_size > max_size_bytes:
-            return {"success": False, "error": f"File too large: {file_size} bytes (max: {max_size_bytes})"}
+            return {
+                "success": False,
+                "error": f"File too large: {file_size} bytes (max: {max_size_bytes})",
+            }
 
         if vfs_path is None:
             vfs_path = "/" + os.path.basename(resolved_path)
 
         try:
-            with open(resolved_path, 'r', encoding='utf-8', errors='replace') as f:
+            with open(resolved_path, "r", encoding="utf-8", errors="replace") as f:
                 content = f.read()
         except Exception as e:
             return {"success": False, "error": f"Read error: {e}"}
 
         result = self.create(vfs_path, content)
 
-        if result['success']:
+        if result["success"]:
             return {
                 "success": True,
                 "vfs_path": vfs_path,
                 "source_path": resolved_path,
                 "size_bytes": len(content),
                 "lines": len(content.splitlines()),
-                "file_type": self.files[self._normalize_path(vfs_path)].file_type.description
+                "file_type": self.files[
+                    self._normalize_path(vfs_path)
+                ].file_type.description,
             }
 
         return result
@@ -1192,7 +1572,7 @@ Session: {self.session_id}
         local_path: str,
         allowed_dirs: list[str] | None = None,
         overwrite: bool = False,
-        create_dirs: bool = True
+        create_dirs: bool = True,
     ) -> dict:
         """Safely save a VFS file to local filesystem"""
         vfs_path = self._normalize_path(vfs_path)
@@ -1213,10 +1593,16 @@ Session: {self.session_id}
                 for d in allowed_dirs
             )
             if not allowed:
-                return {"success": False, "error": f"Path not in allowed directories: {resolved_path}"}
+                return {
+                    "success": False,
+                    "error": f"Path not in allowed directories: {resolved_path}",
+                }
 
         if os.path.exists(resolved_path) and not overwrite:
-            return {"success": False, "error": f"File exists (use overwrite=True): {resolved_path}"}
+            return {
+                "success": False,
+                "error": f"File exists (use overwrite=True): {resolved_path}",
+            }
 
         parent_dir = os.path.dirname(resolved_path)
         if parent_dir and not os.path.exists(parent_dir):
@@ -1226,10 +1612,13 @@ Session: {self.session_id}
                 except Exception as e:
                     return {"success": False, "error": f"Cannot create directory: {e}"}
             else:
-                return {"success": False, "error": f"Parent directory does not exist: {parent_dir}"}
+                return {
+                    "success": False,
+                    "error": f"Parent directory does not exist: {parent_dir}",
+                }
 
         try:
-            with open(resolved_path, 'w', encoding='utf-8') as f:
+            with open(resolved_path, "w", encoding="utf-8") as f:
                 f.write(vfs_file.content)
         except Exception as e:
             return {"success": False, "error": f"Write error: {e}"}
@@ -1239,7 +1628,7 @@ Session: {self.session_id}
             "vfs_path": vfs_path,
             "saved_path": resolved_path,
             "size_bytes": len(vfs_file.content),
-            "lines": len(vfs_file.content.splitlines())
+            "lines": len(vfs_file.content.splitlines()),
         }
 
     # =========================================================================
@@ -1275,9 +1664,9 @@ Session: {self.session_id}
 
         for path, f in ordered:
             if f.state == "open" and (not isinstance(f, VFSFile) or f.is_loaded):
-                lines = f.content.split('\n')
+                lines = f.content.split("\n")
                 end = f.view_end if f.view_end > 0 else len(lines)
-                visible = lines[f.view_start:end]
+                visible = lines[f.view_start : end]
 
                 icon = f.file_type.icon if f.file_type else "📄"
 
@@ -1285,19 +1674,24 @@ Session: {self.session_id}
                 dirty = " [MODIFIED]" if isinstance(f, VFSFile) and f.is_dirty else ""
 
                 if len(visible) > self.max_window_lines:
-                    visible = visible[:self.max_window_lines]
+                    visible = visible[: self.max_window_lines]
                     parts.append(
-                        f"\n{icon} [{path}]{dirty} (lines {f.view_start + 1}-{f.view_start + self.max_window_lines}, truncated):")
+                        f"\n{icon} [{path}]{dirty} (lines {f.view_start + 1}-{f.view_start + self.max_window_lines}, truncated):"
+                    )
                 else:
-                    parts.append(f"\n{icon} [{path}]{dirty} (lines {f.view_start + 1}-{end}):")
-                parts.append('\n'.join(visible))
+                    parts.append(
+                        f"\n{icon} [{path}]{dirty} (lines {f.view_start + 1}-{end}):"
+                    )
+                parts.append("\n".join(visible))
         closed_count = sum(1 for f in self.files.values() if f.state == "closed")
         if closed_count > 0:
             parts.append(f"\n📋 {closed_count} closed files available")
 
-        return '\n'.join(parts)
+        return "\n".join(parts)
 
-    def _build_tree_string(self, path: str = "/", prefix: str = "", max_depth: int = 3) -> str:
+    def _build_tree_string(
+        self, path: str = "/", prefix: str = "", max_depth: int = 3
+    ) -> str:
         """Build a tree representation of the directory structure"""
         if max_depth <= 0:
             return ""
@@ -1314,16 +1708,20 @@ Session: {self.session_id}
                 lines.append(f"{prefix}{current_prefix}{icon} {item['name']}/")
 
                 child_prefix = prefix + ("    " if is_last else "│   ")
-                subtree = self._build_tree_string(item["path"], child_prefix, max_depth - 1)
+                subtree = self._build_tree_string(
+                    item["path"], child_prefix, max_depth - 1
+                )
                 if subtree:
                     lines.append(subtree)
             else:
                 f = self.files.get(item["path"])
                 icon = f.file_type.icon if f and f.file_type else "📄"
                 state = "[OPEN]" if f and f.state == "open" else ""
-                lines.append(f"{prefix}{current_prefix}{icon} {item['name']} {state}".rstrip())
+                lines.append(
+                    f"{prefix}{current_prefix}{icon} {item['name']} {state}".rstrip()
+                )
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
     # =========================================================================
     # SERIALIZATION
@@ -1332,32 +1730,32 @@ Session: {self.session_id}
     def to_checkpoint(self) -> dict:
         """Serialize VFS for checkpoint"""
         return {
-            'session_id': self.session_id,
-            'agent_name': self.agent_name,
-            'max_window_lines': self.max_window_lines,
-            'directories': {
-                path: asdict(d) for path, d in self.directories.items()
-                if not d.readonly
+            "session_id": self.session_id,
+            "agent_name": self.agent_name,
+            "max_window_lines": self.max_window_lines,
+            "directories": {
+                path: asdict(d) for path, d in self.directories.items() if not d.readonly
             },
-            'files': {
+            "files": {
                 path: {
                     **asdict(f),
-                    'file_type': None  # Don't serialize FileTypeInfo, reconstruct on load
-                } for path, f in self.files.items()
+                    "file_type": None,  # Don't serialize FileTypeInfo, reconstruct on load
+                }
+                for path, f in self.files.items()
                 if not f.readonly
-            }
+            },
         }
 
     def from_checkpoint(self, data: dict):
         """Restore VFS from checkpoint"""
         # Restore directories
-        for path, dir_data in data.get('directories', {}).items():
+        for path, dir_data in data.get("directories", {}).items():
             self.directories[path] = VFSDirectory(**dir_data)
 
         # Restore files
-        for path, file_data in data.get('files', {}).items():
-            file_data.pop('file_type', None)  # Remove if present
-            file_data.pop('diagnostics', None)  # Remove diagnostics, will be refreshed
+        for path, file_data in data.get("files", {}).items():
+            file_data.pop("file_type", None)  # Remove if present
+            file_data.pop("diagnostics", None)  # Remove diagnostics, will be refreshed
             self.files[path] = VFSFile(**file_data)
 
         self._dirty = True
@@ -1371,12 +1769,14 @@ Session: {self.session_id}
         executables = []
         for path, f in self.files.items():
             if f.is_executable and not f.readonly:
-                executables.append({
-                    "path": path,
-                    "filename": f.filename,
-                    "language": f.file_type.language_id if f.file_type else "unknown",
-                    "size": len(f.content)
-                })
+                executables.append(
+                    {
+                        "path": path,
+                        "filename": f.filename,
+                        "language": f.file_type.language_id if f.file_type else "unknown",
+                        "size": f.size,
+                    }
+                )
         return executables
 
     def can_execute(self, path: str) -> bool:
@@ -1397,7 +1797,7 @@ Session: {self.session_id}
         allowed_extensions: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
         readonly: bool = False,
-        auto_sync: bool = True
+        auto_sync: bool = True,
     ) -> dict:
         """
         Mount einen lokalen Ordner als Shadow ins VFS.
@@ -1429,9 +1829,11 @@ Session: {self.session_id}
             vfs_path=vfs_path,
             local_path=local_path,
             allowed_extensions=allowed_extensions,
-            exclude_patterns=exclude_patterns or ShadowMount().exclude_patterns,
+            exclude_patterns=exclude_patterns or ShadowMount(
+            vfs_path=vfs_path,
+            local_path=local_path).exclude_patterns,
             readonly=readonly,
-            auto_sync=auto_sync
+            auto_sync=auto_sync,
         )
 
         # Scan and index (metadata only!)
@@ -1447,7 +1849,7 @@ Session: {self.session_id}
             "files_indexed": stats["files"],
             "dirs_indexed": stats["dirs"],
             "total_size": stats["total_size"],
-            "scan_time_ms": stats["scan_time_ms"]
+            "scan_time_ms": stats["scan_time_ms"],
         }
 
     def _scan_mount(self, mount: ShadowMount) -> dict:
@@ -1489,7 +1891,7 @@ Session: {self.session_id}
             if vfs_dir not in self.directories:
                 self.directories[vfs_dir] = VFSDirectory(
                     name=os.path.basename(vfs_dir) or mount.vfs_path,
-                    readonly=mount.readonly
+                    readonly=mount.readonly,
                 )
                 stats["dirs"] += 1
 
@@ -1523,7 +1925,7 @@ Session: {self.session_id}
                         size_bytes=file_stat.st_size,
                         line_count=-1,  # Unknown until loaded
                         file_type=file_type,
-                        readonly=mount.readonly
+                        readonly=mount.readonly,
                     )
 
                     self._shadow_index[vfs_file_path] = local_file
@@ -1570,11 +1972,7 @@ Session: {self.session_id}
         del self.mounts[vfs_path]
         self._dirty = True
 
-        return {
-            "success": True,
-            "unmounted": vfs_path,
-            "files_saved": saved
-        }
+        return {"success": True, "unmounted": vfs_path, "files_saved": saved}
 
     def refresh_mount(self, vfs_path: str) -> dict:
         """
@@ -1590,10 +1988,9 @@ Session: {self.session_id}
 
         # Remember modified files
         modified_files = {
-            path: f for path, f in self.files.items()
-            if path.startswith(vfs_path)
-               and isinstance(f, VFSFile)
-               and f.is_dirty
+            path: f
+            for path, f in self.files.items()
+            if path.startswith(vfs_path) and isinstance(f, VFSFile) and f.is_dirty
         }
 
         # Re-scan
@@ -1606,11 +2003,12 @@ Session: {self.session_id}
         return {
             "success": True,
             "files_indexed": stats["files"],
-            "modified_preserved": len(modified_files)
+            "modified_preserved": len(modified_files),
         }
 
-
-    def execute(self, path: str, args: list[str] | None = None, timeout: float = 30.0) -> dict:
+    def execute(
+        self, path: str, args: list[str] | None = None, timeout: float = 30.0
+    ) -> dict:
         """
         Execute a file if executable.
 
@@ -1645,11 +2043,12 @@ Session: {self.session_id}
         else:
             # Memory file: in temp speichern
             import tempfile
+
             ext = f.file_type.extension if f.file_type else ""
 
             content = f._content if isinstance(f, VFSFile) else f.content
 
-            with tempfile.NamedTemporaryFile(mode='w', suffix=ext, delete=False) as tmp:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=ext, delete=False) as tmp:
                 tmp.write(content)
                 exec_path = tmp.name
 
@@ -1677,7 +2076,7 @@ Session: {self.session_id}
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                cwd=os.path.dirname(exec_path) if exec_path.startswith('/') else None
+                cwd=os.path.dirname(exec_path) if exec_path.startswith("/") else None,
             )
 
             return {
@@ -1685,7 +2084,7 @@ Session: {self.session_id}
                 "return_code": result.returncode,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
-                "command": ' '.join(cmd)
+                "command": " ".join(cmd),
             }
 
         except subprocess.TimeoutExpired:
@@ -1701,9 +2100,6 @@ Session: {self.session_id}
                     os.unlink(exec_path)
                 except:
                     pass
-
-
-
 
 
 VirtualFileSystem = VirtualFileSystemV2
