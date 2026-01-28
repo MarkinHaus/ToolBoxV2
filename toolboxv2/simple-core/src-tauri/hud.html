@@ -191,6 +191,11 @@
             letter-spacing: 0.5px;
         }
 
+        .ws-loading {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+
         .widget-type {
             font-size: 8px;
             color: var(--hud-muted);
@@ -611,6 +616,99 @@
     </div>
 
     <script type="module">
+        /**
+ * DOM Engine für HTMX-Style Updates über WebSocket
+ */
+class DomEngine {
+    constructor(app) {
+        this.app = app;
+    }
+
+    /**
+     * Verarbeitet einen DOM-Update-Befehl vom Server
+     * @param {Object} op - Operation { selector, html, swap, run_js, data }
+     */
+    process(op) {
+        const targets = document.querySelectorAll(op.selector);
+        if (targets.length === 0) {
+            console.warn(`[DomEngine] Target not found: ${op.selector}`);
+            return;
+        }
+
+        targets.forEach(target => {
+            this.applySwap(target, op.html, op.swap || 'innerHTML');
+            this.executeEmbeddedScripts(target);
+        });
+
+        if (op.run_js) {
+            this.executeSafeJs(op.run_js, {
+                selector: op.selector,
+                data: op.data
+            });
+        }
+    }
+
+    applySwap(target, html, strategy) {
+        switch (strategy) {
+            case 'innerHTML':
+                target.innerHTML = html;
+                break;
+            case 'outerHTML':
+                target.outerHTML = html;
+                break;
+            case 'beforebegin':
+                target.insertAdjacentHTML('beforebegin', html);
+                break;
+            case 'afterbegin':
+                target.insertAdjacentHTML('afterbegin', html);
+                break;
+            case 'beforeend':
+                target.insertAdjacentHTML('beforeend', html);
+                break;
+            case 'afterend':
+                target.insertAdjacentHTML('afterend', html);
+                break;
+            case 'delete':
+                target.remove();
+                break;
+            case 'none':
+                break;
+            default:
+                console.warn(`[DomEngine] Unknown swap strategy: ${strategy}`);
+                target.innerHTML = html;
+        }
+    }
+
+    executeEmbeddedScripts(container) {
+        if (!container.querySelectorAll) return;
+
+        const scripts = container.querySelectorAll('script');
+        scripts.forEach(oldScript => {
+            const newScript = document.createElement('script');
+            Array.from(oldScript.attributes).forEach(attr => {
+                newScript.setAttribute(attr.name, attr.value);
+            });
+            newScript.appendChild(document.createTextNode(oldScript.innerHTML));
+            oldScript.parentNode.replaceChild(newScript, oldScript);
+        });
+    }
+
+    executeSafeJs(code, context) {
+        try {
+            const safeFunc = new Function('ctx', 'HUD', `
+                "use strict";
+                try {
+                    ${code}
+                } catch(e) {
+                    console.error("[CustomJS Error]", e);
+                }
+            `);
+            safeFunc(context, window.HUD);
+        } catch (e) {
+            console.error('[DomEngine] Failed to compile backend JS:', e);
+        }
+    }
+}
         class HudApp {
             constructor() {
                 this.ws = null;
@@ -641,6 +739,7 @@
                 this.widgetCallbacks = {};
                 this.pendingActions = new Map();
                 this.actionIdCounter = 0;
+                this.domEngine = new DomEngine(this);
             }
 
             async init() {
@@ -764,6 +863,46 @@
                     const value = parseInt(e.target.value, 10);
                     document.getElementById('animation-delay-value').textContent = value + 'ms';
                     this.setAnimationDelay(value);
+                });
+
+                // HTMX-Style Event Delegation
+                document.body.addEventListener('click', (e) => {
+                    const trigger = e.target.closest('[data-ws-action]');
+                    if (!trigger) return;
+
+                    const action = trigger.dataset.wsAction;
+                    const widgetId = trigger.dataset.widgetId;
+
+                    let payload = {};
+                    if (trigger.dataset.wsPayload) {
+                        try {
+                            payload = JSON.parse(trigger.dataset.wsPayload);
+                        } catch (err) {
+                            console.warn('Invalid JSON in data-ws-payload', err);
+                        }
+                    }
+
+                    if (trigger.dataset.wsInclude) {
+                        const inputs = document.querySelectorAll(trigger.dataset.wsInclude);
+                        inputs.forEach(input => {
+                            if (input.name || input.id) {
+                                payload[input.name || input.id] = input.value;
+                            }
+                        });
+                    }
+
+                    trigger.classList.add('ws-loading');
+
+                    const parentWidget = trigger.closest('.widget');
+                    const targetWidgetId = widgetId || (parentWidget ? parentWidget.id.replace('widget-', '') : null);
+
+                    if (targetWidgetId) {
+                        this.sendWidgetAction(targetWidgetId, action, payload)
+                            .finally(() => trigger.classList.remove('ws-loading'));
+                    } else {
+                        console.error('[HUD] No widget ID for action:', action);
+                        trigger.classList.remove('ws-loading');
+                    }
                 });
             }
 
@@ -1176,6 +1315,15 @@
                             break;
                         case 'single_widget_update':
                             this.handleSingleWidgetUpdate(data);
+                            break;
+                        case 'dom_update':
+                            this.domEngine.process(data);
+                            break;
+
+                        case 'batch_update':
+                            if (Array.isArray(data.updates)) {
+                                data.updates.forEach(op => this.domEngine.process(op));
+                            }
                             break;
                         default:
                             this.handleGenericMessage(data);
