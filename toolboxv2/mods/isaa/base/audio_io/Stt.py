@@ -23,6 +23,8 @@ from enum import Enum
 from pathlib import Path
 from typing import BinaryIO, Generator, Optional, Union
 
+import numpy as np
+
 # Type aliases
 AudioData = Union[bytes, BinaryIO, Path, str]
 
@@ -135,16 +137,42 @@ def _normalize_audio_input(audio: AudioData) -> bytes:
     if hasattr(audio, "read"):
         return audio.read()
 
+    if isinstance(audio, np.ndarray):
+        return audio.tobytes()
+
     raise TypeError(f"Unsupported audio input type: {type(audio)}")
 
 
 def _save_temp_audio(audio_bytes: bytes, suffix: str = ".wav") -> str:
-    """Save audio bytes to a temporary file and return the path."""
+    """
+    Saves raw PCM audio bytes into a valid WAV file with a header.
+    """
+    # 1. Temporäre Datei erstellen
     temp_file = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-    temp_file.write(audio_bytes)
-    temp_file.close()
-    return temp_file.name
+    temp_path = temp_file.name
+    temp_file.close()  # Wir schließen sie kurz, damit 'wave' sie öffnen kann
 
+    try:
+        # 2. Mit dem wave-Modul öffnen, um den Header zu schreiben
+        with wave.open(temp_path, "wb") as wav_file:
+            # WICHTIG: Diese Werte müssen exakt zu deinem Recorder passen!
+            # Basierend auf deinem Code: samplerate=16000, channels=1, dtype="int16"
+            n_channels = 1
+            sampwidth = 2  # 2 Bytes = 16-bit (int16)
+            framerate = 16000
+
+            wav_file.setnchannels(n_channels)
+            wav_file.setsampwidth(sampwidth)
+            wav_file.setframerate(framerate)
+
+            # 3. Die rohen Bytes schreiben
+            wav_file.writeframes(audio_bytes)
+
+    except Exception as e:
+        print(f"Error writing WAV file: {e}")
+        raise
+
+    return temp_path
 
 def _ensure_wav_format(audio_bytes: bytes) -> bytes:
     """
@@ -182,7 +210,8 @@ def _transcribe_faster_whisper(audio: AudioData, config: STTConfig) -> STTResult
         )
 
     audio_bytes = _normalize_audio_input(audio)
-    temp_path = _save_temp_audio(audio_bytes)
+
+    temp_path = _save_temp_audio(audio_bytes, suffix=".wav")
 
     try:
         # Initialize model
@@ -226,11 +255,11 @@ def _transcribe_faster_whisper(audio: AudioData, config: STTConfig) -> STTResult
             segments=segments,
             confidence=None,  # faster-whisper doesn't provide overall confidence
         )
-
     finally:
-        # Cleanup temp file
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
+        # Clean up
+        # if os.path.exists(temp_path):
+        #    os.unlink(temp_path)
+        print(temp_path)
 
 
 def _stream_faster_whisper(

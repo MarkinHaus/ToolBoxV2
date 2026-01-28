@@ -10,122 +10,6 @@ import './Desktop.css';
 
 
 /**
- * Quick Capture Popup - Floating capture window (Ctrl+Shift+C)
- */
-export class QuickCapturePopup {
-    constructor(options = {}) {
-        this.onCapture = options.onCapture || (() => {});
-        this.element = null;
-        this.isVisible = false;
-    }
-
-    create() {
-        if (!isDesktop()) return;
-
-        this.element = document.createElement('div');
-        this.element.className = 'tb-quick-capture';
-        this.element.innerHTML = `
-            <div class="tb-quick-capture-header">
-                <span>⚡ Quick Capture</span>
-                <button class="tb-quick-capture-close">×</button>
-            </div>
-            <div class="tb-quick-capture-body">
-                <textarea placeholder="Capture your thought... #tags" rows="3"></textarea>
-                <div class="tb-quick-capture-actions">
-                    <span class="tb-quick-capture-hint">Ctrl+Enter to save</span>
-                    <button class="tb-quick-capture-save">Save</button>
-                </div>
-            </div>
-        `;
-
-        document.body.appendChild(this.element);
-        this._bindEvents();
-    }
-
-    _bindEvents() {
-        const closeBtn = this.element.querySelector('.tb-quick-capture-close');
-        const saveBtn = this.element.querySelector('.tb-quick-capture-save');
-        const textarea = this.element.querySelector('textarea');
-
-        closeBtn.addEventListener('click', () => this.hide());
-        saveBtn.addEventListener('click', () => this._save());
-
-        textarea.addEventListener('keydown', (e) => {
-            if (e.ctrlKey && e.key === 'Enter') {
-                e.preventDefault();
-                this._save();
-            }
-            if (e.key === 'Escape') {
-                this.hide();
-            }
-        });
-
-        // Global hotkey
-        this._keyHandler = (e) => {
-            if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'c') {
-                e.preventDefault();
-                this.toggle();
-            }
-        };
-        document.addEventListener('keydown', this._keyHandler);
-
-        // Listen for custom event (for programmatic triggering)
-        window.addEventListener('tb:quickCapture', () => this.show());
-    }
-
-    async _save() {
-        const textarea = this.element.querySelector('textarea');
-        const text = textarea.value.trim();
-        if (!text) return;
-
-        // Extract tags
-        const tagRegex = /#(\w+)/g;
-        const tags = [];
-        let match;
-        while ((match = tagRegex.exec(text)) !== null) {
-            tags.push(match[1]);
-        }
-
-        try {
-            await this.onCapture({ text, tags });
-            textarea.value = '';
-            this.hide();
-            tauriAPI.notify('Captured!', text.substring(0, 50));
-        } catch (error) {
-            console.error('Capture failed:', error);
-        }
-    }
-
-    show() {
-        if (!this.element) return;
-        this.element.classList.add('visible');
-        this.isVisible = true;
-        this.element.querySelector('textarea').focus();
-    }
-
-    hide() {
-        if (!this.element) return;
-        this.element.classList.remove('visible');
-        this.isVisible = false;
-    }
-
-    toggle() {
-        if (this.isVisible) {
-            this.hide();
-        } else {
-            this.show();
-        }
-    }
-
-    destroy() {
-        if (this.element) {
-            this.element.remove();
-            this.element = null;
-        }
-    }
-}
-
-/**
  * Desktop Status Bar - Fixed bar at bottom of screen
  * Maintains persistent WebSocket connection for notifications
  */
@@ -179,7 +63,7 @@ export class DesktopStatusBar {
                 <span class="tb-status-info" data-id="endpoint"></span>
             </div>
             <div class="tb-status-bar-right">
-                <span class="tb-status-item" data-id="hotkey">Ctrl+Shift+C: Capture</span>
+                <span class="tb-status-item" data-id="hotkey">Alt+H: HUD Mode</span>
             </div>
         `;
     }
@@ -499,18 +383,20 @@ export function initPlatformUI(options = {}) {
         components.statusBar = new DesktopStatusBar();
         components.statusBar.create();
 
-        components.quickCapture = new QuickCapturePopup({
-            onCapture: options.onCapture || (async ({ text, tags }) => {
-                const response = await fetch('/api/vault/capture', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text, tags })
-                });
-                if (!response.ok) throw new Error('Capture failed');
-            })
+        // Globaler Shortcut für HUD Mode (Alt + H)
+        document.addEventListener('keydown', async (e) => {
+            if (e.altKey && e.key.toLowerCase() === 'h') {
+                e.preventDefault();
+                console.log('[Desktop] Toggling HUD mode via shortcut');
+                try {
+                    // Ruft die Backend-Funktion auf, die auch das Tray Icon nutzt
+                    // Basierend auf capabilities.json: "allow-toggle-mode"
+                    await tauriAPI.invoke('toggle_mode');
+                } catch (error) {
+                    console.error('[Desktop] Failed to toggle HUD mode:', error);
+                }
+            }
         });
-        components.quickCapture.create();
-
         components.tray = new SystemTray();
         components.tray.create();
     }
@@ -534,7 +420,6 @@ export function initPlatformUI(options = {}) {
 }
 
 export default {
-    QuickCapturePopup,
     DesktopStatusBar,
     MobileBottomNav,
     SystemTray,

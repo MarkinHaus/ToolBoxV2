@@ -1369,6 +1369,7 @@ class ExecutionEngine:
                 "",
                 "STATUS:",
                 f"- Loaded tools ({len(ctx.dynamic_tools)}/{ctx.max_dynamic_tools}): [{active_str}]",
+                "(if no fitting tool is loaded, discover it with list_tools and load it with load_tools!)",
                 "",
                 "RULES:",
                 "1. Focus ONLY on the given task",
@@ -1393,7 +1394,7 @@ class ExecutionEngine:
                 "",
                 "MANDATORY WORKFLOW:",
                 "A. PLAN: Use `think()` to decompose the request.",
-                "B. ACT: Use tools (`load_tools`, `vfs_*`, etc.) to gather info or execute changes.",
+                "B. ACT: Use tools (`load_tools`, `vfs_*`, etc.) to gather info or execute changes. (if no fitting tool is loaded, discover it with list_tools and load it with load_tools!)",
                 "C. VERIFY: Check if the tool output matches expectations.",
                 "D. REPORT: Use `final_answer()` only when the objective is met or definitively impossible.",
             ]

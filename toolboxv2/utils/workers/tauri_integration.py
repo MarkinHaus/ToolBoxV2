@@ -24,7 +24,10 @@ import logging
 import os
 import sys
 import threading
-from typing import Any, Callable, Dict, Optional
+from typing import Any,Callable, Dict, Optional
+
+# Import ZMQ Manager
+from toolboxv2.utils.workers.event_manager import ZMQEventManager
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +48,13 @@ class TauriWorkerManager:
         self._config = config
         self._http_worker = None
         self._ws_worker = None
+        self._broker = None
         self._running = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
         self._http_thread: Optional[threading.Thread] = None
         self._app = None
-        self._ws_enabled = True  # Can be disabled via config/env
+        self._ws_enabled = True
 
     def _get_config(self):
         """Get or create configuration."""
@@ -96,60 +100,70 @@ class TauriWorkerManager:
         # Check if WS is enabled
         self._ws_enabled = os.environ.get("TB_WS_ENABLED", "true").lower() in ("true", "1", "yes")
 
-        # Initialize shared app instance
+        # 1. START ZMQ BROKER (Das fehlende Puzzleteil!)
+        # ----------------------------------------------------------------
+        logger.info("Starting internal ZMQ Broker...")
+        self._broker = ZMQEventManager(
+            worker_id="internal_broker",
+            pub_endpoint=config.zmq.pub_endpoint,
+            sub_endpoint=config.zmq.sub_endpoint,
+            req_endpoint=config.zmq.req_endpoint,
+            rep_endpoint=config.zmq.rep_endpoint,
+            http_to_ws_endpoint=config.zmq.http_to_ws_endpoint,
+            is_broker=True,  # WICHTIG: Das macht ihn zum Verteiler
+            hwm_send=config.zmq.hwm_send,
+            hwm_recv=config.zmq.hwm_recv,
+        )
+        # Broker starten und kurz warten, damit Sockets bereit sind
+        await self._broker.start()
+        await asyncio.sleep(0.5)
+        logger.info("Internal Broker started.")
+        # ----------------------------------------------------------------
+
+        # 2. App Initialisieren
         self._init_app()
 
-        # Import workers
+        # 3. HTTP Worker starten
         from toolboxv2.utils.workers.server_worker import HTTPWorker
-
-        # Create HTTP worker with shared app
         self._http_worker = HTTPWorker("tauri_http", config, app=self._app)
 
-        # Start HTTP worker in thread (WSGI is blocking)
         def run_http():
             logger.info(f"Starting HTTP worker on {config.http_worker.host}:{config.http_worker.port}")
             try:
                 self._http_worker.run(
                     host=config.http_worker.host,
                     port=config.http_worker.port,
-                    do_run=True,  # Actually run the server
+                    do_run=True,
                 )
             except Exception as e:
                 logger.error(f"HTTP worker error: {e}")
 
         self._http_thread = threading.Thread(target=run_http, daemon=True, name="http-worker")
         self._http_thread.start()
-        logger.info(f"HTTP worker thread started (PID: {os.getpid()})")
 
-        # Start WS worker if enabled
+        # 4. WS Worker starten
         if self._ws_enabled:
             from toolboxv2.utils.workers.ws_worker import WSWorker
-
             self._ws_worker = WSWorker("tauri_ws", config)
+            logger.info(f"Starting WS worker on port {config.ws_worker.port}")
 
             logger.info(f"Starting WS worker on {config.ws_worker.host}:{config.ws_worker.port}")
 
             # Mark as running
             self._running = True
-
-            # Run WS server (async, blocks until stopped)
-            # Note: start() internally calls _init_event_manager() and _init_direct_pull()
             await self._ws_worker.start()
         else:
             logger.info("WS worker disabled, running HTTP-only mode")
             self._running = True
 
-            # Keep running without WS
             while self._running:
                 await asyncio.sleep(1)
 
     def start(self):
-        """Start workers in background thread."""
         if self._running:
             logger.warning("Workers already running")
             return
 
-        # Windows: Use SelectorEventLoop for ZMQ compatibility
         if sys.platform == "win32":
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -160,37 +174,36 @@ class TauriWorkerManager:
                 self._loop.run_until_complete(self._run_servers())
             except Exception as e:
                 logger.error(f"Worker manager error: {e}")
-                import traceback
-                traceback.print_exc()
 
         self._thread = threading.Thread(target=run, daemon=True, name="tauri-worker-manager")
         self._thread.start()
 
-        logger.info("Tauri worker manager started")
-
     def stop(self):
-        """Stop all workers gracefully."""
         logger.info("Stopping Tauri workers...")
         self._running = False
 
         # Stop WS worker
         if self._ws_worker and self._loop:
             try:
-                future = asyncio.run_coroutine_threadsafe(
-                    self._ws_worker.stop(),
-                    self._loop
-                )
-                future.result(timeout=5)
-            except Exception as e:
-                logger.warning(f"Error stopping WS worker: {e}")
+                future = asyncio.run_coroutine_threadsafe(self._ws_worker.stop(), self._loop)
+                future.result(timeout=2)
+            except Exception:
+                pass
+
+        # Stop Broker
+        if self._broker and self._loop:
+            try:
+                future = asyncio.run_coroutine_threadsafe(self._broker.stop(), self._loop)
+                future.result(timeout=2)
+            except Exception:
+                pass
 
         # Stop event loop
         if self._loop:
             self._loop.call_soon_threadsafe(self._loop.stop)
 
-        # Wait for threads
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=5)
+            self._thread.join(timeout=2)
 
         logger.info("Tauri workers stopped")
 

@@ -605,6 +605,7 @@ def synthesize(text: str, config: Optional[TTSConfig] = None, **kwargs) -> TTSRe
     if handler is None:
         raise ValueError(f"Unknown backend: {config.backend}")
 
+    print(config)
     return handler(text, config)
 
 
@@ -718,7 +719,21 @@ if __name__ == "__main__":
     print("\nQuality presets:")
     for quality in TTSQuality:
         print(f"  - {quality.value}")
+    result = synthesize("Hello, world!")
+    result.save("output.wav")
 
+    # ElevenLabs API
+    result = synthesize(
+        "Professional narration.",
+        config=TTSConfig(
+            backend=TTSBackend.ELEVENLABS,
+            elevenlabs_api_key="your-key"
+        )
+    )
+
+    # Streaming
+    for chunk in synthesize_stream("Long text..."):
+        play(chunk)
     print("\nUsage example:")
     print("""
     from tts import synthesize, TTSConfig, TTSBackend

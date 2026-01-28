@@ -13,11 +13,17 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from enum import Enum, auto
 from pathlib import PurePosixPath
 from typing import Any, Callable, TYPE_CHECKING
+from enum import Enum, auto
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable
+import os
 
 if TYPE_CHECKING:
     from toolboxv2.mods.isaa.base.Agent.lsp_manager import LSPManager, Diagnostic
@@ -147,21 +153,91 @@ def get_file_type(filename: str) -> FileTypeInfo:
 # VFS FILE
 # =============================================================================
 
+
+
+@dataclass
+class VFSDirectory:
+    """Represents a directory in the Virtual File System"""
+    name: str
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    readonly: bool = False
+
+
+class FileBackingType(Enum):
+    """Wo lebt die Datei wirklich?"""
+    MEMORY = auto()  # Nur im VFS (wie bisher)
+    SHADOW = auto()  # Lazy-loaded vom lokalen FS
+    MODIFIED = auto()  # Shadow, aber mit lokalen Änderungen (dirty)
+
+
+@dataclass
+class ShadowMount:
+    """Ein gemounteter lokaler Ordner"""
+    vfs_path: str  # z.B. "/project"
+    local_path: str  # z.B. "/home/user/myproject"
+    allowed_extensions: list[str] | None = None
+    exclude_patterns: list[str] = field(default_factory=lambda: [
+        "__pycache__", "*.pyc", ".git", "node_modules", ".venv", "*.log"
+    ])
+    max_file_size: int = 1024 * 1024  # 1MB
+    readonly: bool = False
+    auto_sync: bool = True  # Änderungen sofort schreiben
+
+
 @dataclass
 class VFSFile:
-    """Represents a file in the Virtual File System"""
+    """Erweiterte VFS-Datei mit Shadow-Support"""
     filename: str
-    content: str
-    state: str = "closed"              # "open" or "closed"
+    backing_type: FileBackingType = FileBackingType.MEMORY
+
+    # Content Management
+    _content: str | None = None  # None = not loaded yet
+    _content_hash: str | None = None  # Für dirty detection
+
+    # Shadow-specific
+    local_path: str | None = None  # Backing file path
+    local_mtime: float | None = None  # Für change detection
+
+    # Metadata (immer verfügbar, auch bei Shadow)
+    size_bytes: int = 0
+    line_count: int = 0
+    file_type: FileTypeInfo | None = None
+
+    # State
+    state: str = "closed"
     view_start: int = 0
     view_end: int = -1
     mini_summary: str = ""
     readonly: bool = False
+    is_dirty: bool = False  # Hat ungespeicherte Änderungen
+
+    # Timestamps
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
+    @property
+    def content(self) -> str:
+        """Lazy content access - lädt bei Shadow on-demand"""
+        if self._content is None and self.backing_type == FileBackingType.SHADOW:
+            ContentNotLoadedError = Exception
+            raise ContentNotLoadedError(f"File not opened: {self.filename}")
+        return self._content or ""
+
+    @content.setter
+    def content(self, value: str):
+        self._content = value
+        if self.backing_type == FileBackingType.SHADOW:
+            self.backing_type = FileBackingType.MODIFIED
+            self.is_dirty = True
+
+    @property
+    def is_loaded(self) -> bool:
+        return self._content is not None
+
+    """Represents a file in the Virtual File System"""
+
     # V2 additions
-    file_type: FileTypeInfo | None = None
     is_executable: bool = False
     lsp_enabled: bool = False
     diagnostics: list[dict] = field(default_factory=list)  # LSP diagnostics cache
@@ -172,15 +248,6 @@ class VFSFile:
             self.file_type = get_file_type(self.filename)
             self.is_executable = self.file_type.is_executable
             self.lsp_enabled = self.file_type.lsp_server is not None
-
-
-@dataclass
-class VFSDirectory:
-    """Represents a directory in the Virtual File System"""
-    name: str
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    readonly: bool = False
 
 
 # =============================================================================
@@ -217,6 +284,9 @@ class VirtualFileSystemV2:
         # Storage: path -> VFSFile or VFSDirectory
         self.files: dict[str, VFSFile] = {}
         self.directories: dict[str, VFSDirectory] = {}
+
+        self.mounts: dict[str, ShadowMount] = {}
+        self._shadow_index: dict[str, str] = {}
 
         self._dirty = True
 
@@ -610,65 +680,195 @@ Session: {self.session_id}
 
         return {"success": True, "content": self.files[path].content}
 
+    # =========================================================================
+    # OVERRIDE: WRITE WITH AUTO-SYNC
+    # =========================================================================
+
     def write(self, path: str, content: str) -> dict:
-        """Write/overwrite file content"""
+        """
+        Write file - synct Shadow-Dateien automatisch.
+        """
         path = self._normalize_path(path)
 
         if self._is_directory(path):
             return {"success": False, "error": f"Cannot write to directory: {path}"}
 
         if self._is_file(path):
-            if self.files[path].readonly:
+            f = self.files[path]
+
+            if f.readonly:
                 return {"success": False, "error": f"Read-only: {path}"}
-            self.files[path].content = content
-            self.files[path].updated_at = datetime.now().isoformat()
+
+            # Update content
+            if isinstance(f, VFSFile):
+                f._content = content
+                f.is_dirty = True
+
+                if f.backing_type == FileBackingType.SHADOW:
+                    f.backing_type = FileBackingType.MODIFIED
+
+                # Auto-sync if enabled
+                mount = self._get_mount_for_path(path)
+                if mount and mount.auto_sync and f.local_path:
+                    sync_result = self._sync_to_local(path)
+                    if sync_result["success"]:
+                        f.is_dirty = False
+                        return {
+                            "success": True,
+                            "message": f"Updated and synced '{path}'",
+                            "synced_to": f.local_path
+                        }
+            else:
+                f.content = content
+
+            f.updated_at = datetime.now().isoformat()
             self._dirty = True
+
             return {"success": True, "message": f"Updated '{path}'"}
 
+        # Create new file
         return self.create(path, content)
 
+    def _sync_to_local(self, path: str) -> dict:
+        """
+        Sync einer modifizierten Datei zurück auf Disk.
+        """
+        f = self.files.get(path)
+
+        if not isinstance(f, VFSFile) or not f.local_path:
+            return {"success": False, "error": "Not a shadow file"}
+
+        if not f._content:
+            return {"success": False, "error": "No content to sync"}
+
+        try:
+            # Ensure parent directory exists
+            os.makedirs(os.path.dirname(f.local_path), exist_ok=True)
+
+            with open(f.local_path, 'w', encoding='utf-8') as file:
+                file.write(f._content)
+
+            f.local_mtime = os.path.getmtime(f.local_path)
+            f.is_dirty = False
+
+            return {"success": True, "synced_to": f.local_path}
+
+        except Exception as e:
+            return {"success": False, "error": f"Sync error: {e}"}
+
+    def _get_mount_for_path(self, path: str) -> ShadowMount | None:
+        """Find mount that contains this path"""
+        for mount_path, mount in self.mounts.items():
+            if path.startswith(mount_path):
+                return mount
+        return None
+
+    def sync_all(self) -> dict:
+        """
+        Sync alle dirty files.
+        """
+        synced = []
+        errors = []
+
+        for path, f in self.files.items():
+            if isinstance(f, VFSFile) and f.is_dirty and f.local_path:
+                result = self._sync_to_local(path)
+                if result["success"]:
+                    synced.append(path)
+                else:
+                    errors.append(f"{path}: {result['error']}")
+
+        return {
+            "success": len(errors) == 0,
+            "synced": synced,
+            "errors": errors
+        }
+
     def append(self, path: str, content: str) -> dict:
-        """Append to file"""
+        """Append to file - mit Shadow auto-sync"""
         path = self._normalize_path(path)
 
         if not self._is_file(path):
             return self.create(path, content)
 
-        if self.files[path].readonly:
+        f = self.files[path]
+
+        if f.readonly:
             return {"success": False, "error": f"Read-only: {path}"}
 
-        self.files[path].content += content
-        self.files[path].updated_at = datetime.now().isoformat()
+        # Shadow: erst laden falls nötig
+        if isinstance(f, VFSFile) and f.backing_type == FileBackingType.SHADOW and not f.is_loaded:
+            load_result = self._load_shadow_content(path)
+            if not load_result["success"]:
+                return load_result
+
+        # Append
+        if isinstance(f, VFSFile):
+            f._content = (f._content or "") + content
+            f.is_dirty = True
+            if f.backing_type == FileBackingType.SHADOW:
+                f.backing_type = FileBackingType.MODIFIED
+
+            # Auto-sync
+            mount = self._get_mount_for_path(path)
+            if mount and mount.auto_sync and f.local_path:
+                self._sync_to_local(path)
+        else:
+            f.content += content
+
+        f.updated_at = datetime.now().isoformat()
         self._dirty = True
 
         return {"success": True, "message": f"Appended to '{path}'"}
 
     def edit(self, path: str, line_start: int, line_end: int, new_content: str) -> dict:
-        """Edit file by replacing lines (1-indexed)"""
+        """Edit file by replacing lines (1-indexed) - mit Shadow auto-sync"""
         path = self._normalize_path(path)
 
         if not self._is_file(path):
             return {"success": False, "error": f"File not found: {path}"}
 
         f = self.files[path]
+
         if f.readonly:
             return {"success": False, "error": f"Read-only: {path}"}
 
-        lines = f.content.split('\n')
+        # Shadow: erst laden falls nötig
+        if isinstance(f, VFSFile) and f.backing_type == FileBackingType.SHADOW and not f.is_loaded:
+            load_result = self._load_shadow_content(path)
+            if not load_result["success"]:
+                return load_result
+
+        # Edit
+        content = f._content if isinstance(f, VFSFile) else f.content
+        lines = content.split('\n')
         start_idx = max(0, line_start - 1)
         end_idx = min(len(lines), line_end)
 
         new_lines = new_content.split('\n')
         lines = lines[:start_idx] + new_lines + lines[end_idx:]
+        new_full_content = '\n'.join(lines)
 
-        f.content = '\n'.join(lines)
+        if isinstance(f, VFSFile):
+            f._content = new_full_content
+            f.is_dirty = True
+            if f.backing_type == FileBackingType.SHADOW:
+                f.backing_type = FileBackingType.MODIFIED
+
+            # Auto-sync
+            mount = self._get_mount_for_path(path)
+            if mount and mount.auto_sync and f.local_path:
+                self._sync_to_local(path)
+        else:
+            f.content = new_full_content
+
         f.updated_at = datetime.now().isoformat()
         self._dirty = True
 
         return {"success": True, "message": f"Edited {path} lines {line_start}-{line_end}"}
 
     def delete(self, path: str) -> dict:
-        """Delete a file"""
+        """Delete a file - löscht auch lokale Shadow-Datei"""
         path = self._normalize_path(path)
 
         if not self._is_file(path):
@@ -676,13 +876,34 @@ Session: {self.session_id}
                 return self.rmdir(path)
             return {"success": False, "error": f"File not found: {path}"}
 
-        if self.files[path].readonly:
+        f = self.files[path]
+
+        if f.readonly:
             return {"success": False, "error": f"Cannot delete system file: {path}"}
+
+        # Shadow: auch lokal löschen
+        local_deleted = False
+        if isinstance(f, VFSFile) and f.local_path:
+            mount = self._get_mount_for_path(path)
+            if mount and mount.auto_sync and not mount.readonly:
+                try:
+                    if os.path.exists(f.local_path):
+                        os.remove(f.local_path)
+                        local_deleted = True
+                except OSError as e:
+                    return {"success": False, "error": f"Cannot delete local file: {e}"}
+
+            # Aus shadow index entfernen
+            self._shadow_index.pop(path, None)
 
         del self.files[path]
         self._dirty = True
 
-        return {"success": True, "message": f"Deleted '{path}'"}
+        msg = f"Deleted '{path}'"
+        if local_deleted:
+            msg += " (and local file)"
+
+        return {"success": True, "message": msg}
 
     # =========================================================================
     # OPEN/CLOSE OPERATIONS
@@ -696,6 +917,13 @@ Session: {self.session_id}
             return {"success": False, "error": f"File not found: {path}"}
 
         f = self.files[path]
+
+        # Lazy load for shadow files
+        if isinstance(f, VFSFile) and f.backing_type == FileBackingType.SHADOW:
+            load_result = self._load_shadow_content(path)
+            if not load_result["success"]:
+                return load_result
+
         f.state = "open"
         f.view_start = max(0, line_start - 1)
         f.view_end = line_end
@@ -712,6 +940,35 @@ Session: {self.session_id}
             "preview": '\n'.join(visible[:5]) + ("..." if len(visible) > 5 else ""),
             "file_type": f.file_type.description if f.file_type else "Unknown"
         }
+
+    def _load_shadow_content(self, path: str) -> dict:
+        """
+        Lädt Content einer Shadow-Datei vom Disk.
+        """
+        f = self.files[path]
+
+        if not isinstance(f, VFSFile) or not f.local_path:
+            return {"success": False, "error": "Not a shadow file"}
+
+        if not os.path.exists(f.local_path):
+            return {"success": False, "error": f"Backing file missing: {f.local_path}"}
+
+        try:
+            # Check if file changed on disk
+            current_mtime = os.path.getmtime(f.local_path)
+
+            with open(f.local_path, 'r', encoding='utf-8', errors='replace') as file:
+                content = file.read()
+
+            f._content = content
+            f.local_mtime = current_mtime
+            f.line_count = len(content.splitlines())
+            f.size_bytes = len(content.encode('utf-8'))
+
+            return {"success": True, "loaded_bytes": f.size_bytes}
+
+        except Exception as e:
+            return {"success": False, "error": f"Load error: {e}"}
 
     async def close(self, path: str) -> dict:
         """Close file (create summary, remove from context)"""
@@ -995,6 +1252,10 @@ Session: {self.session_id}
 
         parts = ["=== VFS (Virtual File System) ==="]
 
+        if self.mounts:
+            parts.append("\n📂 Mounts:")
+            for vfs_path, mount in self.mounts.items():
+                parts.append(f"  {vfs_path} → {mount.local_path}")
         # Build directory tree summary
         dir_tree = self._build_tree_string()
         if dir_tree:
@@ -1013,23 +1274,26 @@ Session: {self.session_id}
                 ordered.append((path, f))
 
         for path, f in ordered:
-            if f.state == "open":
+            if f.state == "open" and (not isinstance(f, VFSFile) or f.is_loaded):
                 lines = f.content.split('\n')
                 end = f.view_end if f.view_end > 0 else len(lines)
                 visible = lines[f.view_start:end]
 
                 icon = f.file_type.icon if f.file_type else "📄"
 
+                # Dirty indicator
+                dirty = " [MODIFIED]" if isinstance(f, VFSFile) and f.is_dirty else ""
+
                 if len(visible) > self.max_window_lines:
                     visible = visible[:self.max_window_lines]
-                    parts.append(f"\n{icon} [{path}] OPEN (lines {f.view_start + 1}-{f.view_start + self.max_window_lines}, truncated):")
+                    parts.append(
+                        f"\n{icon} [{path}]{dirty} (lines {f.view_start + 1}-{f.view_start + self.max_window_lines}, truncated):")
                 else:
-                    parts.append(f"\n{icon} [{path}] OPEN (lines {f.view_start + 1}-{end}):")
+                    parts.append(f"\n{icon} [{path}]{dirty} (lines {f.view_start + 1}-{end}):")
                 parts.append('\n'.join(visible))
-            else:
-                icon = f.file_type.icon if f.file_type else "📄"
-                summary = f.mini_summary or f"[{len(f.content)} chars]"
-                parts.append(f"\n• {icon} {path} [closed]: {summary}")
+        closed_count = sum(1 for f in self.files.values() if f.state == "closed")
+        if closed_count > 0:
+            parts.append(f"\n📋 {closed_count} closed files available")
 
         return '\n'.join(parts)
 
@@ -1121,6 +1385,325 @@ Session: {self.session_id}
         if not self._is_file(path):
             return False
         return self.files[path].is_executable
+
+    # =========================================================================
+    # MOUNT OPERATIONS
+    # =========================================================================
+
+    def mount(
+        self,
+        local_path: str,
+        vfs_path: str = "/project",
+        allowed_extensions: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
+        readonly: bool = False,
+        auto_sync: bool = True
+    ) -> dict:
+        """
+        Mount einen lokalen Ordner als Shadow ins VFS.
+
+        Scannt nur Metadata, lädt keine Dateiinhalte!
+
+        Args:
+            local_path: Lokaler Ordner
+            vfs_path: Mount-Punkt im VFS
+            allowed_extensions: Nur diese Extensions (None = alle)
+            exclude_patterns: Ausschluss-Patterns
+            readonly: Keine Schreiboperationen erlauben
+            auto_sync: Änderungen sofort auf Disk schreiben
+
+        Returns:
+            Result mit Statistiken
+        """
+        local_path = os.path.abspath(os.path.expanduser(local_path))
+        vfs_path = self._normalize_path(vfs_path)
+
+        if not os.path.isdir(local_path):
+            return {"success": False, "error": f"Not a directory: {local_path}"}
+
+        if vfs_path in self.mounts:
+            return {"success": False, "error": f"Already mounted: {vfs_path}"}
+
+        # Create mount
+        mount = ShadowMount(
+            vfs_path=vfs_path,
+            local_path=local_path,
+            allowed_extensions=allowed_extensions,
+            exclude_patterns=exclude_patterns or ShadowMount().exclude_patterns,
+            readonly=readonly,
+            auto_sync=auto_sync
+        )
+
+        # Scan and index (metadata only!)
+        stats = self._scan_mount(mount)
+
+        self.mounts[vfs_path] = mount
+        self._dirty = True
+
+        return {
+            "success": True,
+            "mount_point": vfs_path,
+            "local_path": local_path,
+            "files_indexed": stats["files"],
+            "dirs_indexed": stats["dirs"],
+            "total_size": stats["total_size"],
+            "scan_time_ms": stats["scan_time_ms"]
+        }
+
+    def _scan_mount(self, mount: ShadowMount) -> dict:
+        """
+        Schneller Metadata-Scan ohne Content-Loading.
+
+        Erstellt Shadow-Einträge für alle Dateien.
+        """
+        import fnmatch
+        import time
+
+        start = time.perf_counter()
+        stats = {"files": 0, "dirs": 0, "total_size": 0, "skipped": 0}
+
+        def should_include(path: str, is_dir: bool) -> bool:
+            name = os.path.basename(path)
+            for pattern in mount.exclude_patterns:
+                if fnmatch.fnmatch(name, pattern):
+                    return False
+            if not is_dir and mount.allowed_extensions:
+                ext = os.path.splitext(name)[1].lower()
+                if ext not in mount.allowed_extensions:
+                    return False
+            return True
+
+        # Walk directory tree
+        for root, dirs, files in os.walk(mount.local_path):
+            # Filter directories in-place
+            dirs[:] = [d for d in dirs if should_include(os.path.join(root, d), True)]
+
+            # Calculate VFS path for current directory
+            rel_path = os.path.relpath(root, mount.local_path)
+            if rel_path == ".":
+                vfs_dir = mount.vfs_path
+            else:
+                vfs_dir = f"{mount.vfs_path}/{rel_path.replace(os.sep, '/')}"
+
+            # Create directory entry
+            if vfs_dir not in self.directories:
+                self.directories[vfs_dir] = VFSDirectory(
+                    name=os.path.basename(vfs_dir) or mount.vfs_path,
+                    readonly=mount.readonly
+                )
+                stats["dirs"] += 1
+
+            # Create shadow file entries (metadata only!)
+            for filename in files:
+                local_file = os.path.join(root, filename)
+
+                if not should_include(local_file, False):
+                    stats["skipped"] += 1
+                    continue
+
+                try:
+                    file_stat = os.stat(local_file)
+
+                    # Skip too large files
+                    if file_stat.st_size > mount.max_file_size:
+                        stats["skipped"] += 1
+                        continue
+
+                    vfs_file_path = f"{vfs_dir}/{filename}"
+
+                    # Create shadow entry (NO content loading!)
+                    file_type = get_file_type(filename)
+
+                    self.files[vfs_file_path] = VFSFile(
+                        filename=filename,
+                        backing_type=FileBackingType.SHADOW,
+                        _content=None,  # NOT LOADED
+                        local_path=local_file,
+                        local_mtime=file_stat.st_mtime,
+                        size_bytes=file_stat.st_size,
+                        line_count=-1,  # Unknown until loaded
+                        file_type=file_type,
+                        readonly=mount.readonly
+                    )
+
+                    self._shadow_index[vfs_file_path] = local_file
+                    stats["files"] += 1
+                    stats["total_size"] += file_stat.st_size
+
+                except (OSError, IOError):
+                    stats["skipped"] += 1
+
+        stats["scan_time_ms"] = (time.perf_counter() - start) * 1000
+        return stats
+
+    def unmount(self, vfs_path: str, save_changes: bool = True) -> dict:
+        """
+        Unmount und optional alle Änderungen speichern.
+        """
+        vfs_path = self._normalize_path(vfs_path)
+
+        if vfs_path not in self.mounts:
+            return {"success": False, "error": f"Not mounted: {vfs_path}"}
+
+        mount = self.mounts[vfs_path]
+
+        # Save dirty files if requested
+        saved = []
+        if save_changes and not mount.readonly:
+            for path, f in list(self.files.items()):
+                if path.startswith(vfs_path) and isinstance(f, VFSFile):
+                    if f.is_dirty and f.local_path:
+                        result = self._sync_to_local(path)
+                        if result["success"]:
+                            saved.append(path)
+
+        # Remove all entries under mount point
+        paths_to_remove = [p for p in self.files if p.startswith(vfs_path)]
+        for p in paths_to_remove:
+            del self.files[p]
+            self._shadow_index.pop(p, None)
+
+        dirs_to_remove = [p for p in self.directories if p.startswith(vfs_path)]
+        for p in dirs_to_remove:
+            del self.directories[p]
+
+        del self.mounts[vfs_path]
+        self._dirty = True
+
+        return {
+            "success": True,
+            "unmounted": vfs_path,
+            "files_saved": saved
+        }
+
+    def refresh_mount(self, vfs_path: str) -> dict:
+        """
+        Re-scan mount für neue/gelöschte Dateien.
+        Behält geladene und modifizierte Dateien.
+        """
+        vfs_path = self._normalize_path(vfs_path)
+
+        if vfs_path not in self.mounts:
+            return {"success": False, "error": f"Not mounted: {vfs_path}"}
+
+        mount = self.mounts[vfs_path]
+
+        # Remember modified files
+        modified_files = {
+            path: f for path, f in self.files.items()
+            if path.startswith(vfs_path)
+               and isinstance(f, VFSFile)
+               and f.is_dirty
+        }
+
+        # Re-scan
+        stats = self._scan_mount(mount)
+
+        # Restore modified files
+        for path, f in modified_files.items():
+            self.files[path] = f
+
+        return {
+            "success": True,
+            "files_indexed": stats["files"],
+            "modified_preserved": len(modified_files)
+        }
+
+
+    def execute(self, path: str, args: list[str] | None = None, timeout: float = 30.0) -> dict:
+        """
+        Execute a file if executable.
+
+        Args:
+            path: VFS path to executable file
+            args: Command line arguments
+            timeout: Execution timeout in seconds
+
+        Returns:
+            Result with stdout, stderr, return_code
+        """
+        import subprocess
+
+        path = self._normalize_path(path)
+
+        if not self._is_file(path):
+            return {"success": False, "error": f"File not found: {path}"}
+
+        f = self.files[path]
+
+        if not f.is_executable:
+            return {"success": False, "error": f"File not executable: {path}"}
+
+        # Shadow: nutze lokalen Pfad direkt
+        if isinstance(f, VFSFile) and f.local_path and os.path.exists(f.local_path):
+            # Sync falls dirty
+            if f.is_dirty:
+                sync_result = self._sync_to_local(path)
+                if not sync_result["success"]:
+                    return sync_result
+            exec_path = f.local_path
+        else:
+            # Memory file: in temp speichern
+            import tempfile
+            ext = f.file_type.extension if f.file_type else ""
+
+            content = f._content if isinstance(f, VFSFile) else f.content
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix=ext, delete=False) as tmp:
+                tmp.write(content)
+                exec_path = tmp.name
+
+        # Determine interpreter
+        interpreter = []
+        if f.file_type:
+            lang = f.file_type.language_id
+            if lang == "python":
+                interpreter = [sys.executable]
+            elif lang == "javascript":
+                interpreter = ["node"]
+            elif lang == "typescript":
+                interpreter = ["npx", "ts-node"]
+            elif lang == "shellscript":
+                interpreter = ["bash"]
+            elif lang == "rust":
+                # Rust muss kompiliert werden - nicht direkt ausführbar
+                return {"success": False, "error": "Rust files must be compiled first"}
+
+        cmd = interpreter + [exec_path] + (args or [])
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=os.path.dirname(exec_path) if exec_path.startswith('/') else None
+            )
+
+            return {
+                "success": result.returncode == 0,
+                "return_code": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "command": ' '.join(cmd)
+            }
+
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": f"Execution timed out after {timeout}s"}
+        except FileNotFoundError as e:
+            return {"success": False, "error": f"Interpreter not found: {e}"}
+        except Exception as e:
+            return {"success": False, "error": f"Execution error: {e}"}
+        finally:
+            # Cleanup temp file if created
+            if not (isinstance(f, VFSFile) and f.local_path):
+                try:
+                    os.unlink(exec_path)
+                except:
+                    pass
+
+
+
 
 
 VirtualFileSystem = VirtualFileSystemV2

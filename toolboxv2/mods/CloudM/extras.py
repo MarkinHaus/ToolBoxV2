@@ -179,7 +179,7 @@ def hud_quick_actions(app: App=None, request=None):
             Hello, {user_name}!
         </div>
         <div style="display: flex; flex-wrap: wrap; gap: 6px;">
-            <button onclick=HUD.action('quick_actions', 'refresh') style="
+            <button onclick="HUD.action('CloudM', 'refresh')" style="
                 background: linear-gradient(135deg, #6366f1, #8b5cf6);
                 border: none;
                 color: white;
@@ -191,7 +191,7 @@ def hud_quick_actions(app: App=None, request=None):
                 align-items: center;
                 gap: 4px;
             ">🔄 Refresh</button>
-            <button onclick=HUD.action('quick_actions', 'show_docs') style="
+            <button onclick="HUD.action('CloudM', 'show_docs')" style="
                 background: rgba(255,255,255,0.1);
                 border: 1px solid rgba(255,255,255,0.2);
                 color: white;
@@ -200,7 +200,7 @@ def hud_quick_actions(app: App=None, request=None):
                 font-size: 11px;
                 cursor: pointer;
             ">📚 API Docs</button>
-            <button onclick=HUD.action('quick_actions', 'test_notify') style="
+            <button onclick="HUD.action('CloudM', 'test_notify')" style="
                 background: rgba(34, 197, 94, 0.2);
                 border: 1px solid rgba(34, 197, 94, 0.4);
                 color: #22c55e;

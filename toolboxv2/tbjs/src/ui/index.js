@@ -27,7 +27,6 @@ import { MinuRenderer, createMinuRenderer, mountMinuView } from './components/Mi
 
 // Desktop/Mobile platform components
 import {
-    QuickCapturePopup,
     DesktopStatusBar,
     MobileBottomNav,
     SystemTray,
@@ -122,7 +121,6 @@ export {
     ChatWidget,
     MinuRenderer, createMinuRenderer, mountMinuView,
     // Desktop/Mobile platform components
-    QuickCapturePopup,
     DesktopStatusBar,
     MobileBottomNav,
     SystemTray,

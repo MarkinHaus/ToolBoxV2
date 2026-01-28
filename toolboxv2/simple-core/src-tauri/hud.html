@@ -50,7 +50,6 @@
             font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
             color: var(--hud-text);
             font-size: 13px;
-            /* Ensure no browser chrome or borders */
             -webkit-app-region: no-drag;
         }
 
@@ -66,7 +65,6 @@
             flex-direction: column;
             overflow: hidden;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-            /* Prevent any margin/padding issues */
             margin: 0;
             padding: 0;
             position: absolute;
@@ -153,6 +151,11 @@
         .status-dot.connected {
             background: var(--hud-success);
             box-shadow: 0 0 6px var(--hud-success);
+        }
+
+        .status-dot.authenticated {
+            background: var(--hud-accent);
+            box-shadow: 0 0 6px var(--hud-accent);
         }
 
         .status-text {
@@ -535,6 +538,25 @@
             height: 100%;
             overflow: auto;
         }
+
+        /* Auth Status Badge */
+        .auth-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 9px;
+            font-weight: 500;
+        }
+        .auth-badge.logged-in {
+            background: rgba(34, 197, 94, 0.2);
+            color: var(--hud-success);
+        }
+        .auth-badge.logged-out {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--hud-error);
+        }
     </style>
 </head>
 <body>
@@ -558,7 +580,12 @@
             <span class="status-divider">│</span>
             <span class="status-text" id="status-mode">-</span>
             <span class="status-divider">│</span>
-            <span class="status-text" id="status-info">-</span>
+            <span class="status-text" id="status-auth">
+                <span class="auth-badge logged-out" id="auth-badge">
+                    <span class="material-icons" style="font-size: 10px;">person_off</span>
+                    <span id="auth-text">Not logged in</span>
+                </span>
+            </span>
         </div>
 
         <!-- HUD Function Selector -->
@@ -616,99 +643,516 @@
     </div>
 
     <script type="module">
+        // ============================================================
+        // MINIMAL TB-COMPATIBLE FRAMEWORK FOR HUD
+        // ============================================================
+
         /**
- * DOM Engine für HTMX-Style Updates über WebSocket
- */
-class DomEngine {
-    constructor(app) {
-        this.app = app;
-    }
+         * Minimal TB Framework for HUD Authentication & Routing
+         * - No theme/nav/background
+         * - Session verification via HTTP with Bearer token
+         * - Minimal router for DOM manipulation in HUD content area
+         */
+        const TB = {
+            VERSION: '0.1.0-hud',
+            isInit: false,
 
-    /**
-     * Verarbeitet einen DOM-Update-Befehl vom Server
-     * @param {Object} op - Operation { selector, html, swap, run_js, data }
-     */
-    process(op) {
-        const targets = document.querySelectorAll(op.selector);
-        if (targets.length === 0) {
-            console.warn(`[DomEngine] Target not found: ${op.selector}`);
-            return;
-        }
-
-        targets.forEach(target => {
-            this.applySwap(target, op.html, op.swap || 'innerHTML');
-            this.executeEmbeddedScripts(target);
-        });
-
-        if (op.run_js) {
-            this.executeSafeJs(op.run_js, {
-                selector: op.selector,
-                data: op.data
-            });
-        }
-    }
-
-    applySwap(target, html, strategy) {
-        switch (strategy) {
-            case 'innerHTML':
-                target.innerHTML = html;
-                break;
-            case 'outerHTML':
-                target.outerHTML = html;
-                break;
-            case 'beforebegin':
-                target.insertAdjacentHTML('beforebegin', html);
-                break;
-            case 'afterbegin':
-                target.insertAdjacentHTML('afterbegin', html);
-                break;
-            case 'beforeend':
-                target.insertAdjacentHTML('beforeend', html);
-                break;
-            case 'afterend':
-                target.insertAdjacentHTML('afterend', html);
-                break;
-            case 'delete':
-                target.remove();
-                break;
-            case 'none':
-                break;
-            default:
-                console.warn(`[DomEngine] Unknown swap strategy: ${strategy}`);
-                target.innerHTML = html;
-        }
-    }
-
-    executeEmbeddedScripts(container) {
-        if (!container.querySelectorAll) return;
-
-        const scripts = container.querySelectorAll('script');
-        scripts.forEach(oldScript => {
-            const newScript = document.createElement('script');
-            Array.from(oldScript.attributes).forEach(attr => {
-                newScript.setAttribute(attr.name, attr.value);
-            });
-            newScript.appendChild(document.createTextNode(oldScript.innerHTML));
-            oldScript.parentNode.replaceChild(newScript, oldScript);
-        });
-    }
-
-    executeSafeJs(code, context) {
-        try {
-            const safeFunc = new Function('ctx', 'HUD', `
-                "use strict";
-                try {
-                    ${code}
-                } catch(e) {
-                    console.error("[CustomJS Error]", e);
+            // ---- CONFIG ----
+            config: {
+                _config: {
+                    baseApiUrl: 'http://localhost:5000/api',
+                    baseWsUrl: 'ws://localhost:5001',
+                    isTauri: false
+                },
+                init: function(options = {}) {
+                    this._config = { ...this._config, ...options };
+                },
+                get: function(key) {
+                    if (key.includes('.')) {
+                        return key.split('.').reduce((o, k) => o?.[k], this._config);
+                    }
+                    return this._config[key];
+                },
+                set: function(key, value) {
+                    this._config[key] = value;
                 }
-            `);
-            safeFunc(context, window.HUD);
-        } catch (e) {
-            console.error('[DomEngine] Failed to compile backend JS:', e);
+            },
+
+            // ---- STATE ----
+            state: {
+                _state: {
+                    user: {
+                        isAuthenticated: false,
+                        username: null,
+                        email: null,
+                        userId: null,
+                        userLevel: 1,
+                        token: null,
+                        userData: {},
+                        settings: {},
+                        modData: {}
+                    }
+                },
+                init: function(initialState = {}) {
+                    this._state = { ...this._state, ...initialState };
+                },
+                get: function(key) {
+                    if (key.includes('.')) {
+                        return key.split('.').reduce((o, k) => o?.[k], this._state);
+                    }
+                    return this._state[key];
+                },
+                set: function(key, value) {
+                    if (key.includes('.')) {
+                        const keys = key.split('.');
+                        let current = this._state;
+                        for (let i = 0; i < keys.length - 1; i++) {
+                            if (!current[keys[i]]) current[keys[i]] = {};
+                            current = current[keys[i]];
+                        }
+                        current[keys[keys.length - 1]] = value;
+                    } else {
+                        this._state[key] = value;
+                    }
+                    TB.events.emit('state:changed', { key, value });
+                }
+            },
+
+            // ---- EVENTS ----
+            events: {
+                _listeners: {},
+                on: function(event, callback) {
+                    if (!this._listeners[event]) this._listeners[event] = [];
+                    this._listeners[event].push(callback);
+                },
+                off: function(event, callback) {
+                    if (!this._listeners[event]) return;
+                    this._listeners[event] = this._listeners[event].filter(cb => cb !== callback);
+                },
+                emit: function(event, data) {
+                    if (!this._listeners[event]) return;
+                    this._listeners[event].forEach(cb => {
+                        try { cb(data); } catch (e) { console.error(`[TB.events] Error in ${event}:`, e); }
+                    });
+                }
+            },
+
+            // ---- LOGGER ----
+            logger: {
+                _level: 'debug',
+                _levels: { debug: 0, info: 1, warn: 2, error: 3 },
+                init: function(options = {}) {
+                    this._level = options.logLevel || 'debug';
+                },
+                _log: function(level, ...args) {
+                    if (this._levels[level] >= this._levels[this._level]) {
+                        console[level](`[TB.${level}]`, ...args);
+                    }
+                },
+                debug: function(...args) { this._log('debug', ...args); },
+                info: function(...args) { this._log('info', ...args); },
+                warn: function(...args) { this._log('warn', ...args); },
+                error: function(...args) { this._log('error', ...args); },
+                log: function(...args) { this._log('info', ...args); }
+            },
+
+            // ---- API ----
+            api: {
+                _getHeaders: function(isJson = true) {
+                    const headers = {
+                        'Accept': isJson ? 'application/json' : 'text/html'
+                    };
+                    if (isJson) {
+                        headers['Content-Type'] = 'application/json';
+                    }
+                    const token = TB.state.get('user.token');
+                    if (token) {
+                        headers['Authorization'] = `Bearer ${token}`;
+                    }
+                    return headers;
+                },
+
+                request: async function(moduleName, functionName, payload = null, method = 'POST') {
+                    const isFullPath = moduleName.startsWith('/');
+                    let url;
+                    if (isFullPath) {
+                        url = `${TB.config.get('baseApiUrl').replace('/api', '')}${moduleName}`;
+                    } else {
+                        url = `${TB.config.get('baseApiUrl')}/${moduleName}/${functionName}`;
+                    }
+
+                    const options = {
+                        method,
+                        headers: this._getHeaders(),
+                        credentials: 'include'
+                    };
+
+                    if (payload && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
+                        options.body = JSON.stringify(payload);
+                    }
+
+                    TB.logger.debug(`[API] ${method} ${url}`, payload);
+
+                    try {
+                        const response = await fetch(url, options);
+                        let data;
+                        const contentType = response.headers.get('content-type');
+
+                        if (response.status === 204 || response.status === 205) {
+                            data = { success: true };
+                        } else if (contentType?.includes('application/json')) {
+                            data = await response.json();
+                        } else {
+                            const text = await response.text();
+                            try { data = JSON.parse(text); } catch { data = { message: text }; }
+                        }
+
+                        if (!response.ok) {
+                            TB.logger.error(`[API] HTTP ${response.status}:`, data);
+                            return { error: data.error || 'http_error', data: null, status: response.status };
+                        }
+
+                        TB.logger.debug(`[API] Success:`, data);
+                        return { error: 'none', data, status: response.status };
+                    } catch (error) {
+                        TB.logger.error(`[API] Network error:`, error);
+                        return { error: 'network_error', data: null, message: error.message };
+                    }
+                },
+
+                fetchHtml: async function(path) {
+                    const url = path.startsWith('http') ? path : `${TB.config.get('baseApiUrl').replace('/api', '')}${path}`;
+                    TB.logger.debug(`[API] Fetching HTML: ${url}`);
+                    try {
+                        const response = await fetch(url, {
+                            headers: this._getHeaders(false),
+                            credentials: 'include'
+                        });
+                        if (!response.ok) return `<div class="error">HTTP ${response.status}</div>`;
+                        return await response.text();
+                    } catch (error) {
+                        return `<div class="error">Network error: ${error.message}</div>`;
+                    }
+                }
+            },
+
+            // ---- USER / AUTH ----
+            user: {
+                _sessionToken: null,
+
+                init: async function() {
+                    TB.logger.info('[User] Initializing authentication...');
+                    // Try to restore session from localStorage
+                    const storedToken = localStorage.getItem('tb_hud_session_token');
+                    const storedUser = localStorage.getItem('tb_hud_user_data');
+
+                    if (storedToken) {
+                        TB.state.set('user.token', storedToken);
+                        this._sessionToken = storedToken;
+
+                        if (storedUser) {
+                            try {
+                                const userData = JSON.parse(storedUser);
+                                TB.state.set('user.isAuthenticated', true);
+                                TB.state.set('user.userId', userData.userId);
+                                TB.state.set('user.username', userData.username);
+                                TB.state.set('user.email', userData.email);
+                                TB.state.set('user.userLevel', userData.userLevel || 1);
+                            } catch (e) {
+                                TB.logger.warn('[User] Failed to parse stored user data');
+                            }
+                        }
+
+                        // Verify session with server
+                        const isValid = await this.verifySession();
+                        if (!isValid) {
+                            this.clearSession();
+                        }
+                    }
+
+                    return TB.state.get('user.isAuthenticated');
+                },
+
+                setSession: function(token, userData = {}) {
+                    this._sessionToken = token;
+                    TB.state.set('user.token', token);
+                    TB.state.set('user.isAuthenticated', true);
+
+                    if (userData.userId) TB.state.set('user.userId', userData.userId);
+                    if (userData.username) TB.state.set('user.username', userData.username);
+                    if (userData.email) TB.state.set('user.email', userData.email);
+                    if (userData.userLevel) TB.state.set('user.userLevel', userData.userLevel);
+
+                    // Persist to localStorage
+                    localStorage.setItem('tb_hud_session_token', token);
+                    localStorage.setItem('tb_hud_user_data', JSON.stringify({
+                        userId: userData.userId,
+                        username: userData.username,
+                        email: userData.email,
+                        userLevel: userData.userLevel
+                    }));
+
+                    TB.events.emit('user:signedIn', { userId: userData.userId, username: userData.username });
+                    TB.logger.info('[User] Session set for:', userData.username || userData.userId);
+                },
+
+                clearSession: function() {
+                    this._sessionToken = null;
+                    TB.state.set('user.token', null);
+                    TB.state.set('user.isAuthenticated', false);
+                    TB.state.set('user.userId', null);
+                    TB.state.set('user.username', null);
+                    TB.state.set('user.email', null);
+                    TB.state.set('user.userLevel', 1);
+
+                    localStorage.removeItem('tb_hud_session_token');
+                    localStorage.removeItem('tb_hud_user_data');
+
+                    TB.events.emit('user:signedOut', {});
+                    TB.logger.info('[User] Session cleared');
+                },
+
+                verifySession: async function() {
+                    const token = TB.state.get('user.token');
+                    if (!token) {
+                        TB.logger.debug('[User] No token to verify');
+                        return false;
+                    }
+
+                    try {
+                        // Use /validateSession endpoint
+                        const result = await TB.api.request('/validateSession', null, null, 'GET');
+
+                        if (result.error === 'none' && result.data?.error === 'none') {
+                            TB.logger.info('[User] Session verified successfully');
+                            TB.state.set('user.isAuthenticated', true);
+
+                            // Update user data if provided
+                            if (result.data?.user) {
+                                TB.state.set('user.userId', result.data.user.userId);
+                                TB.state.set('user.username', result.data.user.username);
+                                TB.state.set('user.userLevel', result.data.user.userLevel || 1);
+                            }
+
+                            TB.events.emit('user:sessionVerified', { valid: true });
+                            return true;
+                        } else {
+                            TB.logger.warn('[User] Session invalid:', result);
+                            TB.events.emit('user:sessionVerified', { valid: false });
+                            return false;
+                        }
+                    } catch (error) {
+                        TB.logger.error('[User] Session verification failed:', error);
+                        TB.events.emit('user:sessionVerified', { valid: false, error });
+                        return false;
+                    }
+                },
+
+                isAuthenticated: function() {
+                    return TB.state.get('user.isAuthenticated') === true;
+                },
+
+                getSessionToken: function() {
+                    return this._sessionToken || TB.state.get('user.token');
+                },
+
+                getUserData: function() {
+                    return {
+                        userId: TB.state.get('user.userId'),
+                        username: TB.state.get('user.username'),
+                        email: TB.state.get('user.email'),
+                        userLevel: TB.state.get('user.userLevel')
+                    };
+                }
+            },
+
+            // ---- MINIMAL ROUTER FOR HUD CONTENT ----
+            router: {
+                _container: null,
+                _routes: [],
+                _currentPath: null,
+                _cache: {},
+
+                init: function(container, routes = []) {
+                    this._container = container;
+                    this._routes = routes;
+                    TB.logger.info('[Router] Initialized with container:', container?.id);
+                },
+
+                setContainer: function(container) {
+                    this._container = container;
+                },
+
+                navigateTo: async function(path, replace = false) {
+                    if (!this._container) {
+                        TB.logger.warn('[Router] No container set');
+                        return false;
+                    }
+
+                    TB.logger.info('[Router] Navigating to:', path);
+                    this._currentPath = path;
+
+                    // Check cache
+                    if (this._cache[path]) {
+                        this._container.innerHTML = this._cache[path];
+                        this._executeScripts(this._container);
+                        TB.events.emit('router:navigated', { path });
+                        return true;
+                    }
+
+                    // Fetch HTML
+                    const html = await TB.api.fetchHtml(path);
+                    this._container.innerHTML = html;
+                    this._executeScripts(this._container);
+
+                    TB.events.emit('router:navigated', { path });
+                    return true;
+                },
+
+                getCurrentPath: function() {
+                    return this._currentPath;
+                },
+
+                clearCache: function() {
+                    this._cache = {};
+                },
+
+                _executeScripts: function(container) {
+                    if (!container?.querySelectorAll) return;
+                    const scripts = container.querySelectorAll('script');
+                    scripts.forEach(oldScript => {
+                        const newScript = document.createElement('script');
+                        Array.from(oldScript.attributes).forEach(attr => {
+                            newScript.setAttribute(attr.name, attr.value);
+                        });
+                        newScript.textContent = oldScript.textContent;
+                        oldScript.parentNode?.replaceChild(newScript, oldScript);
+                    });
+                }
+            },
+
+            // ---- ENV ----
+            env: {
+                _detected: {},
+                detect: function() {
+                    this._detected = {
+                        isTauri: typeof window.__TAURI__ !== 'undefined',
+                        isMobile: /iPhone|iPad|iPod|Android/i.test(navigator.userAgent),
+                        isWeb: typeof window !== 'undefined'
+                    };
+                    return this._detected;
+                },
+                isTauri: function() { return this._detected.isTauri; },
+                isMobile: function() { return this._detected.isMobile; },
+                isWeb: function() { return this._detected.isWeb; }
+            },
+
+            // ---- INIT ----
+            init: async function(options = {}) {
+                TB.logger.init({ logLevel: options.logLevel || 'debug' });
+                TB.logger.info(`TB HUD Framework v${this.VERSION} initializing...`);
+
+                TB.config.init(options);
+                TB.state.init(options.initialState || {});
+                TB.env.detect();
+
+                // Load API URLs from Tauri if available
+                if (TB.env.isTauri() && window.__TAURI__?.core?.invoke) {
+                    try {
+                        const urls = await window.__TAURI__.core.invoke('get_api_urls');
+                        TB.config.set('baseApiUrl', urls.api_url);
+                        TB.config.set('baseWsUrl', urls.ws_url);
+                        TB.logger.info('[TB] Using Tauri API URLs:', urls);
+                    } catch (e) {
+                        TB.logger.warn('[TB] Could not get Tauri API URLs:', e);
+                    }
+                }
+
+                // Initialize user/auth
+                await TB.user.init();
+
+                this.isInit = true;
+                TB.events.emit('tb:initialized', TB);
+                TB.logger.info('TB HUD Framework initialized.');
+
+                return this;
+            }
+        };
+
+        // Make TB globally available
+        window.TB = TB;
+
+        // ============================================================
+        // DOM ENGINE FOR HTMX-STYLE UPDATES
+        // ============================================================
+        class DomEngine {
+            constructor(app) {
+                this.app = app;
+            }
+
+            process(op) {
+                const targets = document.querySelectorAll(op.selector);
+                if (targets.length === 0) {
+                    console.warn(`[DomEngine] Target not found: ${op.selector}`);
+                    return;
+                }
+
+                targets.forEach(target => {
+                    this.applySwap(target, op.html, op.swap || 'innerHTML');
+                    this.executeEmbeddedScripts(target);
+                });
+
+                if (op.run_js) {
+                    this.executeSafeJs(op.run_js, {
+                        selector: op.selector,
+                        data: op.data
+                    });
+                }
+            }
+
+            applySwap(target, html, strategy) {
+                switch (strategy) {
+                    case 'innerHTML': target.innerHTML = html; break;
+                    case 'outerHTML': target.outerHTML = html; break;
+                    case 'beforebegin': target.insertAdjacentHTML('beforebegin', html); break;
+                    case 'afterbegin': target.insertAdjacentHTML('afterbegin', html); break;
+                    case 'beforeend': target.insertAdjacentHTML('beforeend', html); break;
+                    case 'afterend': target.insertAdjacentHTML('afterend', html); break;
+                    case 'delete': target.remove(); break;
+                    case 'none': break;
+                    default: target.innerHTML = html;
+                }
+            }
+
+            executeEmbeddedScripts(container) {
+                if (!container.querySelectorAll) return;
+                const scripts = container.querySelectorAll('script');
+                scripts.forEach(oldScript => {
+                    const newScript = document.createElement('script');
+                    Array.from(oldScript.attributes).forEach(attr => {
+                        newScript.setAttribute(attr.name, attr.value);
+                    });
+                    newScript.appendChild(document.createTextNode(oldScript.innerHTML));
+                    oldScript.parentNode.replaceChild(newScript, oldScript);
+                });
+            }
+
+            executeSafeJs(code, context) {
+                try {
+                    const safeFunc = new Function('ctx', 'HUD', 'TB', `
+                        "use strict";
+                        try { ${code} } catch(e) { console.error("[CustomJS Error]", e); }
+                    `);
+                    safeFunc(context, window.HUD, window.TB);
+                } catch (e) {
+                    console.error('[DomEngine] Failed to compile backend JS:', e);
+                }
+            }
         }
-    }
-}
+
+        // ============================================================
+        // HUD APP CLASS
+        // ============================================================
         class HudApp {
             constructor() {
                 this.ws = null;
@@ -744,14 +1188,58 @@ class DomEngine {
 
             async init() {
                 console.log('[HUD] Initializing...');
+
+                // Initialize TB Framework first
+                await TB.init({
+                    baseApiUrl: this.apiUrl + '/api',
+                    baseWsUrl: this.wsUrl,
+                    logLevel: 'debug'
+                });
+
+                // Set router container to HUD content area
+                TB.router.setContainer(document.getElementById('hud-func-content-inner'));
+
                 this.bindEvents();
                 this.setupDrag();
                 this.setupHudFunctions();
                 await this.loadSettings();
+
+                // Update auth UI
+                this.updateAuthUI();
+
+                // Listen for auth changes
+                TB.events.on('user:signedIn', () => this.updateAuthUI());
+                TB.events.on('user:signedOut', () => this.updateAuthUI());
+                TB.events.on('user:sessionVerified', () => this.updateAuthUI());
+
                 await this.connect();
                 this.setupTauriEvents();
                 await this.loadHudFunctions();
                 await this.restoreSelectedHudFunc();
+            }
+
+            updateAuthUI() {
+                const badge = document.getElementById('auth-badge');
+                const text = document.getElementById('auth-text');
+                const statusDot = document.getElementById('status-dot');
+
+                if (TB.user.isAuthenticated()) {
+                    const userData = TB.user.getUserData();
+                    badge.classList.remove('logged-out');
+                    badge.classList.add('logged-in');
+                    badge.querySelector('.material-icons').textContent = 'person';
+                    text.textContent = userData.username || userData.userId || 'Logged in';
+
+                    if (this.connected) {
+                        statusDot.classList.add('authenticated');
+                    }
+                } else {
+                    badge.classList.remove('logged-in');
+                    badge.classList.add('logged-out');
+                    badge.querySelector('.material-icons').textContent = 'person_off';
+                    text.textContent = 'Not logged in';
+                    statusDot.classList.remove('authenticated');
+                }
             }
 
             setupDrag() {
@@ -764,16 +1252,12 @@ class DomEngine {
             }
 
             async onDragStart(e) {
-                // Don't drag if clicking on buttons
                 if (e.target.closest('.hud-btn')) return;
 
                 this.isDragging = true;
                 this.dragStartX = e.screenX;
                 this.dragStartY = e.screenY;
 
-                console.log('[HUD] Drag started at screen:', this.dragStartX, this.dragStartY);
-
-                // Get current window position
                 if (window.__TAURI__) {
                     try {
                         const { getCurrentWindow } = window.__TAURI__.window;
@@ -781,13 +1265,11 @@ class DomEngine {
                         const pos = await win.outerPosition();
                         this.windowStartX = pos.x;
                         this.windowStartY = pos.y;
-                        console.log('[HUD] Window position:', this.windowStartX, this.windowStartY);
                     } catch (err) {
                         console.error('[HUD] Failed to get window position:', err);
                         this.isDragging = false;
                     }
                 } else {
-                    console.warn('[HUD] No Tauri API available');
                     this.isDragging = false;
                 }
             }
@@ -816,7 +1298,6 @@ class DomEngine {
                 if (!this.isDragging) return;
                 this.isDragging = false;
 
-                // Save position after drag ends (debounced)
                 if (this.saveTimeout) clearTimeout(this.saveTimeout);
                 this.saveTimeout = setTimeout(() => this.savePosition(), 300);
             }
@@ -831,7 +1312,6 @@ class DomEngine {
                     const win = getCurrentWindow();
                     const pos = await win.outerPosition();
 
-                    console.log('[HUD] Saving position:', pos.x, pos.y);
                     await invoke('save_hud_position', { x: pos.x, y: pos.y });
                 } catch (err) {
                     console.error('[HUD] Failed to save position:', err);
@@ -842,23 +1322,19 @@ class DomEngine {
                 document.getElementById('btn-settings')?.addEventListener('click', () => this.toggleSettings());
                 document.getElementById('btn-app')?.addEventListener('click', () => this.switchToApp());
                 document.getElementById('btn-refresh')?.addEventListener('click', () => this.refresh());
-                document.getElementById('btn-switch')?.addEventListener('click', () => this.switchToApp());
 
-                // Opacity change - live update!
                 document.getElementById('setting-opacity')?.addEventListener('input', (e) => {
                     const value = parseInt(e.target.value, 10);
                     document.getElementById('opacity-value').textContent = value + '%';
                     this.setOpacity(value / 100);
                 });
 
-                // Animation Steps change
                 document.getElementById('setting-animation-steps')?.addEventListener('input', (e) => {
                     const value = parseInt(e.target.value, 10);
                     document.getElementById('animation-steps-value').textContent = value;
                     this.setAnimationSteps(value);
                 });
 
-                // Animation Delay change
                 document.getElementById('setting-animation-delay')?.addEventListener('input', (e) => {
                     const value = parseInt(e.target.value, 10);
                     document.getElementById('animation-delay-value').textContent = value + 'ms';
@@ -875,11 +1351,8 @@ class DomEngine {
 
                     let payload = {};
                     if (trigger.dataset.wsPayload) {
-                        try {
-                            payload = JSON.parse(trigger.dataset.wsPayload);
-                        } catch (err) {
-                            console.warn('Invalid JSON in data-ws-payload', err);
-                        }
+                        try { payload = JSON.parse(trigger.dataset.wsPayload); }
+                        catch (err) { console.warn('Invalid JSON in data-ws-payload', err); }
                     }
 
                     if (trigger.dataset.wsInclude) {
@@ -927,7 +1400,6 @@ class DomEngine {
                 toggle?.addEventListener('click', () => this.toggleHudFuncPanel());
                 closeBtn?.addEventListener('click', () => this.closeHudFunc());
 
-                // Live search
                 searchInput?.addEventListener('input', (e) => {
                     this.searchQuery = e.target.value.toLowerCase();
                     this.filterHudFuncList();
@@ -944,7 +1416,6 @@ class DomEngine {
                 if (arrow) arrow.textContent = this.hudFuncPanelOpen ? '▲' : '▼';
                 if (toggle) toggle.classList.toggle('active', this.hudFuncPanelOpen);
 
-                // Focus search when opening
                 if (this.hudFuncPanelOpen) {
                     setTimeout(() => {
                         document.getElementById('hud-func-search')?.focus();
@@ -957,23 +1428,20 @@ class DomEngine {
                 if (!listEl) return;
 
                 try {
-                    // Try Tauri invoke first, fallback to HTTP
                     if (window.__TAURI__) {
                         const { invoke } = window.__TAURI__.core;
                         const funcs = await invoke('get_hud_functions');
                         this.hudFunctions = Array.isArray(funcs) ? funcs : [];
                     } else {
-                        const response = await fetch(`${this.apiUrl}/api/CloudM/get_hud_functions`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            credentials: 'include'
-                        });
+                        // Use TB.api with auth
+                        const result = await TB.api.request('CloudM', 'get_hud_functions', null, 'POST');
 
-                        if (!response.ok) throw new Error('Failed to fetch functions');
-
-                        const data = await response.json();
-                        const funcs = data?.result?.data || data?.data || data || [];
-                        this.hudFunctions = Array.isArray(funcs) ? funcs : [];
+                        if (result.error === 'none') {
+                            const funcs = result.data?.result?.data || result.data?.data || result.data || [];
+                            this.hudFunctions = Array.isArray(funcs) ? funcs : [];
+                        } else {
+                            throw new Error(result.message || 'Failed to fetch functions');
+                        }
                     }
 
                     console.log('[HUD] Loaded functions:', this.hudFunctions.length);
@@ -1013,7 +1481,6 @@ class DomEngine {
                     `;
                 }).join('');
 
-                // Bind click events
                 listEl.querySelectorAll('.hud-func-item').forEach(item => {
                     item.addEventListener('click', () => {
                         const funcPath = item.dataset.funcPath;
@@ -1039,7 +1506,6 @@ class DomEngine {
                     if (matches) visibleCount++;
                 });
 
-                // Show empty message if no results
                 let emptyMsg = listEl.querySelector('.hud-func-empty');
                 if (visibleCount === 0 && this.hudFunctions.length > 0) {
                     if (!emptyMsg) {
@@ -1058,12 +1524,10 @@ class DomEngine {
                 console.log('[HUD] Selecting function:', func.display_name);
                 this.selectedHudFunc = func;
 
-                // Update UI
                 this.renderHudFuncList();
                 this.updateHudFuncCurrentLabel();
-                this.toggleHudFuncPanel(); // Close panel
+                this.toggleHudFuncPanel();
 
-                // Show content area, hide widgets
                 const contentEl = document.getElementById('hud-func-content');
                 const widgetEl = document.getElementById('widget-area');
                 const closeBtn = document.getElementById('hud-func-close');
@@ -1072,10 +1536,7 @@ class DomEngine {
                 if (widgetEl) widgetEl.style.display = 'none';
                 if (closeBtn) closeBtn.style.display = 'block';
 
-                // Load function content
                 await this.loadHudFuncContent(func);
-
-                // Save selection persistently
                 await this.saveHudFuncSelection(func.path);
             }
 
@@ -1088,7 +1549,6 @@ class DomEngine {
                 try {
                     let html;
 
-                    // Try Tauri invoke first, fallback to HTTP
                     if (window.__TAURI__) {
                         const { invoke } = window.__TAURI__.core;
                         html = await invoke('call_hud_function', {
@@ -1096,26 +1556,14 @@ class DomEngine {
                             funcName: func.func_name
                         });
                     } else {
-                        const response = await fetch(`${this.apiUrl}${func.path}`, {
-                            method: 'GET',
-                            credentials: 'include'
-                        });
-
-                        if (!response.ok) throw new Error('Failed to load function');
-                        html = await response.text();
+                        // Use TB.api with authentication
+                        html = await TB.api.fetchHtml(func.path);
                     }
 
                     innerEl.innerHTML = html;
 
-                    // Execute any scripts in the loaded content
-                    innerEl.querySelectorAll('script').forEach(oldScript => {
-                        const newScript = document.createElement('script');
-                        Array.from(oldScript.attributes).forEach(attr => {
-                            newScript.setAttribute(attr.name, attr.value);
-                        });
-                        newScript.textContent = oldScript.textContent;
-                        oldScript.parentNode.replaceChild(newScript, oldScript);
-                    });
+                    // Execute scripts using TB router's method
+                    TB.router._executeScripts(innerEl);
 
                 } catch (e) {
                     console.error('[HUD] Failed to load HUD function content:', e);
@@ -1127,11 +1575,9 @@ class DomEngine {
                 console.log('[HUD] Closing HUD function');
                 this.selectedHudFunc = null;
 
-                // Update UI
                 this.updateHudFuncCurrentLabel();
                 this.renderHudFuncList();
 
-                // Hide content area, show widgets
                 const contentEl = document.getElementById('hud-func-content');
                 const widgetEl = document.getElementById('widget-area');
                 const closeBtn = document.getElementById('hud-func-close');
@@ -1142,7 +1588,6 @@ class DomEngine {
                 if (closeBtn) closeBtn.style.display = 'none';
                 if (innerEl) innerEl.innerHTML = '';
 
-                // Clear saved selection
                 this.saveHudFuncSelection(null);
             }
 
@@ -1163,7 +1608,6 @@ class DomEngine {
                 try {
                     const { invoke } = window.__TAURI__.core;
                     await invoke('set_selected_miniui_app', { appName: funcPath });
-                    console.log('[HUD] Function selection saved:', funcPath);
                 } catch (e) {
                     console.warn('[HUD] Failed to save function selection:', e);
                 }
@@ -1189,7 +1633,7 @@ class DomEngine {
             }
 
             // ============================================================
-            // End HUD Functions System
+            // Settings & UI
             // ============================================================
 
             applyOpacity(opacity) {
@@ -1205,23 +1649,20 @@ class DomEngine {
                     if (window.__TAURI__) {
                         const { invoke } = window.__TAURI__.core;
 
-                        // Get API URLs from worker manager
                         const urls = await invoke('get_api_urls');
                         this.wsUrl = urls.ws_url;
                         this.apiUrl = urls.api_url;
-                        console.log('[HUD] Using WebSocket URL:', this.wsUrl);
-                        console.log('[HUD] Using API URL:', this.apiUrl);
 
-                        // Get HUD settings
+                        // Update TB config
+                        TB.config.set('baseApiUrl', urls.api_url);
+                        TB.config.set('baseWsUrl', urls.ws_url);
+
                         const hudSettings = await invoke('get_hud_settings');
-                        console.log('[HUD] Settings:', hudSettings);
 
-                        // Apply opacity
                         if (hudSettings.opacity !== undefined) {
                             this.applyOpacity(hudSettings.opacity);
                         }
 
-                        // Apply animation steps
                         if (hudSettings.animation_steps !== undefined) {
                             const stepsSlider = document.getElementById('setting-animation-steps');
                             const stepsValue = document.getElementById('animation-steps-value');
@@ -1229,7 +1670,6 @@ class DomEngine {
                             if (stepsValue) stepsValue.textContent = hudSettings.animation_steps;
                         }
 
-                        // Apply animation delay
                         if (hudSettings.animation_delay_ms !== undefined) {
                             const delaySlider = document.getElementById('setting-animation-delay');
                             const delayValue = document.getElementById('animation-delay-value');
@@ -1241,6 +1681,10 @@ class DomEngine {
                     console.warn('[HUD] Could not load settings:', e);
                 }
             }
+
+            // ============================================================
+            // WebSocket Connection
+            // ============================================================
 
             async connect() {
                 try {
@@ -1264,9 +1708,12 @@ class DomEngine {
                 this.reconnectAttempts = 0;
                 this.startTime = Date.now();
                 this.updateStatus(true);
+                this.updateAuthUI();
 
-                this.send({ type: 'get_status' });
-                this.send({ type: 'get_widgets' });
+                // Send auth token with initial messages
+                const token = TB.user.getSessionToken();
+                this.send({ type: 'get_status', token });
+                this.send({ type: 'get_widgets', token });
             }
 
             onDisconnect() {
@@ -1296,7 +1743,6 @@ class DomEngine {
                             break;
                         case 'pong':
                             break;
-                        // === HUD Action System Messages ===
                         case 'connected':
                             this.connId = data.conn_id;
                             console.log('[HUD] Connection ID:', this.connId);
@@ -1319,7 +1765,6 @@ class DomEngine {
                         case 'dom_update':
                             this.domEngine.process(data);
                             break;
-
                         case 'batch_update':
                             if (Array.isArray(data.updates)) {
                                 data.updates.forEach(op => this.domEngine.process(op));
@@ -1350,6 +1795,11 @@ class DomEngine {
 
             send(data) {
                 if (this.ws && this.connected) {
+                    // Always include auth token
+                    const token = TB.user.getSessionToken();
+                    if (token && !data.token) {
+                        data.token = token;
+                    }
                     this.ws.send(JSON.stringify(data));
                 }
             }
@@ -1389,25 +1839,19 @@ class DomEngine {
                 }
             }
 
-            // === HUD Action System Methods ===
-
             handleWidgetResponse(data) {
                 const actionId = data.action_id;
                 const widgetId = data.widget_id;
 
-                // Resolve pending action promise if exists
                 if (actionId && this.pendingActions.has(actionId)) {
                     const { resolve } = this.pendingActions.get(actionId);
                     this.pendingActions.delete(actionId);
                     resolve(data.result);
                 }
 
-                // Call widget-specific callback if registered
                 if (widgetId && this.widgetCallbacks[widgetId]) {
                     this.widgetCallbacks[widgetId](data);
                 }
-
-                console.log('[HUD] Widget response:', data);
             }
 
             handleSingleWidgetUpdate(data) {
@@ -1416,7 +1860,6 @@ class DomEngine {
 
                 if (!widgetId || !html) return;
 
-                // Find and update the specific widget
                 const widgetEl = document.getElementById(`widget-${widgetId}`);
                 if (widgetEl) {
                     const contentEl = widgetEl.querySelector('.widget-content');
@@ -1425,14 +1868,12 @@ class DomEngine {
                     }
                 }
 
-                // Call widget callback if registered
                 if (this.widgetCallbacks[widgetId]) {
                     this.widgetCallbacks[widgetId](data);
                 }
             }
 
             showNotification(message, level = 'info', duration = 3000) {
-                // Create notification element
                 let container = document.getElementById('hud-notifications');
                 if (!container) {
                     container = document.createElement('div');
@@ -1470,13 +1911,7 @@ class DomEngine {
 
             async copyToClipboard(text, notificationMsg) {
                 try {
-                    if (window.__TAURI__) {
-                        // Use Tauri clipboard API if available
-                        // For now, fall back to browser API
-                        await navigator.clipboard.writeText(text);
-                    } else {
-                        await navigator.clipboard.writeText(text);
-                    }
+                    await navigator.clipboard.writeText(text);
                     if (notificationMsg) {
                         this.showNotification(notificationMsg, 'success');
                     }
@@ -1487,20 +1922,17 @@ class DomEngine {
             }
 
             navigateTo(path) {
-                // Navigate to a path in the main app
                 console.log('[HUD] Navigate to:', path);
-                this.switchToApp();
+                // Use TB router for HUD content navigation
+                TB.router.navigateTo(path);
             }
 
-            // Send widget action to backend
             sendWidgetAction(widgetId, action, payload = {}) {
                 const actionId = ++this.actionIdCounter;
 
                 return new Promise((resolve, reject) => {
-                    // Store pending action
                     this.pendingActions.set(actionId, { resolve, reject, timestamp: Date.now() });
 
-                    // Send action message
                     this.send({
                         type: 'widget_action',
                         action_id: actionId,
@@ -1510,7 +1942,6 @@ class DomEngine {
                         conn_id: this.connId
                     });
 
-                    // Timeout after 30 seconds
                     setTimeout(() => {
                         if (this.pendingActions.has(actionId)) {
                             this.pendingActions.delete(actionId);
@@ -1520,7 +1951,6 @@ class DomEngine {
                 });
             }
 
-            // Request single widget refresh
             refreshWidget(widgetId) {
                 this.send({
                     type: 'get_widget',
@@ -1529,12 +1959,10 @@ class DomEngine {
                 });
             }
 
-            // Register callback for widget updates
             onWidgetUpdate(widgetId, callback) {
                 this.widgetCallbacks[widgetId] = callback;
             }
 
-            // Unregister widget callback
             offWidgetUpdate(widgetId) {
                 delete this.widgetCallbacks[widgetId];
             }
@@ -1592,6 +2020,12 @@ class DomEngine {
                         <div class="widget-row">
                             <span class="widget-label">Uptime</span>
                             <span class="widget-value">${uptime}</span>
+                        </div>
+                        <div class="widget-row">
+                            <span class="widget-label">Auth</span>
+                            <span class="widget-value ${TB.user.isAuthenticated() ? 'success' : 'warning'}">
+                                ${TB.user.isAuthenticated() ? 'Logged In' : 'Not Logged In'}
+                            </span>
                         </div>
                     `;
                 }
@@ -1694,7 +2128,6 @@ class DomEngine {
                     if (window.__TAURI__) {
                         const { invoke } = window.__TAURI__.core;
                         await invoke('set_animation_steps', { steps });
-                        console.log('[HUD] Animation steps set to:', steps);
                     }
                 } catch (e) {
                     console.error('[HUD] Set animation steps failed:', e);
@@ -1706,7 +2139,6 @@ class DomEngine {
                     if (window.__TAURI__) {
                         const { invoke } = window.__TAURI__.core;
                         await invoke('set_animation_delay', { delayMs });
-                        console.log('[HUD] Animation delay set to:', delayMs, 'ms');
                     }
                 } catch (e) {
                     console.error('[HUD] Set animation delay failed:', e);
@@ -1716,93 +2148,48 @@ class DomEngine {
             refresh() {
                 this.reconnectAttempts = 0;
                 if (this.ws) this.ws.close();
-                this.connect();
+
+                // Re-verify session on refresh
+                TB.user.verifySession().then(() => {
+                    this.updateAuthUI();
+                    this.connect();
+                });
             }
         }
 
+        // ============================================================
+        // INITIALIZE APP
+        // ============================================================
         const app = new HudApp();
         app.init();
 
-        // === Global HUD API for Widget Interactivity ===
-        // This API is exposed to widget HTML content for interactive elements
+        // ============================================================
+        // GLOBAL HUD API
+        // ============================================================
         window.HUD = {
-            /**
-             * Send an action to the backend for a specific widget
-             * @param {string} widgetId - The widget identifier
-             * @param {string} action - The action name
-             * @param {object} payload - Optional payload data
-             * @returns {Promise} - Resolves with the action result
-             */
-            action: (widgetId, action, payload = {}) => {
-                return app.sendWidgetAction(widgetId, action, payload);
-            },
-
-            /**
-             * Request a widget refresh from the backend
-             * @param {string} widgetId - The widget to refresh
-             */
-            refresh: (widgetId) => {
-                app.refreshWidget(widgetId);
-            },
-
-            /**
-             * Show a notification toast
-             * @param {string} message - The message to display
-             * @param {string} level - 'info', 'success', 'warning', 'error'
-             * @param {number} duration - Duration in milliseconds
-             */
-            notify: (message, level = 'info', duration = 3000) => {
-                app.showNotification(message, level, duration);
-            },
-
-            /**
-             * Copy text to clipboard
-             * @param {string} text - Text to copy
-             * @param {string} notification - Optional notification message
-             */
-            copy: (text, notification) => {
-                app.copyToClipboard(text, notification);
-            },
-
-            /**
-             * Get the current WebSocket connection ID
-             * @returns {string|null} - The connection ID
-             */
+            action: (widgetId, action, payload = {}) => app.sendWidgetAction(widgetId, action, payload),
+            refresh: (widgetId) => app.refreshWidget(widgetId),
+            notify: (message, level = 'info', duration = 3000) => app.showNotification(message, level, duration),
+            copy: (text, notification) => app.copyToClipboard(text, notification),
             getConnId: () => app.connId,
+            onUpdate: (widgetId, callback) => app.onWidgetUpdate(widgetId, callback),
+            offUpdate: (widgetId) => app.offWidgetUpdate(widgetId),
+            send: (data) => app.send(data),
+            isConnected: () => app.connected,
 
-            /**
-             * Register a callback for widget updates
-             * @param {string} widgetId - The widget to listen for
-             * @param {function} callback - Called with update data
-             */
-            onUpdate: (widgetId, callback) => {
-                app.onWidgetUpdate(widgetId, callback);
-            },
+            // TB-compatible methods
+            isAuthenticated: () => TB.user.isAuthenticated(),
+            getUser: () => TB.user.getUserData(),
+            getToken: () => TB.user.getSessionToken(),
+            navigate: (path) => TB.router.navigateTo(path),
 
-            /**
-             * Unregister a widget update callback
-             * @param {string} widgetId - The widget to stop listening for
-             */
-            offUpdate: (widgetId) => {
-                app.offWidgetUpdate(widgetId);
-            },
-
-            /**
-             * Send raw message via WebSocket
-             * @param {object} data - Data to send
-             */
-            send: (data) => {
-                app.send(data);
-            },
-
-            /**
-             * Check if connected to backend
-             * @returns {boolean}
-             */
-            isConnected: () => app.connected
+            // Auth methods
+            setSession: (token, userData) => TB.user.setSession(token, userData),
+            clearSession: () => TB.user.clearSession(),
+            verifySession: () => TB.user.verifySession()
         };
 
-        // Add CSS animations for notifications
+        // CSS animations
         const style = document.createElement('style');
         style.textContent = `
             @keyframes slideIn {
@@ -1816,7 +2203,8 @@ class DomEngine {
         `;
         document.head.appendChild(style);
 
-        console.log('[HUD] Global HUD API initialized. Use window.HUD.action(), HUD.notify(), etc.');
+        console.log('[HUD] Global HUD & TB API initialized.');
+        console.log('[HUD] Available: window.HUD, window.TB');
     </script>
 </body>
 </html>

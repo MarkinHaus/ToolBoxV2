@@ -46,6 +46,7 @@ from toolboxv2.mods.isaa.base.Agent.flow_agent import FlowAgent
 from toolboxv2.mods.isaa.base.Agent.instant_data_vis import (
     visualize_data_terminal,
 )
+from toolboxv2.mods.isaa.base.Agent.vfs_v2 import FileBackingType
 from toolboxv2.mods.isaa.base.AgentUtils import detect_shell
 from toolboxv2.mods.isaa.module import Tools as IsaaTool
 
@@ -511,6 +512,25 @@ class ISAA_Host:
             print_status("🎤 Recording... Press F4 to stop", "info")
             asyncio.create_task(self._record_audio())
 
+    def _select_audio_device(self):
+        """Select audio input device."""
+        try:
+            import sounddevice as sd
+
+            devices = sd.query_devices()
+            devices_names = []
+            for i, device in enumerate(devices):
+                if device["name"] in devices_names:
+                    continue
+                devices_names.append(device["name"])
+                print(f"[{i}] {device['name']}")
+            device_index = int(input("Select device index: "))
+            self.audio_device_index = device_index
+        except ImportError:
+            print_status(
+                "Audio requires 'sounddevice'. Install: pip install sounddevice", "error"
+            )
+
     async def _record_audio(self):
         """Record audio from microphone."""
         try:
@@ -529,6 +549,7 @@ class ISAA_Host:
                 channels=channels,
                 dtype="int16",
                 callback=callback,
+                device=self.audio_device_index
             ):
                 while self._audio_recording:
                     await asyncio.sleep(0.1)
@@ -568,6 +589,8 @@ class ISAA_Host:
             print_status(f"Audio processing requires additional packages: {e}", "error")
         except Exception as e:
             print_status(f"Audio processing error: {e}", "error")
+            import traceback
+            traceback.print_exc()
         finally:
             self._audio_buffer = []
 
@@ -1239,8 +1262,10 @@ class ISAA_Host:
         """Build nested completer dictionary."""
         agents = self.isaa_tools.config.get("agents-name-list", ["self"])
 
-        # Try to get VFS files for autocomplete
+        # Try to get VFS files and mounts for autocomplete
         vfs_files: dict = {}
+        vfs_mounts: dict = {}
+        vfs_dirty: dict = {}
         try:
             instance_key = f"agent-instance-{self.active_agent_name}"
             if instance_key in self.isaa_tools.config:
@@ -1248,6 +1273,11 @@ class ISAA_Host:
                 session = agent.session_manager.get(self.active_session_id)
                 if session and hasattr(session, "vfs"):
                     vfs_files = {f: None for f in session.vfs.files}
+                    vfs_mounts = {m: None for m in session.vfs.mounts} if hasattr(session.vfs, 'mounts') else {}
+                    vfs_dirty = {
+                        f: None for f, file in session.vfs.files.items()
+                        if hasattr(file, 'is_dirty') and file.is_dirty
+                    }
         except Exception:
             pass
 
@@ -1257,6 +1287,7 @@ class ISAA_Host:
             "/exit": None,
             "/clear": None,
             "/status": None,
+            "/audio": None,
             "/agent": {
                 "switch": {a: None for a in agents},
                 "list": None,
@@ -1273,9 +1304,16 @@ class ISAA_Host:
                 "status": None,
                 "cancel": None,
             },
-            "/vfs": vfs_files
-            if vfs_files
-            else None,  # /vfs shows tree, /vfs <file> shows content
+            "/vfs": {
+                "mount": None,  # local path - no completion, user types
+                "unmount": vfs_mounts if vfs_mounts else None,
+                "sync": vfs_dirty if vfs_dirty else vfs_files if vfs_files else None,
+                "refresh": vfs_mounts if vfs_mounts else None,
+                "pull": vfs_files if vfs_files else None,
+                "mounts": None,
+                "dirty": None,
+                **vfs_files,  # Direct file access: /vfs <filename>
+            } if vfs_files or vfs_mounts else None,
             "/context": {
                 "stats": None,
             },
@@ -1400,6 +1438,11 @@ class ISAA_Host:
 
         print_separator()
 
+        print_status("Select Audio Device", "info")
+        print_box_content("/audio - Select audio device", "")
+
+        print_separator()
+
         print_status("Task Management", "info")
         print_box_content("/task list - List background tasks", "")
         print_box_content("/task cancel <id> - Cancel a task", "")
@@ -1409,8 +1452,23 @@ class ISAA_Host:
         print_status("Advanced", "info")
         print_box_content("/bind <agent_a> <agent_b> - Bind agents", "")
         print_box_content("/teach <agent> <skill_name> - Teach skill", "")
-        print_box_content("/vfs show - Show VFS structure", "")
         print_box_content("/context stats - Show context stats", "")
+
+        print_separator()
+        print_status("VFS Management", "info")
+        print_box_content("/vfs                         - Show VFS tree", "")
+        print_box_content("/vfs <file>                  - Show file content", "")
+        print_box_content("/vfs mount <path> [vfs_path] - Mount local folder", "")
+        print_box_content("/vfs unmount <vfs_path>      - Unmount folder", "")
+        print_box_content("/vfs sync [file]             - Sync changes to disk", "")
+        print_box_content("/vfs refresh <mount>         - Re-scan mount for changes", "")
+        print_box_content("/vfs pull <file>             - Reload file from disk", "")
+        print_box_content("/vfs mounts                  - List active mounts", "")
+        print_box_content("/vfs dirty                   - Show modified files", "")
+        print_separator()
+        print_status("Mount Options", "info")
+        print_box_content("  --readonly                 - No write operations", "")
+        print_box_content("  --no-sync                  - Manual sync only", "")
 
         print_separator()
 
@@ -1448,6 +1506,9 @@ class ISAA_Host:
 
         elif cmd == "/task":
             await self._cmd_task(args)
+
+        elif cmd == "/audio":
+            self._select_audio_device()
 
         elif cmd == "/vfs":
             await self._cmd_vfs(args)
@@ -1668,7 +1729,7 @@ class ISAA_Host:
         return type_map.get(ext, "markdown")  # Default to markdown
 
     async def _cmd_vfs(self, args: list[str]):
-        """Handle /vfs commands - show tree or file content."""
+        """Handle /vfs commands - mount, unmount, sync, tree, file content."""
         try:
             agent = await self.isaa_tools.get_agent(self.active_agent_name)
             session = agent.session_manager.get(self.active_session_id)
@@ -1677,122 +1738,292 @@ class ISAA_Host:
                 print_status("No VFS available in current session", "warning")
                 return
 
-            # If filename provided, show file content
-            if args:
-                filename = " ".join(args)  # Handle filenames with spaces
-
-                # Try to read the file
-                try:
-                    result = session.vfs.read(filename)
-
-                    if isinstance(result, dict):
-                        # VFS returns dict with 'success' and 'content'
-                        if result.get("success"):
-                            content = result.get("content", "")
-                        else:
-                            print_status(f"File not found: {filename}", "error")
-                            return
-                    else:
-                        content = str(result)
-
-                    # Detect file type and display
-                    file_type = self._detect_file_type(filename)
-
-                    print_box_header(f"📄 {filename}", "")
-                    print_box_content(
-                        f"Type: {file_type} | Size: {len(content)} bytes", "info"
-                    )
-                    print_separator()
-
-                    # Format based on type
-                    if file_type == "json":
-                        try:
-                            parsed = json.loads(content)
-                            content = json.dumps(parsed, indent=2, ensure_ascii=False)
-                        except json.JSONDecodeError:
-                            pass
-                        print_code_block(content, "json", show_line_numbers=True)
-                    elif file_type in ("yaml", "yml"):
-                        print_code_block(content, "yaml", show_line_numbers=True)
-                    elif file_type == "toml":
-                        print_code_block(content, "toml", show_line_numbers=True)
-                    elif file_type == "env":
-                        print_code_block(content, "env", show_line_numbers=False)
-                    elif file_type == "markdown":
-                        # Print markdown with basic formatting (HTML version)
-                        for line in content.split("\n"):
-                            safe_line = html.escape(line)
-
-                            if line.startswith("# "):
-                                # H1: Bold + Cyan
-                                c_print(HTML(f"<style font-weight='bold' fg='{PTColors.CYAN}'>{safe_line}</style>"))
-                            elif line.startswith("## "):
-                                # H2: Bold + Blue
-                                c_print(HTML(f"<style font-weight='bold' fg='{PTColors.BLUE}'>{safe_line}</style>"))
-                            elif line.startswith("### "):
-                                # H3: Bold
-                                c_print(HTML(f"<style font-weight='bold'>{safe_line}</style>"))
-                            elif line.startswith("```"):
-                                # Code fence: Grey
-                                c_print(HTML(f"<style fg='{PTColors.GREY}'>{safe_line}</style>"))
-                            elif line.startswith("- ") or line.startswith("* "):
-                                # List item: Cyan Bullet
-                                c_print(HTML(f"  <style fg='{PTColors.CYAN}'>•</style> {safe_line[2:]}"))
-                            elif line.startswith("> "):
-                                # Quote: Grey Bar + Italic
-                                c_print(HTML(
-                                    f"  <style fg='{PTColors.GREY}'>│</style> <style italic='true'>{safe_line[2:]}</style>"))
-                            else:
-                                # Normal text
-                                c_print(HTML(f"  {safe_line}"))
-                    else:
-                        # Code files with line numbers
-                        print_code_block(content, "text", show_line_numbers=True)
-
-                    print_box_footer()
-
-                except Exception as e:
-                    print_status(f"Error reading file '{filename}': {e}", "error")
+            if not args:
+                # No args: show VFS tree structure
+                await self._vfs_show_tree(session)
                 return
 
-            # No args: show VFS tree structure
-            print_box_header(
-                f"VFS Structure: {self.active_agent_name}@{self.active_session_id}", "📂"
-            )
+            cmd = args[0].lower()
 
-            # Build tree from flat file list
-            tree: dict = {}
-            for filepath in session.vfs.files:
-                parts = filepath.strip("/").split("/")
-                current = tree
-                for i, part in enumerate(parts):
-                    if i == len(parts) - 1:
-                        # Last part is filename - store content length
-                        file_content = session.vfs.files.get(filepath, "")
-                        current[part] = str(file_content) if file_content else ""
-                    else:
-                        # Directory
-                        current = current.setdefault(part, {})
+            # /vfs mount <local_path> [vfs_path] [--readonly] [--no-sync]
+            if cmd == "mount":
+                if len(args) < 2:
+                    print_status("Usage: /vfs mount <local_path> [vfs_path] [--readonly] [--no-sync]", "warning")
+                    return
 
-            if tree:
-                c_print()
-                self._print_vfs_tree(tree)
-                c_print()
+                local_path = args[1]
+                vfs_path = "/project"
+                readonly = False
+                auto_sync = True
 
-                # Summary
-                total_files = len(session.vfs.files)
-                total_size = sum(len(str(c)) for c in session.vfs.files.values() if c)
-                print_separator()
-                print_box_content(
-                    f"Total: {total_files} files, {total_size:,} bytes", "info"
+                for i, arg in enumerate(args[2:], start=2):
+                    if arg == "--readonly":
+                        readonly = True
+                    elif arg == "--no-sync":
+                        auto_sync = False
+                    elif not arg.startswith("--") and i == 2:
+                        vfs_path = arg
+
+                print_status(f"Mounting {local_path} → {vfs_path}...", "info")
+                result = session.vfs.mount(
+                    local_path=local_path,
+                    vfs_path=vfs_path,
+                    readonly=readonly,
+                    auto_sync=auto_sync
                 )
+
+                if result.get("success"):
+                    print_status(f"Mounted: {result['files_indexed']} files, {result['dirs_indexed']} dirs", "success")
+                    print_box_content(f"Scan time: {result['scan_time_ms']:.1f}ms", "info")
+                else:
+                    print_status(f"Mount failed: {result.get('error')}", "error")
+
+            # /vfs unmount <vfs_path> [--no-save]
+            elif cmd == "unmount":
+                if len(args) < 2:
+                    print_status("Usage: /vfs unmount <vfs_path> [--no-save]", "warning")
+                    return
+
+                vfs_path = args[1]
+                save_changes = "--no-save" not in args
+
+                result = session.vfs.unmount(vfs_path, save_changes=save_changes)
+
+                if result.get("success"):
+                    saved = result.get("files_saved", [])
+                    print_status(f"Unmounted: {vfs_path}", "success")
+                    if saved:
+                        print_box_content(f"Saved {len(saved)} modified files", "info")
+                else:
+                    print_status(f"Unmount failed: {result.get('error')}", "error")
+
+            # /vfs sync [vfs_path]
+            elif cmd == "sync":
+                if len(args) > 1:
+                    # Sync specific file
+                    path = args[1]
+                    result = session.vfs._sync_to_local(path)
+                    if result.get("success"):
+                        print_status(f"Synced: {path} → {result['synced_to']}", "success")
+                    else:
+                        print_status(f"Sync failed: {result.get('error')}", "error")
+                else:
+                    # Sync all
+                    result = session.vfs.sync_all()
+                    if result.get("success"):
+                        print_status(f"Synced {len(result['synced'])} files", "success")
+                    else:
+                        for err in result.get("errors", []):
+                            print_status(err, "error")
+
+            # /vfs refresh <vfs_path>
+            elif cmd == "refresh":
+                if len(args) < 2:
+                    print_status("Usage: /vfs refresh <mount_path>", "warning")
+                    return
+
+                vfs_path = args[1]
+                result = session.vfs.refresh_mount(vfs_path)
+
+                if result.get("success"):
+                    print_status(f"Refreshed: {result['files_indexed']} files", "success")
+                    if result.get("modified_preserved", 0) > 0:
+                        print_box_content(f"Preserved {result['modified_preserved']} modified files", "info")
+                else:
+                    print_status(f"Refresh failed: {result.get('error')}", "error")
+
+            # /vfs pull <vfs_path> - reload from disk (discard local changes)
+            elif cmd == "pull":
+                if len(args) < 2:
+                    print_status("Usage: /vfs pull <file_path>", "warning")
+                    return
+
+                path = session.vfs._normalize_path(args[1])
+                f = session.vfs.files.get(path)
+
+                if not f:
+                    print_status(f"File not found: {path}", "error")
+                    return
+
+                if hasattr(f, 'local_path') and f.local_path:
+                    result = session.vfs._load_shadow_content(path)
+                    if result.get("success"):
+                        f.is_dirty = False
+                        f.backing_type = FileBackingType.SHADOW
+                        print_status(f"Pulled: {path} ({result['loaded_bytes']} bytes)", "success")
+                    else:
+                        print_status(f"Pull failed: {result.get('error')}", "error")
+                else:
+                    print_status("Not a shadow file", "warning")
+
+            # /vfs mounts - list all mounts
+            elif cmd == "mounts":
+                if not session.vfs.mounts:
+                    print_status("No active mounts", "info")
+                    return
+
+                print_box_header("Active Mounts", "📂")
+                for vfs_path, mount in session.vfs.mounts.items():
+                    flags = []
+                    if mount.readonly:
+                        flags.append("readonly")
+                    if mount.auto_sync:
+                        flags.append("auto-sync")
+                    flags_str = f" [{', '.join(flags)}]" if flags else ""
+                    print_box_content(f"{vfs_path} → {mount.local_path}{flags_str}", "")
+                print_box_footer()
+
+            # /vfs dirty - show modified files
+            elif cmd == "dirty":
+                dirty_files = [
+                    (path, f) for path, f in session.vfs.files.items()
+                    if hasattr(f, 'is_dirty') and f.is_dirty
+                ]
+
+                if not dirty_files:
+                    print_status("No modified files", "info")
+                    return
+
+                print_box_header("Modified Files", "✏️")
+                for path, f in dirty_files:
+                    local = f.local_path if hasattr(f, 'local_path') else "memory"
+                    print_box_content(f"{path} → {local}", "")
+                print_box_footer()
+
+            # /vfs <filename> - show file content (original behavior)
             else:
-                print_box_content("VFS is empty", "warning")
+                filename = " ".join(args)
+                await self._vfs_show_file(session, filename)
+
+        except Exception as e:
+            print_status(f"Error: {e}", "error")
+
+    async def _vfs_show_tree(self, session):
+        """Show VFS tree structure."""
+        print_box_header(
+            f"VFS Structure: {self.active_agent_name}@{self.active_session_id}", "📂"
+        )
+
+        # Show mounts first
+        if session.vfs.mounts:
+            print_separator()
+            print_status("Mounts", "info")
+            for vfs_path, mount in session.vfs.mounts.items():
+                flags = "ro" if mount.readonly else "rw"
+                print_box_content(f"  {vfs_path} → {mount.local_path} [{flags}]", "")
+            print_separator()
+
+        # Build tree from flat file list
+        tree: dict = {}
+        for filepath, f in session.vfs.files.items():
+            parts = filepath.strip("/").split("/")
+            current = tree
+            for i, part in enumerate(parts):
+                if i == len(parts) - 1:
+                    # File info
+                    is_shadow = hasattr(f, 'backing_type') and f.backing_type != FileBackingType.MEMORY
+                    is_dirty = hasattr(f, 'is_dirty') and f.is_dirty
+                    is_loaded = hasattr(f, 'is_loaded') and f.is_loaded
+
+                    status = ""
+                    if is_shadow and not is_loaded:
+                        status = " [shadow]"
+                    elif is_dirty:
+                        status = " [modified]"
+                    elif f.state == "open":
+                        status = " [open]"
+
+                    current[part] = {"_status": status, "_size": getattr(f, 'size_bytes',
+                                                                         len(str(f.content)) if hasattr(f,
+                                                                                                        'content') else 0)}
+                else:
+                    current = current.setdefault(part, {})
+
+        if tree:
+            c_print()
+            self._print_vfs_tree(tree)
+            c_print()
+
+            # Summary
+            total_files = len(session.vfs.files)
+            shadow_files = sum(1 for f in session.vfs.files.values() if
+                               hasattr(f, 'backing_type') and f.backing_type != FileBackingType.MEMORY)
+            dirty_files = sum(1 for f in session.vfs.files.values() if hasattr(f, 'is_dirty') and f.is_dirty)
+
+            print_separator()
+            print_box_content(f"Total: {total_files} files ({shadow_files} shadow, {dirty_files} modified)", "info")
+        else:
+            print_box_content("VFS is empty", "warning")
+
+        print_box_footer()
+
+    async def _vfs_show_file(self, session, filename: str):
+        """Show file content."""
+        try:
+            result = session.vfs.read(filename)
+
+            if isinstance(result, dict):
+                if result.get("success"):
+                    content = result.get("content", "")
+                else:
+                    print_status(f"File not found: {filename}", "error")
+                    return
+            else:
+                content = str(result)
+
+            file_type = self._detect_file_type(filename)
+
+            # Check if shadow/dirty
+            f = session.vfs.files.get(session.vfs._normalize_path(filename))
+            status_parts = [f"Type: {file_type}", f"Size: {len(content)} bytes"]
+            if f and hasattr(f, 'is_dirty') and f.is_dirty:
+                status_parts.append("MODIFIED")
+            if f and hasattr(f, 'local_path') and f.local_path:
+                status_parts.append(f"→ {f.local_path}")
+
+            print_box_header(f"📄 {filename}", "")
+            print_box_content(" | ".join(status_parts), "info")
+            print_separator()
+
+            # Format based on type
+            if file_type == "json":
+                try:
+                    parsed = json.loads(content)
+                    content = json.dumps(parsed, indent=2, ensure_ascii=False)
+                except json.JSONDecodeError:
+                    pass
+                print_code_block(content, "json", show_line_numbers=True)
+            elif file_type in ("yaml", "yml"):
+                print_code_block(content, "yaml", show_line_numbers=True)
+            elif file_type == "toml":
+                print_code_block(content, "toml", show_line_numbers=True)
+            elif file_type == "env":
+                print_code_block(content, "env", show_line_numbers=False)
+            elif file_type == "markdown":
+                for line in content.split("\n"):
+                    safe_line = html.escape(line)
+                    if line.startswith("# "):
+                        c_print(HTML(f"<style font-weight='bold' fg='{PTColors.CYAN}'>{safe_line}</style>"))
+                    elif line.startswith("## "):
+                        c_print(HTML(f"<style font-weight='bold' fg='{PTColors.BLUE}'>{safe_line}</style>"))
+                    elif line.startswith("### "):
+                        c_print(HTML(f"<style font-weight='bold'>{safe_line}</style>"))
+                    elif line.startswith("```"):
+                        c_print(HTML(f"<style fg='{PTColors.GREY}'>{safe_line}</style>"))
+                    elif line.startswith("- ") or line.startswith("* "):
+                        c_print(HTML(f"  <style fg='{PTColors.CYAN}'>•</style> {safe_line[2:]}"))
+                    elif line.startswith("> "):
+                        c_print(HTML(
+                            f"  <style fg='{PTColors.GREY}'>│</style> <style italic='true'>{safe_line[2:]}</style>"))
+                    else:
+                        c_print(HTML(f"  {safe_line}"))
+            else:
+                print_code_block(content, "text", show_line_numbers=True)
 
             print_box_footer()
 
         except Exception as e:
-            print_status(f"Error: {e}", "error")
+            print_status(f"Error reading file '{filename}': {e}", "error")
 
     async def _cmd_context(self, args: list[str]):
         """Handle /context commands."""

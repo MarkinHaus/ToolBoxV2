@@ -1268,388 +1268,97 @@ class FlowAgent:
                 create_dirs=create_dirs,
             )
 
-        def fs_copy_folder_to_vfs(
+        def vfs_mount(
             local_path: str,
-            vfs_path: str = "/",
-            allowed_dirs: list[str] | None = None,
-            max_size_bytes: int = 1024 * 1024,
-            max_files: int = 100,
-            include_patterns: list[str] | None = None,
+            vfs_path: str = "/project",
+            allowed_extensions: list[str] | None = None,
             exclude_patterns: list[str] | None = None,
+            readonly: bool = False,
+            auto_sync: bool = True
         ) -> dict:
             """
-            Copy a folder from real filesystem into VFS recursively.
+            Mount a local folder as shadow into VFS.
+
+            Only scans metadata, does NOT load file contents.
+            Files are loaded on-demand when opened.
 
             Args:
-                local_path: Path to folder on real filesystem
-                vfs_path: Destination path in VFS (default: root)
-                allowed_dirs: List of allowed directories for security
-                max_size_bytes: Maximum size per file (default: 1MB)
-                max_files: Maximum number of files to copy (default: 100)
-                include_patterns: Only include files matching these patterns (e.g., ["*.py", "*.js"])
-                exclude_patterns: Exclude files matching these patterns (e.g., ["__pycache__", "*.pyc", ".git"])
+                local_path: Local folder path to mount
+                vfs_path: Mount point in VFS (default: /project)
+                allowed_extensions: Only include these extensions (e.g., [".py", ".js"])
+                exclude_patterns: Exclude patterns (default: __pycache__, .git, node_modules, etc.)
+                readonly: If True, no write operations allowed
+                auto_sync: If True, changes are written to disk immediately
 
             Returns:
-                Dict with success status, copied files count, skipped files, errors
-
-            Security:
-                Requires filesystem_access flag.
-                Only reads from allowed_dirs if specified.
+                Dict with success, mount_point, files_indexed, scan_time_ms
             """
-            import fnmatch
-            import os
+            return session.vfs.mount(
+                local_path=local_path,
+                vfs_path=vfs_path,
+                allowed_extensions=allowed_extensions,
+                exclude_patterns=exclude_patterns,
+                readonly=readonly,
+                auto_sync=auto_sync
+            )
 
-            results = {
-                "success": True,
-                "copied_files": [],
-                "copied_dirs": [],
-                "skipped": [],
-                "errors": [],
-                "total_size": 0,
-            }
+        def vfs_unmount(vfs_path: str, save_changes: bool = True) -> dict:
+            """
+            Unmount a shadow mount and optionally save all changes.
 
-            # Default exclude patterns
-            if exclude_patterns is None:
-                exclude_patterns = [
-                    "__pycache__",
-                    "*.pyc",
-                    "*.pyo",
-                    ".git",
-                    ".svn",
-                    "node_modules",
-                    ".venv",
-                    "venv",
-                    "*.egg-info",
-                    ".DS_Store",
-                    "Thumbs.db",
-                    "*.log",
-                ]
+            Args:
+                vfs_path: Mount point to unmount
+                save_changes: If True, sync all dirty files before unmounting
 
-            try:
-                resolved_path = os.path.abspath(os.path.expanduser(local_path))
-            except Exception as e:
-                return {"success": False, "error": f"Invalid path: {e}"}
+            Returns:
+                Dict with success, unmounted path, files_saved list
+            """
+            return session.vfs.unmount(vfs_path, save_changes=save_changes)
 
-            # Security check
-            if allowed_dirs:
-                allowed = any(
-                    resolved_path.startswith(os.path.abspath(os.path.expanduser(d)))
-                    for d in allowed_dirs
-                )
-                if not allowed:
-                    return {
-                        "success": False,
-                        "error": f"Path not in allowed directories: {resolved_path}",
-                    }
+        def vfs_refresh_mount(vfs_path: str) -> dict:
+            """
+            Refresh a mount to detect new/deleted files on disk.
 
-            if not os.path.exists(resolved_path):
-                return {"success": False, "error": f"Folder not found: {resolved_path}"}
+            Preserves modified files that haven't been synced yet.
 
-            if not os.path.isdir(resolved_path):
-                return {"success": False, "error": f"Not a directory: {resolved_path}"}
+            Args:
+                vfs_path: Mount point to refresh
 
-            def should_include(filename: str) -> bool:
-                """Check if file should be included based on patterns"""
-                # Check exclude patterns first
-                for pattern in exclude_patterns:
-                    if fnmatch.fnmatch(filename, pattern) or fnmatch.fnmatch(
-                        os.path.basename(filename), pattern
-                    ):
-                        return False
+            Returns:
+                Dict with success, files_indexed, modified_preserved
+            """
+            return session.vfs.refresh_mount(vfs_path)
 
-                # If include patterns specified, file must match at least one
-                if include_patterns:
-                    return any(
-                        fnmatch.fnmatch(filename, p)
-                        or fnmatch.fnmatch(os.path.basename(filename), p)
-                        for p in include_patterns
-                    )
+        def vfs_sync_all() -> dict:
+            """
+            Sync all dirty files to disk.
 
-                return True
+            Returns:
+                Dict with success, synced files list, errors list
+            """
+            return session.vfs.sync_all()
 
-            def should_include_dir(dirname: str) -> bool:
-                """Check if directory should be traversed"""
-                basename = os.path.basename(dirname)
-                for pattern in exclude_patterns:
-                    if fnmatch.fnmatch(basename, pattern):
-                        return False
-                return True
-
-            # Normalize vfs_path
-            vfs_base = vfs_path.rstrip("/")
-            if not vfs_base:
-                vfs_base = ""
-
-            file_count = 0
-
-            # Walk the directory
-            for root, dirs, files in os.walk(resolved_path):
-                # Filter directories in-place to prevent traversal
-                dirs[:] = [d for d in dirs if should_include_dir(os.path.join(root, d))]
-
-                # Calculate relative path
-                rel_root = os.path.relpath(root, resolved_path)
-                if rel_root == ".":
-                    vfs_dir = vfs_base if vfs_base else "/"
-                else:
-                    vfs_dir = f"{vfs_base}/{rel_root.replace(os.sep, '/')}"
-
-                # Create directory in VFS
-                if vfs_dir and vfs_dir != "/":
-                    dir_result = session.vfs_mkdir(vfs_dir, parents=True)
-                    if dir_result.get("success"):
-                        results["copied_dirs"].append(vfs_dir)
-
-                # Copy files
-                for filename in files:
-                    if file_count >= max_files:
-                        results["skipped"].append(
-                            f"{root}/{filename} (max files reached)"
-                        )
-                        continue
-
-                    local_file = os.path.join(root, filename)
-
-                    if not should_include(local_file):
-                        results["skipped"].append(f"{local_file} (excluded by pattern)")
-                        continue
-
-                    # Check file size
-                    try:
-                        file_size = os.path.getsize(local_file)
-                        if file_size > max_size_bytes:
-                            results["skipped"].append(
-                                f"{local_file} (too large: {file_size} bytes)"
-                            )
-                            continue
-                    except Exception as e:
-                        results["errors"].append(f"{local_file}: {e}")
-                        continue
-
-                    # Build VFS path
-                    vfs_file_path = (
-                        f"{vfs_dir}/{filename}" if vfs_dir != "/" else f"/{filename}"
-                    )
-
-                    # Copy file
-                    copy_result = session.vfs.load_from_local(
-                        local_path=local_file,
-                        vfs_path=vfs_file_path,
-                        allowed_dirs=allowed_dirs,
-                        max_size_bytes=max_size_bytes,
-                    )
-
-                    if copy_result.get("success"):
-                        results["copied_files"].append(
-                            {
-                                "local": local_file,
-                                "vfs": vfs_file_path,
-                                "size": copy_result.get("size_bytes", 0),
-                                "type": copy_result.get("file_type", "Unknown"),
-                            }
-                        )
-                        results["total_size"] += copy_result.get("size_bytes", 0)
-                        file_count += 1
-                    else:
-                        results["errors"].append(
-                            f"{local_file}: {copy_result.get('error')}"
-                        )
-
-            results["files_copied"] = len(results["copied_files"])
-            results["dirs_created"] = len(results["copied_dirs"])
-
-            if results["errors"]:
-                results["success"] = len(results["copied_files"]) > 0  # Partial success
-
-            return results
-
-        def fs_copy_folder_from_vfs(
-            vfs_path: str,
-            local_path: str,
-            allowed_dirs: list[str] | None = None,
-            overwrite: bool = False,
-            create_dirs: bool = True,
-            include_patterns: list[str] | None = None,
-            exclude_patterns: list[str] | None = None,
+        def vfs_execute(
+            path: str,
+            args: list[str] | None = None,
+            timeout: float = 30.0
         ) -> dict:
             """
-            Copy a folder from VFS to real filesystem recursively.
+            Execute an executable file in VFS.
+
+            Supports Python, JavaScript, TypeScript, Shell scripts.
+            Shadow files are executed directly from disk.
+            Memory files are written to temp and executed.
 
             Args:
-                vfs_path: Path to folder in VFS
-                local_path: Destination path on real filesystem
-                allowed_dirs: List of allowed directories for security
-                overwrite: Allow overwriting existing files
-                create_dirs: Create parent directories if needed
-                include_patterns: Only include files matching these patterns
-                exclude_patterns: Exclude files matching these patterns
+                path: VFS path to executable file
+                args: Command line arguments
+                timeout: Execution timeout in seconds (default: 30)
 
             Returns:
-                Dict with success status, copied files count, skipped files, errors
-
-            Security:
-                Requires filesystem_access flag.
-                Only writes to allowed_dirs if specified.
+                Dict with success, return_code, stdout, stderr, command
             """
-            import fnmatch
-            import os
-
-            results = {
-                "success": True,
-                "copied_files": [],
-                "created_dirs": [],
-                "skipped": [],
-                "errors": [],
-                "total_size": 0,
-            }
-
-            # Default exclude patterns
-            if exclude_patterns is None:
-                exclude_patterns = []
-
-            # Normalize VFS path
-            vfs_path = vfs_path.rstrip("/")
-            if not vfs_path:
-                vfs_path = "/"
-
-            # Check if VFS path exists and is a directory
-            if not session.vfs._is_directory(vfs_path) and vfs_path != "/":
-                # Maybe it's root or doesn't exist
-                if vfs_path != "/" and not session.vfs._path_exists(vfs_path):
-                    return {"success": False, "error": f"VFS path not found: {vfs_path}"}
-
-            try:
-                resolved_local = os.path.abspath(os.path.expanduser(local_path))
-            except Exception as e:
-                return {"success": False, "error": f"Invalid local path: {e}"}
-
-            # Security check
-            if allowed_dirs:
-                allowed = any(
-                    resolved_local.startswith(os.path.abspath(os.path.expanduser(d)))
-                    for d in allowed_dirs
-                )
-                if not allowed:
-                    return {
-                        "success": False,
-                        "error": f"Path not in allowed directories: {resolved_local}",
-                    }
-
-            def should_include(filename: str) -> bool:
-                """Check if file should be included based on patterns"""
-                basename = os.path.basename(filename)
-
-                # Check exclude patterns
-                for pattern in exclude_patterns:
-                    if fnmatch.fnmatch(basename, pattern) or fnmatch.fnmatch(
-                        filename, pattern
-                    ):
-                        return False
-
-                # If include patterns specified, must match at least one
-                if include_patterns:
-                    return any(
-                        fnmatch.fnmatch(basename, p) or fnmatch.fnmatch(filename, p)
-                        for p in include_patterns
-                    )
-
-                return True
-
-            def copy_vfs_directory(vfs_dir: str, local_dir: str):
-                """Recursively copy VFS directory to local"""
-                # Create local directory
-                if not os.path.exists(local_dir):
-                    if create_dirs:
-                        try:
-                            os.makedirs(local_dir, exist_ok=True)
-                            results["created_dirs"].append(local_dir)
-                        except Exception as e:
-                            results["errors"].append(f"Cannot create {local_dir}: {e}")
-                            return
-                    else:
-                        results["errors"].append(f"Directory does not exist: {local_dir}")
-                        return
-
-                # List VFS directory contents
-                ls_result = session.vfs.ls(vfs_dir, recursive=False)
-                if not ls_result.get("success"):
-                    results["errors"].append(
-                        f"Cannot list {vfs_dir}: {ls_result.get('error')}"
-                    )
-                    return
-
-                for item in ls_result.get("contents", []):
-                    item_name = item["name"]
-                    item_vfs_path = item["path"]
-                    item_local_path = os.path.join(local_dir, item_name)
-
-                    if item["type"] == "directory":
-                        # Check exclude patterns for directories
-                        skip = False
-                        for pattern in exclude_patterns:
-                            if fnmatch.fnmatch(item_name, pattern):
-                                results["skipped"].append(
-                                    f"{item_vfs_path} (excluded directory)"
-                                )
-                                skip = True
-                                break
-
-                        if not skip:
-                            copy_vfs_directory(item_vfs_path, item_local_path)
-
-                    else:  # file
-                        if not should_include(item_name):
-                            results["skipped"].append(
-                                f"{item_vfs_path} (excluded by pattern)"
-                            )
-                            continue
-
-                        # Skip readonly/system files
-                        vfs_file = session.vfs.files.get(item_vfs_path)
-                        if vfs_file and vfs_file.readonly:
-                            results["skipped"].append(f"{item_vfs_path} (system file)")
-                            continue
-
-                        # Check if local file exists
-                        if os.path.exists(item_local_path) and not overwrite:
-                            results["skipped"].append(
-                                f"{item_vfs_path} (file exists, overwrite=False)"
-                            )
-                            continue
-
-                        # Copy file
-                        save_result = session.vfs.save_to_local(
-                            vfs_path=item_vfs_path,
-                            local_path=item_local_path,
-                            allowed_dirs=allowed_dirs,
-                            overwrite=overwrite,
-                            create_dirs=create_dirs,
-                        )
-
-                        if save_result.get("success"):
-                            results["copied_files"].append(
-                                {
-                                    "vfs": item_vfs_path,
-                                    "local": item_local_path,
-                                    "size": save_result.get("size_bytes", 0),
-                                }
-                            )
-                            results["total_size"] += save_result.get("size_bytes", 0)
-                        else:
-                            results["errors"].append(
-                                f"{item_vfs_path}: {save_result.get('error')}"
-                            )
-
-            # Start recursive copy
-            copy_vfs_directory(vfs_path, resolved_local)
-
-            results["files_copied"] = len(results["copied_files"])
-            results["dirs_created"] = len(results["created_dirs"])
-
-            if results["errors"]:
-                results["success"] = len(results["copied_files"]) > 0  # Partial success
-
-            return results
+            return session.vfs.execute(path, args=args, timeout=timeout)
 
         # =========================================================================
         # DOCKER TOOLS (Flag: requires_docker)
@@ -1846,18 +1555,39 @@ class FlowAgent:
                 "description": "Copy file from VFS to real filesystem",
             },
             {
-                "tool_func": fs_copy_folder_to_vfs,
-                "name": "fs_copy_folder_to_vfs",
+                "tool_func": vfs_mount,
+                "name": "vfs_mount",
                 "category": ["filesystem", "vfs"],
                 "flags": {"filesystem_access": True},
-                "description": "Copy folder from real filesystem to VFS recursively",
+                "description": "Mount local folder as shadow into VFS (lazy loading, no content copied until file opened)",
             },
             {
-                "tool_func": fs_copy_folder_from_vfs,
-                "name": "fs_copy_folder_from_vfs",
+                "tool_func": vfs_unmount,
+                "name": "vfs_unmount",
                 "category": ["filesystem", "vfs"],
                 "flags": {"filesystem_access": True},
-                "description": "Copy folder from VFS to real filesystem recursively",
+                "description": "Unmount shadow mount and optionally save all changes to disk",
+            },
+            {
+                "tool_func": vfs_refresh_mount,
+                "name": "vfs_refresh_mount",
+                "category": ["filesystem", "vfs"],
+                "flags": {"filesystem_access": True},
+                "description": "Refresh mount to detect new/deleted files on disk",
+            },
+            {
+                "tool_func": vfs_sync_all,
+                "name": "vfs_sync_all",
+                "category": ["filesystem", "vfs"],
+                "flags": {"filesystem_access": True},
+                "description": "Sync all modified files to disk",
+            },
+            {
+                "tool_func": vfs_execute,
+                "name": "vfs_execute",
+                "category": ["filesystem", "vfs", "execution"],
+                "flags": {"filesystem_access": True, "code_execution": True},
+                "description": "Execute an executable file (Python, JS, Shell) in VFS",
             },
             # Docker (Flag-based)
             {

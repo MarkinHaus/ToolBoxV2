@@ -2,11 +2,10 @@
  * Desktop Components Tests
  * ========================
  *
- * Tests for QuickCapturePopup, DesktopStatusBar, MobileBottomNav, SystemTray
+ * Tests for , DesktopStatusBar, MobileBottomNav, SystemTray
  */
 
 import {
-    QuickCapturePopup,
     DesktopStatusBar,
     MobileBottomNav,
     SystemTray,
@@ -26,111 +25,6 @@ jest.mock('../../../../core/platform.js', () => ({
 }));
 
 import { tauriAPI, isDesktop, isMobile } from '../../../../core/platform.js';
-
-describe('QuickCapturePopup', () => {
-    let popup;
-
-    beforeEach(() => {
-        document.body.innerHTML = '';
-        popup = new QuickCapturePopup({
-            onCapture: jest.fn().mockResolvedValue(undefined)
-        });
-    });
-
-    afterEach(() => {
-        popup.destroy();
-    });
-
-    it('should create popup element on create()', () => {
-        popup.create();
-        expect(document.querySelector('.tb-quick-capture')).toBeTruthy();
-    });
-
-    it('should be hidden by default', () => {
-        popup.create();
-        expect(popup.element.classList.contains('visible')).toBe(false);
-    });
-
-    it('should show popup on show()', () => {
-        popup.create();
-        popup.show();
-        expect(popup.element.classList.contains('visible')).toBe(true);
-    });
-
-    it('should hide popup on hide()', () => {
-        popup.create();
-        popup.show();
-        popup.hide();
-        expect(popup.element.classList.contains('visible')).toBe(false);
-    });
-
-    it('should toggle visibility on toggle()', () => {
-        popup.create();
-        popup.toggle();
-        expect(popup.element.classList.contains('visible')).toBe(true);
-        popup.toggle();
-        expect(popup.element.classList.contains('visible')).toBe(false);
-    });
-
-    it('should respond to tb:quickCapture event', () => {
-        popup.create();
-        window.dispatchEvent(new CustomEvent('tb:quickCapture'));
-        expect(popup.element.classList.contains('visible')).toBe(true);
-    });
-
-    it('should have keyboard handler registered', () => {
-        popup.create();
-        // Verify the handler is set up (we can't easily test keyboard events in jsdom)
-        expect(popup._keyHandler).toBeDefined();
-    });
-
-    it('should call onCapture when saving', async () => {
-        const onCapture = jest.fn().mockResolvedValue(undefined);
-        popup = new QuickCapturePopup({ onCapture });
-        popup.create();
-        popup.show();
-
-        const textarea = popup.element.querySelector('textarea');
-        textarea.value = 'Test note #tag1 #tag2';
-
-        const saveBtn = popup.element.querySelector('.tb-quick-capture-save');
-        saveBtn.click();
-
-        // Wait for async operation
-        await new Promise(resolve => setTimeout(resolve, 10));
-
-        expect(onCapture).toHaveBeenCalledWith({
-            text: 'Test note #tag1 #tag2',
-            tags: ['tag1', 'tag2']
-        });
-    });
-
-    it('should extract tags from text when saving', async () => {
-        const onCapture = jest.fn().mockResolvedValue(undefined);
-        popup = new QuickCapturePopup({ onCapture });
-        popup.create();
-        popup.show();
-
-        const textarea = popup.element.querySelector('textarea');
-        textarea.value = 'Hello #world #test123 no-tag';
-
-        const saveBtn = popup.element.querySelector('.tb-quick-capture-save');
-        saveBtn.click();
-
-        await new Promise(resolve => setTimeout(resolve, 10));
-
-        expect(onCapture).toHaveBeenCalledWith({
-            text: 'Hello #world #test123 no-tag',
-            tags: ['world', 'test123']
-        });
-    });
-
-    it('should remove element on destroy()', () => {
-        popup.create();
-        popup.destroy();
-        expect(document.querySelector('.tb-quick-capture')).toBeNull();
-    });
-});
 
 describe('DesktopStatusBar', () => {
     let statusBar;

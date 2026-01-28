@@ -709,6 +709,24 @@ class ToolBoxHandler:
             data_type = getattr(result.result, "data_type", "")
             data = result.get()
 
+            if data_type == "stream":
+                # Data structure from Result.stream():
+                # { "type": "stream", "generator": async_gen, "content_type": "...", "headers": {...} }
+                stream_info = data
+
+                headers = stream_info.get("headers", {}).copy()
+                content_type = stream_info.get("content_type", "text/event-stream")
+
+                headers["Content-Type"] = content_type
+                # Ensure no buffering for SSE
+                if content_type == "text/event-stream":
+                    headers["Cache-Control"] = "no-cache"
+                    headers["X-Accel-Buffering"] = "no"
+
+                # Return tuple: (status, headers, async_generator)
+                # The wsgi_app method will wrap the async_generator
+                return (200, headers, stream_info.get("generator"))
+
             if data_type == "html":
                 return html_response(data, status=getattr(result.info, "exec_code", 200) or 200)
 
@@ -1172,6 +1190,43 @@ class WebSocketMessageHandler:
 # HTTP Worker
 # ============================================================================
 
+class AsyncGenToSyncIter:
+    """
+    Adapter that converts an AsyncGenerator into a synchronous Iterator
+    compatible with WSGI, running the async tasks on a specific event loop.
+    """
+
+    def __init__(self, async_gen, loop):
+        self.async_gen = async_gen
+        self.loop = loop
+        self._iterator = self.async_gen.__aiter__()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        try:
+            # Schedule the fetching of the next item on the background event loop
+            future = asyncio.run_coroutine_threadsafe(
+                self._iterator.__anext__(),
+                self.loop
+            )
+            # Block specifically for this chunk with a reasonable timeout (optional)
+            # Note: SSE connections are long-lived, so standard timeouts apply to "time between events"
+            data = future.result()
+
+            # WSGI expects bytes
+            if isinstance(data, str):
+                return data.encode('utf-8')
+            return data
+
+        except StopAsyncIteration:
+            raise StopIteration
+        except Exception as e:
+            # Log error if needed, then stop
+            logger.error(f"Stream error: {e}")
+            raise StopIteration
+
 
 class HTTPWorker:
     """HTTP Worker with raw WSGI application and auth endpoints."""
@@ -1433,9 +1488,17 @@ class HTTPWorker:
 
             self._metrics["requests_success"] += 1
             self._metrics["latency_sum"] += time.time() - start_time
+            import inspect
 
             if isinstance(body, bytes):
                 return [body]
+            elif inspect.isasyncgen(body):
+                if not self._event_loop:
+                    # Fallback if loop is missing (shouldn't happen in worker)
+                    logger.error("Cannot stream: No event loop available")
+                    return [b"Error: Internal Event Loop Missing"]
+
+                return AsyncGenToSyncIter(body, self._event_loop)
             elif isinstance(body, Generator):
                 return body
             else:
