@@ -32,7 +32,6 @@ import {
     SystemTray,
     initPlatformUI
 } from './components/Desktop/index.js';
-import { BrainManager } from './components/Desktop/BrainManager.js';
 
 /**
  * Processes dynamic content added to the DOM (e.g., by HTMX or router).
@@ -124,6 +123,5 @@ export {
     DesktopStatusBar,
     MobileBottomNav,
     SystemTray,
-    BrainManager,
     initPlatformUI
 };
