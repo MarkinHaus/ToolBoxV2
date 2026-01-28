@@ -33,6 +33,7 @@ import {
     initPlatformUI
 } from './components/Desktop/index.js';
 
+
 /**
  * Processes dynamic content added to the DOM (e.g., by HTMX or router).
  * Re-initializes tbjs UI components or applies global enhancements.
