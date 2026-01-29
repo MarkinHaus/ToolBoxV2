@@ -196,8 +196,8 @@ export default {
     new HtmlWebpackPlugin({
       template: './simple-core/src-tauri/hud.html',
       filename: './hud.html',
-      chunks: [],  // No chunks - HUD has its own inline JavaScript
-      inject: false,  // Don't inject any scripts
+      chunks: ['main'],  // No chunks - HUD has its own inline JavaScript
+      // inject: false,  // Don't inject any scripts
     }),
     new MiniCssExtractPlugin({
       filename:  '[name].css',

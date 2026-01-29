@@ -459,6 +459,7 @@ _widget_registry: Dict[str, HudWidget] = {}
 
 def register_widget(widget: HudWidget):
     """Register a widget in the global registry."""
+    print(f"Registering widget: {widget.widget_id}")
     _widget_registry[widget.widget_id] = widget
 
 

@@ -160,7 +160,22 @@ class GatewayProvider(CustomLLM):
 
     def _clean_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """Filter kwargs to only include allowed params"""
+        optional_params = kwargs.get("optional_params", {})
+        litellm_params = kwargs.get("litellm_params", {})
+
         allowed = self._get_allowed_params()
+
+        if optional_params:
+            optional_params = {k: v for k, v in optional_params.items() if k in allowed and v is not None}
+        if litellm_params:
+            litellm_params = {k: v for k, v in litellm_params.items() if k in allowed and v is not None}
+
+        print(f"{litellm_params=}")
+        print(f"{optional_params=}")
+        print(f"{kwargs=}")
+        # kwargs.update(optional_params)
+        # kwargs.update(litellm_params)
+
         return {k: v for k, v in kwargs.items() if k in allowed and v is not None}
 
     def _extract_model(self, model: str) -> str:
@@ -480,7 +495,7 @@ def setup_custom_provider(prefix: str, api_base: str, api_key: str):
 
 
 # === Usage Examples ===
-if __name__ == "__main__2":
+if __name__ == "__main__":
     print("🚀 LiteLLM Gateway Provider Setup\n")
 
     # Method 1: Show JSON config (manual addition)
@@ -513,122 +528,47 @@ if __name__ == "__main__2":
     except Exception as e:
         print(f"❌ Error: {e}")
 
-    # Method 3: Direct approach
-    print("\n" + "=" * 60)
-    print("METHOD 3: Direct OpenAI-compatible (Easiest)")
-    print("=" * 60)
-    print("""
-# Just use OpenAI with custom api_base:
-
-response = litellm.completion(
-    model="openai/your-model-name",
-    messages=[{"role": "user", "content": "Hello!"}],
-    api_base="{GW_URL}",
-    api_key="{GW_KEY}",
-)
-""".format(GW_URL=GW_URL, GW_KEY=GW_KEY[:12] + "..."))
-
-    print("\n✅ All methods ready to use!")
-
-if __name__ == "__main__":
-    import dotenv
-    dotenv.load_dotenv(r"C:\Users\Markin\Workspace\ToolBoxV2\.env")
-    setup_custom_provider("zglm", os.getenv("ZAI_API_BASE"), os.getenv("ZAI_API_KEY"))
-    # 2. Definition des Tools (OpenAI Standard Format)
-    tools = [
+    # Tool definitions in different formats
+    tools_openai = [
         {
             "type": "function",
             "function": {
-                "name": "get_current_weather",
-                "description": "Ruft das aktuelle Wetter für einen Standort ab",
+                "name": "get_weather",
+                "description": "Get the current weather for a location",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "location": {
-                            "type": "string",
-                            "description": "Die Stadt und das Land, z.B. Berlin, DE",
-                        },
-                        "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]},
+                        "location": {"type": "string", "description": "The city name"},
+                        "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
                     },
-                    "required": ["location"],
-                },
-            },
+                    "required": ["location"]
+                }
+            }
         }
     ]
 
 
-    def run_test():
-        print("\n🚀 Starte Tool Calling Test mit GLM-4.7...")
+    try:
 
-        # Initiale Nachricht
-        messages = [{"role": "user", "content": "Wie ist das Wetter in München heute? nutze die get_current_weather function"}]
+        models = gateway.get_available_models()
+        test_model = models[0] if models else "qwen3-4b-instruct-2507.q4_k_m"
+        response = litellm.completion(
+            model=f"gateway/{test_model}",
+            messages=[{"role": "user", "content": "What's the weather in Paris?"}],
+            tools=tools_openai,
+            tool_choice="auto",
+            max_tokens=200
+        )
+        msg = response.choices[0].message
+        print(f"✅ Content: {msg.content}")
+        print(f"   Tool calls: {msg.tool_calls}")
+    except Exception as e:
+        print(f"❌ Error: {e}")
 
-        try:
-            # --- SCHRITT 1: Erste Anfrage an das Modell ---
-            response = litellm.completion(
-                model="zglm/GLM-4.7",
-                messages=messages,
-                functions=tools,
-                function_call="auto"
-            )
 
-            print(response)
+    # Method 3: Direct approach
+    print("\n" + "=" * 60)
+    print("METHOD 3: Direct OpenAI-compatible (Easiest)")
+    print("=" * 60)
 
-            response_message = response.choices[0].message
-            tool_calls = response_message.tool_calls
-
-            # Überprüfen, ob das Modell das Tool nutzen will
-            if tool_calls:
-                print(f"✅ Modell möchte Tool nutzen: {tool_calls[0].function.name}")
-                print(f"   Argumente: {tool_calls[0].function.arguments}")
-
-                # Die Nachricht des Modells zum Verlauf hinzufügen
-                messages.append(response_message)
-
-                # --- SCHRITT 2: Tool Ausführung simulieren ---
-                for tool_call in tool_calls:
-                    function_name = tool_call.function.name
-
-                    if function_name == "get_current_weather":
-                        function_args = json.loads(tool_call.function.arguments)
-
-                        # Simuliertes Ergebnis (Mock)
-                        print("⚙️  Führe (fake) Wetter-API aus...")
-                        function_response = json.dumps({
-                            "location": function_args.get("location"),
-                            "temperature": "18",
-                            "unit": "celsius",
-                            "condition": "Leicht bewölkt"
-                        })
-
-                        # Das Ergebnis als 'tool' role zurückgeben
-                        messages.append({
-                            "tool_call_id": tool_call.id,
-                            "role": "tool",
-                            "name": function_name,
-                            "content": function_response,
-                        })
-
-                # --- SCHRITT 3: Zweite Anfrage (Antwort generieren) ---
-                print("📨 Sende Tool-Ergebnis zurück an GLM-4.7...")
-                second_response = litellm.completion(
-                    model="zglm/GLM-4.7",
-                    messages=messages
-                )
-
-                final_content = second_response.choices[0].message.content
-                print("\n🏁 Finale Antwort des Modells:")
-                print("-" * 40)
-                print(final_content)
-                print("-" * 40)
-
-            else:
-                print("⚠️ Modell hat kein Tool aufgerufen. Test fehlgeschlagen (oder Frage zu simpel).")
-                print("Antwort:", response_message.content)
-
-        except Exception as e:
-            print(f"\n❌ Fehler beim Test: {e}")
-            import traceback
-            traceback.print_exc()
-
-    run_test()
+    print("\n✅ All methods ready to use!")

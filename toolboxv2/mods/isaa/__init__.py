@@ -12,3 +12,5 @@ except ImportError:
     import traceback
     print(traceback.format_exc())
     pass
+
+from .hud import Name as isaa_hud_name

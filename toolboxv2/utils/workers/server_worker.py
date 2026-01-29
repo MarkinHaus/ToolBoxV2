@@ -18,6 +18,7 @@ Features:
 import asyncio
 import json
 import logging
+import mimetypes
 import os
 import signal
 import sys
@@ -26,10 +27,20 @@ import traceback
 import uuid
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http import HTTPStatus
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Set
 from urllib.parse import parse_qs, unquote
+
+# Multipart parsing - Standard library für file uploads
+try:
+    from multipart import parse_form_data, is_form_request, MultipartPart
+
+    MULTIPART_AVAILABLE = True
+except ImportError:
+    MULTIPART_AVAILABLE = False
+    # Warning wird später geloggt
 
 from toolboxv2.utils.workers.event_manager import (
     ZMQEventManager,
@@ -39,6 +50,10 @@ from toolboxv2.utils.workers.event_manager import (
 from toolboxv2.utils.system.types import RequestData
 
 logger = logging.getLogger(__name__)
+
+# Multipart warning loggen falls nicht verfügbar
+if not MULTIPART_AVAILABLE:
+    logger.warning("multipart library not installed - file uploads disabled. Install with: pip install multipart")
 
 
 # ============================================================================
@@ -59,6 +74,41 @@ class AccessLevel:
 
 
 @dataclass
+class UploadedFile:
+    """Wrapper für hochgeladene Dateien."""
+    filename: str
+    content_type: str
+    size: int
+    temp_path: str  # Pfad zur temp Datei auf Disk
+    field_name: str
+
+    def read(self) -> bytes:
+        """Liest gesamte Datei in Memory - Vorsicht bei großen Dateien!"""
+        with open(self.temp_path, 'rb') as f:
+            return f.read()
+
+    def save_to(self, destination: str) -> str:
+        """Verschiebt Datei zum Ziel. Gibt finalen Pfad zurück."""
+        import shutil
+        Path(destination).parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(self.temp_path, destination)
+        return destination
+
+    def copy_to(self, destination: str) -> str:
+        """Kopiert Datei zum Ziel. Gibt finalen Pfad zurück."""
+        import shutil
+        Path(destination).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(self.temp_path, destination)
+        return destination
+
+    def stream(self, chunk_size: int = 65536):
+        """Generator zum Streaming der Datei."""
+        with open(self.temp_path, 'rb') as f:
+            while chunk := f.read(chunk_size):
+                yield chunk
+
+
+@dataclass
 class ParsedRequest:
     """Parsed HTTP request."""
     method: str
@@ -70,13 +120,20 @@ class ParsedRequest:
     body: bytes
     form_data: Dict[str, Any] | None = None
     json_data: Any | None = None
+    files: Dict[str, UploadedFile] = field(default_factory=dict)  # NEU: Uploaded files
     session: Any = None
     client_ip: str = "unknown"
     client_port: str = "unknown"
+    environ: Dict = field(default_factory=dict)  # NEU: Original WSGI environ für file_wrapper
 
     @property
     def is_htmx(self) -> bool:
         return self.headers.get("hx-request", "").lower() == "true"
+
+    @property
+    def has_files(self) -> bool:
+        """Prüft ob Files hochgeladen wurden."""
+        return bool(self.files)
 
     def get_bearer_token(self) -> Optional[str]:
         """Extract Bearer token from Authorization header."""
@@ -103,6 +160,16 @@ class ParsedRequest:
 
     def to_toolbox_request(self) -> Dict[str, Any]:
         """Convert to ToolBoxV2 RequestData format."""
+        # Files als serialisierbare Info (nicht die Objekte selbst)
+        files_info = {}
+        for name, uploaded_file in self.files.items():
+            files_info[name] = {
+                "filename": uploaded_file.filename,
+                "content_type": uploaded_file.content_type,
+                "size": uploaded_file.size,
+                "temp_path": uploaded_file.temp_path,
+            }
+
         return {
             "request": {
                 "content_type": self.content_type,
@@ -114,6 +181,7 @@ class ParsedRequest:
                 "form_data": self.form_data,
                 "body": self.body.decode("utf-8", errors="replace") if self.body else None,
                 "client_ip": self.client_ip,
+                "files": files_info,  # NEU: File metadata
             },
             "session": self.session.to_dict() if self.session else {
                 "SiID": "", "level": "0", "spec": "", "user_name": "anonymous",
@@ -122,8 +190,13 @@ class ParsedRequest:
         }
 
 
-def parse_request(environ: Dict) -> ParsedRequest:
-    """Parse WSGI environ into structured request."""
+def parse_request(environ: Dict, upload_temp_dir: str = None) -> ParsedRequest:
+    """Parse WSGI environ into structured request.
+
+    Args:
+        environ: WSGI environment dict
+        upload_temp_dir: Temp directory for file uploads (default: system temp)
+    """
     method = environ.get("REQUEST_METHOD", "GET")
     path = unquote(environ.get("PATH_INFO", "/"))
     query_string = environ.get("QUERY_STRING", "")
@@ -143,26 +216,78 @@ def parse_request(environ: Dict) -> ParsedRequest:
         content_length = 0
 
     body = b""
-    if content_length > 0:
+    form_data = None
+    json_data = None
+    files = {}
+
+    # Multipart form-data (File Uploads) - MUSS VOR body read kommen!
+    if MULTIPART_AVAILABLE and "multipart/form-data" in content_type:
+        try:
+            # Parse mit disk buffering für große Files
+            # spool_limit: Files > 64KB werden auf Disk gespeichert
+            # disk_limit: Max 1.5 GB pro Upload
+            forms_multi, files_multi = parse_form_data(
+                environ,
+                charset='utf-8',
+                disk_limit=int(1.5 * 1024 ** 3),  # 1.5 GB
+                mem_limit=64 * 1024 ** 2,  # 64 MB total in memory
+                memfile_limit=64 * 1024,  # 64 KB pro part bevor disk
+            )
+
+            # Forms in dict konvertieren
+            form_data = {}
+            for key in forms_multi:
+                values = forms_multi.getall(key)
+                form_data[key] = values[0] if len(values) == 1 else values
+
+            # Files verarbeiten
+            for key in files_multi:
+                part = files_multi[key]
+                if part.filename:  # Nur echte File-Uploads
+                    # Temp file Pfad ermitteln
+                    if hasattr(part, 'file') and hasattr(part.file, 'name'):
+                        temp_path = part.file.name
+                    else:
+                        # Fallback: in temp dir speichern
+                        import tempfile
+                        temp_dir = upload_temp_dir or tempfile.gettempdir()
+                        Path(temp_dir).mkdir(parents=True, exist_ok=True)
+                        temp_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{part.filename}")
+                        part.save_as(temp_path)
+
+                    files[key] = UploadedFile(
+                        filename=part.filename,
+                        content_type=part.content_type or 'application/octet-stream',
+                        size=part.size,
+                        temp_path=temp_path,
+                        field_name=key,
+                    )
+
+        except Exception as e:
+            logger.error(f"Multipart parsing error: {e}")
+            # Fallback: body als raw lesen falls multipart failed
+            wsgi_input = environ.get("wsgi.input")
+            if wsgi_input and content_length > 0:
+                body = wsgi_input.read(content_length)
+
+    # Nicht-multipart: Body normal lesen
+    elif content_length > 0:
         wsgi_input = environ.get("wsgi.input")
         if wsgi_input:
             body = wsgi_input.read(content_length)
 
-    form_data = None
-    json_data = None
-
-    if body:
-        if "application/x-www-form-urlencoded" in content_type:
-            try:
-                form_data = {k: v[0] if len(v) == 1 else v
-                             for k, v in parse_qs(body.decode("utf-8")).items()}
-            except Exception:
-                pass
-        elif "application/json" in content_type:
-            try:
-                json_data = json.loads(body.decode("utf-8"))
-            except Exception:
-                pass
+        if body:
+            if "application/x-www-form-urlencoded" in content_type:
+                try:
+                    form_data = {k: v[0] if len(v) == 1 else v
+                                 for k, v in parse_qs(body.decode("utf-8")).items()}
+                except Exception:
+                    pass
+            elif "application/json" in content_type:
+                try:
+                    json_data = json.loads(body.decode("utf-8"))
+                except Exception:
+                    pass
 
     session = environ.get("tb.session")
 
@@ -180,8 +305,9 @@ def parse_request(environ: Dict) -> ParsedRequest:
         method=method, path=path, query_params=query_params,
         headers=headers, content_type=content_type,
         content_length=content_length, body=body,
-        form_data=form_data, json_data=json_data, session=session,
-        client_ip=client_ip, client_port=str(client_port),
+        form_data=form_data, json_data=json_data, files=files,
+        session=session, client_ip=client_ip, client_port=str(client_port),
+        environ=environ,  # Für wsgi.file_wrapper
     )
 
 
@@ -671,6 +797,10 @@ class ToolBoxHandler:
         if request.json_data and isinstance(request.json_data, dict):
             kwargs.update(request.json_data)
 
+        # NEU: Files als kwargs übergeben (UploadedFile Objekte)
+        if request.files:
+            kwargs["files"] = request.files
+
         # Add request context - convert to RequestData object for modules
         request_dict = request.to_toolbox_request()
         kwargs["request"] = RequestData.from_dict(request_dict)
@@ -738,19 +868,78 @@ class ToolBoxHandler:
             if data_type == "redirect":
                 return redirect_response(data, getattr(result.info, "exec_code", 302))
 
+            # NEU: file_path - Streaming direkt aus Datei
+            if data_type == "file_path":
+                if not isinstance(data, str) or not os.path.isfile(data):
+                    return error_response(f"File not found: {data}", 404, "NotFound")
+
+                info = getattr(result.result, "data_info", "")
+                # Parse filename aus data_info (Format: "filename=xyz.pdf")
+                filename = os.path.basename(data)
+                if info and "filename=" in info:
+                    filename = info.split("filename=", 1)[1].strip()
+
+                # Content-Type ermitteln
+                content_type, _ = mimetypes.guess_type(data)
+                content_type = content_type or "application/octet-stream"
+
+                file_size = os.path.getsize(data)
+
+                headers = {
+                    "Content-Type": content_type,
+                    "Content-Length": str(file_size),
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                }
+
+                # File streaming - nutze wsgi.file_wrapper wenn verfügbar
+                file_obj = open(data, 'rb')
+
+                # Markiere als streaming file für wsgi_app
+                return (200, headers, ("__file_stream__", file_obj, request.environ))
+
             if data_type == "file":
                 import base64
+                # Legacy: base64 encoded file data
                 file_data = base64.b64decode(data) if isinstance(data, str) else data
                 info = getattr(result.result, "data_info", "")
                 filename = info.replace("File download: ", "") if info else "download"
+
+                # Content-Type ermitteln
+                content_type, _ = mimetypes.guess_type(filename)
+                content_type = content_type or "application/octet-stream"
+
                 return (
                     200,
                     {
-                        "Content-Type": "application/octet-stream",
+                        "Content-Type": content_type,
+                        "Content-Length": str(len(file_data)),
                         "Content-Disposition": f'attachment; filename="{filename}"',
                     },
                     file_data
                 )
+
+            # Binary data response (Result.binary())
+            if data_type == "binary":
+                # data ist dict: {"data": bytes, "content_type": str, "filename": str|None}
+                if isinstance(data, dict):
+                    binary_data = data.get("data", b"")
+                    content_type = data.get("content_type", "application/octet-stream")
+                    filename = data.get("filename")
+                else:
+                    # Fallback: data direkt als bytes
+                    binary_data = data if isinstance(data, bytes) else str(data).encode()
+                    content_type = "application/octet-stream"
+                    filename = None
+
+                headers = {
+                    "Content-Type": content_type,
+                    "Content-Length": str(len(binary_data)),
+                }
+
+                if filename:
+                    headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+
+                return (200, headers, binary_data)
 
             # Default JSON response
             return json_response(result.as_dict())
@@ -818,7 +1007,8 @@ class WebSocketMessageHandler:
         data = event.payload.get("data", "")
         path = event.payload.get("path", "/ws")
 
-        self._logger.info(f"WS Message from {conn_id} on path {path}: {data[:200] if isinstance(data, str) else str(data)[:200]}...")
+        self._logger.info(
+            f"WS Message from {conn_id} on path {path}: {data[:200] if isinstance(data, str) else str(data)[:200]}...")
 
         # Parse JSON message
         try:
@@ -834,7 +1024,8 @@ class WebSocketMessageHandler:
             self._logger.info(f"Handler from message: {handler_id}")
 
         if not handler_id:
-            self._logger.warning(f"No handler found for path {path}, available handlers: {list(self.app.websocket_handlers.keys())}")
+            self._logger.warning(
+                f"No handler found for path {path}, available handlers: {list(self.app.websocket_handlers.keys())}")
             return
 
         # Access control for WS handlers
@@ -846,7 +1037,8 @@ class WebSocketMessageHandler:
             user_level = int(event.payload.get("level", AccessLevel.NOT_LOGGED_IN))
             authenticated = event.payload.get("authenticated", False)
 
-            self._logger.info(f"WS Access check: handler={handler_id}, user_level={user_level}, authenticated={authenticated}")
+            self._logger.info(
+                f"WS Access check: handler={handler_id}, user_level={user_level}, authenticated={authenticated}")
             self._logger.info(f"WS Access check: open_modules={self.access_controller._open_modules}")
 
             allowed, error_msg = self.access_controller.check_access(
@@ -1280,7 +1472,7 @@ class HTTPWorker:
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
         try:
-            from ..system.getting_and_closing_app  import get_app
+            from ..system.getting_and_closing_app import get_app
             instance_id = f"{self.config.toolbox.instance_id}_{self.worker_id}"
             self._app = get_app(name=instance_id, from_="HTTPWorker")
             logger.info(f"ToolBoxV2 initialized: {instance_id}")
@@ -1359,7 +1551,8 @@ class HTTPWorker:
 
         @self._event_manager.on(EventType.WS_CONNECT)
         async def handle_ws_connect(event: Event):
-            logger.info(f"[HTTP] Received WS_CONNECT event: conn_id={event.payload.get('conn_id')}, path={event.payload.get('path')}")
+            logger.info(
+                f"[HTTP] Received WS_CONNECT event: conn_id={event.payload.get('conn_id')}, path={event.payload.get('path')}")
             if self._ws_handler:
                 await self._ws_handler.handle_ws_connect(event)
             else:
@@ -1367,7 +1560,8 @@ class HTTPWorker:
 
         @self._event_manager.on(EventType.WS_MESSAGE)
         async def handle_ws_message(event: Event):
-            logger.info(f"[HTTP] Received WS_MESSAGE event: conn_id={event.payload.get('conn_id')}, data={str(event.payload.get('data', ''))[:100]}...")
+            logger.info(
+                f"[HTTP] Received WS_MESSAGE event: conn_id={event.payload.get('conn_id')}, data={str(event.payload.get('data', ''))[:100]}...")
             self._metrics["ws_messages_handled"] += 1
             if self._ws_handler:
                 await self._ws_handler.handle_ws_message(event)
@@ -1449,8 +1643,11 @@ class HTTPWorker:
                 session = self._session_manager.get_session_from_request_sync(environ)
                 environ["tb.session"] = session
 
-            # Parse request
-            request = parse_request(environ)
+            # Parse request - mit upload temp directory aus app config
+            upload_temp_dir = None
+            if self._app and hasattr(self._app, 'data_dir'):
+                upload_temp_dir = os.path.join(self._app.data_dir, 'uploads', 'temp')
+            request = parse_request(environ, upload_temp_dir=upload_temp_dir)
 
             # Route request
             if self._is_auth_endpoint(request.path):
@@ -1492,6 +1689,17 @@ class HTTPWorker:
 
             if isinstance(body, bytes):
                 return [body]
+
+            # NEU: File streaming mit wsgi.file_wrapper
+            elif isinstance(body, tuple) and len(body) == 3 and body[0] == "__file_stream__":
+                _, file_obj, req_environ = body
+                # Nutze wsgi.file_wrapper für optimiertes sendfile() wenn verfügbar
+                if 'wsgi.file_wrapper' in req_environ:
+                    return req_environ['wsgi.file_wrapper'](file_obj, 65536)
+                else:
+                    # Fallback: Generator-basiertes Streaming
+                    return self._file_iterator(file_obj)
+
             elif inspect.isasyncgen(body):
                 if not self._event_loop:
                     # Fallback if loop is missing (shouldn't happen in worker)
@@ -1544,6 +1752,25 @@ class HTTPWorker:
                 except Exception:
                     logger.error(f"Async run error (fallback): {e}")
                     raise
+
+    def _file_iterator(self, file_obj, chunk_size: int = 65536):
+        """Generator für File-Streaming als WSGI Fallback.
+
+        Args:
+            file_obj: Geöffnetes File-Object
+            chunk_size: Größe der Chunks (default 64KB)
+
+        Yields:
+            bytes chunks
+        """
+        try:
+            while True:
+                chunk = file_obj.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            file_obj.close()
 
     def _handle_health(self) -> Tuple:
         """Health check endpoint."""
@@ -1631,7 +1858,8 @@ class HTTPWorker:
             if not loop_ready_event.wait(timeout=10.0):
                 logger.warning("[HTTP] Event loop initialization timed out, continuing anyway")
 
-            logger.info(f"[HTTP] Event loop thread started: {self._event_loop_thread.is_alive()}, loop running: {self._event_loop and self._event_loop.is_running()}")
+            logger.info(
+                f"[HTTP] Event loop thread started: {self._event_loop_thread.is_alive()}, loop running: {self._event_loop and self._event_loop.is_running()}")
         except Exception as e:
             logger.error(f"Event manager init failed: {e}", exc_info=True)
 

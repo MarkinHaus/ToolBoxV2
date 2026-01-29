@@ -406,7 +406,7 @@ async def hud_todo_test(app, request=None):
 
 
 @export(mod_name=Name, api=True, version=version)
-async def hud_action(app, action_name: str, payload: dict, conn_id: str, request=None):
+async def hud_action(app, action: str, payload: dict, conn_id: str, request=None):
     """Route action to correct widget based on widget_id in payload or conn context."""
     # In real implementation: determine widget from request context
     # For test: try all widgets
@@ -416,10 +416,10 @@ async def hud_action(app, action_name: str, payload: dict, conn_id: str, request
     if widget_id:
         widget = get_widget(widget_id)
         if widget:
-            return await widget.handle_action(app, action_name, payload, conn_id, request)
+            return await widget.handle_action(app, action, payload, conn_id, request)
 
     # Fallback: try guess_game
-    return await guess_game.handle_action(app, action_name, payload, conn_id, request)
+    return await guess_game.handle_action(app, action, payload, conn_id, request)
 
 
 # =========================================================================

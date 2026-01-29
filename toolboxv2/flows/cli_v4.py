@@ -47,7 +47,7 @@ from toolboxv2.mods.isaa.base.Agent.instant_data_vis import (
     visualize_data_terminal,
 )
 from toolboxv2.mods.isaa.base.Agent.vfs_v2 import FileBackingType
-from toolboxv2.mods.isaa.base.AgentUtils import detect_shell
+from toolboxv2.mods.isaa.base.AgentUtils import detect_shell, anything_from_str_to_dict
 from toolboxv2.mods.isaa.module import Tools as IsaaTool
 
 import html
@@ -357,6 +357,9 @@ class ISAA_Host:
         # Session state
         self.active_agent_name = "self"
         self.active_session_id = "default"
+
+        # audio
+        self.audio_device_index = 0
 
         # File paths
         self.state_file = Path(self.app.appdata) / "icli" / "isaa_host_state.json"
@@ -1266,6 +1269,7 @@ class ISAA_Host:
         vfs_files: dict = {}
         vfs_mounts: dict = {}
         vfs_dirty: dict = {}
+        current_skills: dict = {}
         try:
             instance_key = f"agent-instance-{self.active_agent_name}"
             if instance_key in self.isaa_tools.config:
@@ -1278,8 +1282,14 @@ class ISAA_Host:
                         f: None for f, file in session.vfs.files.items()
                         if hasattr(file, 'is_dirty') and file.is_dirty
                     }
+
+                engine = agent._get_execution_engine()
+                if hasattr(engine, 'skills_manager'):
+                    current_skills = {s_id: None for s_id in engine.skills_manager.skills.keys()}
         except Exception:
             pass
+
+
 
         return {
             "/help": None,
@@ -1310,12 +1320,27 @@ class ISAA_Host:
                 "sync": vfs_dirty if vfs_dirty else vfs_files if vfs_files else None,
                 "refresh": vfs_mounts if vfs_mounts else None,
                 "pull": vfs_files if vfs_files else None,
+                "save": vfs_files if vfs_files else None,
                 "mounts": None,
                 "dirty": None,
                 **vfs_files,  # Direct file access: /vfs <filename>
             } if vfs_files or vfs_mounts else None,
             "/context": {
                 "stats": None,
+            },
+            "/skill": {
+                "list": None,
+                "show": current_skills if current_skills else None,
+                "edit": current_skills if current_skills else None,
+                "delete": current_skills if current_skills else None,
+                "boost": current_skills if current_skills else None,
+                "merge": current_skills if current_skills else None,
+                "import": {},
+                "export": current_skills if current_skills else None,
+            },
+            "/history": {
+                "show": None,
+                "clear": None,
             },
             "/bind": {a: None for a in agents},
             "/teach": {a: None for a in agents},
@@ -1453,7 +1478,10 @@ class ISAA_Host:
         print_box_content("/bind <agent_a> <agent_b> - Bind agents", "")
         print_box_content("/teach <agent> <skill_name> - Teach skill", "")
         print_box_content("/context stats - Show context stats", "")
-
+        print_separator()
+        print_status("History Management", "info")
+        print_box_content("/history show [n]       - Show last n messages (default 10)", "")
+        print_box_content("/history clear          - Clear current session history", "")
         print_separator()
         print_status("VFS Management", "info")
         print_box_content("/vfs                         - Show VFS tree", "")
@@ -1461,6 +1489,7 @@ class ISAA_Host:
         print_box_content("/vfs mount <path> [vfs_path] - Mount local folder", "")
         print_box_content("/vfs unmount <vfs_path>      - Unmount folder", "")
         print_box_content("/vfs sync [file]             - Sync changes to disk", "")
+        print_box_content("/vfs save <vfs_path> [file]  - Save vfs file to disk", "")
         print_box_content("/vfs refresh <mount>         - Re-scan mount for changes", "")
         print_box_content("/vfs pull <file>             - Reload file from disk", "")
         print_box_content("/vfs mounts                  - List active mounts", "")
@@ -1469,7 +1498,17 @@ class ISAA_Host:
         print_status("Mount Options", "info")
         print_box_content("  --readonly                 - No write operations", "")
         print_box_content("  --no-sync                  - Manual sync only", "")
-
+        print_separator()
+        print_status("Skill Management", "info")
+        print_box_content("/skill list             - List skills of active agent", "")
+        print_box_content("/skill list --inactive  - List inactive skills ", "")
+        print_box_content("/skill show <id>        - Show details/instruction", "")
+        print_box_content("/skill edit <id>        - Edit skill instruction", "")
+        print_box_content("/skill delete <id>      - Delete a skill", "")
+        print_box_content("/skill merge <keep_id> <remove_id>", "")
+        print_box_content("/skill boost <skill_id> 0.3      - Delete a skill", "")
+        print_box_content("/skill import <path>         - import skills from directory/skill file", "")
+        print_box_content("/skill export <id> <path>    - id=all Extprt skill or all skills", "")
         print_separator()
 
         print_status("Shortcuts", "info")
@@ -1512,6 +1551,12 @@ class ISAA_Host:
 
         elif cmd == "/vfs":
             await self._cmd_vfs(args)
+
+        elif cmd == "/skill":
+            await self._cmd_skill(args)
+
+        elif cmd == "/history":
+            await self._cmd_history(args)
 
         elif cmd == "/context":
             await self._cmd_context(args)
@@ -1777,6 +1822,45 @@ class ISAA_Host:
                     print_box_content(f"Scan time: {result['scan_time_ms']:.1f}ms", "info")
                 else:
                     print_status(f"Mount failed: {result.get('error')}", "error")
+            elif cmd == "obsidian":
+                if len(args) < 2:
+                    print_status("Usage: /vfs obsidian <mount|unmount|sync> <local_path> [vfs_path]", "warning")
+                    return
+                action = args[1].lower()
+                if action == "mount":
+                    if len(args) < 3:
+                        print_status("Usage: /vfs obsidian mount <local_path> [vfs_path]", "warning")
+                        return
+                    local_path = args[2]
+                    vfs_path = args[3] if len(args) > 3 else "/obsidian"
+                    from toolboxv2.mods.isaa.base.Agent.vfs_v2 import sync_obsidian_vault
+                    result = sync_obsidian_vault(session.vfs, local_path, vfs_path)
+                    if result.get("success"):
+                        print_status(f"Obsidian vault mounted: {local_path} → {vfs_path}", "success")
+                    else:
+                        print_status(f"Mount failed: {result.get('error')}", "error")
+                elif action == "unmount":
+                    if len(args) < 3:
+                        print_status("Usage: /vfs obsidian unmount <vfs_path>", "warning")
+                        return
+                    vfs_path = args[2]
+                    result = session.vfs.unmount(vfs_path, save_changes=False)
+                    if result.get("success"):
+                        print_status(f"Obsidian vault unmounted: {vfs_path}", "success")
+                    else:
+                        print_status(f"Unmount failed: {result.get('error')}", "error")
+                elif action == "sync":
+                    if len(args) < 3:
+                        print_status("Usage: /vfs obsidian sync <vfs_path>", "warning")
+                        return
+                    vfs_path = args[2]
+                    result = session.vfs.refresh_mount(vfs_path)
+                    if result.get("success"):
+                        print_status(f"Obsidian vault synced: {vfs_path}", "success")
+                    else:
+                        print_status(f"Sync failed: {result.get('error')}", "error")
+                else:
+                    print_status(f"Unknown obsidian action: {action} available: mount, unmount, sync", "error")
 
             # /vfs unmount <vfs_path> [--no-save]
             elif cmd == "unmount":
@@ -1815,6 +1899,18 @@ class ISAA_Host:
                     else:
                         for err in result.get("errors", []):
                             print_status(err, "error")
+
+            elif cmd == "save":
+                if len(args) < 2:
+                    print_status("Usage: /vfs save <vfs_path> <local_path>", "warning")
+                    return
+                vfs_path = args[1]
+                local_path = args[2]
+                result = session.vfs.save_to_local(vfs_path, local_path, overwrite=True, create_dirs=True)
+                if result.get("success"):
+                    print_status(f"Saved: {vfs_path} → {local_path}", "success")
+                else:
+                    print_status(f"Save failed: {result.get('error')}", "error")
 
             # /vfs refresh <vfs_path>
             elif cmd == "refresh":
@@ -1934,8 +2030,8 @@ class ISAA_Host:
                         status = " [open]"
 
                     current[part] = {"_status": status, "_size": getattr(f, 'size_bytes',
-                                                                         len(str(f.content)) if hasattr(f,
-                                                                                                        'content') else 0)}
+                                                                         f.size if hasattr(f,
+                                                                                                        'size') else 0)}
                 else:
                     current = current.setdefault(part, {})
 
@@ -2025,6 +2121,317 @@ class ISAA_Host:
         except Exception as e:
             print_status(f"Error reading file '{filename}': {e}", "error")
 
+    async def _cmd_history(self, args: list[str]):
+        """Handle /history commands."""
+        if not args:
+            print_status("Usage: /history <show|clear> [n]", "warning")
+            return
+
+        action = args[0].lower()
+
+        try:
+            agent = await self.isaa_tools.get_agent(self.active_agent_name)
+            session = agent.session_manager.get(self.active_session_id)
+
+            if not session:
+                print_status("No active session found.", "error")
+                return
+        except Exception as e:
+            print_status(f"Error accessing session: {e}", "error")
+            return
+
+        if action == "clear":
+            session.clear_history()
+            # If the session has a persistence layer, ensure it saves
+            self._save_state()
+            print_status(f"History cleared for session '{self.active_session_id}'.", "success")
+
+        elif action == "show":
+            limit = 10
+            if len(args) > 1 and args[1].isdigit():
+                limit = int(args[1])
+
+            history = session.get_history(last_n=limit)
+
+            if not history:
+                print_status("History is empty.", "info")
+                return
+
+            print_box_header(f"History: {self.active_agent_name}@{self.active_session_id} (Last {len(history)})", "💬")
+
+            for msg in history:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+
+                # Format based on role
+                if role == "user":
+                    c_print(HTML(f"  <style font-weight='bold' fg='ansigreen'>User 👤</style>"))
+                    c_print(HTML(f"  {esc(content)}"))
+                    c_print(HTML(""))  # Spacing
+
+                elif role == "assistant":
+                    c_print(HTML(f"  <style font-weight='bold' fg='ansicyan'>{self.active_agent_name} 🤖</style>"))
+
+                    # Check for Tool Calls
+                    if "tool_calls" in msg and msg["tool_calls"]:
+                        for tc in msg["tool_calls"]:
+                            fn = tc.get("function", {})
+                            name = fn.get("name", "unknown")
+                            c_print(HTML(f"  <style fg='ansiyellow'>🔧 Calls: {name}(...)</style>"))
+
+                    if content:
+                        c_print(HTML(f"  {esc(content)}"))
+                    c_print(HTML(""))  # Spacing
+
+                elif role == "tool":
+                    # Tool Output - usually verbose, show summary
+                    call_id = msg.get("tool_call_id", "unknown")
+                    preview = content[:100] + "..." if len(content) > 100 else content
+                    c_print(HTML(f"  <style fg='ansimagenta'>⚙️ Tool Result ({call_id})</style>"))
+                    c_print(HTML(f"  <style fg='gray'>{esc(preview)}</style>"))
+                    c_print(HTML(""))
+
+                elif role == "system":
+                    c_print(HTML(f"  <style fg='ansired'>System ⚠️</style>"))
+                    c_print(HTML(f"  <style fg='gray'>{esc(content[:100])}...</style>"))
+                    c_print(HTML(""))
+
+            print_box_footer()
+
+        else:
+            print_status(f"Unknown history action: {action}", "error")
+
+    async def _cmd_skill(self, args: list[str]):
+        """Handle /skill commands."""
+        if not args:
+            print_status("Usage: /skill <list|show|edit|delete|boost|merge|import|export> [id]", "warning")
+            return
+
+        action = args[0].lower()
+
+        try:
+            agent = await self.isaa_tools.get_agent(self.active_agent_name)
+            # Access the SkillsManager via the ExecutionEngine
+            engine = agent._get_execution_engine()
+            sm = engine.skills_manager
+        except Exception as e:
+            print_status(f"Could not access skills for agent '{self.active_agent_name}'", "error")
+            import traceback
+            traceback.print_exc()
+            return
+
+
+        if action == "show":
+            if len(args) < 2:
+                print_status("Usage: /skill show <skill_id>", "warning")
+                return
+
+            skill_id = args[1]
+            skill = sm.skills.get(skill_id)
+
+            if not skill:
+                print_status(f"Skill '{skill_id}' not found.", "error")
+                return
+
+            print_box_header(f"Skill: {skill.name}", "🧠")
+            print_box_content(f"ID: {skill.id}", "info")
+            print_box_content(f"Source: {skill.source} | Confidence: {skill.confidence:.2f}", "info")
+            print_box_content(f"Triggers: {', '.join(skill.triggers)}", "info")
+            print_separator()
+            print_status("Instruction:", "info")
+            print_code_block(skill.instruction, "markdown")
+            print_box_footer()
+
+        elif action == "export":
+            if len(args) < 3:
+                print_status("Usage: /skill export <skill_id> <output_path>", "warning")
+                return
+            skill_id = args[1]
+            output_path = args[2]
+            if skill_id == "all":
+                sm.export_skills(output_path)
+            else:
+                sm.export_to_skill_file(skill_id, output_path)
+            print_status(f"Skill '{skill_id}' exported to '{output_path}'", "success")
+
+        elif action == "import":
+            if len(args) < 2:
+                print_status("Usage: /skill import <input_path>", "warning")
+                return
+            input_path = args[1]
+            results = sm.import_skills(input_path, True)
+            for name, success in results.items():
+                print(f"{'✅' if success else '❌'} {name}")
+            print_status(f"Skill '{input_path}' imported", "success")
+
+        elif action == "delete":
+            if len(args) < 2:
+                print_status("Usage: /skill delete <skill_id>", "warning")
+                return
+
+            skill_id = args[1]
+            if skill_id in sm.skills:
+                # Prevent deleting predefined skills unless forced (optional safety)
+                if sm.skills[skill_id].source == "predefined":
+                    print_status("Cannot delete predefined skills.", "warning")
+                    return
+
+                del sm.skills[skill_id]
+                # Trigger save via checkpoint manager implicitly later or set dirty flag
+                sm._skill_embeddings_dirty = True
+                print_status(f"Skill '{skill_id}' deleted.", "success")
+            else:
+                print_status(f"Skill '{skill_id}' not found.", "error")
+        elif action == "list":
+            show_inactive_only = "--inactive" in args
+
+            print_box_header(f"Skills: {self.active_agent_name}", "🧠")
+
+            columns = [("ID", 25), ("Name", 20), ("Src", 10), ("Conf", 6), ("Active", 8)]
+            widths = [25, 20, 10, 6, 8]
+            print_table_header(columns, widths)
+
+            skills = sm.skills.values()
+
+            if show_inactive_only:
+                skills = [
+                    s for s in skills
+                    if s.source == "learned" and not s.is_active()
+                ]
+
+            sorted_skills = sorted(
+                skills,
+                key=lambda s: (s.source != "learned", s.confidence),
+                reverse=False
+            )
+
+            for skill in sorted_skills:
+                disp_id = skill.id if len(skill.id) < 24 else skill.id[:22] + ".."
+
+                source_style = "green" if skill.source == "learned" else "grey"
+                conf_style = "green" if skill.confidence > 0.8 else "yellow"
+                active_style = "green" if skill.is_active() else "grey"
+
+                print_table_row(
+                    [
+                        disp_id,
+                        skill.name,
+                        skill.source,
+                        f"{skill.confidence:.2f}",
+                        "YES" if skill.is_active() else "NO"
+                    ],
+                    widths,
+                    ["cyan", "white", source_style, conf_style, active_style]
+                )
+
+            print_box_footer()
+
+        elif action == "merge":
+            if len(args) < 3:
+                print_status("Usage: /skill merge <keep_id> <remove_id>", "warning")
+                return
+
+            keep_id, remove_id = args[1], args[2]
+
+            keep_skill = sm.skills.get(keep_id)
+            remove_skill = sm.skills.get(remove_id)
+
+            if not keep_skill or not remove_skill:
+                print_status("One or both skills not found.", "error")
+                return
+
+            if keep_id == remove_id:
+                print_status("Cannot merge a skill into itself.", "warning")
+                return
+
+            # Merge logic
+            keep_skill.merge_with(remove_skill)
+
+            del sm.skills[remove_id]
+            sm._skill_embeddings_dirty = True
+
+            print_status(
+                f"Merged skill '{remove_skill.name}' into '{keep_skill.name}'.",
+                "success"
+            )
+
+        elif action == "boost":
+            if len(args) < 3:
+                print_status("Usage: /skill boost <skill_id> <amount>", "warning")
+                return
+
+            skill_id = args[1]
+
+            try:
+                amount = float(args[2])
+            except ValueError:
+                print_status("Boost amount must be a float (e.g. 0.3).", "error")
+                return
+
+            skill = sm.skills.get(skill_id)
+            if not skill:
+                print_status(f"Skill '{skill_id}' not found.", "error")
+                return
+
+            old_conf = skill.confidence
+            skill.confidence = min(1.0, skill.confidence + amount)
+
+            sm._skill_embeddings_dirty = True
+
+            print_status(
+                f"Skill '{skill.name}' boosted: {old_conf:.2f} → {skill.confidence:.2f}",
+                "success"
+            )
+
+
+        elif action == "edit":
+            if len(args) < 2:
+                print_status("Usage: /skill edit <skill_id>", "warning")
+                return
+
+            skill_id = args[1]
+            skill = sm.skills.get(skill_id)
+
+            if not skill:
+                print_status(f"Skill '{skill_id}' not found.", "error")
+                return
+
+            print_box_header(f"Editing: {skill.name}", "✏️")
+            print_status("Current Instruction:", "info")
+            print_code_block(skill.instruction, "markdown")
+            print_separator()
+
+            print_status("Enter NEW instruction (end with empty line) or type 'CANCEL':", "configure")
+
+            lines: list[str] = []
+            if self.prompt_session is not None:
+                while True:
+                    line = await self.prompt_session.prompt_async(
+                        HTML("<style fg='grey'>... </style>")
+                    )
+                    if not line.strip():
+                        break
+                    if line.strip().upper() == "CANCEL":
+                        print_status("Edit cancelled.", "warning")
+                        return
+                    lines.append(line)
+
+            new_instruction = "\n".join(lines)
+            if new_instruction:
+                skill.instruction = new_instruction
+                sm._skill_embeddings_dirty = True  # Force re-embedding
+                print_status(f"Skill '{skill.name}' updated.", "success")
+
+                # Try to save agent state
+                try:
+                    await agent.save()
+                    print_status("Agent state saved.", "data")
+                except Exception as e:
+                    print_status(f"Warning: Could not save to disk immediately: {e}", "warning")
+
+        else:
+            print_status(f"Unknown skill action: {action}", "error")
+
     async def _cmd_context(self, args: list[str]):
         """Handle /context commands."""
         try:
@@ -2050,26 +2457,22 @@ class ISAA_Host:
             ):
                 full_response += chunk
                 print(chunk, end="", flush=True)
-                if not start_data and "```json" in full_response:
-                    start_data = True
-                if start_data:
-                    final_response += chunk
+                full_response += chunk
 
             c_print()  # Newline after streaming
 
             # Try to visualize JSON responses
             try:
-                if final_response.strip().startswith("```json"):
-                    final_response = final_response.strip()[7:-3]
-                if final_response.strip().startswith("```"):
-                    final_response = final_response.strip()[3:-3]
-                if final_response.strip().startswith("{"):
-                    data = json.loads(final_response.strip())
-                    if isinstance(data, dict):
-                        print_separator()
-                        await visualize_data_terminal(
-                            data, agent, max_preview_chars=max(len(final_response), 8000)
-                        )
+                if "```json" in full_response or "```" in full_response:
+                    final_response = full_response.split("```")[1]
+                data = anything_from_str_to_dict(final_response)
+                if isinstance(data, list) and len(data) == 1:
+                    data = data[0]
+                if isinstance(data, dict):
+                    print_separator()
+                    await visualize_data_terminal(
+                        data, agent, max_preview_chars=max(len(final_response), 8000)
+                    )
             except (json.JSONDecodeError, Exception):
                 pass
 

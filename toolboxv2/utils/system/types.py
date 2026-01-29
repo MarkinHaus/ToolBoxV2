@@ -1158,6 +1158,137 @@ class Result(Generic[T]):
         return cls(error=error, info=info_obj, result=result)
 
     @classmethod
+    def file_path(cls, path: str, filename: str = None, content_type: str = None,
+                  info: str = "OK", interface=None):
+        """
+        Erstellt ein Result für File-Download via Streaming.
+
+        Die Datei wird NICHT in Memory geladen, sondern direkt gestreamt.
+        Nutzt wsgi.file_wrapper für optimale Performance.
+
+        Args:
+            path: Absoluter Pfad zur Datei
+            filename: Download-Filename (default: basename von path)
+            content_type: MIME Type (default: auto-detect)
+            info: Info text
+            interface: ToolBoxInterface (default: remote)
+
+        Returns:
+            Result mit data_type="file_path"
+
+        Example:
+            # In einem Modul:
+            @export(mod_name="MyMod", api=True)
+            def download_report(request):
+                report_path = "/path/to/report.pdf"
+                return Result.file_path(report_path, filename="Monthly_Report.pdf")
+        """
+        import os
+        import mimetypes
+
+        # Interface default
+        if interface is None:
+            from toolboxv2.utils.system.types import ToolBoxInterfaces
+            interface = ToolBoxInterfaces.remote
+
+        # Prüfe ob Datei existiert
+        if not os.path.isfile(path):
+            return cls.error(
+                data=f"File not found: {path}",
+                info="File not found",
+                exec_code=404
+            )
+
+        # Filename
+        if filename is None:
+            filename = os.path.basename(path)
+
+        # Content-Type auto-detect
+        if content_type is None:
+            content_type, _ = mimetypes.guess_type(path)
+            content_type = content_type or "application/octet-stream"
+
+        # Result erstellen
+        from toolboxv2.utils.system.types import (
+            ToolBoxError, ToolBoxInfo, ToolBoxResult
+        )
+
+        error = ToolBoxError.none
+        info_obj = ToolBoxInfo(exec_code=200, help_text=info)
+
+        result = ToolBoxResult(
+            data_to=interface,
+            data=path,  # Pfad, nicht Inhalt!
+            data_info=f"filename={filename}",
+            data_type="file_path"  # Wird von server_worker erkannt
+        )
+
+        return cls(error=error, info=info_obj, result=result)
+
+    @classmethod
+    def file_stream(cls, generator, filename: str, content_type: str = None,
+                    size: int = None, info: str = "OK", interface=None):
+        """
+        Erstellt ein Result für File-Download via Generator-Streaming.
+
+        Für Dateien die on-the-fly generiert werden (z.B. aus MinIO).
+
+        Args:
+            generator: Generator/Iterator der bytes yielded
+            filename: Download-Filename
+            content_type: MIME Type (default: application/octet-stream)
+            size: Dateigröße wenn bekannt (für Content-Length header)
+            info: Info text
+            interface: ToolBoxInterface
+
+        Returns:
+            Result mit streaming data
+
+        Example:
+            # Streaming aus MinIO:
+            @export(mod_name="MyMod", api=True)
+            async def download_from_minio(request, file_id):
+                def stream_minio():
+                    response = minio_client.get_object(bucket, file_id)
+                    for chunk in response.stream(32*1024):
+                        yield chunk
+                    response.close()
+
+                return Result.file_stream(
+                    stream_minio(),
+                    filename="data.csv",
+                    content_type="text/csv"
+                )
+        """
+        import mimetypes
+
+        if interface is None:
+            from toolboxv2.utils.system.types import ToolBoxInterfaces
+            interface = ToolBoxInterfaces.remote
+
+        # Content-Type
+        if content_type is None:
+            content_type, _ = mimetypes.guess_type(filename)
+            content_type = content_type or "application/octet-stream"
+
+        # Headers
+        headers = {
+            "Content-Type": content_type,
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        }
+        if size:
+            headers["Content-Length"] = str(size)
+
+        # Nutze existierende stream() Methode
+        return cls.stream(
+            stream_generator=generator,
+            content_type=content_type,
+            headers=headers,
+            info=info,
+            interface=interface
+        )
+
+    @classmethod
     def redirect(cls, url, status_code=302, info="Redirect", interface=ToolBoxInterfaces.remote):
         """Create a redirect response."""
         error = ToolBoxError.none

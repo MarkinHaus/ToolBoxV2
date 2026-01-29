@@ -9,3 +9,5 @@ from .intelligent_rate_limiter import (
 )
 gateway = setup_gateway_provider()
 # zai_provider = setup_custom_provider("zglm", os.getenv("ZAI_API_BASE"), os.getenv("ZAI_API_KEY"))
+from .zai_litellm_provider import setup_zai_provider
+provider = setup_zai_provider(debug=False)

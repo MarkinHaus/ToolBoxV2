@@ -22,6 +22,601 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Any, Dict, Tuple, Callable
 
+"""
+Anthropic Skill Format - Import/Export für SkillsManager
+
+Ermöglicht das Laden und Speichern von Skills im Anthropic-kompatiblen Format:
+
+  skills/
+  ├── skill-name/
+  │   ├── SKILL.md          (required: YAML frontmatter + Markdown body)
+  │   ├── scripts/          (optional: executable Python/Bash scripts)
+  │   ├── references/       (optional: reference docs loaded on demand)
+  │   └── assets/           (optional: templates, images, fonts)
+  └── other-skill/
+      └── ...
+
+SKILL.md Format:
+---
+name: skill-name
+description: Was der Skill tut und wann er getriggert wird
+license: Optional license info
+---
+
+# Skill Title
+
+Markdown instructions here...
+
+Author: FlowAgent V3
+"""
+
+import os
+import re
+import yaml
+import shutil
+import zipfile
+from pathlib import Path
+from datetime import datetime
+from typing import List, Optional, Dict, Tuple, Any
+from dataclasses import dataclass
+
+
+# Import from your existing skills module
+# from toolboxv2.mods.isaa.base.Agent.skills import Skill, SkillsManager
+
+@dataclass
+class AnthropicSkillMetadata:
+    """Parsed metadata from SKILL.md frontmatter"""
+    name: str
+    description: str
+    license: Optional[str] = None
+    compatibility: Optional[str] = None
+    allowed_tools: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class SkillIOAnthropicFormat:
+    """
+    Import/Export Skills im Anthropic-kompatiblen Format.
+
+    Kann als Mixin oder Extension für SkillsManager verwendet werden.
+    """
+
+    # Mapping: Anthropic source → internal source
+    SOURCE_MAPPING = {
+        "anthropic": "imported",
+        "learned": "learned",
+        "predefined": "predefined"
+    }
+
+    def __init__(self, skills_manager: 'SkillsManager'):
+        """
+        Args:
+            skills_manager: Referenz auf den SkillsManager
+        """
+        self.manager = skills_manager
+
+    # =========================================================================
+    # SKILL.md PARSING
+    # =========================================================================
+
+    def parse_skill_md(self, skill_md_path: Path) -> Tuple[Optional[AnthropicSkillMetadata], Optional[str]]:
+        """
+        Parse SKILL.md file into metadata and body.
+
+        Returns:
+            Tuple of (metadata, body) or (None, None) on error
+        """
+        try:
+            content = skill_md_path.read_text(encoding='utf-8')
+        except Exception as e:
+            print(f"[SkillIO] Failed to read {skill_md_path}: {e}")
+            return None, None
+
+        # Check for YAML frontmatter
+        if not content.startswith('---'):
+            print(f"[SkillIO] No YAML frontmatter in {skill_md_path}")
+            return None, None
+
+        # Extract frontmatter
+        match = re.match(r'^---\n(.*?)\n---\n?(.*)', content, re.DOTALL)
+        if not match:
+            print(f"[SkillIO] Invalid frontmatter format in {skill_md_path}")
+            return None, None
+
+        frontmatter_text = match.group(1)
+        body = match.group(2).strip()
+
+        # Parse YAML
+        try:
+            fm = yaml.safe_load(frontmatter_text)
+            if not isinstance(fm, dict):
+                print(f"[SkillIO] Frontmatter must be a dict in {skill_md_path}")
+                return None, None
+        except yaml.YAMLError as e:
+            print(f"[SkillIO] YAML parse error in {skill_md_path}: {e}")
+            return None, None
+
+        # Validate required fields
+        if 'name' not in fm or 'description' not in fm:
+            print(f"[SkillIO] Missing name or description in {skill_md_path}")
+            return None, None
+
+        metadata = AnthropicSkillMetadata(
+            name=fm['name'],
+            description=fm['description'],
+            license=fm.get('license'),
+            compatibility=fm.get('compatibility'),
+            allowed_tools=fm.get('allowed-tools'),
+            metadata=fm.get('metadata')
+        )
+
+        return metadata, body
+
+    # =========================================================================
+    # IMPORT: Directory → SkillsManager
+    # =========================================================================
+
+    def import_skills_from_directory(
+        self,
+        skills_dir: Path,
+        overwrite: bool = False,
+        source_tag: str = "imported"
+    ) -> Dict[str, bool]:
+        """
+        Import all skills from a directory structure.
+
+        Args:
+            skills_dir: Path to skills directory containing skill folders
+            overwrite: Whether to overwrite existing skills
+            source_tag: Source tag for imported skills
+
+        Returns:
+            Dict mapping skill_name → success
+        """
+        skills_dir = Path(skills_dir)
+        results = {}
+
+        if not skills_dir.exists():
+            print(f"[SkillIO] Directory not found: {skills_dir}")
+            return results
+
+        # Iterate through subdirectories
+        for item in skills_dir.iterdir():
+            if not item.is_dir():
+                continue
+
+            skill_md = item / "SKILL.md"
+            if not skill_md.exists():
+                continue
+
+            success = self.import_single_skill(item, overwrite, source_tag)
+            results[item.name] = success
+
+        imported = sum(1 for v in results.values() if v)
+        print(f"[SkillIO] Imported {imported}/{len(results)} skills from {skills_dir}")
+
+        return results
+
+    def import_single_skill(
+        self,
+        skill_dir: Path,
+        overwrite: bool = False,
+        source_tag: str = "imported"
+    ) -> bool:
+        """
+        Import a single skill from its directory.
+
+        Args:
+            skill_dir: Path to skill directory (contains SKILL.md)
+            overwrite: Whether to overwrite if exists
+            source_tag: Source tag
+
+        Returns:
+            True if successful
+        """
+        skill_dir = Path(skill_dir)
+        skill_md_path = skill_dir / "SKILL.md"
+
+        if not skill_md_path.exists():
+            print(f"[SkillIO] SKILL.md not found in {skill_dir}")
+            return False
+
+        # Parse SKILL.md
+        metadata, body = self.parse_skill_md(skill_md_path)
+        if not metadata:
+            return False
+
+        # Generate skill ID from name
+        skill_id = self._generate_skill_id(metadata.name)
+
+        # Check if exists
+        if skill_id in self.manager.skills and not overwrite:
+            print(f"[SkillIO] Skill already exists: {skill_id} (use overwrite=True)")
+            return False
+
+        # Extract triggers from description (simple heuristic)
+        triggers = self._extract_triggers(metadata.name, metadata.description)
+
+        # Load allowed tools if specified
+        tools_used = metadata.allowed_tools or []
+
+        # Check for scripts directory → add tool hints
+        scripts_dir = skill_dir / "scripts"
+        if scripts_dir.exists():
+            for script in scripts_dir.glob("*.py"):
+                tools_used.append(f"script:{script.stem}")
+
+        # Create Skill object
+        # NOTE: Import Skill from your module
+        from toolboxv2.mods.isaa.base.Agent.skills import Skill
+
+        skill = Skill(
+            id=skill_id,
+            name=metadata.name,
+            triggers=triggers,
+            instruction=body,
+            tools_used=tools_used,
+            tool_groups=[],
+            source=source_tag,
+            confidence=0.8 if source_tag == "imported" else 0.3,  # Imported skills start higher
+            activation_threshold=0.6
+        )
+
+        # Store additional metadata
+        skill._anthropic_metadata = {
+            'license': metadata.license,
+            'compatibility': metadata.compatibility,
+            'skill_dir': str(skill_dir),
+            'has_scripts': scripts_dir.exists(),
+            'has_references': (skill_dir / "references").exists(),
+            'has_assets': (skill_dir / "assets").exists()
+        }
+
+        self.manager.skills[skill_id] = skill
+        self.manager._skill_embeddings_dirty = True
+
+        print(f"[SkillIO] Imported skill: {metadata.name} → {skill_id}")
+        return True
+
+    def import_from_skill_file(
+        self,
+        skill_file: Path,
+        extract_dir: Optional[Path] = None,
+        overwrite: bool = False
+    ) -> bool:
+        """
+        Import from .skill file (ZIP format).
+
+        Args:
+            skill_file: Path to .skill file
+            extract_dir: Where to extract (temp if None)
+            overwrite: Whether to overwrite
+
+        Returns:
+            True if successful
+        """
+        skill_file = Path(skill_file)
+
+        if not skill_file.exists():
+            print(f"[SkillIO] File not found: {skill_file}")
+            return False
+
+        if extract_dir is None:
+            extract_dir = Path("/tmp") / f"skill_extract_{skill_file.stem}"
+
+        extract_dir = Path(extract_dir)
+
+        try:
+            # Extract ZIP
+            with zipfile.ZipFile(skill_file, 'r') as zf:
+                zf.extractall(extract_dir)
+
+            # Find skill directory (should be top-level folder in ZIP)
+            skill_dirs = [d for d in extract_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists()]
+
+            if not skill_dirs:
+                print(f"[SkillIO] No valid skill found in {skill_file}")
+                return False
+
+            # Import first skill found
+            return self.import_single_skill(skill_dirs[0], overwrite)
+
+        except zipfile.BadZipFile:
+            print(f"[SkillIO] Invalid ZIP file: {skill_file}")
+            return False
+        except Exception as e:
+            print(f"[SkillIO] Error importing {skill_file}: {e}")
+            return False
+
+    # =========================================================================
+    # EXPORT: SkillsManager → Directory
+    # =========================================================================
+
+    def export_skills_to_directory(
+        self,
+        output_dir: Path,
+        skill_ids: Optional[List[str]] = None,
+        include_predefined: bool = False
+    ) -> Dict[str, bool]:
+        """
+        Export skills to Anthropic-compatible directory structure.
+
+        Args:
+            output_dir: Output directory
+            skill_ids: Specific skill IDs to export (None = all learned/imported)
+            include_predefined: Whether to include predefined skills
+
+        Returns:
+            Dict mapping skill_id → success
+        """
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        results = {}
+
+        # Select skills to export
+        if skill_ids:
+            skills_to_export = [self.manager.skills[sid] for sid in skill_ids if sid in self.manager.skills]
+        else:
+            skills_to_export = [
+                s for s in self.manager.skills.values()
+                if s.source != "predefined" or include_predefined
+            ]
+
+        for skill in skills_to_export:
+            success = self.export_single_skill(skill, output_dir)
+            results[skill.id] = success
+
+        exported = sum(1 for v in results.values() if v)
+        print(f"[SkillIO] Exported {exported}/{len(results)} skills to {output_dir}")
+
+        return results
+
+    def export_single_skill(self, skill: 'Skill', output_dir: Path) -> bool:
+        """
+        Export a single skill to Anthropic format.
+
+        Args:
+            skill: Skill object to export
+            output_dir: Parent directory for skill folder
+
+        Returns:
+            True if successful
+        """
+        # Convert skill name to kebab-case for directory
+        dir_name = self._to_kebab_case(skill.name)
+        skill_dir = Path(output_dir) / dir_name
+
+        try:
+            skill_dir.mkdir(parents=True, exist_ok=True)
+
+            # Build SKILL.md content
+            skill_md_content = self._build_skill_md(skill)
+
+            # Write SKILL.md
+            skill_md_path = skill_dir / "SKILL.md"
+            skill_md_path.write_text(skill_md_content, encoding='utf-8')
+
+            # Create empty resource directories if skill had them
+            if hasattr(skill, '_anthropic_metadata'):
+                meta = skill._anthropic_metadata
+                if meta.get('has_scripts'):
+                    (skill_dir / "scripts").mkdir(exist_ok=True)
+                if meta.get('has_references'):
+                    (skill_dir / "references").mkdir(exist_ok=True)
+                if meta.get('has_assets'):
+                    (skill_dir / "assets").mkdir(exist_ok=True)
+
+            print(f"[SkillIO] Exported: {skill.name} → {skill_dir}")
+            return True
+
+        except Exception as e:
+            print(f"[SkillIO] Failed to export {skill.name}: {e}")
+            return False
+
+    def export_to_skill_file(
+        self,
+        skill_id: str,
+        output_path: Optional[Path] = None
+    ) -> Optional[Path]:
+        """
+        Export skill to .skill file (ZIP format).
+
+        Args:
+            skill_id: ID of skill to export
+            output_path: Output path for .skill file
+
+        Returns:
+            Path to created .skill file or None
+        """
+        if skill_id not in self.manager.skills:
+            print(f"[SkillIO] Skill not found: {skill_id}")
+            return None
+
+        skill = self.manager.skills[skill_id]
+        dir_name = self._to_kebab_case(skill.name)
+
+        # Create temp directory for skill
+        temp_dir = Path("/tmp") / f"skill_export_{dir_name}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        # Export to temp directory
+        if not self.export_single_skill(skill, temp_dir):
+            return None
+
+        skill_dir = temp_dir / dir_name
+
+        # Determine output path
+        if output_path is None:
+            output_path = Path.cwd() / f"{dir_name}.skill"
+        else:
+            output_path = Path(output_path)
+
+        try:
+            # Create ZIP
+            with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for file_path in skill_dir.rglob('*'):
+                    if file_path.is_file():
+                        arcname = file_path.relative_to(temp_dir)
+                        zf.write(file_path, arcname)
+
+            print(f"[SkillIO] Created: {output_path}")
+            return output_path
+
+        except Exception as e:
+            print(f"[SkillIO] Failed to create .skill file: {e}")
+            return None
+        finally:
+            # Cleanup temp
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    # =========================================================================
+    # HELPERS
+    # =========================================================================
+
+    def _generate_skill_id(self, name: str) -> str:
+        """Generate skill ID from name"""
+        # Convert to snake_case
+        normalized = name.lower().replace('-', '_').replace(' ', '_')
+        normalized = ''.join(c for c in normalized if c.isalnum() or c == '_')
+        return f"imported_{normalized[:30]}"
+
+    def _to_kebab_case(self, name: str) -> str:
+        """Convert name to kebab-case for directory"""
+        # Replace spaces and underscores with hyphens
+        kebab = name.lower().replace(' ', '-').replace('_', '-')
+        # Remove invalid characters
+        kebab = ''.join(c for c in kebab if c.isalnum() or c == '-')
+        # Remove consecutive hyphens
+        while '--' in kebab:
+            kebab = kebab.replace('--', '-')
+        return kebab.strip('-')[:64]
+
+    def _extract_triggers(self, name: str, description: str) -> List[str]:
+        """Extract trigger keywords from name and description"""
+        triggers = []
+
+        # Add words from name
+        name_words = name.lower().replace('-', ' ').split()
+        triggers.extend(name_words)
+
+        # Extract key phrases from description
+        # Look for patterns like "when ... for ...", "use for ...", etc.
+        desc_lower = description.lower()
+
+        # Common trigger patterns
+        patterns = [
+            r'when\s+(?:the\s+)?user\s+(?:asks?\s+)?(?:to\s+|for\s+)?([^,.]+)',
+            r'use\s+(?:this\s+)?(?:skill\s+)?(?:to|for|when)\s+([^,.]+)',
+            r'for\s+([^,.]+(?:files?|documents?|tasks?))',
+        ]
+
+        for pattern in patterns:
+            matches = re.findall(pattern, desc_lower)
+            for match in matches:
+                words = match.split()[:3]  # Take first 3 words
+                triggers.extend(words)
+
+        # Remove duplicates and common words
+        stop_words = {'the', 'a', 'an', 'to', 'for', 'with', 'and', 'or', 'is', 'are'}
+        triggers = list(dict.fromkeys(t for t in triggers if t not in stop_words and len(t) > 2))
+
+        return triggers[:10]  # Limit to 10 triggers
+
+    def _build_skill_md(self, skill: 'Skill') -> str:
+        """Build SKILL.md content from Skill object"""
+        # Build YAML frontmatter
+        frontmatter = {
+            'name': self._to_kebab_case(skill.name),
+            'description': self._build_description(skill)
+        }
+
+        # Add license if available
+        if hasattr(skill, '_anthropic_metadata') and skill._anthropic_metadata.get('license'):
+            frontmatter['license'] = skill._anthropic_metadata['license']
+
+        # Build body
+        body_lines = [
+            f"# {skill.name}",
+            "",
+            "## Overview",
+            "",
+            f"**Source:** {skill.source}",
+            f"**Confidence:** {skill.confidence:.2f}",
+            f"**Success Rate:** {skill.success_count}/{skill.success_count + skill.failure_count}",
+            "",
+            "## Instructions",
+            "",
+            skill.instruction,
+            "",
+        ]
+
+        # Add tools section if any
+        if skill.tools_used:
+            body_lines.extend([
+                "## Tools Used",
+                "",
+                *[f"- `{tool}`" for tool in skill.tools_used],
+                ""
+            ])
+
+        # Add triggers section
+        if skill.triggers:
+            body_lines.extend([
+                "## Triggers",
+                "",
+                f"Keywords: {', '.join(skill.triggers)}",
+                ""
+            ])
+
+        # Combine
+        yaml_str = yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True)
+
+        return f"---\n{yaml_str}---\n\n" + '\n'.join(body_lines)
+
+    def _build_description(self, skill: 'Skill') -> str:
+        """Build description from skill for frontmatter"""
+        # Combine instruction preview with triggers
+        instruction_preview = skill.instruction[:200].replace('\n', ' ')
+        triggers_str = ', '.join(skill.triggers[:5])
+
+        desc = f"{instruction_preview}... Use when: {triggers_str}"
+        return desc[:1024]  # Max length per spec
+
+
+# =============================================================================
+# CONVENIENCE: Direct integration
+# =============================================================================
+
+def add_anthropic_skill_io(skills_manager: 'SkillsManager'):
+    """
+    Add Anthropic skill IO methods to an existing SkillsManager instance.
+
+    Usage:
+        from skill_io_anthropic import add_anthropic_skill_io
+
+        manager = SkillsManager("agent1")
+        add_anthropic_skill_io(manager)
+
+        # Now you can use:
+        manager.import_skills("/path/to/skills")
+        manager.export_skills("/path/to/output")
+    """
+    io = SkillIOAnthropicFormat(skills_manager)
+
+    skills_manager._skill_io = io
+    skills_manager.import_skills = lambda path, overwrite=False: (
+        io.import_from_skill_file(Path(path), overwrite=overwrite)
+        if str(path).endswith('.skill')
+        else io.import_skills_from_directory(Path(path), overwrite=overwrite)
+        if not (Path(path) / "SKILL.md").exists()
+        else {Path(path).name: io.import_single_skill(Path(path), overwrite=overwrite)}
+    )
+    skills_manager.export_skills = io.export_skills_to_directory
+    skills_manager.export_skill_file = io.export_to_skill_file
+
+    return skills_manager
 
 # =============================================================================
 # DATA STRUCTURES
@@ -73,6 +668,27 @@ class Skill:
         else:
             self.failure_count += 1
             self.confidence = max(0.1, self.confidence - 0.15)
+
+    def merge_with(self, other: 'Skill'):
+        """
+        Merge another skill's data into this one.
+        Used when a similar skill is detected during learning.
+        """
+        # Merge triggers (unique)
+        existing_triggers = set(t.lower() for t in self.triggers)
+        for trigger in other.triggers:
+            if trigger.lower() not in existing_triggers:
+                self.triggers.append(trigger)
+                existing_triggers.add(trigger.lower())
+
+        # Merge tools (unique)
+        existing_tools = set(self.tools_used)
+        for tool in other.tools_used:
+            if tool not in existing_tools:
+                self.tools_used.append(tool)
+                existing_tools.add(tool)
+
+        self.last_used = datetime.now()
 
     def to_dict(self) -> dict:
         """Serialize for checkpoint"""
@@ -169,8 +785,12 @@ class SkillsManager:
     - Skill sharing (Explicit)
     - ToolGroups management
     """
+    _skill_io = None
+    import_skills = None
+    export_skills = None
+    export_skill_file = None
 
-    def __init__(self, agent_name: str, memory_instance: Any = None):
+    def __init__(self, agent_name: str, memory_instance: Any = None, anthropic_skills=None):
         """
         Initialize SkillsManager.
 
@@ -193,6 +813,11 @@ class SkillsManager:
 
         # Initialize predefined skills
         self._init_predefined_skills()
+        if anthropic_skills is not None:
+            add_anthropic_skill_io(self)
+            if isinstance(anthropic_skills, str):
+                self.import_skills(anthropic_skills, overwrite=True)
+
 
     def _init_predefined_skills(self):
         """Initialize predefined skills focused on user management and interaction"""
@@ -630,6 +1255,59 @@ class SkillsManager:
             return 0.0
         return dot / (norm_a * norm_b)
 
+    def find_similar_skill(
+        self,
+        query: str,
+        triggers: List[str],
+        similarity_threshold: float = 0.5
+    ) -> Optional[Skill]:
+        """
+        Find similar existing skill - INCLUDES INACTIVE SKILLS.
+        Key fix: checks ALL skills, not just active ones.
+        """
+        best_match: Optional[Skill] = None
+        best_score: float = 0.0
+
+        query_lower = query.lower()
+        new_triggers_lower = set(t.lower() for t in triggers)
+
+        for skill in self.skills.values():
+            if skill.source == "predefined":
+                continue
+
+            score = 0.0
+
+            # Query matches existing triggers?
+            if skill.matches_keywords(query):
+                score += 0.5
+
+            # Trigger overlap?
+            existing_triggers_lower = set(t.lower() for t in skill.triggers)
+            overlap = len(new_triggers_lower & existing_triggers_lower)
+            if overlap > 0:
+                overlap_ratio = overlap / max(len(new_triggers_lower), len(existing_triggers_lower))
+                score += 0.5 * overlap_ratio
+
+            if score > best_score and score >= similarity_threshold:
+                best_score = score
+                best_match = skill
+
+        return best_match
+
+    def _generate_skill_id(self, name: str) -> str:
+        """Generate deterministic skill ID."""
+        normalized = name.lower().replace(' ', '_').replace('-', '_')
+        normalized = ''.join(c for c in normalized if c.isalnum() or c == '_')
+        base_id = f"learned_{normalized[:20]}"
+
+        if base_id not in self.skills:
+            return base_id
+
+        counter = 1
+        while f"{base_id}_{counter}" in self.skills:
+            counter += 1
+        return f"{base_id}_{counter}"
+
     # =========================================================================
     # TOOL RELEVANCE SCORING (Keyword Overlap)
     # =========================================================================
@@ -721,52 +1399,40 @@ class SkillsManager:
     ) -> Optional[Skill]:
         """
         Learn a new skill from a successful run.
-        Uses LLM (fast model) to generate instruction.
-
-        Returns: New skill if created, None otherwise
+        IMPROVED: Checks ALL skills (including inactive) for duplicates.
         """
         if not success:
             return None
 
-        # Mindestens 2 Tools verwendet?
         if len(tools_used) < 2:
             return None
 
-        # Filter out meta-tools
         meaningful_tools = [t for t in tools_used if t not in ['think', 'final_answer', 'list_tools', 'load_tools']]
         if len(meaningful_tools) < 1:
             return None
 
-        # Prüfen ob ähnlicher Skill existiert (keyword match)
-        existing = self.match_skills(query, max_results=1)
-        if existing and existing[0].matches_keywords(query):
-            # Existing skill - nur confidence erhöhen
-            existing[0].record_usage(True)
-            return None
-
-        # LLM generiert Instruction
         try:
             extraction_prompt = f"""Analysiere diesen erfolgreichen Ablauf und erstelle eine wiederverwendbare Anleitung.
 
-USER ANFRAGE: {query}
+    USER ANFRAGE: {query}
 
-TOOLS VERWENDET (in Reihenfolge): {', '.join(tools_used)}
+    TOOLS VERWENDET (in Reihenfolge): {', '.join(tools_used)}
 
-ERGEBNIS: {final_answer[:500]}
+    ERGEBNIS: {final_answer[:500]}
 
-Erstelle:
-1. Einen kurzen Namen für diesen Skill (max 5 Wörter, deutsch oder englisch)
-2. 3-5 Trigger-Keywords die ähnliche Anfragen erkennen würden
-3. Eine nummerierte Anleitung (4-6 Schritte) die beschreibt wie man ähnliche Aufgaben löst
+    Erstelle:
+    1. Einen kurzen Namen für diesen Skill (max 5 Wörter, deutsch oder englisch)
+    2. 3-5 Trigger-Keywords die ähnliche Anfragen erkennen würden
+    3. Eine nummerierte Anleitung (4-6 Schritte) die beschreibt wie man ähnliche Aufgaben löst
 
-Format (EXAKT so):
-NAME: [skill name]
-TRIGGERS: [keyword1, keyword2, keyword3]
-ANLEITUNG:
-1. [Schritt 1]
-2. [Schritt 2]
-3. [Schritt 3]
-..."""
+    Format (EXAKT so):
+    NAME: [skill name]
+    TRIGGERS: [keyword1, keyword2, keyword3]
+    ANLEITUNG:
+    1. [Schritt 1]
+    2. [Schritt 2]
+    3. [Schritt 3]
+    ..."""
 
             response = await llm_completion_func(
                 messages=[{"role": "user", "content": extraction_prompt}],
@@ -777,26 +1443,57 @@ ANLEITUNG:
             )
 
             # Parse response
-            skill = self._parse_skill_from_llm(response, tools_used, query)
-            if skill:
-                skill.confidence = 0.3  # Start niedrig (threshold ist 0.6)
-                self.skills[skill.id] = skill
+            parsed = self._parse_skill_response(response)
+            if not parsed:
+                return None
+
+            name, triggers, instruction = parsed
+
+            # ============================================================
+            # KEY FIX: Check ALL skills (including inactive) for similarity
+            # ============================================================
+            similar_skill = self.find_similar_skill(query, triggers, similarity_threshold=0.4)
+
+            if similar_skill:
+                # MERGE into existing skill instead of creating duplicate
+                similar_skill.record_usage(True)  # +0.1 confidence
+                similar_skill.merge_with(Skill(
+                    id="temp",
+                    name=name,
+                    triggers=triggers,
+                    instruction=instruction,
+                    tools_used=list(set(tools_used))
+                ))
                 self._skill_embeddings_dirty = True
-                print(f"[SkillsManager] Learned new skill: {skill.name} (confidence: {skill.confidence})")
-                return skill
+
+                print(f"[SkillsManager] Merged into existing skill: {similar_skill.name} "
+                      f"(confidence: {similar_skill.confidence:.2f}, active: {similar_skill.is_active()})")
+                return similar_skill
+
+            # No similar skill - create new
+            skill = Skill(
+                id=self._generate_skill_id(name),
+                name=name,
+                triggers=triggers,
+                instruction=instruction,
+                tools_used=list(set(tools_used)),
+                tool_groups=[],
+                source="learned",
+                confidence=0.3
+            )
+
+            self.skills[skill.id] = skill
+            self._skill_embeddings_dirty = True
+            print(f"[SkillsManager] Learned new skill: {skill.name} (confidence: {skill.confidence})")
+            return skill
 
         except Exception as e:
             print(f"[SkillsManager] Failed to learn skill: {e}")
 
         return None
 
-    def _parse_skill_from_llm(
-        self,
-        response: str,
-        tools_used: List[str],
-        original_query: str
-    ) -> Optional[Skill]:
-        """Parse LLM response into Skill object"""
+    def _parse_skill_response(self, response: str) -> Optional[Tuple[str, List[str], str]]:
+        """Parse LLM response into (name, triggers, instruction)."""
         try:
             lines = response.strip().split('\n')
 
@@ -820,22 +1517,10 @@ ANLEITUNG:
             if not name or not triggers or not instruction_lines:
                 return None
 
-            # Generiere ID
-            skill_id = f"learned_{name.lower().replace(' ', '_')[:20]}_{uuid.uuid4().hex[:6]}"
-
-            return Skill(
-                id=skill_id,
-                name=name,
-                triggers=triggers,
-                instruction='\n'.join(instruction_lines),
-                tools_used=list(set(tools_used)),
-                tool_groups=[],
-                source="learned",
-                confidence=0.3
-            )
+            return (name, triggers, '\n'.join(instruction_lines))
 
         except Exception as e:
-            print(f"[SkillsManager] Failed to parse skill: {e}")
+            print(f"[SkillsManager] Failed to parse skill response: {e}")
             return None
 
     def record_skill_usage(self, skill_id: str, success: bool):

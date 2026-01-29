@@ -760,15 +760,21 @@ class ModelManager:
         if "mmproj" in name:
             return "mmproj"
 
-        # TTS models (text-to-speech)
-        if "tts" in name or "speech" in name or "vocoder" in name:
+        # TTS models (text-to-speech) - check FIRST
+        # Common TTS identifiers: tts, speech, vocoder, outetts, parler, kokoro, f5-tts, etc.
+        tts_patterns = [
+            "tts", "speech", "vocoder", "outetts", "parler", "kokoro",
+            "f5-tts", "f5tts", "coqui", "xtts", "bark", "vits",
+            "piper", "silero", "speecht5", "tortoise"
+        ]
+        if any(p in name for p in tts_patterns):
             return "tts"
 
         # Omni models (audio + vision + text)
         if "omni" in name:
             return "omni"
 
-        # Audio-only (whisper)
+        # Audio-only (whisper STT)
         if "whisper" in name or (name.startswith("ggml-") and any(
             x in name for x in ["large", "medium", "small", "base", "tiny"]
         )):

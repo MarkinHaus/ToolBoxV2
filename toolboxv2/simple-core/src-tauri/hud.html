@@ -1,2674 +1,459 @@
-<!doctype html>
-<html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>SimpleCore HUD</title>
-        <link
-            href="https://fonts.googleapis.com/icon?family=Material+Icons"
-            rel="stylesheet"
-        />
-
-        <style>
-            /* Material Icons styling */
-            .material-icons {
-                font-family: "Material Icons";
-                font-weight: normal;
-                font-style: normal;
-                font-size: 18px;
-                display: inline-block;
-                line-height: 1;
-                text-transform: none;
-                letter-spacing: normal;
-                word-wrap: normal;
-                white-space: nowrap;
-                direction: ltr;
-                -webkit-font-smoothing: antialiased;
-            }
-            :root {
-                --hud-opacity: 0.92;
-                --hud-bg: rgba(15, 15, 25, var(--hud-opacity));
-                --hud-border: rgba(100, 100, 140, 0.4);
-                --hud-text: #e8e8f0;
-                --hud-accent: #6366f1;
-                --hud-success: #22c55e;
-                --hud-warning: #f59e0b;
-                --hud-error: #ef4444;
-                --hud-muted: rgba(255, 255, 255, 0.5);
-            }
-
-            * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }
-
-            html,
-            body {
-                background: transparent !important;
-                height: 100%;
-                width: 100%;
-                margin: 0;
-                padding: 0;
-                overflow: hidden;
-                font-family:
-                    "Segoe UI",
-                    system-ui,
-                    -apple-system,
-                    sans-serif;
-                color: var(--hud-text);
-                font-size: 13px;
-                -webkit-app-region: no-drag;
-            }
-
-            #hud-root {
-                background: var(--hud-bg);
-                backdrop-filter: blur(12px);
-                -webkit-backdrop-filter: blur(12px);
-                border: 1px solid var(--hud-border);
-                border-radius: 12px;
-                height: 100%;
-                width: 100%;
-                display: flex;
-                flex-direction: column;
-                overflow: hidden;
-                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-                margin: 0;
-                padding: 0;
-                position: absolute;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-            }
-
-            .hud-header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                padding: 8px 12px;
-                background: rgba(0, 0, 0, 0.25);
-                border-bottom: 1px solid var(--hud-border);
-                cursor: grab;
-                user-select: none;
-            }
-
-            .hud-header:active {
-                cursor: grabbing;
-            }
-
-            .hud-header .drag-hint {
-                font-size: 10px;
-                color: var(--hud-muted);
-                opacity: 0;
-                transition: opacity 0.2s;
-            }
-
-            .hud-header:hover .drag-hint {
-                opacity: 1;
-            }
-
-            .hud-title {
-                font-size: 12px;
-                font-weight: 600;
-                letter-spacing: 0.3px;
-                display: flex;
-                align-items: center;
-                gap: 8px;
-            }
-
-            .hud-controls {
-                display: flex;
-                gap: 4px;
-            }
-
-            .hud-btn {
-                background: rgba(255, 255, 255, 0.08);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                color: var(--hud-text);
-                cursor: pointer;
-                padding: 4px 8px;
-                border-radius: 4px;
-                font-size: 10px;
-                transition: all 0.15s ease;
-            }
-
-            .hud-btn:hover {
-                background: rgba(255, 255, 255, 0.15);
-                border-color: rgba(255, 255, 255, 0.2);
-            }
-
-            .hud-status {
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                padding: 6px 12px;
-                background: rgba(0, 0, 0, 0.15);
-                font-size: 10px;
-                border-bottom: 1px solid var(--hud-border);
-            }
-
-            .status-dot {
-                width: 6px;
-                height: 6px;
-                border-radius: 50%;
-                background: var(--hud-error);
-                transition: background 0.3s ease;
-            }
-
-            .status-dot.connected {
-                background: var(--hud-success);
-                box-shadow: 0 0 6px var(--hud-success);
-            }
-
-            .status-dot.authenticated {
-                background: var(--hud-accent);
-                box-shadow: 0 0 6px var(--hud-accent);
-            }
-
-            .status-text {
-                color: var(--hud-muted);
-            }
-
-            .status-divider {
-                color: var(--hud-border);
-            }
-
-            .hud-widgets {
-                flex: 1;
-                overflow-y: auto;
-                padding: 10px;
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-            }
-
-            .widget {
-                background: rgba(0, 0, 0, 0.2);
-                border: 1px solid var(--hud-border);
-                border-radius: 6px;
-                overflow: hidden;
-            }
-
-            .widget-header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                padding: 6px 10px;
-                background: rgba(0, 0, 0, 0.2);
-                font-size: 10px;
-                font-weight: 600;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-            }
-
-            .ws-loading {
-                opacity: 0.6;
-                pointer-events: none;
-            }
-
-            .widget-type {
-                font-size: 8px;
-                color: var(--hud-muted);
-                font-weight: normal;
-            }
-
-            .widget-content {
-                padding: 10px;
-            }
-
-            .widget-row {
-                display: flex;
-                justify-content: space-between;
-                padding: 3px 0;
-                font-size: 11px;
-            }
-
-            .widget-label {
-                color: var(--hud-muted);
-            }
-
-            .widget-value {
-                font-weight: 500;
-            }
-
-            .widget-value.success {
-                color: var(--hud-success);
-            }
-            .widget-value.error {
-                color: var(--hud-error);
-            }
-            .widget-value.warning {
-                color: var(--hud-warning);
-            }
-
-            .hud-settings {
-                display: none;
-                padding: 10px 12px;
-                background: rgba(0, 0, 0, 0.25);
-                border-top: 1px solid var(--hud-border);
-            }
-
-            .hud-settings.visible {
-                display: block;
-            }
-
-            .settings-title {
-                font-size: 10px;
-                font-weight: 600;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-                margin-bottom: 8px;
-                color: var(--hud-muted);
-            }
-
-            .setting-row {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 8px;
-            }
-
-            .setting-row:last-child {
-                margin-bottom: 0;
-            }
-
-            .setting-label {
-                font-size: 11px;
-                color: var(--hud-muted);
-            }
-
-            .setting-input {
-                background: rgba(0, 0, 0, 0.3);
-                border: 1px solid var(--hud-border);
-                border-radius: 4px;
-                color: var(--hud-text);
-                padding: 4px 8px;
-                font-size: 10px;
-                cursor: pointer;
-            }
-
-            .setting-input:focus {
-                outline: none;
-                border-color: var(--hud-accent);
-            }
-
-            .setting-input[type="range"] {
-                width: 80px;
-                cursor: pointer;
-            }
-
-            .setting-value {
-                font-size: 10px;
-                color: var(--hud-text);
-                min-width: 35px;
-                text-align: right;
-            }
-
-            .hud-actions {
-                display: flex;
-                gap: 6px;
-                padding: 8px 12px;
-                border-top: 1px solid var(--hud-border);
-            }
-
-            .action-btn {
-                flex: 1;
-                padding: 8px;
-                background: rgba(99, 102, 241, 0.15);
-                border: 1px solid rgba(99, 102, 241, 0.3);
-                border-radius: 4px;
-                color: var(--hud-text);
-                cursor: pointer;
-                font-size: 10px;
-                font-weight: 500;
-                transition: all 0.15s ease;
-            }
-
-            .action-btn:hover {
-                background: rgba(99, 102, 241, 0.25);
-                border-color: rgba(99, 102, 241, 0.5);
-            }
-
-            .empty-state {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                padding: 30px 15px;
-                color: var(--hud-muted);
-                text-align: center;
-            }
-
-            .empty-icon {
-                font-size: 28px;
-                margin-bottom: 10px;
-                opacity: 0.5;
-            }
-
-            ::-webkit-scrollbar {
-                width: 4px;
-            }
-
-            ::-webkit-scrollbar-track {
-                background: transparent;
-            }
-
-            ::-webkit-scrollbar-thumb {
-                background: var(--hud-border);
-                border-radius: 2px;
-            }
-
-            /* HUD Function Selector */
-            .hud-func-selector {
-                display: flex;
-                align-items: center;
-                gap: 6px;
-                padding: 6px 12px;
-                background: rgba(0, 0, 0, 0.15);
-                border-bottom: 1px solid var(--hud-border);
-            }
-
-            .hud-func-toggle {
-                background: rgba(255, 255, 255, 0.08);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                color: var(--hud-text);
-                cursor: pointer;
-                padding: 4px 8px;
-                border-radius: 4px;
-                font-size: 10px;
-                transition: all 0.15s ease;
-                display: flex;
-                align-items: center;
-                gap: 4px;
-            }
-
-            .hud-func-toggle:hover {
-                background: rgba(255, 255, 255, 0.15);
-            }
-
-            .hud-func-toggle.active {
-                background: var(--hud-accent);
-                border-color: var(--hud-accent);
-            }
-
-            .hud-func-current {
-                font-size: 10px;
-                color: var(--hud-muted);
-                flex: 1;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-            }
-
-            .hud-func-current-name {
-                color: var(--hud-text);
-                font-weight: 500;
-            }
-
-            .hud-func-close {
-                background: transparent;
-                border: none;
-                color: var(--hud-muted);
-                cursor: pointer;
-                padding: 2px 6px;
-                font-size: 12px;
-                border-radius: 3px;
-            }
-
-            .hud-func-close:hover {
-                background: rgba(239, 68, 68, 0.2);
-                color: var(--hud-error);
-            }
-
-            /* HUD Function Panel (collapsible) */
-            .hud-func-panel {
-                display: none;
-                max-height: 250px;
-                overflow-y: auto;
-                background: rgba(0, 0, 0, 0.2);
-                border-bottom: 1px solid var(--hud-border);
-            }
-
-            .hud-func-panel.visible {
-                display: block;
-            }
-
-            /* Search Bar */
-            .hud-func-search {
-                padding: 8px;
-                border-bottom: 1px solid var(--hud-border);
-            }
-
-            .hud-func-search-input {
-                width: 100%;
-                background: rgba(0, 0, 0, 0.3);
-                border: 1px solid var(--hud-border);
-                border-radius: 4px;
-                color: var(--hud-text);
-                padding: 6px 10px;
-                font-size: 11px;
-                outline: none;
-                transition: border-color 0.15s ease;
-            }
-
-            .hud-func-search-input:focus {
-                border-color: var(--hud-accent);
-            }
-
-            .hud-func-search-input::placeholder {
-                color: var(--hud-muted);
-            }
-
-            .hud-func-list {
-                padding: 6px;
-                display: flex;
-                flex-direction: column;
-                gap: 4px;
-            }
-
-            .hud-func-item {
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                padding: 6px 8px;
-                background: rgba(0, 0, 0, 0.2);
-                border: 1px solid transparent;
-                border-radius: 4px;
-                cursor: pointer;
-                transition: all 0.15s ease;
-            }
-
-            .hud-func-item:hover {
-                background: rgba(99, 102, 241, 0.15);
-                border-color: rgba(99, 102, 241, 0.3);
-            }
-
-            .hud-func-item.selected {
-                background: rgba(99, 102, 241, 0.2);
-                border-color: var(--hud-accent);
-            }
-
-            .hud-func-item.hidden {
-                display: none;
-            }
-
-            .hud-func-icon {
-                font-size: 14px;
-                color: var(--hud-accent);
-            }
-
-            .hud-func-info {
-                flex: 1;
-                min-width: 0;
-            }
-
-            .hud-func-title {
-                font-size: 11px;
-                font-weight: 500;
-                color: var(--hud-text);
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-            }
-
-            .hud-func-path {
-                font-size: 9px;
-                color: var(--hud-muted);
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-                font-family: monospace;
-            }
-
-            .hud-func-loading {
-                padding: 20px;
-                text-align: center;
-                color: var(--hud-muted);
-                font-size: 10px;
-            }
-
-            .hud-func-empty {
-                padding: 15px;
-                text-align: center;
-                color: var(--hud-muted);
-                font-size: 10px;
-            }
-
-            /* HUD Function Content Area */
-            .hud-func-content {
-                flex: 1;
-                overflow: auto;
-                background: rgba(0, 0, 0, 0.1);
-                display: none;
-            }
-
-            .hud-func-content.visible {
-                display: block;
-            }
-
-            .hud-func-content-inner {
-                padding: 8px;
-                height: 100%;
-                overflow: auto;
-            }
-
-            /* Auth Status Badge */
-            .auth-badge {
-                display: inline-flex;
-                align-items: center;
-                gap: 4px;
-                padding: 2px 6px;
-                border-radius: 3px;
-                font-size: 9px;
-                font-weight: 500;
-            }
-            .auth-badge.logged-in {
-                background: rgba(34, 197, 94, 0.2);
-                color: var(--hud-success);
-            }
-            .auth-badge.logged-out {
-                background: rgba(239, 68, 68, 0.2);
-                color: var(--hud-error);
-            }
-        </style>
-    </head>
-    <body>
-        <div id="hud-root">
-            <div class="hud-header" id="drag-header">
-                <span class="hud-title">
-                    <span>⋮⋮</span>
-                    <span>SimpleCore HUD</span>
-                    <span class="drag-hint">drag to move</span>
-                </span>
-                <div class="hud-controls">
-                    <button class="hud-btn" id="btn-settings" title="Settings">
-                        ⚙️
-                    </button>
-                    <button class="hud-btn" id="btn-app" title="Switch to App">
-                        📺
-                    </button>
-                    <button
-                        class="hud-btn"
-                        title="Refresh HUD"
-                        id="btn-refresh"
-                    >
-                        🔄
-                    </button>
-                </div>
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SimpleCore HUD</title>
+
+    <!-- Material Symbols -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+
+    <style>
+        /*
+         * HUD Base Styles - Forced Dark Mode
+         */
+        :root {
+            /* Core Colors - Dark Mode Fixed */
+            --bg-base: #0f0f13;
+            --bg-surface: #18181b;
+            --bg-elevated: #27272a;
+
+            --text-primary: #f4f4f5;
+            --text-secondary: #a1a1aa;
+            --text-muted: #71717a;
+
+            --primary: #6366f1;
+            --primary-hover: #818cf8;
+
+            --border: #27272a;
+
+            /* Tauri specific */
+            --header-height: 36px;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: transparent; /* Erlaubt Transparenz/Abrundung durch Tauri */
+            color: var(--text-primary);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        #app-container {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            height: 100%;
+            background: var(--bg-base);
+            border: 1px solid var(--border);
+            border-radius: 12px; /* Runde Ecken für das HUD Fenster */
+            overflow: hidden;
+            box-shadow: 0 10px 30px -10px rgba(0,0,0,0.5);
+        }
+
+        /*
+         * Custom Tauri Drag Header
+         */
+        .hud-header {
+            height: var(--header-height);
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 12px;
+            -webkit-app-region: drag; /* WICHTIG: Macht das Fenster verschiebbar */
+        }
+
+        .hud-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .hud-controls {
+            display: flex;
+            gap: 8px;
+            -webkit-app-region: no-drag; /* Buttons müssen klickbar sein */
+        }
+
+        .icon-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .icon-btn:hover {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+        }
+
+        /*
+         * Main Content Area (TB Router Target)
+         */
+        #MainContent {
+            flex: 1;
+            overflow-y: auto;
+            position: relative;
+        }
+
+        /* Scrollbar Styling */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--bg-elevated); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+        /*
+         * Helper Classes for Dynamic Content
+         */
+        .hud-padding { padding: 16px; }
+        .flex-center { display: flex; align-items: center; justify-content: center; height: 100%; }
+
+        /* Loading Spinner */
+        .loader {
+            width: 24px; height: 24px;
+            border: 2px solid var(--bg-elevated);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Styles aus dem Dashboard Snippet (angepasst für HUD) */
+        .app-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); /* Kleineres Grid für HUD */
+            gap: 8px;
+            padding: 12px;
+        }
+
+        .app-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            text-decoration: none;
+            color: inherit;
+        }
+
+        .app-card:hover {
+            border-color: var(--primary);
+            background: var(--bg-elevated);
+            transform: translateY(-1px);
+        }
+
+        .app-icon {
+            color: var(--primary);
+            background: rgba(99, 102, 241, 0.1);
+            width: 32px; height: 32px;
+            border-radius: 6px;
+            display: flex; align-items: center; justify-content: center;
+        }
+
+        .app-title { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .app-desc { font-size: 11px; color: var(--text-muted); margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+        /* Login Container Override */
+        #clerk-sign-in {
+            width: 100%;
+            max-width: 100%;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app-container">
+        <!-- Tauri Header -->
+        <header class="hud-header" data-tauri-drag-region>
+            <div class="hud-title">
+                <span class="material-symbols-outlined" style="font-size: 16px;">widgets</span>
+                <span>SimpleCore</span>
             </div>
-
-            <div class="hud-status">
-                <div class="status-dot" id="status-dot"></div>
-                <span class="status-text" id="status-text">Connecting...</span>
-                <span class="status-divider">│</span>
-                <span class="status-text" id="status-mode">-</span>
-                <span class="status-divider">│</span>
-                <span class="status-text" id="status-auth">
-                    <span class="auth-badge logged-out" id="auth-badge">
-                        <span class="material-icons" style="font-size: 10px"
-                            >person_off</span
-                        >
-                        <span id="auth-text">Not logged in</span>
-                    </span>
-                </span>
-            </div>
-
-            <!-- HUD Function Selector -->
-            <div class="hud-func-selector" id="hud-func-selector">
-                <button
-                    class="hud-func-toggle"
-                    id="hud-func-toggle"
-                    title="Select HUD Function"
-                >
-                    <span class="material-icons" style="font-size: 14px"
-                        >widgets</span
-                    >
-                    <span id="hud-func-arrow">▼</span>
+            <div class="hud-controls">
+                <button class="icon-btn" id="btn-home" title="Home">
+                    <span class="material-symbols-outlined" style="font-size: 18px;">home</span>
                 </button>
-                <span class="hud-func-current" id="hud-func-current">
-                    <span id="hud-func-current-label"
-                        >No function selected</span
-                    >
-                </span>
-                <button
-                    class="hud-func-close"
-                    id="hud-func-close"
-                    title="Close HUD Function"
-                    style="display: none"
-                >
-                    ✕
+                <button class="icon-btn" id="btn-close" title="Close">
+                    <span class="material-symbols-outlined" style="font-size: 18px;">close</span>
                 </button>
             </div>
+        </header>
 
-            <!-- HUD Function List Panel (collapsible) -->
-            <div class="hud-func-panel" id="hud-func-panel">
-                <div class="hud-func-search">
-                    <input
-                        type="text"
-                        class="hud-func-search-input"
-                        id="hud-func-search"
-                        placeholder="🔍 Search functions..."
-                        autocomplete="off"
-                    />
-                </div>
-                <div class="hud-func-list" id="hud-func-list">
-                    <div class="hud-func-loading">Loading functions...</div>
-                </div>
-            </div>
-
-            <!-- HUD Function Content Area (shows selected function output) -->
-            <div class="hud-func-content" id="hud-func-content">
-                <div
-                    class="hud-func-content-inner"
-                    id="hud-func-content-inner"
-                ></div>
-            </div>
-
-            <div class="hud-widgets" id="widget-area">
-                <div class="empty-state">
-                    <div class="empty-icon">📦</div>
-                    <div>Connecting to ToolBoxV2...</div>
-                </div>
-            </div>
-
-            <div class="hud-settings" id="settings-panel">
-                <div class="settings-title">HUD Settings</div>
-                <div class="setting-row">
-                    <span class="setting-label">Opacity</span>
-                    <input
-                        type="range"
-                        class="setting-input"
-                        id="setting-opacity"
-                        min="10"
-                        max="100"
-                        value="92"
-                    />
-                    <span class="setting-value" id="opacity-value">92%</span>
-                </div>
-                <div class="setting-row">
-                    <span class="setting-label">Animation Steps</span>
-                    <input
-                        type="range"
-                        class="setting-input"
-                        id="setting-animation-steps"
-                        min="5"
-                        max="50"
-                        value="20"
-                    />
-                    <span class="setting-value" id="animation-steps-value"
-                        >20</span
-                    >
-                </div>
-                <div class="setting-row">
-                    <span class="setting-label">Animation Speed</span>
-                    <input
-                        type="range"
-                        class="setting-input"
-                        id="setting-animation-delay"
-                        min="5"
-                        max="50"
-                        value="15"
-                    />
-                    <span class="setting-value" id="animation-delay-value"
-                        >15ms</span
-                    >
-                </div>
+        <!-- TBJS Main Content -->
+        <div id="MainContent">
+            <div class="flex-center">
+                <div class="loader"></div>
             </div>
         </div>
+    </div>
 
-        <script type="module">
-            // ============================================================
-            // MINIMAL TB-COMPATIBLE FRAMEWORK FOR HUD
-            // ============================================================
+    <!-- Script Module -->
+    <script type="module">
+        const TB = window.TB;
+        // Import Login Logic (from your provided file)
+        import { setupLogin } from '../../web/scripts/login.js';
 
-            /**
-             * Minimal TB Framework for HUD Authentication & Routing
-             * - No theme/nav/background
-             * - Session verification via HTTP with Bearer token
-             * - Minimal router for DOM manipulation in HUD content area
-             */
-            const TB = {
-                VERSION: "0.1.0-hud",
-                isInit: false,
+        // 2. HUD Application Initialization
+        async function initHud() {
+            console.log('[HUD] Initializing...');
 
-                // ---- CONFIG ----
-                config: {
-                    _config: {
-                        baseApiUrl: "http://localhost:5000/api",
-                        baseWsUrl: "ws://localhost:5001",
-                        isTauri: false,
-                    },
-                    init: function (options = {}) {
-                        this._config = { ...this._config, ...options };
-                    },
-                    get: function (key) {
-                        if (key.includes(".")) {
-                            return key
-                                .split(".")
-                                .reduce((o, k) => o?.[k], this._config);
-                        }
-                        return this._config[key];
-                    },
-                    set: function (key, value) {
-                        this._config[key] = value;
-                    },
+            // --- TB Konfiguration für HUD ---
+            const hudConfig = {
+                appRootId: 'MainContent',
+                baseApiUrl: '/api',
+
+                // Force Dark Mode, Disable 3D Scene for Performance/Style
+                themeSettings: {
+                    defaultPreference: 'dark',
+                    background: {
+                        type: 'none', // Kein 3D Canvas im HUD
+                        dark: { color: '#0f0f13' }
+                    }
                 },
 
-                // ---- STATE ----
-                state: {
-                    _state: {
-                        user: {
-                            isAuthenticated: false,
-                            username: null,
-                            email: null,
-                            userId: null,
-                            userLevel: 1,
-                            token: null,
-                            userData: {},
-                            settings: {},
-                            modData: {},
-                        },
-                    },
-                    init: function (initialState = {}) {
-                        this._state = { ...this._state, ...initialState };
-                    },
-                    get: function (key) {
-                        if (key.includes(".")) {
-                            return key
-                                .split(".")
-                                .reduce((o, k) => o?.[k], this._state);
-                        }
-                        return this._state[key];
-                    },
-                    set: function (key, value) {
-                        if (key.includes(".")) {
-                            const keys = key.split(".");
-                            let current = this._state;
-                            for (let i = 0; i < keys.length - 1; i++) {
-                                if (!current[keys[i]]) current[keys[i]] = {};
-                                current = current[keys[i]];
-                            }
-                            current[keys[keys.length - 1]] = value;
-                        } else {
-                            this._state[key] = value;
-                        }
-                        TB.events.emit("state:changed", { key, value });
-                    },
-                },
-
-                // ---- EVENTS ----
-                events: {
-                    _listeners: {},
-                    on: function (event, callback) {
-                        if (!this._listeners[event])
-                            this._listeners[event] = [];
-                        this._listeners[event].push(callback);
-                    },
-                    off: function (event, callback) {
-                        if (!this._listeners[event]) return;
-                        this._listeners[event] = this._listeners[event].filter(
-                            (cb) => cb !== callback,
-                        );
-                    },
-                    emit: function (event, data) {
-                        if (!this._listeners[event]) return;
-                        this._listeners[event].forEach((cb) => {
-                            try {
-                                cb(data);
-                            } catch (e) {
-                                console.error(
-                                    `[TB.events] Error in ${event}:`,
-                                    e,
-                                );
-                            }
-                        });
-                    },
-                },
-
-                // ---- LOGGER ----
-                logger: {
-                    _level: "debug",
-                    _levels: { debug: 0, info: 1, warn: 2, error: 3 },
-                    init: function (options = {}) {
-                        this._level = options.logLevel || "debug";
-                    },
-                    _log: function (level, ...args) {
-                        if (this._levels[level] >= this._levels[this._level]) {
-                            console[level](`[TB.${level}]`, ...args);
-                        }
-                    },
-                    debug: function (...args) {
-                        this._log("debug", ...args);
-                    },
-                    info: function (...args) {
-                        this._log("info", ...args);
-                    },
-                    warn: function (...args) {
-                        this._log("warn", ...args);
-                    },
-                    error: function (...args) {
-                        this._log("error", ...args);
-                    },
-                    log: function (...args) {
-                        this._log("info", ...args);
-                    },
-                },
-
-                // ---- API ----
-                api: {
-                    _getHeaders: function (isJson = true) {
-                        const headers = {
-                            Accept: isJson ? "application/json" : "text/html",
-                        };
-                        if (isJson) {
-                            headers["Content-Type"] = "application/json";
-                        }
-                        const token = TB.state.get("user.token");
-                        if (token) {
-                            headers["Authorization"] = `Bearer ${token}`;
-                        }
-                        return headers;
-                    },
-
-                    request: async function (
-                        moduleName,
-                        functionName,
-                        payload = null,
-                        method = "POST",
-                    ) {
-                        const isFullPath = moduleName.startsWith("/");
-                        let url;
-                        if (isFullPath) {
-                            url = `${TB.config.get("baseApiUrl").replace("/api", "")}${moduleName}`;
-                        } else {
-                            url = `${TB.config.get("baseApiUrl")}/${moduleName}/${functionName}`;
-                        }
-
-                        const options = {
-                            method,
-                            headers: this._getHeaders(),
-                            credentials: "include",
-                        };
-
-                        if (
-                            payload &&
-                            (method === "POST" ||
-                                method === "PUT" ||
-                                method === "PATCH")
-                        ) {
-                            options.body = JSON.stringify(payload);
-                        }
-
-                        TB.logger.debug(`[API] ${method} ${url}`, payload);
-
-                        try {
-                            const response = await fetch(url, options);
-                            let data;
-                            const contentType =
-                                response.headers.get("content-type");
-
-                            if (
-                                response.status === 204 ||
-                                response.status === 205
-                            ) {
-                                data = { success: true };
-                            } else if (
-                                contentType?.includes("application/json")
-                            ) {
-                                data = await response.json();
+                // Routen Definition
+                routes: [
+                    {
+                        path: '/',
+                        controller: async () => {
+                            // Auth Check Middleware
+                            if (window.TB.user.isAuthenticated()) {
+                                return renderAppMenu();
                             } else {
-                                const text = await response.text();
-                                try {
-                                    data = JSON.parse(text);
-                                } catch {
-                                    data = { message: text };
-                                }
-                            }
-
-                            if (!response.ok) {
-                                TB.logger.error(
-                                    `[API] HTTP ${response.status}:`,
-                                    data,
-                                );
-                                return {
-                                    error: data.error || "http_error",
-                                    data: null,
-                                    status: response.status,
-                                };
-                            }
-
-                            TB.logger.debug(`[API] Success:`, data);
-                            return {
-                                error: "none",
-                                data,
-                                status: response.status,
-                            };
-                        } catch (error) {
-                            TB.logger.error(`[API] Network error:`, error);
-                            return {
-                                error: "network_error",
-                                data: null,
-                                message: error.message,
-                            };
-                        }
-                    },
-
-                    fetchHtml: async function (path) {
-                        const url = path.startsWith("http")
-                            ? path
-                            : `${TB.config.get("baseApiUrl").replace("/api", "")}${path}`;
-                        TB.logger.debug(`[API] Fetching HTML: ${url}`);
-                        try {
-                            const response = await fetch(url, {
-                                headers: this._getHeaders(false),
-                                credentials: "include",
-                            });
-                            if (!response.ok)
-                                return `<div class="error">HTTP ${response.status}</div>`;
-                            return await response.text();
-                        } catch (error) {
-                            return `<div class="error">Network error: ${error.message}</div>`;
-                        }
-                    },
-                },
-
-                // ---- USER / AUTH ----
-                user: {
-                    _sessionToken: null,
-
-                    init: async function () {
-                        TB.logger.info("[User] Initializing authentication...");
-                        // Try to restore session from localStorage
-                        const storedToken = localStorage.getItem(
-                            "tb_hud_session_token",
-                        );
-                        const storedUser =
-                            localStorage.getItem("tb_hud_user_data");
-
-                        if (storedToken) {
-                            TB.state.set("user.token", storedToken);
-                            this._sessionToken = storedToken;
-
-                            if (storedUser) {
-                                try {
-                                    const userData = JSON.parse(storedUser);
-                                    TB.state.set("user.isAuthenticated", true);
-                                    TB.state.set(
-                                        "user.userId",
-                                        userData.userId,
-                                    );
-                                    TB.state.set(
-                                        "user.username",
-                                        userData.username,
-                                    );
-                                    TB.state.set("user.email", userData.email);
-                                    TB.state.set(
-                                        "user.userLevel",
-                                        userData.userLevel || 1,
-                                    );
-                                } catch (e) {
-                                    TB.logger.warn(
-                                        "[User] Failed to parse stored user data",
-                                    );
-                                }
-                            }
-
-                            // Verify session with server
-                            const isValid = await this.verifySession();
-                            if (!isValid) {
-                                this.clearSession();
+                                return renderLogin();
                             }
                         }
-
-                        return TB.state.get("user.isAuthenticated");
                     },
-
-                    setSession: function (token, userData = {}) {
-                        this._sessionToken = token;
-                        TB.state.set("user.token", token);
-                        TB.state.set("user.isAuthenticated", true);
-
-                        if (userData.userId)
-                            TB.state.set("user.userId", userData.userId);
-                        if (userData.username)
-                            TB.state.set("user.username", userData.username);
-                        if (userData.email)
-                            TB.state.set("user.email", userData.email);
-                        if (userData.userLevel)
-                            TB.state.set("user.userLevel", userData.userLevel);
-
-                        // Persist to localStorage
-                        localStorage.setItem("tb_hud_session_token", token);
-                        localStorage.setItem(
-                            "tb_hud_user_data",
-                            JSON.stringify({
-                                userId: userData.userId,
-                                username: userData.username,
-                                email: userData.email,
-                                userLevel: userData.userLevel,
-                            }),
-                        );
-
-                        TB.events.emit("user:signedIn", {
-                            userId: userData.userId,
-                            username: userData.username,
-                        });
-                        TB.logger.info(
-                            "[User] Session set for:",
-                            userData.username || userData.userId,
-                        );
+                    {
+                        path: '/login',
+                        controller: renderLogin
                     },
-
-                    clearSession: function () {
-                        this._sessionToken = null;
-                        TB.state.set("user.token", null);
-                        TB.state.set("user.isAuthenticated", false);
-                        TB.state.set("user.userId", null);
-                        TB.state.set("user.username", null);
-                        TB.state.set("user.email", null);
-                        TB.state.set("user.userLevel", 1);
-
-                        localStorage.removeItem("tb_hud_session_token");
-                        localStorage.removeItem("tb_hud_user_data");
-
-                        TB.events.emit("user:signedOut", {});
-                        TB.logger.info("[User] Session cleared");
+                    {
+                        path: '/menu',
+                        controller: renderAppMenu,
+                        requiresAuth: true
                     },
-
-                    verifySession: async function () {
-                        const token = TB.state.get("user.token");
-                        if (!token) {
-                            TB.logger.debug("[User] No token to verify");
-                            return false;
-                        }
-
-                        try {
-                            // Use /validateSession endpoint
-                            const result = await TB.api.request(
-                                "/validateSession",
-                                null,
-                                null,
-                                "GET",
-                            );
-
-                            if (
-                                result.error === "none" &&
-                                result.data?.error === "none"
-                            ) {
-                                TB.logger.info(
-                                    "[User] Session verified successfully",
-                                );
-                                TB.state.set("user.isAuthenticated", true);
-
-                                // Update user data if provided
-                                if (result.data?.user) {
-                                    TB.state.set(
-                                        "user.userId",
-                                        result.data.user.userId,
-                                    );
-                                    TB.state.set(
-                                        "user.username",
-                                        result.data.user.username,
-                                    );
-                                    TB.state.set(
-                                        "user.userLevel",
-                                        result.data.user.userLevel || 1,
-                                    );
-                                }
-
-                                TB.events.emit("user:sessionVerified", {
-                                    valid: true,
-                                });
-                                return true;
-                            } else {
-                                TB.logger.warn(
-                                    "[User] Session invalid:",
-                                    result,
-                                );
-                                TB.events.emit("user:sessionVerified", {
-                                    valid: false,
-                                });
-                                return false;
-                            }
-                        } catch (error) {
-                            TB.logger.error(
-                                "[User] Session verification failed:",
-                                error,
-                            );
-                            TB.events.emit("user:sessionVerified", {
-                                valid: false,
-                                error,
-                            });
-                            return false;
-                        }
-                    },
-
-                    isAuthenticated: function () {
-                        return TB.state.get("user.isAuthenticated") === true;
-                    },
-
-                    getSessionToken: function () {
-                        return this._sessionToken || TB.state.get("user.token");
-                    },
-
-                    getUserData: function () {
-                        return {
-                            userId: TB.state.get("user.userId"),
-                            username: TB.state.get("user.username"),
-                            email: TB.state.get("user.email"),
-                            userLevel: TB.state.get("user.userLevel"),
-                        };
-                    },
-                },
-
-                // ---- MINIMAL ROUTER FOR HUD CONTENT ----
-                router: {
-                    _container: null,
-                    _routes: [],
-                    _currentPath: null,
-                    _cache: {},
-
-                    init: function (container, routes = []) {
-                        this._container = container;
-                        this._routes = routes;
-                        TB.logger.info(
-                            "[Router] Initialized with container:",
-                            container?.id,
-                        );
-                    },
-
-                    setContainer: function (container) {
-                        this._container = container;
-                    },
-
-                    navigateTo: async function (path, replace = false) {
-                        if (!this._container) {
-                            TB.logger.warn("[Router] No container set");
-                            return false;
-                        }
-
-                        TB.logger.info("[Router] Navigating to:", path);
-                        this._currentPath = path;
-
-                        // Check cache
-                        if (this._cache[path]) {
-                            this._container.innerHTML = this._cache[path];
-                            this._executeScripts(this._container);
-                            TB.events.emit("router:navigated", { path });
-                            return true;
-                        }
-
-                        // Fetch HTML
-                        const html = await TB.api.fetchHtml(path);
-                        this._container.innerHTML = html;
-                        this._executeScripts(this._container);
-
-                        TB.events.emit("router:navigated", { path });
-                        return true;
-                    },
-
-                    getCurrentPath: function () {
-                        return this._currentPath;
-                    },
-
-                    clearCache: function () {
-                        this._cache = {};
-                    },
-
-                    _executeScripts: function (container) {
-                        if (!container?.querySelectorAll) return;
-                        const scripts = container.querySelectorAll("script");
-                        scripts.forEach((oldScript) => {
-                            const newScript = document.createElement("script");
-                            Array.from(oldScript.attributes).forEach((attr) => {
-                                newScript.setAttribute(attr.name, attr.value);
-                            });
-                            newScript.textContent = oldScript.textContent;
-                            oldScript.parentNode?.replaceChild(
-                                newScript,
-                                oldScript,
-                            );
-                        });
-                    },
-                },
-
-                // ---- ENV ----
-                env: {
-                    _detected: {},
-                    detect: function () {
-                        this._detected = {
-                            isTauri: typeof window.__TAURI__ !== "undefined",
-                            isMobile: /iPhone|iPad|iPod|Android/i.test(
-                                navigator.userAgent,
-                            ),
-                            isWeb: typeof window !== "undefined",
-                        };
-                        return this._detected;
-                    },
-                    isTauri: function () {
-                        return this._detected.isTauri;
-                    },
-                    isMobile: function () {
-                        return this._detected.isMobile;
-                    },
-                    isWeb: function () {
-                        return this._detected.isWeb;
-                    },
-                },
-
-                // ---- INIT ----
-                init: async function (options = {}) {
-                    TB.logger.init({ logLevel: options.logLevel || "debug" });
-                    TB.logger.info(
-                        `TB HUD Framework v${this.VERSION} initializing...`,
-                    );
-
-                    TB.config.init(options);
-                    TB.state.init(options.initialState || {});
-                    TB.env.detect();
-
-                    // Load API URLs from Tauri if available
-                    if (TB.env.isTauri() && window.__TAURI__?.core?.invoke) {
-                        try {
-                            const urls =
-                                await window.__TAURI__.core.invoke(
-                                    "get_api_urls",
-                                );
-                            TB.config.set("baseApiUrl", urls.api_url);
-                            TB.config.set("baseWsUrl", urls.ws_url);
-                            TB.logger.info("[TB] Using Tauri API URLs:", urls);
-                        } catch (e) {
-                            TB.logger.warn(
-                                "[TB] Could not get Tauri API URLs:",
-                                e,
-                            );
+                    // Catch-all für Minu Views
+                    {
+                        path: '/view/:viewName',
+                        controller: async (params) => {
+                           return renderMinuView(params.viewName);
                         }
                     }
-
-                    // Initialize user/auth
-                    await TB.user.init();
-
-                    this.isInit = true;
-                    TB.events.emit("tb:initialized", TB);
-                    TB.logger.info("TB HUD Framework initialized.");
-
-                    return this;
-                },
+                ]
             };
 
-            // Make TB globally available
-            window.TB = TB;
+            // --- Init TB ---
+            window.TB = await TB.init(hudConfig);
 
-            // ============================================================
-            // DOM ENGINE FOR HTMX-STYLE UPDATES
-            // ============================================================
-            class DomEngine {
-                constructor(app) {
-                    this.app = app;
-                }
-
-                process(op) {
-                    const targets = document.querySelectorAll(op.selector);
-                    if (targets.length === 0) {
-                        console.warn(
-                            `[DomEngine] Target not found: ${op.selector}`,
-                        );
-                        return;
-                    }
-
-                    targets.forEach((target) => {
-                        this.applySwap(target, op.html, op.swap || "innerHTML");
-                        this.executeEmbeddedScripts(target);
-                    });
-
-                    if (op.run_js) {
-                        this.executeSafeJs(op.run_js, {
-                            selector: op.selector,
-                            data: op.data,
-                        });
-                    }
-                }
-
-                applySwap(target, html, strategy) {
-                    switch (strategy) {
-                        case "innerHTML":
-                            target.innerHTML = html;
-                            break;
-                        case "outerHTML":
-                            target.outerHTML = html;
-                            break;
-                        case "beforebegin":
-                            target.insertAdjacentHTML("beforebegin", html);
-                            break;
-                        case "afterbegin":
-                            target.insertAdjacentHTML("afterbegin", html);
-                            break;
-                        case "beforeend":
-                            target.insertAdjacentHTML("beforeend", html);
-                            break;
-                        case "afterend":
-                            target.insertAdjacentHTML("afterend", html);
-                            break;
-                        case "delete":
-                            target.remove();
-                            break;
-                        case "none":
-                            break;
-                        default:
-                            target.innerHTML = html;
-                    }
-                }
-
-                executeEmbeddedScripts(container) {
-                    if (!container.querySelectorAll) return;
-                    const scripts = container.querySelectorAll("script");
-                    scripts.forEach((oldScript) => {
-                        const newScript = document.createElement("script");
-                        Array.from(oldScript.attributes).forEach((attr) => {
-                            newScript.setAttribute(attr.name, attr.value);
-                        });
-                        newScript.appendChild(
-                            document.createTextNode(oldScript.innerHTML),
-                        );
-                        oldScript.parentNode.replaceChild(newScript, oldScript);
-                    });
-                }
-
-                executeSafeJs(code, context) {
-                    try {
-                        const safeFunc = new Function(
-                            "ctx",
-                            "HUD",
-                            "TB",
-                            `
-                        "use strict";
-                        try { ${code} } catch(e) { console.error("[CustomJS Error]", e); }
-                    `,
-                        );
-                        safeFunc(context, window.HUD, window.TB);
-                    } catch (e) {
-                        console.error(
-                            "[DomEngine] Failed to compile backend JS:",
-                            e,
-                        );
-                    }
-                }
+            // UI Init
+            if(window.TB.ui.theme) {
+                window.TB.ui.theme.setPreference('dark'); // Force Dark
             }
 
-            // ============================================================
-            // HUD APP CLASS
-            // ============================================================
-            class HudApp {
-                constructor() {
-                    this.ws = null;
-                    this.connected = false;
-                    this.widgets = [];
-                    this.reconnectAttempts = 0;
-                    this.maxReconnects = 10;
-                    this.startTime = Date.now();
-                    this.wsUrl = "ws://localhost:5001";
-                    this.apiUrl = "http://localhost:5000";
-
-                    // Drag state
-                    this.isDragging = false;
-                    this.dragStartX = 0;
-                    this.dragStartY = 0;
-                    this.windowStartX = 0;
-                    this.windowStartY = 0;
-                    this.saveTimeout = null;
-
-                    // HUD Functions state
-                    this.hudFunctions = [];
-                    this.selectedHudFunc = null;
-                    this.hudFuncPanelOpen = false;
-                    this.searchQuery = "";
-
-                    // HUD Action System state
-                    this.connId = null;
-                    this.widgetCallbacks = {};
-                    this.pendingActions = new Map();
-                    this.actionIdCounter = 0;
-                    this.domEngine = new DomEngine(this);
-                }
-
-                async init() {
-                    console.log("[HUD] Initializing...");
-
-                    // Initialize TB Framework first
-                    await TB.init({
-                        baseApiUrl: this.apiUrl + "/api",
-                        baseWsUrl: this.wsUrl,
-                        logLevel: "debug",
-                    });
-
-                    // Set router container to HUD content area
-                    TB.router.setContainer(
-                        document.getElementById("hud-func-content-inner"),
-                    );
-
-                    this.bindEvents();
-                    this.setupDrag();
-                    this.setupHudFunctions();
-                    await this.loadSettings();
-
-                    // Update auth UI
-                    this.updateAuthUI();
-
-                    // Listen for auth changes
-                    TB.events.on("user:signedIn", () => this.updateAuthUI());
-                    TB.events.on("user:signedOut", () => this.updateAuthUI());
-                    TB.events.on("user:sessionVerified", () =>
-                        this.updateAuthUI(),
-                    );
-
-                    await this.connect();
-                    this.setupTauriEvents();
-                    await this.loadHudFunctions();
-                    await this.restoreSelectedHudFunc();
-                }
-
-                updateAuthUI() {
-                    const badge = document.getElementById("auth-badge");
-                    const text = document.getElementById("auth-text");
-                    const statusDot = document.getElementById("status-dot");
-
-                    if (TB.user.isAuthenticated()) {
-                        const userData = TB.user.getUserData();
-                        badge.classList.remove("logged-out");
-                        badge.classList.add("logged-in");
-                        badge.querySelector(".material-icons").textContent =
-                            "person";
-                        text.textContent =
-                            userData.username || userData.userId || "Logged in";
-
-                        if (this.connected) {
-                            statusDot.classList.add("authenticated");
-                        }
-                    } else {
-                        badge.classList.remove("logged-in");
-                        badge.classList.add("logged-out");
-                        badge.querySelector(".material-icons").textContent =
-                            "person_off";
-                        text.textContent = "Not logged in";
-                        statusDot.classList.remove("authenticated");
-                    }
-                }
-
-                setupDrag() {
-                    const header = document.getElementById("drag-header");
-                    if (!header) return;
-
-                    header.addEventListener("mousedown", (e) =>
-                        this.onDragStart(e),
-                    );
-                    document.addEventListener("mousemove", (e) =>
-                        this.onDragMove(e),
-                    );
-                    document.addEventListener("mouseup", (e) =>
-                        this.onDragEnd(e),
-                    );
-                }
-
-                async onDragStart(e) {
-                    if (e.target.closest(".hud-btn")) return;
-
-                    this.isDragging = true;
-                    this.dragStartX = e.screenX;
-                    this.dragStartY = e.screenY;
-
-                    if (window.__TAURI__) {
-                        try {
-                            const { getCurrentWindow } =
-                                window.__TAURI__.window;
-                            const win = getCurrentWindow();
-                            const pos = await win.outerPosition();
-                            this.windowStartX = pos.x;
-                            this.windowStartY = pos.y;
-                        } catch (err) {
-                            console.error(
-                                "[HUD] Failed to get window position:",
-                                err,
-                            );
-                            this.isDragging = false;
-                        }
-                    } else {
-                        this.isDragging = false;
-                    }
-                }
-
-                async onDragMove(e) {
-                    if (!this.isDragging) return;
-
-                    const deltaX = e.screenX - this.dragStartX;
-                    const deltaY = e.screenY - this.dragStartY;
-
-                    const newX = this.windowStartX + deltaX;
-                    const newY = this.windowStartY + deltaY;
-
-                    if (window.__TAURI__) {
-                        try {
-                            const { getCurrentWindow, PhysicalPosition } =
-                                window.__TAURI__.window;
-                            const win = getCurrentWindow();
-                            await win.setPosition(
-                                new PhysicalPosition(newX, newY),
-                            );
-                        } catch (err) {
-                            console.error("[HUD] Move error:", err);
-                        }
-                    }
-                }
-
-                async onDragEnd(e) {
-                    if (!this.isDragging) return;
-                    this.isDragging = false;
-
-                    if (this.saveTimeout) clearTimeout(this.saveTimeout);
-                    this.saveTimeout = setTimeout(
-                        () => this.savePosition(),
-                        300,
-                    );
-                }
-
-                async savePosition() {
-                    if (!window.__TAURI__) return;
-
-                    try {
-                        const { getCurrentWindow } = window.__TAURI__.window;
-                        const { invoke } = window.__TAURI__.core;
-
-                        const win = getCurrentWindow();
-                        const pos = await win.outerPosition();
-
-                        await invoke("save_hud_position", {
-                            x: pos.x,
-                            y: pos.y,
-                        });
-                    } catch (err) {
-                        console.error("[HUD] Failed to save position:", err);
-                    }
-                }
-
-                bindEvents() {
-                    document
-                        .getElementById("btn-settings")
-                        ?.addEventListener("click", () =>
-                            this.toggleSettings(),
-                        );
-                    document
-                        .getElementById("btn-app")
-                        ?.addEventListener("click", () => this.switchToApp());
-                    document
-                        .getElementById("btn-refresh")
-                        ?.addEventListener("click", () => this.refresh());
-
-                    document
-                        .getElementById("setting-opacity")
-                        ?.addEventListener("input", (e) => {
-                            const value = parseInt(e.target.value, 10);
-                            document.getElementById(
-                                "opacity-value",
-                            ).textContent = value + "%";
-                            this.setOpacity(value / 100);
-                        });
-
-                    document
-                        .getElementById("setting-animation-steps")
-                        ?.addEventListener("input", (e) => {
-                            const value = parseInt(e.target.value, 10);
-                            document.getElementById(
-                                "animation-steps-value",
-                            ).textContent = value;
-                            this.setAnimationSteps(value);
-                        });
-
-                    document
-                        .getElementById("setting-animation-delay")
-                        ?.addEventListener("input", (e) => {
-                            const value = parseInt(e.target.value, 10);
-                            document.getElementById(
-                                "animation-delay-value",
-                            ).textContent = value + "ms";
-                            this.setAnimationDelay(value);
-                        });
-
-                    // HTMX-Style Event Delegation
-                    document.body.addEventListener("click", (e) => {
-                        const trigger = e.target.closest("[data-ws-action]");
-                        if (!trigger) return;
-
-                        const action = trigger.dataset.wsAction;
-                        const widgetId = trigger.dataset.widgetId;
-
-                        let payload = {};
-                        if (trigger.dataset.wsPayload) {
-                            try {
-                                payload = JSON.parse(trigger.dataset.wsPayload);
-                            } catch (err) {
-                                console.warn(
-                                    "Invalid JSON in data-ws-payload",
-                                    err,
-                                );
-                            }
-                        }
-
-                        if (trigger.dataset.wsInclude) {
-                            const inputs = document.querySelectorAll(
-                                trigger.dataset.wsInclude,
-                            );
-                            inputs.forEach((input) => {
-                                if (input.name || input.id) {
-                                    payload[input.name || input.id] =
-                                        input.value;
-                                }
-                            });
-                        }
-
-                        trigger.classList.add("ws-loading");
-
-                        const parentWidget = trigger.closest(".widget");
-                        const targetWidgetId =
-                            widgetId ||
-                            (parentWidget
-                                ? parentWidget.id.replace("widget-", "")
-                                : null);
-
-                        if (targetWidgetId) {
-                            this.sendWidgetAction(
-                                targetWidgetId,
-                                action,
-                                payload,
-                            ).finally(() =>
-                                trigger.classList.remove("ws-loading"),
-                            );
-                        } else {
-                            console.error(
-                                "[HUD] No widget ID for action:",
-                                action,
-                            );
-                            trigger.classList.remove("ws-loading");
-                        }
-                    });
-                }
-
-                setupTauriEvents() {
-                    if (window.__TAURI__) {
-                        const { listen } = window.__TAURI__.event;
-                        listen("hud-opacity-changed", (event) => {
-                            this.applyOpacity(event.payload);
-                        });
-                    }
-                }
-
-                // ============================================================
-                // HUD Functions System
-                // ============================================================
-
-                setupHudFunctions() {
-                    const toggle = document.getElementById("hud-func-toggle");
-                    const closeBtn = document.getElementById("hud-func-close");
-                    const searchInput =
-                        document.getElementById("hud-func-search");
-
-                    toggle?.addEventListener("click", () =>
-                        this.toggleHudFuncPanel(),
-                    );
-                    closeBtn?.addEventListener("click", () =>
-                        this.closeHudFunc(),
-                    );
-
-                    searchInput?.addEventListener("input", (e) => {
-                        this.searchQuery = e.target.value.toLowerCase();
-                        this.filterHudFuncList();
-                    });
-                }
-
-                toggleHudFuncPanel() {
-                    this.hudFuncPanelOpen = !this.hudFuncPanelOpen;
-                    const panel = document.getElementById("hud-func-panel");
-                    const arrow = document.getElementById("hud-func-arrow");
-                    const toggle = document.getElementById("hud-func-toggle");
-
-                    if (panel)
-                        panel.classList.toggle(
-                            "visible",
-                            this.hudFuncPanelOpen,
-                        );
-                    if (arrow)
-                        arrow.textContent = this.hudFuncPanelOpen ? "▲" : "▼";
-                    if (toggle)
-                        toggle.classList.toggle(
-                            "active",
-                            this.hudFuncPanelOpen,
-                        );
-
-                    if (this.hudFuncPanelOpen) {
-                        setTimeout(() => {
-                            document.getElementById("hud-func-search")?.focus();
-                        }, 100);
-                    }
-                }
-
-                async loadHudFunctions() {
-                    const listEl = document.getElementById("hud-func-list");
-                    if (!listEl) return;
-
-                    try {
-                        if (window.__TAURI__) {
-                            const { invoke } = window.__TAURI__.core;
-                            const funcs = await invoke("get_hud_functions");
-                            this.hudFunctions = Array.isArray(funcs)
-                                ? funcs
-                                : [];
-                        } else {
-                            // Use TB.api with auth
-                            const result = await TB.api.request(
-                                "CloudM",
-                                "get_hud_functions",
-                                null,
-                                "POST",
-                            );
-
-                            if (result.error === "none") {
-                                const funcs =
-                                    result.data?.result?.data ||
-                                    result.data?.data ||
-                                    result.data ||
-                                    [];
-                                this.hudFunctions = Array.isArray(funcs)
-                                    ? funcs
-                                    : [];
-                            } else {
-                                throw new Error(
-                                    result.message ||
-                                        "Failed to fetch functions",
-                                );
-                            }
-                        }
-
-                        console.log(
-                            "[HUD] Loaded functions:",
-                            this.hudFunctions.length,
-                        );
-                        this.renderHudFuncList();
-                    } catch (e) {
-                        console.error("[HUD] Failed to load HUD functions:", e);
-                        listEl.innerHTML =
-                            '<div class="hud-func-loading">Failed to load functions</div>';
-                    }
-                }
-
-                renderHudFuncList() {
-                    const listEl = document.getElementById("hud-func-list");
-                    if (!listEl) return;
-
-                    if (this.hudFunctions.length === 0) {
-                        listEl.innerHTML =
-                            '<div class="hud-func-empty">No HUD functions available.<br><small>Create functions with "hud" prefix.</small></div>';
-                        return;
-                    }
-
-                    listEl.innerHTML = this.hudFunctions
-                        .map((func) => {
-                            const isSelected =
-                                this.selectedHudFunc?.path === func.path;
-                            const title = this.escapeHtml(
-                                func.display_name || func.func_name,
-                            );
-                            const path = this.escapeHtml(func.path || "");
-                            const modName = this.escapeHtml(
-                                func.mod_name || "",
-                            );
-
-                            return `
-                        <div class="hud-func-item ${isSelected ? "selected" : ""}"
-                             data-func-path="${this.escapeHtml(func.path)}"
-                             data-mod-name="${modName}"
-                             data-func-name="${this.escapeHtml(func.func_name)}">
-                            <span class="hud-func-icon material-icons">code</span>
-                            <div class="hud-func-info">
-                                <div class="hud-func-title">${title}</div>
-                                <div class="hud-func-path">${modName}.${this.escapeHtml(func.func_name)}</div>
-                            </div>
-                        </div>
-                    `;
-                        })
-                        .join("");
-
-                    listEl
-                        .querySelectorAll(".hud-func-item")
-                        .forEach((item) => {
-                            item.addEventListener("click", () => {
-                                const funcPath = item.dataset.funcPath;
-                                const func = this.hudFunctions.find(
-                                    (f) => f.path === funcPath,
-                                );
-                                if (func) this.selectHudFunc(func);
-                            });
-                        });
-                }
-
-                filterHudFuncList() {
-                    const listEl = document.getElementById("hud-func-list");
-                    if (!listEl) return;
-
-                    const items = listEl.querySelectorAll(".hud-func-item");
-                    let visibleCount = 0;
-
-                    items.forEach((item) => {
-                        const title =
-                            item
-                                .querySelector(".hud-func-title")
-                                ?.textContent?.toLowerCase() || "";
-                        const path =
-                            item
-                                .querySelector(".hud-func-path")
-                                ?.textContent?.toLowerCase() || "";
-                        const matches =
-                            title.includes(this.searchQuery) ||
-                            path.includes(this.searchQuery);
-
-                        item.classList.toggle("hidden", !matches);
-                        if (matches) visibleCount++;
-                    });
-
-                    let emptyMsg = listEl.querySelector(".hud-func-empty");
-                    if (visibleCount === 0 && this.hudFunctions.length > 0) {
-                        if (!emptyMsg) {
-                            emptyMsg = document.createElement("div");
-                            emptyMsg.className = "hud-func-empty";
-                            listEl.appendChild(emptyMsg);
-                        }
-                        emptyMsg.textContent = "No matching functions";
-                        emptyMsg.style.display = "block";
-                    } else if (emptyMsg) {
-                        emptyMsg.style.display = "none";
-                    }
-                }
-
-                async selectHudFunc(func) {
-                    console.log("[HUD] Selecting function:", func.display_name);
-                    this.selectedHudFunc = func;
-
-                    this.renderHudFuncList();
-                    this.updateHudFuncCurrentLabel();
-                    this.toggleHudFuncPanel();
-
-                    const contentEl =
-                        document.getElementById("hud-func-content");
-                    const widgetEl = document.getElementById("widget-area");
-                    const closeBtn = document.getElementById("hud-func-close");
-
-                    if (contentEl) contentEl.classList.add("visible");
-                    if (widgetEl) widgetEl.style.display = "none";
-                    if (closeBtn) closeBtn.style.display = "block";
-
-                    await this.loadHudFuncContent(func);
-                    await this.saveHudFuncSelection(func.path);
-                }
-
-                async loadHudFuncContent(func) {
-                    const innerEl = document.getElementById(
-                        "hud-func-content-inner",
-                    );
-                    if (!innerEl) return;
-
-                    innerEl.innerHTML =
-                        '<div class="hud-func-loading">Loading...</div>';
-
-                    try {
-                        let html;
-
-                        if (window.__TAURI__) {
-                            const { invoke } = window.__TAURI__.core;
-                            html = await invoke("call_hud_function", {
-                                modName: func.mod_name,
-                                funcName: func.func_name,
-                            });
-                        } else {
-                            // Use TB.api with authentication
-                            html = await TB.api.fetchHtml(func.path);
-                        }
-
-                        innerEl.innerHTML = html;
-
-                        // Execute scripts using TB router's method
-                        TB.router._executeScripts(innerEl);
-                    } catch (e) {
-                        console.error(
-                            "[HUD] Failed to load HUD function content:",
-                            e,
-                        );
-                        innerEl.innerHTML = `<div class="hud-func-loading">Failed to load: ${this.escapeHtml(e.message)}</div>`;
-                    }
-                }
-
-                closeHudFunc() {
-                    console.log("[HUD] Closing HUD function");
-                    this.selectedHudFunc = null;
-
-                    this.updateHudFuncCurrentLabel();
-                    this.renderHudFuncList();
-
-                    const contentEl =
-                        document.getElementById("hud-func-content");
-                    const widgetEl = document.getElementById("widget-area");
-                    const closeBtn = document.getElementById("hud-func-close");
-                    const innerEl = document.getElementById(
-                        "hud-func-content-inner",
-                    );
-
-                    if (contentEl) contentEl.classList.remove("visible");
-                    if (widgetEl) widgetEl.style.display = "";
-                    if (closeBtn) closeBtn.style.display = "none";
-                    if (innerEl) innerEl.innerHTML = "";
-
-                    this.saveHudFuncSelection(null);
-                }
-
-                updateHudFuncCurrentLabel() {
-                    const labelEl = document.getElementById(
-                        "hud-func-current-label",
-                    );
-                    if (!labelEl) return;
-
-                    if (this.selectedHudFunc) {
-                        labelEl.innerHTML = `<span class="hud-func-current-name">${this.escapeHtml(this.selectedHudFunc.display_name || this.selectedHudFunc.func_name)}</span>`;
-                    } else {
-                        labelEl.textContent = "No function selected";
-                    }
-                }
-
-                async saveHudFuncSelection(funcPath) {
-                    if (!window.__TAURI__) return;
-
-                    try {
-                        const { invoke } = window.__TAURI__.core;
-                        await invoke("set_selected_miniui_app", {
-                            appName: funcPath,
-                        });
-                    } catch (e) {
-                        console.warn(
-                            "[HUD] Failed to save function selection:",
-                            e,
-                        );
-                    }
-                }
-
-                async restoreSelectedHudFunc() {
-                    if (!window.__TAURI__) return;
-
-                    try {
-                        const { invoke } = window.__TAURI__.core;
-                        const funcPath = await invoke(
-                            "get_selected_miniui_app",
-                        );
-
-                        if (funcPath && this.hudFunctions.length > 0) {
-                            const func = this.hudFunctions.find(
-                                (f) => f.path === funcPath,
-                            );
-                            if (func) {
-                                console.log(
-                                    "[HUD] Restoring HUD function:",
-                                    funcPath,
-                                );
-                                await this.selectHudFunc(func);
-                            }
-                        }
-                    } catch (e) {
-                        console.warn(
-                            "[HUD] Failed to restore function selection:",
-                            e,
-                        );
-                    }
-                }
-
-                // ============================================================
-                // Settings & UI
-                // ============================================================
-
-                applyOpacity(opacity) {
-                    document.documentElement.style.setProperty(
-                        "--hud-opacity",
-                        opacity,
-                    );
-                    const slider = document.getElementById("setting-opacity");
-                    const valueDisplay =
-                        document.getElementById("opacity-value");
-                    if (slider) slider.value = Math.round(opacity * 100);
-                    if (valueDisplay)
-                        valueDisplay.textContent =
-                            Math.round(opacity * 100) + "%";
-                }
-
-                async loadSettings() {
-                    try {
-                        if (window.__TAURI__) {
-                            const { invoke } = window.__TAURI__.core;
-
-                            const urls = await invoke("get_api_urls");
-                            this.wsUrl = urls.ws_url;
-                            this.apiUrl = urls.api_url;
-
-                            // Update TB config
-                            TB.config.set("baseApiUrl", urls.api_url);
-                            TB.config.set("baseWsUrl", urls.ws_url);
-
-                            const hudSettings =
-                                await invoke("get_hud_settings");
-
-                            if (hudSettings.opacity !== undefined) {
-                                this.applyOpacity(hudSettings.opacity);
-                            }
-
-                            if (hudSettings.animation_steps !== undefined) {
-                                const stepsSlider = document.getElementById(
-                                    "setting-animation-steps",
-                                );
-                                const stepsValue = document.getElementById(
-                                    "animation-steps-value",
-                                );
-                                if (stepsSlider)
-                                    stepsSlider.value =
-                                        hudSettings.animation_steps;
-                                if (stepsValue)
-                                    stepsValue.textContent =
-                                        hudSettings.animation_steps;
-                            }
-
-                            if (hudSettings.animation_delay_ms !== undefined) {
-                                const delaySlider = document.getElementById(
-                                    "setting-animation-delay",
-                                );
-                                const delayValue = document.getElementById(
-                                    "animation-delay-value",
-                                );
-                                if (delaySlider)
-                                    delaySlider.value =
-                                        hudSettings.animation_delay_ms;
-                                if (delayValue)
-                                    delayValue.textContent =
-                                        hudSettings.animation_delay_ms + "ms";
-                            }
-                        }
-                    } catch (e) {
-                        console.warn("[HUD] Could not load settings:", e);
-                    }
-                }
-
-                // ============================================================
-                // WebSocket Connection
-                // ============================================================
-
-                async connect() {
-                    try {
-                        console.log("[HUD] Connecting to:", this.wsUrl);
-                        this.ws = new WebSocket(this.wsUrl);
-
-                        this.ws.onopen = () => this.onConnect();
-                        this.ws.onclose = () => this.onDisconnect();
-                        this.ws.onmessage = (e) => this.onMessage(e);
-                        this.ws.onerror = (e) => this.onError(e);
-                    } catch (e) {
-                        console.error("[HUD] Connection failed:", e);
-                        this.scheduleReconnect();
-                    }
-                }
-
-                onConnect() {
-                    console.log("[HUD] Connected to worker");
-                    this.connected = true;
-                    this.reconnectAttempts = 0;
-                    this.startTime = Date.now();
-                    this.updateStatus(true);
-                    this.updateAuthUI();
-
-                    // Send auth token with initial messages
-                    const token = TB.user.getSessionToken();
-                    this.send({ type: "get_status", token });
-                    this.send({ type: "get_widgets", token });
-                }
-
-                onDisconnect() {
-                    console.log("[HUD] Disconnected");
-                    this.connected = false;
-                    this.updateStatus(false);
-                    this.scheduleReconnect();
-                }
-
-                onMessage(event) {
-                    try {
-                        const data = JSON.parse(event.data);
-                        const msgType = data.type || data.event;
-
-                        switch (msgType) {
-                            case "status":
-                            case "system_status":
-                            case "worker_status":
-                                this.handleStatus(data.data || data);
-                                break;
-                            case "widgets":
-                            case "widget_list":
-                                this.handleWidgets(
-                                    data.widgets || data.data || [],
-                                );
-                                break;
-                            case "widget_update":
-                                this.handleWidgetUpdate(data);
-                                break;
-                            case "pong":
-                                break;
-                            case "connected":
-                                this.connId = data.conn_id;
-                                console.log(
-                                    "[HUD] Connection ID:",
-                                    this.connId,
-                                );
-                                break;
-                            case "widget_response":
-                                this.handleWidgetResponse(data);
-                                break;
-                            case "hud_notification":
-                                this.showNotification(
-                                    data.message,
-                                    data.level || "info",
-                                    data.duration || 3000,
-                                );
-                                break;
-                            case "hud_clipboard":
-                                this.copyToClipboard(
-                                    data.text,
-                                    data.notification,
-                                );
-                                break;
-                            case "hud_navigate":
-                                this.navigateTo(data.path);
-                                break;
-                            case "single_widget_update":
-                                this.handleSingleWidgetUpdate(data);
-                                break;
-                            case "dom_update":
-                                this.domEngine.process(data);
-                                break;
-                            case "batch_update":
-                                if (Array.isArray(data.updates)) {
-                                    data.updates.forEach((op) =>
-                                        this.domEngine.process(op),
-                                    );
-                                }
-                                break;
-                            default:
-                                this.handleGenericMessage(data);
-                        }
-                    } catch (e) {
-                        console.error("[HUD] Parse error:", e);
-                    }
-                }
-
-                onError(error) {
-                    console.error("[HUD] WebSocket error:", error);
-                }
-
-                scheduleReconnect() {
-                    if (this.reconnectAttempts >= this.maxReconnects) {
-                        this.showError(
-                            "Connection lost. Click refresh to retry.",
-                        );
-                        return;
-                    }
-
-                    this.reconnectAttempts++;
-                    const delay = Math.min(1000 * this.reconnectAttempts, 5000);
-                    setTimeout(() => this.connect(), delay);
-                }
-
-                send(data) {
-                    if (this.ws && this.connected) {
-                        // Always include auth token
-                        const token = TB.user.getSessionToken();
-                        if (token && !data.token) {
-                            data.token = token;
-                        }
-                        this.ws.send(JSON.stringify(data));
-                    }
-                }
-
-                handleStatus(data) {
-                    const modeEl = document.getElementById("status-mode");
-                    const infoEl = document.getElementById("status-info");
-
-                    if (modeEl) {
-                        const isRemote =
-                            data.is_remote || data.mode === "remote";
-                        modeEl.textContent = isRemote ? "Remote" : "Local";
-                    }
-
-                    if (infoEl) {
-                        const modCount =
-                            data.active_mods ||
-                            data.mod_count ||
-                            data.mods ||
-                            0;
-                        infoEl.textContent = `${modCount} Mods`;
-                    }
-
-                    this.updateSystemWidget(data);
-                }
-
-                handleWidgets(widgets) {
-                    this.widgets = widgets;
-                    this.renderWidgets();
-                }
-
-                handleWidgetUpdate(data) {
-                    if (data.widgets) {
-                        this.widgets = data.widgets;
-                        this.renderWidgets();
-                    }
-                }
-
-                handleGenericMessage(data) {
-                    if (
-                        data.running !== undefined ||
-                        data.worker_running !== undefined
-                    ) {
-                        this.handleStatus(data);
-                    }
-                }
-
-                handleWidgetResponse(data) {
-                    const actionId = data.action_id;
-                    const widgetId = data.widget_id;
-
-                    if (actionId && this.pendingActions.has(actionId)) {
-                        const { resolve } = this.pendingActions.get(actionId);
-                        this.pendingActions.delete(actionId);
-                        resolve(data.result);
-                    }
-
-                    if (widgetId && this.widgetCallbacks[widgetId]) {
-                        this.widgetCallbacks[widgetId](data);
-                    }
-                }
-
-                handleSingleWidgetUpdate(data) {
-                    const widgetId = data.widget_id;
-                    const html = data.html;
-
-                    if (!widgetId || !html) return;
-
-                    const widgetEl = document.getElementById(
-                        `widget-${widgetId}`,
-                    );
-                    if (widgetEl) {
-                        const contentEl =
-                            widgetEl.querySelector(".widget-content");
-                        if (contentEl) {
-                            contentEl.innerHTML = html;
-                        }
-                    }
-
-                    if (this.widgetCallbacks[widgetId]) {
-                        this.widgetCallbacks[widgetId](data);
-                    }
-                }
-
-                showNotification(message, level = "info", duration = 3000) {
-                    let container =
-                        document.getElementById("hud-notifications");
-                    if (!container) {
-                        container = document.createElement("div");
-                        container.id = "hud-notifications";
-                        container.style.cssText =
-                            "position:fixed;top:10px;right:10px;z-index:10000;display:flex;flex-direction:column;gap:8px;";
-                        document.body.appendChild(container);
-                    }
-
-                    const colors = {
-                        info: "#3b82f6",
-                        success: "#22c55e",
-                        warning: "#f59e0b",
-                        error: "#ef4444",
-                    };
-
-                    const notification = document.createElement("div");
-                    notification.style.cssText = `
-                    background: ${colors[level] || colors.info};
-                    color: white;
-                    padding: 10px 16px;
-                    border-radius: 6px;
-                    font-size: 12px;
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-                    animation: slideIn 0.2s ease-out;
-                    max-width: 280px;
-                `;
-                    notification.textContent = message;
-                    container.appendChild(notification);
-
-                    setTimeout(() => {
-                        notification.style.animation = "slideOut 0.2s ease-in";
-                        setTimeout(() => notification.remove(), 200);
-                    }, duration);
-                }
-
-                async copyToClipboard(text, notificationMsg) {
-                    try {
-                        await navigator.clipboard.writeText(text);
-                        if (notificationMsg) {
-                            this.showNotification(notificationMsg, "success");
-                        }
-                    } catch (e) {
-                        console.error("[HUD] Clipboard error:", e);
-                        this.showNotification(
-                            "Failed to copy to clipboard",
-                            "error",
-                        );
-                    }
-                }
-
-                navigateTo(path) {
-                    console.log("[HUD] Navigate to:", path);
-                    // Use TB router for HUD content navigation
-                    TB.router.navigateTo(path);
-                }
-
-                sendWidgetAction(widgetId, action, payload = {}) {
-                    const actionId = ++this.actionIdCounter;
-
-                    return new Promise((resolve, reject) => {
-                        this.pendingActions.set(actionId, {
-                            resolve,
-                            reject,
-                            timestamp: Date.now(),
-                        });
-
-                        this.send({
-                            type: "widget_action",
-                            action_id: actionId,
-                            widget_id: widgetId,
-                            action: action,
-                            payload: payload,
-                            conn_id: this.connId,
-                        });
-
-                        setTimeout(() => {
-                            if (this.pendingActions.has(actionId)) {
-                                this.pendingActions.delete(actionId);
-                                reject(new Error("Action timeout"));
-                            }
-                        }, 30000);
-                    });
-                }
-
-                refreshWidget(widgetId) {
-                    this.send({
-                        type: "get_widget",
-                        widget_id: widgetId,
-                        conn_id: this.connId,
-                    });
-                }
-
-                onWidgetUpdate(widgetId, callback) {
-                    this.widgetCallbacks[widgetId] = callback;
-                }
-
-                offWidgetUpdate(widgetId) {
-                    delete this.widgetCallbacks[widgetId];
-                }
-
-                updateStatus(connected) {
-                    const dot = document.getElementById("status-dot");
-                    const text = document.getElementById("status-text");
-
-                    if (dot) dot.classList.toggle("connected", connected);
-                    if (text)
-                        text.textContent = connected
-                            ? "Connected"
-                            : "Disconnected";
-                }
-
-                updateSystemWidget(data) {
-                    const area = document.getElementById("widget-area");
-                    if (!area) return;
-
-                    let widget = document.getElementById("widget-system");
-
-                    if (!widget) {
-                        widget = document.createElement("div");
-                        widget.id = "widget-system";
-                        widget.className = "widget";
-                        widget.innerHTML = `
-                        <div class="widget-header">
-                            <span>System Status</span>
-                            <span class="widget-type">CORE</span>
-                        </div>
-                        <div class="widget-content" id="system-content"></div>
-                    `;
-
-                        const empty = area.querySelector(".empty-state");
-                        if (empty) empty.remove();
-                        area.prepend(widget);
-                    }
-
-                    const content = document.getElementById("system-content");
-                    if (content) {
-                        const workerRunning =
-                            data.worker_running ??
-                            data.running ??
-                            data.healthy ??
-                            true;
-                        const uptimeSeconds =
-                            data.uptime_seconds ||
-                            data.uptime ||
-                            Math.floor((Date.now() - this.startTime) / 1000);
-                        const uptime = this.formatUptime(uptimeSeconds);
-                        const isRemote =
-                            data.is_remote || data.mode === "remote";
-
-                        content.innerHTML = `
-                        <div class="widget-row">
-                            <span class="widget-label">Mode</span>
-                            <span class="widget-value">${isRemote ? "Remote" : "Local"}</span>
-                        </div>
-                        <div class="widget-row">
-                            <span class="widget-label">Worker</span>
-                            <span class="widget-value ${workerRunning ? "success" : "error"}">
-                                ${workerRunning ? "Running" : "Stopped"}
-                            </span>
-                        </div>
-                        <div class="widget-row">
-                            <span class="widget-label">Uptime</span>
-                            <span class="widget-value">${uptime}</span>
-                        </div>
-                        <div class="widget-row">
-                            <span class="widget-label">Auth</span>
-                            <span class="widget-value ${TB.user.isAuthenticated() ? "success" : "warning"}">
-                                ${TB.user.isAuthenticated() ? "Logged In" : "Not Logged In"}
-                            </span>
-                        </div>
-                    `;
-                    }
-                }
-
-                renderWidgets() {
-                    const area = document.getElementById("widget-area");
-                    if (!area) return;
-
-                    Array.from(area.children).forEach((child) => {
-                        if (child.id !== "widget-system") child.remove();
-                    });
-                }
-
-                createWidgetElement(widget) {
-                    const el = document.createElement("div");
-                    el.className = "widget";
-                    el.id = `widget-${widget.widget_id || widget.id || Math.random().toString(36).slice(2)}`;
-
-                    const title = widget.title || widget.name || "Widget";
-                    const type = widget.type || widget.mod_name || "MOD";
-                    const content =
-                        widget.html ||
-                        widget.content ||
-                        '<span style="opacity:0.5">Loading...</span>';
-
-                    el.innerHTML = `
-                    <div class="widget-header">
-                        <span>${this.escapeHtml(title)}</span>
-                        <span class="widget-type">${this.escapeHtml(type.toUpperCase())}</span>
+            // Tauri Events (Close Button)
+            setupTauriControls();
+
+            // Initial Navigation
+            handleInitialRoute();
+        }
+
+        // 3. Controller Functions
+
+        // Login View
+        async function renderLogin() {
+            return {
+                render: () => `
+                    <div class="flex-center">
+                        <div id="clerk-sign-in"></div>
                     </div>
-                    <div class="widget-content">${content}</div>
-                `;
-
-                    return el;
-                }
-
-                escapeHtml(str) {
-                    const div = document.createElement("div");
-                    div.textContent = str;
-                    return div.innerHTML;
-                }
-
-                showError(message) {
-                    const area = document.getElementById("widget-area");
-                    if (area) {
-                        area.innerHTML = `
-                        <div class="empty-state">
-                            <div class="empty-icon">⚠️</div>
-                            <div>${this.escapeHtml(message)}</div>
-                        </div>
-                    `;
-                    }
-                }
-
-                formatUptime(seconds) {
-                    if (!seconds || seconds < 0) return "0s";
-                    if (seconds < 60) return `${Math.floor(seconds)}s`;
-                    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-                    if (seconds < 86400) {
-                        const h = Math.floor(seconds / 3600);
-                        const m = Math.floor((seconds % 3600) / 60);
-                        return `${h}h ${m}m`;
-                    }
-                    return `${Math.floor(seconds / 86400)}d`;
-                }
-
-                toggleSettings() {
-                    const panel = document.getElementById("settings-panel");
-                    if (panel) panel.classList.toggle("visible");
-                }
-
-                async switchToApp() {
-                    try {
-                        if (window.__TAURI__) {
-                            const { invoke } = window.__TAURI__.core;
-                            await invoke("switch_mode", { mode: "app" });
-                        }
-                    } catch (e) {
-                        console.error("[HUD] Switch failed:", e);
-                    }
-                }
-
-                async setOpacity(opacity) {
-                    try {
-                        this.applyOpacity(opacity);
-                        if (window.__TAURI__) {
-                            const { invoke } = window.__TAURI__.core;
-                            await invoke("set_hud_opacity", { opacity });
-                        }
-                    } catch (e) {
-                        console.error("[HUD] Set opacity failed:", e);
-                    }
-                }
-
-                async setAnimationSteps(steps) {
-                    try {
-                        if (window.__TAURI__) {
-                            const { invoke } = window.__TAURI__.core;
-                            await invoke("set_animation_steps", { steps });
-                        }
-                    } catch (e) {
-                        console.error("[HUD] Set animation steps failed:", e);
-                    }
-                }
-
-                async setAnimationDelay(delayMs) {
-                    try {
-                        if (window.__TAURI__) {
-                            const { invoke } = window.__TAURI__.core;
-                            await invoke("set_animation_delay", { delayMs });
-                        }
-                    } catch (e) {
-                        console.error("[HUD] Set animation delay failed:", e);
-                    }
-                }
-
-                refresh() {
-                    this.reconnectAttempts = 0;
-                    if (this.ws) this.ws.close();
-
-                    // Re-verify session on refresh
-                    TB.user.verifySession().then(() => {
-                        this.updateAuthUI();
-                        this.connect();
+                `,
+                postRender: () => {
+                    // Nutzt die setupLogin Logik aus deiner login.js
+                    // Wir überschreiben kurz window.location für den Redirect nach Login
+                    // oder wir hören auf das Event
+                    TB.events.on('user:signedIn', () => {
+                        TB.router.navigateTo('/menu');
                     });
+                    setupLogin();
+                }
+            };
+        }
+
+        // App Menu (Das Dashboard Snippet - angepasst)
+        async function renderAppMenu() {
+            return {
+                render: () => `
+                    <div class="hud-padding">
+                        <div style="margin-bottom: 12px;">
+                            <input type="text" id="hud-search" placeholder="Search apps..."
+                                style="width: 100%; background: var(--bg-surface); border: 1px solid var(--border); color: white; padding: 8px; border-radius: 6px; outline: none;">
+                        </div>
+                        <div id="app-grid-container" class="app-grid">
+                            <div class="loader" style="margin: 0 auto;"></div>
+                        </div>
+                    </div>
+                `,
+                postRender: async () => {
+                    const container = document.getElementById('app-grid-container');
+                    const searchInput = document.getElementById('hud-search');
+
+                    // Daten laden (Parallel Minu Flows & CloudM Apps)
+                    try {
+                        const [flowsData, appsData] = await Promise.all([
+                            TB.api.request('Minu', 'list_flows', { only_custom_ui: false }, 'GET'),
+                            TB.api.request('CloudM', 'openui', null, 'POST') // Annahme Endpunkt existiert
+                        ]);
+
+                        let items = [];
+
+                        // Flows verarbeiten
+                        if (flowsData.data) {
+                            items = items.concat(flowsData.data.map(f => ({
+                                type: 'flow',
+                                title: f.title,
+                                desc: f.description,
+                                icon: f.icon || 'account_tree',
+                                action: () => openMinuFlow(f.name)
+                            })));
+                        }
+
+                        // Apps verarbeiten (Fallback)
+                        if (appsData.data) {
+                             // Hier Logik für CloudM Apps falls nötig
+                        }
+
+                        const renderItems = (filter = '') => {
+                            container.innerHTML = '';
+                            const filtered = items.filter(i => i.title.toLowerCase().includes(filter.toLowerCase()));
+
+                            if (filtered.length === 0) {
+                                container.innerHTML = '<div style="text-align:center; color: var(--text-muted); grid-column: 1/-1;">No apps found</div>';
+                                return;
+                            }
+
+                            filtered.forEach(item => {
+                                const el = document.createElement('a');
+                                el.className = 'app-card';
+                                el.href = '#';
+                                el.innerHTML = `
+                                    <div class="app-icon"><span class="material-symbols-outlined" style="font-size: 20px;">${item.icon}</span></div>
+                                    <div>
+                                        <h4 class="app-title">${item.title}</h4>
+                                        <p class="app-desc">${item.desc}</p>
+                                    </div>
+                                `;
+                                el.onclick = (e) => {
+                                    e.preventDefault();
+                                    item.action();
+                                };
+                                container.appendChild(el);
+                            });
+                        };
+
+                        renderItems();
+                        searchInput.addEventListener('input', (e) => renderItems(e.target.value));
+
+                    } catch (e) {
+                        console.error("Error loading HUD apps", e);
+                        container.innerHTML = `<div style="color:red">Error loading apps: ${e.message}</div>`;
+                    }
+                }
+            };
+        }
+
+        // Minu Flow Renderer
+        async function openMinuFlow(viewName) {
+            // Wir nutzen TB.api um das HTML zu holen (Server Side Rendering oder Client Bootloader)
+            // Dies nutzt die Minu 'render' Funktion die du bereitgestellt hast
+            const container = document.getElementById('MainContent');
+            container.innerHTML = '<div class="flex-center"><div class="loader"></div></div>';
+
+            try {
+                // Request SSR HTML or JSON
+                const result = await TB.api.request('Minu', 'render', { view: viewName, ssr: 'true', format: 'full-html' }, 'POST');
+
+                if (result.data) {
+                    // HTML direkt injecten
+                    // HINWEIS: Bei komplexen Minu Views muss hier evtl. der Script-Tag manuell ausgeführt werden
+                    // TB.router macht das normalerweise automatisch wenn wir navigateTo nutzen.
+                    // Wir simulieren hier eine Route Navigation
+
+                    // Option A: Direktes HTML setzen (schnell)
+                    container.innerHTML = result.data;
+                    TB.router._executeScripts(container); // Helper falls existent, sonst manuell
+
+                    // Back Button Logic aktivieren
+                    document.getElementById('btn-home').style.display = 'flex';
+                }
+            } catch (e) {
+                container.innerHTML = `<div class="hud-padding">Error loading view: ${e.message}</div>`;
+            }
+        }
+
+        // Helper für View Wechsel
+        function renderMinuView(viewName) {
+            return {
+                render: async () => {
+                     const result = await TB.api.request('Minu', 'render', { view: viewName, ssr: 'true' }, 'POST');
+                     return result.data || '<div>No Data</div>';
                 }
             }
+        }
 
-            // ============================================================
-            // INITIALIZE APP
-            // ============================================================
-            const app = new HudApp();
-            app.init();
+        // 4. Tauri Controls & Setup
+        function setupTauriControls() {
+            const btnClose = document.getElementById('btn-close');
+            const btnHome = document.getElementById('btn-home');
 
-            // ============================================================
-            // GLOBAL HUD API
-            // ============================================================
-            window.HUD = {
-                action: (widgetId, action, payload = {}) =>
-                    app.sendWidgetAction(widgetId, action, payload),
-                refresh: (widgetId) => app.refreshWidget(widgetId),
-                notify: (message, level = "info", duration = 3000) =>
-                    app.showNotification(message, level, duration),
-                copy: (text, notification) =>
-                    app.copyToClipboard(text, notification),
-                getConnId: () => app.connId,
-                onUpdate: (widgetId, callback) =>
-                    app.onWidgetUpdate(widgetId, callback),
-                offUpdate: (widgetId) => app.offWidgetUpdate(widgetId),
-                send: (data) => app.send(data),
-                isConnected: () => app.connected,
-
-                // TB-compatible methods
-                isAuthenticated: () => TB.user.isAuthenticated(),
-                getUser: () => TB.user.getUserData(),
-                getToken: () => TB.user.getSessionToken(),
-                navigate: (path) => TB.router.navigateTo(path),
-
-                // Auth methods
-                setSession: (token, userData) =>
-                    TB.user.setSession(token, userData),
-                clearSession: () => TB.user.clearSession(),
-                verifySession: () => TB.user.verifySession(),
-            };
-
-            // CSS animations
-            const style = document.createElement("style");
-            style.textContent = `
-            @keyframes slideIn {
-                from { transform: translateX(100%); opacity: 0; }
-                to { transform: translateX(0); opacity: 1; }
+            if (window.__TAURI__) {
+                btnClose.addEventListener('click', () => {
+                    window.__TAURI__.window.getCurrentWindow().hide(); // Oder close()
+                });
+            } else {
+                btnClose.style.display = 'none'; // Im Browser verstecken
             }
-            @keyframes slideOut {
-                from { transform: translateX(0); opacity: 1; }
-                to { transform: translateX(100%); opacity: 0; }
-            }
-        `;
-            document.head.appendChild(style);
 
-            console.log("[HUD] Global HUD & TB API initialized.");
-            console.log("[HUD] Available: window.HUD, window.TB");
-        </script>
-    </body>
+            btnHome.addEventListener('click', () => {
+                TB.router.navigateTo('/menu');
+            });
+        }
+
+        function handleInitialRoute() {
+            // Prüfen ob bereits eingeloggt
+            if (TB.user.isAuthenticated()) {
+                TB.router.navigateTo('/menu');
+            } else {
+                TB.router.navigateTo('/login');
+            }
+        }
+
+        // Start
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initHud);
+        } else {
+            initHud();
+        }
+
+    </script>
+</body>
 </html>

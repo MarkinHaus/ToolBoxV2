@@ -640,6 +640,7 @@
                     <option value="embedding">📊 Embedding</option>
                     <option value="vision-embedding">👁️📊 Vision-Embedding (requires mmproj)</option>
                     <option value="audio">🎵 Audio (legacy Whisper)</option>
+                    <option value="tts">🔊 TTS (Text-to-Speech)</option>
                 </select>
             </div>
             <div class="form-group" id="mmprojContainer" style="display: none;">
@@ -717,6 +718,7 @@
             'embedding': '📊',
             'vision-embedding': '👁️📊',
             'audio': '🎵',
+            'tts': '🔊',
             'mmproj': '🔗'
         };
 
@@ -1225,17 +1227,28 @@
             }
             indicator.style.color = 'var(--green)';
 
-            // Omni models (audio + vision + text) - check FIRST
-            if (path.includes('omni')) {
+            // TTS models - check FIRST (before other checks)
+            // Common TTS model identifiers: tts, speech, vocoder, outetts, parler, kokoro, f5-tts, coqui, xtts, bark
+            const ttsPatterns = ['tts', 'speech', 'vocoder', 'outetts', 'parler', 'kokoro', 'f5-tts', 'f5tts',
+                                 'coqui', 'xtts', 'bark', 'vits', 'piper', 'silero', 'speecht5'];
+            if (ttsPatterns.some(p => path.includes(p))) {
+                detected = 'tts';
+            }
+            // Omni models (audio + vision + text)
+            else if (path.includes('omni')) {
                 detected = 'omni';
             }
-            // Audio-only models: whisper
-            else if (path.includes('whisper') || (path.includes('ggml-') && (path.includes('.bin') || path.includes('large') || path.includes('medium') || path.includes('small') || path.includes('base') || path.includes('tiny')))) {
+            // Audio-only models: whisper (STT)
+            else if (path.includes('whisper') || (path.includes('ggml-') &&
+                     (path.includes('.bin') || path.includes('large') || path.includes('medium') ||
+                      path.includes('small') || path.includes('base') || path.includes('tiny')))) {
                 detected = 'audio';
             }
             // Check for VL (vision) + embed combination
             else {
-                const isVision = path.includes('-vl') || path.includes('_vl') || path.includes('vision') || path.includes('minicpm-v') || path.includes('minicpm_v');
+                const isVision = path.includes('-vl') || path.includes('_vl') ||
+                                 path.includes('vision') || path.includes('minicpm-v') ||
+                                 path.includes('minicpm_v');
                 const isEmbedding = path.includes('embed');
 
                 if (isVision && isEmbedding) {
@@ -1313,6 +1326,10 @@
             const getFileIcon = (f) => {
                 const name = f.toLowerCase();
                 if (name.includes('mmproj')) return '🔗';
+                // TTS patterns
+                const ttsPatterns = ['tts', 'speech', 'vocoder', 'outetts', 'parler', 'kokoro',
+                                     'f5-tts', 'f5tts', 'coqui', 'xtts', 'bark', 'vits', 'piper', 'silero', 'speecht5'];
+                if (ttsPatterns.some(p => name.includes(p))) return '🔊';
                 if (name.includes('omni')) return '🌐';
                 if (name.includes('whisper') || name.includes('ggml-')) return '🎵';
                 if (name.includes('-vl') || name.includes('vision')) return '👁️';

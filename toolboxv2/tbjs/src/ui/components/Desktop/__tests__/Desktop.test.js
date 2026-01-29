@@ -178,7 +178,6 @@ describe('initPlatformUI', () => {
         const components = initPlatformUI();
 
         expect(components.statusBar).toBeDefined();
-        expect(components.quickCapture).toBeDefined();
         expect(components.tray).toBeDefined();
         expect(document.querySelector('.tb-status-bar')).toBeTruthy();
     });

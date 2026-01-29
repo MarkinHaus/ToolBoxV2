@@ -167,7 +167,7 @@ class FlowAgent:
                     messages=[
                         {
                             "role": "user",
-                            "content": f"Summarize in 1-2 sentences:\n\n{content[:2000]}",
+                            "content": f"Summarize in 1-2 sentences:\n\n{content[:8000]}",
                         }
                     ],
                     max_tokens=100,

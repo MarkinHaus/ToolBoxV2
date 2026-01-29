@@ -24,7 +24,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
-from litellm.types.utils import ModelResponseStream
+from litellm.types.utils import (
+    ChatCompletionMessageToolCall,
+    Function,
+    ModelResponseStream,
+)
 
 # Import Skills System
 from toolboxv2.mods.isaa.base.Agent.skills import (
@@ -41,7 +45,7 @@ from toolboxv2.mods.isaa.base.Agent.sub_agent import (
     SubAgentManager,
     SubAgentResult,
 )
-from litellm.types.utils import ChatCompletionMessageToolCall, Function
+
 # =============================================================================
 # STATIC TOOL DEFINITIONS (separate from dynamic limit)
 # =============================================================================
@@ -492,7 +496,7 @@ class HistoryCompressor:
                 content_lower = content.lower()
 
                 if "error" in content_lower or "failed" in content_lower:
-                    errors.append(f"{tool_name}: {content[:80]}")
+                    errors.append(f"{tool_name}: {content[:800]}")
                 elif "write" in tool_lower or "create" in tool_lower:
                     files_created.append(tool_name)
                 elif "read" in tool_lower:
@@ -508,7 +512,7 @@ class HistoryCompressor:
                     searches.append(f"{tool_name} ({result_count} results)")
                 elif tool_name == "think":
                     # Extract thought preview
-                    thought_preview = content[:60] if content else ""
+                    thought_preview = content[:160] if content else ""
                     thoughts.append(thought_preview)
 
         # Build summary
@@ -855,9 +859,7 @@ class ExecutionEngine:
             # Process tool calls
             if hasattr(response, "tool_calls") and response.tool_calls:
                 for tool_call in response.tool_calls:
-                    result, is_final = await self._execute_tool_call(
-                        ctx, tool_call
-                    )
+                    result, is_final = await self._execute_tool_call(ctx, tool_call)
 
                     # Check if final_answer was called
                     if is_final:
@@ -948,8 +950,6 @@ class ExecutionEngine:
         except:
             f_args = {}
 
-        print(f"  🔧 Tool: {f_name}")
-
         # Track tool usage
         ctx.tools_used.append(f_name)
 
@@ -964,7 +964,7 @@ class ExecutionEngine:
             thought = f_args.get("thought", "")
             result = f"Thought recorded."
             # Record in AutoFocus
-            ctx.auto_focus.record(f_name, f_args, thought[:100])
+            ctx.auto_focus.record(f_name, f_args, thought[:200])
 
         elif f_name == "final_answer":
             answer = f_args.get("answer", "")
@@ -976,12 +976,12 @@ class ExecutionEngine:
         # === DISCOVERY TOOLS ===
         elif f_name == "list_tools":
             result = self._tool_list_tools(f_args.get("category"))
-            ctx.auto_focus.record(f_name, f_args, result[:100])
+            ctx.auto_focus.record(f_name, f_args, result[:200])
 
         elif f_name == "load_tools":
             tools_input = f_args.get("tools") or f_args.get("names")
             result = await self._tool_load_tools(ctx, tools_input)
-            ctx.auto_focus.record(f_name, f_args, result[:100])
+            ctx.auto_focus.record(f_name, f_args, result[:200])
 
         # === SUB-AGENT TOOLS ===
         elif f_name == "spawn_sub_agent":
@@ -1010,7 +1010,7 @@ class ExecutionEngine:
                                 f"✅ Sub-Agent completed successfully.\n"
                                 f"Output: {sub_result.output_dir}\n"
                                 f"Files: {', '.join(sub_result.files_written)}\n"
-                                f"Result: {sub_result.result[:500] if sub_result.result else 'No result'}"
+                                f"Result: {sub_result.result if sub_result.result else 'result in files'}"
                             )
                         else:
                             result = (
@@ -1032,7 +1032,7 @@ class ExecutionEngine:
                 except Exception as e:
                     result = f"ERROR spawning sub-agent: {str(e)}"
 
-            ctx.auto_focus.record(f_name, f_args, result[:200])
+            ctx.auto_focus.record(f_name, f_args, result[:400])
 
         elif f_name == "wait_for":
             if not self._sub_agent_manager:
@@ -1057,7 +1057,7 @@ class ExecutionEngine:
                             f"  Files: {', '.join(sub_result.files_written[:5])}"
                         )
                         if sub_result.error:
-                            result_lines.append(f"  Error: {sub_result.error[:100]}")
+                            result_lines.append(f"  Error: {sub_result.error[:200]}")
 
                     result = "\n".join(result_lines)
 
@@ -1070,7 +1070,7 @@ class ExecutionEngine:
                 except Exception as e:
                     result = f"ERROR waiting for sub-agents: {str(e)}"
 
-            ctx.auto_focus.record(f_name, f_args, result[:200])
+            ctx.auto_focus.record(f_name, f_args, result[:400])
 
         # === VFS & DYNAMIC TOOLS ===
         elif f_name:
@@ -1100,7 +1100,7 @@ class ExecutionEngine:
                     "role": "tool",
                     "tool_call_id": f_id,
                     "name": f_name,
-                    "content": str(result)[:4000],  # Truncate long outputs
+                    "content": str(result),  # Truncate long outputs
                 }
             )
 
@@ -1292,9 +1292,9 @@ class ExecutionEngine:
                 else:
                     categories.add(t.category)
 
-        result = "\n".join(lines[:30])
-        if len(lines) > 30:
-            result += f"\n... und {len(lines) - 30} weitere"
+        result = "\n".join(lines[:150])
+        if len(lines) > 150:
+            result += f"\n... und {len(lines) - 150} weitere"
 
         result += f"\n\nKategorien: {', '.join(sorted(categories))}"
 
@@ -1453,9 +1453,6 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
 1. Die Aufgabe in kleinere Teile aufteilen
 2. Mir mehr Kontext oder Details geben
 3. Eine spezifischere Frage stellen
-
-Ich bin ehrlich mit dir: Ich weiß nicht genau, was schief gelaufen ist.
-Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
 
 *Ursprüngliche Anfrage: {query[:100]}{"..." if len(query) > 100 else ""}*"""
 
@@ -1720,14 +1717,22 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
                     stream_response = await stream_response
 
                 async for chunk in stream_response:
-                    delta = chunk.choices[0].delta if hasattr(chunk, "choices") and chunk.choices else None
+                    delta = (
+                        chunk.choices[0].delta
+                        if hasattr(chunk, "choices") and chunk.choices
+                        else None
+                    )
                     # 1. Content sammeln
                     if delta and hasattr(delta, "content") and delta.content:
                         collected_content += delta.content
                         yield {"type": "content", "chunk": delta.content}
 
                     # 2. Reasoning sammeln (falls vorhanden)
-                    if delta and hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                    if (
+                        delta
+                        and hasattr(delta, "reasoning_content")
+                        and delta.reasoning_content
+                    ):
                         yield {"type": "reasoning", "chunk": delta.reasoning_content}
 
                     # 3. Tool Calls SAMMELN (nicht überschreiben!)
@@ -1738,16 +1743,23 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
                             # Neuen Eintrag anlegen, falls Index noch nicht existiert
                             if idx not in tool_calls_buffer:
                                 tool_calls_buffer[idx] = ChatCompletionMessageToolCall(
-                                        id=tc_chunk.id,
-                                        type="function",
-                                        function=Function(name=tc_chunk.function.name or "", arguments=tc_chunk.function.arguments or "")
-                                    )
+                                    id=tc_chunk.id,
+                                    type="function",
+                                    function=Function(
+                                        name=tc_chunk.function.name or "",
+                                        arguments=tc_chunk.function.arguments or "",
+                                    ),
+                                )
                             else:
                                 # Bestehenden Eintrag erweitern (Name und Argumente anhängen)
                                 if tc_chunk.function.name:
-                                    tool_calls_buffer[idx]["function"]["name"] += tc_chunk.function.name
+                                    tool_calls_buffer[idx]["function"]["name"] += (
+                                        tc_chunk.function.name
+                                    )
                                 if tc_chunk.function.arguments:
-                                    tool_calls_buffer[idx]["function"]["arguments"] += tc_chunk.function.arguments
+                                    tool_calls_buffer[idx]["function"]["arguments"] += (
+                                        tc_chunk.function.arguments
+                                    )
 
                 # Nach dem Loop: Das Dictionary in eine Liste umwandeln
                 tool_calls = list(tool_calls_buffer.values())
@@ -1773,7 +1785,11 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
                         # Check final_answer
                         if f_name == "final_answer":
                             try:
-                                args = json.loads(f_args) if isinstance(f_args, str) else f_args
+                                args = (
+                                    json.loads(f_args)
+                                    if isinstance(f_args, str)
+                                    else f_args
+                                )
                                 final_response = args.get("answer", collected_content)
                             except:
                                 final_response = collected_content
@@ -1781,7 +1797,6 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
                             yield {"type": "final_answer", "answer": final_response}
                             break
 
-                        print(tc)
                         result = await self._execute_tool_call(ctx, tc)
 
                         tool_msg = {
@@ -1790,14 +1805,14 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
                             if hasattr(tc, "id")
                             else tc.get("id", ""),
                             "name": f_name,
-                            "content": str(result)[:2000],
+                            "content": str(result) if not isinstance(result, str) else result,
                         }
                         ctx.working_history.append(tool_msg)
 
                         yield {
                             "type": "tool_result",
                             "name": f_name,
-                            "result": str(result)[:500],
+                            "result": str(result) if not isinstance(result, str) else result,
                         }
 
                     if final_response:
@@ -1839,4 +1854,3 @@ Wenn du mir mehr Informationen gibst, versuche ich es gerne erneut.
             yield {"type": "done", "success": success, "final_answer": final_response}
 
         return stream_generator, ctx
-

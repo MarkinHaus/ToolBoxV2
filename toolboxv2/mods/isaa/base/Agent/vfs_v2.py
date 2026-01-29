@@ -750,8 +750,24 @@ Session: {self.session_id}
                     "error": f"Parent directory does not exist: {parent}",
                 }
 
+        # Check if under a mount
+        mount = self._get_mount_for_path(path)
+        local_path = None
+
+        if mount:
+            rel_path = path[len(mount.vfs_path):].lstrip('/')
+            local_path = os.path.join(mount.local_path, rel_path.replace('/', os.sep))
+
+            try:
+                os.makedirs(local_path, exist_ok=True if parents else False)
+            except OSError as e:
+                return {"success": False, "error": f"Cannot create local directory: {e}"}
+
         # Create directory
-        self.directories[path] = VFSDirectory(name=self._get_basename(path))
+        self.directories[path] = VFSDirectory(
+            name=self._get_basename(path),
+            readonly=mount.readonly if mount else False
+        )
         self._dirty = True
 
         return {"success": True, "message": f"Created directory: {path}"}
@@ -993,7 +1009,9 @@ Session: {self.session_id}
     # =========================================================================
 
     def create(self, path: str, content: str = "") -> dict:
-        """Create a new file"""
+        """
+        Create a new file with mount-aware local file creation.
+        """
         path = self._normalize_path(path)
 
         if self._path_exists(path):
@@ -1011,7 +1029,34 @@ Session: {self.session_id}
             return error
 
         filename = self._get_basename(path)
-        self.files[path] = VFSFile(filename=filename, _content=content, state="closed")
+
+        # Check if under a mount
+        mount = self._get_mount_for_path(path)
+        local_path = None
+        backing_type = FileBackingType.MEMORY
+
+        if mount:
+            rel_path = path[len(mount.vfs_path):].lstrip('/')
+            local_path = os.path.join(mount.local_path, rel_path.replace('/', os.sep))
+            backing_type = FileBackingType.MODIFIED
+
+        self.files[path] = VFSFile(
+            filename=filename,
+            _content=content,
+            state="closed",
+            local_path=local_path,
+            backing_type=backing_type,
+        )
+
+        # If mount: create local file
+        if mount and local_path:
+            try:
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                with open(local_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+            except OSError as e:
+                return {"success": False, "error": f"Cannot create local file: {e}"}
+
         self._dirty = True
 
         return {
@@ -1021,7 +1066,9 @@ Session: {self.session_id}
         }
 
     def read(self, path: str) -> dict:
-        """Read file content"""
+        """
+        Read file content with auto-load for shadow files.
+        """
         path = self._normalize_path(path)
 
         if not self._is_file(path):
@@ -1029,7 +1076,15 @@ Session: {self.session_id}
                 return {"success": False, "error": f"Cannot read directory: {path}"}
             return {"success": False, "error": f"File not found: {path}"}
 
-        return {"success": True, "content": self.files[path].content}
+        f = self.files[path]
+
+        # Auto-load for shadow files
+        if isinstance(f, VFSFile) and f.backing_type == FileBackingType.SHADOW and not f.is_loaded:
+            load_result = self._load_shadow_content(path)
+            if not load_result["success"]:
+                return load_result
+
+        return {"success": True, "content": f.content}
 
     # =========================================================================
     # OVERRIDE: WRITE WITH AUTO-SYNC
@@ -1327,6 +1382,44 @@ Session: {self.session_id}
 
         except Exception as e:
             return {"success": False, "error": f"Load error: {e}"}
+
+    def _sync_from_local(self, path: str) -> dict:
+        """
+        Sync einer Datei vom lokalen Filesystem ins VFS.
+        """
+        f = self.files.get(path)
+
+        if not isinstance(f, VFSFile) or not f.local_path:
+            return {"success": False, "error": "Not a shadow file"}
+
+        if not os.path.exists(f.local_path):
+            return {"success": False, "error": f"Backing file missing: {f.local_path}"}
+
+        try:
+            current_mtime = os.path.getmtime(f.local_path)
+
+            # Check if changed
+            if f.local_mtime and current_mtime == f.local_mtime:
+                return {"success": True, "skipped": "Unchanged"}
+
+            # Load content
+            with open(f.local_path, "r", encoding="utf-8", errors="replace") as file:
+                content = file.read()
+
+            f._content = content
+            f.local_mtime = current_mtime
+            f.line_count = len(content.splitlines())
+            f.size_bytes = len(content.encode("utf-8"))
+
+            # Falls Datei offen war, schließen um Context neu zu bauen
+            if f.state == "open":
+                f.state = "closed"
+                f.is_loaded = True  # Content ist geladen
+
+            return {"success": True, "loaded_bytes": f.size_bytes}
+
+        except Exception as e:
+            return {"success": False, "error": f"Sync from local error: {e}"}
 
     async def close(self, path: str) -> dict:
         """Close file (create summary, remove from context)"""
@@ -1976,8 +2069,7 @@ Session: {self.session_id}
 
     def refresh_mount(self, vfs_path: str) -> dict:
         """
-        Re-scan mount für neue/gelöschte Dateien.
-        Behält geladene und modifizierte Dateien.
+        Re-scan mount für neue/gelöschte Dateien und sync Content vom lokalen FS.
         """
         vfs_path = self._normalize_path(vfs_path)
 
@@ -1986,24 +2078,32 @@ Session: {self.session_id}
 
         mount = self.mounts[vfs_path]
 
-        # Remember modified files
-        modified_files = {
-            path: f
-            for path, f in self.files.items()
-            if path.startswith(vfs_path) and isinstance(f, VFSFile) and f.is_dirty
-        }
+        # Sync Content vom lokalen FS
+        synced = []
+        errors = []
 
-        # Re-scan
+        for path, f in list(self.files.items()):
+            if path.startswith(vfs_path) and isinstance(f, VFSFile):
+                # Dirty-Dateien überspringen (VFS-Änderungen haben Priorität)
+                if f.is_dirty:
+                    continue
+
+                if f.local_path:
+                    result = self._sync_from_local(path)
+                    if result.get("success"):
+                        if "skipped" not in result:
+                            synced.append(path)
+                    else:
+                        errors.append(f"{path}: {result.get('error', 'unknown')}")
+
+        # Re-scan für neue/gelöschte Dateien
         stats = self._scan_mount(mount)
 
-        # Restore modified files
-        for path, f in modified_files.items():
-            self.files[path] = f
-
         return {
-            "success": True,
+            "success": len(errors) == 0,
             "files_indexed": stats["files"],
-            "modified_preserved": len(modified_files),
+            "content_synced": synced,
+            "errors": errors,
         }
 
     def execute(
@@ -2101,5 +2201,67 @@ Session: {self.session_id}
                 except:
                     pass
 
+
+import os
+
+
+def sync_obsidian_vault(vfs: VirtualFileSystemV2, local_vault_path: str, vfs_path: str = "/obsidian") -> dict:
+    """
+    Bindet einen lokalen Obsidian-Vault bi-direktional in das VFS ein.
+
+    Funktionsweise:
+    1. VFS -> Disk: Aktiviert 'auto_sync', sodass Schreibvorgänge im VFS sofort gespeichert werden.
+    2. Disk -> VFS: Führt 'refresh_mount' aus, um externe Änderungen aus Obsidian zu laden.
+    3. Filtert Obsidian-Systemordner (.obsidian, .trash) automatisch heraus.
+    """
+
+    # 1. Pfad normalisieren und prüfen
+    local_path = os.path.abspath(os.path.expanduser(local_vault_path))
+    if not os.path.isdir(local_path):
+        return {"success": False, "error": f"Obsidian vault not found at: {local_path}"}
+
+    # 2. Bestehende ungespeicherte VFS-Änderungen auf Disk schreiben (Safety First)
+    vfs.sync_all()
+
+    # 3. Mount prüfen oder erstellen
+    is_new_mount = False
+    if vfs_path not in vfs.mounts:
+        # Obsidian-spezifische Excludes, damit die KI nicht die Config zerschießt
+        obsidian_excludes = [
+            ".obsidian",
+            ".trash",
+            ".git",
+            "*.lock",
+            ".DS_Store"
+        ]
+
+        # Mount erstellen (Metadata Scan)
+        mount_result = vfs.mount(
+            local_path=local_path,
+            vfs_path=vfs_path,
+            exclude_patterns=obsidian_excludes,
+            readonly=False,
+            auto_sync=True  # WICHTIG: VFS schreibt sofort auf Disk
+        )
+
+        if not mount_result["success"]:
+            return mount_result
+        is_new_mount = True
+
+    # 4. Refresh durchführen (Disk -> VFS Synchronisation)
+    # Scannt nach neuen Dateien im Explorer und lädt geänderte Inhalte neu
+    refresh_result = vfs.refresh_mount(vfs_path)
+
+    status_msg = "Mounted and synced" if is_new_mount else "Refreshed sync"
+
+    return {
+        "success": True,
+        "message": f"{status_msg}: {local_path} <-> {vfs_path}",
+        "stats": {
+            "files_indexed": refresh_result.get("files_indexed", 0),
+            "updated_from_disk": len(refresh_result.get("content_synced", [])),
+            "errors": refresh_result.get("errors", [])
+        }
+    }
 
 VirtualFileSystem = VirtualFileSystemV2
