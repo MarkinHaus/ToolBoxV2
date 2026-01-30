@@ -125,17 +125,41 @@ const WsManager = {
     },
 
     /**
-     * NEU: Vollständige WebSocket-URL erstellen
+     * NEU: Vollständige WebSocket-URL erstellen mit Tauri-Support
      * @private
      */
     _buildFullUrl(url, contextParams) {
         let fullUrl;
 
-        if (url.startsWith('ws://') || url.startsWith('wss://')) {
+        // TAURI OVERRIDE - Priorität 1
+        if (TB.env.isTauri()) {
+            const workerWsUrl = TB.env.getWorkerWsUrl();
+            if (workerWsUrl) {
+                // Worker URL verwenden
+                if (url.startsWith('/')) {
+                    fullUrl = `${workerWsUrl}${url}`;
+                } else if (!url.startsWith('ws://') && !url.startsWith('wss://')) {
+                    fullUrl = `${workerWsUrl}/${url}`;
+                } else {
+                    fullUrl = url;
+                }
+                TB.logger.debug(`[WS] Tauri mode - using worker URL: ${fullUrl}`);
+            } else {
+                // Fallback zu localhost defaults
+                fullUrl = url.startsWith('/')
+                    ? `ws://localhost:5001${url}`
+                    : (url.startsWith('ws://') || url.startsWith('wss://'))
+                        ? url
+                        : `ws://localhost:5001/${url}`;
+                TB.logger.warn(`[WS] Tauri mode - no worker URL, using fallback: ${fullUrl}`);
+            }
+        }
+        // WEB MODE - Standard-Verhalten
+        else if (url.startsWith('ws://') || url.startsWith('wss://')) {
             fullUrl = url;
         } else {
             const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-            fullUrl = `${protocol}${window.location.host}${url}`;
+            fullUrl = `${protocol}${window.location.host}${url.startsWith('/') ? '' : '/'}${url}`;
         }
 
         // Kontext-Parameter anhängen

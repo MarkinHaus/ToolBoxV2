@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -60,22 +60,12 @@
          */
         .hud-header {
             height: var(--header-height);
-            background: var(--bg-surface);
-            border-bottom: 1px solid var(--border);
+            background: transparent;
             display: flex;
             align-items: center;
             justify-content: space-between;
             padding: 0 12px;
             -webkit-app-region: drag; /* WICHTIG: Macht das Fenster verschiebbar */
-        }
-
-        .hud-title {
-            font-size: 13px;
-            font-weight: 600;
-            color: var(--text-secondary);
-            display: flex;
-            align-items: center;
-            gap: 6px;
         }
 
         .hud-controls {
@@ -108,6 +98,8 @@
             flex: 1;
             overflow-y: auto;
             position: relative;
+            display: inline; !important;
+            min-height: 100%; !important;
         }
 
         /* Scrollbar Styling */
@@ -185,8 +177,6 @@
         <!-- Tauri Header -->
         <header class="hud-header" data-tauri-drag-region>
             <div class="hud-title">
-                <span class="material-symbols-outlined" style="font-size: 16px;">widgets</span>
-                <span>SimpleCore</span>
             </div>
             <div class="hud-controls">
                 <button class="icon-btn" id="btn-home" title="Home">
@@ -199,7 +189,9 @@
         </header>
 
         <!-- TBJS Main Content -->
-        <div id="MainContent">
+        <div id="MainContent" style="
+            display: inline; !important;
+            min-height: 100%; !important;">
             <div class="flex-center">
                 <div class="loader"></div>
             </div>
@@ -207,219 +199,7 @@
     </div>
 
     <!-- Script Module -->
-    <script type="module">
-        const TB = window.TB;
-        // Import Login Logic (from your provided file)
-        import { setupLogin } from '../../web/scripts/login.js';
-
-        // 2. HUD Application Initialization
-        async function initHud() {
-            console.log('[HUD] Initializing...');
-
-            // --- TB Konfiguration für HUD ---
-            const hudConfig = {
-                appRootId: 'MainContent',
-                baseApiUrl: '/api',
-
-                // Force Dark Mode, Disable 3D Scene for Performance/Style
-                themeSettings: {
-                    defaultPreference: 'dark',
-                    background: {
-                        type: 'none', // Kein 3D Canvas im HUD
-                        dark: { color: '#0f0f13' }
-                    }
-                },
-
-                // Routen Definition
-                routes: [
-                    {
-                        path: '/',
-                        controller: async () => {
-                            // Auth Check Middleware
-                            if (window.TB.user.isAuthenticated()) {
-                                return renderAppMenu();
-                            } else {
-                                return renderLogin();
-                            }
-                        }
-                    },
-                    {
-                        path: '/login',
-                        controller: renderLogin
-                    },
-                    {
-                        path: '/menu',
-                        controller: renderAppMenu,
-                        requiresAuth: true
-                    },
-                    // Catch-all für Minu Views
-                    {
-                        path: '/view/:viewName',
-                        controller: async (params) => {
-                           return renderMinuView(params.viewName);
-                        }
-                    }
-                ]
-            };
-
-            // --- Init TB ---
-            window.TB = await TB.init(hudConfig);
-
-            // UI Init
-            if(window.TB.ui.theme) {
-                window.TB.ui.theme.setPreference('dark'); // Force Dark
-            }
-
-            // Tauri Events (Close Button)
-            setupTauriControls();
-
-            // Initial Navigation
-            handleInitialRoute();
-        }
-
-        // 3. Controller Functions
-
-        // Login View
-        async function renderLogin() {
-            return {
-                render: () => `
-                    <div class="flex-center">
-                        <div id="clerk-sign-in"></div>
-                    </div>
-                `,
-                postRender: () => {
-                    // Nutzt die setupLogin Logik aus deiner login.js
-                    // Wir überschreiben kurz window.location für den Redirect nach Login
-                    // oder wir hören auf das Event
-                    TB.events.on('user:signedIn', () => {
-                        TB.router.navigateTo('/menu');
-                    });
-                    setupLogin();
-                }
-            };
-        }
-
-        // App Menu (Das Dashboard Snippet - angepasst)
-        async function renderAppMenu() {
-            return {
-                render: () => `
-                    <div class="hud-padding">
-                        <div style="margin-bottom: 12px;">
-                            <input type="text" id="hud-search" placeholder="Search apps..."
-                                style="width: 100%; background: var(--bg-surface); border: 1px solid var(--border); color: white; padding: 8px; border-radius: 6px; outline: none;">
-                        </div>
-                        <div id="app-grid-container" class="app-grid">
-                            <div class="loader" style="margin: 0 auto;"></div>
-                        </div>
-                    </div>
-                `,
-                postRender: async () => {
-                    const container = document.getElementById('app-grid-container');
-                    const searchInput = document.getElementById('hud-search');
-
-                    // Daten laden (Parallel Minu Flows & CloudM Apps)
-                    try {
-                        const [flowsData, appsData] = await Promise.all([
-                            TB.api.request('Minu', 'list_flows', { only_custom_ui: false }, 'GET'),
-                            TB.api.request('CloudM', 'openui', null, 'POST') // Annahme Endpunkt existiert
-                        ]);
-
-                        let items = [];
-
-                        // Flows verarbeiten
-                        if (flowsData.data) {
-                            items = items.concat(flowsData.data.map(f => ({
-                                type: 'flow',
-                                title: f.title,
-                                desc: f.description,
-                                icon: f.icon || 'account_tree',
-                                action: () => openMinuFlow(f.name)
-                            })));
-                        }
-
-                        // Apps verarbeiten (Fallback)
-                        if (appsData.data) {
-                             // Hier Logik für CloudM Apps falls nötig
-                        }
-
-                        const renderItems = (filter = '') => {
-                            container.innerHTML = '';
-                            const filtered = items.filter(i => i.title.toLowerCase().includes(filter.toLowerCase()));
-
-                            if (filtered.length === 0) {
-                                container.innerHTML = '<div style="text-align:center; color: var(--text-muted); grid-column: 1/-1;">No apps found</div>';
-                                return;
-                            }
-
-                            filtered.forEach(item => {
-                                const el = document.createElement('a');
-                                el.className = 'app-card';
-                                el.href = '#';
-                                el.innerHTML = `
-                                    <div class="app-icon"><span class="material-symbols-outlined" style="font-size: 20px;">${item.icon}</span></div>
-                                    <div>
-                                        <h4 class="app-title">${item.title}</h4>
-                                        <p class="app-desc">${item.desc}</p>
-                                    </div>
-                                `;
-                                el.onclick = (e) => {
-                                    e.preventDefault();
-                                    item.action();
-                                };
-                                container.appendChild(el);
-                            });
-                        };
-
-                        renderItems();
-                        searchInput.addEventListener('input', (e) => renderItems(e.target.value));
-
-                    } catch (e) {
-                        console.error("Error loading HUD apps", e);
-                        container.innerHTML = `<div style="color:red">Error loading apps: ${e.message}</div>`;
-                    }
-                }
-            };
-        }
-
-        // Minu Flow Renderer
-        async function openMinuFlow(viewName) {
-            // Wir nutzen TB.api um das HTML zu holen (Server Side Rendering oder Client Bootloader)
-            // Dies nutzt die Minu 'render' Funktion die du bereitgestellt hast
-            const container = document.getElementById('MainContent');
-            container.innerHTML = '<div class="flex-center"><div class="loader"></div></div>';
-
-            try {
-                // Request SSR HTML or JSON
-                const result = await TB.api.request('Minu', 'render', { view: viewName, ssr: 'true', format: 'full-html' }, 'POST');
-
-                if (result.data) {
-                    // HTML direkt injecten
-                    // HINWEIS: Bei komplexen Minu Views muss hier evtl. der Script-Tag manuell ausgeführt werden
-                    // TB.router macht das normalerweise automatisch wenn wir navigateTo nutzen.
-                    // Wir simulieren hier eine Route Navigation
-
-                    // Option A: Direktes HTML setzen (schnell)
-                    container.innerHTML = result.data;
-                    TB.router._executeScripts(container); // Helper falls existent, sonst manuell
-
-                    // Back Button Logic aktivieren
-                    document.getElementById('btn-home').style.display = 'flex';
-                }
-            } catch (e) {
-                container.innerHTML = `<div class="hud-padding">Error loading view: ${e.message}</div>`;
-            }
-        }
-
-        // Helper für View Wechsel
-        function renderMinuView(viewName) {
-            return {
-                render: async () => {
-                     const result = await TB.api.request('Minu', 'render', { view: viewName, ssr: 'true' }, 'POST');
-                     return result.data || '<div>No Data</div>';
-                }
-            }
-        }
-
+    <script unSave="true">
         // 4. Tauri Controls & Setup
         function setupTauriControls() {
             const btnClose = document.getElementById('btn-close');
@@ -434,26 +214,15 @@
             }
 
             btnHome.addEventListener('click', () => {
-                TB.router.navigateTo('/menu');
+                TB.router.navigateTo('/web/mainContent.html');
             });
+            TB.router.navigateTo('/web/mainContent.html');
         }
-
-        function handleInitialRoute() {
-            // Prüfen ob bereits eingeloggt
-            if (TB.user.isAuthenticated()) {
-                TB.router.navigateTo('/menu');
-            } else {
-                TB.router.navigateTo('/login');
-            }
-        }
-
-        // Start
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initHud);
+        if (window.TB?.onLoaded) {
+            window.TB.onLoaded(setupTauriControls);
         } else {
-            initHud();
+            setTimeout(setupTauriControls, 100);
         }
-
     </script>
 </body>
 </html>

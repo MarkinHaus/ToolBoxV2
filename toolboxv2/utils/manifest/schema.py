@@ -313,6 +313,65 @@ class UtilitiesConfig(BaseModel):
 
 
 # =============================================================================
+# Feature System Configuration
+# =============================================================================
+
+
+class FeatureSpec(BaseModel):
+    """Feature specification from features/*/feature.yaml"""
+    name: str = Field(description="Feature identifier")
+    version: str = Field(default="0.1.0", description="Feature version")
+    enabled: bool = Field(default=False, description="Whether feature is active")
+    immutable: bool = Field(default=False, description="If true, warns on disable")
+    description: str = Field(default="", description="Human-readable description")
+    files: List[str] = Field(default_factory=list, description="File patterns belonging to feature")
+    imports: List[str] = Field(default_factory=list, description="Python imports for feature")
+    dependencies: List[str] = Field(default_factory=list, description="pip/uv packages to install")
+    commands: List[str] = Field(default_factory=list, description="CLI commands provided")
+    requires: List[str] = Field(default_factory=list, description="Other features this depends on")
+
+
+class FeaturesConfig(BaseModel):
+    """Features configuration in manifest"""
+    core: FeatureSpec = Field(
+        default_factory=lambda: FeatureSpec(
+            name="core", version="0.1.25", enabled=True, immutable=True,
+            description="Core ToolBox functionality"
+        )
+    )
+    cli: FeatureSpec = Field(
+        default_factory=lambda: FeatureSpec(
+            name="cli", version="0.1.25", enabled=True,
+            description="Command line interface"
+        )
+    )
+    web: FeatureSpec = Field(
+        default_factory=lambda: FeatureSpec(
+            name="web", version="0.1.25", enabled=False,
+            description="Web workers and API"
+        )
+    )
+    desktop: FeatureSpec = Field(
+        default_factory=lambda: FeatureSpec(
+            name="desktop", version="0.1.25", enabled=False,
+            description="Desktop UI with PyQt6"
+        )
+    )
+    isaa: FeatureSpec = Field(
+        default_factory=lambda: FeatureSpec(
+            name="isaa", version="0.1.25", enabled=False,
+            description="AI/LLM integration"
+        )
+    )
+    exotic: FeatureSpec = Field(
+        default_factory=lambda: FeatureSpec(
+            name="exotic", version="0.1.25", enabled=False,
+            description="Scientific computing extras"
+        )
+    )
+
+
+# =============================================================================
 # ISAA Configuration (conditional - only when isaa is installed)
 # =============================================================================
 
@@ -434,6 +493,9 @@ class TBManifest(BaseModel):
     registry: RegistryConfig = Field(default_factory=RegistryConfig)
     toolbox: ToolboxConfig = Field(default_factory=ToolboxConfig)
     utilities: UtilitiesConfig = Field(default_factory=UtilitiesConfig)
+
+    # Feature system
+    features: FeaturesConfig = Field(default_factory=FeaturesConfig)
 
     # Conditional section - only used when isaa is installed
     isaa: Optional[IsaaConfig] = Field(default=None)

@@ -38,6 +38,8 @@ class SubAgentStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     TIMEOUT = "timeout"
+    MAX_ITERATIONS = "max_iterations"  # NEW: Hit max iterations
+    PAUSED = "paused"  # NEW: Manually paused
 
 
 @dataclass
@@ -73,6 +75,13 @@ class SubAgentState:
 
     # Async handling
     _task: asyncio.Task | None = field(default=None, repr=False)
+    
+    # NEW: Resume support
+    execution_context: Optional['ExecutionContext'] = None  # Preserved context
+    resumable: bool = False  # Can this be resumed?
+    original_budget: int = 5000  # Original token budget
+    session_id: str = ""  # Session ID
+    engine: Optional[Any] = None  # Sub-agent engine instance
 
 
 @dataclass
@@ -87,6 +96,13 @@ class SubAgentResult:
     files_written: list[str]
     tokens_used: int
     duration_seconds: float
+    task: str = ""  # NEW: Original task
+    
+    # NEW: Resume support fields
+    max_iterations_reached: bool = False  # NEW: Hit max iterations?
+    resumable: bool = False  # NEW: Can be resumed?
+    iterations_used: int = 0  # NEW: Total iterations used
+    execution_context: Optional['ExecutionContext'] = None  # NEW: Preserved context
 
 
 # =============================================================================
@@ -345,7 +361,12 @@ class SubAgentManager:
             output_dir=state.output_dir,
             files_written=state.files_written,
             tokens_used=state.tokens_used,
-            duration_seconds=duration
+            duration_seconds=duration,
+            task=state.task,  # NEW
+            max_iterations_reached=(state.status == SubAgentStatus.MAX_ITERATIONS),  # NEW
+            resumable=state.resumable,  # NEW
+            iterations_used=state.iterations_used,  # NEW
+            execution_context=state.execution_context if state.resumable else None  # NEW
         )
 
         # Move to completed
@@ -380,20 +401,42 @@ class SubAgentManager:
                 sub_agent_output_dir=state.output_dir,
                 sub_agent_budget=state.config.max_tokens
             )
+            
+            # Store engine and session_id for resume
+            state.engine = sub_engine
+            state.session_id = f"{self.parent_session.session_id}__sub__{state.id}"
+            state.original_budget = state.config.max_tokens
 
-            # Execute with sub-agent context
-            # Note: We pass the task directly, not through session
-            result = await sub_engine.execute(
+            # Execute with sub-agent context - GET CONTEXT BACK!
+            result, ctx = await sub_engine.execute(
                 query=state.task,
-                session_id=f"{self.parent_session.session_id}__sub__{state.id}",
-                max_iterations=state.config.max_iterations
+                session_id=state.session_id,
+                max_iterations=state.config.max_iterations,
+                get_ctx=True  # IMPORTANT: Get context for resume!
             )
 
             # Collect results
             state.result = result
-            state.status = SubAgentStatus.COMPLETED
             state.tokens_used = getattr(sub_engine, '_tokens_used', 0)
-            state.iterations_used = getattr(sub_engine, '_iterations_used', 0)
+            state.iterations_used = ctx.current_iteration
+            
+            # NEW: Check if max iterations reached
+            if ctx.current_iteration >= state.config.max_iterations:
+                # Max iterations hit - check if resumable
+                state.status = SubAgentStatus.MAX_ITERATIONS
+                
+                # Resumable if tools were used (progress was made)
+                if len(ctx.tools_used) > 0:
+                    state.resumable = True
+                    state.execution_context = ctx  # PRESERVE CONTEXT!
+                    print(f"[SubAgent {state.id}] Max iterations reached, but resumable (tools used: {len(ctx.tools_used)})")
+                else:
+                    state.resumable = False
+                    print(f"[SubAgent {state.id}] Max iterations reached, no progress (not resumable)")
+            else:
+                # Completed successfully
+                state.status = SubAgentStatus.COMPLETED
+                state.resumable = False
 
             # Collect files written
             # Check VFS for files in output_dir
@@ -491,6 +534,14 @@ class SubAgentManager:
                 f"• {status_icon} [{sub_id}]: {result.status.value} "
                 f"→ {result.output_dir}"
             )
+            
+            # NEW: Show resume info for MAX_ITERATIONS
+            if result.max_iterations_reached:
+                lines.append(f"  ⏱️  Max Iterations erreicht!")
+                if result.resumable:
+                    lines.append(f"  ℹ️  Resumable: Ja (nutze resume_sub_agent('{sub_id}'))")
+                else:
+                    lines.append(f"  ℹ️  Resumable: Nein (keine Tools verwendet)")
 
             if result.files_written:
                 files_str = ", ".join(result.files_written[:3])

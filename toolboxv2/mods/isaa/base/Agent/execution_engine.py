@@ -44,6 +44,13 @@ from toolboxv2.mods.isaa.base.Agent.sub_agent import (
     RestrictedVFSWrapper,
     SubAgentManager,
     SubAgentResult,
+    SubAgentStatus,
+)
+
+# Import Resume Extension
+from toolboxv2.mods.isaa.base.Agent.sub_agent_resume_extension import (
+    SubAgentResumeExtension,
+    RESUME_SUB_AGENT_TOOL,
 )
 
 # =============================================================================
@@ -610,7 +617,7 @@ class HistoryCompressor:
 # =============================================================================
 
 
-class ExecutionEngine:
+class ExecutionEngine(SubAgentResumeExtension):
     """
     Main orchestration engine for FlowAgent.
 
@@ -714,7 +721,7 @@ class ExecutionEngine:
         self,
         query: str,
         session_id: str,
-        max_iterations: int = 15,
+        max_iterations: int = 25,
         ctx: "ExecutionContext | None" = None,
         get_ctx: bool = False,
     ) -> "tuple[str, ExecutionContext] | str":
@@ -883,8 +890,20 @@ class ExecutionEngine:
 
         # 6. Handle max iterations reached
         if final_response is None:
-            final_response = self._handle_max_iterations(ctx, query)
-            success = False
+            if self.is_sub_agent:
+                # Sub-agent: Special handling mit Resume-Option
+                final_response, should_mark_resumable = await self._handle_sub_agent_max_iterations(
+                    ctx, query, max_iterations
+                )
+                success = False
+                
+                # Mark as resumable if progress was made
+                if should_mark_resumable:
+                    ctx.status = "max_iterations"  # Instead of "completed"
+            else:
+                # Main agent: Existing handling
+                final_response = self._handle_max_iterations(ctx, query)
+                success = False
 
         # 7. Compress and commit to permanent history
         await self._commit_run(ctx, session, query, final_response, success)
@@ -1072,6 +1091,33 @@ class ExecutionEngine:
 
             ctx.auto_focus.record(f_name, f_args, result[:400])
 
+        elif f_name == "resume_sub_agent":
+            if self.is_sub_agent:
+                result = "ERROR: Sub-agents cannot resume other sub-agents!"
+            elif not self._sub_agent_manager:
+                result = "ERROR: SubAgentManager not initialized."
+            else:
+                try:
+                    sub_agent_id = f_args.get("sub_agent_id")
+                    additional_iterations = f_args.get("additional_iterations", 10)
+                    additional_budget = f_args.get("additional_budget", 3000)
+                    wait = f_args.get("wait", True)
+                    context = f_args.get("context")  # NEW: Optional additional context
+                    
+                    result = await self._tool_resume_sub_agent(
+                        sub_agent_id=sub_agent_id,
+                        additional_iterations=additional_iterations,
+                        additional_budget=additional_budget,
+                        wait=wait,
+                        context=context  # Pass context parameter
+                    )
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    result = f"ERROR resuming sub-agent: {str(e)}"
+            
+            ctx.auto_focus.record(f_name, f_args, result[:400])
+
         # === VFS & DYNAMIC TOOLS ===
         elif f_name:
             is_vfs = f_name in VFS_TOOL_NAMES
@@ -1181,7 +1227,14 @@ class ExecutionEngine:
         - Auto-removes lowest relevance tool when limit reached
         - Triggers partial compression on category change + len > 3
         """
-        if isinstance(tools_input, str):
+        print(f"Loading tools: {tools_input} - {type(tools_input)}")
+        if isinstance(tools_input, str) and tools_input.startswith("[") and tools_input.endswith("]"):
+            names = tools_input[1:-1].replace(" ", "").replace('"', "").replace("'", "")
+            if "," in names:
+                names = names.split(",")
+            else:
+                names = [names]
+        elif isinstance(tools_input, str):
             names = [tools_input]
         else:
             names = list(tools_input) if tools_input else []
@@ -1313,6 +1366,7 @@ class ExecutionEngine:
         # 3. Sub-agent tools (ONLY for main agent, not for sub-agents)
         if not self.is_sub_agent:
             definitions.extend(SUB_AGENT_TOOLS)
+            definitions.append(RESUME_SUB_AGENT_TOOL)  # NEW: Resume capability
 
         # 4. VFS tools (always available, not counted in limit)
         all_tools = self.agent.tool_manager.get_all_litellm()
@@ -1391,6 +1445,8 @@ class ExecutionEngine:
                 "CAPABILITIES:",
                 f"- Loaded Tools: ({len(ctx.dynamic_tools)}/{ctx.max_dynamic_tools}): [{active_str}]",
                 f"- Context Access: {cat_list}",
+                "- Sub-Agent Management: spawn_sub_agent, wait_for, resume_sub_agent",
+                "  → If a sub-agent hits max_iterations but made progress, resume it with more iterations",
                 "",
                 "MANDATORY WORKFLOW:",
                 "A. PLAN: Use `think()` to decompose the request.",
@@ -1623,7 +1679,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         self,
         query: str,
         session_id: str,
-        max_iterations: int = 15,
+        max_iterations: int = 25,
         ctx: "ExecutionContext | None" = None,
     ) -> tuple[Callable, ExecutionContext]:
         """
@@ -1854,3 +1910,11 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
             yield {"type": "done", "success": success, "final_answer": final_response}
 
         return stream_generator, ctx
+
+if __name__ == "__main__":
+    print("ExecutionEngine loaded")
+    ctx = ExecutionContext()
+    print(ctx.run_id)
+    from toolboxv2.tests.test_mods.test_isaa.test_base.test_agent.test_execution_engine import MockAgent
+    execution_engine = ExecutionEngine(MockAgent(), None, None)
+    print(asyncio.run(execution_engine._tool_load_tools(ctx, '["scout_interface", "execute_action"]')))

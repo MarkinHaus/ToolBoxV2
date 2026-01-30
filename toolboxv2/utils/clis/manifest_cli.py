@@ -43,6 +43,17 @@ def create_parser() -> argparse.ArgumentParser:
 ║  tb manifest status            Show service status vs manifest             ║
 ║  tb manifest sync              Sync running services with manifest         ║
 ║                                                                            ║
+║  Feature Management:                                                       ║
+║  tb manifest list              List all features and their status          ║
+║  tb manifest enable <feature>  Enable a feature (auto-installs deps)       ║
+║  tb manifest disable <feature> Disable a feature                           ║
+║  tb manifest files <feature>   Show files belonging to a feature           ║
+║                                                                            ║
+║  Pack/Unpack:                                                              ║
+║  tb manifest pack <feature>    Pack feature into ZIP archive               ║
+║  tb manifest unpack <path>     Unpack feature from ZIP archive             ║
+║  tb manifest packed            List available packed features              ║
+║                                                                            ║
 ╚════════════════════════════════════════════════════════════════════════════╝
         """
     )
@@ -77,6 +88,30 @@ def create_parser() -> argparse.ArgumentParser:
     p_sync = subparsers.add_parser("sync", help="Sync running services with manifest")
     p_sync.add_argument("--dry-run", action="store_true", help="Show what would be done")
     p_sync.add_argument("--restart", action="store_true", help="Restart all manifest services")
+
+    # Feature management commands
+    p_list = subparsers.add_parser("list", help="List all features and their status")
+
+    p_enable = subparsers.add_parser("enable", help="Enable a feature (auto-installs dependencies)")
+    p_enable.add_argument("feature", nargs="?", help="Feature name to enable")
+
+    p_disable = subparsers.add_parser("disable", help="Disable a feature")
+    p_disable.add_argument("feature", nargs="?", help="Feature name to disable")
+
+    p_files = subparsers.add_parser("files", help="Show files belonging to a feature")
+    p_files.add_argument("feature", nargs="?", help="Feature name to show files for")
+
+    # Pack/Unpack commands
+    p_pack = subparsers.add_parser("pack", help="Pack feature into ZIP archive")
+    p_pack.add_argument("feature", help="Feature name to pack")
+    p_pack.add_argument("--output", "-o", type=str, help="Output directory (default: ./features_sto/)")
+
+    p_unpack = subparsers.add_parser("unpack", help="Unpack feature from ZIP archive")
+    p_unpack.add_argument("path", help="Path to ZIP file")
+    p_unpack.add_argument("--target", "-t", type=str, help="Target features directory")
+
+    p_packed = subparsers.add_parser("packed", help="List available packed features")
+    p_packed.add_argument("--dir", type=str, help="Directory to search (default: ./features_sto/)")
 
     return parser
 
@@ -390,6 +425,429 @@ def cmd_sync(args) -> int:
     return 0 if not result.failed else 1
 
 
+# =============================================================================
+# Feature Management Commands
+# =============================================================================
+
+
+def _get_feature_manager():
+    """Get or create FeatureManager instance."""
+    from toolboxv2.utils.system.feature_manager import FeatureManager
+    from toolboxv2 import tb_root_dir
+
+    features_dir = tb_root_dir  / "features"
+    print(str(features_dir), features_dir.exists())
+    return FeatureManager(features_dir=str(features_dir.name))
+
+
+def cmd_list(args) -> int:
+    """List all features and their status."""
+    from rich.table import Table
+    from rich.console import Console
+
+    console = Console()
+    print_box_header("Feature Status", "📦")
+
+    try:
+        fm = _get_feature_manager()
+
+        if not fm.features:
+            print_status("No features found", "warning")
+            print_status("Features are loaded from toolboxv2/features/*/feature.yaml", "info")
+            print_box_footer()
+            return 1
+
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Feature", style="bold")
+        table.add_column("Status")
+        table.add_column("Version")
+        table.add_column("Immutable")
+        table.add_column("Description")
+
+        for fname, fspec in fm.features.items():
+            status = "[green]ENABLED[/green]" if fspec.enabled else "[red]DISABLED[/red]"
+            immut = "[yellow]YES[/yellow]" if fspec.immutable else "[dim]NO[/dim]"
+            table.add_row(
+                fname,
+                status,
+                fspec.version,
+                immut,
+                fspec.description[:40] + "..." if len(fspec.description) > 40 else fspec.description
+            )
+
+        console.print(table)
+        print_box_footer()
+        return 0
+
+    except Exception as e:
+        print_status(f"Error listing features: {e}", "error")
+        print_box_footer()
+        return 1
+
+
+def cmd_enable(args) -> int:
+    """Enable a feature with auto-dependency installation."""
+    if not args.feature:
+        print_status("Feature name required", "error")
+        print_status("Usage: tb manifest enable <feature>", "info")
+        return 1
+
+    feature_name = args.feature.lower()
+    print_box_header(f"Enable Feature: {feature_name}", "✅")
+
+    try:
+        fm = _get_feature_manager()
+
+        if feature_name not in fm.features:
+            print_status(f"Unknown feature: {feature_name}", "error")
+            print_status(f"Available: {', '.join(fm.features.keys())}", "info")
+            print_box_footer()
+            return 1
+
+        feature = fm.features[feature_name]
+
+        # Check requirements
+        if feature.requires:
+            print_status(f"Checking requirements: {', '.join(feature.requires)}", "progress")
+            for req in feature.requires:
+                if not fm.is_enabled(req):
+                    print_status(f"Required feature '{req}' is not enabled", "error")
+                    print_status(f"Run: tb manifest enable {req}", "info")
+                    print_box_footer()
+                    return 1
+
+        # Show dependencies that will be installed
+        if feature.dependencies:
+            print_status(f"Dependencies to install: {', '.join(feature.dependencies)}", "info")
+
+        success = fm.enable(feature_name)
+
+        if success:
+            print_status(f"Feature '{feature_name}' enabled", "success")
+
+            # Save to manifest
+            if fm.save_to_manifest(feature_name):
+                print_status("Updated tb-manifest.yaml", "success")
+
+            print_box_footer()
+            return 0
+        else:
+            print_status(f"Failed to enable '{feature_name}'", "error")
+            print_box_footer()
+            return 1
+
+    except Exception as e:
+        print_status(f"Error enabling feature: {e}", "error")
+        import traceback
+        traceback.print_exc()
+        print_box_footer()
+        return 1
+
+
+def cmd_disable(args) -> int:
+    """Disable a feature."""
+    if not args.feature:
+        print_status("Feature name required", "error")
+        print_status("Usage: tb manifest disable <feature>", "info")
+        return 1
+
+    feature_name = args.feature.lower()
+    print_box_header(f"Disable Feature: {feature_name}", "🚫")
+
+    try:
+        fm = _get_feature_manager()
+
+        if feature_name not in fm.features:
+            print_status(f"Unknown feature: {feature_name}", "error")
+            print_status(f"Available: {', '.join(fm.features.keys())}", "info")
+            print_box_footer()
+            return 1
+
+        feature = fm.features[feature_name]
+
+        # Warn for core
+        if feature_name == "core":
+            print_status("WARNING: Disabling 'core' is not recommended!", "warning")
+            confirm = input("Continue? (yes/no): ").strip().lower()
+            if confirm != "yes":
+                print_status("Aborted", "info")
+                print_box_footer()
+                return 0
+
+        # Warn for immutable
+        if feature.immutable:
+            print_status(f"WARNING: Feature '{feature_name}' is marked as immutable", "warning")
+
+        success = fm.disable(feature_name)
+
+        if success:
+            print_status(f"Feature '{feature_name}' disabled", "success")
+
+            # Save to manifest
+            if fm.save_to_manifest(feature_name):
+                print_status("Updated tb-manifest.yaml", "success")
+
+            print_box_footer()
+            return 0
+        else:
+            print_status(f"Failed to disable '{feature_name}'", "error")
+            print_box_footer()
+            return 1
+
+    except Exception as e:
+        print_status(f"Error disabling feature: {e}", "error")
+        print_box_footer()
+        return 1
+
+
+def cmd_files(args) -> int:
+    """Show files belonging to a feature."""
+    if not args.feature:
+        print_status("Feature name required", "error")
+        print_status("Usage: tb manifest files <feature>", "info")
+        return 1
+
+    feature_name = args.feature.lower()
+    print_box_header(f"Files for Feature: {feature_name}", "📁")
+
+    try:
+        fm = _get_feature_manager()
+
+        if feature_name not in fm.features:
+            print_status(f"Unknown feature: {feature_name}", "error")
+            print_status(f"Available: {', '.join(fm.features.keys())}", "info")
+            print_box_footer()
+            return 1
+
+        feature = fm.features[feature_name]
+
+        print_status(f"Description: {feature.description}", "info")
+        print_status(f"Version: {feature.version}", "info")
+        print()
+
+        if feature.files:
+            print_status("File patterns:", "success")
+            for fpattern in feature.files:
+                print(f"  • {fpattern}")
+        else:
+            print_status("No file patterns defined", "warning")
+
+        if feature.imports:
+            print()
+            print_status("Imports:", "info")
+            for imp in feature.imports:
+                print(f"  • {imp}")
+
+        if feature.dependencies:
+            print()
+            print_status("Dependencies:", "info")
+            for dep in feature.dependencies:
+                print(f"  • {dep}")
+
+        if feature.requires:
+            print()
+            print_status("Requires features:", "info")
+            for req in feature.requires:
+                status = "[green]✓[/green]" if fm.is_enabled(req) else "[red]✗[/red]"
+                print(f"  • {req} {status}")
+
+        print_box_footer()
+        return 0
+
+    except Exception as e:
+        print_status(f"Error showing files: {e}", "error")
+        print_box_footer()
+        return 1
+
+
+# =============================================================================
+# Pack/Unpack Commands
+# =============================================================================
+
+
+def cmd_pack(args) -> int:
+    """Pack a feature into a ZIP archive."""
+    feature_name = args.feature.lower()
+    print_box_header(f"Pack Feature: {feature_name}", "📦")
+
+    try:
+        fm = _get_feature_manager()
+
+        if feature_name not in fm.features:
+            print_status(f"Unknown feature: {feature_name}", "error")
+            print_status(f"Available: {', '.join(fm.features.keys())}", "info")
+            print_box_footer()
+            return 1
+
+        feature = fm.features[feature_name]
+        print_status(f"Version: {feature.version}", "info")
+        print_status(f"Description: {feature.description}", "info")
+
+        # Show what will be packed
+        files = fm.get_files_for_feature(feature_name)
+        if files:
+            print()
+            print_status("Files to pack:", "progress")
+            for f in files:
+                print(f"  • {f}")
+
+        if feature.dependencies:
+            print()
+            print_status("Dependencies:", "info")
+            for dep in feature.dependencies:
+                print(f"  • {dep}")
+
+        print()
+        print_status("Packing...", "progress")
+
+        zip_path = fm.pack_feature(feature_name, output_path=args.output)
+
+        if zip_path:
+            print_status(f"Created: {zip_path}", "success")
+
+            # Show file size
+            from pathlib import Path
+            size_kb = Path(zip_path).stat().st_size // 1024
+            print_status(f"Size: {size_kb} KB", "info")
+
+            print_box_footer()
+            return 0
+        else:
+            print_status("Pack failed", "error")
+            print_box_footer()
+            return 1
+
+    except Exception as e:
+        print_status(f"Error packing feature: {e}", "error")
+        import traceback
+        traceback.print_exc()
+        print_box_footer()
+        return 1
+
+
+def cmd_unpack(args) -> int:
+    """Unpack a feature from a ZIP archive."""
+    from pathlib import Path
+
+    zip_path = Path(args.path)
+    print_box_header(f"Unpack Feature: {zip_path.name}", "📥")
+
+    if not zip_path.exists():
+        print_status(f"File not found: {zip_path}", "error")
+        print_box_footer()
+        return 1
+
+    try:
+        fm = _get_feature_manager()
+
+        # Show package info
+        print_status(f"Archive: {zip_path}", "info")
+        size_kb = zip_path.stat().st_size // 1024
+        print_status(f"Size: {size_kb} KB", "info")
+
+        print()
+        print_status("Unpacking...", "progress")
+
+        feature_name = fm.unpack_feature(str(zip_path), target_dir=args.target)
+
+        if feature_name:
+            print_status(f"Feature unpacked: {feature_name}", "success")
+
+            # Show status
+            if feature_name in fm.features:
+                feature = fm.features[feature_name]
+                print()
+                print_status(f"Version: {feature.version}", "info")
+                print_status(f"Enabled: {feature.enabled}", "info")
+
+                if feature.dependencies:
+                    print()
+                    print_status("Dependencies (install with enable):", "info")
+                    for dep in feature.dependencies:
+                        print(f"  • {dep}")
+
+            print()
+            print_status(f"Enable with: tb manifest enable {feature_name}", "info")
+
+            print_box_footer()
+            return 0
+        else:
+            print_status("Unpack failed", "error")
+            print_box_footer()
+            return 1
+
+    except Exception as e:
+        print_status(f"Error unpacking feature: {e}", "error")
+        import traceback
+        traceback.print_exc()
+        print_box_footer()
+        return 1
+
+
+def cmd_packed(args) -> int:
+    """List available packed features."""
+    from rich.table import Table
+    from rich.console import Console
+
+    console = Console()
+    print_box_header("Packed Features", "📦")
+
+    try:
+        fm = _get_feature_manager()
+        packages = fm.list_packed_features(search_dir=args.dir)
+
+        if not packages:
+            print_status("No packed features found", "warning")
+            search_dir = args.dir or "./features_sto/"
+            print_status(f"Search directory: {search_dir}", "info")
+            print_status("Pack a feature with: tb manifest pack <feature>", "info")
+            print_box_footer()
+            return 0
+
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Feature", style="bold")
+        table.add_column("Version")
+        table.add_column("Size")
+        table.add_column("Packed At")
+        table.add_column("Path")
+
+        for pkg in packages:
+            if "error" in pkg:
+                table.add_row(
+                    pkg.get("filename", "unknown"),
+                    "[red]ERROR[/red]",
+                    "-",
+                    "-",
+                    pkg.get("path", "")
+                )
+            else:
+                table.add_row(
+                    pkg.get("feature_name", pkg.get("filename", "unknown")),
+                    pkg.get("version", "unknown"),
+                    f"{pkg.get('size_kb', '?')} KB",
+                    pkg.get("packed_at", "-")[:19] if pkg.get("packed_at") else "-",
+                    pkg.get("path", "")
+                )
+
+        console.print(table)
+        print()
+        print_status(f"Found {len(packages)} package(s)", "info")
+        print_status("Unpack with: tb manifest unpack <path>", "info")
+
+        print_box_footer()
+        return 0
+
+    except Exception as e:
+        print_status(f"Error listing packages: {e}", "error")
+        print_box_footer()
+        return 1
+
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
+
+
 def cli_manifest_main():
     """Main entry point for manifest CLI."""
     parser = create_parser()
@@ -406,6 +864,15 @@ def cli_manifest_main():
         "init": cmd_init,
         "status": cmd_status,
         "sync": cmd_sync,
+        # Feature commands
+        "list": cmd_list,
+        "enable": cmd_enable,
+        "disable": cmd_disable,
+        "files": cmd_files,
+        # Pack/Unpack commands
+        "pack": cmd_pack,
+        "unpack": cmd_unpack,
+        "packed": cmd_packed,
     }
 
     handler = commands.get(args.command)

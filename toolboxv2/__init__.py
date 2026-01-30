@@ -1,6 +1,7 @@
 """Top-level package for ToolBox."""
 import os
 import sys
+from pathlib import Path
 
 # Suppress print statements during import in PyO3 environment
 _suppress_output = os.environ.get('PYTHONIOENCODING') == 'utf-8'
@@ -10,6 +11,44 @@ if _suppress_output:
     _original_stderr = sys.stderr
     sys.stdout = io.StringIO()
     sys.stderr = io.StringIO()
+
+# =============================================================================
+# Feature Loader (loaded first - unpacks required features)
+# =============================================================================
+
+try:
+    from .feature_loader import ensure_features_loaded, get_feature_status
+    # Auto-load features based on installed extras
+    _feature_load_results = ensure_features_loaded()
+except ImportError:
+    _feature_load_results = {}
+    ensure_features_loaded = None
+    get_feature_status = None
+
+# =============================================================================
+# Feature Manager (loaded early, without App dependency)
+# =============================================================================
+
+try:
+    from .utils.system.feature_manager import FeatureManager
+    _tb_root = Path(__file__).parent
+    _features_dir = _tb_root / "features"
+    _feature_manager = FeatureManager(features_dir=str(_features_dir)) if _features_dir.exists() else None
+except ImportError:
+    _feature_manager = None
+    FeatureManager = None
+
+
+def _feature_enabled(name: str) -> bool:
+    """Check if feature is enabled (safe helper)."""
+    if _feature_manager is None:
+        return True  # Default: allow all if no FM
+    return _feature_manager.enabled(name)
+
+
+# =============================================================================
+# Core Imports (always loaded)
+# =============================================================================
 
 try:
     from .utils.toolbox import App

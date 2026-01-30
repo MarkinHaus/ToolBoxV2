@@ -425,36 +425,24 @@ jobs:
       - name: Remove externalBin for Mobile
         working-directory: ./toolboxv2/simple-core/src-tauri
         run: |
-          # Remove externalBin from tauri.conf.json for mobile builds
-          # PyInstaller cannot create Android binaries
           python3 -c "
           import json
           with open('tauri.conf.json', 'r') as f:
               config = json.load(f)
           if 'bundle' in config and 'externalBin' in config['bundle']:
               del config['bundle']['externalBin']
-              print('Removed externalBin from config')
-          else:
-              print('No externalBin found in config')
           with open('tauri.conf.json', 'w') as f:
               json.dump(config, f, indent=2)
           "
-          # Verify the change was applied
-          echo "=== tauri.conf.json after modification ==="
-          cat tauri.conf.json
-          echo "=========================================="
 
       - name: Clean Android Build Cache
         working-directory: ./toolboxv2/simple-core/src-tauri
         run: |
-          # Remove cached Android project to ensure fresh init with updated config
           rm -rf gen/android
-          # Clean Cargo build cache for Android targets to force rebuild with new config
           rm -rf target/aarch64-linux-android
           rm -rf target/armv7-linux-androideabi
           rm -rf target/x86_64-linux-android
           rm -rf target/i686-linux-android
-          echo "Cleaned Android build cache"
 
       - name: Build Android
         working-directory: ./toolboxv2/simple-core
@@ -514,35 +502,23 @@ jobs:
       - name: Remove externalBin for Mobile
         working-directory: ./toolboxv2/simple-core/src-tauri
         run: |
-          # Remove externalBin from tauri.conf.json for mobile builds
-          # PyInstaller cannot create iOS binaries
           python3 -c "
           import json
           with open('tauri.conf.json', 'r') as f:
               config = json.load(f)
           if 'bundle' in config and 'externalBin' in config['bundle']:
               del config['bundle']['externalBin']
-              print('Removed externalBin from config')
-          else:
-              print('No externalBin found in config')
           with open('tauri.conf.json', 'w') as f:
               json.dump(config, f, indent=2)
           "
-          # Verify the change was applied
-          echo "=== tauri.conf.json after modification ==="
-          cat tauri.conf.json
-          echo "=========================================="
 
       - name: Clean iOS Build Cache
         working-directory: ./toolboxv2/simple-core/src-tauri
         run: |
-          # Remove cached iOS project to ensure fresh init with updated config
           rm -rf gen/apple
-          # Clean Cargo build cache for iOS targets to force rebuild with new config
           rm -rf target/aarch64-apple-ios
           rm -rf target/x86_64-apple-ios
           rm -rf target/aarch64-apple-ios-sim
-          echo "Cleaned iOS build cache"
 
       - name: Build iOS
         working-directory: ./toolboxv2/simple-core
@@ -563,7 +539,7 @@ jobs:
           path: artifacts/*
 
   # ============================================================================
-  # PYTHON DISTRIBUTION BUILD
+  # PYTHON DISTRIBUTION BUILD - MIT CUSTOM FEATURE PACKING
   # ============================================================================
 
   build-python:
@@ -578,13 +554,49 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install Dependencies
+      - name: Install Build Dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install build
+          python -m pip install build pyyaml
+
+      # ========================================
+      # CUSTOM FEATURE PACKING STEP
+      # ========================================
+      - name: Pack Features into ZIPs
+        run: |
+          echo "=== Packing Features for Distribution ==="
+          python build_package.py
+          
+          echo ""
+          echo "=== Verifying Package Structure ==="
+          python build_package.py --verify
+          
+          echo ""
+          echo "=== Contents of features_packed/ ==="
+          ls -la toolboxv2/features_packed/
 
       - name: Build Distribution
-        run: python -m build --outdir dist
+        run: |
+          echo "=== Building Python Package ==="
+          python -m build --outdir dist
+          
+          echo ""
+          echo "=== Built Packages ==="
+          ls -la dist/
+
+      - name: Verify Package Contents
+        run: |
+          echo "=== Verifying Package includes Feature ZIPs ==="
+          
+          # Check wheel contents
+          WHEEL=$(ls dist/*.whl | head -1)
+          echo "Checking wheel: $WHEEL"
+          python -m zipfile -l "$WHEEL" | grep -E "(features_packed|\.zip)" || echo "Warning: No feature ZIPs found in wheel"
+          
+          # Check tarball contents
+          TAR=$(ls dist/*.tar.gz | head -1)
+          echo "Checking tarball: $TAR"
+          tar -tzf "$TAR" | grep -E "(features_packed|\.zip)" || echo "Warning: No feature ZIPs found in tarball"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -613,6 +625,11 @@ jobs:
         with:
           name: python-dist
           path: dist/
+
+      - name: List Distribution Files
+        run: |
+          echo "=== Distribution Files ==="
+          ls -la dist/
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

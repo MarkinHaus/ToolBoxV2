@@ -16,6 +16,70 @@ env:
 
 jobs:
   # ============================================================================
+  # FEATURE PACK SYSTEM TEST
+  # ============================================================================
+
+  feature-pack-test:
+    name: Feature Pack System Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION_DEFAULT }}
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml build
+
+      - name: Test Feature Packing
+        run: |
+          echo "=== Testing Feature Pack System ==="
+          python build_package.py
+          
+          echo ""
+          echo "=== Verifying Package Structure ==="
+          python build_package.py --verify
+          
+          echo ""
+          echo "=== Feature ZIPs Created ==="
+          ls -la toolboxv2/features_packed/
+
+      - name: Test Package Build with Feature ZIPs
+        run: |
+          echo "=== Building Package ==="
+          python -m build --outdir dist
+          
+          echo ""
+          echo "=== Built Packages ==="
+          ls -la dist/
+          
+          echo ""
+          echo "=== Verifying Package Contains Feature ZIPs ==="
+          WHEEL=$(ls dist/*.whl | head -1)
+          echo "Checking wheel: $WHEEL"
+          python -m zipfile -l "$WHEEL" | grep -E "features_packed.*\.zip" && echo "✓ Feature ZIPs found in wheel" || echo "✗ Warning: No feature ZIPs found"
+
+      - name: Test Feature Loader
+        run: |
+          echo "=== Testing Feature Loader ==="
+          pip install -e .
+          python -m toolboxv2.feature_loader status
+          python -m toolboxv2.feature_loader list
+
+      - name: Upload Test Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: feature-pack-test
+          path: |
+            toolboxv2/features_packed/*.zip
+            dist/*
+
+  # ============================================================================
   # PYTHON MATRIX BUILD & TEST
   # ============================================================================
 
@@ -728,6 +792,7 @@ jobs:
     name: Build Status Summary
     runs-on: ubuntu-latest
     needs:
+      - feature-pack-test
       - py-check
       - build-root
       - test-root
@@ -746,6 +811,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Feature Pack | ${{ needs.feature-pack-test.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Python Tests | ${{ needs.py-check.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Frontend Build | ${{ needs.build-root.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Frontend Tests | ${{ needs.test-root.result }} |" >> $GITHUB_STEP_SUMMARY

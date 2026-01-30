@@ -1344,6 +1344,7 @@ class ISAA_Host:
             },
             "/bind": {a: None for a in agents},
             "/teach": {a: None for a in agents},
+            "/desktop": None,
             "/rate-limiter": {
                 "status": None,
                 "config": None,
@@ -1506,9 +1507,13 @@ class ISAA_Host:
         print_box_content("/skill edit <id>        - Edit skill instruction", "")
         print_box_content("/skill delete <id>      - Delete a skill", "")
         print_box_content("/skill merge <keep_id> <remove_id>", "")
-        print_box_content("/skill boost <skill_id> 0.3      - Delete a skill", "")
+        print_box_content("/skill boost <skill_id> 0.3  - Delete a skill", "")
         print_box_content("/skill import <path>         - import skills from directory/skill file", "")
         print_box_content("/skill export <id> <path>    - id=all Extprt skill or all skills", "")
+        print_separator()
+
+        print_status("Desktop Automation", "info")
+        print_box_content("/desktop             - Enable Desktop Automation", "")
         print_separator()
 
         print_status("Shortcuts", "info")
@@ -1560,6 +1565,8 @@ class ISAA_Host:
 
         elif cmd == "/context":
             await self._cmd_context(args)
+        elif cmd == "/desktop":
+            await self._cmd_desktop_auto(args)
 
         elif cmd == "/bind":
             if len(args) >= 2:
@@ -2432,6 +2439,20 @@ class ISAA_Host:
         else:
             print_status(f"Unknown skill action: {action}", "error")
 
+    async def _cmd_desktop_auto(self, args: list[str]):
+        """Handle /desktop commands."""
+
+        try:
+            from toolboxv2.mods.isaa.extras.destop_auto import register_enhanced_tools
+            self.kit, tools = register_enhanced_tools()
+            agent = await self.isaa_tools.get_agent(self.active_agent_name)
+            for tool in tools:
+                agent.add_tool(**tool)
+            print_status("Desktop Automation enabled.", "success")
+        except Exception as e:
+            print_status(f"Error: {e}", "error")
+
+
     async def _cmd_context(self, args: list[str]):
         """Handle /context commands."""
         try:
@@ -2455,8 +2476,9 @@ class ISAA_Host:
                 query=user_input,
                 session_id=self.active_session_id,
             ):
-                full_response += chunk
-                print(chunk, end="", flush=True)
+
+                if not full_response.endswith(chunk):
+                    print(chunk, end="", flush=True)
                 full_response += chunk
 
             c_print()  # Newline after streaming
@@ -2464,8 +2486,12 @@ class ISAA_Host:
             # Try to visualize JSON responses
             try:
                 if "```json" in full_response or "```" in full_response:
-                    final_response = full_response.split("```")[1]
-                data = anything_from_str_to_dict(final_response)
+                    if "```json" in full_response:
+                        final_response = full_response.split("```json")[1].split("```")[0].strip()
+                    else:
+                        final_response = full_response.split("```")[1]
+
+                data = json.loads(final_response)
                 if isinstance(data, list) and len(data) == 1:
                     data = data[0]
                 if isinstance(data, dict):
@@ -2474,6 +2500,8 @@ class ISAA_Host:
                         data, agent, max_preview_chars=max(len(final_response), 8000)
                     )
             except (json.JSONDecodeError, Exception):
+                import traceback
+                traceback.print_exc()
                 pass
 
         except Exception as e:

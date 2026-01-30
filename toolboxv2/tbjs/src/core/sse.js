@@ -10,9 +10,36 @@ const SseManager = {
             return SseManager.connections[url];
         }
 
-        const fullUrl = url.startsWith('/') ? `${TB.config.get('baseApiUrl').replace('/api', '')}${url}` : url;
-        const eventSource = new EventSource(fullUrl, options.eventSourceOptions); // options.eventSourceOptions for withCredentials etc.
+        let fullUrl;
 
+        // TAURI OVERRIDE - Priorität 1
+        if (TB.env.isTauri()) {
+            const workerSseUrl = TB.env.getWorkerSseUrl();
+            if (workerSseUrl) {
+                if (url.startsWith('/')) {
+                    fullUrl = `${workerSseUrl}${url}`;
+                } else if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                    fullUrl = `${workerSseUrl}/${url}`;
+                } else {
+                    fullUrl = url;
+                }
+                TB.logger.debug(`[SSE] Tauri mode - using worker URL: ${fullUrl}`);
+            } else {
+                // Fallback zu localhost
+                fullUrl = url.startsWith('/')
+                    ? `http://localhost:5000${url}`
+                    : url;
+                TB.logger.warn(`[SSE] Tauri mode - no worker URL, using fallback: ${fullUrl}`);
+            }
+        }
+        // WEB MODE - Standard-Verhalten
+        else {
+            fullUrl = url.startsWith('/')
+                ? `${TB.config.get('baseApiUrl').replace('/api', '')}${url}`
+                : url;
+        }
+
+        const eventSource = new EventSource(fullUrl, options.eventSourceOptions);
         SseManager.connections[url] = eventSource;
 
         eventSource.onopen = (event) => {
@@ -25,20 +52,17 @@ const SseManager = {
             TB.logger.error(`SSE: Error with ${fullUrl}`, error);
             TB.events.emit(`sse:error:${url}`, error);
             if (options.onError) options.onError(error);
-            // Optionally, close and attempt to reconnect based on strategy
             eventSource.close();
             delete SseManager.connections[url];
         };
 
         eventSource.onmessage = (event) => {
-            // Generic message handler, emits a general event
-            // It's often better to handle named events
             TB.logger.log(`SSE: Message from ${fullUrl}`, event.data);
             TB.events.emit(`sse:message:${url}`, { data: event.data, originEvent: event });
             if (options.onMessage) options.onMessage(event.data, event);
         };
 
-        // Allow adding custom event listeners
+        // Custom event listeners (unverändert)
         if (options.listeners && typeof options.listeners === 'object') {
             for (const eventName in options.listeners) {
                 if (Object.hasOwnProperty.call(options.listeners, eventName)) {
@@ -46,7 +70,6 @@ const SseManager = {
                     eventSource.addEventListener(eventName, (event) => {
                         let parsedData = event.data;
                         try {
-                            // Attempt to parse if it looks like JSON
                             if (typeof event.data === 'string' && (event.data.startsWith('{') || event.data.startsWith('['))) {
                                 parsedData = JSON.parse(event.data);
                             }

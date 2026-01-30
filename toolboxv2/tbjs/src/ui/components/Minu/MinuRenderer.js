@@ -84,6 +84,19 @@ class MinuRenderer {
     // =========================================================================
 
     _buildWsUrl() {
+        // TAURI OVERRIDE - Priorität 1
+        if (TB.env.isTauri()) {
+            const workerWsUrl = TB.env.getWorkerWsUrl();
+            if (workerWsUrl) {
+                TB.logger.debug(`[Minu] Tauri mode - using worker WS URL: ${workerWsUrl}`);
+                return `${workerWsUrl}/ws/Minu/ui`;
+            }
+            // Fallback zu localhost
+            TB.logger.warn('[Minu] Tauri mode - no worker URL, using localhost:5001');
+            return 'ws://localhost:5001/ws/Minu/ui';
+        }
+
+        // WEB MODE - Standard-Verhalten
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         return `${protocol}//${window.location.host}/ws/Minu/ui`;
     }

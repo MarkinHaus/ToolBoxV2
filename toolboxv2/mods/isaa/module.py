@@ -16,6 +16,8 @@ import copy
 import io
 import json
 import os
+import platform
+import queue
 import secrets
 import shlex
 import tarfile
@@ -26,10 +28,11 @@ from collections.abc import Callable
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, Dict
 from collections.abc import Awaitable
 
 import requests
+import uuid
 from langchain_community.agent_toolkits.load_tools import load_tools
 from pydantic import BaseModel
 
@@ -1014,7 +1017,7 @@ class Tools(MainTool):
         await asyncio.gather(*tasks)
         if self.config.get("controller-init"):
             self.controller.save(self.config['controller_file'])
-
+        cleanup_sessions()
         clean_config = {}
         for key, value in self.config.items():
             if key.startswith('agent-instance-'):
@@ -1475,47 +1478,302 @@ class Tools(MainTool):
 # SHELL TOOL
 # =============================================================================
 
-def shell_tool_function(command: str) -> str:
-    result: dict[str, Any] = {"success": False, "output": "", "error": ""}
-    tokens = shlex.split(command)
+import subprocess
+import threading
+import queue
+import time
+import uuid
+import json
+import os
+import platform
+import shutil
+import base64
+from typing import Dict, Optional, Any, Tuple
 
-    for i, tok in enumerate(tokens):
-        if tok in ("python", "python3"):
-            tokens[i] = sys.executable
+# =============================================================================
+# GLOBALE SESSION-VERWALTUNG
+# =============================================================================
+_session_store: Dict[str, 'ShellSession'] = {}
 
-    command = " ".join(shlex.quote(t) for t in tokens)
 
+def is_admin() -> bool:
+    """Prüft, ob der aktuelle Prozess bereits Admin-Rechte hat."""
     try:
-        shell_exe, cmd_flag = detect_shell()
+        if platform.system() == "Windows":
+            import ctypes
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        else:
+            return os.getuid() == 0
+    except:
+        return False
 
-        process = subprocess.run(
-            [shell_exe, cmd_flag, command],
-            capture_output=True,
+
+# =============================================================================
+# SHELL SESSION KLASSE
+# =============================================================================
+
+class ShellSession:
+    def __init__(self):
+        self.id = str(uuid.uuid4())
+        self.system = platform.system()
+        self.is_windows = self.system == "Windows"
+
+        shell_exe, _ = detect_shell()
+
+        # Environment mit UTF-8 Support
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+
+        # PowerShell/CMD ohne zusätzliche Parameter starten
+        start_args = [shell_exe]
+
+        if "powershell" in shell_exe.lower() or "pwsh" in shell_exe.lower():
+            # PowerShell: NoLogo, NoExit für persistente Session
+            start_args.extend([
+                "-NoLogo",
+                "-NoExit",
+                "-NoProfile",  # Schnellerer Start
+                "-ExecutionPolicy", "Bypass"
+            ])
+
+        self.process = subprocess.Popen(
+            start_args,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=False,
-            timeout=120,
-            check=False
+            bufsize=0,
+            env=env,
+            shell=False,
+            # Windows-spezifisch: Verhindert Popup-Fenster
+            creationflags=subprocess.CREATE_NO_WINDOW if self.is_windows else 0
         )
 
-        stdout = remove_styles(safe_decode(process.stdout))
-        stderr = remove_styles(safe_decode(process.stderr))
+        self.out_queue = queue.Queue()
+        self.err_queue = queue.Queue()
+        self.active = True
 
-        if process.returncode == 0:
-            result.update({"success": True, "output": stdout, "error": stderr if stderr else ""})
-        else:
-            error_output = (f"Stdout:\n{stdout}\nStderr:\n{stderr}" if stdout else stderr).strip()
-            result.update({
-                "success": False,
-                "output": stdout,
-                "error": error_output if error_output else f"Command failed with exit code {process.returncode}"
-            })
+        self._start_reader(self.process.stdout, self.out_queue)
+        self._start_reader(self.process.stderr, self.err_queue)
 
-    except subprocess.TimeoutExpired:
-        result.update({"error": "Timeout", "output": f"Command '{command}' timed out after 120 seconds."})
-    except Exception as e:
-        result.update({"error": f"Unexpected error: {type(e).__name__}", "output": str(e)})
+    def _start_reader(self, pipe, q):
+        """Startet async Reader für non-blocking I/O"""
 
-    return json.dumps(result, ensure_ascii=False)
+        def reader():
+            try:
+                while True:
+                    chunk = pipe.read(1)
+                    if not chunk:
+                        break
+                    q.put(chunk)
+            except Exception:
+                pass
 
+        threading.Thread(target=reader, daemon=True).start()
+
+    def write(self, command: str):
+        """
+        Sendet Command 1:1 an Shell - KEINE Manipulation!
+        """
+        if not self.process.stdin:
+            return
+
+        try:
+            cmd_str = command.strip()
+            line_ending = "\r\n" if self.is_windows else "\n"
+
+            self.process.stdin.write((cmd_str + line_ending).encode('utf-8'))
+            self.process.stdin.flush()
+        except (IOError, BrokenPipeError):
+            self.active = False
+
+    def read_output(self, timeout: float = 2.0) -> Dict[str, Any]:
+        """
+        Liest Output mit intelligenterem Timeout-Handling
+        """
+        stdout_acc = bytearray()
+        stderr_acc = bytearray()
+
+        start_time = time.time()
+        last_data_time = time.time()
+
+        # Initial wait für Command-Processing
+        time.sleep(0.15)
+
+        while True:
+            got_data = False
+
+            try:
+                while not self.out_queue.empty():
+                    stdout_acc.extend(self.out_queue.get_nowait())
+                    got_data = True
+                    last_data_time = time.time()
+
+                while not self.err_queue.empty():
+                    stderr_acc.extend(self.err_queue.get_nowait())
+                    got_data = True
+                    last_data_time = time.time()
+            except queue.Empty:
+                pass
+
+            # Timeout wenn keine neuen Daten mehr kommen
+            if (time.time() - last_data_time) > timeout:
+                break
+
+            # Absolutes Timeout
+            if (time.time() - start_time) > (timeout * 3):
+                break
+
+            if self.process.poll() is not None:
+                self.active = False
+                break
+
+            time.sleep(0.05)
+
+        return {
+            "stdout": self._safe_decode(stdout_acc),
+            "stderr": self._safe_decode(stderr_acc),
+            "is_alive": self.process.poll() is None
+        }
+
+    def _safe_decode(self, data: bytearray) -> str:
+        """Multi-Codec Decoding mit Fallbacks"""
+        for encoding in ['utf-8', 'cp1252', 'latin-1']:
+            try:
+                return data.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+        return data.decode('latin-1', errors='replace')
+
+    def terminate(self):
+        if self.process:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+        self.active = False
+
+
+# =============================================================================
+# TOOL FUNCTION - Verbesserte API
+# =============================================================================
+
+def shell_tool_function(
+    command: Optional[str] = None,
+    session_id: Optional[str] = None,
+    user_input: Optional[str] = None,
+    new_session: bool = False,
+    timeout: float = 2.0
+) -> str:
+    r"""
+    Shell-Tool mit Session-Support und verbessertem Error-Handling.
+
+    Features:
+    - Persistente Shell-Sessions
+    - Pipes & Operators (|, ;, &&, ||)
+    - Backslashes in Pfaden (C:\Users\...)
+    - Variable Evaluation ($env:VAR, $PSVersionTable)
+    - Interactive Input Support
+    - Multi-line Commands
+    - Cross-Platform (Windows/Linux/Mac)
+
+    - special command: list-sessions, cleanup-sessions
+
+    Args:
+        command: Shell command to execute
+        session_id: Continue existing session
+        user_input: Send input to running process
+        new_session: Force new session creation
+        timeout: Output read timeout (default: 2.0s)
+
+    Returns:
+        JSON string with execution result
+    """
+
+    if command == "list-sessions":
+        return list_sessions()
+    if command == "cleanup-sessions":
+        return cleanup_sessions()
+
+    session = None
+    msg_info = ""
+
+    # Session Management
+    if session_id and session_id in _session_store and not new_session:
+        session = _session_store[session_id]
+        msg_info = "Resumed session"
+    else:
+        session = ShellSession()
+        _session_store[session.id] = session
+        msg_info = "New session started"
+
+    # Command/Input Execution
+    input_to_send = user_input if user_input else command
+
+    if input_to_send:
+        session.write(input_to_send)
+
+    # Output Collection
+    wait_time = timeout if command else (timeout / 2)
+    output = session.read_output(timeout=wait_time)
+
+    # Status Detection
+    status = "running" if output["is_alive"] else "finished"
+
+    stdout_str = output["stdout"]
+    if status == "running" and stdout_str and not stdout_str.endswith(("\n", ">")):
+        status = "waiting_for_input"
+
+    # Result Assembly
+    result = {
+        "success": True,
+        "session_id": session.id,
+        "stdout": stdout_str.strip(),
+        "stderr": output["stderr"].strip(),
+        "status": status,
+        "info": msg_info,
+        "system": session.system
+    }
+
+    # Auto-Cleanup für One-Shot Commands
+    if not session_id and not new_session and status != "waiting_for_input":
+        session.terminate()
+        del _session_store[session.id]
+
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
+
+def list_sessions() -> str:
+    """Liste alle aktiven Sessions"""
+    sessions = [
+        {
+            "session_id": sid,
+            "system": session.system,
+            "active": session.active,
+            "pid": session.process.pid if session.process else None
+        }
+        for sid, session in _session_store.items()
+    ]
+    return json.dumps({"sessions": sessions}, indent=2)
+
+
+def cleanup_sessions() -> str:
+    """Beende alle Sessions"""
+    count = len(_session_store)
+    for session in _session_store.values():
+        session.terminate()
+    _session_store.clear()
+    return json.dumps({"cleaned": count})
+
+
+# =============================================================================
+# TOOL FUNCTION (Interface)
+# =============================================================================
 
 # =============================================================================
 # EXPORTS

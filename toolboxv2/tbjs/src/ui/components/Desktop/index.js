@@ -63,7 +63,7 @@ export class DesktopStatusBar {
                 <span class="tb-status-info" data-id="endpoint"></span>
             </div>
             <div class="tb-status-bar-right">
-                <span class="tb-status-item" data-id="hotkey">Alt+H: HUD Mode</span>
+                <span class="tb-status-item" data-id="hotkey">Alt+H: Toggle Mode</span>
             </div>
         `;
     }
@@ -192,7 +192,37 @@ export class DesktopStatusBar {
     }
 
     _getApiBase() {
-        return 'http://localhost:5000';
+        // TAURI: Dynamische Worker URL
+        if (isTauri()) {
+            // Versuche aus TB.env zu holen
+            if (window.TB?.env?.getWorkerHttpUrl) {
+                const url = window.TB.env.getWorkerHttpUrl();
+                if (url) return url;
+            }
+            // Fallback
+            return 'http://localhost:5000';
+        }
+        // WEB: Relative URL
+        return '';
+    }
+
+    _getWsUrl() {
+        const wsId = localStorage.getItem('WsID') || `status-${Date.now()}`;
+
+        // TAURI: Dynamische Worker URL
+        if (isTauri()) {
+            // Versuche aus TB.env zu holen
+            if (window.TB?.env?.getWorkerWsUrl) {
+                const url = window.TB.env.getWorkerWsUrl();
+                if (url) return `${url}/ws/${wsId}`;
+            }
+            // Fallback
+            return `ws://localhost:5001/ws/${wsId}`;
+        }
+
+        // WEB: Standard WebSocket URL
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        return `${protocol}//${window.location.host}/ws/${wsId}`;
     }
 
     _getWsUrl() {

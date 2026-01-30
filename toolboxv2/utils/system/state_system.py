@@ -40,6 +40,28 @@ class DefaultFilesFormatElement:
 
 
 @dataclass
+class FeatureStateElement:
+    """State für ein einzelnes Feature"""
+    name: str
+    version: str = "0.0.0"
+    enabled: bool = False
+    shasum: str = ""  # SHA256 von feature.yaml
+    source: str = "local"  # "local" | "registry" | "packed"
+    dependencies: list = None
+    requires: list = None
+
+    def __post_init__(self):
+        if self.dependencies is None:
+            self.dependencies = []
+        if self.requires is None:
+            self.requires = []
+
+    def __str__(self):
+        status = "✓" if self.enabled else "✗"
+        return f"[{status}] {self.name} v{self.version} ({self.source})"
+
+
+@dataclass
 class TbState:
     utils: dict[str, DefaultFilesFormatElement]
     mods: dict[str, DefaultFilesFormatElement]
@@ -47,6 +69,11 @@ class TbState:
     runnable: dict[str, DefaultFilesFormatElement]
     api: dict[str, DefaultFilesFormatElement]
     app: dict[str, DefaultFilesFormatElement]
+    features: dict[str, FeatureStateElement] = None
+
+    def __post_init__(self):
+        if self.features is None:
+            self.features = {}
 
     def __str__(self):
         fstr = "Utils\n"
@@ -67,6 +94,9 @@ class TbState:
         fstr += "app\n"
         for name, item in self.app.items():
             fstr += f"  {name} | {str(item)}\n"
+        fstr += "Features\n"
+        for name, item in self.features.items():
+            fstr += f"  {str(item)}\n"
         return fstr
 
 
@@ -81,6 +111,46 @@ def calculate_shasum(file_path: str) -> str:
             buf = file.read(BUF_SIZE)
 
     return sha_hash.hexdigest()
+
+
+def process_features(features_dir: str) -> dict[str, FeatureStateElement]:
+    """
+    Scanne Features Verzeichnis und erstelle State Elements.
+
+    Args:
+        features_dir: Pfad zum features/ Verzeichnis
+
+    Returns:
+        Dict mit Feature Name -> FeatureStateElement
+    """
+    features = {}
+    features_path = Path(features_dir)
+
+    if not features_path.exists():
+        return features
+
+    for feature_yaml in features_path.glob("*/feature.yaml"):
+        feature_name = feature_yaml.parent.name
+
+        try:
+            with open(feature_yaml, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f)
+
+            shasum = calculate_shasum(str(feature_yaml))
+
+            features[feature_name] = FeatureStateElement(
+                name=feature_name,
+                version=data.get("version", "0.0.0"),
+                enabled=data.get("enabled", False),
+                shasum=shasum,
+                source="local",
+                dependencies=data.get("dependencies", []),
+                requires=data.get("requires", []),
+            )
+        except Exception as e:
+            print(f"Warning: Could not process feature {feature_name}: {e}")
+
+    return features
 
 
 def process_files(directory: str) -> TbState:
@@ -120,6 +190,9 @@ def process_files(directory: str) -> TbState:
                     elif 'app' in root:
                         app[file_name] = element
 
+    # Scanne Features
+    features = process_features(directory + '/toolboxv2/features')
+
     return TbState(
         utils=utils,
         mods=mods,
@@ -127,6 +200,7 @@ def process_files(directory: str) -> TbState:
         runnable=runnable,
         api=api,
         app=app,
+        features=features,
     )
 
 

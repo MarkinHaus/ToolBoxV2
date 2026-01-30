@@ -193,17 +193,30 @@ const Api = {
             }
         }
 
-        // HTTP Fetch
+        // HTTP Fetch - URL Building mit Tauri-Support
+        let baseApiUrl;
+        let baseUrl; // Ohne /api suffix
+
+        if (env.isTauri()) {
+            const workerHttpUrl = env.getWorkerHttpUrl();
+            baseUrl = workerHttpUrl || 'http://localhost:5000';
+            baseApiUrl = `${baseUrl}/api`;
+            logger.debug(`[API] Tauri mode - using worker URL: ${baseUrl}`);
+        } else {
+            baseApiUrl = config.get('baseApiUrl');
+            baseUrl = baseApiUrl.replace('/api', '');
+        }
+
         let url;
         if (isFullPath) {
             if (moduleName.includes("IsValidSession") || moduleName.includes("validateSession") || moduleName.startsWith("/web/")){
-                url = `${config.get('baseApiUrl').replace('/api', '')}${moduleName}`;
-                if (method === "POST" && moduleName.includes("IsValidSession")){ // Note: case sensitive
-                    method = "GET"; // Update method for options too
+                url = `${baseUrl}${moduleName}`;
+                if (method === "POST" && moduleName.includes("IsValidSession")){
+                    method = "GET";
                     options.method = "GET";
                 }
             } else {
-                url = `${config.get('baseApiUrl')}${moduleName}`;
+                url = `${baseApiUrl}${moduleName}`;
             }
             if (functionName && typeof functionName === 'string' && functionName.length > 0 && (method.toUpperCase() === 'GET' || method.toUpperCase() === 'DELETE')) {
                 url += `?${functionName}`;
@@ -211,7 +224,7 @@ const Api = {
                  url += `?${new URLSearchParams(functionName).toString()}`;
             }
         } else {
-            url = `${config.get('baseApiUrl')}/${moduleName}/${functionName}`;
+            url = `${baseApiUrl}/${moduleName}/${functionName}`;
         }
 
         if (method.toUpperCase() === 'GET' || method.toUpperCase() === 'DELETE') {

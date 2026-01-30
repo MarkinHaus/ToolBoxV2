@@ -16,8 +16,9 @@ from typing import List, Tuple
 from dotenv import load_dotenv
 
 from toolboxv2 import tb_root_dir
+from toolboxv2.utils.system.feature_manager import FeatureManager
 
-# from sqlalchemy.testing.suite.test_reflection import metadata
+# from sqlalchemy.testing.suite.test_reflection.metadata
 from toolboxv2.flows import flows_dict as flows_dict_func
 from toolboxv2.setup_helper import run_command
 from toolboxv2.tests.a_util import async_test
@@ -1195,6 +1196,11 @@ async def setup_app(ov_name=None, App=TbApp):
     ):
         TbApp.sprint = lambda text, *_args, **kwargs: False
     tb_app = get_app(from_="InitialStartUp", name=args.name, args=args, app_con=TbApp)
+
+    # Initialize FeatureManager with app reference
+    features_dir = tb_root_dir / "toolboxv2" / "features"
+    feature_manager = FeatureManager(app=tb_app, features_dir=str(features_dir))
+    tb_app.feature_manager = feature_manager
 
     tb_app.loop = asyncio.get_running_loop()
 
