@@ -96,6 +96,27 @@ STATIC_TOOLS = [
             },
         },
     },
+{
+    "type": "function",
+    "function": {
+        "name": "shift_focus",
+        "description": "Archiviert die aktuelle Working History und setzt den Fokus auf ein neues Ziel. Nutze dies, wenn ein Teilabschnitt erledigt ist, um Kontext-Rauschen zu vermeiden. Alle bisherigen Ergebnisse werden permanent gespeichert.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "summary_of_achievements": {
+                    "type": "string",
+                    "description": "Eine detaillierte Zusammenfassung dessen, was im letzten Abschnitt erreicht wurde (Pfade, Ergebnisse, Status)."
+                },
+                "next_objective": {
+                    "type": "string",
+                    "description": "Was ist das unmittelbare nächste Ziel?"
+                }
+            },
+            "required": ["summary_of_achievements", "next_objective"]
+        }
+    }
+}
 ]
 
 DISCOVERY_TOOLS = [
@@ -546,6 +567,7 @@ class HistoryCompressor:
             "final_answer",
             "list_tools",
             "load_tools",
+            "shift_focus"
         }
         if meaningful_tools:
             lines.append(f"• Tools genutzt: {', '.join(list(meaningful_tools)[:5])}")
@@ -632,6 +654,7 @@ class ExecutionEngine(SubAgentResumeExtension):
     Compression Triggers:
     - TRIGGER 1: final_answer → Always compress working → summary → permanent
     - TRIGGER 2: load_tools + category change + len > 3 → Partial compression
+    - TRIGGER 3: shift_focus → Compress working history to summary and archive
     """
 
     def __init__(
@@ -896,7 +919,7 @@ class ExecutionEngine(SubAgentResumeExtension):
                     ctx, query, max_iterations
                 )
                 success = False
-                
+
                 # Mark as resumable if progress was made
                 if should_mark_resumable:
                     ctx.status = "max_iterations"  # Instead of "completed"
@@ -1002,6 +1025,13 @@ class ExecutionEngine(SubAgentResumeExtension):
             result = await self._tool_load_tools(ctx, tools_input)
             ctx.auto_focus.record(f_name, f_args, result[:200])
 
+        elif f_name == "shift_focus":
+            result = await self._tool_shift_focus(
+                ctx,
+                f_args.get("summary_of_achievements", ""),
+                f_args.get("next_objective", "")
+            )
+
         # === SUB-AGENT TOOLS ===
         elif f_name == "spawn_sub_agent":
             if self.is_sub_agent:
@@ -1103,7 +1133,7 @@ class ExecutionEngine(SubAgentResumeExtension):
                     additional_budget = f_args.get("additional_budget", 3000)
                     wait = f_args.get("wait", True)
                     context = f_args.get("context")  # NEW: Optional additional context
-                    
+
                     result = await self._tool_resume_sub_agent(
                         sub_agent_id=sub_agent_id,
                         additional_iterations=additional_iterations,
@@ -1115,7 +1145,7 @@ class ExecutionEngine(SubAgentResumeExtension):
                     import traceback
                     traceback.print_exc()
                     result = f"ERROR resuming sub-agent: {str(e)}"
-            
+
             ctx.auto_focus.record(f_name, f_args, result[:400])
 
         # === VFS & DYNAMIC TOOLS ===
@@ -1217,6 +1247,63 @@ class ExecutionEngine(SubAgentResumeExtension):
                 )
                 category = categories[0] if categories else "unknown"
                 ctx.add_tool(tool_name, score, category)
+
+    async def _tool_shift_focus(self, ctx: ExecutionContext, summary_of_achievements: str, next_objective: str) -> str:
+        """
+        Verschiebt den aktuellen Arbeitsfortschritt in die Permanent History
+        und leert die Working History für einen frischen Start.
+        """
+        session = await self.agent.session_manager.get_or_create(ctx.session_id)
+
+        # 1. Erzeuge automatische Zusammenfassung der bisherigen Tool-Calls
+        auto_summary = HistoryCompressor.compress_to_summary(ctx.working_history, ctx.run_id)
+
+        # 2. Kombiniere automatische Summary mit der manuellen des Agenten
+        combined_content = (
+            f"--- FOKUS-WECHSEL / MEILENSTEIN ---\n"
+            f"ERGEBNISSE: {summary_of_achievements}\n\n"
+            f"TECHNISCHES PROTOKOLL:\n{auto_summary['content'] if auto_summary else 'Keine Tools genutzt.'}"
+        )
+
+        # 3. Permanent Speichern (RAG & History)
+        await session.add_message(
+            {"role": "system", "content": combined_content},
+            direct=True,
+            type="milestone_summary",
+            run_id=ctx.run_id
+        )
+
+        # 4. Working History RESET
+        # Wir behalten den ursprünglichen System-Prompt (Index 0)
+        system_prompt = ctx.working_history[0]
+        ctx.working_history = [
+            system_prompt,
+            {"role": "system", "content": f"Vorheriger Abschnitt abgeschlossen. Stand: {summary_of_achievements}"},
+            {"role": "user", "content": f"Neues Ziel: {next_objective}. Fahre fort."}
+        ]
+
+        # 5. Trackers zurücksetzen für neue Phase
+        ctx.auto_focus.clear()
+        ctx.loop_detector.reset()
+        ctx.loop_warning_given = False
+        # 1. Begrenze, wie oft ein Agent den Fokus shiften darf (Sicherung gegen Loops)
+        if not hasattr(ctx, 'focus_shifts_count'):
+            ctx.focus_shifts_count = 0
+
+        if ctx.focus_shifts_count >= 3:  # Maximal 3 Resets pro Run
+            return "Fehler: Maximale Anzahl an Fokus-Wechseln erreicht. Bitte schließe die Aufgabe jetzt ab."
+
+        ctx.focus_shifts_count += 1
+
+        # 2. Iterations-Bonus statt komplettem Reset
+        # Wir setzen nicht auf 1, sondern geben ihm z.B. 10 neue Versuche,
+        # aber überschreiten niemals das ursprüngliche Limit.
+        ctx.current_iteration = max(1, ctx.current_iteration - 10)
+
+        # Optional: Tool-Relevanz für neues Ziel neu berechnen
+        self._calculate_tool_relevance(ctx, next_objective)
+
+        return f"Fokus erfolgreich gewechselt. Dein Gedächtnis wurde bereinigt. Nächstes Ziel: {next_objective}"
 
     async def _tool_load_tools(
         self, ctx: ExecutionContext, tools_input: Union[str, List[str]]

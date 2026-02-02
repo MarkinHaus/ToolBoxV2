@@ -1009,6 +1009,13 @@ class FlowAgentBuilder:
                 # Step 11: Apply persona patterns to RuleSet
                 await self._apply_persona_to_ruleset(agent)
 
+                # Step 13: Patch FlowAgent
+                try:
+                    from toolboxv2.mods.isaa.base.patch.power_sessions import patch_flow_agent
+                    patch_flow_agent(agent)
+                    iprint("Patch FlowAgent")
+                except Exception as e:
+                    eprint(f"Failed to patch FlowAgent: {e}")
                 # Step 12: Checkpoint loding
                 if self.config.checkpoint.enabled:
                     res = await agent.checkpoint_manager.auto_restore()

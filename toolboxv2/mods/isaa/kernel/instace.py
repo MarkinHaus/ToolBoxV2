@@ -509,6 +509,7 @@ class LearningLoop:
 
                 # Generate rule if high confidence
                 if len(successes) >= 5:
+                    best_tool = max(tool_counts.items(), key=lambda x: x[1])[0]
                     rule_set.add_rule(
                         situation="general",
                         intent=intent,

@@ -2491,14 +2491,14 @@ class ISAA_Host:
                     else:
                         final_response = full_response.split("```")[1]
 
-                data = json.loads(final_response)
-                if isinstance(data, list) and len(data) == 1:
-                    data = data[0]
-                if isinstance(data, dict):
-                    print_separator()
-                    await visualize_data_terminal(
-                        data, agent, max_preview_chars=max(len(final_response), 8000)
-                    )
+                    data = json.loads(final_response)
+                    if isinstance(data, list) and len(data) == 1:
+                        data = data[0]
+                    if isinstance(data, dict):
+                        print_separator()
+                        await visualize_data_terminal(
+                            data, agent, max_preview_chars=max(len(final_response), 8000)
+                        )
             except (json.JSONDecodeError, Exception):
                 import traceback
                 traceback.print_exc()
@@ -2619,6 +2619,16 @@ async def run(app=None, *args):
     """Entry point for ISAA Host CLI."""
     app = app or get_app("isaa-host")
     host = ISAA_Host(app)
+    try:
+        from toolboxv2.mods.isaa.extras.discord_interface.integration_example import patch_cli_for_discord
+        patch_cli_for_discord(host)
+        print("Discord integration enabled.")
+    except ImportError as e:
+        import traceback
+        traceback.print_exc()
+        print(e)
+        print("⚠️ Discord integration not available.")
+        pass
     await host.run()
 
 
