@@ -2609,7 +2609,7 @@ class ISAA_Host:
                 self._select_audio_device()
 
         else:
-            print_status(f"Unknown audio command: {cmd}", "error")
+            print_status(f"Unknown audio command: {cmd} add args", "error")
 
     async def _cmd_skill(self, args: list[str]):
         """Handle /skill commands."""
