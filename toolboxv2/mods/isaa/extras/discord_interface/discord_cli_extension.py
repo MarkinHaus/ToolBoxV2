@@ -22,6 +22,7 @@ Usage in cli_v4.py:
 
 import asyncio
 import os
+from threading import Thread
 from typing import TYPE_CHECKING, Optional
 
 from toolboxv2 import get_app
@@ -69,7 +70,7 @@ class DiscordCLIExtension:
         self.host = host
         self.interface = None
         self.voice_mode = None  # VoiceModeExtension
-        self._discord_task: Optional[asyncio.Task] = None
+        self._discord_task: Optional[Thread] = None
         self._connected = False
 
     async def handle_command(self, args: list[str]):
@@ -214,11 +215,7 @@ class DiscordCLIExtension:
                 await self.voice_mode.voice_handler.leave_channel(guild_id)
 
         if self._discord_task:
-            self._discord_task.cancel()
-            try:
-                await self._discord_task
-            except asyncio.CancelledError:
-                pass
+            del self._discord_task
 
         if self.interface:
             await self.interface.stop()

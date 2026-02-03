@@ -147,145 +147,195 @@ class VoiceConversation:
 # =============================================================================
 
 if VOICE_RECV_AVAILABLE:
+    # UPDATED: UserAudioSink class - Live Chunk Transcription
+
     class UserAudioSink(voice_recv.AudioSink):
         """
-        Custom AudioSink für discord-ext-voice-recv.
-        Sammelt Audio per User und triggert Transcription nach Stille.
+        Custom AudioSink mit Live Chunk-Transkription.
+        Transkribiert Audio während es reinkommt, nicht erst am Ende.
         """
 
         def __init__(self, handler: "VoiceHandler"):
             super().__init__()
             self.handler = handler
-            self.audio_data: dict[int, bytearray] = {}  # user_id -> audio bytes
+
+            # Audio buffers per user
+            self.audio_data: dict[int, bytearray] = {}  # user_id -> current chunk audio
             self.last_packet_time: dict[int, float] = {}
+
+            # Transcription state per user
+            self._transcribed_text: dict[int, str] = {}  # user_id -> accumulated transcribed text
+            self._chunk_buffer: dict[int, bytearray] = {}  # user_id -> current chunk for transcription
+            self._transcription_tasks: dict[int, asyncio.Task] = {}
             self._silence_tasks: dict[int, asyncio.Task] = {}
 
+            # Chunk settings
+            self.chunk_duration_ms = 1500  # Transkribiere alle 1.5 Sekunden
+            self.chunk_bytes = int(192000 * self.chunk_duration_ms / 1000)  # 48kHz stereo 16-bit
+
+            self._is_speaking: dict[int, bool] = {}  # Track if user is actively speaking
+
         def write(self, user, data: voice_recv.VoiceData):
-            """Called for each audio packet received (sync callback from thread!)"""
+            """Called for each audio packet - triggers chunk transcription"""
             if user is None:
                 return
 
             user_id = user.id
             now = time.time()
-            pcm = data.pcm  # PCM audio bytes
+            pcm = data.pcm
 
-            # Initialize buffer if needed
+            # Initialize buffers
             if user_id not in self.audio_data:
                 self.audio_data[user_id] = bytearray()
+                self._chunk_buffer[user_id] = bytearray()
+                self._transcribed_text[user_id] = ""
+                self._is_speaking[user_id] = False
 
-            # Add audio data
+            # User started speaking
+            if not self._is_speaking.get(user_id):
+                self._is_speaking[user_id] = True
+                self._transcribed_text[user_id] = ""  # Reset for new utterance
+
+            # Add to both buffers
             self.audio_data[user_id].extend(pcm)
+            self._chunk_buffer[user_id].extend(pcm)
             self.last_packet_time[user_id] = now
 
-            # Schedule silence check in bot's event loop (thread-safe)
+            # Check if chunk is ready for transcription
+            if len(self._chunk_buffer[user_id]) >= self.chunk_bytes:
+                self._submit_chunk_for_transcription(user_id, user)
+
+            # Schedule silence check
             loop = self.handler.bot.loop
             if loop and loop.is_running():
-                # Cancel existing silence task
                 if user_id in self._silence_tasks:
                     self._silence_tasks[user_id].cancel()
 
-                # Schedule new silence detection
                 asyncio.run_coroutine_threadsafe(
                     self._schedule_silence_check(user_id, user),
                     loop
                 )
 
+        def _submit_chunk_for_transcription(self, user_id: int, user):
+            """Submit current chunk for parallel transcription"""
+            chunk_bytes = bytes(self._chunk_buffer[user_id])
+            self._chunk_buffer[user_id] = bytearray()  # Reset chunk buffer
+
+            loop = self.handler.bot.loop
+            if loop and loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    self._transcribe_chunk(user_id, chunk_bytes),
+                    loop
+                )
+
+        async def _transcribe_chunk(self, user_id: int, audio_bytes: bytes):
+            """Transcribe a single chunk from memory buffer"""
+            try:
+                wav_buffer = self._save_discord_audio_as_wav(audio_bytes)
+
+                # Option 1: MediaHandler unterstützt BytesIO direkt
+                transcription = await self.handler.media_handler.transcribe_audio_bytes(
+                    wav_buffer.getvalue(),
+                    format="wav"
+                )
+
+                if transcription and transcription.strip():
+                    current = self._transcribed_text.get(user_id, "")
+                    self._transcribed_text[user_id] = f"{current} {transcription}".strip()
+
+            except Exception as e:
+                print(f"[Voice] Chunk transcription error: {e}")
+
         async def _schedule_silence_check(self, user_id: int, user):
-            """Schedule silence check after threshold"""
+            """Check for silence = end of utterance"""
             await asyncio.sleep(self.handler.silence_threshold_ms / 1000.0)
 
             now = time.time()
             last = self.last_packet_time.get(user_id, 0)
 
             if (now - last) * 1000 >= self.handler.silence_threshold_ms:
-                # User stopped speaking - process their audio
-                await self._process_user_audio(user_id, user)
+                self._is_speaking[user_id] = False
+                await self._finalize_utterance(user_id, user)
 
-        async def _process_user_audio(self, user_id: int, user):
-            """Process accumulated audio from a user"""
-            if user_id not in self.audio_data:
-                return
-
-            audio_bytes = bytes(self.audio_data[user_id])
-            self.audio_data[user_id] = bytearray()  # Clear buffer
-
-            # Check minimum length (48kHz stereo 16-bit = 192000 bytes/sec)
-            min_bytes = int(192000 * self.handler.min_audio_length_ms / 1000)
-
-            if len(audio_bytes) < min_bytes:
-                return
-
-            # Save to temp file and transcribe
-            temp_path = Path(tempfile.mktemp(suffix=".wav"))
-            try:
-                # Convert Discord audio format to WAV
-                self._save_discord_audio_as_wav(audio_bytes, temp_path)
-
-                # Transcribe
-                transcription = await self.handler.media_handler.transcribe_audio(str(temp_path))
-
-                if transcription and transcription.strip():
-                    user_name = user.display_name if hasattr(user, 'display_name') else f"User_{user_id}"
-
-                    # Create VoiceMessage
-                    msg = VoiceMessage(
-                        user_id=user_id,
-                        user_name=user_name,
-                        text=transcription,
-                        timestamp=datetime.now(),
-                        duration_seconds=len(audio_bytes) / 192000,
-                    )
-
-                    print(f"[Voice] 🎤 {user_name}: {transcription}")
-
-                    # Add to conversations and trigger callback
-                    for conv in self.handler._conversations.values():
-                        conv.add_message(msg)
-
-                        if self.handler.on_voice_message:
-                            try:
-                                result = self.handler.on_voice_message(msg, conv)
-                                if asyncio.iscoroutine(result):
-                                    await result
-                            except Exception as e:
-                                print(f"[Voice] Callback error: {e}")
-                        break
-
-            except Exception as e:
-                print(f"[Voice] Audio processing error: {e}")
-                import traceback
-                traceback.print_exc()
-            finally:
-                try:
-                    temp_path.unlink()
-                except:
-                    pass
-
-        def _save_discord_audio_as_wav(self, audio_bytes: bytes, path: Path):
+        async def _finalize_utterance(self, user_id: int, user):
             """
-            Convert Discord audio (48kHz stereo 16-bit PCM) to WAV.
-            Resamples to 16kHz mono for better STT compatibility.
+            Finalize utterance when silence detected.
+            Transcribes remaining chunk and delivers full text immediately.
+            """
+            # Transcribe any remaining audio in chunk buffer
+            if user_id in self._chunk_buffer and len(self._chunk_buffer[user_id]) > 0:
+                remaining = bytes(self._chunk_buffer[user_id])
+                self._chunk_buffer[user_id] = bytearray()
+
+                # Only transcribe if meaningful length
+                min_bytes = int(192000 * self.handler.min_audio_length_ms / 1000)
+                if len(remaining) >= min_bytes:
+                    await self._transcribe_chunk(user_id, remaining)
+
+            # Get final transcription
+            final_text = self._transcribed_text.get(user_id, "").strip()
+
+            # Clear buffers
+            self.audio_data[user_id] = bytearray()
+            self._transcribed_text[user_id] = ""
+
+            if not final_text:
+                return
+
+            # Create VoiceMessage and deliver immediately
+            user_name = user.display_name if hasattr(user, 'display_name') else f"User_{user_id}"
+
+            msg = VoiceMessage(
+                user_id=user_id,
+                user_name=user_name,
+                text=final_text,
+                timestamp=datetime.now(),
+                duration_seconds=0,  # Not tracked in streaming mode
+            )
+
+            print(f"[Voice] 🎤 {user_name}: {final_text}")
+
+            # Deliver to handler
+            for conv in self.handler._conversations.values():
+                conv.add_message(msg)
+
+                if self.handler.on_voice_message:
+                    try:
+                        result = self.handler.on_voice_message(msg, conv)
+                        if asyncio.iscoroutine(result):
+                            await result
+                    except Exception as e:
+                        print(f"[Voice] Callback error: {e}")
+                break
+
+        # UPDATED: _save_discord_audio_as_wav und _transcribe_chunk - In-Memory BytesIO
+
+        def _save_discord_audio_as_wav(self, audio_bytes: bytes) -> io.BytesIO:
+            """
+            Convert Discord audio to WAV in memory (no disk I/O).
+
+            Returns:
+                BytesIO buffer containing WAV data
             """
             import wave
 
+            buffer = io.BytesIO()
+
             try:
                 import numpy as np
-
-                # Discord: 48kHz, stereo, 16-bit signed
                 audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
 
-                # Convert stereo to mono (average channels)
+                # Stereo to mono
                 if len(audio_array) % 2 == 0:
                     stereo = audio_array.reshape(-1, 2)
                     mono = stereo.mean(axis=1).astype(np.int16)
                 else:
                     mono = audio_array
 
-                # Resample 48kHz -> 16kHz (factor of 3)
+                # Resample 48kHz -> 16kHz
                 resampled = mono[::3]
 
-                # Save as WAV
-                with wave.open(str(path), 'wb') as wav:
+                with wave.open(buffer, 'wb') as wav:
                     wav.setnchannels(1)
                     wav.setsampwidth(2)
                     wav.setframerate(16000)
@@ -293,22 +343,48 @@ if VOICE_RECV_AVAILABLE:
 
             except ImportError:
                 # Fallback ohne numpy
-                with wave.open(str(path), 'wb') as wav:
+                with wave.open(buffer, 'wb') as wav:
                     wav.setnchannels(2)
                     wav.setsampwidth(2)
                     wav.setframerate(48000)
                     wav.writeframes(audio_bytes)
 
+            buffer.seek(0)  # Reset position for reading
+            return buffer
+
+        async def _transcribe_chunk(self, user_id: int, audio_bytes: bytes):
+            """Transcribe a single chunk from memory buffer"""
+            try:
+                wav_buffer = self._save_discord_audio_as_wav(audio_bytes)
+
+                # Option 1: MediaHandler unterstützt BytesIO direkt
+                transcription = await self.handler.media_handler.transcribe_audio_bytes(
+                    wav_buffer.getvalue(),
+                    format="wav"
+                )
+
+                if transcription and transcription.strip():
+                    current = self._transcribed_text.get(user_id, "")
+                    self._transcribed_text[user_id] = f"{current} {transcription}".strip()
+
+            except Exception as e:
+                print(f"[Voice] Chunk transcription error: {e}")
+
         def cleanup(self):
             """Cleanup when sink is destroyed"""
             self.audio_data.clear()
+            self._chunk_buffer.clear()
+            self._transcribed_text.clear()
             self.last_packet_time.clear()
+            self._is_speaking.clear()
             for task in self._silence_tasks.values():
                 task.cancel()
+            for task in self._transcription_tasks.values():
+                task.cancel()
             self._silence_tasks.clear()
+            self._transcription_tasks.clear()
 
         def wants_opus(self) -> bool:
-            """We want decoded PCM, not opus"""
             return False
 
 else:
@@ -358,8 +434,8 @@ class VoiceHandler:
         self._tts_tasks: dict[int, asyncio.Task] = {}
 
         # Settings
-        self.silence_threshold_ms = 1500  # Stille = Ende der Aussage
-        self.min_audio_length_ms = 500  # Mindestlänge für Processing
+        self.silence_threshold_ms = 600  # Stille = Ende der Aussage
+        self.min_audio_length_ms = 250   # Mindestlänge für Processing
 
     # =========================================================================
     # VOICE CHANNEL MANAGEMENT
@@ -858,6 +934,7 @@ Recent conversation:
                 async for chunk in self.interface.agent.a_stream(
                     query=context,
                     session_id=f"discord_voice_{conv.guild_id}",
+                    user_lightning_model=True,
                 ):
                     c_type = chunk.get("type")
 

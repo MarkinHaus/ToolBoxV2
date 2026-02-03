@@ -50,6 +50,8 @@ from litellm.types.utils import (
     Usage,
     StreamingChoices,
     Delta,
+    ChatCompletionMessageToolCall,
+    Function,
 )
 
 # Anthropic SDK imports
@@ -87,6 +89,7 @@ class ToolCallAccumulator:
     index: int = 0
 
 
+
 @dataclass
 class StreamState:
     """Tracks state during streaming response processing"""
@@ -99,7 +102,9 @@ class StreamState:
     finish_reason: Optional[str] = None
     model: str = ""
     message_id: str = ""
-
+    # Map Anthropic block index to OpenAI tool index (0-based)
+    tool_map: Dict[int, int] = field(default_factory=dict)
+    next_tool_index: int = 0
 
 class ZAIProvider(CustomLLM):
     """
@@ -575,29 +580,29 @@ class ZAIProvider(CustomLLM):
         """
         Convert Anthropic streaming event to OpenAI GenericStreamingChunk
 
-        Anthropic streaming events:
-        - message_start: {"type": "message_start", "message": {...}}
-        - content_block_start: {"type": "content_block_start", "index": 0, "content_block": {"type": "text"/"tool_use", ...}}
-        - content_block_delta: {"type": "content_block_delta", "delta": {"type": "text_delta"/"input_json_delta", ...}}
-        - content_block_stop: {"type": "content_block_stop", "index": 0}
-        - message_delta: {"type": "message_delta", "delta": {"stop_reason": ...}, "usage": {...}}
-        - message_stop: {"type": "message_stop"}
-
-        Tool use streaming:
-        - content_block_start with type="tool_use" contains: id, name
-        - content_block_delta with type="input_json_delta" contains: partial_json (the input being built)
+        CRITICAL: LiteLLM expects tool_use as a single ChatCompletionToolCallChunk dict:
+        {
+            "id": "call_xxx",
+            "type": "function",
+            "function": {"name": "...", "arguments": "..."},
+            "index": 0
+        }
         """
-        chunk_text = ""
-        tool_use = None
-        is_finished = False
-        finish_reason = None
+        DEBUG_STREAM = self.debug
+
+        def log(msg, **kwargs):
+            if DEBUG_STREAM:
+                data = json.dumps(kwargs, default=str) if kwargs else ""
+                print(f"[STREAM] {msg} {data}")
 
         event_type = getattr(event, "type", None)
+        log(f"Event: {event_type}", index=getattr(event, "index", "N/A"))
+
         if not event_type:
             return None
 
+        # === MESSAGE START ===
         if event_type == "message_start":
-            # Initialize state from message
             msg = getattr(event, "message", None)
             if msg:
                 state.message_id = getattr(msg, "id", "")
@@ -605,8 +610,9 @@ class ZAIProvider(CustomLLM):
                 usage = getattr(msg, "usage", None)
                 if usage:
                     state.input_tokens = getattr(usage, "input_tokens", 0)
-            return None  # No chunk for message_start
+            return None
 
+        # === CONTENT BLOCK START ===
         elif event_type == "content_block_start":
             state.current_block_index = getattr(event, "index", 0)
             block = getattr(event, "content_block", None)
@@ -614,29 +620,42 @@ class ZAIProvider(CustomLLM):
             if block:
                 block_type = getattr(block, "type", "")
                 state.current_block_type = block_type
+                log(f"Block Start [{state.current_block_index}]", type=block_type)
 
                 if block_type == "tool_use":
-                    # Start of tool call - Anthropic sends id and name here
+                    # Map Anthropic block index to OpenAI tool index (0-based)
+                    anthropic_index = state.current_block_index
+                    openai_index = state.next_tool_index
+                    state.tool_map[anthropic_index] = openai_index
+                    state.next_tool_index += 1
+
                     tool_id = getattr(block, "id", f"call_{uuid.uuid4().hex[:24]}")
                     tool_name = getattr(block, "name", "")
 
-                    state.tool_calls[state.current_block_index] = ToolCallAccumulator(
+                    log(f"Tool Init: Anthropic[{anthropic_index}] -> OpenAI[{openai_index}]",
+                        id=tool_id, name=tool_name)
+
+                    # Store accumulator
+                    state.tool_calls[anthropic_index] = ToolCallAccumulator(
                         id=tool_id,
                         name=tool_name,
-                        arguments="",  # Will be filled by input_json_delta
-                        index=state.current_block_index
+                        arguments="",
+                        index=anthropic_index
                     )
 
-                    # Return initial tool call chunk with name
-                    tool_use = [{
-                        "index": state.current_block_index,
+                    # FIXED: tool_use must be a SINGLE ChatCompletionToolCallChunk dict
+                    # NOT a list! LiteLLM expects this exact structure.
+                    tool_use = {
                         "id": tool_id,
                         "type": "function",
                         "function": {
                             "name": tool_name,
                             "arguments": ""
-                        }
-                    }]
+                        },
+                        "index": openai_index
+                    }
+
+                    log("Yielding Tool Start Chunk", tool_use=tool_use)
 
                     return self._build_generic_chunk(
                         text="",
@@ -652,53 +671,71 @@ class ZAIProvider(CustomLLM):
 
             return None
 
+        # === CONTENT BLOCK DELTA ===
         elif event_type == "content_block_delta":
             delta = getattr(event, "delta", None)
+            event_index = getattr(event, "index", state.current_block_index)
 
             if delta:
                 delta_type = getattr(delta, "type", "")
+                log(f"Delta [{event_index}]", type=delta_type)
 
+                # Text delta
                 if delta_type == "text_delta":
-                    # Text content delta
                     chunk_text = getattr(delta, "text", "")
                     state.content += chunk_text
 
+                    if chunk_text:
+                        return self._build_generic_chunk(
+                            text=chunk_text,
+                            tool_use=None,
+                            is_finished=False,
+                            finish_reason=None,
+                            index=0,
+                            usage=self._build_usage_dict(state)
+                        )
+
+                # Tool arguments delta
                 elif delta_type == "input_json_delta":
-                    # Tool input delta - Anthropic streams the "input" field as JSON
                     partial_json = getattr(delta, "partial_json", "")
-                    idx = state.current_block_index
 
-                    if idx in state.tool_calls:
-                        state.tool_calls[idx].arguments += partial_json
+                    if event_index in state.tool_calls:
+                        state.tool_calls[event_index].arguments += partial_json
+                        openai_index = state.tool_map.get(event_index, 0)
 
-                        # Return delta with partial arguments
-                        tool_use = [{
-                            "index": idx,
-                            "id": state.tool_calls[idx].id,
+                        log(f"Tool Delta: Anthropic[{event_index}] -> OpenAI[{openai_index}]",
+                            partial=partial_json[:50])
+
+                        # FIXED: Single dict with function.arguments delta
+                        # id and name can be None for delta chunks
+                        tool_use = {
+                            "id": None,
                             "type": "function",
                             "function": {
-                                "name": "",  # Name already sent
-                                "arguments": partial_json  # Only the delta
-                            }
-                        }]
+                                "name": None,
+                                "arguments": partial_json
+                            },
+                            "index": openai_index
+                        }
 
-            if chunk_text or tool_use:
-                return self._build_generic_chunk(
-                    text=chunk_text,
-                    tool_use=tool_use,
-                    is_finished=False,
-                    finish_reason=None,
-                    index=0,
-                    usage=self._build_usage_dict(state)
-                )
+                        return self._build_generic_chunk(
+                            text="",
+                            tool_use=tool_use,
+                            is_finished=False,
+                            finish_reason=None,
+                            index=0,
+                            usage=self._build_usage_dict(state)
+                        )
+
             return None
 
+        # === CONTENT BLOCK STOP ===
         elif event_type == "content_block_stop":
-            # Block finished, no chunk needed
+            log("Block Stop", index=getattr(event, "index", -1))
             return None
 
+        # === MESSAGE DELTA (finish reason + final usage) ===
         elif event_type == "message_delta":
-            # Contains final usage and stop_reason
             delta = getattr(event, "delta", None)
             usage = getattr(event, "usage", None)
 
@@ -706,22 +743,27 @@ class ZAIProvider(CustomLLM):
                 stop_reason = getattr(delta, "stop_reason", None)
                 if stop_reason:
                     state.finish_reason = self._convert_stop_reason(stop_reason)
-                    finish_reason = state.finish_reason
+                    log("Message Delta Stop", reason=stop_reason, converted=state.finish_reason)
 
             if usage:
                 state.output_tokens = getattr(usage, "output_tokens", 0)
                 state.input_tokens = getattr(usage, "input_tokens", state.input_tokens)
 
-            return self._build_generic_chunk(
-                text="",
-                tool_use=None,
-                is_finished=True,
-                finish_reason=finish_reason,
-                index=0,
-                usage=self._build_usage_dict(state)
-            )
+            # Only emit if we have a finish reason
+            if state.finish_reason:
+                return self._build_generic_chunk(
+                    text="",
+                    tool_use=None,
+                    is_finished=True,
+                    finish_reason=state.finish_reason,
+                    index=0,
+                    usage=self._build_usage_dict(state)
+                )
+            return None
 
+        # === MESSAGE STOP ===
         elif event_type == "message_stop":
+            log("Message Stop", final_reason=state.finish_reason)
             return self._build_generic_chunk(
                 text="",
                 tool_use=None,
@@ -744,21 +786,26 @@ class ZAIProvider(CustomLLM):
     def _build_generic_chunk(
         self,
         text: str,
-        tool_use: Optional[List[Dict]],
+        tool_use: Optional[Dict[str, Any]],  # CHANGED: Single dict, not List
         is_finished: bool,
         finish_reason: Optional[str],
         index: int,
         usage: Dict[str, int]
     ) -> GenericStreamingChunk:
-        """Build a GenericStreamingChunk"""
-        return {
+        """Build a GenericStreamingChunk with proper tool_use format for LiteLLM"""
+        chunk: GenericStreamingChunk = {
             "text": text,
             "is_finished": is_finished,
             "finish_reason": finish_reason,
             "index": index,
-            "tool_use": tool_use,
             "usage": usage
         }
+
+        # LiteLLM expects tool_use as single ChatCompletionToolCallChunk, not a list!
+        if tool_use is not None:
+            chunk["tool_use"] = tool_use
+
+        return chunk
 
     # =========================================================================
     # ALLOWED PARAMETERS
@@ -1286,175 +1333,13 @@ def setup_zai_provider(
 
     litellm.custom_provider_map.append({
         "provider": provider_name,
-        "custom_handler": provider
+        "custom_handler": provider,
+
     })
 
     print(f"✅ Registered Z.AI provider as '{provider_name}' with base_url: {base_url or ZAI_BASE_URL}")
     return provider
 
-
-# =============================================================================
-# UTILITY FUNCTIONS FOR TOOL HANDLING
-# =============================================================================
-
-def extract_tool_calls_from_response(response: ModelResponse) -> List[Dict[str, Any]]:
-    """
-    Extract tool calls from a ModelResponse in a standardized format
-
-    Returns list of dicts with: id, name, arguments (as dict)
-    """
-    if not response.choices:
-        return []
-
-    msg = response.choices[0].message
-    if not msg.tool_calls:
-        return []
-
-    result = []
-    for tc in msg.tool_calls:
-        func = tc.get("function", {}) if isinstance(tc, dict) else tc.function
-        args_str = func.get("arguments", "{}") if isinstance(func, dict) else func.arguments
-
-        result.append({
-            "id": tc.get("id") if isinstance(tc, dict) else tc.id,
-            "name": func.get("name") if isinstance(func, dict) else func.name,
-            "arguments": json.loads(args_str) if isinstance(args_str, str) else args_str
-        })
-
-    return result
-
-
-def build_tool_result_message(tool_call_id: str, content: Any) -> Dict[str, Any]:
-    """
-    Build a tool result message in OpenAI format
-
-    Args:
-        tool_call_id: The ID from the tool call
-        content: The result (will be JSON-encoded if not a string)
-
-    Returns:
-        Message dict ready to append to conversation
-    """
-    if not isinstance(content, str):
-        content = json.dumps(content)
-
-    return {
-        "role": "tool",
-        "tool_call_id": tool_call_id,
-        "content": content
-    }
-
-
-def build_assistant_message_with_tool_calls(
-    content: Optional[str],
-    tool_calls: List[Dict[str, Any]]
-) -> Dict[str, Any]:
-    """
-    Build an assistant message with tool calls for conversation history
-
-    Args:
-        content: Text content (can be None)
-        tool_calls: List of tool calls from extract_tool_calls_from_response
-
-    Returns:
-        Message dict ready to append to conversation
-    """
-    formatted_tool_calls = []
-    for tc in tool_calls:
-        formatted_tool_calls.append({
-            "id": tc["id"],
-            "type": "function",
-            "function": {
-                "name": tc["name"],
-                "arguments": json.dumps(tc["arguments"]) if isinstance(tc["arguments"], dict) else tc["arguments"]
-            }
-        })
-
-    return {
-        "role": "assistant",
-        "content": content,
-        "tool_calls": formatted_tool_calls
-    }
-
-
-async def run_tool_calling_loop(
-    messages: List[Dict[str, Any]],
-    tools: List[Dict[str, Any]],
-    tool_executor: callable,
-    model: str = "zai/GLM-4.7",
-    max_iterations: int = 10,
-    **kwargs
-) -> tuple[str, List[Dict[str, Any]]]:
-    """
-    Run a complete tool calling loop until the model returns a final response
-
-    Args:
-        messages: Initial conversation messages
-        tools: Tool definitions (OpenAI format)
-        tool_executor: Async function(name, arguments) -> result
-        model: Model to use
-        max_iterations: Maximum tool call iterations
-        **kwargs: Additional parameters for litellm.acompletion
-
-    Returns:
-        (final_content, updated_messages)
-
-    Example:
-        async def execute_tool(name, args):
-            if name == "get_weather":
-                return {"temperature": 20, "condition": "sunny"}
-            return "Unknown tool"
-
-        content, messages = await run_tool_calling_loop(
-            messages=[{"role": "user", "content": "What's the weather?"}],
-            tools=[...],
-            tool_executor=execute_tool
-        )
-    """
-    conversation = messages.copy()
-    iteration = 0
-
-    while iteration < max_iterations:
-        iteration += 1
-
-        response = await litellm.acompletion(
-            model=model,
-            messages=conversation,
-            tools=tools,
-            tool_choice="auto",
-            **kwargs
-        )
-
-        choice = response.choices[0]
-        msg = choice.message
-        finish_reason = choice.finish_reason
-
-        # Check if we have tool calls
-        if finish_reason == "tool_calls" or msg.tool_calls:
-            # Extract tool calls
-            tool_calls = extract_tool_calls_from_response(response)
-
-            # Add assistant message with tool calls to conversation
-            conversation.append(build_assistant_message_with_tool_calls(
-                content=msg.content,
-                tool_calls=tool_calls
-            ))
-
-            # Execute each tool and add results
-            for tc in tool_calls:
-                try:
-                    result = await tool_executor(tc["name"], tc["arguments"])
-                except Exception as e:
-                    result = f"Error executing {tc['name']}: {str(e)}"
-
-                conversation.append(build_tool_result_message(tc["id"], result))
-
-        else:
-            # No tool calls - return final response
-            return msg.content or "", conversation
-
-    # Max iterations reached
-    return "Max tool calling iterations reached", conversation
 
 
 class StreamingToolCallAccumulator:
@@ -1545,10 +1430,10 @@ if __name__ == "__main__":
     print("=" * 60)
 
     # Setup provider with debug enabled
-    provider = setup_zai_provider(debug=True)
+    provider = setup_zai_provider(debug=False)
 
     # Test model
-    TEST_MODEL = "zai/GLM-4.7"
+    TEST_MODEL = "zglm/GLM-4.7"
 
     # Tool definitions in different formats
     tools_openai = [
@@ -1599,91 +1484,168 @@ if __name__ == "__main__":
         }
     ]
 
-    # === Test 0: Direct Provider Test (bypass LiteLLM) ===
-    print("\n📝 Test 0: Direct Provider Test (bypass LiteLLM)")
-    print("-" * 40)
+    async def test():
+        # === Test 0: Direct Provider Test (bypass LiteLLM) ===
+        if False:
+            print("\n📝 Test 0: Direct Provider Test (bypass LiteLLM)")
+            print("-" * 40)
 
-    try:
-        response = provider.completion(
-            model=TEST_MODEL,
+            try:
+                response = await provider.acompletion(
+                    model=TEST_MODEL,
+                    messages=[{"role": "user", "content": "What's the weather in Berlin?"}],
+                    tools=tools_anthropic,
+                    tool_choice={"type": "auto"},
+                    max_tokens=200
+                )
+                msg = response.choices[0].message
+                print(f"✅ Content: {msg.content}")
+                print(f"   Tool calls: {msg.tool_calls}")
+                print(f"   Finish reason: {response.choices[0].finish_reason}")
+            except Exception as e:
+                print(f"❌ Error: {e}")
+                import traceback
+                traceback.print_exc()
+
+            # === Test 1: Simple completion ===
+            print("\n📝 Test 1: Simple Completion (via LiteLLM)")
+            print("-" * 40)
+
+            try:
+                response = await litellm.acompletion(
+                    model=TEST_MODEL,
+                    messages=[{"role": "user", "content": "Say 'Hello from Z.AI!' in exactly 5 words."}],
+                    max_tokens=50
+                )
+                print(f"✅ Response: {response.choices[0].message.content}")
+                print(f"   Usage: {response.usage}")
+            except Exception as e:
+                print(f"❌ Error: {e}")
+
+            # === Test 2: Tool Calling via LiteLLM ===
+            print("\n📝 Test 2: Tool Calling via LiteLLM (OpenAI format)")
+            print("-" * 40)
+
+            try:
+                response = await litellm.acompletion(
+                    model=TEST_MODEL,
+                    messages=[{"role": "user", "content": "What's the weather like in Munich?"}],
+                    tools=tools_openai,
+                    tool_choice="auto",
+                    max_tokens=200
+                )
+
+                msg = response.choices[0].message
+                print(f"✅ Content: {msg.content}")
+                print(f"   Tool calls: {msg.tool_calls}")
+                print(f"   Finish reason: {response.choices[0].finish_reason}")
+            except Exception as e:
+                print(f"❌ Error: {e}")
+                import traceback
+                traceback.print_exc()
+
+            # === Test 3: Direct Provider with different tool formats ===
+            print("\n📝 Test 3: Direct Provider - Flat format tools")
+            print("-" * 40)
+
+            try:
+                response = await provider.acompletion(
+                    model=TEST_MODEL,
+                    messages=[{"role": "user", "content": "What's the weather in Paris?"}],
+                    tools=tools_flat,
+                    tool_choice="auto",
+                    max_tokens=200
+                )
+                msg = response.choices[0].message
+                print(f"✅ Content: {msg.content}")
+                print(f"   Tool calls: {msg.tool_calls}")
+            except Exception as e:
+                print(f"❌ Error: {e}")
+
+            # === Test 4: Tool conversion verification ===
+            print("\n📝 Test 4: Tool Format Conversion")
+            print("-" * 40)
+
+            print("OpenAI format input:")
+            print(f"  {json.dumps(tools_openai[0], indent=2)[:150]}...")
+            converted = convert_tools_to_anthropic(tools_openai)
+            print("\nConverted to Anthropic:")
+            print(f"  {json.dumps(converted[0], indent=2)[:200]}...")
+
+        # in FlowAgent test
+        # === Test 5: Streaming with tool calls ===
+        from toolboxv2 import get_app
+        from toolboxv2.mods.isaa.base.Agent.flow_agent import FlowAgent
+        app = get_app()
+        isaa = app.get_mod("isaa")
+        test_agent: FlowAgent = await isaa.get_agent("self-test")
+        test_agent.amd.fast_llm_model = TEST_MODEL
+        test_agent.amd.complex_llm_model = TEST_MODEL
+        test_agent.add_tool(lambda location, unit="celsius": f"Current weather in {location} is 25°C", "get_weather", "Get the current weather for a location")
+
+        print("\n📝 Test 5: Non-Streaming with tool calls")
+        response = await test_agent.a_run_llm_completion(
             messages=[{"role": "user", "content": "What's the weather in Berlin?"}],
-            tools=tools_anthropic,
-            tool_choice={"type": "auto"},
-            max_tokens=200
-        )
-        msg = response.choices[0].message
-        print(f"✅ Content: {msg.content}")
-        print(f"   Tool calls: {msg.tool_calls}")
-        print(f"   Finish reason: {response.choices[0].finish_reason}")
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
-
-    # === Test 1: Simple completion ===
-    print("\n📝 Test 1: Simple Completion (via LiteLLM)")
-    print("-" * 40)
-
-    try:
-        response = litellm.completion(
-            model=TEST_MODEL,
-            messages=[{"role": "user", "content": "Say 'Hello from Z.AI!' in exactly 5 words."}],
-            max_tokens=50
-        )
-        print(f"✅ Response: {response.choices[0].message.content}")
-        print(f"   Usage: {response.usage}")
-    except Exception as e:
-        print(f"❌ Error: {e}")
-
-    # === Test 2: Tool Calling via LiteLLM ===
-    print("\n📝 Test 2: Tool Calling via LiteLLM (OpenAI format)")
-    print("-" * 40)
-
-    try:
-        response = litellm.completion(
-            model=TEST_MODEL,
-            messages=[{"role": "user", "content": "What's the weather like in Munich?"}],
             tools=tools_openai,
             tool_choice="auto",
-            max_tokens=200
+            max_tokens=200,
+            stream=False,
+            get_response_message=True,
+            with_context=False,
         )
+        print(f"✅ Content: {response}")
 
-        msg = response.choices[0].message
-        print(f"✅ Content: {msg.content}")
-        print(f"   Tool calls: {msg.tool_calls}")
-        print(f"   Finish reason: {response.choices[0].finish_reason}")
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
-
-    # === Test 3: Direct Provider with different tool formats ===
-    print("\n📝 Test 3: Direct Provider - Flat format tools")
-    print("-" * 40)
-
-    try:
-        response = provider.completion(
-            model=TEST_MODEL,
-            messages=[{"role": "user", "content": "What's the weather in Paris?"}],
-            tools=tools_flat,
+        print("\n📝 Test 5.5: Streaming with tool calls")
+        response = await test_agent.a_run_llm_completion(
+            messages=[{"role": "user", "content": "What's the weather in Berlin?"}],
+            tools=tools_openai,
             tool_choice="auto",
-            max_tokens=200
+            max_tokens=200,
+            stream=True,
+            get_response_message=True,
+            with_context=False,
         )
-        msg = response.choices[0].message
-        print(f"✅ Content: {msg.content}")
-        print(f"   Tool calls: {msg.tool_calls}")
-    except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"✅ Content: {response}")
 
-    # === Test 4: Tool conversion verification ===
-    print("\n📝 Test 4: Tool Format Conversion")
-    print("-" * 40)
+        # === Test 6: Streaming with tool calls ===
 
-    print("OpenAI format input:")
-    print(f"  {json.dumps(tools_openai[0], indent=2)[:150]}...")
-    converted = convert_tools_to_anthropic(tools_openai)
-    print("\nConverted to Anthropic:")
-    print(f"  {json.dumps(converted[0], indent=2)[:200]}...")
+        print("\n📝 Test 5: Streaming with tool calls")
+        async for chunk in test_agent.a_stream_verbose("What's the weather in Berlin? nutze load tools um tas tool zu laden und danach das tool zu nutzen."):
+            print(chunk, end="")
 
-    print("\n" + "=" * 60)
-    print("✅ All tests completed!")
+        # === Test 7: Agent run with tool calls ===
+        print("\n📝 Test 6: Agent run with tool calls")
+        response = await test_agent.a_run(
+            query="What's the weather in Berlin?",
+            session_id="tool-test-custom-glm-provider",
+            user_id="default"
+        )
+
+        print(f"✅ Content: {response}")
+
+        print("\n" + "=" * 60)
+        print("✅ All tests completed!")
+
+    #asyncio.run(test())
+
+    for model in ["zglm/GLM-4.7", "zglm/GLM-4.7-flash",  "zglm/glm-4.6", "zglm/glm-4.5", "zglm/glm-4.6v"]:
+        try:
+            start_time = time.perf_counter()
+            response = provider.completion(
+                model=model,
+                messages=[{"role": "user", "content": "What's the weather in Berlin?"}],
+                tools=tools_anthropic,
+                tool_choice={"type": "auto"},
+                max_tokens=200
+            )
+            msg = response.choices[0].message
+            print(f"time: {time.perf_counter() - start_time:.2f}")
+            print(f"✅ Content {model}: {msg.content}")
+            print(f"   Tool calls: {msg.tool_calls}")
+            print(f"   Finish reason: {response.choices[0].finish_reason}")
+        except Exception as e:
+            print(f"❌ Error: {model} {e}")
+            import traceback
+            traceback.print_exc()
+
+

@@ -22,6 +22,14 @@ const WsManager = {
             return;
         }
 
+        const token = TB.state.get('user.token');
+        if (token) {
+            options.context = {
+                ...options.context,
+                session_token: token // Token in den Kontext legen
+            };
+        }
+
         this.disconnect();
         this.url = url;
 

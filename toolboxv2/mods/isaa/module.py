@@ -302,13 +302,34 @@ class Tools(MainTool):
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=None, color=self.color, on_exit=self.on_exit)
 
+
         from toolboxv2.mods.isaa.extras.web_helper.web_search import web_search
 
         async def web_search_tool(query: str) -> str:
             res = web_search(query)
             return await self.mas_text_summaries(str(res), min_length=12000, ref=query)
 
-        self.web_search = web_search_tool
+        # advanced web search tool with dorks
+
+        from toolboxv2.mods.isaa.extras.web_helper.web_agent import quick_search
+
+        # top 5 dorking keys site, filetype, inurl, intitle, exclude
+
+        async def advanced_web_search_tool(query: str, dork_kwargs: dict[str, str]=None) -> str:
+            """
+            🔎 Web-Suche mit Google Dorks Support.
+
+            Args:
+                query: Suchbegriff
+                dork_kwargs: Google Dork Parameter (site=, filetype=, etc.)
+
+            Returns:
+                Suchergebnisse mit Titel, URL, Snippet
+            """
+            results = await quick_search(query, **dork_kwargs)
+            return str(results)
+
+        self.web_search = advanced_web_search_tool # web_search_tool
         self.shell_tool_function = shell_tool_function
 
         self.print(f"Start {self.spec}.isaa")

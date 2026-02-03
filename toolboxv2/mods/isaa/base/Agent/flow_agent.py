@@ -1076,6 +1076,7 @@ class FlowAgent:
         execution_id: str | None = None,
         human_online: bool = False,
         max_iterations: int = 15,
+        user_lightning_model: bool | None = None,
         **kwargs,
     ) -> AsyncGenerator[dict, None]:
         """
@@ -1117,7 +1118,7 @@ class FlowAgent:
 
             # Get stream generator
             stream_func, ctx = await engine.execute_stream(
-                query=query, session_id=session_id, max_iterations=max_iterations, ctx=ctx
+                query=query, session_id=session_id, max_iterations=max_iterations, ctx=ctx, model= os.getenv("BLITZMODEL") if user_lightning_model else None,
             )
 
             # Yield all chunks

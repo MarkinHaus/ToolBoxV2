@@ -1768,6 +1768,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         session_id: str,
         max_iterations: int = 25,
         ctx: "ExecutionContext | None" = None,
+        model=None,
     ) -> tuple[Callable, ExecutionContext]:
         """
         Initialize execution and return stream generator + context.
@@ -1854,6 +1855,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                     tools=tool_definitions if tool_definitions else None,
                     stream=True,
                     true_stream=True,
+                    model = model
                 )
 
                 if asyncio.iscoroutine(stream_response):

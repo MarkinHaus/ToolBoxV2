@@ -2143,6 +2143,30 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                         'onchange="updateBgColor(\\'theme_bg_light\\', this.value)"></div>' +
             '</div></div>';
 
+        // Background Mode & Image Selection
+        var currentBgMode = (currentUser && currentUser.settings && currentUser.settings.theme_background_mode) ? currentUser.settings.theme_background_mode : '3d';
+        var currentBgUrl = (currentUser && currentUser.settings && currentUser.settings.theme_background_url) ? currentUser.settings.theme_background_url : '';
+
+        html += '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">wallpaper_slideshow</span>Hintergrund-Stil</h3>' +
+            '<p class="text-sm text-muted mb-4">Wählen Sie zwischen der 3D-Animation, einer flachen Farbe oder einem eigenen Bild/GIF.</p>' +
+            '<div class="settings-section">' +
+                '<div class="setting-item"><div class="setting-info">' +
+                    '<div class="setting-label">Modus</div>' +
+                    '<div class="setting-description">Art des Hintergrunds</div></div>' +
+                    '<select class="tb-input" style="width:auto; margin-bottom:0;" onchange="updateBackgroundMode(this.value)">' +
+                        '<option value="3d" ' + (currentBgMode === '3d' ? 'selected' : '') + '>3D Animation</option>' +
+                        '<option value="color" ' + (currentBgMode === 'color' ? 'selected' : '') + '>Nur Farbe</option>' +
+                        '<option value="image" ' + (currentBgMode === 'image' ? 'selected' : '') + '>Bild / GIF</option>' +
+                    '</select></div>' +
+
+                '<div id="bg-url-container" class="setting-item" style="display:' + (currentBgMode === 'image' ? 'flex' : 'none') + ';"><div class="setting-info">' +
+                    '<div class="setting-label">Bild URL</div>' +
+                    '<div class="setting-description">Link zu Bild oder GIF</div></div>' +
+                    '<input type="text" class="tb-input" style="width:50%; margin-bottom:0;" placeholder="https://example.com/image.gif" ' +
+                        'value="' + TB.utils.escapeHtml(currentBgUrl) + '" onchange="updateBackgroundUrl(this.value)"></div>' +
+            '</div></div>';
+
         var fontScale = (currentUser && currentUser.settings && currentUser.settings.font_scale) ? currentUser.settings.font_scale : 100;
         html += '<div class="dashboard-card">' +
             '<h3><span class="material-symbols-outlined">format_size</span>Schriftgröße</h3>' +
@@ -2210,6 +2234,60 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
         updateSetting(key, value);
     };
 
+
+    window.updateBackgroundMode = function(mode) {
+        // Toggle URL input visibility
+        var urlContainer = document.getElementById('bg-url-container');
+        if (urlContainer) {
+            urlContainer.style.display = (mode === 'image') ? 'flex' : 'none';
+        }
+
+        // Apply visual changes immediately
+        var canvas = document.querySelector('canvas');
+        // Assuming the 3D canvas is the first/main canvas on body or in a specific container
+
+        if (mode === '3d') {
+            if (canvas) {
+                canvas.style.display = 'block';
+                canvas.style.opacity = '1';
+            }
+            if (TB.graphics && TB.graphics.resume) TB.graphics.resume();
+            document.body.style.backgroundImage = '';
+        } else {
+            if (canvas) {
+                // We hide the canvas to show the color/image behind it
+                canvas.style.opacity = '0';
+                setTimeout(function() { if(canvas.style.opacity === '0') canvas.style.display = 'none'; }, 500);
+            }
+            if (TB.graphics && TB.graphics.pause) TB.graphics.pause();
+
+            if (mode === 'image') {
+                var url = (currentUser && currentUser.settings && currentUser.settings.theme_background_url) ? currentUser.settings.theme_background_url : '';
+                if (url) document.body.style.backgroundImage = 'url("' + url + '")';
+                document.body.style.backgroundSize = 'cover';
+                document.body.style.backgroundPosition = 'center';
+                document.body.style.backgroundAttachment = 'fixed';
+            } else {
+                document.body.style.backgroundImage = '';
+            }
+        }
+
+        updateSetting('theme_background_mode', mode);
+    };
+
+    window.updateBackgroundUrl = function(url) {
+        if (!currentUser.settings) currentUser.settings = {};
+        currentUser.settings.theme_background_url = url;
+
+        // Apply immediately if in image mode
+        var currentMode = currentUser.settings.theme_background_mode || '3d';
+        if (currentMode === 'image') {
+            document.body.style.backgroundImage = 'url("' + url + '")';
+        }
+
+        updateSetting('theme_background_url', url);
+    };
+
     window.resetThemeSettings = async function() {
         // Reset to defaults
         var defaults = {
@@ -2217,7 +2295,9 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
             chroma_primary: 0.18,
             theme_bg_sun: '#ffffff',
             theme_bg_light: '#537FE7',
-            font_scale: 100
+            font_scale: 100,
+            theme_background_mode: '3d',
+            theme_background_url: ''
         };
 
         // Apply defaults
@@ -2226,6 +2306,12 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
         document.documentElement.style.setProperty('--theme-bg-sun', defaults.theme_bg_sun);
         document.documentElement.style.setProperty('--theme-bg-light', defaults.theme_bg_light);
         document.documentElement.style.fontSize = defaults.font_scale + '%';
+
+        // Reset Background
+        var canvas = document.querySelector('canvas');
+        if (canvas) { canvas.style.display = 'block'; canvas.style.opacity = '1'; }
+        if (TB.graphics && TB.graphics.resume) TB.graphics.resume();
+        document.body.style.backgroundImage = '';
 
         // Save all defaults
         var keys = Object.keys(defaults);

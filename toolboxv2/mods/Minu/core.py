@@ -902,11 +902,12 @@ def Badge(
     text: str,
     variant: str = "default",  # default, primary, success, warning, error
     className: str | None = None,
+    **props,
 ) -> Component:
     """Small badge/tag component"""
     return Component(
         type=ComponentType.BADGE,
-        props={"text": text, "variant": variant},
+        props={"text": text, "variant": variant, **props},
         className=className or f"badge badge-{variant}",
     )
 
@@ -1092,6 +1093,8 @@ class MinuView:
 
     # Shared Integration
     _shared_sections: Dict[str, SharedSection] = None
+
+    on_mount: Callable | None = None
 
     def __init__(self, view_id: str | None = None):
         self._view_id = view_id or f"view-{uuid.uuid4().hex[:8]}"
@@ -1449,6 +1452,8 @@ class MinuSession:
                 await result
 
     async def send_full_render(self, view: MinuView):
+        if hasattr(view, 'on_mount') and callable(view.on_mount):
+            await view.on_mount()
         message = {"type": "render", "sessionId": self.session_id, "view": view.to_dict()}
         await self._send(json.dumps(message, cls=MinuJSONEncoder))
 

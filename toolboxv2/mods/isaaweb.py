@@ -8,15 +8,18 @@ Features:
 - Direct a_stream integration with structured rendering
 - Audio I/O & File Management
 """
-
-import asyncio
-import base64
 import json
-import os
-import traceback
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+
+# ISAA & System Imports
+try:
+    from toolboxv2.mods.isaa.base.Agent.flow_agent import FlowAgent
+    from toolboxv2.mods.isaa.base.Agent.vfs_v2 import VirtualFileSystemV2, FileBackingType
+    from toolboxv2.mods.isaa.base.audio_io.audioIo import AudioStreamPlayer
+    # Versuche Audio-Input (Server-Side)
+    import sounddevice as sd
+    import numpy as np
+except ImportError:
+    pass  # Graceful degradation if deps missing
 
 # Toolbox & Minu Imports
 from toolboxv2 import App, RequestData, Result, get_app
@@ -24,1025 +27,729 @@ from toolboxv2.mods.Minu.core import (
     MinuView, MinuSession, State, Component, ComponentType,
     Card, Text, Heading, Button, Input, Row, Column,
     Grid, Spacer, Divider, Icon, Badge, Modal, Form,
-    Switch, Select, Textarea, Custom, Dynamic, ReactiveState
+    Switch, Select, Textarea, Custom, Dynamic, ReactiveState, MinuJSONEncoder, ComponentStyle
 )
 # ISAA Imports
 from toolboxv2.mods.isaa.base.Agent.vfs_v2 import FileBackingType
-from toolboxv2.flows.cli_v4 import ISAA_Host, AgentInfo, PTColors
+import toolboxv2.flows.cli_v4 as cli_mod
 
 # Module Metadata
 Name = 'ISAAWeb'
 export = get_app(f"{Name}.Export").tb
 version = '1.0.0'
 
-# =============================================================================
-# CUSTOM CSS & JS (The "Frontend")
-# =============================================================================
+"""
+ISAA HQ - Cyberpunk Minimalist Web UI
+=====================================
+A full-screen, sliding-panel interface for ISAA Agents.
+Integrates Chat (Stream), VFS (Editor), and System Config.
 
-SHARED_STYLES = """
+Design: GitHub Dark Dimmed / Cyberpunk
+Stack: Minu, FlowAgent, ToolBoxV2
+"""
+# ============================================================================
+#  STYLES & THEME (Cyberpunk / GitHub Dark Dimmed)
+# ============================================================================
+
+GLOBAL_CSS = """
 <style>
-    /* 1. LAYOUT RESET & BREAKOUT */
-    /* Zwingt den Minu-Container über das Standard-Toolbox-Layout */
-    #minu-root {
-        position: fixed !important;
-        top: 0;
-        left: 0;
-        width: 100vw !important;
-        height: 100vh !important;
-        max-width: none !important;
-        padding: 0 !important;
-        margin: 0 !important;
-        z-index: 100; /* Über dem Standard-Hintergrund, unter Modals */
-        background-color: var(--bg-color);
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-    }
-
-    /* Verstecke/Deaktiviere Standard-Container-Styles der Toolbox für diese View */
-    .main-content, .content-wrapper {
-        background: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
-        padding: 0 !important;
-        margin: 0 !important;
-        width: 100vw !important;
-        max-width: 100vw !important;
-    }
-
-    /* 2. VARIABLES */
     :root {
-        --bg-color: #0d1117; /* GitHub Dark Dimmed Style */
-        --panel-bg: #161b22;
-        --input-bg: #0d1117;
+        --bg-dark: #0d1117;
+        --bg-panel: rgba(22, 27, 34, 0.85);
+        --border-color: #30363d;
         --text-primary: #c9d1d9;
         --text-secondary: #8b949e;
-        --accent: #238636;       /* Green Accent */
+        --accent-green: #238636;
         --accent-hover: #2ea043;
-        --border: #30363d;
-        --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+        --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+        --glass-blur: blur(12px);
     }
 
-    /* 3. FULL SCREEN PANELS */
-    .isaa-panel {
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        padding: 60px 80px 80px 80px; /* Platz für Header/Footer/Nav */
-        box-sizing: border-box;
-        transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s ease;
-        opacity: 0;
-        pointer-events: none;
-        transform: scale(0.98) translateY(10px);
-        display: flex;
-        flex-direction: column;
-        background-color: var(--bg-color);
-        z-index: 1;
+    body, html {
+        margin: 0; padding: 0; overflow: hidden;
+        background-color: var(--bg-dark);
+        color: var(--text-primary);
+        font-family: system-ui, -apple-system, sans-serif;
     }
 
-    .isaa-panel.active {
-        opacity: 1;
-        pointer-events: all;
-        transform: scale(1) translateY(0);
-        z-index: 10;
+    #minu-root {
+    padding: 0 !important;
+    max-width: none !important;
+    margin: 0 !important;
+    height: 100vh;
+    width: 100vw;
+}
+
+
+    /* --- LAYOUT & SLIDER --- */
+   isaa-viewport, .isaa-slider, .isaa-panel {
+        gap: 0 !important;
     }
 
-    /* 4. NAVIGATION ARROWS (Hover Zones) */
-    .nav-arrow {
+    .isaa-viewport {
         position: fixed;
         top: 0;
-        bottom: 0;
-        width: 80px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 3rem;
-        color: var(--text-secondary);
-        cursor: pointer;
-        z-index: 1000;
-        opacity: 0;
-        transition: opacity 0.2s ease, background 0.3s ease;
-    }
-    .nav-arrow:hover {
-        opacity: 1;
-        color: var(--text-primary);
-    }
-    .nav-left {
         left: 0;
-        background: linear-gradient(90deg, rgba(0,0,0,0.8), transparent);
-    }
-    .nav-right {
-        right: 0;
-        background: linear-gradient(-90deg, rgba(0,0,0,0.8), transparent);
-    }
-
-    /* 5. CHAT STYLES */
-    .chat-container {
-        flex: 1;
-        overflow-y: auto;
-        padding: 1rem;
-        display: flex;
-        flex-direction: column;
-        gap: 1.5rem;
-        scroll-behavior: smooth;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        z-index: 100;
+        background: #0d1117; /* Fallback */
     }
 
-    .chat-input-area {
-        margin-top: auto; /* Push to bottom */
-        background: var(--panel-bg);
-        padding: 1rem;
-        border-radius: 16px;
-        border: 1px solid var(--border);
-        box-shadow: 0 -4px 20px rgba(0,0,0,0.2);
-        display: flex;
+    .isaa-slider {
+        display: flex !important; /* Sicherstellen, dass es Row bleibt */
+        flex-direction: row !important;
+        width: 300vw !important;
+        height: 100% !important;
+    }
+
+    .isaa-panel {
+        width: 100vw !important;
+        height: 100% !important;
+        flex-shrink: 0 !important; /* Verhindert das Zusammenquetschen der Panels */
+        display: flex !important;
+        justify-content: center;
         align-items: center;
-        gap: 1rem;
     }
 
-    .msg-bubble {
-        max-width: 85%;
-        line-height: 1.6;
-        font-size: 1rem;
-    }
-
-    .msg-user {
-        align-self: flex-end;
-        text-align: right;
-    }
-    .msg-user .content {
-        background: var(--accent);
-        color: white;
-        padding: 12px 18px;
-        border-radius: 18px 18px 4px 18px;
-        display: inline-block;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-    }
-
-    .msg-agent {
-        align-self: flex-start;
-        width: 100%;
-    }
-    .msg-agent .content {
-        color: var(--text-primary);
-        padding: 0 1rem;
-    }
-
-    /* 6. VFS & CODE EDITOR */
-    .vfs-container {
-        display: flex;
-        height: 100%;
-        gap: 1rem;
-        overflow: hidden;
-    }
-
-    .vfs-tree {
-        width: 280px;
-        min-width: 280px;
-        background: var(--panel-bg);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 10px;
-        overflow-y: auto;
-        font-size: 0.9rem;
-    }
-
-    .vfs-editor {
-        flex: 1;
-        background: var(--input-bg);
-        border: 1px solid var(--border);
-        border-radius: 8px;
+    .panel-content {
+        width: 95% !important;
+        max-width: 1400px !important;
+        height: 90vh !important;
+        background: var(--bg-panel);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        backdrop-filter: var(--glass-blur);
         display: flex;
         flex-direction: column;
         overflow: hidden;
+        box-shadow: 0 20px 50px rgba(0,0,0,0.5);
     }
 
+    /* --- NAVIGATION ZONES --- */
+    .nav-zone {
+        position: fixed; top: 0; bottom: 0; width: 60px;
+        z-index: 200; display: flex; align-items: center; justify-content: center;
+        opacity: 0; transition: opacity 0.3s, background 0.3s;
+        cursor: pointer;
+    }
+    .nav-zone:hover { opacity: 1; background: linear-gradient(90deg, rgba(0,0,0,0.8), transparent); }
+    .nav-zone.left { left: 0; }
+    .nav-zone.right { right: 0; background: linear-gradient(-90deg, rgba(0,0,0,0.8), transparent); }
+    .nav-arrow { font-size: 2rem; color: var(--text-secondary); }
+
+    /* --- CHAT STYLES --- */
+    .chat-scroll-area {
+        flex: 1; overflow-y: auto; padding: 1.5rem;
+        display: flex; flex-direction: column; gap: 1rem;
+    }
+    .msg-row { display: flex; gap: 1rem; max-width: 100%; }
+    .msg-row.user { justify-content: flex-end; }
+    .msg-bubble {
+        padding: 0.75rem 1rem; border-radius: 8px;
+        max-width: 80%; line-height: 1.5;
+        font-size: 0.95rem;
+    }
+    .msg-bubble.user { background: var(--accent-green); color: white; border-radius: 12px 12px 0 12px; }
+    .msg-bubble.ai { background: #21262d; border: 1px solid var(--border-color); border-radius: 12px 12px 12px 0; }
+    .msg-bubble pre { background: #0d1117; padding: 0.5rem; border-radius: 4px; overflow-x: auto; font-family: var(--font-mono); font-size: 0.85rem; }
+
+    .tool-log {
+        font-family: var(--font-mono); font-size: 0.8rem;
+        background: #0d1117; border-left: 2px solid var(--text-secondary);
+        padding: 0.5rem; margin-top: 0.5rem; color: var(--text-secondary);
+    }
+
+    /* --- EDITOR / VFS --- */
+    .vfs-container { display: flex; height: 100%; }
+    .vfs-tree { width: 250px; border-right: 1px solid var(--border-color); overflow-y: auto; padding: 1rem; background: rgba(0,0,0,0.2); }
+    .vfs-editor { flex: 1; display: flex; flex-direction: column; background: #0d1117; }
     .editor-textarea {
-        flex: 1;
-        width: 100%;
-        height: 100%;
-        background: transparent;
-        color: #e6edf3;
-        border: none;
-        padding: 1rem;
-        font-family: var(--font-mono);
-        font-size: 14px;
-        line-height: 1.5;
-        resize: none;
-        outline: none;
-        white-space: pre;
+        flex: 1; width: 100%; border: none; outline: none;
+        background: transparent; color: var(--text-primary);
+        padding: 1rem; font-family: var(--font-mono); line-height: 1.6; resize: none;
     }
 
-    /* 7. UTILITIES & OVERRIDES */
-    /* Ensure Minu Components behave */
-    .card { background: var(--panel-bg) !important; border: 1px solid var(--border) !important; }
-    input, select, textarea {
-        background: var(--input-bg) !important;
-        color: var(--text-primary) !important;
-        border: 1px solid var(--border) !important;
+    .tree-item {
+        padding: 4px 8px; cursor: pointer; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        display: flex; align-items: center; gap: 6px; font-size: 0.9rem;
     }
-    input:focus, select:focus, textarea:focus { border-color: var(--accent) !important; }
+    .tree-item:hover { background: rgba(255,255,255,0.05); }
+    .tree-item.active { background: rgba(35, 134, 54, 0.2); color: #fff; }
 
-    .btn-primary { background: var(--accent) !important; color: white !important; }
-    .btn-primary:hover { background: var(--accent-hover) !important; }
+    /* --- COMPONENTS --- */
+    .isaa-btn {
+        background: #21262d; border: 1px solid var(--border-color); color: var(--text-primary);
+        padding: 6px 12px; border-radius: 6px; cursor: pointer; transition: all 0.2s;
+        font-size: 0.9rem; display: flex; align-items: center; gap: 6px;
+    }
+    .isaa-btn:hover { background: #30363d; border-color: #8b949e; }
+    .isaa-btn.primary { background: var(--accent-green); border-color: rgba(255,255,255,0.1); color: white; }
+    .isaa-btn.primary:hover { background: var(--accent-hover); }
 
+    .isaa-input {
+        background: #0d1117; border: 1px solid var(--border-color); color: var(--text-primary);
+        padding: 8px 12px; border-radius: 6px; width: 100%; outline: none;
+    }
+    .isaa-input:focus { border-color: var(--text-secondary); }
+
+    /* --- UTILS --- */
+    .mono { font-family: var(--font-mono); }
+    .text-sm { font-size: 0.85rem; }
+    .text-muted { color: var(--text-secondary); }
+    .flex-center { display: flex; align-items: center; justify-content: center; }
     .w-full { width: 100%; }
-    .h-full { height: 100%; }
-    .flex { display: flex; }
-    .flex-col { flex-direction: column; }
-    .flex-1 { flex: 1; }
-    .gap-2 { gap: 0.5rem; }
-    .gap-4 { gap: 1rem; }
-    .items-center { align-items: center; }
-
-    /* Code Blocks */
-    pre {
-        background: #161b22;
-        padding: 1rem;
-        border-radius: 6px;
-        overflow-x: auto;
-        border: 1px solid var(--border);
-        font-family: var(--font-mono);
-        margin: 10px 0;
-    }
-
-    /* Tool Calls Style */
-    .tool-call {
-        font-family: var(--font-mono);
-        font-size: 0.85em;
-        color: var(--text-secondary);
-        border-left: 2px solid var(--border);
-        padding-left: 10px;
-        margin: 5px 0;
-    }
 
     /* Scrollbars */
-    ::-webkit-scrollbar { width: 10px; height: 10px; }
-    ::-webkit-scrollbar-track { background: var(--bg-color); }
-    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; border: 2px solid var(--bg-color); }
-    ::-webkit-scrollbar-thumb:hover { background: #555; }
-
-    /* Notification Toasts */
-    .notification-toast {
-        animation: slideIn 0.3s ease-out;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-    }
-    @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #484f58; }
 </style>
-
-<script>
-    // Force Layout Fix on Load
-    (function() {
-        const fixLayout = () => {
-            const root = document.getElementById('minu-root');
-            if(root) {
-                // Ensure parents don't constrain us
-                let p = root.parentElement;
-                while(p && p.tagName !== 'BODY') {
-                    p.style.padding = '0';
-                    p.style.margin = '0';
-                    p.style.maxWidth = 'none';
-                    p.style.width = '100%';
-                    p.style.height = '100%';
-                    p = p.parentElement;
-                }
-            }
-        };
-        setTimeout(fixLayout, 100);
-        setTimeout(fixLayout, 500);
-        setTimeout(fixLayout, 1000);
-
-        // Auto-scroll chat
-        const observer = new MutationObserver(() => {
-            const chat = document.querySelector('.chat-container');
-            if(chat) chat.scrollTop = chat.scrollHeight;
-        });
-        const target = document.getElementById('minu-root');
-        if(target) observer.observe(target, { childList: true, subtree: true });
-    })();
-
-    // ISAA Logic (Audio/Drop)
-    window.ISAA = {
-        recorder: null,
-        audioChunks: [],
-
-        startRecording: async () => {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                ISAA.recorder = new MediaRecorder(stream);
-                ISAA.audioChunks = [];
-
-                ISAA.recorder.ondataavailable = e => ISAA.audioChunks.push(e.data);
-                ISAA.recorder.onstop = ISAA.uploadAudio;
-
-                ISAA.recorder.start();
-                const btn = document.getElementById('mic-btn');
-                if(btn) btn.style.color = '#ef4444'; // Red recording state
-                return true;
-            } catch (e) {
-                console.error("Mic Error:", e);
-                return false;
-            }
-        },
-
-        stopRecording: () => {
-            if (ISAA.recorder && ISAA.recorder.state !== 'inactive') {
-                ISAA.recorder.stop();
-                const btn = document.getElementById('mic-btn');
-                if(btn) btn.style.color = ''; // Reset color
-            }
-        },
-
-        uploadAudio: async () => {
-            const blob = new Blob(ISAA.audioChunks, { type: 'audio/webm' });
-            const reader = new FileReader();
-            reader.readAsDataURL(blob);
-            reader.onloadend = () => {
-                const base64data = reader.result.split(',')[1];
-                window.TB.ui.sendMinuEvent('process_audio_upload', { audio_b64: base64data });
-            };
-        },
-
-        handleDrop: (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                ISAA.uploadFiles(files);
-            }
-        },
-
-        uploadFiles: async (files) => {
-            // Visual feedback
-            const dropZone = document.querySelector('.vfs-tree');
-            if(dropZone) dropZone.style.borderColor = 'var(--accent)';
-
-            for (let i = 0; i < files.length; i++) {
-                const file = files[i];
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    const content = e.target.result.split(',')[1];
-                    window.TB.ui.sendMinuEvent('vfs_upload_file', {
-                        name: file.name,
-                        content: content,
-                        is_binary: true
-                    });
-                };
-                reader.readAsDataURL(file);
-            }
-
-            setTimeout(() => {
-                if(dropZone) dropZone.style.borderColor = '';
-            }, 1000);
-        }
-    };
-
-    // Global Drag & Drop Listener for VFS
-    document.addEventListener('dragover', e => e.preventDefault());
-    document.addEventListener('drop', (e) => {
-        if(e.target.closest('.vfs-container')) {
-            ISAA.handleDrop(e);
-        }
-    });
-</script>
 """
-# =============================================================================
-# ISAA HOST WRAPPER (Web Adapter)
-# =============================================================================
 
-class WebISAAHost(ISAA_Host):
-    """Wraps ISAA_Host to redirect outputs to the Web UI State."""
 
-    def __init__(self, app_instance, view_ref: 'ISAAView'):
-        super().__init__(app_instance)
-        self.view = view_ref
+# ============================================================================
+#  HELPER COMPONENTS
+# ============================================================================
 
-    def print_to_ui(self, text: str, style: str = "info"):
-        """Redirects CLI prints to the UI's notification/log system."""
-        # Clean HTML/ANSI tags for simple text log, keep for HTML render
-        clean_text = text.replace("<", "&lt;").replace(">", "&gt;")
-        self.view.add_log_entry(clean_text, style)
+def IconBtn(icon_name, on_click=None, variant="default", tooltip="", style=None, **props):
+    if style is None:
+        style = {}
+    return Button(
+        "", icon=icon_name, on_click=on_click,
+        className=f"isaa-btn {variant}",
+        style={"padding": "6px", "justifyContent": "center", **style},
+        **props
+    )
 
-# =============================================================================
-# MAIN VIEW
-# =============================================================================
 
-class ISAAView(MinuView):
-    """
-    The Single Page Application for ISAA.
-    Manages 3 Full-Screen Panels: Chat, VFS, Config.
-    """
-    # UI State
-    active_panel = State("chat") # chat, vfs, config
-    panels_order = ["chat", "vfs", "config"]
+def CyberPanel(children, active_index, panel_index):
+    """Wrapper for one of the 3 main panels"""
+    # Logic: if active_index == panel_index, it's visible.
+    # But we rely on the slider logic for visibility.
+    return Custom(
+        html=f"""<div class="isaa-panel">
+            <div class="panel-content">
+                <!-- Content Injection Point -->
+                {children}
+            </div>
+        </div>"""
+    )
+
+
+# ============================================================================
+#  MAIN VIEW CLASS
+# ============================================================================
+
+# ============================================================================
+#  MAIN VIEW CLASS - IMPROVED
+# ============================================================================
+
+class IsaaHqView(MinuView):
+    # --- STATE ---
+    panel_index = State(0)  # 0=Chat, 1=VFS, 2=Config
 
     # Chat State
-    chat_history = State([]) # List of {role, content, type, ...}
-    current_input = State("")
+    messages = State([])
+    input_text = State("")
     is_streaming = State(False)
-    system_logs = State([]) # Notification list
 
     # VFS State
-    vfs_path = State("/")
     vfs_tree = State({})
-    current_file = State(None) # {path, content, is_dirty}
-    vfs_loading = State(False)
+    editor_content = State("")
+    editor_path = State(None)
+    editor_dirty = State(False)
 
-    # Config State
-    agent_list = State([])
-    session_list = State([])
-    skills_list = State([])
-    active_agent = State("self")
-
-    # Task Modal
-    show_tasks = State(False)
-    tasks_list = State([])
+    # System State
+    agent_name = State("self")
+    agent_status = State("Idle")
+    available_agents = State([])
+    session_id = State("default")
+    new_agent_name = State("")
 
     def __init__(self):
         super().__init__()
-        self.host = None # Initialized in on_mount
+        self.app = get_app()
+        self.isaa = self.app.get_mod("isaa")
 
     async def on_mount(self):
-        """Initialize the backend host system."""
-        app = get_app("isaa-host")
-        if not app:
-            # Fallback/Init if not running
-            app = self._app
+        """Initial data load"""
+        await self._refresh_agent_list()
+        await self._refresh_vfs_tree()
+        if not self.messages.value:
+            self.messages.value = [{
+                "role": "assistant",
+                "content": f"System online. Connected to **{self.agent_name.value}**."
+            }]
 
-        self.host = WebISAAHost(app, self)
-        # Initialize Self Agent (Async)
-        await self.host._init_self_agent()
-
-        # Sync Initial Data
-        await self.refresh_data()
-
-        # Add welcome message
-        self.chat_history.value = [{
-            "role": "assistant",
-            "content": f"**ISAA Host v{self.host.version} Online.**\nI am ready. Use the arrow zones to switch between VFS and Config.",
-            "type": "message"
-        }]
-
-    async def refresh_data(self):
-        """Syncs backend state to UI state."""
-        if not self.host: return
-
-        # Agents
-        agents = self.host.isaa_tools.config.get("agents-name-list", [])
-        self.agent_list.value = [
-            {"name": a, "info": self.host.agent_registry.get(a)}
-            for a in agents
-        ]
-        self.active_agent.value = self.host.active_agent_name
-
-        # Sessions
-        try:
-            agent = await self.host.isaa_tools.get_agent(self.host.active_agent_name)
-            self.session_list.value = list(agent.session_manager.sessions.keys())
-
-            # VFS Tree
-            session = agent.session_manager.get(self.host.active_session_id)
-            if session:
-                self.vfs_tree.value = session.vfs_ls(self.vfs_path.value, recursive=False)
-
-            # Skills
-            engine = agent._get_execution_engine()
-            self.skills_list.value = [
-                s.to_dict() for s in engine.skills_manager.skills.values()
-            ]
-
-        except Exception as e:
-            self.add_log_entry(f"Data sync error: {e}", "error")
-
-    # =========================================================================
-    # RENDERERS
-    # =========================================================================
+    # ========================================================================
+    #  RENDER LOGIC
+    # ========================================================================
 
     def render(self):
-        # Inject CSS/JS
-        return Column(
-            Custom(html=SHARED_STYLES),
+        # 1. CSS Injection
+        css_injection = Custom(html=GLOBAL_CSS)
 
-            # --- Navigation Overlays ---
-            Custom(html=f"""
-                <div class="nav-arrow nav-left" onclick="window.TB.ui.sendMinuEvent('nav_prev', {{}})"
-                     style="display: {'none' if self.active_panel.value == 'chat' else 'flex'}">
-                    ❮
-                </div>
-                <div class="nav-arrow nav-right" onclick="window.TB.ui.sendMinuEvent('nav_next', {{}})"
-                     style="display: {'none' if self.active_panel.value == 'config' else 'flex'}">
-                    ❯
-                </div>
-            """),
+        # 2. Slider Rendering Logic (wird durch Dynamic getriggert)
+        def render_slider():
+            # Berechne Transform basierend auf panel_index
+            offset = self.panel_index.value * -100
+            transform_str = f"translateX({offset}vw)"
 
-            # --- Notifications / Logs Overlay ---
-            self._render_notifications(),
-
-            # --- PANELS ---
-
-            # 1. Chat Panel
-            Column(
-                self._render_chat_panel(),
-                className=f"isaa-panel {'active' if self.active_panel.value == 'chat' else ''}",
-                id="panel-chat"
-            ),
-
-            # 2. VFS Panel
-            Column(
-                self._render_vfs_panel(),
-                className=f"isaa-panel {'active' if self.active_panel.value == 'vfs' else ''}",
-                id="panel-vfs"
-            ),
-
-            # 3. Config Panel
-            Column(
-                self._render_config_panel(),
-                className=f"isaa-panel {'active' if self.active_panel.value == 'config' else ''}",
-                id="panel-config"
-            ),
-
-            # --- Modals ---
-            self._render_task_modal(),
-
-            className="w-full h-full"
-        )
-
-    def _render_chat_panel(self):
-        return [
-            # Header
-            Row(
-                Icon("smart_toy", size="28", className="text-accent"),
-                Heading(f"{self.host.active_agent_name} @ {self.host.active_session_id}", level=3),
-                Spacer(),
-                Button("Tasks", icon="list", variant="ghost", on_click="toggle_tasks"),
-                className="mb-4 items-center"
-            ),
-
-            # Chat Area
-            Column(
-                *[self._render_message(msg) for msg in self.chat_history.value],
-                className="chat-container",
-                id="chat-scroll-target" # Target for auto-scroll
-            ),
-
-            # Input Area
-            Row(
-                Custom(html="""
-                    <button class="btn btn-ghost" id="mic-btn" onmousedown="ISAA.startRecording()" onmouseup="ISAA.stopRecording()">
-                        <span id="mic-status" class="material-symbols-outlined">mic</span>
-                    </button>
-                """),
-                Input(
-                    placeholder="Ask ISAA... (Supports #audio tag)",
-                    value=self.current_input.value,
-                    bind="current_input",
-                    on_submit="submit_message",
-                    className="flex-1 bg-transparent border-none text-white focus:ring-0"
+            return Row(
+                # Panel 0
+                Column(
+                    self._render_chat_header(),
+                    self._render_chat_area(),
+                    self._render_chat_input(),
+                    className="isaa-panel panel-content",
+                    gap="0", align="stretch"  # WICHTIG: Stretch damit Breite genutzt wird
                 ),
-                Button(
-                    "Send",
-                    icon="send",
-                    variant="primary",
-                    on_click="submit_message",
-                    disabled=self.is_streaming.value
+                # Panel 1
+                Column(
+                    self._render_vfs_panel(),
+                    className="isaa-panel panel-content",
+                    gap="0", align="stretch"
                 ),
-                className="chat-input-area items-center gap-2"
-            )
-        ]
-
-    def _render_message(self, msg):
-        """Renders a single chat message (User, Agent, Tool)."""
-        is_user = msg['role'] == 'user'
-        css_class = "msg-user" if is_user else "msg-agent"
-
-        content_ui = []
-
-        # Tool Calls (Collapsible)
-        if msg.get('tool_calls'):
-            for tc in msg['tool_calls']:
-                content_ui.append(
-                    Custom(html=f"""
-                        <div class="tool-call">
-                            🔧 <b>{tc['function']['name']}</b>
-                            <div class="text-xs opacity-70">{tc['function']['arguments'][:100]}...</div>
-                        </div>
-                    """)
+                # Panel 2
+                Column(
+                    self._render_config_panel(),
+                    className="isaa-panel panel-content",
+                    gap="0", align="stretch"
+                ),
+                className="isaa-slider",
+                gap="0",  # Keine Lücken zwischen den Panels!
+                style=ComponentStyle.from_str(
+                    f"transform: {transform_str}; display: flex; width: 300vw; transition: transform 0.5s ease-in-out;"
                 )
+            )
 
-        # Main Content
-        if msg.get('content'):
-            # Convert Markdown to HTML logic would go here ideally
-            # For now, simple text with preserved whitespace
-            formatted = msg['content'].replace("\n", "<br>")
-            content_ui.append(Custom(html=f"<div>{formatted}</div>"))
-
-        return Column(
-            Column(
-                *content_ui,
-                className="content"
-            ),
-            className=f"msg-bubble {css_class}"
+        # Der Haupt-Viewport
+        viewport = Component(
+            type=ComponentType.COLUMN,
+            className="isaa-viewport",
+            props={"gap":0},
+            children=[
+                Dynamic(render_fn=render_slider, bind=self.panel_index),
+                self._render_nav_overlays()
+            ]
         )
+
+        # Ganz oben: Ein Container ohne Abstände
+        return Column(
+            css_injection,
+            viewport,
+            gap="0",
+            align="stretch",
+            style=ComponentStyle.from_str("height: 100vh; width: 100vw; overflow: hidden;")
+        )
+
+    def _render_nav_overlays(self):
+        """Erzeugt die klickbaren Zonen links/rechts vom Viewport"""
+        zones = []
+
+        if self.panel_index.value > 0:
+            zones.append(Button(
+                "‹", on_click="nav_left",
+                className="nav-zone left"
+            ))
+
+        if self.panel_index.value < 2:
+            zones.append(Button(
+                "›", on_click="nav_right",
+                className="nav-zone right"
+            ))
+
+        return Row(*zones, className="nav-overlay-container", gap="0")
+
+    # --- CHAT RENDERING ---
+
+    def _render_chat_header(self):
+        status_color = "var(--accent-green)" if self.agent_status.value == "Active" else "var(--text-secondary)"
+        return Row(
+            Icon("smart_toy", size="24", className="text-muted"),
+            Text(self.agent_name.value, className="font-bold text-lg"),
+            Badge(self.agent_status.value, className="ml-2", background =status_color),
+            Spacer(),
+            IconBtn("folder", on_click="goto_vfs", tooltip="Go to Files"),
+            IconBtn("settings", on_click="goto_config", tooltip="Settings"),
+            className="p-4 border-b border-gray-700 bg-gray-900"
+        )
+
+    def _render_chat_area(self):
+        msg_components = []
+        for msg in self.messages.value:
+            is_user = msg["role"] == "user"
+            bubble_class = "msg-bubble user" if is_user else "msg-bubble ai"
+
+            content_parts = [
+                Custom(html=f"<div class='{bubble_class}'>{self._format_text(msg['content'])}</div>")
+            ]
+
+            # Tools loggen
+            if not is_user and "tools" in msg:
+                for tool in msg["tools"]:
+                    content_parts.append(
+                        Custom(html=f"""
+                        <details class="tool-log">
+                            <summary>🔧 {tool['name']}</summary>
+                            <pre style="font-size: 10px;">{tool.get('args', '')}</pre>
+                            <div class="tool-result">{tool.get('result', '...')}</div>
+                        </details>
+                        """)
+                    )
+
+            msg_components.append(
+                Row(
+                    Column(*content_parts, align="end" if is_user else "start"),
+                    justify="end" if is_user else "start",
+                    className="msg-row w-full"
+                )
+            )
+
+        return Column(*msg_components, className="chat-scroll-area")
+
+    def _render_chat_input(self):
+        return Row(
+            Button("", icon="mic", on_click="toggle_recording", className="btn-icon"),
+            Input(
+                value=self.input_text.value,
+                bind="input_text",
+                on_submit="send_message",
+                placeholder="Frag ISAA...",
+                className="flex-1"
+            ),
+            Button("", icon="send", on_click="send_message", variant="primary", disabled=self.is_streaming.value),
+            className="p-4 bg-gray-900 gap-2 border-t border-gray-700"
+        )
+
+    # --- VFS RENDERING ---
 
     def _render_vfs_panel(self):
-        # Tree View Items
-        tree_items = []
-        if self.vfs_tree.value and self.vfs_tree.value.get('contents'):
-            for item in self.vfs_tree.value['contents']:
-                icon = "folder" if item['type'] == 'directory' else "description"
-                is_dir = item['type'] == 'directory'
-                cb = f"vfs_open_dir_{item['path']}" if is_dir else f"vfs_open_file_{item['path']}"
+        # Generiere Baum-Items
+        tree_items = self._build_tree_recursive(self.vfs_tree.value)
 
-                # Dynamic handler generation trick handled in __getattr__
+        return Column(
+            # VFS Header
+            Row(
+                Button("", icon="chat", on_click="goto_chat", variant="ghost"),
+                Text("Virtual File System", className="font-bold"),
+                Spacer(),
+                Button("Save", on_click="save_file", variant="primary", disabled=not self.editor_dirty.value),
+                Button("", icon="sync", on_click="sync_vfs"),
+                className="p-3 border-b border-gray-700"
+            ),
+            Row(
+                # Sidebar
+                Column(*tree_items, className="vfs-tree-container", style={"width": "250px"}),
+                # Editor Area
+                Column(
+                    Text(self.editor_path.value or "Keine Datei gewählt", className="p-2 text-xs bg-black"),
+                    Textarea(
+                        value=self.editor_content.value,
+                        bind="editor_content",
+                        on_change="on_editor_change",
+                        className="editor-textarea flex-1"
+                    ),
+                    className="flex-1"
+                ),
+                className="flex-1 overflow-hidden",
+                gap="0"
+            ),
+            className="h-full"
+        )
 
-                tree_items.append(
-                    Row(
-                        Icon(icon, size="18", className="text-secondary"),
-                        Text(item['name'], className="cursor-pointer hover:text-white flex-1"),
-                        on_click=f"vfs_select_{item['path']}", # Using a generic prefix handled by getattr
-                        className="p-1 hover:bg-neutral-800 rounded items-center gap-2"
+    def _build_tree_recursive(self, tree, path_prefix=""):
+        items = []
+        if not isinstance(tree, dict): return []
+
+        for key, val in sorted(tree.items(), key=lambda x: (not isinstance(x[1], dict), x[0])):
+            full_path = f"{path_prefix}/{key}".replace("//", "/")
+
+            if isinstance(val, dict):
+                # Ordner
+                items.append(
+                    Button(f"📂 {key}", on_click=f"toggle_folder_{full_path.replace('/', '_')}",
+                           className="tree-item-dir")
+                )
+                # Kinder einrücken
+                sub_items = self._build_tree_recursive(val, full_path)
+                if sub_items:
+                    items.append(Column(*sub_items, style={"padding-left": "15px"}, gap="1"))
+            else:
+                # Datei
+                active_class = "active-file" if self.editor_path.value == full_path else ""
+                # Trick: Wir nutzen einen Button als Baum-Item für saubere Events
+                items.append(
+                    Button(
+                        f"📄 {key}",
+                        on_click=f"select_file_{full_path.replace('/', '_')}",
+                        className=f"tree-item-file {active_class}"
                     )
                 )
+        return items
 
-        editor_content = ""
-        current_path = ""
-        if self.current_file.value:
-            editor_content = self.current_file.value.get('content', '')
-            current_path = self.current_file.value.get('path', '')
+    def _render_tree_items(self, tree, path_prefix=""):
+        items = []
+        if not tree:
+            return []
 
-        return [
-            Row(
-                Heading("VFS Explorer", level=3),
-                Spacer(),
-                Button("Upload", icon="upload", variant="secondary", on_click="trigger_upload"), # Requires JS trigger
-                Button("Sync", icon="sync", variant="ghost", on_click="vfs_sync_all"),
-                className="mb-4 items-center"
-            ),
-            Row(
-                # Tree Column
-                Column(
-                    Text(self.vfs_path.value, className="text-xs text-gray-500 mb-2 font-mono"),
-                    *tree_items,
-                    Custom(html="<div class='mt-auto p-4 border-t border-gray-800 text-xs text-gray-500'>Drop files here to upload</div>"),
-                    className="vfs-tree h-full"
-                ),
-                # Editor Column
-                Column(
-                    Row(
-                        Text(current_path or "No file selected", className="font-mono text-sm"),
-                        Spacer(),
-                        Button("Save", size="sm", variant="primary", on_click="vfs_save_current") if current_path else None,
-                        className="p-2 border-b border-gray-800 bg-neutral-900"
-                    ),
-                    Textarea(
-                        value=editor_content,
-                        bind="current_file_content", # Needs complex binding logic or event
-                        className="editor-textarea",
-                        rows=30
-                    ) if current_path else
-                    Column(
-                        Icon("terminal", size="48", className="text-gray-700"),
-                        Text("Select a file to edit", className="text-gray-600"),
-                        align="center", justify="center", className="h-full"
-                    ),
-                    className="vfs-editor h-full"
-                ),
-                className="vfs-container flex-1"
-            )
-        ]
+        # Sort folders first
+        try:
+            sorted_keys = sorted(tree.keys(), key=lambda k: (not isinstance(tree[k], dict), k))
+        except AttributeError:
+            return []  # Fallback falls tree kein dict ist
 
-    def _render_config_panel(self):
-        return [
-            Heading("System Configuration", level=2, className="mb-6"),
+        for key in sorted_keys:
+            val = tree[key]
+            full_path = f"{path_prefix}/{key}".replace("//", "/")
 
-            Grid(
-                # Column 1: Agent Control
-                Card(
-                    Heading("Active Agent", level=4),
-                    Select(
-                        options=[{"value": a['name'], "label": a['name']} for a in self.agent_list.value],
-                        value=self.active_agent.value,
-                        bind="active_agent",
-                        on_change="switch_agent"
-                    ),
-                    Row(
-                        Button("Restart", icon="refresh", size="sm", on_click="restart_agent"),
-                        Button("Memory", icon="memory", size="sm", on_click="show_memory_stats"),
-                        gap="2", className="mt-4"
-                    ),
-                    title="Agent Control"
-                ),
+            if isinstance(val, dict):
+                # Folder
+                items.append(
+                    Custom(html=f"""
+                    <div class="tree-item" onclick="window.minu.emit('{self._view_id}', 'toggle_folder', {{path: '{full_path}'}})">
+                        📂 {key}
+                    </div>
+                    """)
+                )
+                # Recursion
+                sub_items = self._render_tree_items(val, full_path)
+                if sub_items:
+                    # Hier auch wichtig: *sub_items entpacken, da Column args erwartet
+                    items.append(Column(*sub_items, style={"paddingLeft": "12px"}))
+            else:
+                # File
+                is_active = "active" if self.editor_path.value == full_path else ""
+                items.append(
+                    Custom(html=f"""
+                    <div class="tree-item {is_active}" onclick="window.minu.emit('{self._view_id}', 'open_file', {{path: '{full_path}'}})">
+                        📄 {key}
+                    </div>
+                    """)
+                )
+        return items
 
-                # Column 2: Session Management
-                Card(
-                    Heading("Sessions", level=4),
-                    Column(
-                        *[
-                            Row(
-                                Text(sid, className="flex-1 font-mono text-sm"),
-                                Button("Load", size="xs", variant="ghost", on_click=f"load_session_{sid}"),
-                                Button("×", size="xs", variant="ghost", className="text-red-400", on_click=f"del_session_{sid}"),
-                                className="items-center"
-                            ) for sid in self.session_list.value
-                        ],
-                        className="max-h-60 overflow-y-auto"
-                    ),
-                    Button("New Session", className="w-full mt-4", on_click="new_session"),
-                    title="Session Manager"
-                ),
+    # ========================================================================
+    #  HANDLERS
+    # ========================================================================
 
-                # Column 3: Skills
-                Card(
-                    Heading("Skills Library", level=4),
-                    Text(f"{len(self.skills_list.value)} skills loaded", className="text-sm text-gray-500 mb-2"),
-                    Row(
-                        Button("Import", icon="download", size="sm"),
-                        Button("Export All", icon="upload", size="sm"),
-                        gap="2"
-                    ),
-                    title="Skills"
-                ),
+    async def nav_left(self, _):
+        self.panel_index.value = max(0, self.panel_index.value - 1)
 
-                cols=3, gap="6"
-            )
-        ]
+    async def nav_right(self, _):
+        self.panel_index.value = min(2, self.panel_index.value + 1)
 
-    def _render_notifications(self):
-        """Renders toast-like notifications from system logs."""
-        logs = self.system_logs.value[-3:] # Show last 3
-        return Column(
-            *[
-                Card(
-                    Text(l['text']),
-                    className=f"mb-2 p-3 text-sm border-l-4 border-{l['color']}-500 bg-neutral-900 shadow-lg animate-fade-in"
-                ) for l in logs
-            ],
-            className="fixed bottom-4 right-4 w-80 z-50 pointer-events-none"
-        )
+    async def on_editor_change(self, e):
+        # e.value kommt vom Textarea binding
+        self.editor_dirty.value = True
 
-    def _render_task_modal(self):
-        return Modal(
-            Heading("Background Tasks"),
-            Column(
-                *[
-                    Card(
-                        Row(
-                            Text(t.task_id, className="font-mono font-bold"),
-                            Badge(t.status, variant="warning" if t.status=="running" else "success"),
-                            Spacer(),
-                            Button("Stop", size="sm", variant="danger", on_click=f"stop_task_{t.task_id}")
-                        ),
-                        Text(t.query, className="text-sm text-gray-400 mt-2 truncate")
-                    ) for t in self.host.background_tasks.values()
-                ] if self.host.background_tasks else [Text("No active tasks")]
-            ),
-            open=self.show_tasks.value,
-            on_close="toggle_tasks",
-            title="Task Manager"
-        )
 
-    # =========================================================================
-    # EVENT HANDLERS
-    # =========================================================================
+    # --- Chat ---
 
-    def add_log_entry(self, text, style="info"):
-        """Called by Host to push logs."""
-        color_map = {"info": "blue", "success": "green", "error": "red", "warning": "yellow"}
-        entry = {"text": text, "color": color_map.get(style, "gray"), "time": datetime.now()}
+    async def send_message(self, _):
+        txt = self.input_text.value.strip()
+        if not txt or self.is_streaming.value: return
 
-        # Need to create new list reference for reactivity
-        current = list(self.system_logs.value)
-        current.append(entry)
-        self.system_logs.value = current
+        # 1. User Nachricht adden
+        new_msgs = list(self.messages.value)
+        new_msgs.append({"role": "user", "content": txt})
 
-    async def submit_message(self, event=None):
-        if not self.current_input.value.strip(): return
-
-        query = self.current_input.value
-        self.current_input.value = ""
+        # 2. AI Placeholder adden
+        new_msgs.append({"role": "assistant", "content": "Thinking...", "tools": []})
+        self.messages.value = new_msgs
+        self.input_text.value = ""
         self.is_streaming.value = True
 
-        # Add User Message
-        current_hist = list(self.chat_history.value)
-        current_hist.append({"role": "user", "content": query})
-        self.chat_history.value = current_hist
-
-        # Prepare Agent Message Placeholder
-        agent_msg_idx = len(current_hist)
-        current_hist.append({"role": "assistant", "content": "", "tool_calls": []})
-        self.chat_history.value = current_hist
-
         try:
-            agent = await self.host.isaa_tools.get_agent(self.host.active_agent_name)
-
-            # STREAMING LOOP
+            agent = await self.isaa.get_agent(self.agent_name.value)
             full_response = ""
-            async for chunk in agent.a_stream(
-                query=query,
-                session_id=self.host.active_session_id
-            ):
-                c_type = chunk.get("type")
 
-                # Update logic
-                hist_update = list(self.chat_history.value)
-                last_msg = hist_update[agent_msg_idx]
-
-                if c_type == "content":
-                    full_response += chunk['chunk']
-                    last_msg['content'] = full_response
-
-                elif c_type == "tool_start":
-                    # Add pending tool
-                    last_msg.setdefault('tool_calls', []).append({
-                        "function": {"name": chunk['name'], "arguments": "Running..."}
-                    })
-
-                elif c_type == "tool_result":
-                    # Update tool result (simplified matching last tool)
-                    if last_msg.get('tool_calls'):
-                        last_msg['tool_calls'][-1]['function']['arguments'] = f"Result: {chunk['result'][:50]}..."
-
-                elif c_type == "error":
-                    self.add_log_entry(chunk['error'], "error")
-
-                # Trigger Reactivity
-                self.chat_history.value = hist_update
-
-                # Force UI flush (essential for streaming feeling)
-                await self._session.force_flush()
-
+            async for chunk in agent.a_stream(query=txt, session_id=self.session_id.value):
+                if chunk.get("type") == "content":
+                    full_response += chunk["chunk"]
+                    # Update nur die letzte Nachricht
+                    self.messages.value[-1]["content"] = full_response
+                    self.messages.update_hash()  # Force update für Liste
         except Exception as e:
-            self.add_log_entry(f"Execution failed: {e}", "error")
-            traceback.print_exc()
+            self.messages.value[-1]["content"] = f"Error: {str(e)}"
         finally:
             self.is_streaming.value = False
-            await self.refresh_data() # Update VFS etc
 
-    # --- Navigation ---
-    async def nav_next(self, e):
-        curr_idx = self.panels_order.index(self.active_panel.value)
-        next_idx = (curr_idx + 1) % len(self.panels_order)
-        self.active_panel.value = self.panels_order[next_idx]
-
-    async def nav_prev(self, e):
-        curr_idx = self.panels_order.index(self.active_panel.value)
-        prev_idx = (curr_idx - 1) % len(self.panels_order)
-        self.active_panel.value = self.panels_order[prev_idx]
-
-    # --- VFS Logic ---
+    # --- FALLBACK HANDLER FÜR DYNAMISCHE VFS PFADE ---
     def __getattr__(self, name):
-        """Dynamic handlers for VFS tree clicks."""
-        if name.startswith("vfs_select_"):
-            path = name.replace("vfs_select_", "")
-            return lambda e: self._handle_vfs_select(path)
-        if name.startswith("load_session_"):
-            sid = name.replace("load_session_", "")
-            return lambda e: self._switch_session(sid)
-        if name.startswith("stop_task_"):
-            tid = name.replace("stop_task_", "")
-            return lambda e: self._stop_task(tid)
+        """Fängt dynamische Pfad-Klicks aus dem VFS Baum ab"""
+        if name.startswith("select_file_"):
+            path = name.replace("select_file_", "").replace("_", "/")
+            return lambda e: self._handle_open_file(path)
         return super().__getattribute__(name)
 
-    async def _handle_vfs_select(self, path):
-        # Is directory?
-        if self.vfs_tree.value: # Check if matches dir in tree
-            pass # (Simplified logic: assuming user clicked file for edit or dir for traversal)
+    async def _handle_open_file(self, path):
+        self.editor_path.value = path
+        # Hier käme die Logik zum Laden der Datei via ISAA VFS
+        self.editor_content.value = f"Lade {path}..."
+        self.editor_dirty.value = False
 
-        # Traverse or Read
-        agent = await self.host.isaa_tools.get_agent(self.host.active_agent_name)
-        session = agent.session_manager.get(self.host.active_session_id)
+    def _format_text(self, text):
+        import html
+        return html.escape(text).replace("\n", "<br>").replace("**", "<b>")
 
-        info = session.vfs.get_file_info(path)
+    # (Andere Handler wie sync_vfs, switch_agent etc. hier ...)
 
-        if info.get('type') == 'directory':
-            self.vfs_path.value = path
-            self.vfs_tree.value = session.vfs_ls(path)
-        else:
-            # Read file
-            res = session.vfs.read(path)
-            if res.get('success'):
-                self.current_file.value = {"path": path, "content": res['content']}
-            else:
-                self.add_log_entry(res.get('error'), "error")
 
-    async def vfs_save_current(self, e):
-        if not self.current_file.value: return
-        path = self.current_file.value['path']
-        # Note: In a real TextArea component, we need to bind the value back.
-        # Here we assume self.current_file.value['content'] was updated by the bind.
-        # Since 'bind' in Minu might be basic, we might need to rely on the payload of the event
-        # but let's assume reactivity works for the bound "current_file_content".
+    def _render_config_panel(self):
+        return Column(
+            Row(IconBtn("arrow_forward", on_click="goto_vfs"), Text("System Config"),
+                className="p-3 border-b border-gray-700"),
 
-        # NOTE: Minu's Textarea doesn't auto-update a dict key.
-        # We need a separate state or get value from event if supported.
-        # For this example, we assume we have a mechanism or strict binding.
-        content = self.current_file.value.get('content') # Needs to be updated by input
+            # Agent Control
+            Card(
+                Heading("Agent Control", level=3),
+                Row(
+                    Select(
+                        options=[{"value": a, "label": a} for a in self.available_agents.value],
+                        value=self.agent_name.value,
+                        bind="agent_name",
+                        label="Active Agent"
+                    ),
+                    Button("Switch", on_click="switch_agent"),
+                    align="end"
+                ),
+                Row(
+                    Input(placeholder="New Agent Name", bind="new_agent_name"),
+                    Button("Spawn", on_click="spawn_agent", variant="primary"),
+                    align="end", className="mt-2"
+                ),
+                className="mb-4 bg-gray-800 p-4 rounded"
+            ),
 
-        agent = await self.host.isaa_tools.get_agent(self.host.active_agent_name)
-        session = agent.session_manager.get(self.host.active_session_id)
+            # Session Config
+            Card(
+                Heading("Session", level=3),
+                Row(
+                    Input(value=self.session_id.value, bind="session_id", label="Session ID"),
+                    Button("Load", on_click="load_session"),
+                    Button("Clear History", on_click="clear_history", variant="danger"),
+                    align="end"
+                ),
+                className="mb-4 bg-gray-800 p-4 rounded"
+            ),
 
-        res = session.vfs.write(path, content)
-        if res.get('success'):
-            self.add_log_entry(f"Saved {path}", "success")
-        else:
-            self.add_log_entry(res.get('error'), "error")
+            # Skills
+            Card(
+                Heading("Skills", level=3),
+                Button("Scan/Import Skills", on_click="scan_skills"),
+                Custom(
+                    html="<div class='text-sm text-muted mt-2'>Skills are managed automatically via the Agent's skill manager.</div>"),
+                className="bg-gray-800 p-4 rounded"
+            ),
 
-    # --- Uploads ---
-    async def process_audio_upload(self, event):
-        """Called by JS when audio is recorded."""
-        b64_audio = event.get('audio_b64')
-        if not b64_audio: return
+            className="p-4"
+        )
 
-        audio_bytes = base64.b64decode(b64_audio)
+    async def goto_chat(self, e):
+        self.panel_index.value = 0
 
-        # Use ISAA Host internal processing
-        # We manually trigger STT -> Input
+    async def goto_vfs(self, e):
+        self.panel_index.value = 1
+
+    async def goto_config(self, e):
+        self.panel_index.value = 2
+
+
+    # --- VFS ---
+    async def _refresh_vfs_tree(self):
         try:
-            from toolboxv2.mods.isaa.base.audio_io.Stt import STTConfig, transcribe
-            result = transcribe(audio_bytes, config=STTConfig(language="en")) # Auto-detect ideally
+            agent = await self.isaa.get_agent(self.agent_name.value)
+            session = await agent.session_manager.get_or_create(self.session_id.value)
 
-            if result.text:
-                self.current_input.value = result.text
-                self.add_log_entry("Audio transcribed", "success")
-                await self.submit_message()
-            else:
-                self.add_log_entry("No speech detected", "warning")
-        except Exception as e:
-            self.add_log_entry(f"STT Error: {e}", "error")
+            # Get flat file list and convert to tree
+            files_dict = session.vfs.list_files()  # Returns dict with metadata
 
-    async def vfs_upload_file(self, event):
-        """Called by JS on drag & drop."""
-        name = event.get('name')
-        content_b64 = event.get('content')
+            tree = {}
+            for file_info in files_dict.get("files", []):
+                path_parts = file_info["path"].strip("/").split("/")
+                current = tree
+                for part in path_parts[:-1]:
+                    current = current.setdefault(part, {})
+                current[path_parts[-1]] = "file"  # Marker
+
+            self.vfs_tree.value = tree
+        except Exception:
+            self.vfs_tree.value = {}
+
+    async def open_file(self, event):
+        path = event.get("path")
+        if not path: return
 
         try:
-            # Decode
-            content_bytes = base64.b64decode(content_b64)
+            agent = await self.isaa.get_agent(self.agent_name.value)
+            session = agent.session_manager.get(self.session_id.value)
+            content = session.vfs.read(path)
 
-            agent = await self.host.isaa_tools.get_agent(self.host.active_agent_name)
-            session = agent.session_manager.get(self.host.active_session_id)
+            if isinstance(content, dict) and content.get("success"):
+                self.editor_content.value = content["content"]
+            else:
+                self.editor_content.value = "// Error reading file"
 
-            # Save to 'user_uploads' mount if exists, else root
-            target_dir = "/user_uploads"
-            if not session.vfs._path_exists(target_dir):
-                session.vfs.mkdir(target_dir)
+            self.editor_path.value = path
+            self.editor_dirty.value = False
+        except Exception:
+            pass
 
-            target_path = f"{target_dir}/{name}"
+    async def update_editor(self, event):
+        self.editor_content.value = event.get("value", "")
+        self.editor_dirty.value = True
 
-            # Determine if binary or text. For VFS V2, we might strictly handle text in 'content'
-            # Binary support in VFS depends on V2 implementation (usually text-focused).
-            # We try to decode utf-8
-            try:
-                text_content = content_bytes.decode('utf-8')
-                session.vfs.write(target_path, text_content)
-                self.add_log_entry(f"Uploaded {name}", "success")
-                await self.refresh_data()
-            except UnicodeDecodeError:
-                self.add_log_entry(f"Skipped {name}: Binary files not fully supported in VFS text mode", "warning")
+    async def save_file(self, e):
+        if not self.editor_path.value: return
+        try:
+            agent = await self.isaa.get_agent(self.agent_name.value)
+            session = agent.session_manager.get(self.session_id.value)
+            session.vfs.write(self.editor_path.value, self.editor_content.value)
+            self.editor_dirty.value = False
+            # Trigger toast or status update here
+        except Exception:
+            pass
 
-        except Exception as e:
-            self.add_log_entry(f"Upload failed: {e}", "error")
+    # --- Config / Agents ---
+    async def _refresh_agent_list(self):
+        # This assumes isaa config structure
+        try:
+            agents = self.isaa.config.get("agents-name-list", ["self"])
+            self.available_agents.value = agents
+        except:
+            self.available_agents.value = ["self"]
 
-    # --- Session & Agent ---
-    async def switch_agent(self, event):
-        new_agent = event.get('value')
-        if new_agent:
-            self.host.active_agent_name = new_agent
-            self.host.active_session_id = "default"
-            self.host._save_state()
-            await self.refresh_data()
-            self.add_log_entry(f"Switched to {new_agent}", "success")
+    async def switch_agent(self, e):
+        # Just updates state, logic uses state
+        await self._refresh_vfs_tree()
+        self.messages.value = []  # Clear chat on switch
 
-    async def _switch_session(self, sid):
-        self.host.active_session_id = sid
-        self.host._save_state()
-        self.chat_history.value = [] # Clear view, will reload if persistent
-        await self.refresh_data()
-        self.add_log_entry(f"Switched to session {sid}", "info")
+    async def spawn_agent(self, e):
+        # Logic to call builder
+        pass
 
-    async def new_session(self, event):
-        import uuid
-        new_id = f"sess_{uuid.uuid4().hex[:6]}"
-        self.host.active_session_id = new_id
-        self.host._save_state()
-        await self.refresh_data()
-        self.add_log_entry(f"Created session {new_id}", "success")
+    # --- Audio ---
+    async def toggle_recording(self, e):
+        if self.is_recording.value:
+            self.is_recording.value = False
+            # Stop recording logic (Server side)
+            # In a web context, this button would typically trigger client-side JS to stop sending blobs.
+            # Here we assume local-host CLI-like behavior as per prompt (F4 logic).
+            pass
+        else:
+            self.is_recording.value = True
+            # Start recording logic
+            pass
 
-    async def toggle_tasks(self, event):
-        self.show_tasks.value = not self.show_tasks.value
 
-    async def _stop_task(self, tid):
-        if tid in self.host.background_tasks:
-            self.host.background_tasks[tid].task.cancel()
-            self.add_log_entry(f"Stopped task {tid}", "warning")
-            # Force UI update (hacky, ideally reactive)
-            self.show_tasks.value = False
-            self.show_tasks.value = True
+# ============================================================================
+#  REGISTRATION
+# ============================================================================
 
-# =============================================================================
-# EXPORT & INIT
-# =============================================================================
 
 @export(mod_name=Name, name="initialize", initial=True)
 def initialize(app: App, **kwargs) -> Result:
@@ -1050,17 +757,16 @@ def initialize(app: App, **kwargs) -> Result:
     from toolboxv2.mods.Minu import register_view
 
     # Register the main view
-    register_view("isaa_dashboard", ISAAView)
+    register_view("isaa_ui", IsaaHqView)
 
     # Register UI Route
     app.run_any(
         ("CloudM", "add_ui"),
-        name="ISAA_Host",
-        title="ISAA Host",
-        path=f"/api/Minu/render?view=isaa_dashboard&ssr=true&format=full-html",
-        description="Autonomous Agent Host Interface",
+        name="ISAA HQ",
+        title="ISAA HQ",
+        path="/api/Minu/render?view=isaa_ui&ssr=true",
         icon="smart_toy",
-        auth=True # Production secure
+        description="Cyberpunk Agent Control"
     )
+    return Result.ok()
 
-    return Result.ok(info="ISAA Web Host Initialized")

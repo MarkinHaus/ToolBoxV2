@@ -25,6 +25,7 @@ import uuid
 import weakref
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Set
+from urllib.parse import parse_qs, urlparse
 
 try:
     from toolboxv2 import get_logger
@@ -618,6 +619,21 @@ class WSWorker:
         try:
             # Get cookie header from websocket request
             cookie_header = None
+            url_token = None
+            session = None
+
+            # --- 1. Extraktion aus dem Pfad (Query Params) ---
+            # Das ist der "manuelle" Weg für Tauri
+            path = ""
+            if hasattr(websocket, 'request') and websocket.request:
+                path = websocket.request.path
+            elif hasattr(websocket, 'path'):
+                path = websocket.path
+
+            if path and '?' in path:
+                params = parse_qs(urlparse(path).query)
+                # Wir suchen nach 'session_token' (aus ws.js) oder 'token'
+                url_token = params.get('session_token', [None])[0] or params.get('token', [None])[0]
 
             # New API (websockets >= 13.0)
             if hasattr(websocket, 'request') and websocket.request:
@@ -628,10 +644,6 @@ class WSWorker:
             # Legacy API
             if not cookie_header and hasattr(websocket, 'request_headers'):
                 cookie_header = websocket.request_headers.get('Cookie') or websocket.request_headers.get('cookie')
-
-            if not cookie_header:
-                logger.debug("[WS] No cookie header found in WebSocket request")
-                return None
 
             # Use the cookie secret from config
             secret = None
@@ -648,7 +660,20 @@ class WSWorker:
 
             # Parse the session cookie
             session_handler = SignedCookieSession(secret=secret)
-            session = session_handler.get_from_cookie_header(cookie_header)
+            if url_token:
+                # Wenn der URL-Token ein Clerk-JWT ist, nutzen wir den SessionManager des Apps,
+                # um ihn zu validieren (da ws_worker keine direkte Clerk-Anbindung hat,
+                # aber SignedCookieSession nutzen kann falls es ein Cookie-String ist).
+
+                # Falls der übergebene Token bereits ein fertiges Session-Cookie ist:
+                if "tb_session=" in url_token:
+                    session =  session_handler.get_from_cookie_header(url_token)
+
+            elif not cookie_header:
+                logger.debug("[WS] No cookie header found in WebSocket request")
+                return None
+            else:
+                session = session_handler.get_from_cookie_header(cookie_header)
 
             if session:
                 logger.info(f"[WS] Extracted session: user_id={session.user_id}, level={session.level}, authenticated={session.is_authenticated}")

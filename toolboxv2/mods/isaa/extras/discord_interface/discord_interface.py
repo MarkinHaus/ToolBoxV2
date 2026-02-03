@@ -999,6 +999,105 @@ class MediaHandler:
                 except:
                     pass
 
+    async def transcribe_audio_bytes(
+        self,
+        audio_bytes: bytes,
+        format: str = "wav"
+    ) -> Optional[str]:
+        """
+        Transkribiert Audio aus Bytes (kein Disk I/O).
+
+        Args:
+            audio_bytes: Raw audio data
+            format: Audio format (wav, mp3, etc.)
+
+        Returns:
+            Transcribed text or None
+        """
+        transcribe, STTConfig, STTBackend = _load_stt()
+
+        # Groq/Cloud APIs: BytesIO direkt
+        if self.stt_backend == "groq":
+            return await self._transcribe_groq_bytes(audio_bytes, format)
+
+        # Lokale Backends (faster_whisper): brauchen leider temp file
+        # faster-whisper kann kein BytesIO, nur file paths
+        if transcribe is not None:
+            return await self._transcribe_local_bytes(audio_bytes, format, transcribe, STTConfig, STTBackend)
+
+        # Fallback
+        return await self._transcribe_groq_bytes(audio_bytes, format)
+
+    async def _transcribe_groq_bytes(
+        self,
+        audio_bytes: bytes,
+        format: str = "wav"
+    ) -> Optional[str]:
+        """Groq API mit BytesIO - kein Disk I/O"""
+        try:
+            from groq import AsyncGroq
+
+            groq_key = os.environ.get("GROQ_API_KEY")
+            if not groq_key:
+                return None
+
+            client = AsyncGroq(api_key=groq_key)
+
+            # BytesIO mit filename für format detection
+            audio_file = io.BytesIO(audio_bytes)
+            audio_file.name = f"audio.{format}"
+
+            transcription = await client.audio.transcriptions.create(
+                model="whisper-large-v3-turbo",
+                file=audio_file,
+                language=self.language,
+            )
+            return transcription.text
+
+        except Exception as e:
+            print(f"[MediaHandler] Groq bytes STT failed: {e}")
+            return None
+
+    async def _transcribe_local_bytes(
+        self,
+        audio_bytes: bytes,
+        format: str,
+        transcribe,
+        STTConfig,
+        STTBackend
+    ) -> Optional[str]:
+        """
+        Lokales Backend (faster_whisper) - minimaler temp file.
+        faster-whisper unterstützt kein BytesIO, daher tmpfs/ramfs nutzen.
+        """
+        import tempfile
+
+        # /dev/shm ist RAM-backed auf Linux - quasi in-memory
+        tmp_dir = "/dev/shm" if os.path.exists("/dev/shm") else None
+
+        try:
+            with tempfile.NamedTemporaryFile(
+                suffix=f".{format}",
+                dir=tmp_dir,  # RAM wenn verfügbar
+                delete=True
+            ) as tmp:
+                tmp.write(audio_bytes)
+                tmp.flush()
+
+                config = STTConfig(
+                    backend=STTBackend.FASTER_WHISPER,
+                    language=self.language,
+                    device="cpu",
+                    compute_type="int8",
+                )
+
+                result = transcribe(tmp.name, config=config)
+                return result.text
+
+        except Exception as e:
+            print(f"[MediaHandler] Local bytes STT failed: {e}")
+            return await self._transcribe_groq_bytes(audio_bytes, format)
+
 
 # =============================================================================
 # DISCORD INTERFACE - Hauptklasse

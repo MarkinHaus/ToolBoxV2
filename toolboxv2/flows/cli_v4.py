@@ -122,8 +122,6 @@ def c_print(*args, **kwargs):
         print_formatted_text(HTML(esc(text)), **kwargs)
 
 
-# =================== Die 8 gewünschten Funktionen ===================
-
 def print_box_header(title: str, icon: str = "ℹ", width: int = 76):
     """1. Header mit Icon und Titel"""
     print_formatted_text(HTML(""))  # Leere Zeile
@@ -435,6 +433,8 @@ class ISAA_Host:
     - Skill sharing between agents
     """
 
+    version = VERSION
+
     def __init__(self, app_instance: Any = None):
         """Initialize the ISAA Host system."""
         self.app = app_instance or get_app("isaa-host")
@@ -558,6 +558,7 @@ class ISAA_Host:
                     state = json.load(f)
                     self.active_agent_name = state.get("active_agent", "self")
                     self.active_session_id = state.get("active_session", "default")
+                    self.audio_device_index = state.get("audio_device_index", 0)
                     for name, info in state.get("agent_registry", {}).items():
                         self.agent_registry[name] = AgentInfo(
                             name=name,
@@ -577,6 +578,7 @@ class ISAA_Host:
             state = {
                 "active_agent": self.active_agent_name,
                 "active_session": self.active_session_id,
+                "audio_device_index": self.audio_device_index,
                 "agent_registry": {
                     name: {
                         "persona": info.persona,
@@ -1459,9 +1461,8 @@ class ISAA_Host:
                 "clear": None,
             },
             "/task": {
-                "list": None,
-                "status": None,
-                "cancel": None,
+                "status": {t: None for t in self.background_tasks.keys()},
+                "cancel": {t: None for t in self.background_tasks.keys()},
             },
             "/vfs": {
                 "mount": path_compl, # /vfs mount <local_path> [vfs_path] [--readonly] [--no-sync]
@@ -2049,16 +2050,12 @@ class ISAA_Host:
     async def _cmd_task(self, args: list[str]):
         """Handle /task commands."""
         if not args:
-            print_status("Usage: /task <list|cancel> [id]", "warning")
+            print_status("Usage: /task <cancel|status> [id]", "warning")
             return
 
         action = args[0]
 
-        if action == "list":
-            result = await self._tool_task_status()
-            c_print(result)
-
-        elif action == "cancel":
+        if action == "cancel":
             if len(args) < 2:
                 print_status("Usage: /task cancel <id>", "warning")
                 return
@@ -2069,6 +2066,14 @@ class ISAA_Host:
                 print_status(f"Task {task_id} cancelled", "success")
             else:
                 print_status(f"Task {task_id} not found", "error")
+
+        elif action == "status":
+            if len(args) < 2:
+                result = await self._tool_task_status()
+                c_print(result)
+                return
+            task_id = args[1]
+            print_status(await self._tool_task_status(task_id), "info")
 
         else:
             print_status(f"Unknown task action: {action}", "error")
@@ -2946,19 +2951,10 @@ class ISAA_Host:
 
                     # Check ob Satzende erreicht
                     if any(current_sentence.rstrip().endswith(p) for p in ['.', '!', '?', ':', '\n\n']):
-                        # Satz zur Audio Queue
-                        sentence = current_sentence.strip()
-                        if len(sentence) > 10:  # Mindestlänge
-                            sentence = remove_styles(sentence)
-                            already_played.append(sentence)
-                            get_app("ci.audio.bg.task").run_bg_task_advanced(self.audio_player.queue_text,sentence)
+                        get_app("ci.audio.bg.task").run_bg_task_advanced(self.audio_player.queue_text,remove_styles(current_sentence.strip()))
                         current_sentence = ""
 
             c_print()  # Newline after streaming
-
-            # Rest der Sentence queuen
-            if should_speak and current_sentence.strip() and hasattr(self, 'audio_player') and current_sentence not in already_played:
-                 get_app("ci.audio.bg.task").run_bg_task_advanced(self.audio_player.queue_text,remove_styles(current_sentence.strip()))
 
             # Try to visualize JSON responses
             try:
@@ -3049,8 +3045,8 @@ class ISAA_Host:
                     )
 
                 # Check for transcription
-                if hasattr(self, "_last_transcription") and self._last_transcription:
-                    user_input = self._last_transcription
+                if hasattr(self, "_last_transcription") and self._last_transcription is not None:
+                    user_input = self._last_transcription + " " + user_input
                     self._last_transcription = None
                     print_status(f"Using transcription: {user_input}", "info")
 
