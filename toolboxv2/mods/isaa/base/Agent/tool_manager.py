@@ -279,6 +279,15 @@ class ToolManager:
 
         return entry
 
+
+    def un_register(self, name: str) -> bool:
+        """Remove a tool from the registry"""
+        if name not in self._registry:
+            return False
+
+        del self._registry[name]
+        return True
+
     def register_mcp_tools(
         self,
         server_name: str,

@@ -27,14 +27,14 @@ from pathlib import Path
 from typing import Any
 
 from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import FuzzyCompleter, NestedCompleter, WordCompleter
+from prompt_toolkit.completion import FuzzyCompleter, NestedCompleter, WordCompleter, PathCompleter
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
 
 # ToolBoxV2 Imports
-from toolboxv2 import get_app
+from toolboxv2 import get_app, remove_styles
 
 # ISAA Agent Imports
 from toolboxv2.mods.isaa.base.Agent.builder import (
@@ -48,6 +48,7 @@ from toolboxv2.mods.isaa.base.Agent.instant_data_vis import (
 )
 from toolboxv2.mods.isaa.base.Agent.vfs_v2 import FileBackingType
 from toolboxv2.mods.isaa.base.AgentUtils import detect_shell, anything_from_str_to_dict
+from toolboxv2.mods.isaa.base.audio_io.audioIo import AudioStreamPlayer
 from toolboxv2.mods.isaa.module import Tools as IsaaTool
 
 import html
@@ -58,7 +59,24 @@ from prompt_toolkit.styles import Style
 
 
 # =================== Helpers & Setup ===================
-
+MODEL_MAPPING = {
+    "gemini-3-flash": "openrouter/google/gemini-3-flash-preview",
+    "deepseek-v3.2": "openrouter/deepseek/deepseek-v3.2",
+    "kimi-k2.5": "openrouter/moonshotai/kimi-k2.5",
+    "gpt-oss-120bF": "openrouter/openai/gpt-oss-120b:free",
+    "gpt-oss-120b": "openrouter/openai/gpt-oss-120b",
+    "mistral-14b": "openrouter/mistralai/ministral-14b-2512",
+    "devstral": "openrouter/mistralai/devstral-2512",
+    "gpt-oss-safeguard-20b": "openrouter/openai/gpt-oss-safeguard-20b",
+    "nemotron-3": "openrouter/nvidia/nemotron-3-nano-30b-a3b",
+    "minimax-m2.1": "openrouter/minimax/minimax-m2.1",
+    "glm-4.7-flash": "openrouter/z-ai/glm-4.7-flash",
+    "glm-4.7": "openrouter/z-ai/glm-4.7",
+    "glm-4.6v": "openrouter/z-ai/glm-4.6v",
+    "glm-4.5f": "openrouter/z-ai/glm-4.5-air:free",
+    "step-3.5-flash": "openrouter/stepfun/step-3.5-flash:free",
+    "trinity-large": "openrouter/arcee-ai/trinity-large-preview:free",
+}
 class PTColors:
     """Farb-Mapping für Prompt Toolkit HTML"""
     GREY = 'gray'
@@ -315,6 +333,90 @@ class AgentInfo:
     bound_agents: list[str] = field(default_factory=list)
 
 
+# =========================== Simple Feature Manager ==========================
+class SimpleFeatureManager:
+    def __init__(self):
+        self.agent_ref = None
+        self.features = { }
+
+    def list_features(self):
+        return list(self.features.keys())
+
+    def enable(self, feature, agent):
+        if feature in self.features:
+            self.features[feature]["is_enabled"] = True
+            if self.features[feature]["activation_f"]:
+                self.features[feature]["activation_f"](self.agent_ref)
+
+    def is_enabled(self, feature):
+        return self.features.get(feature, {"is_enabled": False})["is_enabled"]
+
+    def disable(self, feature):
+        if feature in self.features:
+            self.features[feature]["is_enabled"] = False
+            if self.features[feature]["deactivation_f"]:
+                self.features[feature]["deactivation_f"](self.agent_ref)
+
+    def add_feature(self, feature, activation_f=None, deactivation_f=None):
+        self.features[feature] = {
+            "is_enabled": False,
+            "activation_f": activation_f,
+            "deactivation_f": deactivation_f,
+        }
+
+    def set_agent(self, agent):
+        self.agent_ref = agent
+
+
+# ============================ Feature Definitions ============================
+
+def load_desktop_auto_feature(fm: SimpleFeatureManager):
+    def enable_desktop_auto(agent):
+        from toolboxv2.mods.isaa.extras.destop_auto import register_enhanced_tools
+        kit, tools = register_enhanced_tools()
+        agent.add_tools(**tools)
+        print_status("Desktop Automation enabled.", "success")
+
+    def disable_desktop_auto(agent):
+        from toolboxv2.mods.isaa.extras.destop_auto import register_enhanced_tools
+        kit, tools = register_enhanced_tools()
+        agent.remove_tools(tools)
+        print_status("Desktop Automation enabled.", "success")
+    fm.add_feature("desktop_auto", activation_f=enable_desktop_auto, deactivation_f=disable_desktop_auto)
+
+def load_web_auto_feature(fm: SimpleFeatureManager):
+    def enable_web_auto(agent):
+        from toolboxv2.mods.isaa.extras.web_helper.web_agent import minimal_web_agent_integration
+        agent.add_tools(minimal_web_agent_integration())
+        print_status("Web Automation enabled.", "success")
+
+    def disable_web_auto(agent):
+        from toolboxv2.mods.isaa.extras.web_helper.web_agent import minimal_web_agent_integration
+        agent.remove_tools(minimal_web_agent_integration())
+        print_status("Web Automation disabled.", "success")
+
+    fm.add_feature("mini_web_auto", activation_f=enable_web_auto, deactivation_f=disable_web_auto)
+
+def load_full_web_auto_feature(fm: SimpleFeatureManager):
+    def enable_full_web_auto(agent):
+        from toolboxv2.mods.isaa.extras.web_helper.tooklit import get_full_tools
+        agent.add_tools(get_full_tools()[1])
+        print_status("Full Web Automation enabled.", "success")
+
+    def disable_full_web_auto(agent):
+        from toolboxv2.mods.isaa.extras.web_helper.tooklit import get_full_tools
+        agent.remove_tools(get_full_tools()[1])
+        print_status("Full Web Automation disabled.", "success")
+
+    fm.add_feature("full_web_auto", activation_f=enable_full_web_auto, deactivation_f=disable_full_web_auto)
+
+
+ALL_FEATURES = {
+    "desktop_auto": load_desktop_auto_feature,
+    "mini_web_auto": load_web_auto_feature,
+    "full_web_auto": load_full_web_auto_feature,
+}
+
 # =============================================================================
 # ISAA HOST - MAIN CLASS
 # =============================================================================
@@ -382,6 +484,9 @@ class ISAA_Host:
         self._audio_buffer: list[bytes] = []
         self._last_transcription: str | None = None
 
+        self.audio_player = AudioStreamPlayer()
+        self.verbose_audio = False  # /audio on aktiviert das
+
         # Prompt Toolkit setup
         self.history = FileHistory(str(self.history_file))
         self.key_bindings = self._create_key_bindings()
@@ -393,6 +498,11 @@ class ISAA_Host:
         # Load persisted state
         self._load_rate_limiter_config()
         self._load_state()
+
+
+        self.feature_manager = SimpleFeatureManager()
+        for feature in ALL_FEATURES.values():
+            feature(self.feature_manager)
 
     # =========================================================================
     # RATE LIMITER CONFIG MANAGEMENT
@@ -499,7 +609,15 @@ class ISAA_Host:
         @kb.add("f5")
         def _(event):
             """Show status dashboard with F5."""
-            asyncio.create_task(self._print_status_dashboard())
+            async def __():
+                await self._print_status_dashboard()
+                # Rate Limiter
+                await self._cmd_vfs(["list"])
+                await self._cmd_skill(["list"])
+                await self._cmd_mcp(["list"])
+                await self._cmd_session(["list"])
+                await self._cmd_session(["show"])
+            asyncio.create_task(__())
 
         return kb
 
@@ -774,18 +892,6 @@ class ISAA_Host:
 
         # ===== SYSTEM TOOLS =====
 
-        def cli_shell(command: str) -> str:
-            """
-            Execute a shell command. CAUTION: Use responsibly.
-
-            Args:
-                command: Shell command to execute
-
-            Returns:
-                Command output as JSON
-            """
-            return host_ref._tool_shell(command)
-
         async def cli_mcp_connect(
             server_name: str,
             command: str,
@@ -863,12 +969,6 @@ class ISAA_Host:
             "bindAgents",
             "Bind two agents for data sharing",
             category=["agent_binding"],
-        )
-        builder.add_tool(
-            cli_shell,
-            "shell",
-            f"Execute shell command in {detect_shell()[0]}",
-            category=["system"],
         )
         builder.add_tool(
             cli_mcp_connect,
@@ -1107,48 +1207,59 @@ class ISAA_Host:
             return f"✗ Failed to bind agents: {e}"
 
     def _tool_shell(self, command: str) -> str:
-        """Implementation: Execute shell command."""
+        """
+        Führt einen Shell-Befehl LIVE und INTERAKTIV aus.
+        Unterstützt Windows (CMD/PowerShell) und Unix (Bash/Zsh).
+        """
+        import subprocess
         import shlex
+        import sys
 
-        result = {"success": False, "output": "", "error": ""}
+        # Shell-Erkennung (Windows/Unix)
+        shell_exe, cmd_flag = detect_shell()
 
+        # Vorbereitung für Windows "Charm" / ANSI Support
+        # Wir übergeben stdin/stdout/stderr direkt (None), damit der Prozess
+        # das Terminal "besitzt".
         try:
-            tokens = shlex.split(command)
+            # Wir nutzen subprocess.run OHNE capture_output,
+            # damit das Terminal direkt interagieren kann.
+            print_separator(char="═")
 
-            for i, tok in enumerate(tokens):
-                if tok in ("python", "python3"):
-                    tokens[i] = sys.executable
-
-            cmd_str = " ".join(shlex.quote(t) for t in tokens)
-            shell_exe, cmd_flag = detect_shell()
-
+            # Ausführung im Vordergrund
             process = subprocess.run(
-                [shell_exe, cmd_flag, cmd_str],
-                capture_output=True,
-                text=True,
-                timeout=120,
-                check=False,
+                [shell_exe, cmd_flag, command],
+                stdin=None,  # Direktes Terminal-Input
+                stdout=None,  # Direktes Terminal-Output (Live!)
+                stderr=None,  # Direktes Terminal-Error
+                check=False
             )
 
-            if process.returncode == 0:
-                result.update(
-                    {"success": True, "output": process.stdout, "error": process.stderr}
-                )
-            else:
-                result.update(
-                    {
-                        "success": False,
-                        "output": process.stdout,
-                        "error": process.stderr or f"Exit code: {process.returncode}",
-                    }
-                )
+            print_separator(char="═")
 
-        except subprocess.TimeoutExpired:
-            result.update({"error": "Timeout after 120 seconds"})
+            result = {
+                "success": process.returncode == 0,
+                "exit_code": process.returncode
+            }
+            return json.dumps(result)
+
         except Exception as e:
-            result.update({"error": f"{type(e).__name__}: {e}"})
+            return json.dumps({"success": False, "error": str(e)})
 
-        return json.dumps(result, ensure_ascii=False)
+    async def _handle_shell(self, command: str):
+        """Wrapper für den Shell-Befehl mit Prompt-Toolkit Suspension."""
+        from prompt_toolkit.eventloop import run_in_executor_with_context
+
+        # WICHTIG: Wir müssen die prompt_toolkit UI pausieren,
+        # damit die Shell das Terminal sauber übernehmen kann.
+        try:
+            # Wir führen die blockierende Shell-Aktion in einem Thread aus,
+            # aber geben ihr vollen Zugriff auf das Terminal.
+            await run_in_executor_with_context(
+                lambda: self._tool_shell(command)
+            )
+        except Exception as e:
+            print_status(f"Shell Error: {e}", "error")
 
     async def _tool_mcp_connect(
         self,
@@ -1269,7 +1380,9 @@ class ISAA_Host:
         vfs_files: dict = {}
         vfs_mounts: dict = {}
         vfs_dirty: dict = {}
+        model_options: dict = {}
         current_skills: dict = {}
+        features: dict = {_:None for _ in self.feature_manager.list_features()}
         try:
             instance_key = f"agent-instance-{self.active_agent_name}"
             if instance_key in self.isaa_tools.config:
@@ -1286,8 +1399,11 @@ class ISAA_Host:
                 engine = agent._get_execution_engine()
                 if hasattr(engine, 'skills_manager'):
                     current_skills = {s_id: None for s_id in engine.skills_manager.skills.keys()}
+            model_options = {m: None for m in MODEL_MAPPING.keys()}
         except Exception:
             pass
+
+        path_compl = PathCompleter(expanduser=True)
 
 
 
@@ -1297,17 +1413,50 @@ class ISAA_Host:
             "/exit": None,
             "/clear": None,
             "/status": None,
-            "/audio": None,
+            "/audio": {
+                "on": None,
+                "off": None,
+                "stop": None,
+                "voice": None,
+                "backend": {
+                    "groq": None,
+                    "piper": None,
+                    "elevenlabs": None,
+                },
+                "lang": None,
+            },
             "/agent": {
                 "switch": {a: None for a in agents},
                 "list": None,
                 "spawn": None,
                 "stop": {a: None for a in agents},
+                "model": {
+                    "fast": model_options,
+                    "complex": model_options
+                },
+                "checkpoint": {
+                    "save": {a: None for a in agents},
+                    "load": {a: None for a in agents},
+                },
+                "load-all": None,
+                "save-all": None,
+                "stats": {a: None for a in agents},
+                "delete": {a: None for a in agents},
+                "config": {a: None for a in agents},
+            },
+            "/mcp": {
+                "list": None,
+                "add": None,  # /mcp add <name> <cmd> <args>
+                "remove": {s: None for s in getattr(self, 'current_mcp_servers', [])},
+                "reload": None,  # Re-connectet alle Server
+                "info": None,  # Details zu einem Server
             },
             "/session": {
                 "switch": {},
                 "list": None,
                 "new": None,
+                "show": None,
+                "clear": None,
             },
             "/task": {
                 "list": None,
@@ -1315,7 +1464,7 @@ class ISAA_Host:
                 "cancel": None,
             },
             "/vfs": {
-                "mount": None,  # local path - no completion, user types
+                "mount": path_compl, # /vfs mount <local_path> [vfs_path] [--readonly] [--no-sync]
                 "unmount": vfs_mounts if vfs_mounts else None,
                 "sync": vfs_dirty if vfs_dirty else vfs_files if vfs_files else None,
                 "refresh": vfs_mounts if vfs_mounts else None,
@@ -1336,15 +1485,15 @@ class ISAA_Host:
                 "boost": current_skills if current_skills else None,
                 "merge": current_skills if current_skills else None,
                 "import": {},
-                "export": current_skills if current_skills else None,
-            },
-            "/history": {
-                "show": None,
-                "clear": None,
+                "export": {s_id: path_compl for s_id in ["all"]+list(current_skills.keys())} if current_skills else None,
             },
             "/bind": {a: None for a in agents},
             "/teach": {a: None for a in agents},
-            "/desktop": None,
+            "/feature": {
+                "list": None,
+                "enable": features,
+                "disable": features,
+            },
             "/rate-limiter": {
                 "status": None,
                 "config": None,
@@ -1388,8 +1537,9 @@ class ISAA_Host:
         agents = self.isaa_tools.config.get("agents-name-list", [])
         print_status(f"Agents: {len(agents)} registered", "data")
 
-        columns = [("Name", 15), ("Status", 10), ("Persona", 25), ("Tasks", 8)]
-        widths = [15, 10, 25, 8]
+        max_name_length = max(len(name) for name in agents)
+        columns = [("Name", max_name_length), ("Status", 10), ("Persona", 25), ("Tasks", 8)]
+        widths = [max_name_length, 10, 25, 8]
         print_table_header(columns, widths)
 
         for name in agents[:10]:  # Limit display
@@ -1422,17 +1572,6 @@ class ISAA_Host:
         ]
         print_status(f"Background Tasks: {len(running_tasks)} running", "progress")
 
-        # Rate Limiter
-        print_separator()
-        rl = self._rate_limiter_config.get("features", {})
-        print_status("Rate Limiter Config:", "configure")
-        print_box_content(
-            f"  Rate Limiting: {'✓' if rl.get('rate_limiting') else '✗'}", ""
-        )
-        print_box_content(
-            f"  Model Fallback: {'✓' if rl.get('model_fallback') else '✗'}", ""
-        )
-        print_box_content(f"  Key Rotation: {rl.get('key_rotation_mode', 'N/A')}", "")
 
         print_box_footer()
         c_print()
@@ -1454,6 +1593,13 @@ class ISAA_Host:
         print_box_content("/agent switch <name> - Switch active agent", "")
         print_box_content("/agent spawn <name> <persona> - Create new agent", "")
         print_box_content("/agent stop <name> - Stop agent tasks", "")
+        print_box_content("/agent model <fast|complex> <name> - Change LLM model on the fly", "")
+        print_box_content("/agent checkpoint <save|load> [name] - Manage state persistence", "")
+        print_box_content("/agent load-all               - Initialize all agents from disk", "")
+        print_box_content("/agent save-all               - Save checkpoints for all active agents", "")
+        print_box_content("/agent stats [name]           - Show token usage and cost metrics", "")
+        print_box_content("/agent delete <name>          - Remove agent and its data", "")
+        print_box_content("/agent config <name>          - View raw JSON configuration", "")
 
         print_separator()
 
@@ -1461,11 +1607,16 @@ class ISAA_Host:
         print_box_content("/session list - List sessions", "")
         print_box_content("/session switch <id> - Switch session", "")
         print_box_content("/session new - Create new session", "")
+        print_box_content("/session show [n]       - Show last n messages (default 10)", "")
+        print_box_content("/session clear          - Clear current session history", "")
 
         print_separator()
 
-        print_status("Select Audio Device", "info")
-        print_box_content("/audio - Select audio device", "")
+        print_status("MCP Management (Live)", "info")
+        print_box_content("/mcp list                    - Zeige aktive MCP Verbindungen", "")
+        print_box_content("/mcp add <n> <cmd> [args]    - Server hinzufügen & Tools laden", "")
+        print_box_content("/mcp remove <name>           - Server trennen & Tools löschen", "")
+        print_box_content("/mcp reload                  - Alle MCP Tools neu indizieren", "")
 
         print_separator()
 
@@ -1512,8 +1663,22 @@ class ISAA_Host:
         print_box_content("/skill export <id> <path>    - id=all Extprt skill or all skills", "")
         print_separator()
 
-        print_status("Desktop Automation", "info")
-        print_box_content("/desktop             - Enable Desktop Automation", "")
+        print_status("Additional Features", "info")
+        print_box_content("/feature list                     - List all features", "")
+        print_box_content("/feature disable <feature>        - Disable a feature", "")
+        print_box_content("/feature enable <feature>         - Enable a feature", "")
+        print_box_content("/feature enable desktop           - Enable Desktop Automation", "")
+        print_box_content("/feature enable web <headless>    - Enable Desktop Web Automation", "")
+        print_separator()
+
+        print_status("Audio Settings", "info")
+        print_box_content("/audio on       - Enable verbose audio", "")
+        print_box_content("/audio off      - Disable verbose audio", "")
+        print_box_content("/audio voice <v>- Set voice", "")
+        print_box_content("/audio backend <b> - Set backend (groq/piper/elevenlabs)", "")
+        print_box_content("/audio stop     - Stop current playback", "")
+        print_box_content("", "")
+        print_box_content("Tip: Add #audio to any message for one-time audio response", "info")
         print_separator()
 
         print_status("Shortcuts", "info")
@@ -1551,8 +1716,8 @@ class ISAA_Host:
         elif cmd == "/task":
             await self._cmd_task(args)
 
-        elif cmd == "/audio":
-            self._select_audio_device()
+        elif cmd == "/mcp":
+            await self._cmd_mcp(args)
 
         elif cmd == "/vfs":
             await self._cmd_vfs(args)
@@ -1560,13 +1725,13 @@ class ISAA_Host:
         elif cmd == "/skill":
             await self._cmd_skill(args)
 
-        elif cmd == "/history":
-            await self._cmd_history(args)
+        elif cmd == "/audio":
+            await self._handle_audio_command(args)
 
         elif cmd == "/context":
             await self._cmd_context(args)
-        elif cmd == "/desktop":
-            await self._cmd_desktop_auto(args)
+        elif cmd == "/feature":
+            await self._cmd_feature(args)
 
         elif cmd == "/bind":
             if len(args) >= 2:
@@ -1611,7 +1776,7 @@ class ISAA_Host:
     async def _cmd_agent(self, args: list[str]):
         """Handle /agent commands."""
         if not args:
-            print_status("Usage: /agent <list|switch|spawn|stop> [args]", "warning")
+            print_status("Usage: /agent <list|switch|spawn|stop|model|...> [args]", "warning")
             return
 
         action = args[0]
@@ -1633,6 +1798,41 @@ class ISAA_Host:
             else:
                 print_status(f"Agent '{target}' not found", "error")
 
+        elif action == "model":
+            if len(args) < 3:
+                print_status("Usage: /agent model <fast|complex> <model_name>", "warning")
+                return
+
+            target_type = args[1].lower()  # "fast" oder "complex"
+            model_alias = args[2]
+
+            if model_alias not in MODEL_MAPPING:
+                print_status(f"Model '{model_alias}' not in registry. Using raw name.", "info")
+                full_model_name = model_alias
+            else:
+                full_model_name = MODEL_MAPPING[model_alias]
+
+            try:
+                agent = await self.isaa_tools.get_agent(self.active_agent_name)
+                if target_type == "fast":
+                    agent.amd.fast_llm_model = full_model_name
+                elif target_type == "complex":
+                    agent.amd.complex_llm_model = full_model_name
+                else:
+                    print_status("Type must be 'fast' or 'complex'", "error")
+                    return
+
+                print_status(f"Updated {target_type} model for {self.active_agent_name} to: {full_model_name}",
+                             "success")
+
+                # Optional: Config persistent speichern
+                await self._tool_update_agent_config(self.active_agent_name, {
+                    f"{target_type}_llm_model": full_model_name
+                })
+
+            except Exception as e:
+                print_status(f"Failed to update model: {e}", "error")
+
         elif action == "spawn":
             if len(args) < 2:
                 print_status("Usage: /agent spawn <name> [persona]", "warning")
@@ -1649,18 +1849,175 @@ class ISAA_Host:
             result = await self._tool_stop_agent(args[1])
             print_status(result, "success" if "✓" in result else "error")
 
+        elif action == "checkpoint":
+            if len(args) < 2:
+                print_status("Usage: /agent checkpoint <save|load> [name]", "warning")
+                return
+            sub = args[1].lower()
+            target = args[2] if len(args) > 2 else self.active_agent_name
+            try:
+                agent = await self.isaa_tools.get_agent(target)
+                if sub == "save":
+                    path = await agent.save()
+                    print_status(f"Checkpoint saved: {path}", "success")
+                else:
+                    await agent.restore()
+                    print_status(f"State restored for {target}", "success")
+            except Exception as e:
+                print_status(f"Checkpoint error: {e}", "error")
+
+        elif action == "load-all":
+            print_status("Scanning agent directory...", "progress")
+            agent_dir = Path(self.app.data_dir) / "Agents"
+            loaded = 0
+            if agent_dir.exists():
+                for d in agent_dir.iterdir():
+                    if d.is_dir() and (d / "agent.json").exists():
+                        try:
+                            await self.isaa_tools.get_agent(d.name)
+                            loaded += 1
+                        except:
+                            pass
+            print_status(f"Loaded {loaded} agents from disk", "success")
+
+        elif action == "save-all":
+            print_status("Saving all active agent states...", "progress")
+            for name in self.isaa_tools.config.get("agents-name-list", []):
+                instance_key = f"agent-instance-{name}"
+                if instance_key in self.isaa_tools.config:
+                    agent = self.isaa_tools.config[instance_key]
+                    await agent.save()
+            print_status("All agents checkpointed", "success")
+
+        elif action == "stats":
+            target = args[1] if len(args) > 1 else self.active_agent_name
+            try:
+                agent = await self.isaa_tools.get_agent(target)
+                stats = agent.get_stats()
+                print_box_header(f"Stats: {target}", "📊")
+                print_table_row(["Input Tokens", f"{stats['total_tokens_in']:,}"], [20, 15], ["white", "cyan"])
+                print_table_row(["Output Tokens", f"{stats['total_tokens_out']:,}"], [20, 15], ["white", "cyan"])
+                print_table_row(["Total Cost", f"${stats['total_cost']:.4f}"], [20, 15], ["white", "green"])
+                print_table_row(["LLM Calls", str(stats['total_llm_calls'])], [20, 15], ["white", "yellow"])
+                print_table_row(["Sessions", str(len(stats['sessions']))], [20, 15], ["white", "blue"])
+                print_table_row(["Tools", str(len(stats['tools']))], [20, 15], ["white", "blue"])
+                print_table_row(["Bindings", str(len(stats['bindings']))], [20, 15], ["white", "blue"])
+                print_box_footer()
+            except Exception as e:
+                print_status(f"Could not get stats: {e}", "error")
+
+        elif action == "delete":
+            if len(args) < 2:
+                print_status("Usage: /agent delete <name>", "warning")
+                return
+            target = args[1]
+            confirm = input(f"Really delete agent '{target}' and all its data? (y/N): ")
+            if confirm.lower() == 'y':
+                # Registry cleanup
+                self.agent_registry.pop(target, None)
+                # Disk cleanup
+                import shutil
+                agent_path = Path(self.app.data_dir) / "Agents" / target
+                if agent_path.exists(): shutil.rmtree(agent_path)
+                print_status(f"Agent '{target}' deleted", "success")
+
+        elif action == "config":
+            target = args[1] if len(args) > 1 else self.active_agent_name
+            agent_path = Path(self.app.data_dir) / "Agents" / target / "agent.json"
+            if agent_path.exists():
+                with open(agent_path, 'r', encoding='utf-8') as f:
+                    print_code_block(f.read(), "json")
+            else:
+                print_status("Config not found on disk", "error")
+
         else:
             print_status(f"Unknown agent action: {action}", "error")
 
     async def _cmd_session(self, args: list[str]):
         """Handle /session commands."""
         if not args:
-            print_status("Usage: /session <list|switch|new>", "warning")
+            print_status("Usage: /session <list|switch|new|clear|show>", "warning")
             return
 
         action = args[0]
+        if action == "clear":
+            try:
+                agent = await self.isaa_tools.get_agent(self.active_agent_name)
+                session = agent.session_manager.get(self.active_session_id)
 
-        if action == "list":
+                if not session:
+                    print_status("No active session found.", "error")
+                    return
+            except Exception as e:
+                print_status(f"Error accessing session: {e}", "error")
+                return
+            session.clear_history()
+            # If the session has a persistence layer, ensure it saves
+            self._save_state()
+            print_status(f"History cleared for session '{self.active_session_id}'.", "success")
+
+        elif action == "show":
+            limit = 10
+            if len(args) > 1 and args[1].isdigit():
+                limit = int(args[1])
+            try:
+                agent = await self.isaa_tools.get_agent(self.active_agent_name)
+                session = agent.session_manager.get(self.active_session_id)
+
+                if not session:
+                    print_status("No active session found.", "error")
+                    return
+            except Exception as e:
+                print_status(f"Error accessing session: {e}", "error")
+                return
+            history = session.get_history(last_n=limit)
+
+            if not history:
+                print_status("History is empty.", "info")
+                return
+
+            print_box_header(f"History: {self.active_agent_name}@{self.active_session_id} (Last {len(history)})", "💬")
+
+            for msg in history:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+
+                # Format based on role
+                if role == "user":
+                    c_print(HTML(f"  <style font-weight='bold' fg='ansigreen'>User 👤</style>"))
+                    c_print(HTML(f"  {esc(content)}"))
+                    c_print(HTML(""))  # Spacing
+
+                elif role == "assistant":
+                    c_print(HTML(f"  <style font-weight='bold' fg='ansicyan'>{self.active_agent_name} 🤖</style>"))
+
+                    # Check for Tool Calls
+                    if "tool_calls" in msg and msg["tool_calls"]:
+                        for tc in msg["tool_calls"]:
+                            fn = tc.get("function", {})
+                            name = fn.get("name", "unknown")
+                            c_print(HTML(f"  <style fg='ansiyellow'>🔧 Calls: {name}(...)</style>"))
+
+                    if content:
+                        c_print(HTML(f"  {esc(content)}"))
+                    c_print(HTML(""))  # Spacing
+
+                elif role == "tool":
+                    # Tool Output - usually verbose, show summary
+                    call_id = msg.get("tool_call_id", "unknown")
+                    preview = content[:10000] + "..." if len(content) > 10000 else content
+                    c_print(HTML(f"  <style fg='ansimagenta'>⚙️ Tool Result ({call_id})</style>"))
+                    c_print(HTML(f"  <style fg='gray'>{esc(preview)}</style>"))
+                    c_print(HTML(""))
+
+                elif role == "system":
+                    c_print(HTML(f"  <style fg='ansired'>System ⚠️</style>"))
+                    c_print(HTML(f"  <style fg='gray'>{esc(content[:10000])}...</style>"))
+                    c_print(HTML(""))
+
+            print_box_footer()
+
+        elif action == "list":
             try:
                 agent = await self.isaa_tools.get_agent(self.active_agent_name)
                 sessions = list(agent.session_manager.sessions.keys())
@@ -1715,6 +2072,119 @@ class ISAA_Host:
 
         else:
             print_status(f"Unknown task action: {action}", "error")
+
+    async def _cmd_mcp(self, args: list[str]):
+        """Handle live MCP management commands."""
+        if not args:
+            print_status("Usage: /mcp <list|add|remove|reload|info> [args]", "warning")
+            return
+
+        action = args[0].lower()
+        agent = await self.isaa_tools.get_agent(self.active_agent_name)
+
+        # Sicherstellen, dass der Agent einen MCPSessionManager hat
+        if not hasattr(agent, "_mcp_session_manager") or agent._mcp_session_manager is None:
+            from toolboxv2.mods.isaa.extras.mcp_session_manager import MCPSessionManager
+            agent._mcp_session_manager = MCPSessionManager()
+
+        if action == "list":
+            print_box_header(f"MCP Servers: {self.active_agent_name}", "🔌")
+            active_sessions = agent._mcp_session_manager.sessions
+            if not active_sessions:
+                print_box_content("Keine aktiven MCP Server.", "info")
+            for name, session in active_sessions.items():
+                print_box_content(f"{name} (Status: Connected)", "success")
+            print_box_footer()
+
+        elif action == "add":
+            if len(args) < 3:
+                print_status("Usage: /mcp add <name> <command> [args...]", "warning")
+                return
+
+            name = args[1]
+            cmd = args[2]
+            cmd_args = args[3:] if len(args) > 3 else []
+
+            server_config = {"command": cmd, "args": cmd_args}
+
+            print_status(f"Connecting to MCP '{name}'...", "progress")
+            try:
+                # 1. Verbindung herstellen
+                session = await agent._mcp_session_manager.get_session(name, server_config)
+                # 2. Tools extrahieren
+                caps = await agent._mcp_session_manager.extract_capabilities(session, name)
+
+                # 3. Tools im ToolManager des Agenten registrieren (Live-Rebuild)
+                count = 0
+                for t_name, t_info in caps.get('tools', {}).items():
+                    wrapper_name = f"{name}_{t_name}"
+
+                    # Nutze die Builder-Logik für den Wrapper (simuliert)
+                    from toolboxv2.mods.isaa.base.Agent.builder import FlowAgentBuilder
+                    builder_tmp = FlowAgentBuilder()
+                    wrapper = builder_tmp._create_mcp_tool_wrapper(name, t_name, t_info, session)
+
+                    agent.add_tool(
+                        wrapper,
+                        name=wrapper_name,
+                        description=t_info.get('description'),
+                        category=[f"mcp_{name}", "mcp"]
+                    )
+                    count += 1
+
+                # 4. In agent.json persistent speichern
+                await self._tool_mcp_connect(name, cmd, cmd_args, self.active_agent_name)
+
+                print_status(f"Successfully added {count} tools from '{name}'", "success")
+
+            except Exception as e:
+                print_status(f"Failed to add MCP server: {e}", "error")
+
+        elif action == "remove":
+            if len(args) < 2:
+                print_status("Usage: /mcp remove <name>", "warning")
+                return
+
+            name = args[1]
+            # 1. Session schließen
+            if name in agent._mcp_session_manager.sessions:
+                # Wir löschen die Session (Shutdown erfolgt im Manager)
+                del agent._mcp_session_manager.sessions[name]
+
+            # 2. Tools aus Registry entfernen
+            tools_to_remove = [t for t in agent.tool_manager.tools.keys() if t.startswith(f"{name}_")]
+            for t in tools_to_remove:
+                del agent.tool_manager.tools[t]
+
+            # 3. Config bereinigen
+            agent_config_path = Path(self.app.data_dir) / "Agents" / self.active_agent_name / "agent.json"
+            if agent_config_path.exists():
+                with open(agent_config_path, 'r+') as f:
+                    cfg = json.load(f)
+                    if "mcp" in cfg and "servers" in cfg["mcp"]:
+                        cfg["mcp"]["servers"] = [s for s in cfg["mcp"]["servers"] if s['name'] != name]
+                        f.seek(0)
+                        json.dump(cfg, f, indent=2)
+                        f.truncate()
+
+            print_status(f"MCP server '{name}' and its {len(tools_to_remove)} tools removed.", "success")
+
+        elif action == "reload":
+            print_status("Reloading all MCP configurations...", "progress")
+            # Wir triggern den FlowAgentBuilder Re-Process
+            from toolboxv2.mods.isaa.base.Agent.builder import FlowAgentBuilder
+            agent_config_path = Path(self.app.data_dir) / "Agents" / self.active_agent_name / "agent.json"
+
+            if agent_config_path.exists():
+                builder = FlowAgentBuilder(config_path=str(agent_config_path))
+                # Extrahiere Config-Teil
+                mcp_data = {"mcpServers": {s['name']: s for s in builder.config.mcp.model_dump().get('servers', [])}}
+                builder.load_mcp_tools_from_config(mcp_data)
+                await builder._process_mcp_config(agent)
+                print_status("MCP Rebuild complete.", "success")
+            else:
+                print_status("No config found to reload.", "error")
+
 
     def _print_vfs_tree(self, tree: dict, level: int = 0, max_depth: int = 4):
         """Recursively print VFS directory structure (HTML version)."""
@@ -2006,59 +2476,8 @@ class ISAA_Host:
         print_box_header(
             f"VFS Structure: {self.active_agent_name}@{self.active_session_id}", "📂"
         )
+        print_code_block(session.vfs.build_context_string(), "markdown")
 
-        # Show mounts first
-        if session.vfs.mounts:
-            print_separator()
-            print_status("Mounts", "info")
-            for vfs_path, mount in session.vfs.mounts.items():
-                flags = "ro" if mount.readonly else "rw"
-                print_box_content(f"  {vfs_path} → {mount.local_path} [{flags}]", "")
-            print_separator()
-
-        # Build tree from flat file list
-        tree: dict = {}
-        for filepath, f in session.vfs.files.items():
-            parts = filepath.strip("/").split("/")
-            current = tree
-            for i, part in enumerate(parts):
-                if i == len(parts) - 1:
-                    # File info
-                    is_shadow = hasattr(f, 'backing_type') and f.backing_type != FileBackingType.MEMORY
-                    is_dirty = hasattr(f, 'is_dirty') and f.is_dirty
-                    is_loaded = hasattr(f, 'is_loaded') and f.is_loaded
-
-                    status = ""
-                    if is_shadow and not is_loaded:
-                        status = " [shadow]"
-                    elif is_dirty:
-                        status = " [modified]"
-                    elif f.state == "open":
-                        status = " [open]"
-
-                    current[part] = {"_status": status, "_size": getattr(f, 'size_bytes',
-                                                                         f.size if hasattr(f,
-                                                                                                        'size') else 0)}
-                else:
-                    current = current.setdefault(part, {})
-
-        if tree:
-            c_print()
-            self._print_vfs_tree(tree)
-            c_print()
-
-            # Summary
-            total_files = len(session.vfs.files)
-            shadow_files = sum(1 for f in session.vfs.files.values() if
-                               hasattr(f, 'backing_type') and f.backing_type != FileBackingType.MEMORY)
-            dirty_files = sum(1 for f in session.vfs.files.values() if hasattr(f, 'is_dirty') and f.is_dirty)
-
-            print_separator()
-            print_box_content(f"Total: {total_files} files ({shadow_files} shadow, {dirty_files} modified)", "info")
-        else:
-            print_box_content("VFS is empty", "warning")
-
-        print_box_footer()
 
     async def _vfs_show_file(self, session, filename: str):
         """Show file content."""
@@ -2128,85 +2547,69 @@ class ISAA_Host:
         except Exception as e:
             print_status(f"Error reading file '{filename}': {e}", "error")
 
-    async def _cmd_history(self, args: list[str]):
-        """Handle /history commands."""
+    async def _handle_audio_command(self, args: list[str]):
+        """Handle /audio commands"""
+
         if not args:
-            print_status("Usage: /history <show|clear> [n]", "warning")
-            return
-
-        action = args[0].lower()
-
-        try:
-            agent = await self.isaa_tools.get_agent(self.active_agent_name)
-            session = agent.session_manager.get(self.active_session_id)
-
-            if not session:
-                print_status("No active session found.", "error")
-                return
-        except Exception as e:
-            print_status(f"Error accessing session: {e}", "error")
-            return
-
-        if action == "clear":
-            session.clear_history()
-            # If the session has a persistence layer, ensure it saves
-            self._save_state()
-            print_status(f"History cleared for session '{self.active_session_id}'.", "success")
-
-        elif action == "show":
-            limit = 10
-            if len(args) > 1 and args[1].isdigit():
-                limit = int(args[1])
-
-            history = session.get_history(last_n=limit)
-
-            if not history:
-                print_status("History is empty.", "info")
-                return
-
-            print_box_header(f"History: {self.active_agent_name}@{self.active_session_id} (Last {len(history)})", "💬")
-
-            for msg in history:
-                role = msg.get("role", "unknown")
-                content = msg.get("content", "")
-
-                # Format based on role
-                if role == "user":
-                    c_print(HTML(f"  <style font-weight='bold' fg='ansigreen'>User 👤</style>"))
-                    c_print(HTML(f"  {esc(content)}"))
-                    c_print(HTML(""))  # Spacing
-
-                elif role == "assistant":
-                    c_print(HTML(f"  <style font-weight='bold' fg='ansicyan'>{self.active_agent_name} 🤖</style>"))
-
-                    # Check for Tool Calls
-                    if "tool_calls" in msg and msg["tool_calls"]:
-                        for tc in msg["tool_calls"]:
-                            fn = tc.get("function", {})
-                            name = fn.get("name", "unknown")
-                            c_print(HTML(f"  <style fg='ansiyellow'>🔧 Calls: {name}(...)</style>"))
-
-                    if content:
-                        c_print(HTML(f"  {esc(content)}"))
-                    c_print(HTML(""))  # Spacing
-
-                elif role == "tool":
-                    # Tool Output - usually verbose, show summary
-                    call_id = msg.get("tool_call_id", "unknown")
-                    preview = content[:100] + "..." if len(content) > 100 else content
-                    c_print(HTML(f"  <style fg='ansimagenta'>⚙️ Tool Result ({call_id})</style>"))
-                    c_print(HTML(f"  <style fg='gray'>{esc(preview)}</style>"))
-                    c_print(HTML(""))
-
-                elif role == "system":
-                    c_print(HTML(f"  <style fg='ansired'>System ⚠️</style>"))
-                    c_print(HTML(f"  <style fg='gray'>{esc(content[:100])}...</style>"))
-                    c_print(HTML(""))
-
+            # Status zeigen
+            verbose = getattr(self, 'verbose_audio', False)
+            print_box_header("Audio Settings", "🔊")
+            print_box_content(f"Verbose Audio: {'ON' if verbose else 'OFF'}", "")
+            print_box_content(f"TTS Backend: {self.audio_player.tts_backend}", "")
+            print_box_content(f"Voice: {self.audio_player.tts_voice}", "")
+            print_box_content(f"Language: {self.audio_player.language}", "")
+            print_separator()
+            print_box_content("Commands:", "bold")
+            print_box_content("/audio on           - Enable verbose audio", "")
+            print_box_content("/audio off          - Disable verbose audio", "")
+            print_box_content("/audio voice <v>    - Set voice", "")
+            print_box_content("/audio backend <b>  - Set backend (groq/piper/elevenlabs)", "")
+            print_box_content("/audio stop         - Stop current playback", "")
+            print_box_content("/audio device <d>   - Set audio input device", "")
+            print_box_content("", "")
+            print_box_content("Tip: Add #audio to any message for one-time audio response", "info")
             print_box_footer()
+            return
+
+        cmd = args[0].lower()
+
+        if cmd == "on":
+            self.verbose_audio = True
+            print_status("Verbose audio enabled - all responses will be spoken", "success")
+
+        elif cmd == "off":
+            self.verbose_audio = False
+            print_status("Verbose audio disabled", "success")
+
+        elif cmd == "stop":
+            if hasattr(self, 'audio_player'):
+                await self.audio_player.stop()
+                print_status("Audio stopped", "success")
+
+        elif cmd == "voice" and len(args) > 1:
+            self.audio_player.tts_voice = args[1]
+            print_status(f"Voice set to: {args[1]}", "success")
+
+        elif cmd == "backend" and len(args) > 1:
+            backend = args[1].lower()
+            if backend in ["groq", "piper", "elevenlabs"]:
+                self.audio_player.tts_backend = backend
+                print_status(f"Backend set to: {backend}", "success")
+            else:
+                print_status("Valid backends: groq, piper, elevenlabs", "error")
+
+        elif cmd == "lang" and len(args) > 1:
+            self.audio_player.language = args[1]
+            print_status(f"Language set to: {args[1]}", "success")
+
+        elif cmd == "device":
+            if len(args) > 1:
+                self.audio_device_index = int(args[1])
+            else:
+                self._select_audio_device()
 
         else:
-            print_status(f"Unknown history action: {action}", "error")
+            print_status(f"Unknown audio command: {cmd}", "error")
 
     async def _cmd_skill(self, args: list[str]):
         """Handle /skill commands."""
@@ -2221,6 +2624,9 @@ class ISAA_Host:
             # Access the SkillsManager via the ExecutionEngine
             engine = agent._get_execution_engine()
             sm = engine.skills_manager
+            if sm.export_skills is None:
+                from toolboxv2.mods.isaa.base.Agent.skills import add_anthropic_skill_io
+                add_anthropic_skill_io(sm)
         except Exception as e:
             print_status(f"Could not access skills for agent '{self.active_agent_name}'", "error")
             import traceback
@@ -2251,7 +2657,7 @@ class ISAA_Host:
 
         elif action == "export":
             if len(args) < 3:
-                print_status("Usage: /skill export <skill_id> <output_path>", "warning")
+                print_status("Usage: /skill export <skill_id/all> <output_path>", "warning")
                 return
             skill_id = args[1]
             output_path = args[2]
@@ -2294,8 +2700,10 @@ class ISAA_Host:
 
             print_box_header(f"Skills: {self.active_agent_name}", "🧠")
 
-            columns = [("ID", 25), ("Name", 20), ("Src", 10), ("Conf", 6), ("Active", 8)]
-            widths = [25, 20, 10, 6, 8]
+            max_id_length = max(len(skill.id) for skill in sm.skills.values())
+            max_name_length = max(len(skill.name) for skill in sm.skills.values())
+            columns = [("ID", max_id_length), ("Name", max_name_length), ("Src", 10), ("Conf", 6), ("Active", 8)]
+            widths = [max_id_length, max_name_length, 10, 6, 8]
             print_table_header(columns, widths)
 
             skills = sm.skills.values()
@@ -2439,18 +2847,51 @@ class ISAA_Host:
         else:
             print_status(f"Unknown skill action: {action}", "error")
 
-    async def _cmd_desktop_auto(self, args: list[str]):
-        """Handle /desktop commands."""
+    async def _cmd_feature(self, args: list[str]):
+        """Handle /feature commands."""
+        if len(args) < 2:
+            print_status("Usage: /feature <action> [options]", "warning")
+            return
 
         try:
-            from toolboxv2.mods.isaa.extras.destop_auto import register_enhanced_tools
-            self.kit, tools = register_enhanced_tools()
             agent = await self.isaa_tools.get_agent(self.active_agent_name)
-            for tool in tools:
-                agent.add_tool(**tool)
-            print_status("Desktop Automation enabled.", "success")
         except Exception as e:
-            print_status(f"Error: {e}", "error")
+            print_status(f"Could not access agent '{self.active_agent_name}'", "error")
+            import traceback
+            traceback.print_exc()
+            return
+
+        self.feature_manager.set_agent(agent)
+
+        action = args[1].lower()
+        if action == "list":
+            print_box_header("Available Features", "📦")
+            for feature in self.feature_manager.list_features():
+                print_status(f"{feature}", "info")
+        elif action == "enable":
+            if len(args) < 3:
+                print_status("Usage: /feature enable <feature> [options]", "warning")
+                return
+            feature = args[2].lower()
+            if feature not in self.feature_manager.list_features():
+                print_status(f"Feature '{feature}' not found.", "error")
+                return
+            self.feature_manager.enable(feature)
+            print_status(f"Feature '{feature}' enabled.", "success")
+        elif action == "disable":
+            if len(args) < 3:
+                print_status("Usage: /feature disable <feature> [options]", "warning")
+                return
+            feature = args[2].lower()
+            if feature not in self.feature_manager.list_features():
+                print_status(f"Feature '{feature}' not found.", "error")
+                return
+            # test active
+            if self.feature_manager.is_enabled(feature):
+                print_status(f"Feature '{feature}' is active. Please disable it first.", "warning")
+                return
+            self.feature_manager.disable(feature)
+            print_status(f"Feature '{feature}' disabled.", "success")
 
 
     async def _cmd_context(self, args: list[str]):
@@ -2466,12 +2907,26 @@ class ISAA_Host:
         try:
             agent = await self.isaa_tools.get_agent(self.active_agent_name)
 
+            # Check für #audio Flag
+            wants_audio = user_input.strip().endswith("#audio")
+            if wants_audio:
+                user_input = user_input.rsplit("#audio", 1)[0].strip()
+
+            # Kombiniere mit verbose_audio Setting
+            should_speak = wants_audio or getattr(self, 'verbose_audio', False)
+
+            # Audio Player starten wenn nötig
+            if should_speak and hasattr(self, 'audio_player'):
+                await self.audio_player.start()
+
             print_status(f"Processing with {self.active_agent_name}...", "progress")
 
             # Stream response
             final_response = ""
             full_response = ""
-            start_data = False
+            current_sentence = ""
+            already_played = []
+            stop_for_speech = False
             async for chunk in agent.a_stream_verbose(
                 query=user_input,
                 session_id=self.active_session_id,
@@ -2481,7 +2936,29 @@ class ISAA_Host:
                     print(chunk, end="", flush=True)
                 full_response += chunk
 
+                if '```' in chunk:
+                    stop_for_speech = True
+
+                # Für Audio: Sammle bis Satzende
+                if should_speak and hasattr(self, 'audio_player'):
+                    if chunk == remove_styles(chunk) and not stop_for_speech:
+                        current_sentence += chunk
+
+                    # Check ob Satzende erreicht
+                    if any(current_sentence.rstrip().endswith(p) for p in ['.', '!', '?', ':', '\n\n']):
+                        # Satz zur Audio Queue
+                        sentence = current_sentence.strip()
+                        if len(sentence) > 10:  # Mindestlänge
+                            sentence = remove_styles(sentence)
+                            already_played.append(sentence)
+                            get_app("ci.audio.bg.task").run_bg_task_advanced(self.audio_player.queue_text,sentence)
+                        current_sentence = ""
+
             c_print()  # Newline after streaming
+
+            # Rest der Sentence queuen
+            if should_speak and current_sentence.strip() and hasattr(self, 'audio_player') and current_sentence not in already_played:
+                 get_app("ci.audio.bg.task").run_bg_task_advanced(self.audio_player.queue_text,remove_styles(current_sentence.strip()))
 
             # Try to visualize JSON responses
             try:

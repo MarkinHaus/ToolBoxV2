@@ -695,14 +695,14 @@ class ExecutionEngine(SubAgentResumeExtension):
         self._current_session = None
 
         # Get or create SkillsManager
-        if hasattr(agent, "skills_manager") and agent.skills_manager:
-            self.skills_manager = agent.skills_manager
+        if hasattr(agent.session_manager, "skills_manager") and agent.session_manager.skills_manager:
+            self.skills_manager = agent.session_manager.skills_manager
         else:
             self.skills_manager = SkillsManager(
                 agent_name=agent.amd.name, memory_instance=self._get_memory_instance()
             )
             # Store back on agent
-            agent.skills_manager = self.skills_manager
+            agent.session_manager.skills_manager = self.skills_manager
 
         # Add parallel_subtasks skill if not present
         if "parallel_subtasks" not in self.skills_manager.skills:

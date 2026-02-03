@@ -61,8 +61,8 @@ def print_prompt(msg_data):
         if content is not None:
             # Bei Tool Results den Content evtl. kürzen, falls riesig
             content_str = str(content)
-            if role == 'tool' and len(content_str) > 2000:
-                print(Style.GREY(f"{content_str[:2000]}... [truncated {len(content_str) - 2000} chars]"))
+            if role == 'tool' and len(content_str) > 200000:
+                print(Style.GREY(f"{content_str[:200000]}... [truncated {len(content_str) - 200000} chars]"))
             else:
                 # Standard Text Content
                 print(Style.GREY(f"{content_str}"))

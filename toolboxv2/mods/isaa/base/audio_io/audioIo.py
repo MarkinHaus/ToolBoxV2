@@ -14,8 +14,7 @@ Supports multiple processing pipelines:
 Author: OmniCore Team
 Version: 1.0.0
 """
-
-
+import asyncio
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -766,6 +765,140 @@ def process_audio_native(
     )
     return process_audio_raw(audio, processor or (lambda x: x), config)
 
+
+# =============================================================================
+# AUDIO STREAMING PLAYER
+# =============================================================================
+
+class AudioStreamPlayer:
+    """Streamt Audio während der Agent-Antwort generiert wird"""
+
+    def __init__(self):
+        self._queue: asyncio.Queue = asyncio.Queue()
+        self._playing = False
+        self._task: Optional[asyncio.Task] = None
+        self._stop_event = asyncio.Event()
+
+        # TTS Config
+        self.tts_backend = "groq"  # "groq", "piper", "elevenlabs"
+        self.tts_voice = "autumn" # for groq [autumn diana hannah austin daniel troy]
+        self.language = "de"
+
+    def _load_tts(self):
+        """Lazy load TTS"""
+        try:
+            from toolboxv2.mods.isaa.base.audio_io.Tts import (
+                synthesize, TTSConfig, TTSBackend
+            )
+            return synthesize, TTSConfig, TTSBackend
+        except ImportError:
+            return None, None, None
+
+    async def start(self):
+        """Startet den Audio Player Worker"""
+        if self._task is None or self._task.done():
+            self._stop_event.clear()
+            self._task = asyncio.create_task(self._player_worker())
+
+    async def stop(self):
+        """Stoppt den Audio Player"""
+        self._stop_event.set()
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        # Queue leeren
+        while not self._queue.empty():
+            try:
+                self._queue.get_nowait()
+            except:
+                break
+
+    async def queue_text(self, text: str):
+        """Fügt Text zur TTS Queue hinzu"""
+        if text.strip():
+            await self._queue.put(text)
+
+    async def _player_worker(self):
+        """Background Worker der Audio abspielt"""
+        synthesize, TTSConfig, TTSBackend = self._load_tts()
+
+        if synthesize is None:
+            print("[Audio] TTS not available")
+            return
+
+        try:
+            import sounddevice as sd
+            import numpy as np
+        except ImportError:
+            print("[Audio] sounddevice not installed: pip install sounddevice")
+            return
+
+        while not self._stop_event.is_set():
+            try:
+                # Warte auf Text (mit Timeout für Stop-Check)
+                try:
+                    text = await asyncio.wait_for(self._queue.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+
+                self._playing = True
+
+                # TTS Config
+                if self.tts_backend == "groq":
+                    config = TTSConfig(
+                        backend=TTSBackend.GROQ_TTS,
+                        voice=self.tts_voice,
+                        language=self.language,
+                    )
+                elif self.tts_backend == "elevenlabs":
+                    config = TTSConfig(
+                        backend=TTSBackend.ELEVENLABS,
+                        voice=self.tts_voice,
+                    )
+                else:
+                    config = TTSConfig(
+                        backend=TTSBackend.PIPER,
+                        voice=self.tts_voice,
+                        language=self.language,
+                    )
+
+                # Synthesize
+                try:
+                    result = synthesize(text, config=config)
+
+                    if result and result.audio:
+                        # WAV zu numpy
+                        import io
+                        import wave
+
+                        with io.BytesIO(result.audio) as buf:
+                            with wave.open(buf, 'rb') as wav:
+                                frames = wav.readframes(wav.getnframes())
+                                sample_rate = wav.getframerate()
+                                audio_data = np.frombuffer(frames, dtype=np.int16)
+
+                        # Abspielen (non-blocking)
+                        sd.play(audio_data, sample_rate)
+                        sd.wait()
+
+                except Exception as e:
+                    print(f"[Audio] TTS error: {e}")
+
+                self._playing = False
+                self._queue.task_done()
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"[Audio] Player error: {e}")
+                self._playing = False
+
+    @property
+    def is_playing(self) -> bool:
+        return self._playing or not self._queue.empty()
 
 # =============================================================================
 # MODULE INFO

@@ -842,6 +842,25 @@ class SkillsManager:
                 source="predefined"
             ),
             Skill(
+            id="user_profile_manager",
+            name="User Profile Manager",
+            triggers=[
+                "profil", "profile", "wer bin ich", "who am i",
+                "was weißt du über mich", "what do you know about me",
+                "mein profil", "my profile", "zeig mein profil"
+            ],
+            instruction="""Für User Profile Management:
+1. Lade das User-Profil aus der persistenten Datei (user_profiles/{user_id}.json)
+2. Bei Anfrage "wer bin ich" - fasse das Profil zusammen
+3. Bei Anfrage "was weißt du" - zeige relevante Kategorien
+4. Nutze think() um zu entscheiden welche Profilteile relevant sind
+5. Antworte personalisiert basierend auf dem Kontext
+6. Aktualisiere last_interaction Timestamp""",
+            tools_used=["think", "file_read", "file_write", "final_answer"],
+            tool_groups=["memory", "filesystem"],
+            source="predefined"
+            ),
+            Skill(
                 id="user_preference_recall",
                 name="User Preference Recall",
                 triggers=[
@@ -876,8 +895,48 @@ class SkillsManager:
                 tool_groups=["memory"],
                 source="predefined"
             ),
+            Skill(
+                id="user_context_learn",
+                name="User Context Learning",
+                triggers=[],  # Kein expliziter Trigger - wird automatisch angewendet
+                instruction="""Implizites Lernen aus Interaktionen (AUTOMATISCH):
+1. Nach jeder Interaktion: Analysiere ob neue Informationen gelernt wurden
+2. Kategorien für implizites Lernen:
+   - work_context: Projekte, Tools, Technologien
+   - communication_style: Sprache, Formalität, Präferenzen
+   - current_focus: Aktuelle Aufgaben, Deadlines, Prioritäten
+   - pain_points: Wiederkehrende Probleme, Frustrationen
+3. Nutze think() um zu entscheiden ob Info speicherwürdig ist
+4. Speichere nur FAKTEN, keine Vermutungen
+5. Update brief_history mit signifikanten Interaktionen
+6. Halte top_of_mind aktuell""",
+                tools_used=["think", "file_read", "file_write"],
+                tool_groups=["memory", "filesystem"],
+                source="predefined"
+            ),
 
-            # === HABITS SKILLS ===
+            # Skill: Profil bearbeiten/löschen
+            Skill(
+            id="user_profile_edit",
+            name="User Profile Edit",
+            triggers=[
+                "lösche", "delete", "entferne", "remove", "korrigiere", "correct",
+                "das stimmt nicht", "that's wrong", "update", "ändere", "change"
+            ],
+            instruction="""Für Profil-Bearbeitungen:
+1. Identifiziere WAS geändert/gelöscht werden soll
+2. Lade aktuelles Profil
+3. Bei Löschung: Bestätige VOR dem Löschen was entfernt wird
+4. Bei Korrektur: Zeige alt vs. neu
+5. Bei Update: Merge mit existierenden Daten
+6. Speichere und bestätige die Änderung
+7. Bei "lösche alles": Doppelte Bestätigung erforderlich""",
+            tools_used=["think", "file_read", "file_write", "final_answer"],
+            tool_groups=["memory", "filesystem"],
+            source="predefined"
+        ),
+
+        # === HABITS SKILLS ===
             Skill(
                 id="habits_tracking",
                 name="Habits Tracking",

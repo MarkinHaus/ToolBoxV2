@@ -358,7 +358,7 @@ class AISemanticMemory(metaclass=Singleton):
     @staticmethod
     def _sanitize_name(name: str) -> str:
         """Sanitize memory name for filesystem safety"""
-        name = re.sub(r'[^a-zA-Z0-9_-]', '-', name)[:63].strip('-')
+        name = re.sub(r'[^a-zA-Z0-9_-]', '-', name)[:63].strip('-').replace(":", "_").replace(" ", "_")
         if not name:
             raise ValueError("Invalid memory name")
         if len(name) < 3:

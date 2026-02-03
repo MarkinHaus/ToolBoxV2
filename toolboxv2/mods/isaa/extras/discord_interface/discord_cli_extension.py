@@ -129,6 +129,7 @@ class DiscordCLIExtension:
         print_box_content("/discord voice status    - Voice connection status", "")
         print_box_content("/discord voice speak <text> - Speak in voice", "")
         print_box_content("/discord voice stop      - Stop speaking", "")
+        print_box_content("/discord voice set <voice> <backend> - Stop speaking", "")
         print_box_content("/discord voice context   - Show voice conversation", "")
         print_box_footer()
 
@@ -160,7 +161,7 @@ class DiscordCLIExtension:
                 token=token,
                 respond_to_mentions_only=True,
                 tts_backend="groq",
-                tts_voice="Fritz-PlayAI",
+                tts_voice="autumn",
                 stt_backend="groq",
                 language="de",
             )
@@ -418,6 +419,8 @@ class DiscordCLIExtension:
             await self._voice_stop()
         elif cmd == "context":
             await self._voice_context()
+        elif cmd == "set":
+            await self._voice_set(sub_args)
         elif cmd == "channels":
             await self._voice_channels()
         else:
@@ -433,11 +436,12 @@ class DiscordCLIExtension:
         print_box_content("/discord voice speak <text>      - Speak text via TTS", "")
         print_box_content("/discord voice stop              - Stop speaking", "")
         print_box_content("/discord voice context           - Show conversation", "")
+        print_box_content("/discord voice set <voice> <backend> - Set voice and backend", "")
         print_box_content("/discord voice channels          - List voice channels", "")
         print_box_footer()
 
     async def _voice_join(self, args: list[str]):
-        """Join voice channel"""
+        """Join voice channel (Thread-Safe)"""
         if not args:
             print_status("Usage: /discord voice join <channel_id>", "error")
             print_status("Use /discord voice channels to see available channels", "info")
@@ -449,54 +453,111 @@ class DiscordCLIExtension:
             print_status("Invalid channel ID", "error")
             return
 
-        import discord
-
-        channel = self.interface.bot.get_channel(channel_id)
-        if not channel:
-            try:
-                channel = await self.interface.bot.fetch_channel(channel_id)
-            except:
-                print_status(f"Channel {channel_id} not found", "error")
-                return
-
-        if not isinstance(channel, discord.VoiceChannel):
-            print_status(f"{channel.name} is not a voice channel", "error")
+        # Sicherstellen, dass wir Zugriff auf den Bot-Loop haben
+        if not self.interface or not self.interface.bot.loop:
+            print_status("Discord not connected or loop not available", "error")
             return
 
-        print_status(f"Joining {channel.name}...", "progress")
+        # Logik, die im Bot-Thread ausgeführt werden muss
+        async def _join_task():
+            import discord
+            # Channel im Kontext des Bot-Loops abrufen
+            channel = self.interface.bot.get_channel(channel_id)
+            if not channel:
+                try:
+                    channel = await self.interface.bot.fetch_channel(channel_id)
+                except:
+                    return {"success": False, "error": f"Channel {channel_id} not found"}
 
-        result = await self.voice_mode.voice_handler.join_channel(channel)
+            if not isinstance(channel, discord.VoiceChannel):
+                return {"success": False, "error": f"{channel.name} is not a voice channel"}
 
-        if result.get("success"):
-            listening = "✅ Listening enabled" if result.get("listening") else "❌ Listening disabled"
-            print_status(f"Joined {result.get('channel_name')}", "success")
-            print_status(listening, "info")
+            # Join ausführen (im richtigen Loop)
+            return await self.voice_mode.voice_handler.join_channel(channel)
 
-            if result.get("warning"):
-                print_status(result["warning"], "warning")
-        else:
-            print_status(f"Failed: {result.get('error')}", "error")
+        print_status(f"Joining channel {channel_id}...", "progress")
+
+        try:
+            # Task sicher an den Bot-Loop übergeben und im Haupt-Loop auf Ergebnis warten
+            future = asyncio.run_coroutine_threadsafe(_join_task(), self.interface.bot.loop)
+            result = await asyncio.wrap_future(future)
+
+            if result.get("success"):
+                listening = "✅ Listening enabled" if result.get("listening") else "❌ Listening disabled"
+                print_status(f"Joined {result.get('channel_name')}", "success")
+                print_status(listening, "info")
+
+                if result.get("warning"):
+                    print_status(result["warning"], "warning")
+            else:
+                print_status(f"Failed: {result.get('error')}", "error")
+
+        except Exception as e:
+            print_status(f"Error joining channel: {e}", "error")
+
+    async def _voice_set(self, args: list[str]):
+        """Set voice and backend (Thread-Safe)"""
+        if not args or len(args) != 2:
+            print_status("Usage: /discord voice set <voice> <backend>", "error")
+            return
+
+        voice = args[0]
+        backend = args[1]
+
+        if backend not in ["groq", "piper", "elevenlabs"]:
+            print_status("Invalid backend. Valid: groq, piper, elevenlabs", "error")
+            return
+
+        # Sicherstellen, dass wir Zugriff auf den Bot-Loop haben
+        if not self.interface or not self.interface.bot.loop:
+            print_status("Discord not connected or loop not available", "error")
+            return
+
+        # Logik, die im Bot-Thread ausgeführt werden muss
+        async def _set_task():
+            self.interface.media_handler.tts_voice = voice
+            self.interface.media_handler.tts_backend = backend
+            return True
+
+        print_status(f"Setting voice to {voice} with {backend}...", "progress")
+
+        try:
+            future = asyncio.run_coroutine_threadsafe(_set_task(), self.interface.bot.loop)
+            await asyncio.wrap_future(future)
+            print_status("Voice settings updated", "success")
+        except Exception as e:
+            print_status(f"Error setting voice: {e}", "error")
 
     async def _voice_leave(self):
-        """Leave voice channel"""
-        handler = self.voice_mode.voice_handler
-
-        # Find connected guild
-        guild_id = None
-        for gid in handler._voice_clients.keys():
-            guild_id = gid
-            break
-
-        if not guild_id:
-            print_status("Not in any voice channel", "warning")
+        """Leave voice channel (Thread-Safe)"""
+        if not self.interface or not self.interface.bot.loop:
             return
 
-        result = await handler.leave_channel(guild_id)
+        handler = self.voice_mode.voice_handler
 
-        if result.get("success"):
-            print_status("Left voice channel", "success")
-        else:
-            print_status(f"Failed: {result.get('error')}", "error")
+        async def _leave_task():
+            # Guild ID finden
+            guild_id = None
+            for gid in handler._voice_clients.keys():
+                guild_id = gid
+                break
+
+            if not guild_id:
+                return {"success": False, "error": "Not in any voice channel"}
+
+            return await handler.leave_channel(guild_id)
+
+        try:
+            future = asyncio.run_coroutine_threadsafe(_leave_task(), self.interface.bot.loop)
+            result = await asyncio.wrap_future(future)
+
+            if result.get("success"):
+                print_status("Left voice channel", "success")
+            else:
+                print_status(f"Failed: {result.get('error')}", "error")
+
+        except Exception as e:
+            print_status(f"Error leaving: {e}", "error")
 
     async def _voice_status(self):
         """Show voice status"""
@@ -517,34 +578,49 @@ class DiscordCLIExtension:
             print_box_content(f"Participants: {', '.join(status.get('participants', []))}", "")
             print_box_content(f"Messages: {status.get('conversation_messages', 0)}", "")
             print_box_content(f"Latency: {status.get('latency', 0)*1000:.0f}ms", "")
+            print_box_content(f"Voice: {status.get('tts_voice', 'unknown')}", "")
+            print_box_content(f"Backend: {status.get('tts_backend', 'unknown')}", "")
 
         print_box_footer()
 
     async def _voice_speak(self, args: list[str]):
-        """Speak text in voice channel"""
+        """Speak text in voice channel (Thread-Safe)"""
         if not args:
             print_status("Usage: /discord voice speak <text>", "error")
             return
 
-        handler = self.voice_mode.voice_handler
-
-        # Find connected guild
-        guild_id = None
-        for gid in handler._voice_clients.keys():
-            guild_id = gid
-            break
-
-        if not guild_id:
-            print_status("Not in any voice channel", "warning")
+        if not self.interface or not self.interface.bot.loop:
             return
 
         text = " ".join(args)
+        handler = self.voice_mode.voice_handler
+
+        async def _speak_task():
+            # Guild ID finden
+            guild_id = None
+            for gid in handler._voice_clients.keys():
+                guild_id = gid
+                break
+
+            if not guild_id:
+                return False
+
+            await handler.speak_streaming(guild_id, text)
+            return True
 
         print_status(f"Speaking: {text[:50]}...", "progress")
 
-        await handler.speak_streaming(guild_id, text)
+        try:
+            future = asyncio.run_coroutine_threadsafe(_speak_task(), self.interface.bot.loop)
+            success = await asyncio.wrap_future(future)
 
-        print_status("Queued for playback", "success")
+            if success:
+                print_status("Queued for playback", "success")
+            else:
+                print_status("Not in any voice channel", "warning")
+
+        except Exception as e:
+            print_status(f"Error speaking: {e}", "error")
 
     async def _voice_stop(self):
         """Stop speaking"""
@@ -629,5 +705,10 @@ def get_completer_dict() -> dict:
             "stop": None,
             "context": None,
             "channels": None,
+            "set": {
+                "groq": {"autumn": None, "diana": None, "hannah": None, "austin": None, "daniel": None, "troy": None},
+                "piper": None,
+                "elevenlabs": None,
+            },
         },
     }

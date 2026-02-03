@@ -80,7 +80,8 @@ class AgentSessionV2:
         enable_lsp: bool = True,
         enable_docker: bool = False,
         docker_config: DockerConfig | None = None,
-        toolboxv2_wheel_path: str | None = None
+        toolboxv2_wheel_path: str | None = None,
+        skills_manager: SkillsManager | None = None
     ):
         """
         Initialize AgentSessionV2.
@@ -97,6 +98,7 @@ class AgentSessionV2:
             enable_docker: Enable Docker execution environment
             docker_config: Docker configuration
             toolboxv2_wheel_path: Path to ToolboxV2 wheel for Docker
+            skills_manager: SkillsManager instance
         """
         self.session_id = session_id
         self.agent_name = agent_name
@@ -150,7 +152,7 @@ class AgentSessionV2:
         from toolboxv2.mods.isaa.base.Agent.rule_set import RuleSet, create_default_ruleset
         self.rule_set: RuleSet = create_default_ruleset(config_path=rule_config_path)
         from toolboxv2.mods.isaa.base.Agent.skills import SkillsManager
-        self.skills: SkillsManager = SkillsManager(
+        self.skills: SkillsManager = skills_manager or SkillsManager(
             agent_name=agent_name,
             memory_instance=memory_instance
         )

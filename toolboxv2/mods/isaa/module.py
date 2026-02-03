@@ -14,45 +14,31 @@ Author: FlowAgent V2
 import asyncio
 import copy
 import io
-import json
-import os
-import platform
-import queue
-import secrets
-import shlex
 import tarfile
 import tempfile
-import threading
-import time
 from collections.abc import Callable
 from datetime import datetime
-from enum import Enum
 from pathlib import Path
-from typing import Any, Optional, Dict
+from typing import Any
 from collections.abc import Awaitable
 
 import requests
-import uuid
 from langchain_community.agent_toolkits.load_tools import load_tools
 from pydantic import BaseModel
 
-from toolboxv2.mods.isaa.base.Agent.types import ProgressEvent
 from toolboxv2.utils.system import FileCache
 from toolboxv2.utils.toolbox import stram_print
 
-import subprocess
 import sys
 
 from toolboxv2 import (
     FileHandler,
     MainTool,
     RequestData,
-    Result,
     Spinner,
     Style,
     get_app,
     get_logger,
-    remove_styles,
 )
 
 # FlowAgent imports
@@ -62,20 +48,12 @@ from .base.Agent.builder import AgentConfig, FlowAgentBuilder
 # Chain imports - native support
 from .base.Agent.chain import (
     Chain,
-    ParallelChain,
-    ConditionalChain,
-    ErrorHandlingChain,
-    ChainBase,
-    CF,
-    IS,
-    Function,
 )
 
 from .base.AgentUtils import (
     AISemanticMemory,
     ControllerManager,
     detect_shell,
-    safe_decode,
 )
 
 # Optional dill import for tool serialization
@@ -324,7 +302,7 @@ class Tools(MainTool):
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=None, color=self.color, on_exit=self.on_exit)
 
-        from .extras.web_search import web_search
+        from toolboxv2.mods.isaa.extras.web_helper.web_search import web_search
 
         async def web_search_tool(query: str) -> str:
             res = web_search(query)
@@ -1122,6 +1100,7 @@ class Tools(MainTool):
             builder.add_tool(memory_search_tool, "memorySearch", "Search ISAA's semantic memory")
             builder.add_tool(save_to_memory_tool, "saveDataToMemory", "Save data to ISAA's semantic memory")
             builder.add_tool(self.web_search, "searchWeb", "Search the web for information")
+
             if with_dangerous_shell:
                 builder.add_tool(self.shell_tool_function, "shell", f"Run shell command in {detect_shell()}")
 
@@ -1486,9 +1465,7 @@ import uuid
 import json
 import os
 import platform
-import shutil
-import base64
-from typing import Dict, Optional, Any, Tuple
+from typing import Dict, Optional, Any
 
 # =============================================================================
 # GLOBALE SESSION-VERWALTUNG

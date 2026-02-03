@@ -121,6 +121,7 @@ def patch_flow_agent(agent: "FlowAgent") -> "FlowAgent":
     if hasattr(agent, "_vfs_tools_registered"):
         return agent
 
+
     # Session Manager patchen
     if hasattr(agent, "session_manager") and not getattr(agent.session_manager, "_vfs_patched", False):
         patch_session_manager(agent.session_manager)

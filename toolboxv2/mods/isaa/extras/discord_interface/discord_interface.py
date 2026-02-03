@@ -33,7 +33,13 @@ from pathlib import Path
 from typing import Any, Callable, Optional, TYPE_CHECKING
 from enum import Enum, auto
 
-from toolboxv2.mods.isaa.kernel.kernelin.kernelin_discord import MediaHandler
+try:
+    from groq import AsyncGroq
+
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
+    AsyncGroq = None
 
 try:
     import discord
@@ -102,6 +108,66 @@ class MessageSource(Enum):
 
 
 @dataclass
+class AttachmentInfo:
+    """Strukturierte Attachment-Information mit Media-Type Detection"""
+    path: str
+    filename: str
+    content_type: Optional[str]
+    size: int
+    transcription: Optional[str] = None  # Für Audio
+
+    @property
+    def media_type(self) -> str:
+        """Bestimmt den Medientyp basierend auf content_type und Extension"""
+        if self.content_type:
+            ct = self.content_type.lower()
+            if "image" in ct:
+                return "image"
+            if "audio" in ct:
+                return "audio"
+            if "video" in ct:
+                return "video"
+            if "pdf" in ct:
+                return "pdf"
+
+        # Fallback auf Extension
+        ext = Path(self.filename).suffix.lower()
+        ext_map = {
+            '.jpg': 'image', '.jpeg': 'image', '.png': 'image',
+            '.gif': 'image', '.webp': 'image', '.bmp': 'image',
+            '.mp3': 'audio', '.wav': 'audio', '.ogg': 'audio',
+            '.m4a': 'audio', '.flac': 'audio',
+            '.mp4': 'video', '.avi': 'video', '.mov': 'video',
+            '.mkv': 'video', '.webm': 'video',
+            '.pdf': 'pdf',
+        }
+        return ext_map.get(ext, "file")
+
+    @property
+    def is_native_llm_compatible(self) -> bool:
+        """Prüft ob das Format direkt vom LLM verarbeitet werden kann"""
+        return self.media_type == "image"
+
+    def to_media_tag(self) -> str:
+        """Generiert den [media:path] Tag für den Agent"""
+        return f"[media:{self.path}]"
+
+    def to_context_line(self) -> str:
+        """Generiert eine kontextuelle Beschreibung für den Agent"""
+        size_kb = self.size / 1024
+        size_str = f"{size_kb:.1f}KB" if size_kb < 1024 else f"{size_kb / 1024:.1f}MB"
+
+        line = f"  - {self.filename} ({self.media_type}, {size_str})"
+
+        if self.is_native_llm_compatible:
+            line += " → Native verarbeitbar"
+        else:
+            line += " → Erfordert Tool-Verarbeitung"
+
+        return line
+
+
+@dataclass
 class MessageContext:
     """
     Vollständiger Context einer eingehenden Nachricht.
@@ -135,7 +201,7 @@ class MessageContext:
     mentioned_users: list[int] = field(default_factory=list)
 
     # Attachments
-    attachments: list[dict] = field(default_factory=list)
+    attachments: list[AttachmentInfo] = field(default_factory=list)
 
     # Reply Context
     is_reply: bool = False
@@ -170,14 +236,64 @@ class MessageContext:
             lines.append(f"Note: This is a reply to message {self.reply_to_message_id}")
 
         if self.voice_channel_name:
-            lines.append(f"Voice: User is in #{self.voice_channel_name}")
+            lines.append(f"Voice: User is in #{self.voice_channel_name} (ID: {self.voice_channel_id})")
 
         if self.wants_audio_response:
             lines.append("Response Mode: AUDIO (convert response to TTS)")
 
         if self.attachments:
-            att_info = ", ".join([a.get("filename", "file") for a in self.attachments])
-            lines.append(f"Attachments: {att_info}")
+            lines.append("")
+            lines.append("[Attachments]")
+
+            native_media = []
+            non_native_media = []
+            transcriptions = []
+
+            for att in self.attachments:
+                # Kategorisiere Attachments
+                if att.is_native_llm_compatible:
+                    native_media.append(att)
+                else:
+                    non_native_media.append(att)
+
+                # Sammle Transkriptionen
+                if att.transcription:
+                    transcriptions.append((att.filename, att.transcription))
+
+            # Native Media (Bilder) - Direkt als [media:] Tags
+            if native_media:
+                lines.append("Native Media (direkt verarbeitbar):")
+                for att in native_media:
+                    lines.append(f"  {att.to_media_tag()}")
+                    lines.append(f"    ↳ {att.filename} ({att.media_type})")
+
+            # Non-Native Media - Mit Hinweis auf erforderliche Tools
+            if non_native_media:
+                lines.append("Weitere Dateien (erfordern Tool-Verarbeitung):")
+                for att in non_native_media:
+                    lines.append(att.to_context_line())
+                    lines.append(f"    Pfad: {att.path}")
+
+                    # Spezifische Hinweise je nach Typ
+                    if att.media_type == "audio":
+                        lines.append(
+                            "    → Audio bereits transkribiert (siehe unten)" if att.transcription else "    → Nutze Audio-Transkription für Inhalt")
+                    elif att.media_type == "video":
+                        lines.append("    → Nutze Video-Frame-Extraktion oder Transkription")
+                    elif att.media_type == "pdf":
+                        lines.append("    → Nutze PDF-Text-Extraktion für Inhalt")
+                    else:
+                        lines.append(f"    → Dateityp '{att.media_type}' - manuelle Verarbeitung erforderlich")
+
+            # Audio Transkriptionen
+            if transcriptions:
+                lines.append("")
+                lines.append("[Audio Transcriptions]")
+                for filename, text in transcriptions:
+                    lines.append(f"  {filename}:")
+                    # Transkription einrücken
+                    for line in text.split('\n'):
+                        lines.append(f"    {line}")
 
         return "\n".join(lines)
 
@@ -434,6 +550,97 @@ class AddressBook:
 # AUTO ROUTER - Routet Antworten automatisch zurück
 # =============================================================================
 
+
+@dataclass
+class DiscordConfig:
+    """Discord transport configuration"""
+
+    token: str
+    admin_whitelist: list[int] = field(default_factory=list)
+    command_prefix: str = "!"  # Ignored - no commands, just for bot init
+
+    # Voice settings
+    enable_voice: bool = True
+    voice_language: str = "de"
+    silence_threshold_ms: int = 1500
+    min_audio_length_ms: int = 500
+
+    # Media settings
+    temp_dir: str = "/tmp/discord_media"
+    max_attachment_size_mb: int = 25
+
+    # TTS settings (output)
+    tts_provider: str = "local"  # "local", "elevenlabs", "google"
+    elevenlabs_api_key: str = ""
+    elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
+
+
+# =============================================================================
+# MEDIA HANDLER
+# =============================================================================
+
+
+class MediaHandler:
+    """Handles media downloads and processing"""
+
+    def __init__(self, config: DiscordConfig):
+        self.config = config
+        self.temp_dir = Path(config.temp_dir)
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+
+        # Groq client for transcription
+        self._groq: Optional[AsyncGroq] = None
+        if GROQ_AVAILABLE:
+            groq_key = os.environ.get("GROQ_API_KEY")
+            if groq_key:
+                self._groq = AsyncGroq(api_key=groq_key)
+
+    async def download_attachment(self, attachment: discord.Attachment) -> Optional[str]:
+        """Download attachment to temp file, return path"""
+        if attachment.size > self.config.max_attachment_size_mb * 1024 * 1024:
+            return None
+
+        # Generate unique filename
+        ext = Path(attachment.filename).suffix or ".bin"
+        filename = f"{int(time.time())}_{attachment.id}{ext}"
+        filepath = self.temp_dir / filename
+
+        try:
+            await attachment.save(filepath)
+            return str(filepath)
+        except Exception as e:
+            print(f"[Discord] Failed to download attachment: {e}")
+            return None
+
+    async def transcribe_audio(self, audio_path: str) -> Optional[str]:
+        """Transcribe audio file using Groq Whisper"""
+        if not self._groq:
+            print("[Discord] Groq not available for transcription")
+            return None
+
+        try:
+            with open(audio_path, "rb") as audio_file:
+                transcription = await self._groq.audio.transcriptions.create(
+                    model="whisper-large-v3",
+                    file=audio_file,
+                    language=self.config.voice_language,
+                )
+            return transcription.text
+        except Exception as e:
+            print(f"[Discord] Transcription failed: {e}")
+            return None
+
+    def cleanup_old_files(self, max_age_hours: int = 24):
+        """Clean up old temp files"""
+        cutoff = time.time() - (max_age_hours * 3600)
+        for filepath in self.temp_dir.iterdir():
+            if filepath.stat().st_mtime < cutoff:
+                try:
+                    filepath.unlink()
+                except Exception:
+                    pass
+
+
 class AutoRouter:
     """
     Routet Agent-Antworten automatisch zum richtigen Ziel.
@@ -618,7 +825,7 @@ class MediaHandler:
         self,
         temp_dir: str = "/tmp/discord_media",
         tts_backend: str = "groq",  # "piper", "groq", "elevenlabs"
-        tts_voice: str = "Fritz-PlayAI",  # Backend-spezifisch
+        tts_voice: str = "autumn",  # Backend-spezifisch
         stt_backend: str = "groq",  # "faster_whisper", "groq"
         language: str = "de",
     ):
@@ -763,8 +970,8 @@ class MediaHandler:
             client = AsyncGroq(api_key=groq_key)
 
             response = await client.audio.speech.create(
-                model="playai-tts",
-                voice=self.tts_voice or "Fritz-PlayAI",
+                model="canopylabs/orpheus-v1-english",
+                voice=self.tts_voice or "autumn",
                 input=text,
                 response_format="wav",
             )
@@ -824,7 +1031,7 @@ class DiscordInterface:
         respond_to_mentions_only: bool = True,
         admin_ids: Optional[list[int]] = None,
         tts_backend: str = "groq",  # "piper", "groq", "elevenlabs"
-        tts_voice: str = "Fritz-PlayAI",
+        tts_voice: str = "autumn",
         stt_backend: str = "groq",  # "faster_whisper", "groq"
         language: str = "de",
     ):
@@ -908,7 +1115,14 @@ class DiscordInterface:
             await self._handle_message(ctx, message)
 
     async def _build_message_context(self, message: discord.Message) -> MessageContext:
-        """Baut einen vollständigen MessageContext"""
+        """
+        Baut einen vollständigen MessageContext mit strukturierten Attachments.
+
+        Attachments werden als AttachmentInfo-Objekte gespeichert, die:
+        - Media-Type Detection enthalten
+        - Native LLM-Kompatibilität prüfen
+        - [media:] Tags generieren können
+        """
 
         # Source bestimmen
         if isinstance(message.channel, discord.DMChannel):
@@ -931,17 +1145,25 @@ class DiscordInterface:
             content = content.rsplit("#audio", 1)[0].strip()
 
         # Attachments verarbeiten
-        attachments = []
+        attachments: list[AttachmentInfo] = []
+
         for att in message.attachments:
-            att_info = await self.media_handler.process_attachment(att)
-            if att_info:
-                attachments.append(att_info)
+            att_data = await self.media_handler.process_attachment(att)
+            if att_data:
+                attachment_info = AttachmentInfo(
+                    path=att_data["path"],
+                    filename=att_data["filename"],
+                    content_type=att_data["content_type"],
+                    size=att_data["size"],
+                )
 
                 # Audio transkribieren
-                if att_info["content_type"] and "audio" in att_info["content_type"]:
-                    transcription = await self.media_handler.transcribe_audio(att_info["path"])
+                if attachment_info.media_type == "audio":
+                    transcription = await self.media_handler.transcribe_audio(attachment_info.path)
                     if transcription:
-                        content += f"\n[Audio Transcription: {transcription}]"
+                        attachment_info.transcription = transcription
+
+                attachments.append(attachment_info)
 
         # Voice Channel Check
         voice_channel_id = None
@@ -1198,7 +1420,7 @@ def create_discord_interface(
     respond_to_mentions_only: bool = True,
     admin_ids: Optional[list[int]] = None,
     tts_backend: str = "groq",  # "piper", "groq", "elevenlabs"
-    tts_voice: str = "Fritz-PlayAI",
+    tts_voice: str = "autumn",
     stt_backend: str = "groq",  # "faster_whisper", "groq"
     language: str = "de",
 ) -> DiscordInterface:
@@ -1219,7 +1441,7 @@ def create_discord_interface(
         Konfiguriertes DiscordInterface
 
     TTS Voices:
-        groq: "Fritz-PlayAI", "Arsenio-PlayAI", "Ava-PlayAI", "Zola-PlayAI"
+        groq: [autumn diana hannah austin daniel troy]
         elevenlabs: "21m00Tcm4TlvDq8ikWAM" (Rachel), etc.
         piper: "de_DE-thorsten-medium", "en_US-amy-medium", etc.
 

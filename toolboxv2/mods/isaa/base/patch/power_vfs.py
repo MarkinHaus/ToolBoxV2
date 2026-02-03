@@ -953,7 +953,7 @@ def register_vfs_tools(
         Returns:
             Formatted directory listing
         """
-        session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
         vfs = session.vfs
 
         if recursive:
@@ -973,7 +973,7 @@ def register_vfs_tools(
         Returns:
             File content or windowed view
         """
-        session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
         vfs = session.vfs
 
         # Open file if needed
@@ -1002,7 +1002,7 @@ def register_vfs_tools(
         Returns:
             Result message
         """
-        session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
         vfs = session.vfs
 
         # Create directories if needed
@@ -1033,7 +1033,7 @@ def register_vfs_tools(
         Returns:
             Result message
         """
-        session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
         vfs = session.vfs
 
         result = vfs.str_replace(path, old_str, new_str)
@@ -1052,7 +1052,7 @@ def register_vfs_tools(
         Returns:
             Result message
         """
-        session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
         vfs = session.vfs
 
         if path in vfs.directories:
@@ -1076,7 +1076,7 @@ def register_vfs_tools(
         Returns:
             Result message
         """
-        session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
         vfs = session.vfs
 
         result = vfs.mkdir(path, parents=parents)
@@ -1096,7 +1096,7 @@ def register_vfs_tools(
         Returns:
             Result message
         """
-        session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
         vfs = session.vfs
 
         result = vfs.mv(src, dest)
@@ -1116,7 +1116,7 @@ def register_vfs_tools(
         Returns:
             Result message
         """
-        session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
         vfs = session.vfs
 
         result = vfs.cp(src, dest)
@@ -1143,7 +1143,7 @@ def register_vfs_tools(
         Returns:
             Result message with statistics
         """
-        session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
         vfs = session.vfs
 
         result = vfs.mount(local_path, vfs_path, readonly=readonly, auto_sync=auto_sync)
@@ -1163,7 +1163,7 @@ def register_vfs_tools(
         Returns:
             Result message
         """
-        session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
         vfs = session.vfs
 
         result = vfs.unmount(vfs_path, save_changes=save_changes)
@@ -1298,7 +1298,7 @@ def register_vfs_tools(
             Returns:
                 Share ID that can be used to mount the share
             """
-            session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
             vfs = session.vfs
 
             sharing = get_sharing_manager()
@@ -1320,7 +1320,7 @@ def register_vfs_tools(
             Returns:
                 Result message
             """
-            session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
             vfs = session.vfs
 
             sharing = get_sharing_manager()
@@ -1409,7 +1409,7 @@ def register_vfs_tools(
             Returns:
                 Search results
             """
-            session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
             vfs = session.vfs
 
             mode_map = {
@@ -1449,7 +1449,7 @@ def register_vfs_tools(
             Returns:
                 List of matching files
             """
-            session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
             vfs = session.vfs
 
             results = find_files(vfs, pattern, path)
@@ -1477,7 +1477,7 @@ def register_vfs_tools(
             Returns:
                 Grep results
             """
-            session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
             vfs = session.vfs
 
             results = grep_vfs(vfs, pattern, file_pattern, path, context)
@@ -1519,7 +1519,7 @@ def register_vfs_tools(
             Returns:
                 Execution result with stdout/stderr
             """
-            session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
 
             if not session._docker_vfs:
                 return "Error: Docker not enabled for this session"
@@ -1559,7 +1559,7 @@ def register_vfs_tools(
             Returns:
                 Execution result
             """
-            session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
 
             if not session._docker_vfs:
                 return "Error: Docker not enabled for this session"
@@ -1593,7 +1593,7 @@ def register_vfs_tools(
             Returns:
                 Command output
             """
-            session = await agent.session_manager.get_or_create(agent._current_session_id or "default")
+            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
 
             if not session._docker_vfs:
                 return "Error: Docker not enabled for this session"

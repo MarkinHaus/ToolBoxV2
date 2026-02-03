@@ -12,8 +12,10 @@ Author: FlowAgent V2
 """
 
 import asyncio
+import copy
 import json
 import os
+import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -68,6 +70,233 @@ except ImportError:
 
 logger = get_logger()
 AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
+
+
+
+# ===== MEDIA PARSING UTILITIES =====
+def parse_media_from_query(query: str) -> tuple[str, list[dict]]:
+    """
+    Parse [media:(path/url)] tags from query and convert to litellm vision format
+
+    Args:
+        query: Text query that may contain [media:(path/url)] tags
+
+    Returns:
+        tuple: (cleaned_query, media_list)
+            - cleaned_query: Query with media tags removed
+            - media_list: List of dicts in litellm vision format
+
+    Examples:
+        >>> parse_media_from_query("Analyze [media:image.jpg] this image")
+        ("Analyze  this image", [{"type": "image_url", "image_url": {"url": "image.jpg", "format": "image/jpeg"}}])
+
+    Note:
+        litellm uses the OpenAI vision format: {"type": "image_url", "image_url": {"url": "...", "format": "..."}}
+        The "format" field is optional but recommended for explicit MIME type specification.
+    """
+    media_pattern = r'\[media:([^\]]+)\]'
+    media_matches = re.findall(media_pattern, query)
+
+    media_list = []
+    for media_path in media_matches:
+        media_path = media_path.strip()
+
+        # Determine media type from extension or URL
+        media_type = _detect_media_type(media_path)
+
+        # litellm uses image_url format for vision models
+        # Format: {"type": "image_url", "image_url": {"url": "...", "format": "image/jpeg"}}
+        if media_type == "image":
+            # Detect image format for explicit MIME type
+            mime_type = _get_image_mime_type(media_path)
+            image_obj = {"url": media_path}
+            if mime_type:
+                image_obj["format"] = mime_type
+
+            media_list.append({
+                "type": "image_url",
+                "image_url": image_obj
+            })
+        elif media_type in ["audio", "video", "pdf"]:
+            # For non-image media, some models may support them
+            # but we use image_url as the standard format
+            # The model will handle or reject based on its capabilities
+            if AGENT_VERBOSE:
+                print(f"Warning: Media type '{media_type}' detected. Not all models support non-image media.")
+            media_list.append({
+                "type": "image_url",
+                "image_url": {"url": media_path}
+            })
+        else:
+            # Unknown type - try as image
+            media_list.append({
+                "type": "image_url",
+                "image_url": {"url": media_path}
+            })
+
+    # Remove media tags from query
+    cleaned_query = re.sub(media_pattern, '', query).strip()
+    return cleaned_query, media_list
+
+
+def _detect_media_type(path: str) -> str:
+    """Detect media type from file extension or URL"""
+    path_lower = path.lower()
+
+    # Image extensions
+    if any(path_lower.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg']):
+        return "image"
+
+    # Audio extensions
+    if any(path_lower.endswith(ext) for ext in ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac']):
+        return "audio"
+
+    # Video extensions
+    if any(path_lower.endswith(ext) for ext in ['.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv']):
+        return "video"
+
+    # PDF
+    if path_lower.endswith('.pdf'):
+        return "pdf"
+
+    return "unknown"
+
+
+def _get_image_mime_type(path: str) -> str:
+    """
+    Get MIME type for image based on file extension
+
+    Args:
+        path: Image file path or URL
+
+    Returns:
+        str: MIME type (e.g., "image/jpeg") or empty string if unknown
+    """
+    path_lower = path.lower()
+
+    mime_map = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.bmp': 'image/bmp',
+        '.webp': 'image/webp',
+        '.svg': 'image/svg+xml',
+        '.tiff': 'image/tiff',
+        '.tif': 'image/tiff',
+        '.ico': 'image/x-icon'
+    }
+
+    for ext, mime in mime_map.items():
+        if path_lower.endswith(ext):
+            return mime
+
+    return ""
+
+# Muti media Extention
+MEDIA_ERROR_PATTERNS = [
+    r"unsupported.*(?:media|image|file).*type",
+    r"(?:media|image|file).*type.*(?:not supported|unsupported)",
+    r"cannot process.*(?:media|image|file)",
+    r"invalid.*(?:media|image|file).*format",
+    r"(?:media|image).*(?:could not be|cannot be).*processed",
+    r"unable to.*(?:read|process|decode).*(?:media|image|file)",
+    r"(?:400|422).*(?:media|image)",
+    r"content.*type.*not.*(?:allowed|supported|valid)",
+    r"(?:pdf|audio|video).*not.*supported",
+]
+
+
+def _is_media_error(error: Exception) -> bool:
+    """Prüft ob ein Fehler ein Media-Verarbeitungsfehler ist"""
+    error_str = str(error).lower()
+    return any(re.search(p, error_str, re.IGNORECASE) for p in MEDIA_ERROR_PATTERNS)
+
+
+def _extract_failed_media_type(error: Exception) -> str | None:
+    """Extrahiert den fehlgeschlagenen Medientyp aus der Fehlermeldung"""
+    error_str = str(error).lower()
+    for media_type in ['pdf', 'audio', 'video', 'mp3', 'wav', 'mp4', 'avi']:
+        if media_type in error_str:
+            return media_type
+    return None
+
+
+def _remove_media_by_type(messages: list[dict], types_to_remove: list[str]) -> tuple[list[dict], list[dict]]:
+    """Entfernt bestimmte Medientypen aus den Messages"""
+    cleaned = []
+    removed = []
+
+    type_extensions = {
+        'pdf': ['.pdf'],
+        'audio': ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac'],
+        'video': ['.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv'],
+        'image': ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg'],
+    }
+
+    def should_remove(url: str) -> tuple[bool, str]:
+        url_lower = url.lower()
+        for media_type, extensions in type_extensions.items():
+            if media_type in types_to_remove:
+                if any(url_lower.endswith(ext) for ext in extensions):
+                    return True, media_type
+        return False, ""
+
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            cleaned.append(msg)
+            continue
+
+        new_content = []
+        for part in content:
+            if part.get("type") == "image_url":
+                url = part.get("image_url", {}).get("url", "")
+                remove, media_type = should_remove(url)
+                if remove:
+                    removed.append({"path": url, "media_type": media_type})
+                else:
+                    new_content.append(part)
+            else:
+                new_content.append(part)
+
+        if new_content:
+            if len(new_content) == 1 and new_content[0].get("type") == "text":
+                cleaned.append({"role": msg["role"], "content": new_content[0]["text"]})
+            else:
+                cleaned.append({"role": msg["role"], "content": new_content})
+
+    return cleaned, removed
+
+
+def _inject_media_notice(messages: list[dict], removed: list[dict]) -> list[dict]:
+    """Fügt einen Hinweis über entfernte Medien ein"""
+    if not removed:
+        return messages
+
+    notice_items = [f"  - {m['path']} (Typ: {m['media_type']})" for m in removed]
+    notice = (
+        f"\n\n[System-Hinweis: Folgende Medientypen werden nicht automatisch unterstützt "
+        f"und wurden entfernt:\n{chr(10).join(notice_items)}\n"
+        f"Für diese Dateien sind zusätzliche Tools/Schritte erforderlich "
+        f"(z.B. PDF-Extraktion, Audio-Transkription, Video-Frame-Analyse).]"
+    )
+
+    result = copy.deepcopy(messages)
+    for i in range(len(result) - 1, -1, -1):
+        if result[i]["role"] == "user":
+            content = result[i]["content"]
+            if isinstance(content, str):
+                result[i]["content"] = content + notice
+            elif isinstance(content, list):
+                for part in content:
+                    if part.get("type") == "text":
+                        part["text"] += notice
+                        break
+            break
+    return result
+
+
 
 
 class FlowAgent:
@@ -186,6 +415,62 @@ class FlowAgent:
     # CORE: a_run_llm_completion
     # =========================================================================
 
+    @staticmethod
+    def _process_media_in_messages(messages: list[dict]) -> list[dict]:
+        """
+        Process messages to extract and convert [media:(path/url)] tags to litellm format
+
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+
+        Returns:
+            list[dict]: Processed messages with media content properly formatted
+        """
+        processed_messages = []
+
+        for msg in messages:
+            if not isinstance(msg.get("content"), str):
+                # Already processed or non-text content
+                processed_messages.append(msg)
+                continue
+
+            content = msg["content"]
+
+            if not content:
+                continue
+
+            # Check if content contains media tags
+            if "[media:" in content:
+                cleaned_content, media_list = parse_media_from_query(content)
+
+                if media_list:
+                    # Convert to multi-modal message format for litellm
+                    # Format: content becomes a list with text and media items
+                    content_parts = []
+
+                    # Add text part if there's any text left
+                    if cleaned_content.strip():
+                        content_parts.append({
+                            "type": "text",
+                            "text": cleaned_content
+                        })
+
+                    # Add media parts
+                    content_parts.extend(media_list)
+
+                    processed_messages.append({
+                        "role": msg["role"],
+                        "content": content_parts
+                    })
+                else:
+                    # No valid media found, keep original
+                    processed_messages.append(msg)
+            else:
+                # No media tags, keep original
+                processed_messages.append(msg)
+        return processed_messages
+
+
     async def a_run_llm_completion(
         self,
         messages: list[dict],
@@ -196,10 +481,15 @@ class FlowAgent:
         task_id: str = "unknown",
         session_id: str | None = None,
         do_tool_execution: bool = False,
+        # NEU: Parameter für Media-Retry
+        _media_retry: int = 0,
+        _removed_types: list[str] | None = None,
         **kwargs,
     ) -> str | Any:
         if not LITELLM_AVAILABLE:
             raise RuntimeError("LiteLLM required")
+
+        _removed_types = _removed_types or []
 
         model = kwargs.pop("model", None) or (
             self.amd.fast_llm_model
@@ -208,12 +498,22 @@ class FlowAgent:
         )
         use_stream = stream if stream is not None else self.stream
 
+        # NEU: Verarbeite Media in Messages
+        processed_messages = self._process_media_in_messages(messages.copy())
+
+        # NEU: Entferne bereits bekannte problematische Typen
+        if _removed_types:
+            processed_messages, newly_removed = _remove_media_by_type(processed_messages, _removed_types)
+            if newly_removed:
+                processed_messages = _inject_media_notice(processed_messages, newly_removed)
+
         llm_kwargs = {
             "model": model,
-            "messages": messages.copy(),
+            "messages": processed_messages,
             "stream": use_stream,
             **kwargs,
         }
+
         session_id = session_id or self.active_session
         system_msg = self.amd.get_system_message()
         session = None
@@ -230,19 +530,15 @@ class FlowAgent:
                 for msg in full_history:
                     if not current_msg:
                         break
-
                     if msg["role"] != "user":
                         continue
-
                     content = msg["content"]
-
                     if (
                         current_msg[0]["role"] == "user"
                         and current_msg[0]["content"] == content
                     ):
                         current_msg = current_msg[1:]
                         break
-
                     if (
                         len(current_msg) > 1
                         and current_msg[-1]["role"] == "user"
@@ -250,12 +546,11 @@ class FlowAgent:
                     ):
                         current_msg = current_msg[:-1]
                         break
-
                 llm_kwargs["messages"] = sysmsg + full_history + current_msg
             else:
                 llm_kwargs["messages"] = [
-                    {"role": "system", "content": f"{system_msg}"}
-                ] + llm_kwargs["messages"]
+                                             {"role": "system", "content": f"{system_msg}"}
+                                         ] + llm_kwargs["messages"]
 
         try:
             if use_stream:
@@ -292,11 +587,11 @@ class FlowAgent:
                     session_id,
                 )
                 llm_kwargs["messages"] += [
-                    {
-                        "role": "assistant",
-                        "content": result.content if get_response_message else result,
-                    }
-                ] + tool_response
+                                              {
+                                                  "role": "assistant",
+                                                  "content": result.content if get_response_message else result,
+                                              }
+                                          ] + tool_response
                 del kwargs["tools"]
                 return await self.a_run_llm_completion(
                     llm_kwargs["messages"],
@@ -306,11 +601,52 @@ class FlowAgent:
                     get_response_message,
                     task_id,
                     session_id,
+                    _media_retry=_media_retry,
+                    _removed_types=_removed_types,
                     **kwargs,
                 )
 
             return result
+
         except Exception as e:
+            # =====================================================================
+            # NEU: Intelligente Media-Fehlerbehandlung mit Auto-Retry
+            # =====================================================================
+            if _is_media_error(e) and _media_retry < 3:
+                logger.warning(f"Media-Fehler erkannt (Versuch {_media_retry + 1}): {e}")
+
+                # Bestimme welchen Typ entfernen
+                failed_type = _extract_failed_media_type(e)
+
+                if failed_type:
+                    new_types = list(set(_removed_types + [failed_type]))
+                else:
+                    # Entferne schrittweise: erst pdf, dann audio, dann video
+                    priority_order = ['pdf', 'audio', 'video', 'image']
+                    for ptype in priority_order:
+                        if ptype not in _removed_types:
+                            new_types = _removed_types + [ptype]
+                            break
+                    else:
+                        new_types = _removed_types + ['image']  # Fallback
+
+                logger.info(f"Retry ohne Media-Typen: {new_types}")
+
+                return await self.a_run_llm_completion(
+                    messages,  # Original messages!
+                    model_preference,
+                    with_context,
+                    stream,
+                    get_response_message,
+                    task_id,
+                    session_id,
+                    do_tool_execution,
+                    _media_retry=_media_retry + 1,
+                    _removed_types=new_types,
+                    **kwargs,
+                )
+            # =====================================================================
+
             logger.error(f"LLM call failed: {e}")
             raise
 
@@ -958,6 +1294,24 @@ class FlowAgent:
             category=category,
             flags=flags,
         )
+
+    def remove_tool(self, name: str):
+        """Remove a tool."""
+        self.tool_manager.un_register(name)
+
+
+    def add_tools(self, tools: list[dict]):
+        """Register multiple tools."""
+        for tool in tools:
+            self.add_tool(**tool)
+
+    def remove_tools(self, names: list[str]):
+        """Remove multiple tools."""
+        for name in names:
+            if isinstance(name, dict):
+                name = name.get("name")
+            if name:
+                self.remove_tool(name)
 
     def get_tool(self, name: str) -> Callable | None:
         """Get tool function by name."""
@@ -1922,7 +2276,6 @@ class FlowAgent:
             await self.a2a_server.close()
         if self.mcp_server:
             await self.mcp_server.close()
-        print("Checkpoint saved")
         logger.info(f"FlowAgent '{self.amd.name}' closed")
 
     # =========================================================================

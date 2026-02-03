@@ -74,6 +74,7 @@ class SessionManager:
 
         # Memory instance (lazy loaded)
         self._memory_instance = None
+        self.skills_manager = None
 
         # Stats
         self._total_sessions_created = 0
@@ -104,7 +105,8 @@ class SessionManager:
         # V2 overrides per session
         enable_lsp: bool | None = None,
         enable_docker: bool | None = None,
-        docker_config: DockerConfig | None = None
+        docker_config: DockerConfig | None = None,
+        personal_skills: bool = False
     ) -> AgentSessionV2:
         """
         Get existing session or create new one.
@@ -116,6 +118,7 @@ class SessionManager:
             enable_lsp: Override default LSP setting
             enable_docker: Override default Docker setting
             docker_config: Override default Docker config
+            personal_skills: Whether to use personal skills for this session
 
         Returns:
             AgentSessionV2 instance (initialized)
@@ -130,6 +133,10 @@ class SessionManager:
         # Create new
         self._ensure_memory()
 
+        if self.skills_manager is None:
+            from toolboxv2.mods.isaa.base.Agent.skills import SkillsManager
+            self.skills_manager = SkillsManager(self.agent_name, self._memory_instance)
+
         session = AgentSessionV2(
             session_id=session_id,
             agent_name=self.agent_name,
@@ -142,7 +149,8 @@ class SessionManager:
             enable_lsp=enable_lsp if enable_lsp is not None else self.enable_lsp,
             enable_docker=enable_docker if enable_docker is not None else self.enable_docker,
             docker_config=docker_config or self.docker_config,
-            toolboxv2_wheel_path=self.toolboxv2_wheel_path
+            toolboxv2_wheel_path=self.toolboxv2_wheel_path,
+            skills_manager=self.skills_manager if not personal_skills else None
         )
 
         await session.initialize()
@@ -271,7 +279,8 @@ class SessionManager:
                 session_id: session.to_checkpoint()
                 for session_id, session in self.sessions.items()
                 if session._initialized
-            }
+            },
+            'skills_manager': self.skills_manager.to_checkpoint() if self.skills_manager else None
         }
 
     async def from_checkpoint(self, data: dict):
@@ -309,6 +318,12 @@ class SessionManager:
                 self.sessions[session_id] = session
             except Exception as e:
                 print(f"[SessionManager] Failed to restore session {session_id}: {e}")
+
+        # Restore skills manager
+        if data.get('skills_manager'):
+            from toolboxv2.mods.isaa.base.Agent.skills import SkillsManager
+            self.skills_manager = SkillsManager(self.agent_name, self._memory_instance)
+            self.skills_manager.from_checkpoint(data['skills_manager'])
 
     # =========================================================================
     # STATISTICS

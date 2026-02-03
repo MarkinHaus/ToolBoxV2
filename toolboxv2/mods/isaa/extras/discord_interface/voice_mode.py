@@ -5,26 +5,26 @@ Discord Voice Mode - Voice Channel TTS und Listening
 Erweitert das Discord Interface um Voice Channel Support:
 - Voice Channel Join/Leave
 - TTS Streaming in Voice (Satz für Satz)
-- Voice Receive (benötigt discord-ext-voice-recv oder py-cord)
+- Voice Receive (benötigt discord-ext-voice-recv)
 - Multi-Speaker Tracking
 - Letzte 5 Minuten Conversation History
 
 WICHTIG:
 - discord.py hat KEIN built-in Voice Receive
 - Für Voice Listening: pip install discord-ext-voice-recv
-- Alternativ: py-cord statt discord.py (hat built-in Voice Receive)
 
 Dependencies:
 - discord.py[voice]>=2.6.4
+- discord-ext-voice-recv
 - FFmpeg (muss im PATH sein)
-- Optional: discord-ext-voice-recv für Listening
 
 Author: Markin / ToolBoxV2
-Version: 2.0.0
+Version: 2.1.0
 """
 
 import asyncio
 import io
+import logging
 import os
 import tempfile
 import time
@@ -47,13 +47,46 @@ from .discord_interface import MediaHandler, _load_tts
 # Voice Receive Library (optional)
 try:
     from discord.ext import voice_recv
-
     VOICE_RECV_AVAILABLE = True
 except ImportError:
     VOICE_RECV_AVAILABLE = False
     voice_recv = None
 
+try:
+    import discord.opus
 
+    # Original Funktion sichern
+    _original_decode = discord.opus.Decoder.decode
+
+
+    def _safe_decode(self, *args, **kwargs):
+        try:
+            return _original_decode(self, *args, **kwargs)
+        except discord.opus.OpusError:
+            # Bei Fehler (korruptes Paket): Stille zurückgeben statt Absturz
+            # Frame Size für 20ms bei 48kHz Stereo = 3840 bytes
+            return b'\x00' * 3840
+
+
+    # Funktion ersetzen
+    discord.opus.Decoder.decode = _safe_decode
+    print("[VoiceMode] Applied Opus decoder safety patch")
+except ImportError:
+    pass
+
+# =============================================================================
+# LOGGING FILTER
+# =============================================================================
+# Unterdrückt die nervigen RTCP Warnungen
+def _suppress_voice_noise():
+    loggers = [
+        "discord.ext.voice_recv.reader",
+        "discord.ext.voice_recv.gateway",
+        "discord.ext.voice_recv.router"
+    ]
+    for name in loggers:
+        logger = logging.getLogger(name)
+        logger.setLevel(logging.ERROR)  # Nur echte Fehler anzeigen, keine Warnungen/Infos
 # =============================================================================
 # DATA CLASSES
 # =============================================================================
@@ -110,165 +143,179 @@ class VoiceConversation:
 
 
 # =============================================================================
-# VOICE RECEIVE SINK
+# VOICE RECEIVE SINK (für discord-ext-voice-recv)
 # =============================================================================
 
-class UserAudioSink(discord.sinks.Sink if hasattr(discord, 'sinks') else object):
-    """
-    Custom Sink für discord-ext-voice-recv.
-    Sammelt Audio per User und triggert Transcription nach Stille.
-    """
+if VOICE_RECV_AVAILABLE:
+    class UserAudioSink(voice_recv.AudioSink):
+        """
+        Custom AudioSink für discord-ext-voice-recv.
+        Sammelt Audio per User und triggert Transcription nach Stille.
+        """
 
-    def __init__(self, handler: "VoiceHandler"):
-        if hasattr(discord, 'sinks'):
+        def __init__(self, handler: "VoiceHandler"):
             super().__init__()
-        self.handler = handler
-        self.audio_data: dict[int, bytearray] = {}  # user_id -> audio bytes
-        self.last_packet_time: dict[int, float] = {}
+            self.handler = handler
+            self.audio_data: dict[int, bytearray] = {}  # user_id -> audio bytes
+            self.last_packet_time: dict[int, float] = {}
+            self._silence_tasks: dict[int, asyncio.Task] = {}
 
-    def write(self, data, user):
-        """Called for each audio packet received"""
-        if user is None:
-            return
+        def write(self, user, data: voice_recv.VoiceData):
+            """Called for each audio packet received (sync callback from thread!)"""
+            if user is None:
+                return
 
-        user_id = user.id
-        now = time.time()
+            user_id = user.id
+            now = time.time()
+            pcm = data.pcm  # PCM audio bytes
 
-        # Initialize buffer if needed
-        if user_id not in self.audio_data:
-            self.audio_data[user_id] = bytearray()
+            # Initialize buffer if needed
+            if user_id not in self.audio_data:
+                self.audio_data[user_id] = bytearray()
 
-        # Add audio data
-        self.audio_data[user_id].extend(data)
-        self.last_packet_time[user_id] = now
+            # Add audio data
+            self.audio_data[user_id].extend(pcm)
+            self.last_packet_time[user_id] = now
 
-        # Update handler timestamps
-        self.handler._last_audio_time[user_id] = now
+            # Schedule silence check in bot's event loop (thread-safe)
+            loop = self.handler.bot.loop
+            if loop and loop.is_running():
+                # Cancel existing silence task
+                if user_id in self._silence_tasks:
+                    self._silence_tasks[user_id].cancel()
 
-        # Cancel existing silence task
-        if user_id in self.handler._silence_tasks:
-            self.handler._silence_tasks[user_id].cancel()
-
-        # Start new silence detection
-        self.handler._silence_tasks[user_id] = asyncio.create_task(
-            self._check_user_silence(user_id, user)
-        )
-
-    async def _check_user_silence(self, user_id: int, user):
-        """Check if user stopped speaking"""
-        await asyncio.sleep(self.handler.silence_threshold_ms / 1000.0)
-
-        now = time.time()
-        last = self.last_packet_time.get(user_id, 0)
-
-        if (now - last) * 1000 >= self.handler.silence_threshold_ms:
-            # User stopped speaking - process their audio
-            await self._process_user_audio(user_id, user)
-
-    async def _process_user_audio(self, user_id: int, user):
-        """Process accumulated audio from a user"""
-        if user_id not in self.audio_data:
-            return
-
-        audio_bytes = bytes(self.audio_data[user_id])
-        self.audio_data[user_id] = bytearray()  # Clear buffer
-
-        # Check minimum length (48kHz stereo 16-bit = 192000 bytes/sec)
-        # Discord sends 48kHz stereo, so ~192KB = 1 second
-        min_bytes = int(192000 * self.handler.min_audio_length_ms / 1000)
-
-        if len(audio_bytes) < min_bytes:
-            return
-
-        # Save to temp file and transcribe
-        temp_path = Path(tempfile.mktemp(suffix=".wav"))
-        try:
-            # Convert Discord audio format to WAV
-            self._save_discord_audio_as_wav(audio_bytes, temp_path)
-
-            # Transcribe
-            transcription = await self.handler.media_handler.transcribe_audio(str(temp_path))
-
-            if transcription and transcription.strip():
-                user_name = user.display_name if hasattr(user, 'display_name') else f"User_{user_id}"
-
-                # Create VoiceMessage
-                msg = VoiceMessage(
-                    user_id=user_id,
-                    user_name=user_name,
-                    text=transcription,
-                    timestamp=datetime.now(),
-                    duration_seconds=len(audio_bytes) / 192000,
+                # Schedule new silence detection
+                asyncio.run_coroutine_threadsafe(
+                    self._schedule_silence_check(user_id, user),
+                    loop
                 )
 
-                print(f"[Voice] 🎤 {user_name}: {transcription}")
+        async def _schedule_silence_check(self, user_id: int, user):
+            """Schedule silence check after threshold"""
+            await asyncio.sleep(self.handler.silence_threshold_ms / 1000.0)
 
-                # Add to conversations and trigger callback
-                for conv in self.handler._conversations.values():
-                    conv.add_message(msg)
+            now = time.time()
+            last = self.last_packet_time.get(user_id, 0)
 
-                    if self.handler.on_voice_message:
-                        try:
-                            result = self.handler.on_voice_message(msg, conv)
-                            if asyncio.iscoroutine(result):
-                                await result
-                        except Exception as e:
-                            print(f"[Voice] Callback error: {e}")
-                    break
+            if (now - last) * 1000 >= self.handler.silence_threshold_ms:
+                # User stopped speaking - process their audio
+                await self._process_user_audio(user_id, user)
 
-        except Exception as e:
-            print(f"[Voice] Audio processing error: {e}")
-            import traceback
-            traceback.print_exc()
-        finally:
+        async def _process_user_audio(self, user_id: int, user):
+            """Process accumulated audio from a user"""
+            if user_id not in self.audio_data:
+                return
+
+            audio_bytes = bytes(self.audio_data[user_id])
+            self.audio_data[user_id] = bytearray()  # Clear buffer
+
+            # Check minimum length (48kHz stereo 16-bit = 192000 bytes/sec)
+            min_bytes = int(192000 * self.handler.min_audio_length_ms / 1000)
+
+            if len(audio_bytes) < min_bytes:
+                return
+
+            # Save to temp file and transcribe
+            temp_path = Path(tempfile.mktemp(suffix=".wav"))
             try:
-                temp_path.unlink()
-            except:
-                pass
+                # Convert Discord audio format to WAV
+                self._save_discord_audio_as_wav(audio_bytes, temp_path)
 
-    def _save_discord_audio_as_wav(self, audio_bytes: bytes, path: Path):
-        """
-        Convert Discord audio (48kHz stereo 16-bit PCM) to WAV.
-        Resamples to 16kHz mono for better STT compatibility.
-        """
-        import wave
+                # Transcribe
+                transcription = await self.handler.media_handler.transcribe_audio(str(temp_path))
 
-        try:
-            import numpy as np
+                if transcription and transcription.strip():
+                    user_name = user.display_name if hasattr(user, 'display_name') else f"User_{user_id}"
 
-            # Discord: 48kHz, stereo, 16-bit signed
-            audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
+                    # Create VoiceMessage
+                    msg = VoiceMessage(
+                        user_id=user_id,
+                        user_name=user_name,
+                        text=transcription,
+                        timestamp=datetime.now(),
+                        duration_seconds=len(audio_bytes) / 192000,
+                    )
 
-            # Convert stereo to mono (average channels)
-            if len(audio_array) % 2 == 0:
-                stereo = audio_array.reshape(-1, 2)
-                mono = stereo.mean(axis=1).astype(np.int16)
-            else:
-                mono = audio_array
+                    print(f"[Voice] 🎤 {user_name}: {transcription}")
 
-            # Resample 48kHz -> 16kHz (factor of 3)
-            # Simple decimation - für bessere Qualität könnte man scipy.signal.resample nutzen
-            resampled = mono[::3]
+                    # Add to conversations and trigger callback
+                    for conv in self.handler._conversations.values():
+                        conv.add_message(msg)
 
-            # Save as WAV
-            with wave.open(str(path), 'wb') as wav:
-                wav.setnchannels(1)
-                wav.setsampwidth(2)
-                wav.setframerate(16000)
-                wav.writeframes(resampled.tobytes())
+                        if self.handler.on_voice_message:
+                            try:
+                                result = self.handler.on_voice_message(msg, conv)
+                                if asyncio.iscoroutine(result):
+                                    await result
+                            except Exception as e:
+                                print(f"[Voice] Callback error: {e}")
+                        break
 
-        except ImportError:
-            # Fallback ohne numpy - speichere direkt (weniger optimal)
-            with wave.open(str(path), 'wb') as wav:
-                wav.setnchannels(2)
-                wav.setsampwidth(2)
-                wav.setframerate(48000)
-                wav.writeframes(audio_bytes)
+            except Exception as e:
+                print(f"[Voice] Audio processing error: {e}")
+                import traceback
+                traceback.print_exc()
+            finally:
+                try:
+                    temp_path.unlink()
+                except:
+                    pass
 
-    def cleanup(self):
-        """Cleanup when sink is destroyed"""
-        self.audio_data.clear()
-        self.last_packet_time.clear()
+        def _save_discord_audio_as_wav(self, audio_bytes: bytes, path: Path):
+            """
+            Convert Discord audio (48kHz stereo 16-bit PCM) to WAV.
+            Resamples to 16kHz mono for better STT compatibility.
+            """
+            import wave
+
+            try:
+                import numpy as np
+
+                # Discord: 48kHz, stereo, 16-bit signed
+                audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
+
+                # Convert stereo to mono (average channels)
+                if len(audio_array) % 2 == 0:
+                    stereo = audio_array.reshape(-1, 2)
+                    mono = stereo.mean(axis=1).astype(np.int16)
+                else:
+                    mono = audio_array
+
+                # Resample 48kHz -> 16kHz (factor of 3)
+                resampled = mono[::3]
+
+                # Save as WAV
+                with wave.open(str(path), 'wb') as wav:
+                    wav.setnchannels(1)
+                    wav.setsampwidth(2)
+                    wav.setframerate(16000)
+                    wav.writeframes(resampled.tobytes())
+
+            except ImportError:
+                # Fallback ohne numpy
+                with wave.open(str(path), 'wb') as wav:
+                    wav.setnchannels(2)
+                    wav.setsampwidth(2)
+                    wav.setframerate(48000)
+                    wav.writeframes(audio_bytes)
+
+        def cleanup(self):
+            """Cleanup when sink is destroyed"""
+            self.audio_data.clear()
+            self.last_packet_time.clear()
+            for task in self._silence_tasks.values():
+                task.cancel()
+            self._silence_tasks.clear()
+
+        def wants_opus(self) -> bool:
+            """We want decoded PCM, not opus"""
+            return False
+
+else:
+    # Dummy class wenn voice_recv nicht verfügbar
+    class UserAudioSink:
+        def __init__(self, handler):
+            pass
 
 
 # =============================================================================
@@ -303,10 +350,8 @@ class VoiceHandler:
         # Conversation History per Channel
         self._conversations: dict[int, VoiceConversation] = {}  # channel_id -> VoiceConversation
 
-        # Voice Receive State (wenn verfügbar)
-        self._audio_buffers: dict[int, bytearray] = {}  # user_id -> audio buffer
-        self._last_audio_time: dict[int, float] = {}  # user_id -> timestamp
-        self._silence_tasks: dict[int, asyncio.Task] = {}
+        # Audio Sink reference
+        self._audio_sinks: dict[int, UserAudioSink] = {}  # guild_id -> sink
 
         # TTS Queue für sequential playback
         self._tts_queues: dict[int, asyncio.Queue] = {}  # guild_id -> Queue
@@ -323,6 +368,7 @@ class VoiceHandler:
     async def join_channel(self, channel: discord.VoiceChannel) -> dict:
         """
         Join a voice channel.
+        MUST be called from bot's event loop!
 
         Args:
             channel: Discord VoiceChannel to join
@@ -337,8 +383,16 @@ class VoiceHandler:
             if guild_id in self._voice_clients:
                 await self.leave_channel(guild_id)
 
-            # Connect to channel
-            vc = await channel.connect()
+            # WICHTIG: Sicherstellen dass wir im richtigen Loop sind
+            # und der Loop auch im Bot gesetzt ist
+            current_loop = asyncio.get_running_loop()
+
+            # Connect to channel - use VoiceRecvClient if available for listening
+            if VOICE_RECV_AVAILABLE:
+                vc = await channel.connect(cls=voice_recv.VoiceRecvClient)
+            else:
+                vc = await channel.connect()
+
             self._voice_clients[guild_id] = vc
 
             # Initialize conversation
@@ -348,15 +402,15 @@ class VoiceHandler:
                 guild_id=guild_id,
             )
 
-            # Initialize TTS queue
+            # Initialize TTS queue - muss im gleichen Loop erstellt werden
             self._tts_queues[guild_id] = asyncio.Queue()
-            self._tts_tasks[guild_id] = asyncio.create_task(
+            self._tts_tasks[guild_id] = current_loop.create_task(
                 self._tts_worker(guild_id)
             )
 
             # Start listening if available
             if VOICE_RECV_AVAILABLE:
-                await self._start_listening(vc)
+                self._start_listening(vc, guild_id)
                 return {
                     "success": True,
                     "channel_id": channel.id,
@@ -373,6 +427,48 @@ class VoiceHandler:
                 }
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+
+    async def join_channel_safe(self, channel: discord.VoiceChannel) -> dict:
+        """
+        Join a voice channel - safe to call from any thread/loop.
+        Schedules the join in the bot's event loop.
+        """
+        # Get bot's loop - this is set when bot.start() runs
+        loop = getattr(self.bot, 'loop', None)
+
+        # If bot.loop is not set yet, try to get it from the client
+        if loop is None:
+            # discord.py 2.0+ stores loop internally
+            loop = getattr(self.bot, '_connection', None)
+            if loop:
+                loop = getattr(loop, 'loop', None)
+
+        if loop is None or not loop.is_running():
+            return {"success": False, "error": "Bot event loop not running. Is the bot connected?"}
+
+        # Check if we're already in the bot's loop
+        try:
+            current_loop = asyncio.get_running_loop()
+            if current_loop == loop:
+                # Already in bot's loop, call directly
+                return await self.join_channel(channel)
+        except RuntimeError:
+            pass  # No running loop in this thread
+
+        # We're in a different thread/loop - schedule in bot's loop
+        future = asyncio.run_coroutine_threadsafe(
+            self.join_channel(channel),
+            loop
+        )
+        try:
+            # Wait for result with timeout
+            return future.result(timeout=30)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
             return {"success": False, "error": str(e)}
 
     async def leave_channel(self, guild_id: int) -> dict:
@@ -391,6 +487,14 @@ class VoiceHandler:
         try:
             vc = self._voice_clients[guild_id]
             channel_id = vc.channel.id if vc.channel else None
+
+            # Stop listening
+            if guild_id in self._audio_sinks:
+                self._audio_sinks[guild_id].cleanup()
+                del self._audio_sinks[guild_id]
+
+            if VOICE_RECV_AVAILABLE and hasattr(vc, 'stop_listening'):
+                vc.stop_listening()
 
             # Stop TTS worker
             if guild_id in self._tts_tasks:
@@ -432,7 +536,7 @@ class VoiceHandler:
             "channel_name": channel.name if channel else None,
             "is_playing": vc.is_playing(),
             "is_paused": vc.is_paused(),
-            "listening": VOICE_RECV_AVAILABLE,
+            "listening": VOICE_RECV_AVAILABLE and guild_id in self._audio_sinks,
             "participants": conversation.get_participants() if conversation else [],
             "conversation_messages": len(conversation.messages) if conversation else 0,
             "latency": vc.latency,
@@ -596,7 +700,7 @@ class VoiceHandler:
     # VOICE RECEIVE (erfordert discord-ext-voice-recv)
     # =========================================================================
 
-    async def _start_listening(self, vc: VoiceClient):
+    def _start_listening(self, vc, guild_id: int):
         """Start listening for voice input mit discord-ext-voice-recv"""
         if not VOICE_RECV_AVAILABLE:
             print("[Voice] Voice receive not available - install discord-ext-voice-recv")
@@ -604,120 +708,27 @@ class VoiceHandler:
 
         # Create custom sink that processes audio per user
         sink = UserAudioSink(self)
+        self._audio_sinks[guild_id] = sink
 
-        # Start listening
-        vc.start_recording(sink, self._on_recording_stopped)
+        # Start listening - use listen() method from VoiceRecvClient
+        vc.listen(sink)
         print(f"[Voice] Started listening in {vc.channel.name}")
 
-    def _on_recording_stopped(self, sink, *args):
-        """Callback when recording stops"""
-        print("[Voice] Recording stopped")
+    def _on_listening_stopped(self, sink, *args):
+        """Callback when listening stops"""
+        print("[Voice] Listening stopped")
 
     async def stop_listening(self, guild_id: int):
         """Stop listening in a guild"""
         if guild_id in self._voice_clients:
             vc = self._voice_clients[guild_id]
-            if vc.is_connected():
-                vc.stop_recording()
+            if vc.is_connected() and hasattr(vc, 'stop_listening'):
+                vc.stop_listening()
                 print(f"[Voice] Stopped listening in guild {guild_id}")
 
-    def _on_audio_packet(self, user_id: int, pcm_data: bytes):
-        """Handle incoming audio packet from a user"""
-        now = time.time()
-
-        # Initialize buffer if needed
-        if user_id not in self._audio_buffers:
-            self._audio_buffers[user_id] = bytearray()
-
-        # Add to buffer
-        self._audio_buffers[user_id].extend(pcm_data)
-        self._last_audio_time[user_id] = now
-
-        # Cancel existing silence task
-        if user_id in self._silence_tasks:
-            self._silence_tasks[user_id].cancel()
-
-        # Start new silence detection task
-        self._silence_tasks[user_id] = asyncio.create_task(
-            self._check_silence(user_id)
-        )
-
-    async def _check_silence(self, user_id: int):
-        """Check if user has stopped speaking"""
-        await asyncio.sleep(self.silence_threshold_ms / 1000.0)
-
-        # Check if still silent
-        now = time.time()
-        last = self._last_audio_time.get(user_id, 0)
-
-        if (now - last) * 1000 >= self.silence_threshold_ms:
-            # User has stopped speaking - process audio
-            await self._process_audio_buffer(user_id)
-
-    async def _process_audio_buffer(self, user_id: int):
-        """Process accumulated audio buffer"""
-        if user_id not in self._audio_buffers:
-            return
-
-        buffer = self._audio_buffers[user_id]
-
-        # Check minimum length
-        # Assuming 16kHz, 16-bit mono: 32000 bytes = 1 second
-        min_bytes = int(32000 * self.min_audio_length_ms / 1000)
-
-        if len(buffer) < min_bytes:
-            self._audio_buffers[user_id] = bytearray()
-            return
-
-        # Save to temp file
-        temp_path = Path(tempfile.mktemp(suffix=".wav"))
-        try:
-            self._save_pcm_as_wav(bytes(buffer), temp_path)
-
-            # Transcribe
-            transcription = await self.media_handler.transcribe_audio(str(temp_path))
-
-            if transcription and transcription.strip():
-                # Get user info
-                user = self.bot.get_user(user_id)
-                user_name = user.display_name if user else f"User_{user_id}"
-
-                # Create VoiceMessage
-                msg = VoiceMessage(
-                    user_id=user_id,
-                    user_name=user_name,
-                    text=transcription,
-                    timestamp=datetime.now(),
-                    duration_seconds=len(buffer) / 32000,  # Approximate
-                )
-
-                # Find conversation (from any connected channel)
-                for conv in self._conversations.values():
-                    conv.add_message(msg)
-
-                    # Callback
-                    if self.on_voice_message:
-                        await self.on_voice_message(msg, conv)
-
-                    break  # Only one conversation per user
-
-        finally:
-            # Cleanup
-            self._audio_buffers[user_id] = bytearray()
-            try:
-                temp_path.unlink()
-            except:
-                pass
-
-    def _save_pcm_as_wav(self, pcm_data: bytes, path: Path):
-        """Save raw PCM data as WAV file"""
-        import wave
-
-        with wave.open(str(path), 'wb') as wav:
-            wav.setnchannels(1)
-            wav.setsampwidth(2)  # 16-bit
-            wav.setframerate(16000)  # Discord uses 48kHz but we resample
-            wav.writeframes(pcm_data)
+        if guild_id in self._audio_sinks:
+            self._audio_sinks[guild_id].cleanup()
+            del self._audio_sinks[guild_id]
 
     # =========================================================================
     # CONVERSATION MANAGEMENT
@@ -759,6 +770,11 @@ class VoiceModeExtension:
         from .discord_interface import DiscordInterface
 
         self.interface: DiscordInterface = discord_interface
+
+        # Wake words for activation
+        self.wake_words = ["hey bot", "ok bot", "assistant", "agent", "isaa", "isa", "issa", "iza", "pc", "computer", "system", "toolbox"]
+        # Stop words to interrupt
+        self.stop_words = ["stop", "stopp", "halt", "quiet", "ruhe", "sei still", "shut up"]
 
         # Create VoiceHandler
         self.voice_handler = VoiceHandler(
@@ -810,22 +826,24 @@ class VoiceModeExtension:
         """Called when a voice message is transcribed"""
         print(f"[Voice] 🎤 {msg.user_name}: {msg.text}")
 
-        # Optionen für automatische Agent-Antwort:
-        # 1. Immer antworten wenn engaged
-        # 2. Nur bei Keywords/Wake Words
-        # 3. Nur bei direkter Ansprache
+        text_lower = msg.text.lower().strip()
 
-        # Für jetzt: Check ob Bot Name erwähnt wird
+        # Check for STOP words first - interrupt if bot is speaking
+        if any(stop in text_lower for stop in self.stop_words):
+            vc = self.voice_handler._voice_clients.get(conv.guild_id)
+            if vc and vc.is_playing():
+                print(f"[Voice] ⏹️ Stop command from {msg.user_name}")
+                await self.voice_handler.stop_speaking(conv.guild_id)
+                return
+
+        # Check for wake words
         bot_name = self.interface.bot.user.name.lower() if self.interface.bot.user else "bot"
-        text_lower = msg.text.lower()
-
-        # Wake words
-        wake_words = [bot_name, "hey bot", "ok bot", "assistant", "agent"]
-        should_respond = any(word in text_lower for word in wake_words)
+        all_wake_words = self.wake_words + [bot_name]
+        should_respond = any(word in text_lower for word in all_wake_words)
 
         if should_respond:
             # Build context mit Voice Conversation History
-            context = f"""[Voice Channel Context]
+            context = f"""[Voice Channel Context] Use bracketed text like [cheerful], [whisper], or [dramatic] to control speech style
 Channel: {conv.channel_name}
 Participants: {', '.join(conv.get_participants())}
 Recent conversation:
@@ -836,14 +854,32 @@ Recent conversation:
 """
             try:
                 # Call Agent
-                response = await self.interface.agent.a_run(
+                content_buffer = ""
+                async for chunk in self.interface.agent.a_stream(
                     query=context,
                     session_id=f"discord_voice_{conv.guild_id}",
-                )
+                ):
+                    c_type = chunk.get("type")
 
-                if response:
-                    # Speak response in voice channel
-                    await self.voice_handler.speak_streaming(conv.guild_id, response)
+                    if c_type == "final_answer":
+                        answer = chunk.get("answer", content_buffer)
+                        # send as text to discord
+                        try:
+                            await self.interface.router.route_response(
+                                content=answer,
+                                target_address=f"discord://guild:{conv.guild_id}/channel:{conv.channel_id}",
+                                as_audio=False,
+                            )
+                        except Exception as e:
+                            print(f"[Voice] Failed to route response: {e}")
+
+                    if c_type == "content":
+                        content_buffer += chunk.get("chunk", "")
+                        # test for santace end
+                        if content_buffer.endswith(".") or content_buffer.endswith("?") or content_buffer.endswith("!") or content_buffer.endswith("\n\n"):
+                            await self.voice_handler.speak_streaming(conv.guild_id, content_buffer)
+                            content_buffer = ""
+
 
             except Exception as e:
                 print(f"[Voice] Agent error: {e}")
@@ -876,7 +912,8 @@ Recent conversation:
                 if not isinstance(channel, discord.VoiceChannel):
                     return json.dumps({"error": "Not a voice channel"})
 
-                result = await handler.join_channel(channel)
+                # Use safe join that handles event loop
+                result = await handler.join_channel_safe(channel)
                 return json.dumps(result)
 
             except Exception as e:
@@ -1056,15 +1093,47 @@ async def handle_voice_cli_command(
 
         try:
             channel_id = int(args[1])
-            channel = voice_ext.interface.bot.get_channel(channel_id)
+            bot = voice_ext.interface.bot
 
-            if not channel:
-                channel = await voice_ext.interface.bot.fetch_channel(channel_id)
+            # Diese Funktion wird im Bot-Loop ausgeführt
+            async def _do_join():
+                channel = bot.get_channel(channel_id)
+                if not channel:
+                    try:
+                        channel = await bot.fetch_channel(channel_id)
+                    except Exception:
+                        return {"success": False, "error": f"Channel {channel_id} not found"}
 
-            if not isinstance(channel, discord.VoiceChannel):
-                return f"Error: {channel_id} is not a voice channel"
+                if not isinstance(channel, discord.VoiceChannel):
+                    return {"success": False, "error": f"{channel_id} is not a voice channel"}
 
-            result = await handler.join_channel(channel)
+                return await handler.join_channel(channel)
+
+            # Wenn wir bereits im Bot-Loop sind, direkt ausführen
+            try:
+                current_loop = asyncio.get_running_loop()
+                # Prüfen ob wir im Bot-Loop sind
+                bot_loop = getattr(bot, '_loop', None) or getattr(bot, 'loop', None)
+                if current_loop is bot_loop:
+                    result = await _do_join()
+                else:
+                    raise RuntimeError("Wrong loop")
+            except RuntimeError:
+                # Wir sind in einem anderen Thread/Loop
+                # Nutze den BotManager oder direkten Zugriff auf den Loop
+
+                # Option 1: Über BotManager (wenn verfügbar)
+                if hasattr(voice_ext.interface, 'manager') and voice_ext.interface.manager:
+                    result = voice_ext.interface.manager.run_coroutine(_do_join(), timeout=30)
+                else:
+                    # Option 2: Direkter Loop-Zugriff
+                    # Der Loop muss irgendwo gespeichert sein!
+                    loop = getattr(voice_ext.interface, '_bot_loop', None)
+                    if loop is None or not loop.is_running():
+                        return "Error: Bot event loop not accessible"
+
+                    future = asyncio.run_coroutine_threadsafe(_do_join(), loop)
+                    result = future.result(timeout=30)
 
             if result.get("success"):
                 listening = "✅ Listening" if result.get("listening") else "❌ Not listening"
@@ -1075,6 +1144,8 @@ async def handle_voice_cli_command(
         except ValueError:
             return "Error: Invalid channel ID"
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return f"Error: {e}"
 
     elif cmd == "leave":
@@ -1087,7 +1158,17 @@ async def handle_voice_cli_command(
         if not guild_id:
             return "Not in any voice channel"
 
-        result = await handler.leave_channel(guild_id)
+        # Run in bot's loop
+        bot = voice_ext.interface.bot
+        loop = getattr(bot, 'loop', None)
+        if loop and loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(
+                handler.leave_channel(guild_id),
+                loop
+            )
+            result = future.result(timeout=10)
+        else:
+            result = await handler.leave_channel(guild_id)
 
         if result.get("success"):
             return "✅ Left voice channel"
@@ -1137,7 +1218,18 @@ async def handle_voice_cli_command(
         if not guild_id:
             return "Not in any voice channel"
 
-        await handler.speak_streaming(guild_id, text)
+        # Run in bot's loop
+        bot = voice_ext.interface.bot
+        loop = getattr(bot, 'loop', None)
+        if loop and loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(
+                handler.speak_streaming(guild_id, text),
+                loop
+            )
+            future.result(timeout=10)  # Wait for queue
+        else:
+            await handler.speak_streaming(guild_id, text)
+
         return f"🔊 Speaking: {text[:50]}..."
 
     elif cmd == "stop":
@@ -1147,7 +1239,17 @@ async def handle_voice_cli_command(
                 break
 
         if guild_id:
-            await handler.stop_speaking(guild_id)
+            # Run in bot's loop
+            bot = voice_ext.interface.bot
+            loop = getattr(bot, 'loop', None)
+            if loop and loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(
+                    handler.stop_speaking(guild_id),
+                    loop
+                )
+                future.result(timeout=5)
+            else:
+                await handler.stop_speaking(guild_id)
             return "⏹️ Stopped speaking"
         else:
             return "Not in any voice channel"
@@ -1170,8 +1272,22 @@ async def handle_voice_cli_command(
             if mode == "on":
                 return "Listening is automatic when joining voice channels"
             elif mode == "off":
+                if not guild_id:
+                    for gid in handler._voice_clients.keys():
+                        guild_id = gid
+                        break
                 if guild_id:
-                    await handler.stop_listening(guild_id)
+                    # Run in bot's loop
+                    bot = voice_ext.interface.bot
+                    loop = getattr(bot, 'loop', None)
+                    if loop and loop.is_running():
+                        future = asyncio.run_coroutine_threadsafe(
+                            handler.stop_listening(guild_id),
+                            loop
+                        )
+                        future.result(timeout=5)
+                    else:
+                        await handler.stop_listening(guild_id)
                     return "🔇 Stopped listening"
 
         return f"Voice receive available: {VOICE_RECV_AVAILABLE}"
@@ -1201,4 +1317,5 @@ def create_voice_mode(discord_interface) -> VoiceModeExtension:
         # Now voice tools are available to the agent
         await interface.start()
     """
+    _suppress_voice_noise()
     return VoiceModeExtension(discord_interface)

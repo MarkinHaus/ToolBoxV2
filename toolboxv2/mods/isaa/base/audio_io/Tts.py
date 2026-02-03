@@ -24,6 +24,8 @@ from enum import Enum
 from pathlib import Path
 from typing import BinaryIO, Generator, Literal, Optional, Union
 
+from groq._response import BinaryAPIResponse
+
 # Type aliases
 TextInput = Union[str, list[str]]
 AudioOutput = bytes
@@ -84,7 +86,7 @@ class TTSConfig:
 
     # Groq TTS specific
     groq_api_key: Optional[str] = None
-    groq_model: str = "playai-tts"  # or "playai-tts-arabic"
+    groq_model: str = "canopylabs/orpheus-v1-english"
 
     # ElevenLabs specific
     elevenlabs_api_key: Optional[str] = None
@@ -373,13 +375,10 @@ def _synthesize_groq_tts(text: str, config: TTSConfig) -> TTSResult:
         Set GROQ_API_KEY environment variable
 
     Models:
-        - playai-tts: English voices
-        - playai-tts-arabic: Arabic voices
+        - canopylabs/orpheus-v1-english: English voices
 
     Voices (English):
-        Fritz-PlayAI, Arsenio-PlayAI, Cillian-PlayAI,
-        Timo-PlayAI, Dexter-PlayAI, Ava-PlayAI,
-        Zola-PlayAI, Nia-PlayAI, Brooke-PlayAI, Celeste-PlayAI
+        [autumn diana hannah austin daniel troy]
     """
     try:
         from groq import Groq
@@ -404,8 +403,8 @@ def _synthesize_groq_tts(text: str, config: TTSConfig) -> TTSResult:
         speed=config.speed,
     )
 
-    # Get audio bytes
-    audio_bytes = response.content
+    # Get audio bytes - BinaryAPIResponse needs .read() or iterate
+    audio_bytes = b"".join(response.iter_bytes())
 
     # Parse WAV to get metadata
     with io.BytesIO(audio_bytes) as buf:
@@ -421,7 +420,6 @@ def _synthesize_groq_tts(text: str, config: TTSConfig) -> TTSResult:
         duration=duration,
         channels=channels,
     )
-
 
 def _stream_groq_tts(text: str, config: TTSConfig) -> Generator[bytes, None, None]:
     """
@@ -605,7 +603,6 @@ def synthesize(text: str, config: Optional[TTSConfig] = None, **kwargs) -> TTSRe
     if handler is None:
         raise ValueError(f"Unknown backend: {config.backend}")
 
-    print(config)
     return handler(text, config)
 
 
