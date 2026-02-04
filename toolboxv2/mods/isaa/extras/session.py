@@ -41,7 +41,8 @@ class ChatSession:
             self.history.pop(0)
 
     async def get_reference(self, text,row=False, **kwargs):
-        return "\n".join([str(x) for x in await self.mem.query(text, self.space_name, **kwargs)]) if not row else await self.mem.query(text, self.space_name, **kwargs)
+        kwargs["to_str"] = not row
+        return await self.mem.query(text, self.space_name, **kwargs) if not row else await self.mem.query(text, self.space_name, **kwargs)
 
     def get_past_x(self, x, last_u=False):
         if last_u:

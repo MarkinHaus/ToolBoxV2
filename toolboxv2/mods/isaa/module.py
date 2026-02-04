@@ -1088,38 +1088,72 @@ class Tools(MainTool):
         if self.default_setter:
             builder = self.default_setter(builder, name)
 
-        # ISAA core tools
-        async def memory_search_tool(
+        async def unified_memory_tool(
             query: str,
-            search_mode: str | None = "balanced",
-            context_name: str | None = None
+            scope: str = "global"
         ) -> str:
-            """Memory search with configurable precision"""
-            mem_instance = self.get_memory()
-            memory_names_list = [name.strip() for name in context_name.split(',')] if context_name else None
+            """
+            Search the AI's long-term memory and current conversation context.
 
+            Args:
+                query: The detailed search question.
+                scope: 'global' (searches everything including general knowledge),
+                       'session' (searches only current conversation history),
+                       or specify a specific memory category name.
+            """
+            mem_instance = self.get_memory()
+
+            # Determine which memories to search
+            targets = None
+            if scope == "session":
+                # Only search the chat history space
+                agent = await self.get_agent(name)
+                session = agent.active_session or agent.session_manager.get_or_create(agent.active_execution_id or "default")
+                targets = [session.space_name]
+            elif scope == "global":
+                # Search everything (session + knowledge bases)
+                targets = None
+            else:
+                # Try to search specific category, fallback to global if not found
+                targets = [scope]
+
+            # Configuration for the search "mode" is now internal logic
+            # to reduce agent cognitive load
             search_params = {
-                "wide": {"k": 7, "min_similarity": 0.1, "cross_ref_depth": 3, "max_cross_refs": 4, "max_sentences": 8},
-                "narrow": {"k": 2, "min_similarity": 0.75, "cross_ref_depth": 1, "max_cross_refs": 1,
-                           "max_sentences": 3},
-                "balanced": {"k": 3, "min_similarity": 0.2, "cross_ref_depth": 2, "max_cross_refs": 2,
-                             "max_sentences": 5}
-            }.get(search_mode,
-                  {"k": 3, "min_similarity": 0.2, "cross_ref_depth": 2, "max_cross_refs": 2, "max_sentences": 5})
+                "k": 4,
+                "min_similarity": 0.45,  # Stricter to reduce noise
+                "max_sentences": 6,
+                "cross_ref_depth": 1
+            }
 
             return await mem_instance.query(
-                query=query, memory_names=memory_names_list,
-                query_params=search_params, to_str=True
+                query=query,
+                memory_names=targets,
+                query_params=search_params,
+                to_str=True
             )
 
-        async def save_to_memory_tool(data_to_save: str, context_name: str = name):
+        async def save_knowledge_tool(
+            info: str,
+            category: str = "general"
+        ) -> str:
+            """
+            Save IMPORTANT facts, rules, or user preferences to long-term memory.
+            Do NOT save conversation logs here (they are saved automatically).
+
+            Args:
+                info: The fact or data to save.
+                category: A short name to categorize this info (e.g., 'user_bio', 'project_specs').
+            """
             mem_instance = self.get_memory()
-            result = await mem_instance.add_data(context_name, str(data_to_save), direct=True)
-            return 'Data added to memory.' if result else 'Error adding data to memory.'
+            # We map 'category' to memory context_name
+            result = await mem_instance.add_data(category, str(info), direct=True)
+            return f"Information saved to category '{category}'." if result else "Error saving."
 
         if add_base_tools:
-            builder.add_tool(memory_search_tool, "memorySearch", "Search ISAA's semantic memory")
-            builder.add_tool(save_to_memory_tool, "saveDataToMemory", "Save data to ISAA's semantic memory")
+            # Only add these two. Remove 'recall' and 'memorySearch'.
+            builder.add_tool(unified_memory_tool, "search_memory", "Search knowledge base and chat history.")
+            builder.add_tool(save_knowledge_tool, "save_memory", "Save permanent knowledge.")
             builder.add_tool(self.web_search, "searchWeb", "Search the web for information")
 
             if with_dangerous_shell:

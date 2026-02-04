@@ -13,4 +13,3 @@ except ImportError:
     print(traceback.format_exc())
     pass
 
-from .hud import Name as isaa_hud_name

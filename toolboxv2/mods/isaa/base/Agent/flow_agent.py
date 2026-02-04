@@ -1791,21 +1791,8 @@ class FlowAgent:
             return session.docker_status()
 
         # =========================================================================
-        # MEMORY/RAG TOOLS
+        # history TOOLS
         # =========================================================================
-
-        async def recall(query: str, max_entries: int = 5) -> str:
-            """
-            Query RAG memory for relevant context.
-
-            Args:
-                query: Search query
-                max_entries: Maximum results to return
-
-            Returns:
-                Formatted context string from memory
-            """
-            return await session.get_reference(query, max_entries=max_entries)
 
         def history(last_n: int = 10) -> list[dict]:
             """
@@ -1978,13 +1965,6 @@ class FlowAgent:
                 "name": "docker_status",
                 "category": ["docker", "read"],
                 "flags": {"requires_docker": True},
-            },
-            # Memory/RAG
-            {
-                "tool_func": recall,
-                "name": "recall",
-                "category": ["memory", "rag"],
-                "is_async": True,
             },
             {"tool_func": history, "name": "history", "category": ["memory", "history"]},
             # Situation/Behavior

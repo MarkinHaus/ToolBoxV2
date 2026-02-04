@@ -467,62 +467,99 @@ class AISemanticMemory(metaclass=Singleton):
         return [m for n,m in self._get_target_memories(names)]
 
     async def query(self,
-                    query: str,
-                    memory_names: str | list[str] | None = None,
-                    query_params: dict | None = None,
-                    to_str: bool = False,
-                    unified_retrieve: bool =False) -> str | list[dict]:
+              query: str,
+              memory_names: str | list[str] | None = None,
+              query_params: dict | None = None,
+              to_str: bool = False,
+              unified_retrieve: bool = False,
+                    **kwargs) -> str | list[dict]:
         """
         Query memories using KnowledgeBase retrieval
-
-        Args:
-            query: Search query
-            memory_names: Target memory names
-            query_params: Query parameters
-            to_str: Return string format
-            unified_retrieve: Unified retrieve
         """
+        # 1. Safety: Ensure query_params is a dict
+        if query_params is None:
+            query_params = {}
+
+        # 2. Compatibility: Map legacy kwargs (like from ChatSession) to query_params
+        if 'max_entries' in kwargs:
+            query_params['k'] = kwargs['max_entries']
+
         targets = self._get_target_memories(memory_names)
         if not targets:
-            return []
+            return "" if to_str else []
 
         results = []
         for name, kb in targets:
-            #try:
-                # Use KnowledgeBase's retrieve_with_overview for comprehensive results
-                result = await kb.retrieve_with_overview(
-                    query=query,
-                    k=query_params.get("k", 3) if query_params else 3,
-                    min_similarity=query_params.get("min_similarity", 0.2) if query_params else 0.2,
-                    cross_ref_depth=query_params.get("cross_ref_depth", 2) if query_params else 2,
-                    max_cross_refs=query_params.get("max_cross_refs", 2) if query_params else 2,
-                    max_sentences=query_params.get("max_sentences", 5) if query_params else 5
-                ) if not unified_retrieve else await kb.unified_retrieve(
-                    query=query,
-                    k=query_params.get("k", 2) if query_params else 2,
-                    min_similarity=query_params.get("min_similarity", 0.2) if query_params else 0.2,
-                    cross_ref_depth=query_params.get("cross_ref_depth", 2) if query_params else 2,
-                    max_cross_refs=query_params.get("max_cross_refs", 6) if query_params else 6,
-                    max_sentences=query_params.get("max_sentences", 12) if query_params else 12
-                )
-                if result.overview:
-                    results.append({
-                        "memory": name,
-                        "result": result
-                    })
-            #except Exception as e:
-            #    print(f"Query failed on {name}: {str(e)}")
-        print(to_str, "to_str")
+            try:
+                # Setup default params
+                k = int(query_params.get("k", 3))
+                min_sim = float(query_params.get("min_similarity", 0.2))
+
+                if unified_retrieve:
+                    # Use the complex unified retrieval
+                    result_dict = await kb.unified_retrieve(
+                        query=query, k=k, min_similarity=min_sim,
+                        use_graph_expansion=query_params.get("use_graph_expansion", False)
+                    )
+                    # For unified, we just store the summary if available, or chunks
+                    if result_dict:
+                        results.append({"memory": name, "type": "unified", "data": result_dict})
+                else:
+                    # Standard retrieval with overview
+                    result = await kb.retrieve_with_overview(
+                        query=query,
+                        k=k,
+                        min_similarity=min_sim,
+                        cross_ref_depth=int(query_params.get("cross_ref_depth", 1)),
+                        max_sentences=int(query_params.get("max_sentences", 5))
+                    )
+                    if result.details or result.overview:
+                        results.append({"memory": name, "type": "standard", "result": result})
+
+            except Exception as e:
+                # Log error but don't crash the whole search
+                get_logger().error(f"Query failed on {name}: {str(e)}")
+
         if to_str:
-            str_res = ""
-            if not unified_retrieve:
-                str_res = [
-                    f"{x['memory']} - {json.dumps(x['result'].overview)}\n - {[c.text for c in x['result'].details]}\n - {[(k, [c.text for c in v]) for k, v in x['result'].cross_references.items()]}"
-                    for x in results]
-                # str_res =
-            else:
-                str_res = json.dumps(results)
-            return str_res
+            if not results:
+                return "No relevant information found in memory."
+
+            formatted_output = []
+            for item in results:
+                mem_name = item['memory']
+
+                if item['type'] == 'unified':
+                    # Format unified result
+                    data = item['data']
+                    #summary = data.get('summary', {}).get('main_summary', '').strip()
+                    #if summary:
+                    #    formatted_output.append(f"Source [{mem_name} - Summary]:\n{summary}")
+
+                    chunks = data.get('raw_results', {}).get('relevant_chunks', [])
+                    for chunk in chunks:
+                        formatted_output.append(f"Source [{mem_name}]: {chunk.get('text', '').strip()}")
+
+                else:
+                    # Format standard result (Clean text only)
+                    r = item['result']
+                    # 1. Add Summaries if useful
+                    seen_texts = set()
+                    #for topic in r.overview:
+                    #    if topic.get('summary'):
+                    #        formatted_output.append(f"Source [{mem_name} - Topic Summary]: {topic['summary']}")
+
+                    # 2. Add Direct Details (The actual chunks)
+                    for chunk in r.details:
+                        text = chunk.text.strip()
+                        if text and text not in seen_texts:
+                            seen_texts.add(text)
+                            formatted_output.append(f"Source [{mem_name}]: {text}")
+
+            if not formatted_output:
+                return "No relevant information found in memory."
+
+            return "\n\n".join(formatted_output)
+
         return results
 
     def _get_target_memories(self, memory_names: str | list[str] | None) -> list[tuple[str, KnowledgeBase]]:
