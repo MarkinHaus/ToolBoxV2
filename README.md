@@ -8,11 +8,51 @@ A flexible modular framework for tools, functions, and complete applications –
 
 ---
 
-## 🔍 Overview
+## 🔍 Overview & Architecture
 
-ToolBoxV2 combines a Python backend library with a Rust web/desktop server (Actix) and a cross-platform UI framework (Tauri + tbjs). This architecture enables the creation of versatile applications accessible through various interfaces.
+ToolBoxV2 is a Python-first framework with a high-performance worker infrastructure for web, desktop, and mobile applications.
 
-![ToolBoxV2 Architecture](https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/architecture-diagram.svg)
+### Architecture
+
+```
+                    ┌─────────────┐
+                    │    Nginx    │
+                    │ (Load Bal., │
+                    │ Rate Limit) │
+                    └──────┬──────┘
+                           │
+         ┌─────────────────┼─────────────────┐
+         │                 │                 │
+         ▼                 ▼                 ▼
+  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+  │ HTTP Worker │   │ HTTP Worker │   │ WS Worker   │
+  │  (WSGI)     │   │  (WSGI)     │   │ (asyncio)   │
+  │  Port 8000  │   │  Port 8001  │   │  Port 8010  │
+  └──────┬──────┘   └──────┬──────┘   └──────┬──────┘
+         │                 │                 │
+         └────────────┬────┴─────────────────┘
+                      │
+               ┌──────▼──────┐
+               │ ZeroMQ      │
+               │ Event Broker│
+               │ (Pub/Sub)   │
+               └──────┬──────┘
+                      │
+               ┌──────▼──────┐
+               │ ToolBoxV2   │
+               │ App Instance│
+               └─────────────┘
+```
+
+### Key Components
+
+- **Python Backend**: Core library with modular architecture
+- **Worker System**: High-performance WSGI/async workers (replacing the legacy Rust server)
+- **ZeroMQ IPC**: Fast inter-worker communication
+- **Tauri + tbjs**: Cross-platform desktop/web UI
+- **Nginx**: Load balancing, rate limiting, SSL termination
+
+For detailed worker documentation, see [toolboxv2/utils/workers/README.md](toolboxv2/utils/workers/README.md).
 
 ---
 
@@ -34,7 +74,7 @@ The underlying system, built on a monolithic modular architecture, combines the 
 Utilize ToolBoxV2 as a framework to:
 *   Create custom functions, widgets, or complete mini-applications.
 *   Leverage existing modules (`mods`) or extend them with new components.
-*   Build web, desktop, or mobile applications using a unified code stack (Python, Rust, Web Technologies).
+*   Build web, desktop, or mobile applications using a unified Python stack.
 *   Customize the user interface via the web frontend (tbjs).
 
 ### 🙋 For End Users
@@ -183,41 +223,39 @@ You can also use our [**Interactive Web Installer Page**](https://simplecore.app
 
 ---
 
-### 3. Server-Only Deployment (Rust Actix Server)
+### 🖥️ Worker System Deployment (Production)
 
-If you wish to deploy only the Rust Actix backend server:
+ToolBoxV2 uses a Python-based worker infrastructure instead of a Rust server. For production deployments:
 
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/MarkinHaus/ToolBoxV2.git
-    cd ToolBoxV2
-    ```
-2.  **Install Rust:** If you haven't already, install Rust and Cargo from [rust-lang.org](https://www.rust-lang.org/tools/install).
-3.  **Build the server:**
-    ```bash
-    cd toolboxv2/src-core
-    cargo build --release
-    ```
-4. or auto build and run using
-5. ```bash
-    tb api start
-    ```
-for details run
+#### Start Worker System
+
 ```bash
-    tb api -h
+# Start all workers (HTTP + WebSocket)
+cd toolboxv2/utils/workers
+python cli_worker_manager.py start
+
+# Or use the tb command
+tb workers start
 ```
+
+#### Worker Components
+
+- **HTTP Workers**: Handle API requests via raw WSGI (~5000 req/s per worker)
+- **WebSocket Workers**: Handle real-time connections (~10,000 concurrent per instance)
+- **ZeroMQ Event Broker**: High-performance inter-worker communication
+
+For full documentation, see [toolboxv2/utils/workers/README.md](toolboxv2/utils/workers/README.md).
 
 ---
 
 ### 🖥️ Full Stack Desktop/Web Application (Tauri + Web)
 
-This setup includes the Python backend, Rust server, and Tauri/Web frontend.
+This setup includes the Python backend, worker system, and Tauri/Web frontend.
 
 **Prerequisites:**
 *   Python 3.10 or higher
-*   [Rust and Cargo](https://www.rust-lang.org/tools/install)
 *   [Node.js](https://nodejs.org/) (which includes npm)
-*   Tauri CLI: `cargo install tauri-cli`
+*   Tauri CLI (installed via npm)
 
 for execution details use [package.json](toolboxv2/package.json)
 or run tb --help
@@ -227,7 +265,7 @@ or run tb --help
 ## 🧪 CI/CD & Deployment
 
 Automated processes are managed using GitHub Actions for:
-*   🔁 **Build & Test**: Validating both Rust and Python components.
+*   🔁 **Build & Test**: Validating Python components and worker system.
 *   🚀 **Release**: Publishing to PyPI, building Tauri applications, and potentially Docker images.
 
 ---
@@ -251,6 +289,7 @@ ToolBoxV2 can be used to build a wide range of applications, including:
 *   [📚 Documentation (WIP)](https://markinhaus.github.io/ToolBoxV2/)
 *   [🐍 PyPI Package](https://pypi.org/project/ToolBoxV2)
 *   [🐙 GitHub Repository](https://github.com/MarkinHaus/ToolBoxV2)
+*   [⚙️ Worker System Documentation](toolboxv2/utils/workers/README.md)
 
 ---
 ## 📄 License

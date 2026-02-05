@@ -8,6 +8,7 @@ import inspect
 
 from toolboxv2 import get_app
 from toolboxv2.mods.isaa.base.KnowledgeBase import KnowledgeBase, RetrievalResult
+from toolboxv2.utils.extras.Style import print_prompt
 
 
 # ... (Ihr gesamter bestehender Code von asyncio bis zum Ende der KnowledgeBase-Klasse) ...
@@ -20,6 +21,76 @@ class ToolCall(BaseModel):
     """Defines the structure for a tool call requested by the LLM."""
     tool_name: str = Field(..., description="The name of the tool to be executed.")
     parameters: dict[str, Any] = Field({}, description="The parameters to pass to the tool.")
+
+def topic_to_list_of_str(topic) -> list[str]:
+    """
+    Convert a topic dictionary into a human- and LLM-readable string.
+    Embeddings, numpy values, and internal objects are removed.
+    """
+    lines = []
+    topic_id = topic.get("topic_id", "N/A")
+    summary = topic.get("summary", "").strip()
+    chunk_count = topic.get("chunk_count", 0)
+    relevance = topic.get("relevance_score", None)
+
+    lines.append(f"Topic {topic_id}")
+    lines.append("-" * 20)
+
+    if relevance is not None:
+        try:
+            relevance = float(relevance)
+            lines.append(f"Relevance score: {relevance:.3f}")
+        except Exception:
+            lines.append(f"Relevance score: {relevance}")
+
+    if summary:
+        lines.append("Summary:")
+        lines.append(summary)
+
+    lines.append(f"Chunks: {chunk_count}")
+
+    # -------- Main Chunks --------
+    main_chunks = topic.get("main_chunks", [])
+    if main_chunks:
+        lines.append("\nKey texts:")
+        for i, chunk in enumerate(main_chunks, 1):
+            text = chunk.get("text", "").strip()
+            metadata = chunk.get("metadata", {})
+
+            lines.append(f"  {i}. {text}")
+
+            concepts = metadata.get("concepts", [])
+            if concepts:
+                lines.append(f"     Concepts: {', '.join(concepts)}")
+
+    lines.append("")
+    return lines
+
+def retrieval_result_to_str(retrieval_result) -> str:
+    """
+    Convert a RetrievalResult object into a human- and LLM-readable string.
+    Embeddings, numpy values, and internal objects are removed.
+    """
+
+    lines = []
+    lines.append("RETRIEVAL RESULT")
+    lines.append("=" * 40)
+
+    # -------- Overview / Topics --------
+    overview = getattr(retrieval_result, "overview", [])
+    lines.append(f"Number of topics: {len(overview)}\n")
+
+    for topic in overview:
+        lines.extend(topic_to_list_of_str(topic))
+
+    # -------- Optional Cross References --------
+    cross_refs = getattr(retrieval_result, "cross_references", {})
+    if cross_refs:
+        lines.append("Cross references:")
+        for k, v in cross_refs.items():
+            lines.append(f"- {k}: {v}")
+
+    return "\n".join(lines)
 
 
 class AgentKnowledge:
@@ -51,8 +122,30 @@ class AgentKnowledge:
             "combine_2_data_points": self.combine_2_data_points,
         })
         # Analyse-Set (Analyse der Wissensdatenbank)
+        async def retrieve_with_overview(
+                query: str,
+                query_embedding=None,
+                k: int = 5,
+                min_similarity: float = 0.2,
+                max_sentences: int = 5,
+                cross_ref_depth: int = 2,
+                max_cross_refs: int = 10,
+                use_graph_expansion: bool = True,  # NEU
+                graph_hops: int = 2,  # NEU
+                relation_weight: float = 0.3  # NEU
+    ) -> str:
+            """
+            Enhanced retrieval mit Graph-Awareness und better cross-reference handling
+
+            Args:
+                use_graph_expansion: Nutze Graph-basierte Expansion (empfohlen)
+                graph_hops: Tiefe der Graph-Traversierung
+                relation_weight: Gewichtung Graph vs Vector (0-1)
+            """
+            results: RetrievalResult = await self.kb.retrieve_with_overview(query=query,query_embedding=query_embedding,k=k,min_similarity=min_similarity,max_sentences=max_sentences,cross_ref_depth=cross_ref_depth,max_cross_refs=max_cross_refs,use_graph_expansion=use_graph_expansion,graph_hops=graph_hops,relation_weight=relation_weight)
+            return retrieval_result_to_str(results)
         self.tools.update({
-            "retrieve_with_overview": self.kb.retrieve_with_overview,
+            "retrieve_with_overview": retrieve_with_overview,
             "get_largest_cluster_points": self.get_largest_cluster_points,
             "get_smallest_cluster_points": self.get_smallest_cluster_points,
             "get_single_points": self.get_single_points,
@@ -128,6 +221,11 @@ class AgentKnowledge:
             agent_name="summary"
         )
 
+        if hasattr(summary_response, "as_result"):
+            summary_response = summary_response.as_result().get()
+        if hasattr(summary_response, "get"):
+            summary_response = summary_response.get()
+
         await self.add_data_point(summary_response, {"source": "combination", "original_queries": [query1, query2]})
         return f"Successfully combined and added new data point: {summary_response[:100]}..."
 
@@ -135,22 +233,23 @@ class AgentKnowledge:
     # Analyse-Set: Tools zur Analyse der Wissensdatenbank
     # ----------------------------------------------------------------------------------
 
-    async def get_largest_cluster_points(self, query: str) -> dict:
+    async def get_largest_cluster_points(self, query: str) -> str:
         """Finds the largest topic cluster related to a query and returns its summary and main chunks."""
         results: RetrievalResult = await self.kb.retrieve_with_overview(query, k=10)
         if not results.overview:
             return {"error": "No topics found for this query."}
         largest_topic = max(results.overview, key=lambda x: x['chunk_count'])
-        return largest_topic
 
-    async def get_smallest_cluster_points(self, query: str) -> dict:
+        return "\n".join(topic_to_list_of_str(largest_topic))
+
+    async def get_smallest_cluster_points(self, query: str) -> str:
         """Finds the smallest (but not single-point) topic cluster related to a query."""
         results = await self.kb.retrieve_with_overview(query, k=10)
         non_single_topics = [t for t in results.overview if t['chunk_count'] > 1]
         if not non_single_topics:
             return {"error": "No multi-point clusters found."}
         smallest_topic = min(non_single_topics, key=lambda x: x['chunk_count'])
-        return smallest_topic
+        return "\n".join(topic_to_list_of_str(smallest_topic))
 
     async def get_single_points(self, query: str) -> list[dict]:
         """Retrieves highly relevant individual data points (chunks) for a query."""
@@ -216,6 +315,8 @@ Respond ONLY with a JSON object in the format:
   "tool_name": "name_of_the_tool_to_call",
   "parameters": {{ "param1": "value1", "param2": "value2" }}
 }}
+
+tool_name must be one of the following: {list(self.tools.keys())} Must call final_analysis analysis tool on 10th iteration (after 9 tool calls max!).
 """
 
         for i in range(max_iterations):
@@ -223,7 +324,6 @@ Respond ONLY with a JSON object in the format:
 
             # 1. Ask LLM for the next tool to use
             from toolboxv2 import get_app
-            print(self.analysis_history)
             llm_response = await get_app().get_mod("isaa").mini_task_completion_format(
                 mini_task=system_prompt,
                 user_task=f"Analysis History:\n{json.dumps(self.analysis_history, indent=2)}",
@@ -237,6 +337,7 @@ Respond ONLY with a JSON object in the format:
             print(f"Agent chose tool: {tool_name} with parameters: {parameters}")
 
             self.analysis_history.append({"role": "assistant", "content": llm_response})
+            print_prompt(self.analysis_history)
 
             if tool_name in self.tools:
                 tool_function = self.tools[tool_name]
@@ -247,7 +348,7 @@ Respond ONLY with a JSON object in the format:
                     else:
                         result = tool_function(**parameters)
 
-                    self.analysis_history.append({"role": "tool", "content": {"result": result}})
+                    self.analysis_history.append({"role": "tool", "content": {"result": str(result)}})
                     print(f"Tool Result: {result}")
 
                     # Check for termination condition
@@ -283,6 +384,8 @@ async def agent_main():
     await kb.add_data(initial_texts, direct=True)
     print("Knowledge Base populated.")
 
+    await kb.vis(output_file="initial_kb.html")
+
     # 2. Initialize the Agent
     agent = AgentKnowledge(kb)
 
@@ -290,7 +393,10 @@ async def agent_main():
     user_query = "Analyze the relationship between Large Language Models and Graph Theory, and provide a summary of how they can be used together."
     print(f"\nStarting analysis for: '{user_query}'")
 
-    final_history = await agent.start_analysis_loop(user_query)
+    final_history = await agent.start_analysis_loop(user_query, 25)
+
+
+    await kb.vis(output_file="initial_kb_after_analysis.html")
 
     print("\n--- Final Analysis History ---")
     print(json.dumps(final_history, indent=2))

@@ -78,7 +78,7 @@ class AgentSessionV2:
         summarizer: Callable | None = None,
         # V2 additions
         enable_lsp: bool = True,
-        enable_docker: bool = False,
+        enable_docker: bool = True,
         docker_config: DockerConfig | None = None,
         toolboxv2_wheel_path: str | None = None,
         skills_manager: SkillsManager | None = None

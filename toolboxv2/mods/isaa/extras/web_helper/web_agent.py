@@ -257,9 +257,7 @@ class SearXNGClient:
 
         for instance in self.PUBLIC_INSTANCES:
             try:
-                print(f"Testing instance: {instance}")
                 resp = await self._client.get(f"{instance}/search", params={"q": "test", "format": "json"}, timeout=10)
-                print(f"Response: {resp.status_code} {resp.text[:100]}", resp)
                 if resp.status_code == 200:
                     self._working_instance = instance
                     self.logger.info("SearXNG", f"Using instance: {instance}")

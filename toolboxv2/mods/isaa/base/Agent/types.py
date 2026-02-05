@@ -804,7 +804,7 @@ You are Isaa (via simplecore.app), a self-correcting, autonomous software. You v
     handler_path_or_dict: str | dict[str, Any] | None = None
     vfs_max_window_lines: int = 250
     enable_lsp: bool = True
-    enable_docker: bool = False
+    enable_docker: bool = True
     docker_config: DockerConfig | None = None
 
     def get_system_message(self) -> str:

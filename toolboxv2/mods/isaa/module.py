@@ -26,6 +26,7 @@ import requests
 from langchain_community.agent_toolkits.load_tools import load_tools
 from pydantic import BaseModel
 
+from toolboxv2.utils.extras.Style import print_prompt
 from toolboxv2.utils.system import FileCache
 from toolboxv2.utils.toolbox import stram_print
 
@@ -326,6 +327,7 @@ class Tools(MainTool):
             Returns:
                 Suchergebnisse mit Titel, URL, Snippet
             """
+            dork_kwargs = dork_kwargs or {}
             results = await quick_search(query, **dork_kwargs)
             return str(results)
 
@@ -1362,7 +1364,6 @@ class Tools(MainTool):
         if user_task:
             message_context.append({"role": task_from, "content": mini_task})
             current_prompt = user_task
-
         try:
             result_dict = await agent.a_format_class(
                 pydantic_model=format_schema,

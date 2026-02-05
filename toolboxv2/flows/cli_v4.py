@@ -340,7 +340,7 @@ class SimpleFeatureManager:
     def list_features(self):
         return list(self.features.keys())
 
-    def enable(self, feature, agent):
+    def enable(self, feature):
         if feature in self.features:
             self.features[feature]["is_enabled"] = True
             if self.features[feature]["activation_f"]:
@@ -1896,14 +1896,60 @@ class ISAA_Host:
                 agent = await self.isaa_tools.get_agent(target)
                 stats = agent.get_stats()
                 print_box_header(f"Stats: {target}", "📊")
+                # Modells
+                print_table_row(["Fast Model", agent.amd.fast_llm_model], [20, 15], ["white", "blue"])
+                print_table_row(["Complex Model", agent.amd.complex_llm_model], [20, 15], ["white", "blue"])
                 print_table_row(["Input Tokens", f"{stats['total_tokens_in']:,}"], [20, 15], ["white", "cyan"])
                 print_table_row(["Output Tokens", f"{stats['total_tokens_out']:,}"], [20, 15], ["white", "cyan"])
                 print_table_row(["Total Cost", f"${stats['total_cost']:.4f}"], [20, 15], ["white", "green"])
                 print_table_row(["LLM Calls", str(stats['total_llm_calls'])], [20, 15], ["white", "yellow"])
-                print_table_row(["Sessions", str(len(stats['sessions']))], [20, 15], ["white", "blue"])
-                print_table_row(["Tools", str(len(stats['tools']))], [20, 15], ["white", "blue"])
-                print_table_row(["Bindings", str(len(stats['bindings']))], [20, 15], ["white", "blue"])
+                # Session data {
+                #             'version': 2,
+                #             'agent_name': self.agent_name,
+                #             'total_sessions': len(self.sessions),
+                #             'active_sessions': active_count,
+                #             'docker_enabled_sessions': docker_count,
+                #             'running_containers': running_containers,
+                #             'total_sessions_created': self._total_sessions_created,
+                #             'total_history_messages': total_history,
+                #             'memory_loaded': self._memory_instance is not None,
+                #             'default_lsp_enabled': self.enable_lsp,
+                #             'default_docker_enabled': self.enable_docker,
+                #             'session_ids': list(self.sessions.keys())
+                #         }
+                print_table_row(["Total Sessions", str(stats['sessions']['total_sessions'])], [20, 15], ["white", "blue"])
+                print_table_row(["Active Sessions", str(stats['sessions']['active_sessions'])], [20, 15], ["white", "blue"])
+                print_table_row(["Running Containers", str(stats['sessions']['running_containers'])], [20, 15], ["white", "blue"])
+                print_table_row(["Total Sessions", str(stats['sessions']['total_sessions_created'])], [20, 15], ["white", "blue"])
+                print_table_row(["Total History", str(stats['sessions']['total_history_messages'])], [20, 15], ["white", "blue"])
+                print_table_row(["Memory Loaded", str(stats['sessions']['memory_loaded'])], [20, 15], ["white", "blue"])
+                print_table_row(["Default LSP", str(stats['sessions']['default_lsp_enabled'])], [20, 15], ["white", "blue"])
+                print_table_row(["Default Docker", str(stats['sessions']['default_docker_enabled'])], [20, 15], ["white", "blue"])
+                # Tools section 'total_tools': len(self._registry),
+                #             'by_source': {
+                #                 source: len(names)
+                #                 for source, names in self._source_index.items()
+                #             },
+                #             'categories': list(self._category_index.keys()),
+                #             'total_calls'
+                print_table_row(["Total Tools", str(stats['tools']['total_tools'])], [20, 15], ["white", "blue"])
+                print_table_row(["Total Calls", str(stats['tools']['total_calls'])], [20, 15], ["white", "blue"])
+                # Binding data {
+                #             'agent_name': self.agent_name,
+                #             'total_bindings': len(self.bindings),
+                #             'public_bindings': sum(1 for b in self.bindings.values() if b.mode == 'public'),
+                #             'private_bindings': sum(1 for b in self.bindings.values() if b.mode == 'private'),
+                #             'total_messages_sent': total_sent,
+                #             'total_messages_received': total_received,
+                #             'partners': list(self.bindings.keys())
+                #         }
+                print_table_row(["Total Bindings", str(stats['bindings']['total_bindings'])], [20, 15], ["white", "blue"])
+                print_table_row(["Public Bindings", str(stats['bindings']['public_bindings'])], [20, 15], ["white", "blue"])
+                print_table_row(["Private Bindings", str(stats['bindings']['private_bindings'])], [20, 15], ["white", "blue"])
+                print_table_row(["Total I/O Messages", f"{str(stats['bindings']['total_messages_received'])}/{str(stats['bindings']['total_messages_sent'])}"], [20, 15], ["white", "blue"])
                 print_box_footer()
+                # tools categories
+                print_code_block(json.dumps({"Tools Categories":stats['tools']['categories']}, indent=2), "json")
             except Exception as e:
                 print_status(f"Could not get stats: {e}", "error")
 
@@ -2868,26 +2914,26 @@ class ISAA_Host:
 
         self.feature_manager.set_agent(agent)
 
-        action = args[1].lower()
+        action = args[0].lower()
         if action == "list":
             print_box_header("Available Features", "📦")
             for feature in self.feature_manager.list_features():
                 print_status(f"{feature}", "info")
         elif action == "enable":
-            if len(args) < 3:
+            if len(args) < 2:
                 print_status("Usage: /feature enable <feature> [options]", "warning")
                 return
-            feature = args[2].lower()
+            feature = args[1].lower()
             if feature not in self.feature_manager.list_features():
                 print_status(f"Feature '{feature}' not found.", "error")
                 return
             self.feature_manager.enable(feature)
             print_status(f"Feature '{feature}' enabled.", "success")
         elif action == "disable":
-            if len(args) < 3:
+            if len(args) < 2:
                 print_status("Usage: /feature disable <feature> [options]", "warning")
                 return
-            feature = args[2].lower()
+            feature = args[1].lower()
             if feature not in self.feature_manager.list_features():
                 print_status(f"Feature '{feature}' not found.", "error")
                 return
@@ -2897,6 +2943,8 @@ class ISAA_Host:
                 return
             self.feature_manager.disable(feature)
             print_status(f"Feature '{feature}' disabled.", "success")
+        else:
+            print_status(f"Unknown feature action: {action}", "error")
 
 
     async def _cmd_context(self, args: list[str]):

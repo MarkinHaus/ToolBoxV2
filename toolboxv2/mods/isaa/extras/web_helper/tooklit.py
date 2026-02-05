@@ -63,7 +63,7 @@ class ToolDefinition:
         return {
             "name": self.name,
             "description": self.description,
-            "func": self.func,
+            "tool_func": self.func,
             "category": self.category.value,
             "parameters": self.parameters,
             "returns": self.returns,
@@ -224,13 +224,18 @@ class WebAgentToolkit:
             Returns:
                 Status des Browsers
             """
-            await self.browser.set_headless(headless)
-            await self.browser.start()
-            return {
-                "status": "started",
-                "headless": headless,
-                "message": f"Browser gestartet ({'headless' if headless else 'sichtbar'})"
-            }
+            try:
+                await self.browser.set_headless(headless)
+                await self.browser.start()
+                return {
+                    "status": "started",
+                    "headless": headless,
+                    "message": f"Browser gestartet ({'headless' if headless else 'sichtbar'})"
+                }
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return {"status": "error", "message": f"Failed to start browser: {e}"}
 
         async def tool_browser_stop() -> dict:
             """
@@ -1279,7 +1284,7 @@ if __name__ == "__main__":
     print("  WebAgent Tools - Full Pack")
     print("=" * 70)
 
-    full = get_full_tools()
+    kit, full = get_full_tools()
     print(f"\n📦 Full Pack: {len(full)} Tools\n")
 
     for tool in full:
@@ -1291,7 +1296,7 @@ if __name__ == "__main__":
     print("  WebAgent Tools - Minimal Pack")
     print("=" * 70)
 
-    minimal = get_minimal_tools()
+    _, minimal = get_minimal_tools()
     print(f"\n📦 Minimal Pack: {len(minimal)} Tools\n")
 
     for tool in minimal:
@@ -1301,14 +1306,17 @@ if __name__ == "__main__":
     print("  Categories")
     print("=" * 70)
 
-    toolkit = WebAgentToolkit()
+    toolkit = kit
     for cat in ToolCategory:
         tools = [t for t in toolkit._tools if t.category == cat]
         if tools:
             print(f"\n  {cat.value.upper()} ({len(tools)} tools):")
             for t in tools:
                 print(f"    - {t.name}")
-
+    async def test():
+        await toolkit.start_browser(False)
+        await asyncio.sleep(8000)
+        await toolkit.stop_browser()
     print("\n" + "=" * 70)
     print("  Usage Example")
     print("=" * 70)
@@ -1333,3 +1341,4 @@ if __name__ == "__main__":
     from web_agent_tools import register_with_toolbox
     register_with_toolbox(app, get_full_tools())
     """)
+    asyncio.run(test())

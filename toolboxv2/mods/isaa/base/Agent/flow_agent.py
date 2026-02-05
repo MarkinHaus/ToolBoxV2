@@ -70,7 +70,7 @@ except ImportError:
 
 logger = get_logger()
 AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
-
+litellm.suppress_debug_info = not AGENT_VERBOSE
 
 
 # ===== MEDIA PARSING UTILITIES =====
@@ -800,7 +800,7 @@ class FlowAgent:
                 "complex" if model_preference == "fast" else "fast",
             ]:
                 data = await self.a_run_llm_completion(
-                    messages=[{"role": "user", "content": enhanced_prompt}],
+                    messages=(message_context or [] )+ [{"role": "user", "content": enhanced_prompt}],
                     model_preference=mp,
                     stream=False,
                     with_context=auto_context,
@@ -2280,7 +2280,7 @@ class FlowAgent:
         }
 
     def __repr__(self) -> str:
-        return f"<FlowAgent '{self.amd.name}' [{len(self.session_manager.sessions)} sessions]>"
+        return f"<FlowAgent '{self.amd.name}' [{len(self.session_manager.sessions)} sessions] [{len(self.tool_manager._registry.keys())} tools] [{len(self.bind_manager.bindings)} bindings]>"
 
     def __rshift__(self, other):
         return Chain(self) >> other
