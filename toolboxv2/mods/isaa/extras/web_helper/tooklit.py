@@ -284,7 +284,7 @@ class WebAgentToolkit:
                 func=tool_browser_start,
                 category=ToolCategory.BROWSER,
                 parameters={"headless": {"type": "bool", "default": True}},
-                flags={"read": False, "write": True},
+                flags={"read": False, "write": True,"no_thread": True},
                 examples=["browser_start()", "browser_start(headless=False)"]
             ),
             ToolDefinition(
@@ -292,14 +292,14 @@ class WebAgentToolkit:
                 description="Stoppt den Browser und gibt Ressourcen frei.",
                 func=tool_browser_stop,
                 category=ToolCategory.BROWSER,
-                flags={"read": False, "write": True}
+                flags={"read": False, "write": True,"no_thread": True}
             ),
             ToolDefinition(
                 name="browser_status",
                 description="Zeigt ob Browser läuft und in welchem Modus.",
                 func=tool_browser_status,
                 category=ToolCategory.BROWSER,
-                flags={"read": True, "write": False}
+                flags={"read": True, "write": False,"no_thread": True}
             ),
             ToolDefinition(
                 name="browser_set_headless",
@@ -307,7 +307,7 @@ class WebAgentToolkit:
                 func=tool_browser_set_headless,
                 category=ToolCategory.BROWSER,
                 parameters={"headless": {"type": "bool", "required": True}},
-                flags={"read": False, "write": True}
+                flags={"read": False, "write": True,"no_thread": True}
             ),
         ])
 
@@ -427,7 +427,7 @@ class WebAgentToolkit:
                     "max_results": {"type": "int", "default": 10},
                     "engines": {"type": "str", "default": ""}
                 },
-                flags={"read": True, "write": False},
+                flags={"read": True, "write": False,"no_thread": True},
                 examples=[
                     'web_search("Python async")',
                     'web_search("REST API", site="github.com")',
@@ -444,7 +444,7 @@ class WebAgentToolkit:
                     "query": {"type": "str", "default": ""},
                     "max_results": {"type": "int", "default": 10}
                 },
-                flags={"read": True, "write": False}
+                flags={"read": True, "write": False,"no_thread": True}
             ),
             ToolDefinition(
                 name="search_files",
@@ -456,7 +456,7 @@ class WebAgentToolkit:
                     "query": {"type": "str", "required": True},
                     "max_results": {"type": "int", "default": 10}
                 },
-                flags={"read": True, "write": False}
+                flags={"read": True, "write": False,"no_thread": True}
             ),
         ])
 
@@ -1105,7 +1105,7 @@ class WebAgentToolkit:
                     "name": {"type": "str", "default": ""},
                     "full_page": {"type": "bool", "default": False}
                 },
-                flags={"read": True, "write": True}
+                flags={"read": True, "write": True,"no_thread": True}
             ),
             ToolDefinition(
                 name="execute_js",
@@ -1113,14 +1113,14 @@ class WebAgentToolkit:
                 func=tool_execute_js,
                 category=ToolCategory.UTILITY,
                 parameters={"script": {"type": "str", "required": True}},
-                flags={"read": True, "write": True}
+                flags={"read": True, "write": True,"no_thread": True}
             ),
             ToolDefinition(
                 name="get_logs",
                 description="Zeigt Agent-Logs und Statistiken.",
                 func=tool_get_logs,
                 category=ToolCategory.UTILITY,
-                flags={"read": True, "write": False}
+                flags={"read": True, "write": False,"no_thread": True}
             ),
         ])
 

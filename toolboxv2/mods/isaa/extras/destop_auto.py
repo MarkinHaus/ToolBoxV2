@@ -1056,6 +1056,7 @@ def register_enhanced_tools(user_level: UserLevel | str = UserLevel.BASIC):
         {
             "tool_func": toolkit.scout_interface,
             "name": "scout_interface",
+            "flags": {"no_thread": True},
             "category": ["desktop", "overview", "context"],
             "description": """
 Scannt Desktop und gibt umfassende Übersicht:
@@ -1087,6 +1088,7 @@ scout_interface(window_title="Gmail")      # Wechsle zu Gmail-Tab
         {
             "tool_func": toolkit.execute_action,
             "name": "execute_action",
+            "flags": {"no_thread": True},
             "category": ["desktop", "action", "automation"],
             "description": """
 Führt Aktion in aktiver App aus.

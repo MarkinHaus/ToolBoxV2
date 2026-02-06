@@ -67,6 +67,22 @@ except ImportError:
     class FastMCP:
         pass
 
+try:
+
+    gmail_toolkit = None
+    calendar_toolkit = None
+    if os.getenv("WITH_GOOGLE_TOOLS", "false") == "true":
+        from toolboxv2.mods.isaa.extras.toolkit.google_gmail_toolkit import GmailToolkit
+        from toolboxv2.mods.isaa.extras.toolkit.google_calendar_toolkit import CalendarToolkit
+
+        gmail_toolkit = GmailToolkit(credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+        calendar_toolkit = CalendarToolkit(credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+except ImportError as e:
+    gmail_toolkit = None
+    calendar_toolkit = None
+    if os.getenv("WITH_GOOGLE_TOOLS", "false") == "true":
+        print(f"⚠️ Google tools not available: {e}")
+
 
 logger = get_logger()
 AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
@@ -507,6 +523,8 @@ class FlowAgent:
             if newly_removed:
                 processed_messages = _inject_media_notice(processed_messages, newly_removed)
 
+        true_stream = kwargs.pop("true_stream", False)
+
         llm_kwargs = {
             "model": model,
             "messages": processed_messages,
@@ -561,7 +579,7 @@ class FlowAgent:
             )
 
             if use_stream:
-                if "true_stream" in llm_kwargs and llm_kwargs["true_stream"]:
+                if true_stream:
                     return response
                 result, usage = await self._process_streaming_response(
                     response, task_id, model, get_response_message
@@ -1980,12 +1998,15 @@ class FlowAgent:
             },
         ]
 
+        if os.getenv("WITH_GOOGLE_TOOLS", "false") == "true":
+            tools.extend(gmail_toolkit.get_tools(session.session_id))
+            tools.extend(calendar_toolkit.get_tools(session.session_id))
+
         # Register all tools
-        for tool_def in tools:
-            self.add_tool(**tool_def)
+        self.add_tools(tools)
 
         session.tools_initialized = True
-        logger.info(f"Tools initialized for session {session.session_id}")
+        logger.info(f"{len(tools)} Tools initialized for session {session.session_id}")
 
         return tools
 

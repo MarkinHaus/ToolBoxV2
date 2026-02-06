@@ -226,10 +226,22 @@ class ToolManager:
         # Wrap sync functions as async
         effective_func = func
         if func is not None and not asyncio.iscoroutinefunction(func):
-            @wraps(func)
-            async def async_wrapper(*args, **kwargs):
-                return await asyncio.to_thread(func, *args, **kwargs)
-            effective_func = async_wrapper
+            # NEU: Check ob Tool GUI-blocking ist und Main Thread braucht
+            no_thread = (flags or {}).get("no_thread", False)
+
+            if no_thread:
+                @wraps(func)
+                async def async_wrapper_direct(*args, **kwargs):
+                    """Direkt auf Event-Loop Thread - für GUI/Win32 Calls"""
+                    return func(*args, **kwargs)
+
+                effective_func = async_wrapper_direct
+            else:
+                @wraps(func)
+                async def async_wrapper(*args, **kwargs):
+                    return await asyncio.to_thread(func, *args, **kwargs)
+
+                effective_func = async_wrapper
 
         # Create entry
         entry = ToolEntry(
