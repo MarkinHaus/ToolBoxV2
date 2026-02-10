@@ -480,34 +480,43 @@ class AccessController:
 
 class AuthHandler:
     """
-    Handles authentication endpoints equivalent to Rust handlers:
-    - /validateSession (POST)
-    - /IsValidSession (GET)
-    - /web/logoutS (POST)
-    - /api_user_data (GET)
+    Handles authentication endpoints:
+    - /validateSession (POST) - JWT token validation
+    - /IsValidSession (GET) - Session check
+    - /web/logoutS (POST) - Logout with token blacklist
+    - /api_user_data (GET) - User data retrieval
+    - /auth/discord/url (GET) - Discord OAuth URL
+    - /auth/discord/callback (GET) - Discord OAuth callback
+    - /auth/google/url (GET) - Google OAuth URL
+    - /auth/google/callback (GET) - Google OAuth callback
+    - /auth/magic/verify (GET) - Magic link verification
+
+    Provider-agnostic: uses config.toolbox.auth_module (default: CloudM.Auth)
     """
 
     def __init__(self, session_manager, app, config):
         self.session_manager = session_manager
         self.app = app
         self.config = config
+        self.auth_module = getattr(config.toolbox, 'auth_module', 'CloudM.Auth')
+        self.verify_func = getattr(config.toolbox, 'verify_session_func', 'validate_session')
         self._logger = logging.getLogger(f"{__name__}.AuthHandler")
 
+    # ================================================================
+    # Core Auth Endpoints
+    # ================================================================
+
     async def validate_session(self, request: ParsedRequest) -> Tuple:
-        """
-        Validate session with Clerk token.
-        Equivalent to validate_session_handler in Rust.
-        """
+        """Validate JWT token via CloudM.Auth.validate_session."""
         client_ip = request.client_ip
         token = request.get_session_token()
-        clerk_user_id = request.get_clerk_user_id()
+        user_id = request.get_clerk_user_id()  # backwards compat field name
 
         self._logger.info(
             f"[Session] Validation request - IP: {client_ip}, "
-            f"User: {clerk_user_id}, Has Token: {token is not None}"
+            f"User: {user_id}, Has Token: {token is not None}"
         )
 
-        # Token must be present
         if not token:
             self._logger.warning("[Session] No token provided")
             if request.session:
@@ -517,7 +526,6 @@ class AuthHandler:
                 status=401,
             )
 
-        # Get or create session
         session = request.session
         session_id = session.session_id if session else None
 
@@ -526,13 +534,11 @@ class AuthHandler:
             session_id = self.session_manager.create_session(
                 client_ip=client_ip,
                 token=token,
-                clerk_user_id=clerk_user_id,
+                clerk_user_id=user_id or "",
             )
             session = self.session_manager.get_session(session_id)
 
-        # Verify session with Clerk
-        self._logger.info(f"[Session] Verifying session {session_id} with Clerk")
-        valid, user_data = await self._verify_with_clerk(token)
+        valid, user_data = await self._verify_token(token)
 
         if not valid:
             self._logger.warning(f"[Session] Validation FAILED for session {session_id}")
@@ -542,25 +548,23 @@ class AuthHandler:
                 status=401,
             )
 
-        self._logger.info(f"[Session] ✓ Validation SUCCESS for session {session_id}")
+        self._logger.info(f"[Session] Validation SUCCESS for session {session_id}")
 
-        # Update session with user data
         if user_data:
-            session.user_id = user_data.get("user_id", clerk_user_id)
-            session.clerk_user_id = clerk_user_id
+            session.user_id = user_data.get("user_id", user_id or "")
+            session.clerk_user_id = user_data.get("user_id", "")
             session.level = user_data.get("level", AccessLevel.LOGGED_IN)
             session.user_name = user_data.get("user_name", "")
             session.validated = True
             session.anonymous = False
             self.session_manager.update_session(session)
 
-        # Return success response
         return api_result_response(
             error="none",
             data={
                 "authenticated": True,
                 "session_id": session_id,
-                "clerk_user_id": clerk_user_id,
+                "user_id": session.user_id if session else "",
                 "user_name": session.user_name if session else "",
                 "level": session.level if session else AccessLevel.LOGGED_IN,
             },
@@ -571,10 +575,7 @@ class AuthHandler:
         )
 
     async def is_valid_session(self, request: ParsedRequest) -> Tuple:
-        """
-        Check if current session is valid.
-        Equivalent to is_valid_session_handler in Rust.
-        """
+        """Check if current session is valid."""
         session = request.session
 
         if session and session.validated and not session.anonymous:
@@ -592,10 +593,7 @@ class AuthHandler:
             )
 
     async def logout(self, request: ParsedRequest) -> Tuple:
-        """
-        Logout user and invalidate session.
-        Equivalent to logout_handler in Rust.
-        """
+        """Logout: blacklist token + invalidate session."""
         session = request.session
 
         if not session or not session.validated:
@@ -606,23 +604,22 @@ class AuthHandler:
 
         session_id = session.session_id
 
-        # Call Clerk sign out if available
+        # Blacklist token via CloudM.Auth.logout
+        token = request.get_session_token()
         try:
-            await self._clerk_sign_out(session_id)
+            await self.app.a_run_any(
+                (self.auth_module, "logout"),
+                token=token,
+                get_results=False,
+            )
         except Exception as e:
-            self._logger.debug(f"Clerk sign out failed: {e}")
+            self._logger.debug(f"Auth logout call failed: {e}")
 
-        # Delete session
         self.session_manager.delete_session(session_id)
-
-        # Redirect to logout page
         return redirect_response("/web/logout", status=302)
 
     async def get_user_data(self, request: ParsedRequest) -> Tuple:
-        """
-        Get user data from Clerk.
-        Equivalent to get_user_data_handler in Rust.
-        """
+        """Get user data from CloudM.Auth."""
         session = request.session
 
         if not session or not session.validated:
@@ -631,21 +628,18 @@ class AuthHandler:
                 status=401,
             )
 
-        # Get clerk_user_id
-        clerk_user_id = None
-        if hasattr(session, 'clerk_user_id'):
-            clerk_user_id = session.clerk_user_id
-        elif hasattr(session, 'live_data') and isinstance(session.live_data, dict):
-            clerk_user_id = session.live_data.get('clerk_user_id')
+        user_id = session.user_id or getattr(session, 'clerk_user_id', None)
+        if not user_id:
+            if hasattr(session, 'live_data') and isinstance(session.live_data, dict):
+                user_id = session.live_data.get('clerk_user_id', '')
 
-        if not clerk_user_id:
+        if not user_id:
             return api_result_response(
-                error="No Clerk user ID found in session.",
+                error="No user ID found in session.",
                 status=400,
             )
 
-        # Get user data from Clerk
-        user_data = await self._get_clerk_user_data(clerk_user_id)
+        user_data = await self._get_user_data(user_id)
 
         if user_data:
             return api_result_response(
@@ -663,61 +657,191 @@ class AuthHandler:
                 status=404,
             )
 
-    async def _verify_with_clerk(self, token: str) -> Tuple[bool, Optional[Dict]]:
-        """Verify session token with CloudM.AuthClerk."""
-        try:
-            auth_module = getattr(self.config.toolbox, 'auth_module', 'CloudM.AuthClerk')
-            verify_func = getattr(self.config.toolbox, 'verify_session_func', 'verify_session')
+    # ================================================================
+    # OAuth Endpoints
+    # ================================================================
 
+    async def get_discord_auth_url(self, request: ParsedRequest) -> Tuple:
+        """GET /auth/discord/url - Returns Discord OAuth authorization URL."""
+        redirect_after = None
+        if request.query_params:
+            redirect_after = request.query_params.get("redirect_after", [None])[0]
+
+        result = await self.app.a_run_any(
+            (self.auth_module, "get_discord_auth_url"),
+            redirect_after=redirect_after,
+            get_results=True,
+        )
+
+        if hasattr(result, 'is_error') and result.is_error():
+            return error_response("Discord OAuth not configured", 500)
+
+        data = result.get() if hasattr(result, 'get') else result
+        if isinstance(data, dict) and "auth_url" in data:
+            return redirect_response(data["auth_url"])
+        return json_response(data)
+
+    async def discord_callback(self, request: ParsedRequest) -> Tuple:
+        """GET /auth/discord/callback - Discord OAuth callback."""
+        code = request.query_params.get("code", [None])[0] if request.query_params else None
+        state = request.query_params.get("state", [None])[0] if request.query_params else None
+
+        if not code:
+            return error_response("Authorization code required", 400, "BadRequest")
+
+        result = await self.app.a_run_any(
+            (self.auth_module, "login_discord"),
+            code=code,
+            state=state,
+            get_results=True,
+        )
+
+        return self._handle_oauth_result(result, request)
+
+    async def get_google_auth_url(self, request: ParsedRequest) -> Tuple:
+        """GET /auth/google/url - Returns Google OAuth authorization URL."""
+        redirect_after = None
+        if request.query_params:
+            redirect_after = request.query_params.get("redirect_after", [None])[0]
+
+        result = await self.app.a_run_any(
+            (self.auth_module, "get_google_auth_url"),
+            redirect_after=redirect_after,
+            get_results=True,
+        )
+
+        if hasattr(result, 'is_error') and result.is_error():
+            return error_response("Google OAuth not configured", 500)
+
+        data = result.get() if hasattr(result, 'get') else result
+        if isinstance(data, dict) and "auth_url" in data:
+            return redirect_response(data["auth_url"])
+        return json_response(data)
+
+    async def google_callback(self, request: ParsedRequest) -> Tuple:
+        """GET /auth/google/callback - Google OAuth callback."""
+        code = request.query_params.get("code", [None])[0] if request.query_params else None
+        state = request.query_params.get("state", [None])[0] if request.query_params else None
+
+        if not code:
+            return error_response("Authorization code required", 400, "BadRequest")
+
+        result = await self.app.a_run_any(
+            (self.auth_module, "login_google"),
+            code=code,
+            state=state,
+            get_results=True,
+        )
+
+        return self._handle_oauth_result(result, request)
+
+    async def magic_link_verify(self, request: ParsedRequest) -> Tuple:
+        """GET /auth/magic/verify?token=... - Verify magic link."""
+        token = request.query_params.get("token", [None])[0] if request.query_params else None
+
+        if not token:
+            return error_response("Token required", 400, "BadRequest")
+
+        result = await self.app.a_run_any(
+            (self.auth_module, "verify_magic_link"),
+            token=token,
+            get_results=True,
+        )
+
+        return self._handle_oauth_result(result, request)
+
+    # ================================================================
+    # Internal Helpers
+    # ================================================================
+
+    def _handle_oauth_result(self, result, request: ParsedRequest) -> Tuple:
+        """Process OAuth/magic link result: create session + redirect with tokens."""
+        if hasattr(result, 'is_error') and result.is_error():
+            error_msg = "Authentication failed"
+            if hasattr(result, 'info') and hasattr(result.info, 'help_text'):
+                error_msg = result.info.help_text
+            return redirect_response(
+                f"/web/scripts/login.html?error={error_msg}",
+                status=302,
+            )
+
+        data = result.get() if hasattr(result, 'get') else result
+        if not data or not isinstance(data, dict):
+            return redirect_response(
+                "/web/scripts/login.html?error=Auth+failed",
+                status=302,
+            )
+
+        # Create server-side session
+        user_id = data.get("user_id", "")
+        username = data.get("username", "")
+        level = data.get("level", AccessLevel.LOGGED_IN)
+
+        session, cookie_header = self.session_manager.create_authenticated_session(
+            user_id=user_id,
+            user_name=username,
+            level=level,
+            clerk_user_id=user_id,
+        )
+
+        access_token = data.get("access_token", "")
+        refresh_token = data.get("refresh_token", "")
+
+        from urllib.parse import urlencode, quote
+        params = urlencode({
+            "token": access_token,
+            "refresh_token": refresh_token,
+            "user_id": user_id,
+            "username": username,
+        })
+        redirect_url = f"/web/scripts/login.html?{params}"
+
+        status_code = 302
+        headers = {
+            "Location": redirect_url,
+            "Content-Type": "text/plain",
+        }
+        if cookie_header:
+            headers["Set-Cookie"] = cookie_header
+
+        return (status_code, headers, b"")
+
+    async def _verify_token(self, token: str) -> Tuple[bool, Optional[Dict]]:
+        """Verify JWT token via auth module."""
+        try:
             result = await self.app.a_run_any(
-                (auth_module, verify_func),
+                (self.auth_module, self.verify_func),
+                token=token,
                 session_token=token,
                 get_results=True,
             )
 
             if hasattr(result, 'is_error') and result.is_error():
-                self._logger.debug(f"Clerk verification returned error: {result}")
+                self._logger.debug(f"Token verification returned error: {result}")
                 return False, None
 
             data = result.get() if hasattr(result, 'get') else result
 
-            # Check for 'authenticated' key (returned by verify_session)
-            # Also support legacy 'valid' key for backwards compatibility
             if not data:
                 return False, None
 
             is_authenticated = data.get('authenticated', data.get('valid', False))
             if not is_authenticated:
-                self._logger.debug(f"Clerk verification: not authenticated, data={data}")
+                self._logger.debug(f"Token verification: not authenticated")
                 return False, None
 
             return True, data
 
         except Exception as e:
-            self._logger.error(f"Clerk verification error: {e}")
+            self._logger.error(f"Token verification error: {e}")
             return False, None
 
-    async def _clerk_sign_out(self, session_id: str):
-        """Call Clerk sign out."""
+    async def _get_user_data(self, user_id: str) -> Optional[Dict]:
+        """Get user data via auth module."""
         try:
-            auth_module = getattr(self.config.toolbox, 'auth_module', 'CloudM.AuthClerk')
-
-            await self.app.a_run_any(
-                (auth_module, "on_sign_out"),
-                session_id=session_id,
-                get_results=False,
-            )
-        except Exception as e:
-            self._logger.debug(f"Clerk sign out error: {e}")
-
-    async def _get_clerk_user_data(self, clerk_user_id: str) -> Optional[Dict]:
-        """Get user data from Clerk."""
-        try:
-            auth_module = getattr(self.config.toolbox, 'auth_module', 'CloudM.AuthClerk')
-
             result = await self.app.a_run_any(
-                (auth_module, "get_user_data"),
-                clerk_user_id=clerk_user_id,
+                (self.auth_module, "get_user_data"),
+                user_id=user_id,
                 get_results=True,
             )
 
@@ -1429,6 +1553,13 @@ class HTTPWorker:
         "/IsValidSession": "is_valid_session",
         "/web/logoutS": "logout",
         "/api_user_data": "get_user_data",
+        # OAuth Routes (Custom Auth)
+        "/auth/discord/url": "get_discord_auth_url",
+        "/auth/discord/callback": "discord_callback",
+        "/auth/google/url": "get_google_auth_url",
+        "/auth/google/callback": "google_callback",
+        # Magic Link
+        "/auth/magic/verify": "magic_link_verify",
     }
 
     def __init__(

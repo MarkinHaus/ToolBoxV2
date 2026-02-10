@@ -36,13 +36,13 @@ session:
     - "user_name"
     - "exp"
 
-# Authentication
+# Authentication (Custom Auth - replaces Clerk)
 auth:
-  clerk_enabled: true
-  clerk_secret_key: "${CLERK_SECRET_KEY:}"
-  clerk_publishable_key: "${CLERK_PUBLISHABLE_KEY:}"
+  clerk_enabled: false
   jwt_algorithm: "HS256"
-  jwt_expiry: 3600
+  jwt_access_expiry: 900       # 15 minutes
+  jwt_refresh_expiry: 604800   # 7 days
+  jwt_secret: "${TB_JWT_SECRET:}"
   api_key_header: "X-API-Key"
   bearer_header: "Authorization"
 
@@ -113,5 +113,5 @@ toolbox:
   modules_preload: []
   api_prefix: "/api"
   api_allowed_mods: []
-  auth_module: "CloudM.AuthClerk"
-  verify_session_func: "verify_session"
+  auth_module: "CloudM.Auth"
+  verify_session_func: "validate_session"

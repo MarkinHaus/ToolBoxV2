@@ -30,7 +30,7 @@ async def _is_admin(app: App, request: RequestData) -> User | None:
     if not current_user:
         return None
 
-    # Get username from either attribute (Clerk uses 'username', legacy uses 'name')
+    # Get username from either attribute
     username = getattr(current_user, 'username', None) or getattr(current_user, 'name', None)
     level = getattr(current_user, 'level', 1)
 
@@ -1502,7 +1502,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
 
     function renderUserManagement(users, content) {
         if (!users || users.length === 0) {
-            content.innerHTML = '<p class="text-muted">No users found. Users will appear here after they sign in via Clerk.</p>';
+            content.innerHTML = '<p class="text-muted">No users found. Users will appear here after they sign in.</p>';
             return;
         }
 
@@ -1524,8 +1524,10 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
         users.forEach(function(user) {
             var levelInfo = getLevelInfo(user.level);
             var canDelete = currentAdminUser && currentAdminUser.uid !== user.uid;
-            var sourceLabel = user.source === 'clerk' ? 'Clerk DB' : (user.source === 'clerk_api' ? 'Clerk API' : 'Legacy');
-            var sourceColor = user.source === 'clerk' || user.source === 'clerk_api' ? 'var(--color-info)' : 'var(--text-muted)';
+            var sourceLabel = user.source === 'custom_auth' ? 'Custom Auth' : (user.source === 'clerk_legacy' ? 'Clerk (Legacy)' : 'Legacy');
+            var sourceColor = user.source === 'custom_auth' ? 'var(--color-success)' : 'var(--text-muted)';
+            var providerInfo = (user.providers || []).join(', ');
+            if (user.has_passkey) providerInfo += (providerInfo ? ', ' : '') + 'Passkey';
 
             html += '<tr class="user-row-admin" data-name="' + (user.name || '').toLowerCase() + '" data-email="' + (user.email || '').toLowerCase() + '">' +
                 '<td><strong>' + TB.utils.escapeHtml(user.name || 'N/A') + '</strong></td>' +
@@ -1535,7 +1537,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
                         levelInfo.name +
                     '</span>' +
                 '</td>' +
-                '<td><span class="text-xs" style="color:' + sourceColor + ';">' + sourceLabel + '</span></td>' +
+                '<td><span class="text-xs" style="color:' + sourceColor + ';">' + sourceLabel + (providerInfo ? '<br><span class="text-xs text-muted">' + TB.utils.escapeHtml(providerInfo) + '</span>' : '') + '</span></td>' +
                 '<td class="text-xs text-muted">' + TB.utils.escapeHtml(user.uid || 'N/A') + '</td>' +
                 '<td>' +
                     '<div class="action-group">' +
@@ -1939,7 +1941,52 @@ async def list_users_admin(app: App, request: RequestData):
     users_data = []
     seen_ids = set()
 
-    # 1. Clerk-Benutzer aus Datenbank laden (CLERK_USER::*)
+    def _parse_db_entry(raw):
+        """Parse a DB entry (bytes/str/list) into a dict."""
+        try:
+            if isinstance(raw, list):
+                raw = raw[0] if raw else None
+            if raw is None:
+                return None
+            if isinstance(raw, bytes):
+                raw = raw.decode()
+            if isinstance(raw, str):
+                return json.loads(raw) if raw.startswith('{') else None
+            return raw if isinstance(raw, dict) else None
+        except Exception:
+            return None
+
+    # 1. Custom Auth Users (AUTH_USER::*) - Primary source
+    try:
+        auth_users_result = await app.a_run_any(TBEF.DB.GET, query="AUTH_USER::*", get_results=True)
+        if not auth_users_result.is_error():
+            auth_users_raw = auth_users_result.get()
+            if auth_users_raw:
+                if not isinstance(auth_users_raw, list):
+                    auth_users_raw = [auth_users_raw]
+                for user_bytes in auth_users_raw:
+                    user_dict = _parse_db_entry(user_bytes)
+                    if not user_dict:
+                        continue
+                    uid = user_dict.get("user_id", "N/A")
+                    if uid not in seen_ids:
+                        seen_ids.add(uid)
+                        providers = list(user_dict.get("oauth_providers", {}).keys())
+                        users_data.append({
+                            "uid": uid,
+                            "name": user_dict.get("username", user_dict.get("name", "N/A")),
+                            "email": user_dict.get("email"),
+                            "level": user_dict.get("level", 1),
+                            "is_persona": user_dict.get("is_persona", False),
+                            "settings": user_dict.get("settings", {}),
+                            "providers": providers,
+                            "has_passkey": bool(user_dict.get("passkeys")),
+                            "source": "custom_auth"
+                        })
+    except Exception as e:
+        app.print("Error fetching Custom Auth users: " + str(e), "WARNING")
+
+    # 2. Clerk-Benutzer aus Datenbank (CLERK_USER::*) - Legacy/readonly
     try:
         clerk_users_result = await app.a_run_any(TBEF.DB.GET, query="CLERK_USER::*", get_results=True)
         if not clerk_users_result.is_error():
@@ -1948,27 +1995,25 @@ async def list_users_admin(app: App, request: RequestData):
                 if not isinstance(clerk_users_raw, list):
                     clerk_users_raw = [clerk_users_raw]
                 for user_bytes in clerk_users_raw:
-                    try:
-                        user_str = user_bytes.decode() if isinstance(user_bytes, bytes) else str(user_bytes)
-                        user_dict = json.loads(user_str) if user_str.startswith('{') else eval(user_str)
-                        uid = user_dict.get("clerk_user_id", user_dict.get("uid", "N/A"))
-                        if uid not in seen_ids:
-                            seen_ids.add(uid)
-                            users_data.append({
-                                "uid": uid,
-                                "name": user_dict.get("username", user_dict.get("name", "N/A")),
-                                "email": user_dict.get("email"),
-                                "level": user_dict.get("level", 1),
-                                "is_persona": user_dict.get("is_persona", False),
-                                "settings": user_dict.get("settings", {}),
-                                "source": "clerk"
-                            })
-                    except Exception as e:
-                        app.print("Error parsing Clerk user: " + str(e), "WARNING")
+                    user_dict = _parse_db_entry(user_bytes)
+                    if not user_dict:
+                        continue
+                    uid = user_dict.get("clerk_user_id", user_dict.get("uid", "N/A"))
+                    if uid not in seen_ids:
+                        seen_ids.add(uid)
+                        users_data.append({
+                            "uid": uid,
+                            "name": user_dict.get("username", user_dict.get("name", "N/A")),
+                            "email": user_dict.get("email"),
+                            "level": user_dict.get("level", 1),
+                            "is_persona": user_dict.get("is_persona", False),
+                            "settings": user_dict.get("settings", {}),
+                            "source": "clerk_legacy"
+                        })
     except Exception as e:
         app.print("Error fetching Clerk users: " + str(e), "WARNING")
 
-    # 2. Legacy-Benutzer aus Datenbank laden (USER::*)
+    # 3. Legacy-Benutzer aus Datenbank (USER::*)
     try:
         legacy_users_result = await app.a_run_any(TBEF.DB.GET, query="USER::*", get_results=True)
         if not legacy_users_result.is_error():
@@ -1977,46 +2022,23 @@ async def list_users_admin(app: App, request: RequestData):
                 if not isinstance(legacy_users_raw, list):
                     legacy_users_raw = [legacy_users_raw]
                 for user_bytes in legacy_users_raw:
-                    try:
-                        user_str = user_bytes.decode() if isinstance(user_bytes, bytes) else str(user_bytes)
-                        user_dict = json.loads(user_str) if user_str.startswith('{') else eval(user_str)
-                        uid = user_dict.get("uid", "N/A")
-                        if uid not in seen_ids:
-                            seen_ids.add(uid)
-                            users_data.append({
-                                "uid": uid,
-                                "name": user_dict.get("name", "N/A"),
-                                "email": user_dict.get("email"),
-                                "level": user_dict.get("level", 1),
-                                "is_persona": user_dict.get("is_persona", False),
-                                "settings": user_dict.get("settings", {}),
-                                "source": "legacy"
-                            })
-                    except Exception as e:
-                        app.print("Error parsing legacy user: " + str(e), "WARNING")
+                    user_dict = _parse_db_entry(user_bytes)
+                    if not user_dict:
+                        continue
+                    uid = user_dict.get("uid", "N/A")
+                    if uid not in seen_ids:
+                        seen_ids.add(uid)
+                        users_data.append({
+                            "uid": uid,
+                            "name": user_dict.get("name", "N/A"),
+                            "email": user_dict.get("email"),
+                            "level": user_dict.get("level", 1),
+                            "is_persona": user_dict.get("is_persona", False),
+                            "settings": user_dict.get("settings", {}),
+                            "source": "legacy"
+                        })
     except Exception as e:
         app.print("Error fetching legacy users: " + str(e), "WARNING")
-
-    # 3. Versuche auch Clerk API direkt (falls verfügbar)
-    try:
-        from .AuthClerk import list_users as clerk_list_users
-        clerk_api_result = clerk_list_users(app)
-        if not clerk_api_result.is_error():
-            for user in clerk_api_result.get() or []:
-                uid = user.get("id", "N/A")
-                if uid not in seen_ids:
-                    seen_ids.add(uid)
-                    users_data.append({
-                        "uid": uid,
-                        "name": user.get("username", "N/A"),
-                        "email": user.get("email"),
-                        "level": 1,  # Default level für Clerk-API Benutzer
-                        "is_persona": False,
-                        "settings": {},
-                        "source": "clerk_api"
-                    })
-    except Exception as e:
-        app.print("Clerk API not available: " + str(e), "DEBUG")
 
     return Result.json(data=users_data)
 
@@ -2041,7 +2063,48 @@ async def update_user_admin(app: App, request: RequestData, data: dict=None, **k
     if not uid_to_update:
         return Result.default_user_error(info="User UID is required.")
 
-    # Versuche zuerst Clerk-Benutzer zu aktualisieren
+    def _apply_user_updates(user_dict, data):
+        """Apply update fields to a user dict."""
+        if "email" in data:
+            user_dict["email"] = data["email"]
+        if "level" in data:
+            try:
+                user_dict["level"] = int(data["level"])
+            except ValueError:
+                return "Invalid level format."
+        if "settings" in data and isinstance(data["settings"], dict):
+            if "settings" not in user_dict or user_dict["settings"] is None:
+                user_dict["settings"] = {}
+            user_dict["settings"].update(data["settings"])
+        return None
+
+    # 1. Try Custom Auth user (AUTH_USER::*)
+    try:
+        auth_user_result = await app.a_run_any(TBEF.DB.GET, query="AUTH_USER::" + str(uid_to_update), get_results=True)
+        if not auth_user_result.is_error() and auth_user_result.get():
+            user_bytes = auth_user_result.get()
+            if isinstance(user_bytes, list):
+                user_bytes = user_bytes[0]
+            user_str = user_bytes.decode() if isinstance(user_bytes, bytes) else str(user_bytes)
+            user_dict = json.loads(user_str) if user_str.startswith('{') else {}
+
+            err = _apply_user_updates(user_dict, data)
+            if err:
+                return Result.default_user_error(info=err)
+
+            save_result = await app.a_run_any(
+                TBEF.DB.SET,
+                query="AUTH_USER::" + str(uid_to_update),
+                data=json.dumps(user_dict),
+                get_results=True
+            )
+            if save_result.is_error():
+                return Result.default_internal_error(info="Failed to save user: " + str(save_result.info))
+            return Result.ok(info="User updated successfully.")
+    except Exception as e:
+        app.print("Error updating Custom Auth user, trying Clerk: " + str(e), "DEBUG")
+
+    # 2. Try Clerk user (CLERK_USER::*) - legacy
     try:
         clerk_user_result = await app.a_run_any(TBEF.DB.GET, query="CLERK_USER::" + str(uid_to_update), get_results=True)
         if not clerk_user_result.is_error() and clerk_user_result.get():
@@ -2049,26 +2112,16 @@ async def update_user_admin(app: App, request: RequestData, data: dict=None, **k
             if isinstance(user_bytes, list):
                 user_bytes = user_bytes[0]
             user_str = user_bytes.decode() if isinstance(user_bytes, bytes) else str(user_bytes)
-            user_dict = json.loads(user_str) if user_str.startswith('{') else eval(user_str)
+            user_dict = json.loads(user_str) if user_str.startswith('{') else {}
 
-            # Update fields
-            if "email" in data:
-                user_dict["email"] = data["email"]
-            if "level" in data:
-                try:
-                    user_dict["level"] = int(data["level"])
-                except ValueError:
-                    return Result.default_user_error(info="Invalid level format.")
-            if "settings" in data and isinstance(data["settings"], dict):
-                if "settings" not in user_dict or user_dict["settings"] is None:
-                    user_dict["settings"] = {}
-                user_dict["settings"].update(data["settings"])
+            err = _apply_user_updates(user_dict, data)
+            if err:
+                return Result.default_user_error(info=err)
 
-            # Save Clerk user
             save_result = await app.a_run_any(
                 TBEF.DB.SET,
                 query="CLERK_USER::" + str(uid_to_update),
-                data=user_dict,
+                data=json.dumps(user_dict),
                 get_results=True
             )
             if save_result.is_error():
@@ -2122,18 +2175,54 @@ async def delete_user_admin(app: App, request: RequestData, data: dict=None, uid
 
     deleted = False
 
-    # 1. Versuche Clerk-Benutzer zu löschen
+    # 1. Try Custom Auth user (AUTH_USER::*)
     try:
-        clerk_delete_result = await app.a_run_any(
+        auth_delete_result = await app.a_run_any(
             TBEF.DB.DELETE,
-            query="CLERK_USER::" + str(uid_to_delete),
+            query="AUTH_USER::" + str(uid_to_delete),
             get_results=True
         )
-        if not clerk_delete_result.is_error():
+        if not auth_delete_result.is_error():
             deleted = True
-            app.print("Deleted Clerk user: " + str(uid_to_delete), "INFO")
+            app.print("Deleted Custom Auth user: " + str(uid_to_delete), "INFO")
+            # Also clean up provider and email indexes
+            try:
+                auth_user_result = await app.a_run_any(TBEF.DB.GET, query="AUTH_USER::" + str(uid_to_delete), get_results=True)
+                if not auth_user_result.is_error():
+                    raw = auth_user_result.get()
+                    if isinstance(raw, bytes):
+                        raw = raw.decode()
+                    if isinstance(raw, list):
+                        raw = raw[0] if raw else None
+                    if raw and isinstance(raw, str):
+                        user_dict = json.loads(raw)
+                        # Delete provider indexes
+                        for provider, pdata in user_dict.get("oauth_providers", {}).items():
+                            pid = pdata.get("provider_id", "")
+                            if pid:
+                                await app.a_run_any(TBEF.DB.DELETE, query=f"AUTH_USER_PROVIDER::{provider}::{pid}", get_results=True)
+                        # Delete email index
+                        email = user_dict.get("email")
+                        if email:
+                            await app.a_run_any(TBEF.DB.DELETE, query=f"AUTH_USER_EMAIL::{email}", get_results=True)
+            except Exception:
+                pass
     except Exception as e:
-        app.print("Error deleting Clerk user: " + str(e), "DEBUG")
+        app.print("Error deleting Custom Auth user: " + str(e), "DEBUG")
+
+    # 2. Try Clerk user (CLERK_USER::*) - legacy
+    if not deleted:
+        try:
+            clerk_delete_result = await app.a_run_any(
+                TBEF.DB.DELETE,
+                query="CLERK_USER::" + str(uid_to_delete),
+                get_results=True
+            )
+            if not clerk_delete_result.is_error():
+                deleted = True
+                app.print("Deleted Clerk user: " + str(uid_to_delete), "INFO")
+        except Exception as e:
+            app.print("Error deleting Clerk user: " + str(e), "DEBUG")
 
     # 2. Versuche Legacy-Benutzer zu löschen
     try:

@@ -9,7 +9,7 @@ Features:
 - Stateless: No server-side session storage needed
 - Secure: HMAC-SHA256 signature prevents tampering
 - Expiry: Built-in TTL support
-- Clerk integration: Verify sessions via CloudM.AuthClerk
+- Custom Auth: Verify sessions via CloudM.Auth (JWT-based)
 - Multi-worker support: All session state in signed cookie
 """
 
@@ -77,11 +77,11 @@ class SessionData:
     # Expiration
     exp: float = 0.0  # Expiration timestamp
 
-    # Clerk integration
+    # Provider user ID (backwards-compatible alias: clerk_user_id)
     clerk_user_id: str = ""
 
     # Session state
-    validated: bool = False  # Whether session was validated with Clerk
+    validated: bool = False  # Whether session was validated with auth provider
     anonymous: bool = True   # Anonymous session flag
 
     # Additional custom data
@@ -374,61 +374,95 @@ class SignedCookieSession:
 
 
 # ============================================================================
-# Clerk Integration
+# Auth Token Verifier (Provider-agnostic, replaces Clerk-only verifier)
 # ============================================================================
 
 
 class ClerkSessionVerifier:
     """
-    Verify sessions using CloudM.AuthClerk from ToolBoxV2.
+    Verify sessions using CloudM.Auth from ToolBoxV2.
 
-    Falls back to signed cookie if Clerk is not available.
+    Provider-agnostic: works with any auth backend that implements
+    validate_session(token=...) returning {authenticated, user_id, ...}.
+
+    Class name kept as ClerkSessionVerifier for backwards compatibility.
+    Falls back to signed cookie if auth module is not available.
     """
 
     def __init__(
         self,
         app,  # ToolBoxV2 App instance
-        auth_module: str = "CloudM.AuthClerk",
-        verify_func: str = "verify_session",
+        auth_module: str = "CloudM.Auth",
+        verify_func: str = "validate_session",
     ):
         self.app = app
         self.auth_module = auth_module
         self.verify_func = verify_func
-        self._clerk_available = None
+        self._auth_available = None
 
-    def _check_clerk_available(self) -> bool:
-        """Check if Clerk module is available."""
-        if self._clerk_available is not None:
-            return self._clerk_available
+    def _check_auth_available(self) -> bool:
+        """Check if auth module is available."""
+        if self._auth_available is not None:
+            return self._auth_available
 
         try:
             if hasattr(self.app, "get_mod"):
                 mod = self.app.get_mod(self.auth_module.split(".")[0])
-                self._clerk_available = mod is not None
+                self._auth_available = mod is not None
             else:
-                self._clerk_available = False
+                self._auth_available = False
         except Exception:
-            self._clerk_available = False
+            self._auth_available = False
 
-        return self._clerk_available
+        return self._auth_available
+
+    # Keep old name as alias for backwards compat
+    def _check_clerk_available(self) -> bool:
+        return self._check_auth_available()
+
+    def _data_to_session(self, data: dict) -> SessionData:
+        """Convert auth response to SessionData."""
+        user_id = data.get("user_id", "")
+        # Backwards compat: clerk_user_id falls back to user_id
+        clerk_user_id = data.get("clerk_user_id", user_id)
+
+        return SessionData(
+            user_id=user_id,
+            session_id=data.get("session_id", str(uuid.uuid4())),
+            user_name=data.get("user_name", data.get("username", "anonymous")),
+            level=data.get("level", AccessLevel.LOGGED_IN),
+            spec=data.get("spec", ""),
+            exp=data.get("exp", 0),
+            clerk_user_id=clerk_user_id,
+            validated=True,
+            anonymous=False,
+            extra={
+                "email": data.get("email"),
+                "provider": data.get("provider", ""),
+            },
+            live_data={
+                "clerk_user_id": clerk_user_id,
+                "level": str(data.get("level", AccessLevel.LOGGED_IN)),
+            },
+        )
 
     async def verify_session_async(
         self,
         session_token: str,
     ) -> Tuple[bool, Optional[SessionData]]:
         """
-        Verify session token via Clerk.
+        Verify session token via auth module (async).
 
         Returns:
             Tuple of (is_valid, session_data)
         """
-        if not self._check_clerk_available():
+        if not self._check_auth_available():
             return False, None
 
         try:
             result = await self.app.a_run_any(
                 (self.auth_module, self.verify_func),
-                session_token=session_token,
+                token=session_token,
                 get_results=True,
             )
 
@@ -436,34 +470,18 @@ class ClerkSessionVerifier:
                 return False, None
 
             data = result.get()
-
-            if not data or not data.get("valid", False):
+            if not data:
                 return False, None
 
-            # Convert Clerk response to SessionData
-            session = SessionData(
-                user_id=data.get("user_id", ""),
-                session_id=data.get("session_id", str(uuid.uuid4())),
-                user_name=data.get("user_name", data.get("username", "anonymous")),
-                level=data.get("level", AccessLevel.LOGGED_IN),
-                spec=data.get("spec", ""),
-                exp=data.get("exp", 0),
-                clerk_user_id=data.get("clerk_user_id", ""),
-                validated=True,
-                anonymous=False,
-                extra={
-                    "email": data.get("email"),
-                },
-                live_data={
-                    "clerk_user_id": data.get("clerk_user_id", ""),
-                    "level": str(data.get("level", AccessLevel.LOGGED_IN)),
-                },
-            )
+            is_authenticated = data.get('authenticated', data.get('valid', False))
+            if not is_authenticated:
+                logger.debug(f"Auth verification: not authenticated, data keys={list(data.keys())}")
+                return False, None
 
-            return True, session
+            return True, self._data_to_session(data)
 
         except Exception as e:
-            logger.error(f"Clerk verification error: {e}")
+            logger.error(f"Auth verification error: {e}")
             return False, None
 
     def verify_session_sync(
@@ -471,13 +489,13 @@ class ClerkSessionVerifier:
         session_token: str,
     ) -> Tuple[bool, Optional[SessionData]]:
         """Synchronous version of verify_session."""
-        if not self._check_clerk_available():
+        if not self._check_auth_available():
             return False, None
 
         try:
             result = self.app.run_any(
                 (self.auth_module, self.verify_func),
-                session_token=session_token,
+                token=session_token,
                 get_results=True,
             )
 
@@ -485,44 +503,18 @@ class ClerkSessionVerifier:
                 return False, None
 
             data = result.get()
-
-            # Check for 'authenticated' key (returned by verify_session)
-            # Also support legacy 'valid' key for backwards compatibility
             if not data:
                 return False, None
 
             is_authenticated = data.get('authenticated', data.get('valid', False))
             if not is_authenticated:
-                logger.debug(f"Clerk verification: not authenticated, data={data}")
+                logger.debug(f"Auth verification: not authenticated, data keys={list(data.keys())}")
                 return False, None
 
-            # Extract user_id - could be clerk_user_id or user_id
-            user_id = data.get("user_id", "")
-            clerk_user_id = data.get("clerk_user_id", user_id)  # Fallback to user_id
-
-            session = SessionData(
-                user_id=user_id,
-                session_id=data.get("session_id", str(uuid.uuid4())),
-                user_name=data.get("user_name", data.get("username", "anonymous")),
-                level=data.get("level", AccessLevel.LOGGED_IN),
-                spec=data.get("spec", ""),
-                exp=data.get("exp", 0),
-                clerk_user_id=clerk_user_id,
-                validated=True,
-                anonymous=False,
-                extra={
-                    "email": data.get("email"),
-                },
-                live_data={
-                    "clerk_user_id": clerk_user_id,
-                    "level": str(data.get("level", AccessLevel.LOGGED_IN)),
-                },
-            )
-
-            return True, session
+            return True, self._data_to_session(data)
 
         except Exception as e:
-            logger.error(f"Clerk verification error: {e}")
+            logger.error(f"Auth verification error: {e}")
             return False, None
 
 
@@ -535,7 +527,7 @@ class SessionManager:
     """
     Combined session manager supporting:
     - Signed cookies (stateless, multi-worker safe)
-    - Clerk verification
+    - Custom Auth verification (CloudM.Auth, JWT-based)
     - Bearer token auth
     - API key auth
 
@@ -555,6 +547,8 @@ class SessionManager:
         cookie_domain: Optional[str] = None,
         app=None,
         clerk_enabled: bool = True,
+        auth_module: str = "CloudM.Auth",
+        verify_func: str = "validate_session",
         api_key_header: str = "X-API-Key",
         bearer_header: str = "Authorization",
     ):
@@ -569,14 +563,17 @@ class SessionManager:
             domain=cookie_domain,
         )
 
+        # Primary auth verifier (ClerkSessionVerifier is now provider-agnostic)
         self.clerk_verifier = None
-        if app and clerk_enabled:
-            self.clerk_verifier = ClerkSessionVerifier(app)
+        if app:
+            self.clerk_verifier = ClerkSessionVerifier(
+                app, auth_module=auth_module, verify_func=verify_func
+            )
 
-        # Custom Auth verifier support (CloudM.Auth)
+        # Custom Auth verifier support (session_custom.py - with caching)
         self.custom_verifier = None
         if app and CUSTOM_AUTH_AVAILABLE:
-            self.custom_verifier = CustomSessionVerifier(app, auth_module="CloudM.Auth")
+            self.custom_verifier = CustomSessionVerifier(app, auth_module=auth_module)
 
         self.api_key_header = api_key_header
         self.bearer_header = bearer_header
@@ -712,7 +709,7 @@ class SessionManager:
 
         Checks in order:
         1. API Key header
-        2. Bearer token (Clerk)
+        2. Bearer token (via CloudM.Auth)
         3. Signed cookie
         4. Returns anonymous session
         """
@@ -732,15 +729,16 @@ class SessionManager:
             if not session.is_expired:
                 return session
 
-        # 2. Check Bearer token (Clerk)
+        # 2. Check Bearer token (auth provider)
         auth_header = headers.get(self.bearer_header) or headers.get(
             self.bearer_header.lower()
         )
-        if auth_header and auth_header.startswith("Bearer ") and self.clerk_verifier:
+        if auth_header and auth_header.startswith("Bearer "):
             token = auth_header[7:]
-            is_valid, session = await self.clerk_verifier.verify_session_async(token)
-            if is_valid and session:
-                return session
+            if self.clerk_verifier:
+                is_valid, session = await self.clerk_verifier.verify_session_async(token)
+                if is_valid and session:
+                    return session
 
         # 3. Check signed cookie
         cookie_session = self.cookie_session.get_from_environ(environ)
@@ -776,18 +774,19 @@ class SessionManager:
             if not session.is_expired:
                 return session
 
-        # 2. Check Bearer token
+        # 2. Check Bearer token (auth provider)
         auth_header = headers.get(self.bearer_header) or headers.get(
             self.bearer_header.lower()
         )
-        logger.debug(f"[SessionManager] Bearer header check: auth_header={auth_header[:50] if auth_header else None}..., clerk_verifier={self.clerk_verifier is not None}")
-        if auth_header and auth_header.startswith("Bearer ") and self.clerk_verifier:
+        logger.debug(f"[SessionManager] Bearer header check: auth_header={auth_header[:50] if auth_header else None}..., verifier={self.clerk_verifier is not None}")
+        if auth_header and auth_header.startswith("Bearer "):
             token = auth_header[7:]
             logger.debug(f"[SessionManager] Verifying Bearer token (length: {len(token)})")
-            is_valid, session = self.clerk_verifier.verify_session_sync(token)
-            logger.debug(f"[SessionManager] Bearer verification result: is_valid={is_valid}, session_level={session.level if session else None}")
-            if is_valid and session:
-                return session
+            if self.clerk_verifier:
+                is_valid, session = self.clerk_verifier.verify_session_sync(token)
+                logger.debug(f"[SessionManager] Bearer verification result: is_valid={is_valid}, session_level={session.level if session else None}")
+                if is_valid and session:
+                    return session
 
         # 3. Check signed cookie
         cookie_session = self.cookie_session.get_from_environ(environ)
@@ -960,9 +959,31 @@ class SessionManager:
         """
         Verify a session token (async).
 
+        Prefers custom verifier (with caching) if available,
+        falls back to clerk_verifier.
+
         Returns:
             Tuple of (is_valid, session_data)
         """
+        # Try custom verifier first (has caching)
+        if self.custom_verifier:
+            try:
+                custom_session = await self.custom_verifier.verify_session(token)
+                if custom_session and custom_session.valid:
+                    session = SessionData(
+                        user_id=custom_session.user_id,
+                        session_id=custom_session.session_id,
+                        user_name=custom_session.user_name,
+                        level=custom_session.level,
+                        spec=custom_session.spec,
+                        validated=True,
+                        anonymous=False,
+                    )
+                    return True, session
+            except Exception as e:
+                logger.debug(f"Custom verifier error, falling back: {e}")
+
+        # Fallback to clerk_verifier
         if self.clerk_verifier:
             return await self.clerk_verifier.verify_session_async(token)
         return False, None
@@ -1079,7 +1100,6 @@ def main():
             user_id="test_123",
             user_name="testuser",
             level=AccessLevel.LOGGED_IN,
-            clerk_user_id="clerk_abc",
         )
 
         # Encode
