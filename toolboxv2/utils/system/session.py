@@ -1,12 +1,13 @@
 """
 ToolBox V2 - Session Management
-Handles CLI and API sessions with Clerk integration
+Handles CLI and API sessions with Custom Auth (CloudM.Auth)
 """
 
 import asyncio
 import json
 import os
 import socket
+from pathlib import Path
 from typing import Optional
 
 import requests
@@ -14,8 +15,6 @@ from aiohttp import ClientResponse, ClientSession, MultipartWriter
 from aiohttp import ClientConnectorError, ClientError
 from requests import Response
 
-from toolboxv2.utils.security.cryp import Code
-from toolboxv2.utils.extras.blobs import BlobFile
 from toolboxv2.utils.singelton_class import Singleton
 from toolboxv2.utils.system.getting_and_closing_app import get_app, get_logger
 from toolboxv2.utils.system.types import Result
@@ -42,8 +41,9 @@ class RequestSession:
 
 class Session(metaclass=Singleton):
     """
-    Session manager for ToolBox V2 with Clerk integration.
-    Handles authentication tokens and API communication.
+    Session manager for ToolBox V2 with Custom Auth (CloudM.Auth).
+    Handles JWT tokens and API communication.
+    Token storage: local JSON file in user config dir (CLI has no DB access).
     """
 
     def __init__(self, username=None, base=None):
@@ -51,6 +51,11 @@ class Session(metaclass=Singleton):
         self._session: Optional[ClientSession] = None
         self._event_loop = None
         self.valid = False
+        self.user_id: Optional[str] = None
+        self.access_token: Optional[str] = None
+        self.refresh_token: Optional[str] = None
+
+        # Backwards compat aliases
         self.clerk_user_id: Optional[str] = None
         self.clerk_session_token: Optional[str] = None
 
@@ -86,28 +91,37 @@ class Session(metaclass=Singleton):
             self._session = ClientSession()
             self._event_loop = current_loop
 
-    # =================== Clerk Token Management ===================
+    # =================== Token Storage (local JSON file) ===================
 
-    def _get_token_path(self) -> str:
-        """Get BlobFile path for session token"""
-        if self.username:
-            safe_name = Code.one_way_hash(self.username, "cli-session")[:16]
-            return f"clerk/cli/{safe_name}/session.json"
-        return "clerk/cli/default/session.json"
+    def _get_token_dir(self) -> Path:
+        """Get directory for CLI session storage."""
+        config_dir = Path(os.environ.get("TB_DATA_DIR", ".")) / ".data" / "cli_sessions"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        return config_dir
 
-    def _save_session_token(self, token: str, user_id: str = None):
-        """Save Clerk session token to BlobFile"""
+    def _get_token_path(self) -> Path:
+        """Get file path for session token."""
+        safe_name = self.username or "default"
+        # Simple safe filename (no crypto dependency needed)
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in safe_name)[:32]
+        return self._get_token_dir() / f"{safe_name}_session.json"
+
+    def _save_session_token(self, access_token: str, refresh_token: str = "", user_id: str = None):
+        """Save session tokens to local JSON file."""
         try:
             path = self._get_token_path()
             session_data = {
-                "token": token,
-                "user_id": user_id or self.clerk_user_id,
-                "username": self.username
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "user_id": user_id or self.user_id or "",
+                "username": self.username or "",
             }
-            with BlobFile(path, key=Code.DK()(), mode="w") as blob:
-                blob.clear()
-                blob.write(json.dumps(session_data).encode())
-            self.clerk_session_token = token
+            path.write_text(json.dumps(session_data, indent=2))
+            self.access_token = access_token
+            self.refresh_token = refresh_token
+            self.user_id = user_id
+            # Backwards compat
+            self.clerk_session_token = access_token
             self.clerk_user_id = user_id
             return True
         except Exception as e:
@@ -115,26 +129,32 @@ class Session(metaclass=Singleton):
             return False
 
     def _load_session_token(self) -> Optional[dict]:
-        """Load Clerk session token from BlobFile"""
+        """Load session tokens from local JSON file."""
         try:
             path = self._get_token_path()
-            with BlobFile(path, key=Code.DK()(), mode="r") as blob:
-                data = blob.read()
-                if data and data != b'Error decoding':
-                    session_data = json.loads(data.decode())
-                    self.clerk_session_token = session_data.get("token")
-                    self.clerk_user_id = session_data.get("user_id")
-                    return session_data
+            if not path.exists():
+                return None
+            session_data = json.loads(path.read_text())
+            self.access_token = session_data.get("access_token")
+            self.refresh_token = session_data.get("refresh_token")
+            self.user_id = session_data.get("user_id")
+            # Backwards compat
+            self.clerk_session_token = self.access_token
+            self.clerk_user_id = self.user_id
+            return session_data
         except Exception as e:
             get_logger().debug(f"No session token found: {e}")
         return None
 
     def _clear_session_token(self):
-        """Clear session token from BlobFile"""
+        """Clear session token file."""
         try:
             path = self._get_token_path()
-            with BlobFile(path, key=Code.DK()(), mode="w") as blob:
-                blob.clear()
+            if path.exists():
+                path.unlink()
+            self.access_token = None
+            self.refresh_token = None
+            self.user_id = None
             self.clerk_session_token = None
             self.clerk_user_id = None
             return True
@@ -145,7 +165,7 @@ class Session(metaclass=Singleton):
 
     async def login(self, verbose=False) -> bool:
         """
-        Login using stored Clerk session token.
+        Login using stored JWT access token.
         Returns True if session is valid.
         """
         self._ensure_session()
@@ -153,26 +173,33 @@ class Session(metaclass=Singleton):
         # Try to load existing session
         session_data = self._load_session_token()
 
-        if not session_data or not session_data.get("token"):
+        if not session_data or not session_data.get("access_token"):
             if verbose:
                 print("No stored session token. Please run 'tb login' first.")
             return False
 
-        token = session_data.get("token")
+        token = session_data.get("access_token")
 
         try:
             # Verify session with backend
             async with self.session.request(
                 "POST",
-                url=f"{self.base}/api/CloudM.AuthClerk/verify_session",
-                json={"session_token": token}
+                url=f"{self.base}/api/CloudM.Auth/validate_session",
+                json={"token": token}
             ) as response:
                 if response.status == 200:
                     result = await response.json()
                     if result.get("result", {}).get("authenticated"):
                         get_logger().info("Session validated successfully")
                         self.valid = True
-                        self.username = session_data.get("username")
+                        self.username = session_data.get("username") or result.get("result", {}).get("username")
+                        return True
+
+                # Try token refresh
+                refresh = session_data.get("refresh_token")
+                if refresh:
+                    refreshed = await self._try_refresh(refresh)
+                    if refreshed:
                         return True
 
                 # Session invalid
@@ -190,72 +217,141 @@ class Session(metaclass=Singleton):
                 print(f"Connection error: {e}")
             return False
 
-    async def login_with_code(self, email: str, code: str) -> Result:
+    async def _try_refresh(self, refresh_token: str) -> bool:
+        """Try to refresh the access token."""
+        try:
+            async with self.session.request(
+                "POST",
+                url=f"{self.base}/api/CloudM.Auth/refresh_token",
+                json={"refresh_token": refresh_token}
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    data = result.get("result", {})
+                    new_access = data.get("access_token")
+                    new_refresh = data.get("refresh_token", refresh_token)
+                    if new_access:
+                        self._save_session_token(new_access, new_refresh, self.user_id)
+                        self.valid = True
+                        return True
+        except Exception as e:
+            get_logger().debug(f"Token refresh failed: {e}")
+        return False
+
+    async def login_with_magic_link(self, email: str) -> Result:
         """
-        Login with email verification code (Clerk Email + Code flow).
-        This is the primary CLI login method.
+        Request a magic link for CLI login.
+        User receives email, clicks link, pastes token back.
         """
         self._ensure_session()
 
         try:
-            # First, request the verification
             async with self.session.request(
                 "POST",
-                url=f"{self.base}/api/CloudM.AuthClerk/cli_request_code",
+                url=f"{self.base}/api/CloudM.Auth/request_magic_link",
                 json={"email": email}
             ) as response:
                 if response.status != 200:
-                    return Result.default_user_error("Failed to request verification code")
+                    return Result.default_user_error("Failed to request magic link")
 
                 result = await response.json()
-                if result.get("error") != 0:
+                if result.get("error", 0) != 0:
                     return Result.default_user_error(
                         result.get("info", {}).get("help_text", "Unknown error")
                     )
 
-                cli_session_id = result.get("result", {}).get("cli_session_id")
+                return Result.ok("Magic link sent", data=result.get("result", {}))
 
-            # Then verify the code
+        except Exception as e:
+            get_logger().error(f"Magic link request error: {e}")
+            return Result.default_internal_error(str(e))
+
+    async def verify_magic_link(self, token: str) -> Result:
+        """Verify a magic link token and complete login."""
+        self._ensure_session()
+
+        try:
             async with self.session.request(
                 "POST",
-                url=f"{self.base}/api/CloudM.AuthClerk/cli_verify_code",
-                json={"cli_session_id": cli_session_id, "code": code}
+                url=f"{self.base}/api/CloudM.Auth/verify_magic_link",
+                json={"token": token}
             ) as response:
                 if response.status != 200:
                     return Result.default_user_error("Verification failed")
 
                 result = await response.json()
-                if result.get("error") != 0:
+                if result.get("error", 0) != 0:
                     return Result.default_user_error(
-                        result.get("info", {}).get("help_text", "Invalid code")
+                        result.get("info", {}).get("help_text", "Invalid or expired link")
                     )
 
                 data = result.get("result", {})
-
-                # Save session
                 self._save_session_token(
-                    data.get("session_token", ""),
-                    data.get("user_id")
+                    data.get("access_token", ""),
+                    data.get("refresh_token", ""),
+                    data.get("user_id", ""),
                 )
-                self.username = data.get("username")
+                self.username = data.get("username", "")
                 self.valid = True
-
                 return Result.ok("Login successful", data=data)
 
         except Exception as e:
-            get_logger().error(f"Login error: {e}")
+            get_logger().error(f"Magic link verify error: {e}")
             return Result.default_internal_error(str(e))
 
-    async def logout(self) -> bool:
-        """Logout and clear session"""
+    async def login_with_invite_code(self, code: str) -> Result:
+        """Login with a device invite code."""
         self._ensure_session()
 
-        # Notify server
-        if self.session and not self.session.closed and self.clerk_user_id:
+        try:
+            async with self.session.request(
+                "POST",
+                url=f"{self.base}/api/CloudM.Auth/verify_device_invite",
+                json={"code": code}
+            ) as response:
+                if response.status != 200:
+                    return Result.default_user_error("Verification failed")
+
+                result = await response.json()
+                if result.get("error", 0) != 0:
+                    return Result.default_user_error(
+                        result.get("info", {}).get("help_text", "Invalid or expired code")
+                    )
+
+                data = result.get("result", {})
+                self._save_session_token(
+                    data.get("access_token", ""),
+                    data.get("refresh_token", ""),
+                    data.get("user_id", ""),
+                )
+                self.username = data.get("username", "")
+                self.valid = True
+                return Result.ok("Login successful", data=data)
+
+        except Exception as e:
+            get_logger().error(f"Invite code login error: {e}")
+            return Result.default_internal_error(str(e))
+
+    # Backwards compat alias
+    async def login_with_code(self, email: str, code: str) -> Result:
+        """Legacy alias: tries magic link flow (request + verify)."""
+        req = await self.login_with_magic_link(email)
+        if req.is_error():
+            return req
+        return await self.verify_magic_link(code)
+
+    async def logout(self) -> bool:
+        """Logout and clear session."""
+        self._ensure_session()
+
+        # Notify server (blacklist token)
+        if self.session and not self.session.closed and self.access_token:
             try:
+                headers = self._get_auth_headers()
                 await self.session.post(
-                    f'{self.base}/api/CloudM.AuthClerk/on_sign_out',
-                    json={"clerk_user_id": self.clerk_user_id}
+                    f'{self.base}/api/CloudM.Auth/logout',
+                    json={"token": self.access_token},
+                    headers=headers,
                 )
             except:
                 pass
@@ -277,19 +373,22 @@ class Session(metaclass=Singleton):
         return True
 
     def init(self):
-        """Initialize session (legacy compatibility)"""
+        """Initialize session (legacy compatibility)."""
         self._ensure_session()
 
     def set_token(self, token: str):
-        """Set session token (for web login callback)"""
+        """Set session token (for web login callback)."""
         self._save_session_token(token)
 
     # =================== HTTP Methods ===================
 
     def _get_auth_headers(self) -> dict:
-        """Get authentication headers for API requests"""
+        """Get authentication headers for API requests."""
         headers = {}
-        if self.clerk_session_token:
+        if self.access_token:
+            headers["Authorization"] = f"Bearer {self.access_token}"
+        elif self.clerk_session_token:
+            # Backwards compat fallback
             headers["Authorization"] = f"Bearer {self.clerk_session_token}"
         return headers
 

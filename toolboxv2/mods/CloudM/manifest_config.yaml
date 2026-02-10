@@ -1,0 +1,197 @@
+# ToolBoxV2 Custom Auth Configuration
+# Manifest configuration for CloudM.Auth module
+#
+# This configuration replaces Clerk-based authentication with a custom
+# implementation supporting Discord OAuth, Google OAuth, and WebAuthn Passkeys.
+#
+# Environment variables are loaded from:
+# - .env file in project root
+# - System environment variables
+# - Runtime configuration
+
+cloudm:
+  auth:
+    # Module identifier
+    module: "CloudM.Auth"
+
+    # Provider configurations
+    providers:
+      # Discord OAuth2 Configuration
+      discord:
+        enabled: true
+
+        # Discord Application credentials
+        # Get from: https://discord.com/developers/applications
+        client_id: "${DISCORD_CLIENT_ID:}"
+        client_secret: "${DISCORD_CLIENT_SECRET:}"
+
+        # OAuth callback URL
+        # Must match exactly in Discord Application settings
+        redirect_uri: "${DISCORD_REDIRECT_URI:http://localhost:8000/auth/discord/callback}"
+
+        # OAuth scopes
+        scopes: "identify email"
+
+        # API endpoints
+        api_base: "https://discord.com/api/v10"
+        token_url: "https://discord.com/api/oauth2/token"
+        user_url: "https://discord.com/api/users/@me"
+
+      # Google OAuth2 Configuration
+      google:
+        enabled: true
+
+        # Google Cloud Project credentials
+        # Get from: https://console.cloud.google.com/apis/credentials
+        client_id: "${GOOGLE_CLIENT_ID:}"
+        client_secret: "${GOOGLE_CLIENT_SECRET:}"
+
+        # OAuth callback URL
+        # Must match exactly in Google Cloud Console
+        redirect_uri: "${GOOGLE_REDIRECT_URI:http://localhost:8000/auth/google/callback}"
+
+        # OAuth scopes
+        scopes: "openid profile email"
+
+        # API endpoints
+        auth_url: "https://accounts.google.com/o/oauth2/v2/auth"
+        token_url: "https://oauth2.googleapis.com/token"
+        user_info_url: "https://people.googleapis.com/v1/people/me?personFields=names,emailAddresses"
+
+      # WebAuthn Passkeys Configuration
+      passkeys:
+        enabled: true
+
+        # Relying Party ID
+        # For production: your domain (e.g., "simplecore.app")
+        # For development: "localhost" (with chrome://flags setup)
+        rp_id: "${PASSKEY_RP_ID:localhost}"
+
+        # Relying Party display name
+        rp_name: "${PASSKEY_RP_NAME:ToolBoxV2}"
+
+        # Relying Party origin
+        rp_origin: "${PASSKEY_ORIGIN:http://localhost:8000}"
+
+        # Passkey timeout in milliseconds
+        timeout: 60000
+
+        # User verification requirement
+        # Options: "required", "preferred", "discouraged"
+        user_verification: "preferred"
+
+        # Attestation preference
+        # Options: "none", "indirect", "direct"
+        attestation: "none"
+
+      # Reserved for future providers
+      # github:
+      #   enabled: false
+      #   client_id: "${GITHUB_CLIENT_ID:}"
+      #   client_secret: "${GITHUB_CLIENT_SECRET:}"
+      #   redirect_uri: "${GITHUB_REDIRECT_URI:http://localhost:8000/auth/github/callback}"
+
+    # JWT Token Configuration
+    jwt:
+      # Secret key for JWT signing (REQUIRED for production)
+      # Generate with: python -c "import secrets; print(secrets.token_hex(64))"
+      secret: "${TB_JWT_SECRET:}"
+
+      # Token algorithm
+      algorithm: "HS256"
+
+      # Access token expiration (seconds)
+      access_token_expire: 900  # 15 minutes
+
+      # Refresh token expiration (seconds)
+      refresh_token_expire: 604800  # 7 days
+
+      # Issuer claim
+      issuer: "ToolBoxV2"
+
+      # Audience claim
+      audience: "toolboxv2-users"
+
+    # Session Configuration
+    session:
+      # Session storage backend
+      # Options: "db" (TBEF.DB)
+      storage: "db"
+
+      # Session cookie name
+      cookie_name: "tb_session"
+
+      # Cookie signing secret
+      cookie_secret: "${TB_COOKIE_SECRET:}"
+
+      # OAuth state TTL (seconds)
+      oauth_state_ttl: 600
+
+      # Magic link TTL (seconds)
+      magic_link_ttl: 600
+
+      # Device invite TTL (seconds)
+      device_invite_ttl: 300
+
+      # WebAuthn challenge TTL (seconds)
+      challenge_ttl: 300
+
+    # User Data Configuration
+    user:
+      # Default user level for new users
+      default_level: 1
+
+      # Require email verification
+      require_verification: false
+
+      # Allow multiple providers per account
+      allow_linking: true
+
+      # User data scopes
+      scopes:
+        - "profile"
+        - "settings"
+        - "mod_data"
+        - "notifications"
+
+# Database Namespace Reference (TBEF.DB):
+#
+# AUTH_USER::{user_id}                         - User profile data (permanent)
+# AUTH_USER_PROVIDER::{provider}::{provider_id} - Provider->User index (permanent)
+# AUTH_USER_EMAIL::{email}                     - Email->User index (permanent)
+# AUTH_STATE::{state}                          - OAuth CSRF state (10min TTL via timestamp)
+# AUTH_CHALLENGE::{username}                   - WebAuthn challenge (5min TTL via timestamp)
+# AUTH_BLACKLIST::{jti}                        - Token blacklist (until token expiry)
+# AUTH_MAGIC_LINK::{token}                     - Magic link token (10min TTL via timestamp)
+# AUTH_DEVICE_INVITE::{code}                   - Device invite code (5min TTL via timestamp)
+# CLI_SESSION::{username}                      - CLI session token cache (until logout)
+#
+# Legacy (read-only, not deleted):
+# CLERK_USER::{clerk_id}                      - Clerk legacy user data
+# USER::{username}::{uid}                      - Legacy user data
+
+# Required Environment Variables (copy to .env):
+#
+# # Application
+# TB_ENV=development
+# APP_BASE_URL=http://localhost:8000
+# APP_BASE_URL_PROD=https://simplecore.app
+#
+# # JWT & Session Secrets (REQUIRED!)
+# TB_JWT_SECRET=<generate with: python -c "import secrets; print(secrets.token_hex(64))">
+# TB_COOKIE_SECRET=<generate with: python -c "import secrets; print(secrets.token_hex(64))">
+#
+# # Discord OAuth
+# DISCORD_CLIENT_ID=your_discord_client_id
+# DISCORD_CLIENT_SECRET=your_discord_client_secret
+# DISCORD_REDIRECT_URI=http://localhost:8000/auth/discord/callback
+#
+# # Google OAuth
+# GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
+# GOOGLE_CLIENT_SECRET=your_google_client_secret
+# GOOGLE_REDIRECT_URI=http://localhost:8000/auth/google/callback
+#
+# # Passkeys
+# PASSKEY_RP_ID=localhost
+# PASSKEY_RP_NAME=ToolBoxV2
+# PASSKEY_ORIGIN=http://localhost:8000

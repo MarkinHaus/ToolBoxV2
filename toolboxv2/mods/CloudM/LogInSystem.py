@@ -1,22 +1,23 @@
 """
-ToolBox V2 - CLI Login System with Clerk
-Handles CLI authentication via Email + Code (NO browser opening)
+ToolBox V2 - CLI & Web Login System (Custom Auth)
+Handles authentication via Magic Link Email + Device Invite Code.
 
-WICHTIG:
-- Kein Webbrowser mehr öffnen
-- Direkter Code-Eingabe in CLI
-- BlobFile für Token-Speicherung
+NO Clerk dependency. NO BlobFile.
+Token storage via TBEF.DB for multi-worker safety.
+
+CLI Auth Methods:
+1. Magic Link Email: User enters email -> receives link -> clicks -> JWT issued
+2. Device Invite Code: Logged-in user generates 6-digit code -> CLI enters code -> JWT issued
+
+Web Login:
+Redirects to /web/scripts/login.html (Discord/Google/Passkey UI)
 """
 
-import asyncio
 import json
-import os
-import sys
 import time
 from typing import Optional
 
-from toolboxv2 import App, get_app, Result, Code
-from toolboxv2.utils.extras.blobs import BlobFile
+from toolboxv2 import App, get_app, Result, TBEF
 
 # CLI Printing Utilities
 from toolboxv2.utils.clis.cli_printing import (
@@ -28,272 +29,326 @@ from toolboxv2.utils.clis.cli_printing import (
 )
 
 Name = 'CloudM'
-version = '0.0.5'
+version = '0.0.6'
 export = get_app(f"{Name}.EXPORT").tb
 
-
-# =================== Helper Functions ===================
-
-def _get_session_path(username: str) -> str:
-    """Get BlobFile path for CLI session"""
-    safe_name = Code.one_way_hash(username, "cli-session")[:16]
-    return f"clerk/cli/{safe_name}/session.json"
+AUTH_MODULE = "CloudM.Auth"
 
 
-def _save_cli_session(username: str, session_data: dict) -> bool:
-    """Save CLI session to BlobFile"""
+# =================== CLI Token Storage (via TBEF.DB) ===================
+
+async def _save_cli_token(app: App, username: str, token_data: dict) -> bool:
+    """Save CLI session token to TBEF.DB."""
     try:
-        path = _get_session_path(username)
-        with BlobFile(path, key=Code.DK()(), mode="w") as blob:
-            blob.clear()
-            blob.write(json.dumps(session_data).encode())
-        return True
+        result = await app.a_run_any(
+            TBEF.DB.SET,
+            query=f"CLI_SESSION::{username}",
+            data=json.dumps(token_data),
+            get_results=True,
+        )
+        return not result.is_error()
     except Exception as e:
         print_status(f"Failed to save session: {e}", "error")
         return False
 
 
-def _load_cli_session(username: str) -> Optional[dict]:
-    """Load CLI session from BlobFile"""
+async def _load_cli_token(app: App, username: str) -> Optional[dict]:
+    """Load CLI session token from TBEF.DB."""
     try:
-        path = _get_session_path(username)
-        with BlobFile(path, key=Code.DK()(), mode="r") as blob:
-            data = blob.read()
-            if data and data != b'Error decoding':
-                return json.loads(data.decode())
-    except:
-        pass
-    return None
+        result = await app.a_run_any(
+            TBEF.DB.GET,
+            query=f"CLI_SESSION::{username}",
+            get_results=True,
+        )
+        if result.is_error():
+            return None
+        raw = result.get()
+        if isinstance(raw, list):
+            raw = raw[0] if raw else None
+        if isinstance(raw, bytes):
+            raw = raw.decode()
+        if isinstance(raw, str):
+            return json.loads(raw)
+        return raw if isinstance(raw, dict) else None
+    except Exception:
+        return None
 
 
-def _clear_cli_session(username: str) -> bool:
-    """Clear CLI session from BlobFile"""
+async def _clear_cli_token(app: App, username: str) -> bool:
+    """Clear CLI session token from TBEF.DB."""
     try:
-        path = _get_session_path(username)
-        with BlobFile(path, key=Code.DK()(), mode="w") as blob:
-            blob.clear()
-        return True
-    except:
+        result = await app.a_run_any(
+            TBEF.DB.DELETE,
+            query=f"CLI_SESSION::{username}",
+            get_results=True,
+        )
+        return not result.is_error()
+    except Exception:
         return False
 
 
 # =================== Main CLI Login ===================
+
 @export(mod_name=Name, version=version)
-async def cli_login(app: App = None, email: str = None):
+async def cli_login(app: App = None, email: str = None, method: str = None):
     """
-    CLI Login with Clerk Email + Code verification
-    NO browser opening - direct code input
+    CLI Login - Two methods:
+    1. Magic Link Email (default)
+    2. Device Invite Code
+
+    Args:
+        app: ToolBoxV2 app instance
+        email: Email for magic link (optional, will prompt)
+        method: "magic" or "invite" (optional, will prompt)
     """
     if app is None:
         app = get_app("CloudM.cli_login")
 
-    # Check if already logged in
-    existing_session = _check_existing_session(app)
-    if existing_session:
-        print_box_header("Already Authenticated", "✓")
-        print_box_content(f"Logged in as: {existing_session.get('username', 'Unknown')}", "success")
+    # Check existing session
+    existing = await _check_existing_session(app)
+    if existing:
+        print_box_header("Already Authenticated", "+")
+        print_box_content(f"Logged in as: {existing.get('username', 'Unknown')}", "success")
         print_box_footer()
 
-        choice = input("\033[96m❯ Continue with existing session? (y/n): \033[0m").strip().lower()
+        choice = input("\033[96m> Continue with existing session? (y/n): \033[0m").strip().lower()
         if choice == 'y':
-            return Result.ok(info="Already authenticated", data=existing_session)
+            return Result.ok(info="Already authenticated", data=existing)
         else:
             await cli_logout(app)
 
-    # Get email if not provided
-    if not email:
-        print_box_header("Clerk Authentication", "🔐")
+    # Choose login method
+    if not method:
+        print_box_header("ToolBoxV2 Authentication", "#")
         print()
-        email = input("\033[96m❯ Enter your email: \033[0m").strip()
+        print("  [1] Magic Link (Email)")
+        print("  [2] Device Invite Code")
+        print()
+        choice = input("\033[96m> Choose method (1/2): \033[0m").strip()
+        method = "invite" if choice == "2" else "magic"
+        print()
+
+    if method == "invite":
+        return await _cli_login_invite(app)
+    else:
+        return await _cli_login_magic(app, email)
+
+
+# =================== Magic Link Login ===================
+
+async def _cli_login_magic(app: App, email: str = None) -> Result:
+    """CLI login via magic link email."""
+    if not email:
+        print_box_header("Magic Link Login", "@")
+        print()
+        email = input("\033[96m> Enter your email: \033[0m").strip()
         print()
 
     if not email or "@" not in email:
         print_status("Invalid email address", "error")
         return Result.default_user_error("Invalid email address")
 
-    print_status(f"Requesting verification code for {email}...", "progress")
+    print_status(f"Sending magic link to {email}...", "progress")
 
-    # Request verification code
-    try:
-        result = await _request_verification_code(app, email)
+    # Request magic link via CloudM.Auth
+    result = await app.a_run_any(
+        (AUTH_MODULE, "request_magic_link"),
+        email=email,
+        get_results=True,
+    )
 
-        if result.is_error():
-            print_status(result.info.help_text or "Failed to request code", "error")
-            return result
-
-        cli_session_id = result.get().get("cli_session_id")
-
-        print_status("Verification code sent to your email!", "success")
-        print()
-        print_separator("─")
-        print()
-
-        # Wait for code input
-        return await _wait_for_code_input(app, cli_session_id, email)
-
-    except Exception as e:
-        print_status(f"Error: {e}", "error")
-        return Result.default_internal_error(str(e))
-
-
-async def _request_verification_code(app: App, email: str) -> Result:
-    """Request verification code from Clerk via API"""
-    try:
-        # Call AuthClerk API
-        result = await app.a_run_any(
-            "CloudM.AuthClerk.cli_request_code",
-            email=email,
-            get_results=True
-        )
+    if result.is_error():
+        error_msg = "Failed to send magic link"
+        if hasattr(result, 'info') and hasattr(result.info, 'help_text'):
+            error_msg = result.info.help_text
+        print_status(error_msg, "error")
         return result
-    except Exception as e:
-        # Fallback: Direct API call
-        response = await app.session.fetch(
-            "/api/CloudM.AuthClerk/cli_request_code",
-            method="POST",
-            data={"email": email}
-        )
-        if hasattr(response, 'json'):
-            response = await response.json()
-        return Result.result_from_dict(**response)
+
+    print_status("Magic link sent! Check your email.", "success")
+    print()
+    print_separator("-")
+    print()
+    print("  Open the link in your email to complete authentication.")
+    print("  Then paste the token from the URL below.")
+    print()
+
+    token = input("\033[96m> Token (from URL after /auth/magic/): \033[0m").strip()
+
+    if not token:
+        print_status("No token entered", "error")
+        return Result.default_user_error("No token provided")
+
+    # Verify the magic link token
+    verify_result = await app.a_run_any(
+        (AUTH_MODULE, "verify_magic_link"),
+        token=token,
+        get_results=True,
+    )
+
+    if verify_result.is_error():
+        error_msg = "Invalid or expired magic link"
+        if hasattr(verify_result, 'info') and hasattr(verify_result.info, 'help_text'):
+            error_msg = verify_result.info.help_text
+        print_status(error_msg, "error")
+        return verify_result
+
+    return await _complete_login(app, verify_result, email)
 
 
-async def _wait_for_code_input(app: App, cli_session_id: str, email: str) -> Result:
-    """Wait for user to input verification code"""
+# =================== Device Invite Login ===================
+
+async def _cli_login_invite(app: App) -> Result:
+    """CLI login via device invite code."""
+    print_box_header("Device Invite Login", "*")
+    print()
+    print("  Ask a logged-in user to generate an invite code")
+    print("  (from Web Dashboard or another CLI session)")
+    print()
+
     max_attempts = 3
-
     for attempt in range(max_attempts):
-        print_box_header(f"Enter Verification Code (Attempt {attempt + 1}/{max_attempts})", "📧")
-        print()
-
-        code = input("\033[96m❯ Enter 6-digit code: \033[0m").strip()
+        code = input(f"\033[96m> Enter 6-digit invite code ({attempt + 1}/{max_attempts}): \033[0m").strip()
         print()
 
         if not code:
             print_status("No code entered", "warning")
             continue
 
-        # Clean up code (remove spaces, dashes)
+        # Clean up code
         code = code.replace(" ", "").replace("-", "")
 
         if len(code) != 6 or not code.isdigit():
             print_status("Code must be 6 digits", "warning")
             continue
 
-        print_status("Verifying code...", "progress")
+        print_status("Verifying invite code...", "progress")
 
-        # Verify code
-        result = await _verify_code(app, cli_session_id, code)
+        result = await app.a_run_any(
+            (AUTH_MODULE, "verify_device_invite"),
+            code=code,
+            get_results=True,
+        )
 
         if result.is_error():
-            print_status(result.info.help_text or "Invalid code", "error")
+            error_msg = "Invalid or expired code"
+            if hasattr(result, 'info') and hasattr(result.info, 'help_text'):
+                error_msg = result.info.help_text
+            print_status(error_msg, "error")
             if attempt < max_attempts - 1:
                 print_status("Please try again", "info")
             continue
 
-        # Success!
-        data = result.get()
-        username = data.get("username", email.split("@")[0])
-        session_token = data.get("session_token", "")
-        user_id = data.get("user_id", "")
-        session_id = data.get("session_id", "")  # Clerk session ID for token refresh
+        return await _complete_login(app, result)
 
-        # Save session
-        session_data = {
-            "username": username,
-            "email": email,
-            "user_id": user_id,
-            "session_token": session_token,
-            "session_id": session_id,  # Store for token refresh
-            "authenticated_at": time.time()
-        }
-        _save_cli_session(username, session_data)
-
-        # Also save in app session
-        if app.session:
-            app.session.username = username
-            app.session.valid = True
-
-        print()
-        print_box_header("Login Successful", "✓")
-        print_box_content(f"Welcome, {username}!", "success")
-        print_box_content("Your CLI session has been established", "info")
-        print_box_footer()
-
-        return Result.ok(info="Login successful", data=session_data)
-
-    # Max attempts reached
     print()
-    print_box_header("Authentication Failed", "✗")
-    print_box_content("Maximum verification attempts reached", "error")
-    print_box_content("Please try again later", "info")
+    print_box_header("Authentication Failed", "X")
+    print_box_content("Maximum attempts reached", "error")
     print_box_footer()
-
     return Result.default_user_error("Maximum verification attempts reached")
 
 
-async def _verify_code(app: App, cli_session_id: str, code: str) -> Result:
-    """Verify the entered code with Clerk"""
-    try:
-        result = await app.a_run_any(
-            "CloudM.AuthClerk.cli_verify_code",
-            cli_session_id=cli_session_id,
-            code=code,
-            get_results=True
-        )
-        return result
-    except Exception as e:
-        # Fallback: Direct API call
-        response = await app.session.fetch(
-            "/api/CloudM.AuthClerk/cli_verify_code",
-            method="POST",
-            data={"cli_session_id": cli_session_id, "code": code}
-        )
-        if hasattr(response, 'json'):
-            response = await response.json()
-        return Result.result_from_dict(**response)
+# =================== Login Completion ===================
+
+async def _complete_login(app: App, result: Result, email: str = None) -> Result:
+    """Complete login: save token, update app session, print success."""
+    data = result.get()
+    if not data or not isinstance(data, dict):
+        print_status("Unexpected response from auth", "error")
+        return Result.default_internal_error("Bad auth response")
+
+    username = data.get("username", "")
+    user_id = data.get("user_id", "")
+    access_token = data.get("access_token", "")
+    refresh_token = data.get("refresh_token", "")
+    provider = data.get("provider", "")
+
+    # Save session to DB
+    session_data = {
+        "username": username,
+        "email": email or data.get("email", ""),
+        "user_id": user_id,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "provider": provider,
+        "authenticated_at": time.time(),
+    }
+    await _save_cli_token(app, username, session_data)
+
+    # Update app session
+    if hasattr(app, 'session') and app.session:
+        app.session.username = username
+        app.session.valid = True
+
+    print()
+    print_box_header("Login Successful", "+")
+    print_box_content(f"Welcome, {username}!", "success")
+    print_box_content(f"Provider: {provider}", "info")
+    print_box_content("Your CLI session has been established", "info")
+    print_box_footer()
+
+    return Result.ok(info="Login successful", data=session_data)
 
 
-def _check_existing_session(app: App) -> Optional[dict]:
-    """Check for existing valid session"""
-    # Check app session
-    if app.session and app.session.valid:
-        return {"username": app.session.username}
+# =================== Session Check ===================
 
-    # Check all saved sessions
-    # This is a simplified check - in production, iterate through possible users
+async def _check_existing_session(app: App) -> Optional[dict]:
+    """Check for existing valid session."""
+    if hasattr(app, 'session') and app.session and getattr(app.session, 'valid', False):
+        username = getattr(app.session, 'username', None)
+        if username:
+            token_data = await _load_cli_token(app, username)
+            if token_data and token_data.get("access_token"):
+                # Validate token is still valid
+                try:
+                    result = await app.a_run_any(
+                        (AUTH_MODULE, "validate_session"),
+                        token=token_data["access_token"],
+                        get_results=True,
+                    )
+                    if not result.is_error():
+                        return token_data
+                except Exception:
+                    pass
     return None
 
 
 # =================== Logout ===================
+
 @export(mod_name=Name, version=version)
 async def cli_logout(app: App = None):
-    """Logout from CLI session"""
+    """Logout from CLI session."""
     if app is None:
         app = get_app("CloudM.cli_logout")
 
-    print_box_header("Logout", "🔓")
+    print_box_header("Logout", "~")
 
-    username = app.get_username() if hasattr(app, 'get_username') else None
+    username = None
+    if hasattr(app, 'session') and app.session:
+        username = getattr(app.session, 'username', None)
+    if not username and hasattr(app, 'get_username'):
+        username = app.get_username()
 
     if username:
         print_status(f"Logging out {username}...", "progress")
-        _clear_cli_session(username)
+
+        # Load token to blacklist it
+        token_data = await _load_cli_token(app, username)
+        if token_data and token_data.get("access_token"):
+            try:
+                await app.a_run_any(
+                    (AUTH_MODULE, "logout"),
+                    token=token_data["access_token"],
+                    get_results=False,
+                )
+            except Exception:
+                pass
+
+        await _clear_cli_token(app, username)
 
     # Clear app session
-    if app.session:
+    if hasattr(app, 'session') and app.session:
         app.session.valid = False
         app.session.username = None
-
-    # Notify server
-    try:
-        await app.a_run_any(
-            "CloudM.AuthClerk.on_sign_out",
-            clerk_user_id=username,
-            get_results=True
-        )
-    except:
-        pass
 
     print_status("Logged out successfully", "success")
     print_box_footer()
@@ -302,180 +357,98 @@ async def cli_logout(app: App = None):
 
 
 # =================== Session Status ===================
+
 @export(mod_name=Name, version=version)
 async def cli_status(app: App = None):
-    """Show current CLI session status"""
+    """Show current CLI session status."""
     if app is None:
         app = get_app("CloudM.cli_status")
 
-    print_box_header("Session Status", "ℹ")
+    print_box_header("Session Status", "i")
 
-    if app.session and app.session.valid:
-        print_box_content(f"✓ Authenticated as: {app.session.username}", "success")
+    if hasattr(app, 'session') and app.session and getattr(app.session, 'valid', False):
+        username = getattr(app.session, 'username', 'Unknown')
+        print_box_content(f"+ Authenticated as: {username}", "success")
+
+        token_data = await _load_cli_token(app, username)
+        if token_data:
+            provider = token_data.get("provider", "unknown")
+            auth_time = token_data.get("authenticated_at", 0)
+            if auth_time:
+                elapsed = time.time() - auth_time
+                hours = int(elapsed // 3600)
+                minutes = int((elapsed % 3600) // 60)
+                print_box_content(f"  Provider: {provider}", "info")
+                print_box_content(f"  Session age: {hours}h {minutes}m", "info")
         print_box_content("Session is valid", "info")
     else:
-        print_box_content("✗ Not authenticated", "warning")
+        print_box_content("X Not authenticated", "warning")
         print_box_content("Run 'tb login' to authenticate", "info")
 
     print_box_footer()
-
     return Result.ok()
 
 
-# =================== Web Login Page (für API) ===================
+# =================== Generate Device Invite (for logged-in users) ===================
 
-@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
-async def open_web_login_web(app: App, request=None, session_id=None, return_to=None):
-    """
-    Web login page using Clerk UI components
-    Returns HTML that loads Clerk's sign-in component
-    """
-    if request is None:
-        return Result.default_internal_error("No request specified")
-
-    # Get Clerk publishable key
-    publishable_key = os.getenv('CLERK_PUBLISHABLE_KEY', '')
-
-    template = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ToolBox V2 - Login</title>
-    <script src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"></script>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        }}
-        #clerk-container {{
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 16px;
-            padding: 32px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-        }}
-        .loading {{
-            color: #666;
-            text-align: center;
-            padding: 20px;
-        }}
-    </style>
-</head>
-<body>
-    <div id="clerk-container">
-        <div class="loading">Loading authentication...</div>
-    </div>
-
-    <script>
-        const clerkPubKey = '{publishable_key}';
-        const sessionId = '{session_id or ""}';
-        const returnTo = '{return_to or "/web/mainContent.html"}';
-
-        async function initClerk() {{
-            const clerk = new Clerk(clerkPubKey);
-            await clerk.load();
-
-            const container = document.getElementById('clerk-container');
-
-            if (clerk.user) {{
-                // Already signed in
-                container.innerHTML = '<p>Already signed in! Redirecting...</p>';
-
-                // Notify CLI if this is a CLI auth flow
-                if (sessionId) {{
-                    await notifyCliAuth(clerk);
-                }}
-
-                setTimeout(() => window.location.href = returnTo, 1000);
-            }} else {{
-                // Show sign-in component
-                clerk.mountSignIn(container, {{
-                    afterSignInUrl: returnTo,
-                    signUpUrl: '/web/assets/signup.html'
-                }});
-
-                // Listen for sign-in completion
-                clerk.addListener((event) => {{
-                    if (event.user && sessionId) {{
-                        notifyCliAuth(clerk);
-                    }}
-                }});
-            }}
-        }}
-
-        async function notifyCliAuth(clerk) {{
-            if (!sessionId) return;
-
-            try {{
-                const response = await fetch('/api/CloudM/open_complete_cli_auth', {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{
-                        session_id: sessionId,
-                        user_id: clerk.user.id,
-                        username: clerk.user.username || clerk.user.emailAddresses[0]?.emailAddress?.split('@')[0],
-                        session_token: await clerk.session.getToken()
-                    }})
-                }});
-                console.log('CLI auth notified:', await response.json());
-            }} catch (e) {{
-                console.error('Failed to notify CLI:', e);
-            }}
-        }}
-
-        initClerk().catch(console.error);
-    </script>
-</body>
-</html>"""
-
-    return Result.html(template)
-
-
-@export(mod_name=Name, version=version, api=True)
-async def open_check_cli_auth(session_id: str, app: App = None):
-    """Check if CLI authentication is complete (polling endpoint)"""
+@export(mod_name=Name, version=version)
+async def cli_generate_invite(app: App = None):
+    """Generate a device invite code for CLI pairing."""
     if app is None:
-        app = get_app("CloudM.open_check_cli_auth")
+        app = get_app("CloudM.cli_generate_invite")
 
-    # Delegate to AuthClerk
+    # Check if logged in
+    if not (hasattr(app, 'session') and app.session and getattr(app.session, 'valid', False)):
+        print_status("You must be logged in to generate an invite code", "error")
+        return Result.default_user_error("Not authenticated")
+
+    username = getattr(app.session, 'username', None)
+    if not username:
+        print_status("No username in session", "error")
+        return Result.default_user_error("No username")
+
+    token_data = await _load_cli_token(app, username)
+    if not token_data or not token_data.get("user_id"):
+        print_status("No valid session found", "error")
+        return Result.default_user_error("No valid session")
+
+    print_status("Generating invite code...", "progress")
+
     result = await app.a_run_any(
-        "CloudM.AuthClerk.cli_check_auth",
-        cli_session_id=session_id,
-        get_results=True
+        (AUTH_MODULE, "create_device_invite"),
+        user_id=token_data["user_id"],
+        get_results=True,
     )
 
-    return result
+    if result.is_error():
+        error_msg = "Failed to generate invite code"
+        if hasattr(result, 'info') and hasattr(result.info, 'help_text'):
+            error_msg = result.info.help_text
+        print_status(error_msg, "error")
+        return result
+
+    data = result.get()
+    code = data.get("code", "")
+    expires_in = data.get("expires_in", 300)
+
+    print()
+    print_box_header("Device Invite Code", "*")
+    print()
+    print(f"    Code: \033[1;93m{code}\033[0m")
+    print()
+    print_box_content(f"Expires in {expires_in // 60} minutes", "info")
+    print_box_content("Enter this code on the other device", "info")
+    print_box_footer()
+
+    return Result.ok(data={"code": code, "expires_in": expires_in})
 
 
-@export(mod_name=Name, version=version, api=True)
-async def open_complete_cli_auth(
-    session_id: str,
-    user_id: str = None,
-    username: str = None,
-    session_token: str = None,
-    app: App = None
-):
-    """Complete CLI authentication (called from web after Clerk sign-in)"""
-    if app is None:
-        app = get_app("CloudM.open_complete_cli_auth")
+# =================== Web Login Page (API endpoint) ===================
 
-    # This is called from the web page after successful Clerk sign-in
-    # to notify the CLI polling that auth is complete
-
-    from .AuthClerk import _verification_codes
-
-    if session_id in _verification_codes:
-        _verification_codes[session_id].update({
-            "verified": True,
-            "user_id": user_id,
-            "username": username,
-            "session_token": session_token
-        })
-        return Result.ok({"success": True})
-
-    return Result.default_user_error("Invalid session ID")
+@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
+async def open_web_login_web(app: App = None, request=None, **kwargs):
+    """
+    Web login page - redirects to custom login.html.
+    No Clerk SDK dependency.
+    """
+    return Result.redirect("/web/scripts/login.html")

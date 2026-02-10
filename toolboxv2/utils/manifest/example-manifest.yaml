@@ -59,7 +59,7 @@ mods:
 
   open_modules:
     - CloudM.AuthManager
-    - CloudM.AuthClerk
+    - CloudM.Auth
 
   watch_modules: []
 

@@ -992,9 +992,9 @@ http {{
     def _generate_auth_endpoints_block(
         self, upstream_http: str, rate_limit_block: str
     ) -> str:
-        """Generate auth endpoint configuration."""
+        """Generate auth endpoint configuration for Custom Auth."""
         return f"""
-        # Auth Endpoints (Clerk Integration)
+        # Auth Endpoints (Custom Auth - JWT, OAuth, Magic Link)
         location = /validateSession {{
             limit_except POST {{ deny all; }}
 {rate_limit_block}
@@ -1040,6 +1040,76 @@ http {{
             proxy_set_header Host $host;
             proxy_set_header Cookie $http_cookie;
             proxy_set_header Authorization $http_authorization;
+        }}
+
+        # OAuth Routes - Discord
+        location = /auth/discord/url {{
+            limit_except GET {{ deny all; }}
+{rate_limit_block}
+            proxy_pass http://{upstream_http}/auth/discord/url;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }}
+
+        location = /auth/discord/callback {{
+            limit_except GET {{ deny all; }}
+{rate_limit_block}
+            proxy_pass http://{upstream_http}/auth/discord/callback;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Cookie $http_cookie;
+            proxy_pass_header Set-Cookie;
+            proxy_connect_timeout 15s;
+            proxy_read_timeout 30s;
+        }}
+
+        # OAuth Routes - Google
+        location = /auth/google/url {{
+            limit_except GET {{ deny all; }}
+{rate_limit_block}
+            proxy_pass http://{upstream_http}/auth/google/url;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }}
+
+        location = /auth/google/callback {{
+            limit_except GET {{ deny all; }}
+{rate_limit_block}
+            proxy_pass http://{upstream_http}/auth/google/callback;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Cookie $http_cookie;
+            proxy_pass_header Set-Cookie;
+            proxy_connect_timeout 15s;
+            proxy_read_timeout 30s;
+        }}
+
+        # Magic Link Verification (CLI Auth)
+        location = /auth/magic/verify {{
+            limit_except GET {{ deny all; }}
+{rate_limit_block}
+            proxy_pass http://{upstream_http}/auth/magic/verify;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_connect_timeout 10s;
+            proxy_read_timeout 30s;
         }}
 
         location = /web/logout {{
