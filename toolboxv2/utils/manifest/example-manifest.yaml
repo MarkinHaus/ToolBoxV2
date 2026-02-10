@@ -153,11 +153,13 @@ nginx:
 # Authentication
 # =============================================================================
 auth:
-  provider: clerk  # clerk | local | none
+  provider: custom  # custom | local | none
 
-  clerk:
-    secret_key: "${CLERK_SECRET_KEY:}"
-    publishable_key: "${CLERK_PUBLISHABLE_KEY:}"
+  jwt:
+    secret: "${TB_JWT_SECRET:}"
+    algorithm: "HS256"
+    access_expiry: 900
+    refresh_expiry: 604800
 
   session:
     cookie_name: tb_session

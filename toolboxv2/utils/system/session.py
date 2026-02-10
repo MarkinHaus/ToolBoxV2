@@ -55,10 +55,6 @@ class Session(metaclass=Singleton):
         self.access_token: Optional[str] = None
         self.refresh_token: Optional[str] = None
 
-        # Backwards compat aliases
-        self.clerk_user_id: Optional[str] = None
-        self.clerk_session_token: Optional[str] = None
-
         # Set base URL
         if base is None:
             base = os.environ.get("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app")
@@ -120,9 +116,6 @@ class Session(metaclass=Singleton):
             self.access_token = access_token
             self.refresh_token = refresh_token
             self.user_id = user_id
-            # Backwards compat
-            self.clerk_session_token = access_token
-            self.clerk_user_id = user_id
             return True
         except Exception as e:
             get_logger().error(f"Failed to save session token: {e}")
@@ -138,9 +131,6 @@ class Session(metaclass=Singleton):
             self.access_token = session_data.get("access_token")
             self.refresh_token = session_data.get("refresh_token")
             self.user_id = session_data.get("user_id")
-            # Backwards compat
-            self.clerk_session_token = self.access_token
-            self.clerk_user_id = self.user_id
             return session_data
         except Exception as e:
             get_logger().debug(f"No session token found: {e}")
@@ -155,8 +145,6 @@ class Session(metaclass=Singleton):
             self.access_token = None
             self.refresh_token = None
             self.user_id = None
-            self.clerk_session_token = None
-            self.clerk_user_id = None
             return True
         except:
             return False
@@ -387,9 +375,6 @@ class Session(metaclass=Singleton):
         headers = {}
         if self.access_token:
             headers["Authorization"] = f"Bearer {self.access_token}"
-        elif self.clerk_session_token:
-            # Backwards compat fallback
-            headers["Authorization"] = f"Bearer {self.clerk_session_token}"
         return headers
 
     async def fetch(

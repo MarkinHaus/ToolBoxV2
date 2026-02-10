@@ -38,7 +38,6 @@ session:
 
 # Authentication (Custom Auth - replaces Clerk)
 auth:
-  clerk_enabled: false
   jwt_algorithm: "HS256"
   jwt_access_expiry: 900       # 15 minutes
   jwt_refresh_expiry: 604800   # 7 days

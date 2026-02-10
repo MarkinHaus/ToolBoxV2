@@ -15,7 +15,7 @@ Features:
 - Audit-Log für Datenzugriffe
 - Lokale Speicherung für USER_PRIVATE
 - Caching für andere Scopes
-- Integration mit Clerk Auth
+- Integration mit Custom Auth
 """
 
 import hashlib
@@ -366,21 +366,7 @@ async def _get_current_user(app: App, request: RequestData):
         from .UserAccountManager import get_current_user_from_request
         return await get_current_user_from_request(app, request)
     except ImportError:
-        # Fallback für AuthClerk
-        try:
-            from .AuthClerk import load_local_user_data, verify_session_token
-
-            # Token aus Request holen
-            token = None
-            if hasattr(request, 'headers'):
-                token = request.headers.get('Authorization', '').replace('Bearer ', '')
-
-            if token:
-                result = verify_session_token(token)
-                if result.is_valid and result.user_id:
-                    return load_local_user_data(result.user_id)
-        except:
-            pass
+        pass
 
     return None
 

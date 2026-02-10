@@ -61,7 +61,6 @@
     ]
   },
   "dependencies": {
-    "@clerk/clerk-js": "^5.111.0",
     "@tauri-apps/api": "^2.9.1",
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-shell": "^2.3.3",

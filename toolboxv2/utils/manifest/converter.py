@@ -106,8 +106,7 @@ class ConfigConverter:
             },
 
             "auth": {
-                "clerk_enabled": m.auth.provider.value == "clerk",
-                "clerk_secret_key": m.auth.clerk.secret_key,
+                "auth_enabled": m.auth.provider.value in ("custom", "clerk"),
                 "ws_require_auth": m.auth.ws_require_auth,
                 "ws_allow_anonymous": m.auth.ws_allow_anonymous,
             },
@@ -397,10 +396,9 @@ class ConfigConverter:
             ])
 
         # Auth requirements
-        if m.auth.provider.value == "clerk":
+        if m.auth.provider.value in ("custom", "clerk"):
             required_vars.extend([
-                ("CLERK_SECRET_KEY", ""),
-                ("CLERK_PUBLISHABLE_KEY", ""),
+                ("TB_JWT_SECRET", ""),
             ])
 
         # Session secret

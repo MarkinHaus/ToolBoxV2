@@ -1,11 +1,39 @@
+# ============================================================
+# ToolBoxV2 - Environment Configuration Template
+# ============================================================
+
+# --- Core Application Configuration ---
+TB_ENV="development"                        # development | production
+SERVER_ID="myserver"                        # Default: hostname
+HOSTNAME="localhost"
+TOOLBOX_LOGGING_LEVEL="INFO"                # "DEBUG", "INFO", "NOTSET"
+GUI_COMMAND="wt new-tab powershell -NoExit -Command"
+ICON_FILE="./favicon.ico"
+
+# --- Network & Base URLs ---
 TOOLBOXV2_BASE="localhost"
 TOOLBOXV2_BASE_PORT=6587
 TOOLBOXV2_REMOTE_BASE="https://simplecore.app"
 TOOLBOXV2_REMOTE_BASE_PORT=6587
 TOOLBOXV2_REMOTE_IP="139.162.136.35"
-APP_BASE_URL="http://localhost:80"
-ADMIN_UI_PASSWORD="admin_pass"
+APP_BASE_URL="http://localhost:8000"        # Dev base URL
+APP_BASE_URL_PROD="https://simplecore.app"  # Production base URL
 
+# --- Security & Authentication (General) ---
+ADMIN_UI_PASSWORD="admin_pass"
+CLUSTER_SECRET=
+TB_JWT_SECRET=                              # REQUIRED: JWT signing secret (min 64 chars)
+TB_COOKIE_SECRET=                           # REQUIRED: Session cookie signing secret
+TOKEN_SECRET="012345678900000987654321asdfghjkl"
+
+# --- Database & Caching ---
+IS_OFFLINE_DB="false"                       # true = nur SQLite, false = full DB
+DB_CONNACTION_URI=
+DB_MODE_KEY="RR"
+DB_MODE_KEY_TEST="LC"
+DB_CACHE_TTL="60"
+
+# --- Object Storage (MinIO / Cloud / S3) ---
 MINIO_ENDPOINT=
 MINIO_ACCESS_KEY=
 MINIO_SECRET_KEY=
@@ -14,98 +42,30 @@ CLOUD_ENDPOINT=
 CLOUD_ACCESS_KEY=
 CLOUD_SECRET_KEY=
 
-IS_OFFLINE_DB="false"       # true = nur SQLite
-SERVER_ID="myserver"        # Default: hostname
-DB_CACHE_TTL="60"
+TB_R_KEY="root@remote"
 
-NGINX_PATH=
-# NGINX_KEY_PATH= SSL_KEY_PATH=
-# NGINX_CERT_PATH= SSL_CERT_PATH=
-NGINX_CONF_PATH=
-CLUSTER_SECRET=
-TOOLBOX_LOGGING_LEVEL="INFO" # "DEBUG"
+# Blob API Keys (Dynamic)
+# Format: TB_BLOB_API_KEY_<PORT>=<key> oder TB_BLOB_API_KEY_<HOST>_<PORT>=<key>
+# TB_BLOB_API_KEY_3001=
+# TB_BLOB_API_KEY_3002=
 
-MOD_PROVIDER="https://simplecore.app"
-PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
-GUI_COMMAND="wt new-tab powershell -NoExit -Command"
-
-TB_RUNTIME_PATH=
-
-ICON_FILE="./favicon.ico"
-
-SHELL=
-PYO3_PYTHON=
-UV_BASE_ENV=
-
-DB_CONNACTION_URI=
-DB_MODE_KEY="RR"
-DB_MODE_KEY_TEST="LC"
-
-# Format: TB_BLOB_API_KEY_<PORT>=<key>
-# oder: TB_BLOB_API_KEY_<HOST>_<PORT>=<key>
-
-# TB_BLOB_API_KEY_3001=<stabiler-key>
-# TB_BLOB_API_KEY_3002=<stabiler-key>
-
+# --- AI & LLM API Keys ---
 OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+GEMINI_API_KEY=
+DEEPSEEK_API_KEY=
+GROQ_API_KEY=
+OPENROUTER_API_KEY=
 HUGGINGFACEHUB_API_TOKEN=
-
 OLLAMA_API_KEY=
 ELEVENLABS_API_KEY=
 REPLICATE_API_TOKEN=
-ANTHROPIC_API_KEY=
-WOLFRAM_ALPHA_APPID=
-IFTTTKey=
-SERP_API_KEY=
+DEEPGRAM_API_KEY=
 PINECONE_API_KEY=
 PINECONE_API_ENV=
-DEEPGRAM_API_KEY=
-GROQ_API_KEY=
-OPENROUTER_API_KEY=
 
-GOOGLE_API_KEY=
-GOOGLE_CSE_ID=
-
-DISCORD_BOT_TOKEN=
-TELEGRAM_BOT_TOKEN=
-DISCORD_AID=
-TELEGRAM_AID=
-
-OBSIDIAN_VAULT_PATH=
-
-BING_SUBSCRIPTION_KEY=
-BING_SEARCH_URL=
-
-GMAIL_PASSWORD=
-GMAIL_EMAIL=
-EMAIL_BG_LIGHT_URL="/web/assets/backgrounds/light-bg.png"
-EMAIL_BG_DARK_URL="/web/assets/backgrounds/dark-bg.png"
-EMAIL_LOGO_URL="/web/icons/icon.png"
-GOOGLE_CREDENTIALS_FILE=
-
-OMP_NUM_THREADS=1
-NUMEXPR_MAX_THREADS=8
-CUDA_LAUNCH_BLOCKING=1
-
-HF_HOME="./.data/huggingface"
-HUGGINGFACE_HUB_VERBOSITY="info"
-TB_R_KEY="root@remote"
-
-VAULTS =
-HOSTNAME="localhost"
-
-TB_COOKIE_SECRET=
-TOKEN_SECRET="012345678900000987654321asdfghjkl"
-
-WHATSAPP_PHONE_NUMBER_ID=
-RECIPIENT_PHONE =
-WHATSAPP_API_TOKEN=
-WHATSAPP_VERIFY_TOKEN=
-
-WITH_GOOGLE_TOOLS
-GOOGLE_APPLICATION_CREDENTIALS
-GOOGLE_TOKEN_DIR
-
+# --- AI Model Configuration & Defaults ---
+MOD_PROVIDER="https://simplecore.app"
 DEFAULTMODEL0="gpt-3.5-turbo-0613"
 DEFAULTMODEL1="gpt-3.5-turbo-0613"
 DEFAULTMODEL2="text-davinci-003"
@@ -114,37 +74,99 @@ DEFAULTMODELSUMMERY="text-curie-001"
 DEFAULTMODELEMBEDDING="gemini/text-embedding-004"
 FALLBACKS_MODELS=
 DEV_MODULES="welcome CloudM"
-LOCAL_DOCKER_IMAGE=
-GITHUB_TOKEN=
-GITHUB_TOKEN_GIST=
-EXTERNAL_PATH_RUNNABELS=
 
-DEEPSEEK_API_KEY=
-GEMINI_API_KEY=
+# --- Python & Runtime Environment ---
+TB_RUNTIME_PATH=
+SHELL=
+PYO3_PYTHON=
+UV_BASE_ENV=
+HF_HOME="./.data/huggingface"
+HUGGINGFACE_HUB_VERBOSITY="info"
 
-FIRECRAWL_API_KEY=
+# Hardware / Performance
+PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+OMP_NUM_THREADS=1
+NUMEXPR_MAX_THREADS=8
+CUDA_LAUNCH_BLOCKING=1
+TF_ENABLE_ONEDNN_OPTS=0
 
-NWV2 = # https://newsapi.org/v2
-LITELLM_LOG="NOTSET"
-
+# --- Payment (Stripe) ---
 STRIPE_SECRET_KEY=
 STRIPE_SECRET_KEY_=
 
+# --- OAuth2 Configuration ---
+# Discord
+DISCORD_CLIENT_ID=
+DISCORD_CLIENT_SECRET=
+DISCORD_REDIRECT_URI="http://localhost:8000/auth/discord/callback"
+# Google
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI="http://localhost:8000/auth/google/callback"
+
+# --- Passkeys / WebAuthn ---
+PASSKEY_RP_ID="localhost"                   # Prod: "simplecore.app"
+PASSKEY_RP_NAME="ToolBoxV2"
+PASSKEY_ORIGIN="http://localhost:8000"
+
+# --- Tools, Search & Integrations ---
+GOOGLE_API_KEY=
+GOOGLE_CSE_ID=
+GOOGLE_CREDENTIALS_FILE=
+WITH_GOOGLE_TOOLS=
+GOOGLE_APPLICATION_CREDENTIALS=
+GOOGLE_TOKEN_DIR=
+
+BING_SUBSCRIPTION_KEY=
+BING_SEARCH_URL=
+SERP_API_KEY=
+WOLFRAM_ALPHA_APPID=
+IFTTTKey=
+FIRECRAWL_API_KEY=
+NWV2=                                       # https://newsapi.org/v2
+GITHUB_TOKEN=
+GITHUB_TOKEN_GIST=
+
+# --- Messaging & Social Bots ---
+# Email
+GMAIL_EMAIL=
+GMAIL_PASSWORD=
+EMAIL_BG_LIGHT_URL="/web/assets/backgrounds/light-bg.png"
+EMAIL_BG_DARK_URL="/web/assets/backgrounds/dark-bg.png"
+EMAIL_LOGO_URL="/web/icons/icon.png"
+
+# Discord Bot
+DISCORD_BOT_TOKEN=
+DISCORD_AID=
+
+# Telegram Bot
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_AID=
+
+# WhatsApp
+WHATSAPP_PHONE_NUMBER_ID=
+WHATSAPP_API_TOKEN=
+WHATSAPP_VERIFY_TOKEN=
+RECIPIENT_PHONE=
+
+# --- Web Server Configuration (Nginx / SSL) ---
+NGINX_PATH=
+NGINX_CONF_PATH=
+NGINX_KEY_PATH=
+NGINX_CERT_PATH=
+SSL_KEY_PATH=
+SSL_CERT_PATH=
+
+# --- Desktop & Build Configuration (Tauri) ---
 TAURI_SIGNING_PUBLIC_KEY=
 TAURI_SIGNING_PRIVATE_KEY=
 TAURI_SIGNING_PRIVATE_KEY_PASSWORD=
 
-
-TF_ENABLE_ONEDNN_OPTS=0
+# --- Miscellaneous / Legacy / Unsorted ---
+VAULTS=
+OBSIDIAN_VAULT_PATH=
+LOCAL_DOCKER_IMAGE=
+EXTERNAL_PATH_RUNNABELS=
+EXTERNAL_PATH_RUNNABLE=                     # (Keep both to satisfy request)
+LITELLM_LOG="NOTSET"
 ANONYMIZED_TELEMETRY="false"
-EXTERNAL_PATH_RUNNABLE=""
-
-CLERK_PUBLISHABLE_KEY=pk_test_...
-CLERK_SECRET_KEY=sk_test_...
-CLERK_DOMAIN=your-clerk-instance.clerk.accounts.dev
-
-
-CLERK_DOMAIN_PROD="your-clerk-instance.clerk.accounts.dev"
-CLERK_SECRET_KEY_PROD="sk_live_...."
-CLERK_PUBLISHABLE_KEY_PROD="pk_live_..."
-APP_BASE_URL_PROD="https://simplecore.app"

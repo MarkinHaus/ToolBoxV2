@@ -102,9 +102,6 @@ class SessionConfig:
 @dataclass
 class AuthConfig:
     """Authentication configuration."""
-    clerk_enabled: bool = True
-    clerk_secret_key: str = ""
-    clerk_publishable_key: str = ""
     jwt_algorithm: str = "HS256"
     jwt_expiry: int = 3600
     api_key_header: str = "X-API-Key"
@@ -193,7 +190,7 @@ class ToolBoxV2Config:
     api_prefix: str = "/api"
     api_allowed_mods: List[str] = field(default_factory=list)
     # CloudM Auth
-    auth_module: str = "CloudM.AuthClerk"
+    auth_module: str = "CloudM.Auth"
     verify_session_func: str = "verify_session"
 
     # === Access Control ===
@@ -208,7 +205,7 @@ class ToolBoxV2Config:
 
     # Admin-only modules (require level -1)
     admin_modules: List[str] = field(default_factory=lambda: [
-        "CloudM.AuthClerk",
+        "CloudM.Auth",
         "ToolBox",
     ])
 
@@ -331,18 +328,11 @@ def load_config(config_path: Optional[str] = None) -> Config:
             loaded = yaml.safe_load(f) or {}
             config_data = _resolve_env_vars(loaded)
 
-    # Determine which Clerk keys to use based on TB_ENV
-    is_prod = Environment.is_production()
-    clerk_secret_key_env = "CLERK_SECRET_KEY_PROD" if is_prod else "CLERK_SECRET_KEY"
-    clerk_publishable_key_env = "CLERK_PUBLISHABLE_KEY_PROD" if is_prod else "CLERK_PUBLISHABLE_KEY"
-
     env_mapping = {
         "TB_ENV": ["environment"],
         "TB_DEBUG": ["debug"],
         "TB_LOG_LEVEL": ["log_level"],
         "TB_COOKIE_SECRET": ["session", "cookie_secret"],
-        clerk_secret_key_env: ["auth", "clerk_secret_key"],
-        clerk_publishable_key_env: ["auth", "clerk_publishable_key"],
         "TB_HTTP_HOST": ["http_worker", "host"],
         "TB_HTTP_PORT": ["http_worker", "port"],
         "TB_HTTP_WORKERS": ["http_worker", "workers"],
@@ -470,9 +460,6 @@ session:
 
 # Authentication
 auth:
-  clerk_enabled: true
-  clerk_secret_key: "${CLERK_SECRET_KEY:}"
-  clerk_publishable_key: "${CLERK_PUBLISHABLE_KEY:}"
   jwt_algorithm: "HS256"
   jwt_expiry: 3600
   api_key_header: "X-API-Key"
@@ -547,7 +534,7 @@ toolbox:
   modules_preload: []
   api_prefix: "/api"
   api_allowed_mods: []
-  auth_module: "CloudM.AuthClerk"
+  auth_module: "CloudM.Auth"
   verify_session_func: "verify_session"
 
   # === Access Control Configuration ===
@@ -580,7 +567,7 @@ toolbox:
 
   # Admin-only modules (require level -1)
   admin_modules:
-    - "CloudM.AuthClerk"
+    - "CloudM.Auth"
     - "ToolBox"
 '''
 

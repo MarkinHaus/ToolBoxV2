@@ -11,25 +11,44 @@ Tests cover:
 - Session validation
 - Refresh token flow
 """
-
+import importlib
 import json
+import sys
 import time
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
 from dataclasses import asdict
+
+from toolboxv2.tests.a_util import IsolatedTestCase
 
 
 # ---------------------------------------------------------------------------
 # Helpers – import Auth internals lazily so mocks can be set up first
 # ---------------------------------------------------------------------------
 
+
 def _import_auth():
-    """Import Auth module – call inside tests so patches apply."""
+    """
+    Import Auth module – strictly ensures a clean reload to avoid mock pollution.
+
+    CRITICAL FIX: If other tests (honks) mocked 'toolboxv2.mods.CloudM.Auth' globally
+    and didn't clean up, sys.modules will hold a MagicMock instead of the real module.
+    This function detects that state and forces a fresh import from disk.
+    """
+    mod_name = "toolboxv2.mods.CloudM.Auth"
+
+    # 1. Purge existing module from cache to remove any stale Mocks
+    if mod_name in sys.modules:
+        del sys.modules[mod_name]
+
+    # 2. Import fresh from disk
     import toolboxv2.mods.CloudM.Auth as auth_mod
-    return auth_mod
+
+    # 3. Ensure it is actually reloaded (double-safety for nested dependencies)
+    return importlib.reload(auth_mod)
 
 
-class TestJWTTokenGeneration(unittest.TestCase):
+class TestJWTTokenGeneration(IsolatedTestCase):
     """Tests for _generate_access_token / _generate_refresh_token."""
 
     def test_access_token_contains_required_claims(self):
@@ -89,7 +108,7 @@ class TestJWTTokenGeneration(unittest.TestCase):
         self.assertNotEqual(p1["jti"], p2["jti"])
 
 
-class TestJWTValidation(unittest.IsolatedAsyncioTestCase):
+class TestJWTValidation(IsolatedTestCase, unittest.IsolatedAsyncioTestCase):
     """Tests for _validate_jwt."""
 
     async def test_valid_access_token(self):
@@ -133,7 +152,7 @@ class TestJWTValidation(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(valid)
 
 
-class TestTokenBlacklisting(unittest.IsolatedAsyncioTestCase):
+class TestTokenBlacklisting(IsolatedTestCase, unittest.IsolatedAsyncioTestCase):
     """Tests for _blacklist_token / _is_blacklisted."""
 
     async def test_blacklist_token_stores_in_db(self):
@@ -171,7 +190,7 @@ class TestTokenBlacklisting(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result)
 
 
-class TestOAuthState(unittest.IsolatedAsyncioTestCase):
+class TestOAuthState(IsolatedTestCase, unittest.IsolatedAsyncioTestCase):
     """Tests for OAuth CSRF state management."""
 
     async def test_store_and_validate_state(self):
@@ -207,7 +226,7 @@ class TestOAuthState(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(len(matching_keys) > 0, "State should be stored in DB")
 
 
-class TestUserData(unittest.TestCase):
+class TestUserData(IsolatedTestCase, unittest.TestCase):
     """Tests for UserData dataclass."""
 
     def test_user_data_to_dict(self):
@@ -243,7 +262,7 @@ class TestUserData(unittest.TestCase):
         self.assertEqual(user.level, 2)
 
 
-class TestValidateSessionEndpoint(unittest.IsolatedAsyncioTestCase):
+class TestValidateSessionEndpoint(IsolatedTestCase, unittest.IsolatedAsyncioTestCase):
     """Tests for the validate_session exported function."""
 
     async def test_validate_session_with_valid_token(self):
@@ -279,7 +298,7 @@ class TestValidateSessionEndpoint(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.is_error())
 
 
-class TestLogout(unittest.IsolatedAsyncioTestCase):
+class TestLogout(IsolatedTestCase, unittest.IsolatedAsyncioTestCase):
     """Tests for the logout exported function."""
 
     async def test_logout_blacklists_token(self):
@@ -300,7 +319,7 @@ class TestLogout(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(data.get("logged_out"))
 
 
-class TestOAuthProviderDataclass(unittest.TestCase):
+class TestOAuthProviderDataclass(IsolatedTestCase, unittest.TestCase):
     """Tests for OAuthProvider dataclass."""
 
     def test_round_trip(self):
@@ -321,7 +340,7 @@ class TestOAuthProviderDataclass(unittest.TestCase):
         self.assertEqual(restored.email, "alice@test.com")
 
 
-class TestPasskeyDataclass(unittest.TestCase):
+class TestPasskeyDataclass(IsolatedTestCase, unittest.TestCase):
     """Tests for Passkey dataclass."""
 
     def test_round_trip(self):
@@ -339,7 +358,7 @@ class TestPasskeyDataclass(unittest.TestCase):
         self.assertEqual(restored.name, "My YubiKey")
 
 
-class TestRefreshToken(unittest.IsolatedAsyncioTestCase):
+class TestRefreshToken(IsolatedTestCase, unittest.IsolatedAsyncioTestCase):
     """Tests for refresh_token endpoint."""
 
     async def test_refresh_with_valid_token(self):

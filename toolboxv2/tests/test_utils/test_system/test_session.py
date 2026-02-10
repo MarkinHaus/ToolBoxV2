@@ -49,8 +49,8 @@ class TestSession(unittest.TestCase):
         self.assertEqual(session.username, 'test_user')
         self.assertIsNone(session._session)
         self.assertFalse(session.valid)
-        self.assertIsNone(session.clerk_user_id)
-        self.assertIsNone(session.clerk_session_token)
+        self.assertIsNone(session.user_id)
+        self.assertIsNone(session.access_token)
 
         # Check base URL
         expected_base = os.environ.get("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app")
@@ -76,10 +76,8 @@ class TestSession(unittest.TestCase):
         """Test login failure when no session token exists"""
         session = Session('test_user')
 
-        # Mock BlobFile to simulate no stored token
-        with patch('toolboxv2.utils.system.session.BlobFile') as mock_blob:
-            mock_blob.return_value.__enter__.return_value.read.return_value = b''
-
+        # Mock _load_session_token to simulate no stored token
+        with patch.object(session, '_load_session_token', return_value=None):
             # Attempt to log in
             result = await session.login(verbose=False)
 
@@ -92,17 +90,15 @@ class TestSession(unittest.TestCase):
         """Test login failure with invalid session token"""
         session = Session('test_user')
 
-        # Mock stored session token
+        # Mock stored session token (new format uses access_token)
         mock_session_data = {
-            "token": "invalid_token",
+            "access_token": "invalid_token",
+            "refresh_token": "",
             "user_id": "test_user_id",
             "username": "test_user"
         }
 
-        with patch('toolboxv2.utils.system.session.BlobFile') as mock_blob:
-            mock_blob.return_value.__enter__.return_value.read.return_value = \
-                json.dumps(mock_session_data).encode()
-
+        with patch.object(session, '_load_session_token', return_value=mock_session_data):
             # Mock the HTTP response to return authentication failure
             mock_response = AsyncMock()
             mock_response.status = 401
@@ -114,13 +110,14 @@ class TestSession(unittest.TestCase):
             with patch.object(session, '_ensure_session'):
                 session._session = AsyncMock()
                 session._session.request.return_value = mock_response
+                with patch.object(session, '_clear_session_token'):
 
-                # Attempt to log in
-                result = await session.login(verbose=False)
+                    # Attempt to log in
+                    result = await session.login(verbose=False)
 
-                # Assert login failed
-                self.assertFalse(result)
-                self.assertFalse(session.valid)
+                    # Assert login failed
+                    self.assertFalse(result)
+                    self.assertFalse(session.valid)
 
     @async_test
     async def test_logout_with_active_session(self):
@@ -128,8 +125,8 @@ class TestSession(unittest.TestCase):
         session = Session('test_user')
 
         # Setup mock session data
-        session.clerk_user_id = "test_user_id"
-        session.clerk_session_token = "test_token"
+        session.user_id = "test_user_id"
+        session.access_token = "test_token"
         session.valid = True
         session.username = "test_user"
 
@@ -144,10 +141,10 @@ class TestSession(unittest.TestCase):
         mock_session.closed = False
         mock_session.close = AsyncMock()
 
-        # Mock BlobFile for clearing token
-        with patch('toolboxv2.utils.system.session.BlobFile') as mock_blob:
-            mock_blob.return_value.__enter__.return_value.clear = MagicMock()
-
+        # Mock _get_token_path to use a temp file that doesn't need real disk I/O
+        mock_path = MagicMock()
+        mock_path.exists.return_value = True
+        with patch.object(session, '_get_token_path', return_value=mock_path):
             with patch.object(session, '_ensure_session'):
                 session._session = mock_session
 
@@ -158,8 +155,8 @@ class TestSession(unittest.TestCase):
                 self.assertTrue(result)
                 self.assertFalse(session.valid)
                 self.assertIsNone(session.username)
-                self.assertIsNone(session.clerk_session_token)
-                self.assertIsNone(session.clerk_user_id)
+                self.assertIsNone(session.access_token)
+                self.assertIsNone(session.user_id)
 
                 # Verify session was closed
                 mock_session.close.assert_awaited_once()
@@ -170,9 +167,7 @@ class TestSession(unittest.TestCase):
         session = Session('test_user')
         session._session = None
 
-        with patch('toolboxv2.utils.system.session.BlobFile') as mock_blob:
-            mock_blob.return_value.__enter__.return_value.clear = MagicMock()
-
+        with patch.object(session, '_clear_session_token'):
             result = await session.logout()
 
             self.assertTrue(result)
@@ -186,20 +181,18 @@ class TestSession(unittest.TestCase):
         test_token = "test_session_token"
         test_user_id = "test_user_123"
 
-        # Mock BlobFile for saving
-        with patch('toolboxv2.utils.system.session.BlobFile') as mock_blob:
-            mock_file = MagicMock()
-            mock_blob.return_value.__enter__.return_value = mock_file
-
-            # Save token
-            result = session._save_session_token(test_token, test_user_id)
+        # Mock Path.write_text for saving (new JSON file-based storage)
+        mock_path = MagicMock()
+        with patch.object(session, '_get_token_path', return_value=mock_path):
+            # Save token (new signature: access_token, refresh_token, user_id)
+            result = session._save_session_token(test_token, "", test_user_id)
 
             self.assertTrue(result)
-            self.assertEqual(session.clerk_session_token, test_token)
-            self.assertEqual(session.clerk_user_id, test_user_id)
+            self.assertEqual(session.access_token, test_token)
+            self.assertEqual(session.user_id, test_user_id)
 
-            # Verify write was called
-            mock_file.write.assert_called_once()
+            # Verify write_text was called on the Path object
+            mock_path.write_text.assert_called_once()
 
     @async_test
     async def test_get_auth_headers(self):
@@ -211,7 +204,7 @@ class TestSession(unittest.TestCase):
         self.assertEqual(headers, {})
 
         # With token
-        session.clerk_session_token = "test_token"
+        session.access_token = "test_token"
         headers = session._get_auth_headers()
         self.assertEqual(headers, {"Authorization": "Bearer test_token"})
 

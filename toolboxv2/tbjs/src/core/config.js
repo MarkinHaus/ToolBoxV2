@@ -193,10 +193,10 @@ const Config = {
                 return STATIC_EXTENSIONS.some(ext => lowerPath.endsWith(ext));
             };
 
-            // Get fresh auth token from Clerk or stored state
+            // Get fresh auth token from stored state
             const getAuthToken = async () => {
                 try {
-                    // Try to get fresh token from Clerk via TB.user
+                    // Try to get fresh token via TB.user
                     if (window.TB?.user?.getSessionToken) {
                         const token = await window.TB.user.getSessionToken();
                         if (token) return token;
@@ -222,7 +222,7 @@ const Config = {
                 newInit.headers = new Headers(init?.headers || {});
 
                 // ALWAYS set fresh Authorization token (override any stale token)
-                // This ensures we always use the latest token from Clerk
+                // This ensures we always use the latest token
                 newInit.headers.set('Authorization', `Bearer ${token}`);
 
                 // Ensure credentials are included

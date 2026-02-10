@@ -152,10 +152,10 @@ class ParsedRequest:
         # From Authorization header
         return self.get_bearer_token()
 
-    def get_clerk_user_id(self) -> Optional[str]:
-        """Get Clerk user ID from body."""
+    def get_user_id_from_body(self) -> Optional[str]:
+        """Get user ID from body."""
         if self.json_data and isinstance(self.json_data, dict):
-            return self.json_data.get("clerk_user_id") or self.json_data.get("Username")
+            return self.json_data.get("user_id") or self.json_data.get("clerk_user_id") or self.json_data.get("Username")
         return None
 
     def to_toolbox_request(self) -> Dict[str, Any]:
@@ -510,7 +510,7 @@ class AuthHandler:
         """Validate JWT token via CloudM.Auth.validate_session."""
         client_ip = request.client_ip
         token = request.get_session_token()
-        user_id = request.get_clerk_user_id()  # backwards compat field name
+        user_id = request.get_user_id_from_body()
 
         self._logger.info(
             f"[Session] Validation request - IP: {client_ip}, "
@@ -534,7 +534,7 @@ class AuthHandler:
             session_id = self.session_manager.create_session(
                 client_ip=client_ip,
                 token=token,
-                clerk_user_id=user_id or "",
+                provider_user_id=user_id or "",
             )
             session = self.session_manager.get_session(session_id)
 
@@ -552,7 +552,7 @@ class AuthHandler:
 
         if user_data:
             session.user_id = user_data.get("user_id", user_id or "")
-            session.clerk_user_id = user_data.get("user_id", "")
+            session.provider_user_id = user_data.get("user_id", "")
             session.level = user_data.get("level", AccessLevel.LOGGED_IN)
             session.user_name = user_data.get("user_name", "")
             session.validated = True
@@ -628,10 +628,10 @@ class AuthHandler:
                 status=401,
             )
 
-        user_id = session.user_id or getattr(session, 'clerk_user_id', None)
+        user_id = session.user_id or getattr(session, 'provider_user_id', None)
         if not user_id:
             if hasattr(session, 'live_data') and isinstance(session.live_data, dict):
-                user_id = session.live_data.get('clerk_user_id', '')
+                user_id = session.live_data.get('provider_user_id', '')
 
         if not user_id:
             return api_result_response(
@@ -781,7 +781,7 @@ class AuthHandler:
             user_id=user_id,
             user_name=username,
             level=level,
-            clerk_user_id=user_id,
+            provider_user_id=user_id,
         )
 
         access_token = data.get("access_token", "")
@@ -1202,7 +1202,7 @@ class WebSocketMessageHandler:
                 # Extract additional session info from event payload
                 user_level = int(event.payload.get("level", AccessLevel.NOT_LOGGED_IN))
                 authenticated = event.payload.get("authenticated", False)
-                clerk_user_id = event.payload.get("clerk_user_id", "")
+                provider_user_id = event.payload.get("user_id", event.payload.get("clerk_user_id", ""))
 
                 request_dict = {
                     "request": {
@@ -1221,7 +1221,7 @@ class WebSocketMessageHandler:
                         "user_name": user_id or "anonymous",
                         "user_id": user_id,
                         "session_id": session_id,
-                        "clerk_user_id": clerk_user_id,
+                        "provider_user_id": provider_user_id,
                         "validated": authenticated,
                         "anonymous": not authenticated,
                     },
@@ -1275,7 +1275,7 @@ class WebSocketMessageHandler:
             # Build request object with session data for access control
             user_level = int(event.payload.get("level", AccessLevel.NOT_LOGGED_IN))
             authenticated = event.payload.get("authenticated", False)
-            clerk_user_id = event.payload.get("clerk_user_id", "")
+            provider_user_id = event.payload.get("user_id", event.payload.get("clerk_user_id", ""))
 
             request_dict = {
                 "request": {
@@ -1294,7 +1294,7 @@ class WebSocketMessageHandler:
                     "user_name": user_id or "anonymous",
                     "user_id": user_id,
                     "session_id": session_id,
-                    "clerk_user_id": clerk_user_id,
+                    "provider_user_id": provider_user_id,
                     "validated": authenticated,
                     "anonymous": not authenticated,
                 },
@@ -1629,7 +1629,6 @@ class HTTPWorker:
             cookie_httponly=self.config.session.cookie_httponly,
             cookie_samesite=self.config.session.cookie_samesite,
             app=self._app,
-            clerk_enabled=self.config.auth.clerk_enabled,
         )
 
     def _init_access_controller(self):

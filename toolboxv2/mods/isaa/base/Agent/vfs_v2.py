@@ -1849,6 +1849,8 @@ Session: {self.session_id}
         for path, file_data in data.get("files", {}).items():
             file_data.pop("file_type", None)  # Remove if present
             file_data.pop("diagnostics", None)  # Remove diagnostics, will be refreshed
+            if "content" in file_data:
+                file_data["_content"] = file_data.pop("content")
             self.files[path] = VFSFile(**file_data)
 
         self._dirty = True

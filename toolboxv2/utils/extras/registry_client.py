@@ -3,7 +3,7 @@ TB Registry Client
 Async HTTP client for interacting with the TB Registry API.
 
 Provides:
-- Authentication (Clerk token)
+- Authentication (JWT token)
 - Package Discovery (search, get, versions)
 - Dependency Resolution
 - Download (single and with dependencies)
@@ -217,7 +217,7 @@ class RegistryClient:
         cache_dir: Optional[Path] = None,
         max_retries: int = 3,
         session_id: Optional[str] = None,
-        clerk_user_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         token_refresh_callback: Optional[callable] = None,
     ):
         """
@@ -225,12 +225,12 @@ class RegistryClient:
 
         Args:
             registry_url: Base URL of the registry API
-            auth_token: Optional Clerk JWT authentication token
+            auth_token: Optional JWT authentication token
             timeout: Request timeout in seconds
             cache_dir: Optional directory for local caching
             max_retries: Number of retries for transient errors
-            session_id: Clerk session ID for token refresh
-            clerk_user_id: Clerk user ID for token refresh
+            session_id: Session ID for token refresh
+            user_id: User ID for token refresh
             token_refresh_callback: Async callback to refresh token (returns new token)
         """
         self.registry_url = registry_url.rstrip("/")
@@ -239,7 +239,7 @@ class RegistryClient:
         self.cache_dir = cache_dir or Path.home() / ".tb-registry" / "cache"
         self.max_retries = max_retries
         self.session_id = session_id
-        self.clerk_user_id = clerk_user_id
+        self.user_id = user_id
         self._token_refresh_callback = token_refresh_callback
         self._client: Optional[httpx.AsyncClient] = None
         self._user: Optional[UserInfo] = None
@@ -274,26 +274,26 @@ class RegistryClient:
 
     async def login(
         self,
-        clerk_token: str,
+        auth_token: str,
         session_id: Optional[str] = None,
-        clerk_user_id: Optional[str] = None
+        user_id: Optional[str] = None
     ) -> bool:
         """
-        Login with Clerk JWT token.
+        Login with JWT token.
 
         Args:
-            clerk_token: Clerk JWT token (from 'cli' template)
-            session_id: Optional Clerk session ID for token refresh
-            clerk_user_id: Optional Clerk user ID for token refresh
+            auth_token: JWT authentication token
+            session_id: Optional session ID for token refresh
+            user_id: Optional user ID for token refresh
 
         Returns:
             True if login successful
         """
-        self.auth_token = clerk_token
+        self.auth_token = auth_token
         if session_id:
             self.session_id = session_id
-        if clerk_user_id:
-            self.clerk_user_id = clerk_user_id
+        if user_id:
+            self.user_id = user_id
         self._token_refresh_attempted = False
 
         # Recreate client with new token
@@ -340,7 +340,7 @@ class RegistryClient:
             if self._token_refresh_callback:
                 new_token = await self._token_refresh_callback(
                     session_id=self.session_id,
-                    clerk_user_id=self.clerk_user_id
+                    user_id=self.user_id
                 )
                 if new_token:
                     self.auth_token = new_token
@@ -353,15 +353,15 @@ class RegistryClient:
                     return True
 
             # Fallback: Try ToolBox server refresh endpoint
-            if self.session_id or self.clerk_user_id:
+            if self.session_id or self.user_id:
                 try:
                     # Import here to avoid circular imports
                     from toolboxv2 import get_app
                     app = get_app("RegistryClient.refresh_token")
                     result = await app.a_run_any(
-                        "CloudM.AuthClerk.refresh_jwt_token",
+                        "CloudM.Auth.refresh_jwt_token",
                         session_id=self.session_id,
-                        clerk_user_id=self.clerk_user_id,
+                        user_id=self.user_id,
                         get_results=True
                     )
                     if not result.is_error():

@@ -52,7 +52,8 @@ class DatabaseMode(str, Enum):
 
 class AuthProvider(str, Enum):
     """Authentication provider."""
-    CLERK = "clerk"
+    CUSTOM = "custom"
+    CLERK = "clerk"  # deprecated, use CUSTOM
     LOCAL = "local"
     NONE = "none"
 
@@ -265,8 +266,8 @@ class SessionConfig(BaseModel):
 
 class AuthConfig(BaseModel):
     """Authentication configuration."""
-    provider: AuthProvider = Field(default=AuthProvider.CLERK)
-    clerk: ClerkConfig = Field(default_factory=ClerkConfig)
+    provider: AuthProvider = Field(default=AuthProvider.CUSTOM)
+    clerk: ClerkConfig = Field(default_factory=ClerkConfig)  # deprecated, kept for backwards compat
     session: SessionConfig = Field(default_factory=SessionConfig)
     ws_require_auth: bool = Field(default=False)
     ws_allow_anonymous: bool = Field(default=True)

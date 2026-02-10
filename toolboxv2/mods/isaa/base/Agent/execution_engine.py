@@ -847,6 +847,8 @@ class ExecutionEngine(SubAgentResumeExtension):
         while ctx.current_iteration < max_iterations:
             ctx.current_iteration += 1
 
+            print(f"─────────────── {ctx.current_iteration}/{max_iterations} ─────────────── ")
+
             # Check for loop and inject warning if needed
             if self._should_warn_loop(ctx):
                 ctx.working_history.append(
@@ -1913,6 +1915,8 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
 
             while ctx.current_iteration < max_iterations:
                 ctx.current_iteration += 1
+
+                print(f"─────────────── {ctx.current_iteration}/{max_iterations} ─────────────── ")
 
                 # Check pause
                 if ctx.status == "paused":

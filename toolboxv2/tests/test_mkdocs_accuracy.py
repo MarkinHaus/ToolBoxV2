@@ -42,7 +42,7 @@ EXPECTED_CLASSES = {
     # Mod-specific classes - MUST be from mods/
     # Note: User exists in both types.py (dataclass) and models.py (pydantic)
     "User": ["toolboxv2/mods/CloudM/types.py", "toolboxv2/mods/CloudM/models.py"],
-    "LocalUserData": "toolboxv2/mods/CloudM/AuthClerk.py",
+    "UserData": "toolboxv2/mods/CloudM/Auth.py",
     "StorageProvider": "toolboxv2/mods/CloudM/UserDataAPI.py",
     "ModDataClient": "toolboxv2/mods/CloudM/UserDataAPI.py",
 }

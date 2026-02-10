@@ -469,19 +469,19 @@ async def register_initial_loot_user(app: App, email: str = None, user_name: str
     Returns:
         Result with registration URL or instructions
     """
-    # Check if Clerk is configured
-    clerk_key = os.getenv('CLERK_SECRET_KEY')
+    # Check if custom auth is configured
+    auth_configured = bool(os.getenv('TB_JWT_SECRET') or os.getenv('DISCORD_CLIENT_ID'))
 
-    if clerk_key:
-        # Clerk is configured - direct to web registration
+    if auth_configured:
+        # Custom auth is configured - direct to web registration
         base_url = os.getenv('APP_BASE_URL', 'http://localhost:8080')
         signup_url = f"{base_url}/web/assets/signup.html"
 
         print("\n" + "=" * 60)
-        print("  Clerk Authentication Configured")
+        print("  Custom Authentication Configured")
         print("=" * 60)
         print(f"\nPlease register your admin account via the web interface:")
-        print(f"\n  📱 {signup_url}")
+        print(f"\n  {signup_url}")
         print("\nAfter registration, use 'tb login' for CLI access.")
         print("=" * 60 + "\n")
 
@@ -494,20 +494,20 @@ async def register_initial_loot_user(app: App, email: str = None, user_name: str
 
         return Result.ok(signup_url)
 
-    return Result.default_user_error("Clerk not configured")
+    return Result.default_user_error("Auth not configured")
 
 
 @no_test
 def create_magic_log_in(app: App, username: str):
     """
     Create magic login URL for a user.
-    Note: With Clerk, this is replaced by email code verification.
+    Note: With custom auth, this is replaced by email code verification.
     """
-    # Check if Clerk is configured
-    if os.getenv('CLERK_SECRET_KEY'):
-        print("\n⚠️  With Clerk, magic links are replaced by email code verification.")
+    # Check if custom auth is configured
+    if os.getenv('TB_JWT_SECRET') or os.getenv('DISCORD_CLIENT_ID'):
+        print("\nWith custom auth, magic links are replaced by email code verification.")
         print("Use 'tb login' and enter your email to receive a verification code.\n")
-        return Result.ok("Use 'tb login' for Clerk email verification")
+        return Result.ok("Use 'tb login' for email verification")
 
     # Legacy flow
     user = app.run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
@@ -605,13 +605,13 @@ def initialize_admin_panel(app: App):
         auth=True
     )
 
-    # Check Clerk configuration
-    clerk_configured = bool(os.getenv('CLERK_SECRET_KEY'))
+    # Check auth configuration
+    auth_configured = bool(os.getenv('TB_JWT_SECRET') or os.getenv('DISCORD_CLIENT_ID'))
 
     return Result.ok(
         info="Admin Panel Online",
         data={
-            "clerk_enabled": clerk_configured,
+            "auth_enabled": auth_configured,
             "version": version
         }
     ).set_origin("CloudM.initialize_admin_panel")

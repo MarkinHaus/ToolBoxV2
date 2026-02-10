@@ -5,7 +5,7 @@ toolbox_integration.py - ToolBoxV2 Integration Layer
 Integration between the worker system and ToolBoxV2:
 - server_helper() integration
 - Module function routing with access control
-- Session verification via CloudM.AuthClerk
+- Session verification via CloudM.Auth
 - Event manager bridge
 - Level-based authorization
 """
@@ -50,13 +50,13 @@ def get_toolbox_app(instance_id: str = "worker", **kwargs):
 # ============================================================================
 
 
-def verify_session_via_clerk(
+def verify_session_via_auth(
     app,
     session_token: str,
-    auth_module: str = "CloudM.AuthClerk",
+    auth_module: str = "CloudM.Auth",
     verify_func: str = "verify_session",
 ) -> Tuple[bool, Optional[Dict]]:
-    """Verify session using CloudM.AuthClerk."""
+    """Verify session using CloudM.Auth."""
     try:
         result = app.run_any(
             (auth_module, verify_func),
@@ -74,13 +74,13 @@ def verify_session_via_clerk(
         return False, None
 
 
-async def verify_session_via_clerk_async(
+async def verify_session_via_auth_async(
     app,
     session_token: str,
-    auth_module: str = "CloudM.AuthClerk",
+    auth_module: str = "CloudM.Auth",
     verify_func: str = "verify_session",
 ) -> Tuple[bool, Optional[Dict]]:
-    """Async version of verify_session_via_clerk."""
+    """Async version of verify_session_via_auth."""
     try:
         result = await app.a_run_any(
             (auth_module, verify_func),
@@ -135,7 +135,7 @@ class AccessController:
 
         # Admin modules
         self._admin_modules = set(getattr(tb, 'admin_modules', [
-            "CloudM.AuthClerk",
+            "CloudM.Auth",
             "ToolBox",
         ]))
 

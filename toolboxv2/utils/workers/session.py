@@ -77,8 +77,8 @@ class SessionData:
     # Expiration
     exp: float = 0.0  # Expiration timestamp
 
-    # Provider user ID (backwards-compatible alias: clerk_user_id)
-    clerk_user_id: str = ""
+    # Provider user ID (e.g. from OAuth/JWT provider)
+    provider_user_id: str = ""
 
     # Session state
     validated: bool = False  # Whether session was validated with auth provider
@@ -127,7 +127,7 @@ class SessionData:
             "level": self.level,
             "spec": self.spec,
             "exp": self.exp,
-            "clerk_user_id": self.clerk_user_id,
+            "provider_user_id": self.provider_user_id,
             "validated": self.validated,
             "anonymous": self.anonymous,
             "extra": self.extra,
@@ -144,7 +144,7 @@ class SessionData:
             level=data.get("level", AccessLevel.NOT_LOGGED_IN),
             spec=data.get("spec", ""),
             exp=data.get("exp", 0.0),
-            clerk_user_id=data.get("clerk_user_id", ""),
+            provider_user_id=data.get("provider_user_id", data.get("clerk_user_id", "")),
             validated=data.get("validated", False),
             anonymous=data.get("anonymous", True),
             extra=data.get("extra", {}),
@@ -169,7 +169,7 @@ class SessionData:
         user_id: str,
         user_name: str,
         level: int = AccessLevel.LOGGED_IN,
-        clerk_user_id: str = "",
+        provider_user_id: str = "",
         spec: str = "",
         max_age: int = 604800,
         **extra
@@ -182,12 +182,12 @@ class SessionData:
             level=level,
             spec=spec,
             exp=time.time() + max_age,
-            clerk_user_id=clerk_user_id,
+            provider_user_id=provider_user_id,
             validated=True,
             anonymous=False,
             extra=extra,
             live_data={
-                "clerk_user_id": clerk_user_id,
+                "provider_user_id": provider_user_id,
                 "level": str(level),
             },
         )
@@ -198,7 +198,7 @@ class SessionData:
         self.anonymous = True
         self.level = AccessLevel.NOT_LOGGED_IN
         self.user_id = ""
-        self.clerk_user_id = ""
+        self.provider_user_id = ""
         self._dirty = True
 
     # Backwards compatibility
@@ -374,18 +374,17 @@ class SignedCookieSession:
 
 
 # ============================================================================
-# Auth Token Verifier (Provider-agnostic, replaces Clerk-only verifier)
+# Auth Token Verifier (Provider-agnostic)
 # ============================================================================
 
 
-class ClerkSessionVerifier:
+class AuthSessionVerifier:
     """
     Verify sessions using CloudM.Auth from ToolBoxV2.
 
     Provider-agnostic: works with any auth backend that implements
     validate_session(token=...) returning {authenticated, user_id, ...}.
 
-    Class name kept as ClerkSessionVerifier for backwards compatibility.
     Falls back to signed cookie if auth module is not available.
     """
 
@@ -416,15 +415,9 @@ class ClerkSessionVerifier:
 
         return self._auth_available
 
-    # Keep old name as alias for backwards compat
-    def _check_clerk_available(self) -> bool:
-        return self._check_auth_available()
-
     def _data_to_session(self, data: dict) -> SessionData:
         """Convert auth response to SessionData."""
         user_id = data.get("user_id", "")
-        # Backwards compat: clerk_user_id falls back to user_id
-        clerk_user_id = data.get("clerk_user_id", user_id)
 
         return SessionData(
             user_id=user_id,
@@ -433,7 +426,7 @@ class ClerkSessionVerifier:
             level=data.get("level", AccessLevel.LOGGED_IN),
             spec=data.get("spec", ""),
             exp=data.get("exp", 0),
-            clerk_user_id=clerk_user_id,
+            provider_user_id=user_id,
             validated=True,
             anonymous=False,
             extra={
@@ -441,7 +434,7 @@ class ClerkSessionVerifier:
                 "provider": data.get("provider", ""),
             },
             live_data={
-                "clerk_user_id": clerk_user_id,
+                "provider_user_id": user_id,
                 "level": str(data.get("level", AccessLevel.LOGGED_IN)),
             },
         )
@@ -546,7 +539,6 @@ class SessionManager:
         cookie_path: str = "/",
         cookie_domain: Optional[str] = None,
         app=None,
-        clerk_enabled: bool = True,
         auth_module: str = "CloudM.Auth",
         verify_func: str = "validate_session",
         api_key_header: str = "X-API-Key",
@@ -563,10 +555,10 @@ class SessionManager:
             domain=cookie_domain,
         )
 
-        # Primary auth verifier (ClerkSessionVerifier is now provider-agnostic)
-        self.clerk_verifier = None
+        # Primary auth verifier
+        self.auth_verifier = None
         if app:
-            self.clerk_verifier = ClerkSessionVerifier(
+            self.auth_verifier = AuthSessionVerifier(
                 app, auth_module=auth_module, verify_func=verify_func
             )
 
@@ -596,7 +588,7 @@ class SessionManager:
         user_name: str = "anonymous",
         level: int = AccessLevel.NOT_LOGGED_IN,
         spec: str = "",
-        clerk_user_id: str = "",
+        provider_user_id: str = "",
         client_ip: str = "",
         token: str = "",
         max_age: Optional[int] = None,
@@ -625,7 +617,7 @@ class SessionManager:
             level=level,
             spec=spec,
             exp=time.time() + max_age,
-            clerk_user_id=clerk_user_id,
+            provider_user_id=provider_user_id,
             validated=not is_anonymous,
             anonymous=is_anonymous,
             extra={
@@ -634,7 +626,7 @@ class SessionManager:
                 **extra,
             },
             live_data={
-                "clerk_user_id": clerk_user_id,
+                "provider_user_id": provider_user_id,
                 "level": str(level),
             },
         )
@@ -652,7 +644,7 @@ class SessionManager:
         user_id: str,
         user_name: str,
         level: int = AccessLevel.LOGGED_IN,
-        clerk_user_id: str = "",
+        provider_user_id: str = "",
         spec: str = "",
         max_age: Optional[int] = None,
         **extra
@@ -670,7 +662,7 @@ class SessionManager:
             user_id=user_id,
             user_name=user_name,
             level=level,
-            clerk_user_id=clerk_user_id,
+            provider_user_id=provider_user_id,
             spec=spec,
             max_age=max_age,
             **extra
@@ -735,8 +727,8 @@ class SessionManager:
         )
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header[7:]
-            if self.clerk_verifier:
-                is_valid, session = await self.clerk_verifier.verify_session_async(token)
+            if self.auth_verifier:
+                is_valid, session = await self.auth_verifier.verify_session_async(token)
                 if is_valid and session:
                     return session
 
@@ -778,12 +770,12 @@ class SessionManager:
         auth_header = headers.get(self.bearer_header) or headers.get(
             self.bearer_header.lower()
         )
-        logger.debug(f"[SessionManager] Bearer header check: auth_header={auth_header[:50] if auth_header else None}..., verifier={self.clerk_verifier is not None}")
+        logger.debug(f"[SessionManager] Bearer header check: auth_header={auth_header[:50] if auth_header else None}..., verifier={self.auth_verifier is not None}")
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header[7:]
             logger.debug(f"[SessionManager] Verifying Bearer token (length: {len(token)})")
-            if self.clerk_verifier:
-                is_valid, session = self.clerk_verifier.verify_session_sync(token)
+            if self.auth_verifier:
+                is_valid, session = self.auth_verifier.verify_session_sync(token)
                 logger.debug(f"[SessionManager] Bearer verification result: is_valid={is_valid}, session_level={session.level if session else None}")
                 if is_valid and session:
                     return session
@@ -820,7 +812,7 @@ class SessionManager:
         user_id: str = None,
         user_name: str = None,
         level: int = None,
-        clerk_user_id: str = None,
+        provider_user_id: str = None,
         validated: bool = None,
         anonymous: bool = None,
         **extra
@@ -837,9 +829,9 @@ class SessionManager:
         if level is not None:
             session.level = level
             session.live_data["level"] = str(level)
-        if clerk_user_id is not None:
-            session.clerk_user_id = clerk_user_id
-            session.live_data["clerk_user_id"] = clerk_user_id
+        if provider_user_id is not None:
+            session.provider_user_id = provider_user_id
+            session.live_data["provider_user_id"] = provider_user_id
         if validated is not None:
             session.validated = validated
         if anonymous is not None:
@@ -951,8 +943,8 @@ class SessionManager:
         Returns:
             Tuple of (is_valid, session_data)
         """
-        if self.clerk_verifier:
-            return self.clerk_verifier.verify_session_sync(token)
+        if self.auth_verifier:
+            return self.auth_verifier.verify_session_sync(token)
         return False, None
 
     async def verify_session_token_async(self, token: str) -> Tuple[bool, Optional[SessionData]]:
@@ -960,7 +952,7 @@ class SessionManager:
         Verify a session token (async).
 
         Prefers custom verifier (with caching) if available,
-        falls back to clerk_verifier.
+        falls back to auth_verifier.
 
         Returns:
             Tuple of (is_valid, session_data)
@@ -983,9 +975,9 @@ class SessionManager:
             except Exception as e:
                 logger.debug(f"Custom verifier error, falling back: {e}")
 
-        # Fallback to clerk_verifier
-        if self.clerk_verifier:
-            return await self.clerk_verifier.verify_session_async(token)
+        # Fallback to auth_verifier
+        if self.auth_verifier:
+            return await self.auth_verifier.verify_session_async(token)
         return False, None
 
     def clear_pending_updates(self):

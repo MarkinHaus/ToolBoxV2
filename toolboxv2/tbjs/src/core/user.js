@@ -1,44 +1,45 @@
 // tbjs/core/user.js
-// ToolBox V2 User Management with Clerk Integration
+// ToolBox V2 User Management with Custom Auth (CloudM.Auth)
 
 import TB from '../index.js';
 
 const USER_STATE_KEY = 'tbjs_user_session';
 const USER_DATA_TIMESTAMP_KEY = 'tbjs_user_data_timestamp';
 const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+const TOKEN_REFRESH_INTERVAL = 10 * 60 * 1000; // 10 minutes
 
 const defaultUserState = {
     isAuthenticated: false,
     username: null,
     email: null,
-    userId: null,  // Clerk user ID
+    userId: null,
     userLevel: 1,
     token: null,
+    refreshToken: null,
     userData: {},
     settings: {},
     modData: {}
 };
 
-// Clerk instance (will be initialized)
-let clerkInstance = null;
-let clerkConfig = null;
-let clerkInitPromise = null;
-let clerkFullyInitialized = false; // Flag to prevent logout during initialization
+// Auth state tracking
+let authInitialized = false;
 
 const user = {
     _lastActivityTimestamp: Date.now(),
     _initPromise: null,
+    _tokenRefreshTimerId: null,
+    _signInInProgress: false,
+    _lastSignInUserId: null,
 
+    // =================== Backend Session Validation ===================
 
     /**
-     * Consolidated backend session validation.
-     * Verifies if the current session token is truly valid on the server side.
-     *
+     * Validates the current session token with the backend.
      * @returns {Promise<boolean>} True if backend confirms valid session
      */
     async validateBackendSession() {
-        const token = await this.getSessionToken();
-        const userId = this.getUserId() || (clerkInstance?.user?.id);
+        const token = this.getToken();
+        const userId = this.getUserId();
 
         if (!token || !userId) {
             TB.logger.debug('[User] Cannot validate session: missing token or userId');
@@ -46,7 +47,7 @@ const user = {
         }
 
         try {
-            TB.logger.debug('[User] Validating session integrity with backend...');
+            TB.logger.debug('[User] Validating session with backend...');
 
             const response = await fetch('/validateSession', {
                 method: 'POST',
@@ -56,7 +57,7 @@ const user = {
                 },
                 body: JSON.stringify({
                     session_token: token,
-                    clerk_user_id: userId
+                    user_id: userId
                 })
             });
 
@@ -67,9 +68,8 @@ const user = {
 
             const result = await response.json();
 
-            // Check explicit backend confirmation
             if (result.error === "none" && result.result?.data?.authenticated === true) {
-                TB.logger.debug('[User] ✓ Backend confirmed session validity');
+                TB.logger.debug('[User] Backend confirmed session validity');
                 return true;
             }
 
@@ -100,18 +100,16 @@ const user = {
     },
 
     async init(forceServerFetch = false) {
-        // Verhindere mehrfache Initialisierung
         if (this._initPromise) {
             return this._initPromise;
         }
-
         this._initPromise = this._doInit(forceServerFetch);
         return this._initPromise;
     },
 
     async _doInit(forceServerFetch = false) {
         this._initActivityMonitor();
-        TB.logger.info('[User] Initializing with Clerk...');
+        TB.logger.info('[User] Initializing with Custom Auth...');
 
         // Load state from localStorage
         let initialState = TB.state.get('user');
@@ -133,8 +131,25 @@ const user = {
         const mergedState = { ...defaultUserState, ...(initialState || {}) };
         TB.state.set('user', mergedState);
 
-        // Initialize Clerk
-        await this._initClerk();
+        // Check if we have a stored token and validate it
+        if (mergedState.token && mergedState.isAuthenticated) {
+            const isValid = await this.validateBackendSession();
+            if (isValid) {
+                TB.logger.info('[User] Restored valid session from storage.');
+                authInitialized = true;
+                this._startTokenRefreshTimer();
+                TB.events.emit('user:signedIn', {
+                    username: mergedState.username,
+                    userId: mergedState.userId
+                });
+            } else {
+                TB.logger.warn('[User] Stored session invalid, clearing.');
+                this._updateUserState({}, true);
+            }
+        }
+
+        // Check URL for auth callback tokens (OAuth redirect)
+        await this._checkAuthCallback();
 
         // Listen for state changes to persist
         TB.events.on('state:changed:user', (newState) => {
@@ -146,305 +161,60 @@ const user = {
             }
         });
 
+        authInitialized = true;
         return true;
     },
 
-    async _initClerk() {
-        // Verhindere mehrfache Clerk-Initialisierung
-        if (clerkInitPromise) {
-            return clerkInitPromise;
-        }
+    /**
+     * Check URL for auth callback parameters (after OAuth redirect).
+     * Handles ?token=xxx&refresh_token=xxx from OAuth callbacks.
+     */
+    async _checkAuthCallback() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const token = urlParams.get('token');
+        const refreshToken = urlParams.get('refresh_token');
 
-        clerkInitPromise = this._doInitClerk();
-        return clerkInitPromise;
-    },
+        if (!token) return;
 
-    async _doInitClerk() {
-        try {
-            // 1. Get Clerk config from backend FIRST
-            TB.logger.debug('[User] Fetching Clerk config...');
-
-            const configResponse = await fetch('/api/CloudM.AuthClerk/get_clerk_config');
-            const configResult = await configResponse.json();
-
-            TB.logger.debug('[User] Clerk config result:', configResult);
-
-            // Prüfe auf "none" string
-            if (configResult.error !== "none" || !configResult.result?.data?.publishable_key) {
-                TB.logger.error('[User] Failed to get Clerk config:', configResult.info?.help_text, configResult);
-                return false;
-            }
-
-            clerkConfig = configResult.result.data;
-            const publishableKey = clerkConfig.publishable_key;
-
-            TB.logger.debug('[User] Got publishable key:', publishableKey.substring(0, 20) + '...');
-
-            // 2. Lade Clerk SDK und initialisiere
-            await this._loadAndInitClerk(publishableKey);
-
-            if (!clerkInstance) {
-                TB.logger.error('[User] Failed to initialize Clerk instance.');
-                return false;
-            }
-
-            TB.logger.info('[User] Clerk loaded successfully.');
-
-            // Listen for Clerk events FIRST (before checking current state)
-            // Clerk's addListener receives the full Clerk state object
-            clerkInstance.addListener((clerkState) => {
-                TB.logger.debug('[User] Clerk state changed:', {
-                    hasUser: !!clerkState?.user,
-                    hasSession: !!clerkState?.session,
-                    userId: clerkState?.user?.id,
-                    clerkFullyInitialized
-                });
-
-                if (clerkState?.user && clerkState?.session) {
-                    // User is signed in with active session
-                    clerkFullyInitialized = true; // Mark as initialized once we have a valid session
-                    this._onClerkSignIn(clerkState.user);
-                } else if (!clerkState?.session) {
-                    // No active session - user signed out
-                    // IMPORTANT: Only trigger logout if Clerk is fully initialized
-                    // This prevents false logouts during page load when session hasn't loaded yet
-                    if (!clerkFullyInitialized) {
-                        TB.logger.debug('[User] Ignoring sign-out event during initialization');
-                        return;
-                    }
-                    const currentState = TB.state.get('user');
-                    if (currentState?.isAuthenticated) {
-                        this._onClerkSignOut();
-                    }
-                }
-            });
-
-            // Check if already signed in (after page reload)
-            if (clerkInstance.user && clerkInstance.session) {
-                TB.logger.info('[User] User already signed in after reload:', clerkInstance.user.id);
-                clerkFullyInitialized = true;
-                await this._onClerkSignIn(clerkInstance.user);
-            } else if (clerkInstance.user && !clerkInstance.session) {
-                // User exists but no session - stale state
-                TB.logger.warn('[User] Clerk has user but no session, clearing state');
-                this._updateUserState({}, true);
-            }
-
-            // Mark as initialized after initial check
-            // Give Clerk a moment to restore session from storage
-            setTimeout(() => {
-                if (!clerkFullyInitialized) {
-                    TB.logger.debug('[User] Clerk initialization timeout - marking as initialized');
-                    clerkFullyInitialized = true;
-                }
-            }, 2000);
-
-            TB.logger.info('[User] Clerk initialized successfully.');
-            return true;
-
-        } catch (e) {
-            TB.logger.error('[User] Clerk initialization failed:', e);
-            return false;
-        }
-    },
-
-    async _loadAndInitClerk(publishableKey) {
-        /**
-         * Lade Clerk SDK und initialisiere es mit dem publishableKey
-         *
-         * WICHTIG: Das Clerk browser SDK initialisiert sich selbst wenn es
-         * ein data-clerk-publishable-key Attribut am Script-Tag findet.
-         */
-
-        // Prüfe ob Clerk bereits verfügbar ist
-        if (window.Clerk) {
-            TB.logger.debug('[User] Clerk already in window.');
-            return this._initExistingClerk(publishableKey);
-        }
-
-        return new Promise((resolve, reject) => {
-            TB.logger.debug('[User] Loading Clerk SDK...');
-
-            const script = document.createElement('script');
-
-            // WICHTIG: Setze data-clerk-publishable-key BEVOR das Script lädt
-            // Clerk sucht danach und initialisiert sich automatisch
-            script.setAttribute('data-clerk-publishable-key', publishableKey);
-            script.src = 'https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js';
-            script.async = true;
-
-            script.onload = async () => {
-                TB.logger.debug('[User] Clerk script loaded, waiting for initialization...');
-
-                // Warte bis Clerk verfügbar ist
-                let attempts = 0;
-                const maxAttempts = 50; // 5 Sekunden
-
-                const waitForClerk = async () => {
-                    attempts++;
-
-                    if (window.Clerk) {
-                        try {
-                            await this._initExistingClerk(publishableKey);
-                            resolve(true);
-                        } catch (e) {
-                            reject(e);
-                        }
-                        return;
-                    }
-
-                    if (attempts >= maxAttempts) {
-                        reject(new Error('Clerk not available after timeout'));
-                        return;
-                    }
-
-                    setTimeout(waitForClerk, 100);
-                };
-
-                await waitForClerk();
-            };
-
-            script.onerror = (e) => {
-                TB.logger.error('[User] Failed to load Clerk SDK:', e);
-                reject(new Error('Failed to load Clerk SDK'));
-            };
-
-            document.head.appendChild(script);
-        });
-    },
-
-    async _initExistingClerk(publishableKey) {
-        /**
-         * Initialisiere ein bestehendes Clerk-Objekt
-         */
-        TB.logger.debug('[User] Initializing existing Clerk...');
-
-        const ClerkObj = window.Clerk;
-
-        // Clerk kann als Konstruktor ODER als bereits initialisierte Instanz vorliegen
-        if (typeof ClerkObj === 'function' && ClerkObj.prototype && ClerkObj.prototype.constructor === ClerkObj) {
-            // Es ist ein Konstruktor (Klasse)
-            TB.logger.debug('[User] Clerk is a constructor, creating instance...');
-            try {
-                clerkInstance = new ClerkObj(publishableKey);
-                await clerkInstance.load();
-            } catch (e) {
-                TB.logger.error('[User] Failed to create Clerk instance:', e);
-                throw e;
-            }
-        } else if (ClerkObj && typeof ClerkObj.load === 'function') {
-            // Es ist bereits eine Instanz mit load-Methode
-            TB.logger.debug('[User] Clerk is already an instance.');
-            clerkInstance = ClerkObj;
-
-            if (!clerkInstance.loaded) {
-                try {
-                    await clerkInstance.load();
-                } catch (e) {
-                    // Clerk könnte bereits geladen sein
-                    TB.logger.debug('[User] Clerk.load() threw, might already be loaded:', e.message);
-                }
-            }
-        } else if (ClerkObj && ClerkObj.user !== undefined) {
-            // Clerk ist bereits vollständig initialisiert
-            TB.logger.debug('[User] Clerk is fully initialized.');
-            clerkInstance = ClerkObj;
-        } else {
-            TB.logger.error('[User] Unknown Clerk state:', typeof ClerkObj);
-            throw new Error('Unknown Clerk state');
-        }
-
-        TB.logger.debug('[User] Clerk instance ready.');
-    },
-
-    _updateUserState(updates, clearExisting = false) {
-        const currentState = clearExisting ? defaultUserState : (TB.state.get('user') || defaultUserState);
-        const newState = { ...currentState, ...updates };
-        TB.state.set('user', newState);
-        TB.events.emit('user:stateChanged', newState);
-        return newState;
-    },
-
-    // =================== Clerk Event Handlers ===================
-
-    // Track if we're currently processing a sign-in to prevent duplicate calls
-    _signInInProgress: false,
-    _lastSignInUserId: null,
-
-    async _onClerkSignIn(clerkUser) {
-        // Prevent duplicate sign-in processing
-        if (this._signInInProgress) {
-            TB.logger.debug('[User] Sign-in already in progress, skipping');
-            return;
-        }
-
-        // Check if we already processed this user
-        const currentState = TB.state.get('user');
-        if (currentState?.isAuthenticated && currentState?.userId === clerkUser.id) {
-            TB.logger.debug('[User] User already authenticated with same ID, skipping');
-            return;
-        }
-
-        this._signInInProgress = true;
-        this._lastSignInUserId = clerkUser.id;
-
-        TB.logger.info('[User] Clerk sign-in detected:', clerkUser.id);
-
-        const email = clerkUser.emailAddresses?.[0]?.emailAddress || '';
-        const username = clerkUser.username || email.split('@')[0];
-
-        // 1. Get Token
-        let token = null;
-        if (clerkInstance?.session) {
-            try {
-                token = await clerkInstance.session.getToken();
-            } catch (e) {
-                TB.logger.error('[User] Failed to get token:', e);
-                this._signInInProgress = false;
-                await this._handleAuthFailure('Failed to get authentication token');
-                return;
-            }
-        }
-
-        if (!token) {
-            this._signInInProgress = false;
-            await this._handleAuthFailure('No authentication token available');
-            return;
-        }
+        TB.logger.info('[User] Auth callback detected, processing tokens...');
 
         try {
-            // 2. Notify Backend of Sign In (Audit/Log)
-            await fetch('/api/CloudM.AuthClerk/on_sign_in', {
+            // Clean up URL (remove token params)
+            const cleanUrl = new URL(window.location.href);
+            cleanUrl.searchParams.delete('token');
+            cleanUrl.searchParams.delete('refresh_token');
+            window.history.replaceState({}, '', cleanUrl.toString());
+
+            // Validate the token
+            const response = await fetch('/api/CloudM.Auth/validate_session', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
-                body: JSON.stringify({
-                    user_data: {
-                        id: clerkUser.id,
-                        username: username,
-                        email_addresses: clerkUser.emailAddresses,
-                        session_token: token
-                    }
-                })
+                body: JSON.stringify({ token: token })
             });
 
-            // 3. Validate Session with Backend
-            const isValid = await this.validateBackendSession();
-
-            if (!isValid) {
-                throw new Error('Server rejected session during sign-in flow');
+            if (!response.ok) {
+                throw new Error(`Validation failed: ${response.status}`);
             }
 
-            // 4. Fetch User Data
-            const userDataResponse = await fetch('/api/CloudM.AuthClerk/get_user_data', {
+            const result = await response.json();
+
+            if (result.error !== "none" || !result.result?.data?.authenticated) {
+                throw new Error('Token validation rejected');
+            }
+
+            const userData = result.result.data;
+
+            // Fetch full user data
+            const userDataResponse = await fetch('/api/CloudM.Auth/get_user_data', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
-                body: JSON.stringify({ clerk_user_id: clerkUser.id })
+                body: JSON.stringify({ user_id: userData.user_id })
             });
 
             let settings = {};
@@ -461,235 +231,273 @@ const user = {
                 }
             }
 
-            // 5. Update State
+            // Update state
             this._updateUserState({
                 isAuthenticated: true,
-                username: username,
-                email: email,
-                userId: clerkUser.id,
+                username: userData.username || userData.user_name || '',
+                email: userData.email || '',
+                userId: userData.user_id,
                 userLevel: userLevel,
                 token: token,
+                refreshToken: refreshToken || '',
                 settings: settings,
                 modData: modData,
                 userData: {
-                    firstName: clerkUser.firstName,
-                    lastName: clerkUser.lastName,
-                    imageUrl: clerkUser.imageUrl
+                    provider: userData.provider || '',
+                    imageUrl: userData.image_url || ''
                 }
             });
 
-            this._signInInProgress = false;
-            TB.logger.info('[User] ✓ Login successful, user authenticated');
-            TB.events.emit('user:signedIn', { username, userId: clerkUser.id });
+            TB.logger.info('[User] Auth callback processed successfully');
+            TB.events.emit('user:signedIn', {
+                username: userData.username,
+                userId: userData.user_id
+            });
 
-            // Start token refresh timer to keep token in sync
             this._startTokenRefreshTimer();
-
             this._handlePostAuthRedirect();
 
-        } catch (error) {
-            this._signInInProgress = false;
-            TB.logger.error('[User] ✗ Authentication failed:', error);
-            await this._handleAuthFailure(error.message);
+        } catch (e) {
+            TB.logger.error('[User] Auth callback failed:', e);
+            await this._handleAuthFailure(e.message);
         }
     },
 
-    async _handleAuthFailure(message) {
-        TB.logger.error('[User] Handling auth failure:', message);
-
-        // Clerk Session löschen
-        if (clerkInstance?.signOut) {
-            try {
-                await clerkInstance.signOut();
-                TB.logger.debug('[User] Clerk session cleared');
-            } catch (e) {
-                TB.logger.warn('[User] Failed to sign out from Clerk:', e);
-            }
-        }
-
-        // Lokalen State zurücksetzen
-        this._updateUserState({}, true); // true = clear existing
-
-        // User informieren
-        if (window.TB?.ui?.Toast?.showError) {
-            window.TB.ui.Toast.showError(`Login failed: ${message}`);
-        }
-
-        TB.events.emit('user:authError', { message });
-
-        // Zur Login-Seite wenn nötig
-        const currentPath = window.location.pathname;
-        if (!currentPath.includes('/login.html') && !currentPath.includes('/signup.html')) {
-            setTimeout(() => {
-                window.location.href = '/web/assets/login.html';
-            }, 2000);
-        }
+    _updateUserState(updates, clearExisting = false) {
+        const currentState = clearExisting ? defaultUserState : (TB.state.get('user') || defaultUserState);
+        const newState = { ...currentState, ...updates };
+        TB.state.set('user', newState);
+        TB.events.emit('user:stateChanged', newState);
+        return newState;
     },
 
-    _handlePostAuthRedirect() {
-    const currentPath = window.location.pathname;
-    const isAuthPage = currentPath.includes('/login.html') || currentPath.includes('/signup.html');
+    // =================== Authentication Methods ===================
 
-    // Prüfe ob Username gesetzt ist
-    const clerkUser = clerkInstance?.user;
-    if (clerkUser && !clerkUser.username) {
-        // User muss noch Username setzen - NICHT weiterleiten
-        TB.logger.info('[User] User needs to complete profile (set username)');
+    /**
+     * Redirect to sign-in page.
+     * Custom Auth uses its own login page.
+     */
+    async signIn(options = {}) {
+        const currentUrl = window.location.href;
+        const loginUrl = options.loginUrl || '/web/scripts/login.html';
+        const next = options.next || currentUrl;
 
-        // Wenn auf Login-Seite, zur Signup-Seite weiterleiten
-        if (currentPath.includes('/login.html')) {
-            const urlParams = new URLSearchParams(window.location.search);
-            const nextUrl = urlParams.get('next') || '/web/mainContent.html';
-            window.location.href = `/web/assets/signup.html?next=${encodeURIComponent(nextUrl)}`;
-        }
-        return;
-    }
+        window.location.href = `${loginUrl}?next=${encodeURIComponent(next)}`;
+        return { success: true };
+    },
 
-    if (isAuthPage) {
-        TB.logger.info('[User] On auth page after sign-in, redirecting...');
+    /**
+     * Redirect to sign-up page.
+     */
+    async signUp(options = {}) {
+        const currentUrl = window.location.href;
+        const signUpUrl = options.signUpUrl || '/web/scripts/login.html?mode=signup';
+        const next = options.next || currentUrl;
 
-        // Parse redirect URL from various sources
-        let redirectUrl = '/web/mainContent.html'; // Default
+        window.location.href = `${signUpUrl}&next=${encodeURIComponent(next)}`;
+        return { success: true };
+    },
 
-        // 1. Check URL params
-        const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.has('next')) {
-            redirectUrl = urlParams.get('next');
-        }
+    /**
+     * Sign out the user.
+     */
+    async signOut() {
+        TB.logger.info('[User] Signing out...');
 
-        // 2. Check hash params (Clerk's #/continue?redirect_url=...)
-        const hash = window.location.hash;
-        if (hash.includes('redirect_url=')) {
-            const match = hash.match(/redirect_url=([^&]+)/);
-            if (match) {
-                redirectUrl = decodeURIComponent(match[1]);
-            }
-        } else if (hash.includes('after_sign_in_url=')) {
-            const match = hash.match(/after_sign_in_url=([^&]+)/);
-            if (match) {
-                redirectUrl = decodeURIComponent(match[1]);
-            }
-        } else if (hash.includes('after_sign_up_url=')) {
-            const match = hash.match(/after_sign_up_url=([^&]+)/);
-            if (match) {
-                redirectUrl = decodeURIComponent(match[1]);
-            }
-        }
-
-        TB.logger.info('[User] Redirecting to:', redirectUrl);
-
-        // Short delay for UI feedback, then redirect
-        setTimeout(() => {
-            if (window.TB?.router?.navigateTo) {
-                window.TB.router.navigateTo(redirectUrl);
-            } else {
-                window.location.href = redirectUrl;
-            }
-        }, 500);
-    }
-},
-
-    async _onClerkSignOut() {
-        TB.logger.info('[User] Clerk sign-out detected.');
-
-        // Stop token refresh timer
         this._stopTokenRefreshTimer();
 
         const userId = this.getUserId();
-        if (userId) {
+        const token = this.getToken();
+
+        // Notify backend
+        if (userId && token) {
             try {
-                await fetch('/api/CloudM.AuthClerk/on_sign_out', {
+                await fetch('/api/CloudM.Auth/logout', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ clerk_user_id: userId })
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ token: token })
                 });
             } catch (e) {
                 TB.logger.warn('[User] Failed to notify backend of sign-out:', e);
             }
         }
 
-        this._updateUserState({}, true);  // Reset to default
+        // Clear local state
+        this._updateUserState({}, true);
         TB.events.emit('user:signedOut');
-    },
 
-    // =================== Authentication Methods ===================
-
-    async signIn() {
-        if (!clerkInstance) {
-            await this._initClerk();
-        }
-
-        if (!clerkInstance) {
-            TB.logger.error('[User] Clerk not initialized');
-            return { success: false, message: 'Authentication service not available' };
-        }
-
-        try {
-            await clerkInstance.openSignIn({
-                fallbackRedirectUrl: window.location.href
-            });
-            return { success: true };
-        } catch (e) {
-            TB.logger.error('[User] Sign-in error:', e);
-            return { success: false, message: e.message };
-        }
-    },
-
-    async signUp() {
-        if (!clerkInstance) {
-            await this._initClerk();
-        }
-
-        if (!clerkInstance) {
-            TB.logger.error('[User] Clerk not initialized');
-            return { success: false, message: 'Authentication service not available' };
-        }
-
-        try {
-            await clerkInstance.openSignUp({
-                fallbackRedirectUrl: window.location.href
-            });
-            return { success: true };
-        } catch (e) {
-            TB.logger.error('[User] Sign-up error:', e);
-            return { success: false, message: e.message };
-        }
-    },
-
-    async signOut() {
-        if (!clerkInstance) {
-            this._updateUserState({}, true);
-            return { success: true };
-        }
-
-        try {
-            await clerkInstance.signOut();
-            return { success: true, message: 'Signed out successfully' };
-        } catch (e) {
-            TB.logger.error('[User] Sign-out error:', e);
-            this._updateUserState({}, true);
-            return { success: false, message: e.message };
-        }
+        TB.logger.info('[User] Signed out successfully');
+        return { success: true, message: 'Signed out successfully' };
     },
 
     async logout(notifyServer = true) {
         return this.signOut();
     },
 
+    // =================== Auth Failure & Redirect ===================
+
+    async _handleAuthFailure(message) {
+        TB.logger.error('[User] Handling auth failure:', message);
+
+        // Reset local state
+        this._updateUserState({}, true);
+        this._stopTokenRefreshTimer();
+
+        // Notify user
+        if (window.TB?.ui?.Toast?.showError) {
+            window.TB.ui.Toast.showError(`Login failed: ${message}`);
+        }
+
+        TB.events.emit('user:authError', { message });
+
+        // Redirect to login if needed
+        const currentPath = window.location.pathname;
+        if (!currentPath.includes('/login.html') && !currentPath.includes('/signup.html')) {
+            setTimeout(() => {
+                window.location.href = '/web/scripts/login.html';
+            }, 2000);
+        }
+    },
+
+    _handlePostAuthRedirect() {
+        const currentPath = window.location.pathname;
+        const isAuthPage = currentPath.includes('/login.html') || currentPath.includes('/signup.html');
+
+        if (isAuthPage) {
+            TB.logger.info('[User] On auth page after sign-in, redirecting...');
+
+            let redirectUrl = '/web/mainContent.html';
+
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.has('next')) {
+                redirectUrl = urlParams.get('next');
+            }
+
+            TB.logger.info('[User] Redirecting to:', redirectUrl);
+
+            setTimeout(() => {
+                if (window.TB?.router?.navigateTo) {
+                    window.TB.router.navigateTo(redirectUrl);
+                } else {
+                    window.location.href = redirectUrl;
+                }
+            }, 500);
+        }
+    },
+
+    // =================== Token Management ===================
+
+    /**
+     * Get current session token. Returns stored JWT token.
+     */
+    async getSessionToken() {
+        return this.getToken();
+    },
+
+    /**
+     * Refresh the JWT access token using the refresh token.
+     */
+    async _refreshToken() {
+        TB.logger.debug('[User] Refreshing session token...');
+
+        const refreshToken = TB.state.get('user.refreshToken');
+        const currentToken = this.getToken();
+
+        if (!refreshToken && !currentToken) {
+            TB.logger.warn('[User] No tokens available for refresh');
+            throw new Error('No active session');
+        }
+
+        try {
+            const response = await fetch('/api/CloudM.Auth/refresh_token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    refresh_token: refreshToken,
+                    token: currentToken
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`Refresh failed: ${response.status}`);
+            }
+
+            const result = await response.json();
+
+            if (result.error !== "none" || !result.result?.data?.access_token) {
+                throw new Error('Token refresh rejected');
+            }
+
+            const data = result.result.data;
+            this._updateUserState({
+                token: data.access_token,
+                refreshToken: data.refresh_token || refreshToken
+            });
+
+            TB.logger.info('[User] Session token refreshed');
+
+        } catch (e) {
+            TB.logger.error('[User] Token refresh failed:', e);
+            await this.signOut();
+            throw e;
+        }
+    },
+
+    /**
+     * Start periodic token refresh timer.
+     */
+    _startTokenRefreshTimer() {
+        this._stopTokenRefreshTimer();
+
+        this._tokenRefreshTimerId = setInterval(async () => {
+            try {
+                if (this._isUserActive() && this.getToken()) {
+                    // Validate first, refresh if needed
+                    const isValid = await this.validateBackendSession();
+                    if (!isValid) {
+                        await this._refreshToken();
+                    }
+                }
+            } catch (e) {
+                TB.logger.warn('[User] Token auto-refresh failed:', e);
+            }
+        }, TOKEN_REFRESH_INTERVAL);
+
+        TB.logger.debug('[User] Token refresh timer started');
+    },
+
+    /**
+     * Stop the token refresh timer.
+     */
+    _stopTokenRefreshTimer() {
+        if (this._tokenRefreshTimerId) {
+            clearInterval(this._tokenRefreshTimerId);
+            this._tokenRefreshTimerId = null;
+            TB.logger.debug('[User] Token refresh timer stopped');
+        }
+    },
+
     // =================== User Data Management ===================
 
     async updateSettings(settings) {
         const userId = this.getUserId();
-        if (!userId) {
+        const token = this.getToken();
+        if (!userId || !token) {
             return { success: false, message: 'Not authenticated' };
         }
 
         try {
-            const response = await fetch('/api/CloudM.AuthClerk/update_user_data', {
+            const response = await fetch('/api/CloudM.Auth/update_user_data', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 body: JSON.stringify({
-                    clerk_user_id: userId,
+                    user_id: userId,
                     settings: settings
                 })
             });
@@ -712,7 +520,8 @@ const user = {
 
     async updateModData(modName, data) {
         const userId = this.getUserId();
-        if (!userId) {
+        const token = this.getToken();
+        if (!userId || !token) {
             return { success: false, message: 'Not authenticated' };
         }
 
@@ -723,11 +532,14 @@ const user = {
                 [modName]: { ...(currentModData[modName] || {}), ...data }
             };
 
-            const response = await fetch('/api/CloudM.AuthClerk/update_user_data', {
+            const response = await fetch('/api/CloudM.Auth/update_user_data', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 body: JSON.stringify({
-                    clerk_user_id: userId,
+                    user_id: userId,
                     mod_data: updatedModData
                 })
             });
@@ -747,15 +559,19 @@ const user = {
 
     async fetchUserData() {
         const userId = this.getUserId();
-        if (!userId) {
+        const token = this.getToken();
+        if (!userId || !token) {
             return { success: false, message: 'Not authenticated' };
         }
 
         try {
-            const response = await fetch('/api/CloudM.AuthClerk/get_user_data', {
+            const response = await fetch('/api/CloudM.Auth/get_user_data', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ clerk_user_id: userId })
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ user_id: userId })
             });
             const result = await response.json();
 
@@ -780,26 +596,21 @@ const user = {
 
     /**
      * Checks if the user is authenticated.
-     *
-     * @param {boolean} [checkBackend=false] - If true, performs an async deep check against the backend.
-     * @returns {boolean|Promise<boolean>} Returns boolean state if synchronous, or Promise<boolean> if checking backend.
+     * @param {boolean} [checkBackend=false] - If true, performs async backend check.
+     * @returns {boolean|Promise<boolean>}
      */
     isAuthenticated(checkBackend = false) {
-        // 1. Fast local check
         const localState = TB.state.get('user.isAuthenticated') || false;
 
-        // If simple check or no local auth, return immediate result
         if (!checkBackend || !localState) {
             return localState;
         }
 
-        // 2. Deep backend check (Consolidated)
         return (async () => {
             const isValid = await this.validateBackendSession();
 
             if (!isValid && localState) {
-                // State mismatch: Local says yes, Backend says no. Force logout.
-                TB.logger.warn('[User] Security Alert: Session invalid on backend. Logging out.');
+                TB.logger.warn('[User] Session invalid on backend. Logging out.');
                 await this._handleAuthFailure('Session expired or revoked by server');
                 return false;
             }
@@ -828,6 +639,10 @@ const user = {
         return TB.state.get('user.token') || null;
     },
 
+    getRefreshToken() {
+        return TB.state.get('user.refreshToken') || null;
+    },
+
     getSettings() {
         return TB.state.get('user.settings') || {};
     },
@@ -846,372 +661,69 @@ const user = {
         return TB.state.get(`user.userData.${key}`);
     },
 
-    // =================== Clerk Direct Access ===================
-
-    getClerkInstance() {
-        return clerkInstance;
+    /**
+     * Check if auth system is initialized and ready.
+     */
+    isAuthReady() {
+        return authInitialized;
     },
 
-    getClerkUser() {
-        return clerkInstance?.user || null;
-    },
-
-    getClerkConfig() {
-        return clerkConfig;
-    },
-
-    async getSessionToken() {
-        if (clerkInstance?.session) {
-            try {
-                const freshToken = await clerkInstance.session.getToken();
-                if (freshToken) {
-                    // Update stored token to keep it in sync
-                    const storedToken = this.getToken();
-                    if (freshToken !== storedToken) {
-                        this._updateUserState({ token: freshToken });
-                        TB.logger.debug('[User] Token updated from Clerk session');
-                    }
-                    return freshToken;
-                }
-            } catch (e) {
-                TB.logger.warn('[User] Failed to get session token:', e);
-            }
-        }
-        return this.getToken();
-    },
+    // =================== UI Mount Points (Custom Auth) ===================
 
     /**
-     * Refreshes the session token from Clerk and updates the state.
-     * Called by API when receiving 401 responses.
-     * @returns {Promise<void>}
-     * @throws {Error} If token refresh fails
+     * Mount sign-in form or redirect to login page.
+     * For Custom Auth, we redirect to the login page since there's no embeddable SDK.
      */
-    async _refreshToken() {
-        TB.logger.debug('[User] Refreshing session token...');
-
-        if (!clerkInstance?.session) {
-            TB.logger.warn('[User] No Clerk session available for token refresh');
-            throw new Error('No active session');
-        }
-
-        try {
-            // Force refresh the token from Clerk
-            const newToken = await clerkInstance.session.getToken({ skipCache: true });
-
-            if (!newToken) {
-                throw new Error('Failed to get new token');
-            }
-
-            // Update the stored token
-            this._updateUserState({ token: newToken });
-            TB.logger.info('[User] ✓ Session token refreshed');
-
-        } catch (e) {
-            TB.logger.error('[User] Token refresh failed:', e);
-            // If refresh fails, user needs to re-authenticate
-            await this.signOut();
-            throw e;
-        }
-    },
-
-    // Token refresh timer ID
-    _tokenRefreshTimerId: null,
-
-    /**
-     * Start a timer to periodically refresh the token.
-     * Clerk tokens expire after ~60 seconds, so we refresh every 50 seconds.
-     */
-    _startTokenRefreshTimer() {
-        // Clear any existing timer
-        this._stopTokenRefreshTimer();
-
-        // Refresh token every 50 seconds (Clerk tokens expire after ~60s)
-        const REFRESH_INTERVAL = 50 * 1000;
-
-        this._tokenRefreshTimerId = setInterval(async () => {
-            try {
-                if (clerkInstance?.session) {
-                    const freshToken = await clerkInstance.session.getToken();
-                    if (freshToken) {
-                        const storedToken = this.getToken();
-                        if (freshToken !== storedToken) {
-                            this._updateUserState({ token: freshToken });
-                            TB.logger.debug('[User] Token auto-refreshed');
-                        }
-                    }
-                }
-            } catch (e) {
-                TB.logger.warn('[User] Token auto-refresh failed:', e);
-            }
-        }, REFRESH_INTERVAL);
-
-        TB.logger.debug('[User] Token refresh timer started');
-    },
-
-    /**
-     * Stop the token refresh timer.
-     */
-    _stopTokenRefreshTimer() {
-        if (this._tokenRefreshTimerId) {
-            clearInterval(this._tokenRefreshTimerId);
-            this._tokenRefreshTimerId = null;
-            TB.logger.debug('[User] Token refresh timer stopped');
-        }
-    },
-
-    isClerkReady() {
-        return clerkInstance !== null;
-    },
-
-    // =================== Clerk Theming ===================
-
-    /**
-     * Generiert Clerk appearance config basierend auf aktuellem Theme
-     * @returns {Object} Clerk appearance configuration
-     */
-    _getClerkAppearance() {
-        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-
-        return {
-            baseTheme: isDark ? 'dark' : undefined,
-            variables: {
-                // Farben aus Design System
-                colorPrimary: isDark ? '#818cf8' : '#6366f1',
-                colorBackground: isDark ? '#1f2937' : '#ffffff',
-                colorInputBackground: isDark ? '#374151' : '#f9fafb',
-                colorInputText: isDark ? '#f3f4f6' : '#1f2937',
-                colorText: isDark ? '#f3f4f6' : '#1f2937',
-                colorTextSecondary: isDark ? '#9ca3af' : '#6b7280',
-                colorDanger: '#ef4444',
-                colorSuccess: '#22c55e',
-                colorWarning: '#f59e0b',
-
-                // Border & Radius
-                borderRadius: '8px',
-
-                // Fonts
-                fontFamily: 'Roboto, system-ui, sans-serif',
-                fontSize: '15px'
-            },
-            elements: {
-                // Root Container
-                rootBox: {
-                    width: '100%'
-                },
-
-                // Card (transparent für Glass-Effekt)
-                card: {
-                    background: 'transparent',
-                    boxShadow: 'none',
-                    border: 'none'
-                },
-
-                // Form Container
-                formContainer: {
-                    gap: '16px'
-                },
-
-                // Input Fields
-                formFieldInput: {
-                    backgroundColor: isDark ? '#374151' : '#ffffff',
-                    borderColor: isDark ? '#4b5563' : '#d1d5db',
-                    color: isDark ? '#f3f4f6' : '#1f2937',
-                    transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
-
-                    '&:focus': {
-                        borderColor: isDark ? '#818cf8' : '#6366f1',
-                        boxShadow: isDark
-                            ? '0 0 0 3px rgba(129, 140, 248, 0.15)'
-                            : '0 0 0 3px rgba(99, 102, 241, 0.15)'
-                    }
-                },
-
-                // Labels
-                formFieldLabel: {
-                    color: isDark ? '#d1d5db' : '#374151',
-                    fontSize: '14px',
-                    fontWeight: '500'
-                },
-
-                // Primary Button (mit Gradient)
-                formButtonPrimary: {
-                    background: isDark
-                        ? 'linear-gradient(to bottom, #818cf8, #6366f1)'
-                        : 'linear-gradient(to bottom, #818cf8, #4f46e5)',
-                    color: '#ffffff',
-                    border: 'none',
-                    boxShadow: isDark
-                        ? '0 2px 8px rgba(129, 140, 248, 0.3)'
-                        : '0 2px 8px rgba(99, 102, 241, 0.3)',
-                    transition: 'transform 0.15s ease, box-shadow 0.15s ease',
-
-                    '&:hover': {
-                        background: isDark
-                            ? 'linear-gradient(to bottom, #a5b4fc, #818cf8)'
-                            : 'linear-gradient(to bottom, #6366f1, #4338ca)',
-                        transform: 'translateY(-1px)',
-                        boxShadow: isDark
-                            ? '0 4px 12px rgba(129, 140, 248, 0.4)'
-                            : '0 4px 12px rgba(99, 102, 241, 0.4)'
-                    }
-                },
-
-                // Secondary/Social Buttons
-                socialButtonsBlockButton: {
-                    backgroundColor: isDark ? '#374151' : '#ffffff',
-                    borderColor: isDark ? '#4b5563' : '#d1d5db',
-                    color: isDark ? '#f3f4f6' : '#1f2937',
-
-                    '&:hover': {
-                        backgroundColor: isDark ? '#4b5563' : '#f3f4f6'
-                    }
-                },
-
-                // Divider
-                dividerLine: {
-                    backgroundColor: isDark ? '#4b5563' : '#e5e7eb'
-                },
-                dividerText: {
-                    color: isDark ? '#9ca3af' : '#6b7280'
-                },
-
-                // Footer Links
-                footerActionLink: {
-                    color: isDark ? '#818cf8' : '#6366f1',
-
-                    '&:hover': {
-                        color: isDark ? '#a5b4fc' : '#4f46e5'
-                    }
-                },
-
-                // Error States
-                formFieldErrorText: {
-                    color: '#ef4444'
-                },
-
-                // Header (optional ausblenden)
-                headerTitle: {
-                    display: 'none'
-                },
-                headerSubtitle: {
-                    display: 'none'
-                }
-            }
-        };
-    },
-
-    // =================== UI Mount Points ===================
-
     async mountSignIn(elementOrSelector, options = {}) {
-    if (!clerkInstance) {
-        const success = await this._initClerk();
-        if (!success) {
-            const element = typeof elementOrSelector === 'string'
-                ? document.querySelector(elementOrSelector)
-                : elementOrSelector;
+        const element = typeof elementOrSelector === 'string'
+            ? document.querySelector(elementOrSelector)
+            : elementOrSelector;
 
-            if (element) {
-                element.innerHTML = `
-                    <div style="text-align: center; color: var(--color-error, #ef4444); padding: 20px;">
-                        <p>❌ Authentication service not available</p>
-                        <button onclick="location.reload()" class="btn-primary" style="margin-top: 16px;">
-                            Retry
-                        </button>
-                    </div>
-                `;
-            }
+        if (!element) {
+            TB.logger.error('[User] Element not found for sign-in mount');
             return;
         }
-    }
 
-    const element = typeof elementOrSelector === 'string'
-        ? document.querySelector(elementOrSelector)
-        : elementOrSelector;
+        // Custom Auth: render a simple redirect/iframe or load login form inline
+        const urlParams = new URLSearchParams(window.location.search);
+        const redirectUrl = urlParams.get('next') || options.afterSignInUrl || '/web/mainContent.html';
+        const loginPageUrl = options.loginUrl || '/web/scripts/login.html';
 
-    if (!element) {
-        TB.logger.error('[User] Element not found for sign-in mount');
-        return;
-    }
+        // If we're already on the login page, the login.html handles everything
+        if (window.location.pathname.includes('/login.html')) {
+            TB.logger.debug('[User] Already on login page, login.html handles auth UI');
+            return;
+        }
 
-    element.innerHTML = '';
+        // Otherwise redirect to login page
+        window.location.href = `${loginPageUrl}?next=${encodeURIComponent(redirectUrl)}`;
+    },
 
-    // Get redirect URL
-    const urlParams = new URLSearchParams(window.location.search);
-    const redirectUrl = urlParams.get('next') || options.afterSignInUrl || '/web/mainContent.html';
-
-    // Mount mit dynamischem Theme
-    clerkInstance.mountSignIn(element, {
-        fallbackRedirectUrl: redirectUrl,
-        signUpUrl: options.signUpUrl || clerkConfig?.sign_up_url || '/web/assets/signup.html',
-        appearance: this._getClerkAppearance(),
-        ...options
-    });
-
-    // Store element reference für Theme-Updates
-    this._signInElement = element;
-    this._signInOptions = options;
-},
-
+    /**
+     * Mount sign-up form or redirect to signup page.
+     */
     async mountSignUp(elementOrSelector, options = {}) {
-    if (!clerkInstance) {
-        const success = await this._initClerk();
-        if (!success) {
-            const element = typeof elementOrSelector === 'string'
-                ? document.querySelector(elementOrSelector)
-                : elementOrSelector;
+        const element = typeof elementOrSelector === 'string'
+            ? document.querySelector(elementOrSelector)
+            : elementOrSelector;
 
-            if (element) {
-                element.innerHTML = `
-                    <div style="text-align: center; color: var(--color-error, #ef4444); padding: 20px;">
-                        <p>❌ Authentication service not available</p>
-                        <button onclick="location.reload()" class="btn-primary" style="margin-top: 16px;">
-                            Retry
-                        </button>
-                    </div>
-                `;
-            }
+        if (!element) {
+            TB.logger.error('[User] Element not found for sign-up mount');
             return;
         }
-    }
 
-    const element = typeof elementOrSelector === 'string'
-        ? document.querySelector(elementOrSelector)
-        : elementOrSelector;
+        const urlParams = new URLSearchParams(window.location.search);
+        const redirectUrl = options.afterSignUpUrl || urlParams.get('next') || '/web/mainContent.html';
+        const loginPageUrl = options.loginUrl || '/web/scripts/login.html';
 
-    if (!element) {
-        TB.logger.error('[User] Element not found for sign-up mount');
-        return;
-    }
+        window.location.href = `${loginPageUrl}?mode=signup&next=${encodeURIComponent(redirectUrl)}`;
+    },
 
-    element.innerHTML = '';
-
-    // Get redirect URL
-    const urlParams = new URLSearchParams(window.location.search);
-    const redirectUrl = options.fallbackRedirectUrl || options.afterSignUpUrl || urlParams.get('next') || '/web/mainContent.html';
-
-    // Mount mit dynamischem Theme
-    clerkInstance.mountSignUp(element, {
-        fallbackRedirectUrl: redirectUrl,
-        signInUrl: options.signInUrl || clerkConfig?.sign_in_url || '/web/assets/login.html',
-        appearance: this._getClerkAppearance(),
-        ...options
-    });
-
-    // Store element reference für Theme-Updates
-    this._signUpElement = element;
-    this._signUpOptions = options;
-},
-
+    /**
+     * Mount user button (profile/logout dropdown).
+     * For Custom Auth, this creates a simple user menu.
+     */
     async mountUserButton(elementOrSelector, options = {}) {
-        if (!clerkInstance) {
-            await this._initClerk();
-        }
-
-        if (!clerkInstance) {
-            TB.logger.error('[User] Clerk not initialized');
-            return;
-        }
-
         const element = typeof elementOrSelector === 'string'
             ? document.querySelector(elementOrSelector)
             : elementOrSelector;
@@ -1221,63 +733,82 @@ const user = {
             return;
         }
 
-        clerkInstance.mountUserButton(element, {
-            afterSignOutUrl: options.afterSignOutUrl || clerkConfig?.sign_in_url || '/web/assets/login.html',
-            ...options
+        const username = this.getUsername() || 'User';
+        const imageUrl = this.getUserData('imageUrl');
+
+        element.innerHTML = `
+            <div class="tb-user-button" style="position: relative; display: inline-block;">
+                <button class="tb-user-avatar" style="
+                    display: flex; align-items: center; gap: 8px;
+                    background: none; border: 1px solid var(--color-border, #d1d5db);
+                    border-radius: 9999px; padding: 4px 12px 4px 4px; cursor: pointer;
+                    color: var(--color-text, inherit); font-size: 14px;
+                ">
+                    ${imageUrl
+                        ? `<img src="${imageUrl}" alt="${username}" style="width: 28px; height: 28px; border-radius: 50%;" />`
+                        : `<span style="width: 28px; height: 28px; border-radius: 50%; background: var(--color-primary, #6366f1); color: white; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 12px;">${username.charAt(0).toUpperCase()}</span>`
+                    }
+                    <span>${username}</span>
+                </button>
+                <div class="tb-user-dropdown" style="
+                    display: none; position: absolute; top: 100%; right: 0; margin-top: 4px;
+                    background: var(--color-bg, white); border: 1px solid var(--color-border, #d1d5db);
+                    border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+                    min-width: 160px; z-index: 1000; overflow: hidden;
+                ">
+                    <a href="/web/mainContent.html" style="display: block; padding: 10px 16px; text-decoration: none; color: var(--color-text, inherit);">Dashboard</a>
+                    <hr style="margin: 0; border: none; border-top: 1px solid var(--color-border, #e5e7eb);" />
+                    <button class="tb-user-signout" style="
+                        display: block; width: 100%; text-align: left; padding: 10px 16px;
+                        background: none; border: none; cursor: pointer;
+                        color: var(--color-error, #ef4444); font-size: 14px;
+                    ">Sign Out</button>
+                </div>
+            </div>
+        `;
+
+        // Toggle dropdown
+        const avatarBtn = element.querySelector('.tb-user-avatar');
+        const dropdown = element.querySelector('.tb-user-dropdown');
+        avatarBtn?.addEventListener('click', () => {
+            dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+        });
+
+        // Close on outside click
+        document.addEventListener('click', (e) => {
+            if (!element.contains(e.target)) {
+                dropdown.style.display = 'none';
+            }
+        });
+
+        // Sign out button
+        const signOutBtn = element.querySelector('.tb-user-signout');
+        signOutBtn?.addEventListener('click', async () => {
+            await this.signOut();
+            const afterSignOutUrl = options.afterSignOutUrl || '/web/scripts/login.html';
+            window.location.href = afterSignOutUrl;
         });
     },
 
-    /**
-     * Remount Clerk components when theme changes
-     * Call this when user toggles dark/light mode
-     */
-    async refreshClerkTheme() {
-        if (!clerkInstance) return;
-
-        TB.logger.debug('[User] Refreshing Clerk theme...');
-
-        // Remount SignIn if mounted
-        if (this._signInElement && document.contains(this._signInElement)) {
-            clerkInstance.unmountSignIn(this._signInElement);
-            clerkInstance.mountSignIn(this._signInElement, {
-                ...this._signInOptions,
-                appearance: this._getClerkAppearance()
-            });
-        }
-
-        // Remount SignUp if mounted
-        if (this._signUpElement && document.contains(this._signUpElement)) {
-            clerkInstance.unmountSignUp(this._signUpElement);
-            clerkInstance.mountSignUp(this._signUpElement, {
-                ...this._signUpOptions,
-                appearance: this._getClerkAppearance()
-            });
-        }
-
-        TB.logger.debug('[User] Clerk theme refreshed.');
-    },
-
     unmountAll() {
-        if (clerkInstance) {
-            try {
-                clerkInstance.unmountSignIn?.();
-                clerkInstance.unmountSignUp?.();
-                clerkInstance.unmountUserButton?.();
-            } catch (e) {
-                TB.logger.warn('[User] Error unmounting Clerk components:', e);
-            }
-        }
+        // No SDK components to unmount with Custom Auth
+        TB.logger.debug('[User] unmountAll called (no-op for Custom Auth)');
     },
 
     // =================== Auth Data Setter ===================
 
-    setAuthData({ token, userId, username }) {
+    setAuthData({ token, refreshToken, userId, username, email }) {
         this._updateUserState({
             isAuthenticated: true,
             token: token,
+            refreshToken: refreshToken || null,
             userId: userId,
-            username: username
+            username: username,
+            email: email || null
         });
+
+        this._startTokenRefreshTimer();
+        TB.events.emit('user:signedIn', { username, userId });
     }
 };
 

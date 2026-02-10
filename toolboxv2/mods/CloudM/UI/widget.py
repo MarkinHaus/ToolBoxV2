@@ -1,7 +1,7 @@
 # toolboxv2/mods/CloudM/UI/widget.py
 
 from toolboxv2 import App, RequestData, get_app, Result
-from toolboxv2.mods.CloudM.AuthClerk import LocalUserData
+from toolboxv2.mods.CloudM.Auth import UserData as LocalUserData
 
 Name = 'CloudM.UI.widget'
 export = get_app(f"{Name}.Export").tb

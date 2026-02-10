@@ -303,10 +303,10 @@ class TestTokenRefresh(unittest.IsolatedAsyncioTestCase):
         client = RegistryClient(
             auth_token="test-token",
             session_id="sess_123",
-            clerk_user_id="user_456"
+            user_id="user_456"
         )
         self.assertEqual(client.session_id, "sess_123")
-        self.assertEqual(client.clerk_user_id, "user_456")
+        self.assertEqual(client.user_id, "user_456")
         self.assertFalse(client._token_refresh_attempted)
 
     def test_client_init_with_callback(self):
@@ -332,14 +332,14 @@ class TestTokenRefresh(unittest.IsolatedAsyncioTestCase):
             )
 
             result = await client.login(
-                clerk_token="jwt-token",
+                auth_token="jwt-token",
                 session_id="sess_abc",
-                clerk_user_id="user_123"
+                user_id="user_123"
             )
 
             self.assertTrue(result)
             self.assertEqual(client.session_id, "sess_abc")
-            self.assertEqual(client.clerk_user_id, "user_123")
+            self.assertEqual(client.user_id, "user_123")
             self.assertFalse(client._token_refresh_attempted)
 
     async def test_logout_clears_session_data(self):
@@ -347,7 +347,7 @@ class TestTokenRefresh(unittest.IsolatedAsyncioTestCase):
         client = RegistryClient(
             auth_token="test-token",
             session_id="sess_123",
-            clerk_user_id="user_456"
+            user_id="user_456"
         )
 
         await client.logout()

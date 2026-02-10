@@ -16,7 +16,7 @@ const HtmxIntegration = {
      * Inject auth token into HTMX requests.
      * Note: htmx:configRequest must be synchronous, so we use the stored token.
      * The stored token is kept in sync by getSessionToken() which updates it
-     * whenever a fresh token is fetched from Clerk.
+     * whenever a fresh token is fetched.
      */
     handleConfigRequest: (event) => {
         try {

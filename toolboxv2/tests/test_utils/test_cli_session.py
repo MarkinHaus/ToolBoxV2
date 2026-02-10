@@ -5,7 +5,6 @@ Tests cover:
 - Token storage (JSON file based)
 - Token loading & clearing
 - Path generation & safety
-- Backwards-compat aliases (clerk_user_id, clerk_session_token)
 - _get_auth_headers()
 """
 
@@ -76,9 +75,6 @@ class TestSessionTokenStorage(unittest.TestCase):
         self.assertEqual(sess.access_token, "at_x")
         self.assertEqual(sess.refresh_token, "rt_y")
         self.assertEqual(sess.user_id, "u_z")
-        # Backwards compat aliases
-        self.assertEqual(sess.clerk_session_token, "at_x")
-        self.assertEqual(sess.clerk_user_id, "u_z")
 
     def test_load_updates_instance_attributes(self):
         sess = self._make_session()
@@ -87,7 +83,6 @@ class TestSessionTokenStorage(unittest.TestCase):
         sess2 = self._make_session()
         sess2._load_session_token()
         self.assertEqual(sess2.access_token, "at_a")
-        self.assertEqual(sess2.clerk_session_token, "at_a")
 
     def test_load_nonexistent_returns_none(self):
         sess = self._make_session("no_such_user")
@@ -106,8 +101,6 @@ class TestSessionTokenStorage(unittest.TestCase):
         self.assertIsNone(sess.access_token)
         self.assertIsNone(sess.refresh_token)
         self.assertIsNone(sess.user_id)
-        self.assertIsNone(sess.clerk_session_token)
-        self.assertIsNone(sess.clerk_user_id)
 
 
 class TestSessionPathSafety(unittest.TestCase):
@@ -201,22 +194,11 @@ class TestSessionAuthHeaders(unittest.TestCase):
         self.assertIn("Authorization", headers)
         self.assertEqual(headers["Authorization"], "Bearer at_xyz")
 
-    def test_headers_fallback_to_clerk_session_token(self):
-        from toolboxv2.utils.system.session import Session
-        _reset_session_singleton()
-        sess = Session(username="test2", base="http://localhost:8000")
-        sess.access_token = None
-        sess.clerk_session_token = "legacy_tok"
-        headers = sess._get_auth_headers()
-        self.assertIn("Authorization", headers)
-        self.assertEqual(headers["Authorization"], "Bearer legacy_tok")
-
     def test_headers_without_any_token(self):
         from toolboxv2.utils.system.session import Session
         _reset_session_singleton()
         sess = Session(username="test3", base="http://localhost:8000")
         sess.access_token = None
-        sess.clerk_session_token = None
         headers = sess._get_auth_headers()
         # Should still return a dict, possibly without Authorization
         self.assertIsInstance(headers, dict)

@@ -6,7 +6,7 @@ Provides real-time system status, user profile access, and quick actions
 directly in the overlay.
 
 Integrates with:
-- AuthClerk (User Identity)
+- Auth (User Identity)
 - mini (System Processes)
 - UserInstances (Session State)
 
@@ -22,7 +22,10 @@ from toolboxv2.utils.extras.hud_widget import HudWidget, register_widget
 from toolboxv2.utils.system.types import RequestData
 
 # Import CloudM specific helpers
-from .AuthClerk import load_local_user_data
+try:
+    from .Auth import _load_user as _auth_load_user
+except ImportError:
+    _auth_load_user = None
 from .mini import PID_DIRECTORY, get_service_status
 from .UserInstances import UserInstances
 

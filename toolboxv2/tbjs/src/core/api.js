@@ -72,7 +72,7 @@ const Api = {
     },
 
     /**
-     * Async version that gets fresh token from Clerk if available.
+     * Async version that gets fresh token if available.
      * Use this for API calls that need the most current token.
      */
     _getRequestHeadersAsync: async (isJson = true) => {
@@ -83,7 +83,7 @@ const Api = {
             headers['Content-Type'] = 'application/json';
         }
 
-        // Try to get fresh token from Clerk, fallback to stored token
+        // Try to get fresh token, fallback to stored token
         let token = null;
         if (TB.user?.getSessionToken) {
             try {
@@ -120,7 +120,7 @@ const Api = {
         let isFullPath = moduleName.startsWith('/');
         const isFormDataPayload = payload instanceof FormData;
 
-        // Get headers with fresh token from Clerk (async version)
+        // Get headers with fresh token (async version)
         // This ensures we always have the most current token for API calls
         const baseHeaders = await Api._getRequestHeadersAsync();
         const options = {

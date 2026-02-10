@@ -1,11 +1,11 @@
 # toolboxv2/tests/test_web.py
 """
 ToolBox V2 - E2E Web Test Utilities
-Updated for Clerk Authentication and API CLI Management
+Updated for Custom JWT Authentication and API CLI Management
 
 Usage:
     - Manages web server lifecycle via API CLI
-    - Creates test users via Clerk
+    - Creates test users via custom auth system
     - Provides session state management for E2E tests
     - Supports both async and sync test execution
 """
@@ -35,19 +35,19 @@ TEST_SERVER_BASE_URL = f"http://{TEST_SERVER_HOST}:{TEST_SERVER_PORT}"
 TEST_WEB_PORT = int(os.getenv("TEST_WEB_PORT", 80))
 TEST_WEB_BASE_URL = os.getenv("TEST_WEB_BASE_URL", f"http://{TEST_SERVER_HOST}:{TEST_WEB_PORT}")
 
-# Clerk Test Users (configure in .env or here)
+# Test Users (configure in .env or here)
 TEST_USERS = {
     "admin": {
         "email": os.getenv("TEST_ADMIN_EMAIL", "test-admin@example.com"),
-        "clerk_user_id": os.getenv("TEST_ADMIN_CLERK_ID"),
+        "user_id": os.getenv("TEST_ADMIN_USER_ID"),
     },
     "testUser": {
         "email": os.getenv("TEST_USER_EMAIL", "test-user@example.com"),
-        "clerk_user_id": os.getenv("TEST_USER_CLERK_ID"),
+        "user_id": os.getenv("TEST_USER_USER_ID"),
     },
     "loot": {
         "email": os.getenv("TEST_LOOT_EMAIL", "test-loot@example.com"),
-        "clerk_user_id": os.getenv("TEST_LOOT_CLERK_ID"),
+        "user_id": os.getenv("TEST_LOOT_USER_ID"),
     },
 }
 
@@ -160,23 +160,23 @@ def stop_test_server() -> bool:
         return False
 
 
-# =================== Clerk Authentication Helpers ===================
+# =================== Authentication Helpers ===================
 
 
-async def clerk_authenticate_user(
-    email: str, clerk_user_id: Optional[str] = None
+async def authenticate_user(
+    email: str, user_id: Optional[str] = None
 ) -> Optional[str]:
     """
-    Authenticate a test user via Clerk and get session token.
+    Authenticate a test user via custom auth and get session token.
 
-    This simulates the Clerk auth flow. In real tests, you might need to:
-    1. Use Clerk's test mode
-    2. Pre-create test users in Clerk Dashboard
+    This simulates the auth flow. In real tests, you might need to:
+    1. Use test mode
+    2. Pre-create test users
     3. Use magic links or test tokens
 
     Args:
         email: User email address
-        clerk_user_id: Optional Clerk user ID if known
+        user_id: Optional user ID if known
 
     Returns:
         Session token or None if authentication failed
@@ -184,52 +184,51 @@ async def clerk_authenticate_user(
     app = get_app(name="test")
 
     try:
-        # Option 1: If you have Clerk test tokens
+        # Option 1: If you have test tokens
         test_token = os.getenv(
-            f"CLERK_TEST_TOKEN_{email.replace('@', '_').replace('.', '_').upper()}"
+            f"TEST_TOKEN_{email.replace('@', '_').replace('.', '_').upper()}"
         )
         if test_token:
             app.logger.info(f"Using test token for {email}")
             return test_token
 
-        # Option 2: Use AuthClerk's CLI flow (if available)
-        from toolboxv2.mods.CloudM.AuthClerk import cli_request_code, cli_verify_code
+        # Option 2: Use LogInSystem's CLI flow (if available)
+        from toolboxv2.mods.CloudM.LogInSystem import cli_login
 
-        # Request verification code
-        result = await cli_request_code(app=app, email=email)
+        # Request login
+        result = await cli_login(app=app, email=email)
 
         if result.is_error():
-            app.logger.error(f"Failed to request code for {email}: {result.info}")
+            app.logger.error(f"Failed to login for {email}: {result.info}")
             return None
 
-        cli_session_id = result.get().get("cli_session_id")
+        session_token = result.get().get("session_token")
+
+        if session_token:
+            return session_token
 
         # In real tests, you'd need to get the code from email or test inbox
         # For now, we'll assume test mode bypasses this
         app.logger.warning(
-            f"⚠️  Manual step required: Enter verification code for {email}"
+            f"Manual step required: Complete verification for {email}"
         )
-        app.logger.info(f"CLI Session ID: {cli_session_id}")
-
-        # You could implement a test code retriever here
-        # For example, using a test email service API
 
         return None  # Placeholder - implement based on your test setup
 
     except ImportError:
-        app.logger.error("AuthClerk module not available")
+        app.logger.error("LogInSystem module not available")
         return None
     except Exception as e:
         app.logger.error(f"Authentication error for {email}: {e}")
         return None
 
 
-def create_clerk_session_cookie(session_token: str) -> dict:
+def create_session_cookie(session_token: str) -> dict:
     """
-    Create Clerk session cookie for browser context
+    Create session cookie for browser context
 
     Args:
-        session_token: Clerk session token
+        session_token: JWT session token
 
     Returns:
         Cookie dict for Playwright
@@ -245,11 +244,11 @@ def create_clerk_session_cookie(session_token: str) -> dict:
     }
 
 
-async def setup_clerk_session(
+async def setup_auth_session(
     framework: AsyncWebTestFramework, user_key: str = "testUser"
 ) -> bool:
     """
-    Setup Clerk authenticated session in test framework
+    Setup authenticated session in test framework
 
     Args:
         framework: AsyncWebTestFramework instance
@@ -272,15 +271,15 @@ async def setup_clerk_session(
 
             # Add cookie to context
             await framework.context.add_cookies(
-                [create_clerk_session_cookie(cached["token"])]
+                [create_session_cookie(cached["token"])]
             )
             return True
 
     # Authenticate and get new token
-    framework.logger.info(f"Authenticating {user_key} via Clerk...")
+    framework.logger.info(f"Authenticating {user_key}...")
 
-    token = await clerk_authenticate_user(
-        email=user_info["email"], clerk_user_id=user_info.get("clerk_user_id")
+    token = await authenticate_user(
+        email=user_info["email"], user_id=user_info.get("user_id")
     )
 
     if not token:
@@ -295,7 +294,7 @@ async def setup_clerk_session(
     }
 
     # Add cookie to context
-    await framework.context.add_cookies([create_clerk_session_cookie(token)])
+    await framework.context.add_cookies([create_session_cookie(token)])
 
     framework.logger.info(f"✓ Session setup complete for {user_key}")
     return True
@@ -328,7 +327,7 @@ async def save_authenticated_state(
     """
     try:
         # Setup session if not already done
-        await setup_clerk_session(framework, user_key)
+        await setup_auth_session(framework, user_key)
 
         # Navigate to main page to verify auth
         await framework.navigate(f"{TEST_SERVER_BASE_URL}/web/mainContent.html")
@@ -458,7 +457,7 @@ async def run_test_suite(
             # Create new authenticated state
             tf.logger.info(f"Creating new authenticated state for {user_key}...")
 
-            if not await setup_clerk_session(tf, user_key):
+            if not await setup_auth_session(tf, user_key):
                 tf.logger.error("Failed to setup session")
                 return False, []
 
@@ -500,7 +499,7 @@ async def test_login_page(tf: AsyncWebTestFramework):
     return [
         {"type": "goto", "url": f"{TEST_SERVER_BASE_URL}/web/assets/login.html"},
         {"type": "sleep", "time": 2},
-        {"type": "test", "selector": "#clerk-login"},
+        {"type": "test", "selector": "#auth-login"},
         {"type": "screenshot", "path": "login_page.png"},
     ]
 

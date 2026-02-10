@@ -1,7 +1,7 @@
 # toolboxv2/mods/CloudM/UserAccountManager.py
 """
 ToolBox V2 - User Account Manager
-Benutzerkonten-Verwaltung mit Clerk-Integration
+Benutzerkonten-Verwaltung mit Custom Auth Integration
 Stellt API-Endpunkte für Dashboard und programmatischen Zugriff bereit
 """
 
@@ -21,7 +21,7 @@ version = '0.1.1'
 async def get_current_user_from_request(app: App, request: RequestData):
     """
     Holt den aktuellen Benutzer aus der Request-Session.
-    Funktioniert mit Clerk und Legacy-Auth.
+    Funktioniert mit Custom Auth und Legacy-Auth.
 
     Returns:
         User-Objekt (LocalUserData oder legacy User) oder None
@@ -31,60 +31,55 @@ async def get_current_user_from_request(app: App, request: RequestData):
         return None
 
     # Benutzer-Identifikator aus Session extrahieren
-    clerk_user_id = None
+    user_id = None
     username = None
 
-    # Clerk User ID prüfen
-    if hasattr(request.session, 'clerk_user_id') and request.session.clerk_user_id:
-        clerk_user_id = request.session.clerk_user_id
-    elif hasattr(request.session, 'user_id') and request.session.user_id:
-        clerk_user_id = request.session.user_id
+    # User ID prüfen
+    user_id = None
+    if hasattr(request.session, 'user_id') and request.session.user_id:
+        user_id = request.session.user_id
     elif hasattr(request.session, 'user_name') and request.session.user_name:
-        clerk_user_id = request.session.extra_data.get('clerk_user_id')
         username = request.session.user_name
 
-    if not clerk_user_id:
+    if not user_id and not username:
         app.logger.debug("UAM: Kein gültiger Benutzer-Identifikator in Session")
         return None
 
     # Benutzer laden
-    return await _load_user_data(app, clerk_user_id, username)
+    return await _load_user_data(app, user_id, username)
 
 
-async def _load_user_data(app: App, clerk_user_id: str, username):
+async def _load_user_data(app: App, user_id: str, username: str = None):
     """Lädt Benutzerdaten aus verschiedenen Quellen"""
-    # Versuche zuerst Clerk/AuthClerk
+    # Versuche zuerst Custom Auth (CloudM.Auth)
     try:
-        from .AuthClerk import load_local_user_data, _db_load_user_sync_data, LocalUserData
+        from .Auth import _load_user, UserData
 
-        local_data = load_local_user_data(clerk_user_id)
-        if local_data:
-            return local_data
-
-        db_data = _db_load_user_sync_data(app, clerk_user_id)
-        if db_data:
-            return LocalUserData.from_dict(db_data)
+        if user_id:
+            user_data = await _load_user(app, user_id)
+            if user_data:
+                return user_data
 
     except ImportError:
-        pass  # AuthClerk nicht verfügbar
+        pass  # Auth nicht verfügbar
     except Exception as e:
-        app.logger.error(f"UAM: Fehler beim Laden via AuthClerk: {e}")
+        app.logger.error(f"UAM: Fehler beim Laden via Auth: {e}")
 
     return None
 
 
 def _save_user_data(app: App, user_data) -> Result:
     """
-    Speichert Benutzerdaten - unterstützt Clerk und Legacy.
+    Speichert Benutzerdaten - unterstützt Custom Auth und Legacy.
     """
     try:
-        # Clerk LocalUserData
+        # Custom Auth UserData
         if hasattr(user_data, 'to_dict'):
-            from .AuthClerk import save_local_user_data, _db_save_user_sync_data
+            from .Auth import _save_user
 
             user_data.last_sync = time.time()
-            save_local_user_data(user_data)
-            _db_save_user_sync_data(app, user_data.clerk_user_id, user_data.to_dict())
+            import asyncio
+            asyncio.get_event_loop().run_until_complete(_save_user(app, user_data.to_dict()))
             return Result.ok("Benutzerdaten gespeichert")
 
         # Legacy User Objekt
@@ -126,7 +121,7 @@ async def get_current_user(app: App, request: RequestData):
 
     # Öffentliche Daten zusammenstellen
     user_data = {
-        "clerk_user_id": _get_user_attribute(user, 'clerk_user_id'),
+        "user_id": _get_user_attribute(user, 'user_id'),
         "username": _get_user_attribute(user, 'username') or _get_user_attribute(user, 'name'),
         "name": _get_user_attribute(user, 'name') or _get_user_attribute(user, 'username'),
         "email": _get_user_attribute(user, 'email'),
@@ -152,7 +147,7 @@ async def get_current_user_api_wrapper(app: App, request: RequestData):
 async def update_email(app: App, request: RequestData, new_email: str = None):
     """
     E-Mail-Adresse aktualisieren.
-    Bei Clerk: Weiterleitung zu Clerk-Profil.
+    E-Mail-Adresse aktualisieren oder anzeigen.
     """
     user = await get_current_user_from_request(app, request)
 
@@ -165,23 +160,9 @@ async def update_email(app: App, request: RequestData, new_email: str = None):
         """
 
     current_email = _get_user_attribute(user, 'email', 'Nicht angegeben')
-    is_clerk = hasattr(user, 'clerk_user_id') and user.clerk_user_id
+    is_custom_auth = hasattr(user, 'user_id') and user.user_id
 
-    if is_clerk:
-        return f"""
-            <div class="tb-space-y-2">
-                <p><strong>Aktuelle E-Mail:</strong> {current_email}</p>
-                <p class="tb-text-sm tb-text-muted">
-                    E-Mail-Änderungen werden aus Sicherheitsgründen über Clerk verwaltet.
-                </p>
-                <button onclick="window.TB?.user?.getClerkInstance()?.openUserProfile()"
-                        class="tb-btn tb-btn-secondary tb-mt-2">
-                    <span class="material-symbols-outlined tb-mr-1">settings</span>
-                    Profil-Einstellungen öffnen
-                </button>
-            </div>
-        """
-    else:
+    if is_custom_auth:
         # Legacy: Direkte Aktualisierung
         if new_email and new_email != current_email:
             user.email = new_email
@@ -450,7 +431,7 @@ async def get_account_section_html(app: App, request: RequestData):
     email = _get_user_attribute(user, 'email', 'Nicht angegeben')
     level = _get_user_attribute(user, 'level', 1)
     settings = _get_user_attribute(user, 'settings', {})
-    is_clerk = hasattr(user, 'clerk_user_id') and user.clerk_user_id
+    is_custom_auth = hasattr(user, 'user_id') and user.user_id
 
     exp_features = settings.get('experimental_features', False)
     exp_checked = 'checked' if exp_features else ''
@@ -468,8 +449,8 @@ async def get_account_section_html(app: App, request: RequestData):
                     <p><strong>Level:</strong> {level}</p>
                 </div>
 
-                <!-- Profil-Button für Clerk -->
-                {'<div><button onclick="window.TB?.user?.getClerkInstance()?.openUserProfile()" class="tb-btn tb-btn-secondary">Profil-Einstellungen öffnen</button></div>' if is_clerk else ''}
+                <!-- Profil-Button -->
+                {'<div><button onclick="window.TB?.router?.navigate(\'/web/scripts/login.html#profile\')" class="tb-btn tb-btn-secondary">Profil-Einstellungen öffnen</button></div>' if is_custom_auth else ''}
 
                 <!-- App-Einstellungen -->
                 <div class="tb-border-t tb-pt-4">

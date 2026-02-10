@@ -1,6 +1,6 @@
 """
 Custom Session Management for ToolBoxV2
-Replaces Clerk-based session system with provider-agnostic custom auth.
+Provider-agnostic custom auth session management.
 
 Compatible with:
 - Discord OAuth
@@ -20,7 +20,7 @@ class SessionData:
     """
     Session data structure for custom authentication.
 
-    Replaces Clerk-specific session data with provider-agnostic format.
+    Provider-agnostic session data format.
     """
     # User identification
     user_id: str = ""  # Internal ToolBoxV2 user ID
@@ -109,7 +109,7 @@ class SessionData:
 
 class CustomSessionVerifier:
     """
-    Custom session verifier replacing ClerkSessionVerifier.
+    Custom session verifier with caching support.
 
     Uses the CloudM.Auth module for token validation and user data retrieval.
     Provider-agnostic - works with Discord, Google, and Passkeys.

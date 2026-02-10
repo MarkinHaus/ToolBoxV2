@@ -154,7 +154,7 @@ try:
         is_server_running,
         start_test_server,
         stop_test_server,
-        setup_clerk_session,
+        setup_auth_session,
         TEST_USERS,
     )
 except ImportError:
@@ -180,7 +180,7 @@ except ImportError:
     def stop_test_server():
         return False
 
-    async def setup_clerk_session(framework, user_key="testUser"):
+    async def setup_auth_session(framework, user_key="testUser"):
         return False
 
 
@@ -272,7 +272,7 @@ async def authenticated_session(
     Provide an authenticated browser session.
     Uses testUser credentials from TEST_USERS.
     """
-    success = await setup_clerk_session(browser_context, "testUser")
+    success = await setup_auth_session(browser_context, "testUser")
     if not success:
         pytest.skip("Could not setup authenticated session")
     yield browser_context
@@ -284,7 +284,7 @@ async def admin_session(
     require_server
 ) -> AsyncGenerator[AsyncWebTestFramework, None]:
     """Provide an admin authenticated browser session"""
-    success = await setup_clerk_session(browser_context, "admin")
+    success = await setup_auth_session(browser_context, "admin")
     if not success:
         pytest.skip("Could not setup admin session")
     yield browser_context
