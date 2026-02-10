@@ -15,9 +15,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Add parent to path for imports
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ..live_handler import (
+from live_handler import (
     LiveHandler,
     LiveSession,
     LiveSessionRequest,
@@ -335,7 +335,7 @@ class TestLiveHandlerDatabase(AsyncTestCase):
         try:
             # Mock model manager without TTS
             model_manager = MagicMock()
-            model_manager.find_tts_slot.return_value = None
+            model_manager.find_tts_model.return_value = None
 
             handler = LiveHandler(db_path, model_manager)
             self.run_async(handler.init_db())

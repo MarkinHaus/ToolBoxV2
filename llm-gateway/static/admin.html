@@ -102,60 +102,49 @@
             color: var(--accent2);
         }
         .stat-label { color: var(--text2); font-size: 12px; }
-        /* Slots */
-        .slots-grid {
+        /* Status indicators */
+        .status-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        .status-healthy { background: var(--green); }
+        .status-unhealthy { background: var(--red); }
+        /* Model cards */
+        .models-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
             gap: 12px;
         }
-        .slot-card {
+        .model-card {
             background: var(--bg2);
             border: 1px solid var(--border);
             border-radius: 8px;
             padding: 16px;
         }
-        .slot-header {
+        .model-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 12px;
         }
-        .slot-port {
+        .model-name {
             font-weight: bold;
             color: var(--accent);
+            font-size: 14px;
         }
-        .slot-status {
+        .model-badge {
             padding: 2px 8px;
             border-radius: 4px;
             font-size: 11px;
             font-weight: 500;
         }
-        .slot-status.running { background: rgba(34,197,94,0.2); color: var(--green); }
-        .slot-status.empty { background: rgba(136,136,136,0.2); color: var(--text2); }
-        .slot-status.crashed { background: rgba(239,68,68,0.2); color: var(--red); }
-        .slot-model { font-size: 12px; margin-bottom: 8px; word-break: break-all; }
-        .slot-stats {
-            display: flex;
-            gap: 16px;
-            font-size: 11px;
-            color: var(--text2);
-        }
-        .slot-actions { margin-top: 12px; display: flex; gap: 8px; }
-        /* Progress Bar */
-        .progress {
-            height: 6px;
-            background: var(--bg3);
-            border-radius: 3px;
-            overflow: hidden;
-            margin: 8px 0;
-        }
-        .progress-bar {
-            height: 100%;
-            background: var(--accent);
-            transition: width 0.3s;
-        }
-        .progress-bar.warning { background: var(--yellow); }
-        .progress-bar.danger { background: var(--red); }
+        .model-badge.loaded { background: rgba(34,197,94,0.2); color: var(--green); }
+        .model-badge.available { background: rgba(136,136,136,0.2); color: var(--text2); }
+        .model-info { font-size: 12px; color: var(--text2); margin-bottom: 8px; }
+        .model-actions { margin-top: 12px; display: flex; gap: 8px; }
         /* Table */
         table {
             width: 100%;
@@ -180,13 +169,17 @@
         }
         .btn-primary { background: var(--accent); color: white; }
         .btn-primary:hover { background: var(--accent2); }
+        .btn-success { background: var(--green); color: white; }
+        .btn-success:hover { opacity: 0.8; }
         .btn-danger { background: var(--red); color: white; }
         .btn-danger:hover { opacity: 0.8; }
+        .btn-secondary { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+        .btn-secondary:hover { background: var(--border); }
         .btn-sm { padding: 4px 8px; font-size: 11px; }
         /* Forms */
         .form-group { margin-bottom: 12px; }
         .form-group label { display: block; margin-bottom: 4px; color: var(--text2); font-size: 12px; }
-        input, select {
+        input, select, textarea {
             width: 100%;
             padding: 8px 12px;
             background: var(--bg3);
@@ -196,10 +189,11 @@
             font-family: inherit;
             font-size: 13px;
         }
-        input:focus, select:focus {
+        input:focus, select:focus, textarea:focus {
             outline: none;
             border-color: var(--accent);
         }
+        textarea { resize: vertical; min-height: 80px; }
         /* Modal */
         .modal-overlay {
             display: none;
@@ -222,108 +216,6 @@
             overflow-y: auto;
         }
         .modal h2 { margin-bottom: 16px; }
-        /* Load Queue Status */
-        .load-queue-status {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            min-width: 320px;
-            max-width: 400px;
-            z-index: 90;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-        }
-        .queue-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 16px;
-            border-bottom: 1px solid var(--border);
-            font-weight: 500;
-        }
-        .queue-content {
-            max-height: 300px;
-            overflow-y: auto;
-        }
-        .queue-content.minimized {
-            display: none;
-        }
-        .queue-item {
-            padding: 12px 16px;
-            border-bottom: 1px solid var(--border);
-        }
-        .queue-item:last-child {
-            border-bottom: none;
-        }
-        .queue-item-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 4px;
-        }
-        .queue-item-name {
-            font-size: 12px;
-            font-weight: 500;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            max-width: 200px;
-        }
-        .queue-item-status {
-            font-size: 11px;
-            padding: 2px 8px;
-            border-radius: 4px;
-        }
-        .queue-item-status.pending { background: var(--bg3); color: var(--text2); }
-        .queue-item-status.loading { background: var(--accent); color: white; }
-        .queue-item-status.done { background: var(--green); color: white; }
-        .queue-item-status.error { background: var(--red); color: white; }
-        .queue-item-progress {
-            height: 4px;
-            background: var(--bg3);
-            border-radius: 2px;
-            margin-top: 8px;
-            overflow: hidden;
-        }
-        .queue-item-progress-bar {
-            height: 100%;
-            background: var(--accent);
-            transition: width 0.3s;
-        }
-        .queue-item-actions {
-            margin-top: 8px;
-            display: flex;
-            gap: 8px;
-        }
-        /* Search Results */
-        .search-results {
-            max-height: 300px;
-            overflow-y: auto;
-            margin: 12px 0;
-        }
-        .search-item {
-            padding: 12px;
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            margin-bottom: 8px;
-            cursor: pointer;
-        }
-        .search-item:hover { border-color: var(--accent); }
-        .search-item-title { font-weight: 500; margin-bottom: 4px; }
-        .search-item-meta { font-size: 11px; color: var(--text2); }
-        .file-list { margin-top: 8px; }
-        .file-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 4px 8px;
-            background: var(--bg3);
-            border-radius: 4px;
-            margin: 4px 0;
-            font-size: 11px;
-        }
         /* Toast */
         .toast {
             position: fixed;
@@ -336,8 +228,8 @@
             z-index: 200;
             animation: slideIn 0.3s;
         }
-        .toast.success { border-color: var(--green); }
-        .toast.error { border-color: var(--red); }
+        .toast.success { border-color: var(--green); color: var(--green); }
+        .toast.error { border-color: var(--red); color: var(--red); }
         @keyframes slideIn {
             from { transform: translateX(100%); opacity: 0; }
             to { transform: translateX(0); opacity: 1; }
@@ -356,6 +248,25 @@
             padding: 32px;
             width: 350px;
         }
+        /* Alert */
+        .alert {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            border-left: 4px solid;
+        }
+        .alert-warning {
+            background: rgba(234,179,8,0.1);
+            border-color: var(--yellow);
+            color: var(--yellow);
+        }
+        /* Search bar */
+        .search-bar {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        .search-bar input { flex: 1; }
     </style>
 </head>
 <body>
@@ -364,8 +275,8 @@
         <div class="auth-box">
             <h2 style="margin-bottom: 20px; color: var(--accent);">🔐 Admin Login</h2>
             <div class="form-group">
-                <label>API Key</label>
-                <input type="password" id="apiKeyInput" placeholder="sk-...">
+                <label>Admin Key</label>
+                <input type="password" id="adminKeyInput" placeholder="Enter admin key">
             </div>
             <button class="btn btn-primary" style="width: 100%;" onclick="login()">Login</button>
         </div>
@@ -376,7 +287,7 @@
         <nav class="sidebar">
             <div class="logo">⚡ LLM Gateway</div>
             <div class="nav-item active" data-page="dashboard">📊 Dashboard</div>
-            <div class="nav-item" data-page="models">🧠 Model Slots</div>
+            <div class="nav-item" data-page="models">🧠 Models</div>
             <div class="nav-item" data-page="hf">🤗 HF Browser</div>
             <div class="nav-item" data-page="users">👥 Users</div>
             <div class="nav-item" data-page="signups">📝 Signups</div>
@@ -392,41 +303,88 @@
                 </div>
 
                 <!-- Pending Signups Alert -->
-                <div id="pendingSignupsAlert" class="card" style="display: none; border-color: var(--yellow); background: rgba(234, 179, 8, 0.1);">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <strong style="color: var(--yellow);">📝 Pending Signup Requests</strong>
-                            <span id="pendingCount" style="margin-left: 8px;"></span>
+                <div id="pendingSignupsAlert" class="alert alert-warning" style="display: none;">
+                    <strong>📝 Pending Signup Requests</strong>
+                    <span id="pendingCount"></span>
+                    <button class="btn btn-primary btn-sm" style="margin-left: 12px;" onclick="switchPage('signups')">Review Now</button>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Ollama Status</div>
+                        <div class="stat-value" id="ollamaStatus" style="font-size: 16px;">
+                            <span class="status-dot"></span>
+                            <span>Checking...</span>
                         </div>
-                        <button class="btn btn-primary btn-sm" onclick="document.querySelector('[data-page=signups]').click()">Review Now</button>
+                        <div style="font-size: 11px; color: var(--text2); margin-top: 4px;">
+                            Mode: <span id="backendMode">-</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Active Models</div>
+                        <div class="stat-value" id="activeModels">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Total Users</div>
+                        <div class="stat-value" id="totalUsers">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">24h Requests</div>
+                        <div class="stat-value" id="requests24h">0</div>
                     </div>
                 </div>
 
-                <div class="stats-grid" id="systemStats"></div>
-
                 <div class="card">
-                    <div class="card-title">Active Model Slots</div>
-                    <div id="dashboardSlots" class="slots-grid"></div>
-                </div>
-
-                <div class="card">
-                    <div class="card-title">24h Stats</div>
-                    <div id="usageStats"></div>
+                    <div class="card-title">Active Models</div>
+                    <div id="activeModelsGrid" class="models-grid"></div>
                 </div>
             </div>
 
             <!-- Models -->
             <div id="page-models" class="page">
                 <div class="header">
-                    <h1>Model Slots</h1>
-                    <button class="btn btn-primary" onclick="openLoadModal()">+ Load Model</button>
+                    <h1>Models</h1>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn btn-success" onclick="openLoadModal()">+ Load Model</button>
+                        <button class="btn btn-primary" onclick="openPullModal()">⬇ Pull Model</button>
+                        <button class="btn btn-secondary" onclick="openImportModal()">📦 Import GGUF</button>
+                        <button class="btn btn-secondary" onclick="loadModels()">↻ Refresh</button>
+                    </div>
                 </div>
 
-                <div id="slotsContainer" class="slots-grid"></div>
+                <div class="card">
+                    <div class="card-title">Gateway Active Models</div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Model Name</th>
+                                <th>Type</th>
+                                <th>Keep Alive</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="gatewayModelsTable">
+                            <tr><td colspan="5" style="color: var(--text2); text-align: center;">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
 
-                <div class="card" style="margin-top: 20px;">
-                    <div class="card-title">Local Models</div>
-                    <div id="localModels"></div>
+                <div class="card">
+                    <div class="card-title">Ollama Models (Available)</div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Size</th>
+                                <th>Modified</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ollamaModelsTable">
+                            <tr><td colspan="4" style="color: var(--text2); text-align: center;">Loading...</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
@@ -437,11 +395,31 @@
                 </div>
 
                 <div class="card">
-                    <div style="display: flex; gap: 8px;">
-                        <input type="text" id="hfSearchInput" placeholder="Search GGUF models...">
+                    <div class="search-bar">
+                        <input type="text" id="hfSearchInput" placeholder="Search GGUF models (e.g., llama3, qwen2.5-coder)">
                         <button class="btn btn-primary" onclick="searchHF()">Search</button>
                     </div>
-                    <div id="hfResults" class="search-results"></div>
+                    <div id="hfResults"></div>
+                </div>
+
+                <div class="card">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <div class="card-title" style="margin: 0;">Local GGUF Files</div>
+                        <button class="btn btn-sm btn-secondary" onclick="loadLocalFiles()">↻ Refresh</button>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Filename</th>
+                                <th>Size</th>
+                                <th>Path</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="localFilesTable">
+                            <tr><td colspan="4" style="color: var(--text2); text-align: center;">Loading...</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
@@ -459,104 +437,14 @@
                                 <th>Email</th>
                                 <th>Tier</th>
                                 <th>Balance</th>
-                                <th>Keys</th>
-                                <th>Usage</th>
+                                <th>Created</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
-                        <tbody id="usersTable"></tbody>
+                        <tbody id="usersTable">
+                            <tr><td colspan="5" style="color: var(--text2); text-align: center;">Loading...</td></tr>
+                        </tbody>
                     </table>
-                </div>
-            </div>
-
-            <!-- Config -->
-            <div id="page-config" class="page">
-                <div class="header">
-                    <h1>Configuration</h1>
-                </div>
-
-                <div class="card">
-                    <div class="card-title">Admin Access</div>
-                    <div class="form-group">
-                        <label>Admin API Key</label>
-                        <input type="text" id="adminKeyDisplay" readonly style="background: var(--bg); color: var(--text2);">
-                        <small style="color: var(--text2); display: block; margin-top: 4px;">
-                            To change: edit <code>data/config.json</code> → <code>admin_key</code> field, then restart server
-                        </small>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div class="card-title">⚡ Performance Settings</div>
-                    <p style="color: var(--text2); margin-bottom: 12px; font-size: 12px;">
-                        These settings affect inference speed. Changes apply to newly loaded models.
-                    </p>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-                        <div class="form-group">
-                            <label>
-                                <input type="checkbox" id="perfFlashAttn" checked>
-                                Flash Attention (+20-30% speed)
-                            </label>
-                            <small style="color: var(--text2); display: block;">Faster attention computation</small>
-                        </div>
-                        <div class="form-group">
-                            <label>
-                                <input type="checkbox" id="perfMlock" checked>
-                                Memory Lock (mlock)
-                            </label>
-                            <small style="color: var(--text2); display: block;">Prevent model swapping to disk</small>
-                        </div>
-                    </div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-                        <div class="form-group">
-                            <label>KV-Cache Quantization</label>
-                            <select id="perfKvCache">
-                                <option value="f16">F16 (best quality, more RAM)</option>
-                                <option value="q8_0" selected>Q8_0 (recommended)</option>
-                                <option value="q4_0">Q4_0 (smallest, less quality)</option>
-                            </select>
-                            <small style="color: var(--text2); display: block;">Lower = less RAM, allows more context</small>
-                        </div>
-                        <div class="form-group">
-                            <label>Batch Size</label>
-                            <select id="perfBatchSize">
-                                <option value="256">256 (low RAM)</option>
-                                <option value="512" selected>512 (default)</option>
-                                <option value="1024">1024 (fast, more RAM)</option>
-                                <option value="2048">2048 (fastest, most RAM)</option>
-                            </select>
-                            <small style="color: var(--text2); display: block;">Tokens processed per batch</small>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div class="card-title">Model Defaults</div>
-                    <div class="form-group">
-                        <label>HuggingFace Token</label>
-                        <input type="password" id="hfTokenInput" placeholder="hf_...">
-                    </div>
-                    <div class="form-group">
-                        <label>Default Context Size</label>
-                        <input type="number" id="ctxSizeInput" value="8192">
-                    </div>
-                    <div class="form-group">
-                        <label>Default Threads</label>
-                        <input type="number" id="threadsInput" value="10">
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div class="card-title">Pricing</div>
-                    <div class="form-group">
-                        <label>Input (per 1K tokens) €</label>
-                        <input type="number" id="priceInputInput" step="0.0001" value="0.0001">
-                    </div>
-                    <div class="form-group">
-                        <label>Output (per 1K tokens) €</label>
-                        <input type="number" id="priceOutputInput" step="0.0001" value="0.0002">
-                    </div>
-                    <button class="btn btn-primary" onclick="saveConfig()">Save Config</button>
                 </div>
             </div>
 
@@ -573,42 +461,74 @@
                             <tr>
                                 <th>Email</th>
                                 <th>Tier</th>
-                                <th>Message</th>
                                 <th>Status</th>
-                                <th>Date</th>
+                                <th>Created</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
-                        <tbody id="signupsTable"></tbody>
+                        <tbody id="signupsTable">
+                            <tr><td colspan="5" style="color: var(--text2); text-align: center;">Loading...</td></tr>
+                        </tbody>
                     </table>
+                </div>
+            </div>
+
+            <!-- Config -->
+            <div id="page-config" class="page">
+                <div class="header">
+                    <h1>Configuration</h1>
                 </div>
 
                 <div class="card">
-                    <div class="card-title">📧 Email Templates</div>
-                    <div style="margin-bottom: 16px;">
-                        <label style="color: var(--text2); font-size: 12px;">Welcome Email (PAYG)</label>
-                        <textarea id="emailTemplatePAYG" readonly style="width: 100%; height: 200px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; padding: 12px; color: var(--text); font-family: inherit; font-size: 12px; resize: vertical;"></textarea>
-                        <button class="btn btn-sm" style="margin-top: 8px;" onclick="copyTemplate('emailTemplatePAYG')">📋 Copy</button>
+                    <div class="card-title">Gateway Settings</div>
+                    <div class="form-group">
+                        <label>Ollama URL</label>
+                        <input type="text" id="configOllamaUrl" placeholder="http://localhost:11434">
                     </div>
-                    <div>
-                        <label style="color: var(--text2); font-size: 12px;">Welcome Email (Subscription - €39/month)</label>
-                        <textarea id="emailTemplateSub" readonly style="width: 100%; height: 220px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; padding: 12px; color: var(--text); font-family: inherit; font-size: 12px; resize: vertical;"></textarea>
-                        <button class="btn btn-sm" style="margin-top: 8px;" onclick="copyTemplate('emailTemplateSub')">📋 Copy</button>
+                    <div class="form-group">
+                        <label>Backend Mode</label>
+                        <select id="configBackendMode">
+                            <option value="bare">Bare Metal</option>
+                            <option value="docker">Docker</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>HuggingFace Token (optional)</label>
+                        <input type="password" id="configHfToken" placeholder="hf_...">
                     </div>
                 </div>
+
+                <div class="card">
+                    <div class="card-title">Rate Limiting (Requests/Minute)</div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div class="form-group">
+                            <label>PAYG Tier (RPM)</label>
+                            <input type="number" id="configDefaultRpm" placeholder="5">
+                        </div>
+                        <div class="form-group">
+                            <label>Subscription Tier (RPM)</label>
+                            <input type="number" id="configDefaultRpd" placeholder="10">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Pricing (per 1K tokens)</div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div class="form-group">
+                            <label>Input Token Price ($)</label>
+                            <input type="number" step="0.0001" id="configInputPrice" placeholder="0.0001">
+                        </div>
+                        <div class="form-group">
+                            <label>Output Token Price ($)</label>
+                            <input type="number" step="0.0001" id="configOutputPrice" placeholder="0.0002">
+                        </div>
+                    </div>
+                </div>
+
+                <button class="btn btn-success" onclick="saveConfig()">Save Configuration</button>
             </div>
         </main>
-    </div>
-
-    <!-- Load Queue Status (floating) -->
-    <div id="loadQueueStatus" class="load-queue-status" style="display: none;">
-        <div class="queue-header">
-            <span>📦 Model Loading Queue</span>
-            <button class="btn btn-sm" onclick="toggleQueueMinimize()">_</button>
-        </div>
-        <div class="queue-content" id="queueContent">
-            <!-- Queue items will be inserted here -->
-        </div>
     </div>
 
     <!-- Load Model Modal -->
@@ -616,52 +536,73 @@
         <div class="modal">
             <h2>Load Model</h2>
             <div class="form-group">
-                <label>Slot</label>
-                <select id="loadSlot">
-                    <option value="4801">4801</option>
-                    <option value="4802">4802</option>
-                    <option value="4803">4803</option>
-                    <option value="4804">4804</option>
-                    <option value="4805">4805</option>
-                    <option value="4806">4806</option>
-                    <option value="4807">4807</option>
+                <label>Model Name</label>
+                <input type="text" id="loadModelName" placeholder="e.g., llama3.2, qwen2.5-coder:7b">
+            </div>
+            <div class="form-group">
+                <label>Model Type</label>
+                <select id="loadModelType">
+                    <option value="auto">Auto-detect</option>
+                    <option value="text">Text</option>
+                    <option value="vision">Vision</option>
+                    <option value="omni">Omni</option>
+                    <option value="embedding">Embedding</option>
+                    <option value="tts">TTS</option>
+                    <option value="audio">Audio</option>
                 </select>
             </div>
             <div class="form-group">
-                <label>Model Path</label>
-                <input type="text" id="loadPath" placeholder="model.gguf or path/to/model.gguf" onchange="onModelPathChange()" oninput="onModelPathChange()">
-            </div>
-            <div class="form-group">
-                <label>Type <span id="typeAutoDetected" style="color: var(--green); font-size: 11px;"></span></label>
-                <select id="loadType" onchange="onModelTypeChange()">
-                    <option value="text">💬 Text</option>
-                    <option value="vision">👁️ Vision (requires mmproj)</option>
-                    <option value="omni">🌐 Omni (Audio+Vision+Text, requires mmproj)</option>
-                    <option value="embedding">📊 Embedding</option>
-                    <option value="vision-embedding">👁️📊 Vision-Embedding (requires mmproj)</option>
-                    <option value="audio">🎵 Audio (legacy Whisper)</option>
-                    <option value="tts">🔊 TTS (Text-to-Speech)</option>
+                <label>Keep Alive</label>
+                <select id="loadKeepAlive">
+                    <option value="-1">Forever (-1)</option>
+                    <option value="5m">5 minutes</option>
+                    <option value="30m" selected>30 minutes</option>
+                    <option value="1h">1 hour</option>
                 </select>
             </div>
-            <div class="form-group" id="mmprojContainer" style="display: none;">
-                <label>Projector File (mmproj)</label>
-                <select id="loadMmproj">
-                    <option value="">✨ Auto-detect</option>
-                    <!-- Populated by JS -->
-                </select>
-                <small style="color: var(--text2);">Select mmproj file or let server auto-detect</small>
+            <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
+                <button class="btn btn-secondary" onclick="closeModal('loadModal')">Cancel</button>
+                <button class="btn btn-success" onclick="loadModel()">Load Model</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pull Model Modal -->
+    <div id="pullModal" class="modal-overlay">
+        <div class="modal">
+            <h2>Pull Model from Ollama Registry</h2>
+            <div class="form-group">
+                <label>Model Name</label>
+                <input type="text" id="pullModelName" placeholder="e.g., llama3.2, mistral:7b">
+                <small style="color: var(--text2); display: block; margin-top: 4px;">
+                    Browse at <a href="https://ollama.com/library" target="_blank" style="color: var(--accent);">ollama.com/library</a>
+                </small>
+            </div>
+            <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
+                <button class="btn btn-secondary" onclick="closeModal('pullModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="pullModel()">Pull Model</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import GGUF Modal -->
+    <div id="importModal" class="modal-overlay">
+        <div class="modal">
+            <h2>Import GGUF into Ollama</h2>
+            <div class="form-group">
+                <label>GGUF File Path</label>
+                <input type="text" id="importGGUFPath" placeholder="/path/to/model.gguf">
+                <small style="color: var(--text2); display: block; margin-top: 4px;">
+                    Absolute path or relative to data/models/
+                </small>
             </div>
             <div class="form-group">
-                <label>Context Size (optional)</label>
-                <input type="number" id="loadCtx" placeholder="8192">
+                <label>Model Name (in Ollama)</label>
+                <input type="text" id="importModelName" placeholder="my-model:latest">
             </div>
-            <div class="form-group">
-                <label>Threads (optional)</label>
-                <input type="number" id="loadThreads" placeholder="10">
-            </div>
-            <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                <button class="btn" onclick="closeModal('loadModal')">Cancel</button>
-                <button class="btn btn-primary" id="loadModelBtn" onclick="queueLoadModel()">Add to Queue</button>
+            <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
+                <button class="btn btn-secondary" onclick="closeModal('importModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="importGGUF()">Import</button>
             </div>
         </div>
     </div>
@@ -672,34 +613,18 @@
             <h2>Add User</h2>
             <div class="form-group">
                 <label>Email</label>
-                <input type="email" id="userEmail">
+                <input type="email" id="userUsername" placeholder="user@example.com">
             </div>
             <div class="form-group">
                 <label>Tier</label>
-                <select id="userTier">
-                    <option value="payg">Pay As You Go</option>
+                <select id="userRpm">
+                    <option value="payg">PAYG (Pay-as-you-go)</option>
                     <option value="sub">Subscription</option>
                 </select>
             </div>
-            <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                <button class="btn" onclick="closeModal('userModal')">Cancel</button>
-                <button class="btn btn-primary" onclick="createUser()">Create</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Balance Modal -->
-    <div id="balanceModal" class="modal-overlay">
-        <div class="modal">
-            <h2>Update Balance</h2>
-            <input type="hidden" id="balanceUserId">
-            <div class="form-group">
-                <label>New Balance (€)</label>
-                <input type="number" id="newBalance" step="0.01">
-            </div>
-            <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                <button class="btn" onclick="closeModal('balanceModal')">Cancel</button>
-                <button class="btn btn-primary" onclick="updateBalance()">Update</button>
+            <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
+                <button class="btn btn-secondary" onclick="closeModal('userModal')">Cancel</button>
+                <button class="btn btn-success" onclick="createUser()">Create User</button>
             </div>
         </div>
     </div>
@@ -708,207 +633,9 @@
         let API_KEY = localStorage.getItem('adminKey') || '';
         let refreshInterval = null;
 
-        // ============================================================
-        // GLOBAL CONSTANTS
-        // ============================================================
-        const TYPE_ICONS = {
-            'text': '💬',
-            'vision': '👁️',
-            'omni': '🌐',
-            'embedding': '📊',
-            'vision-embedding': '👁️📊',
-            'audio': '🎵',
-            'tts': '🔊',
-            'mmproj': '🔗'
-        };
-
-        const TYPES_REQUIRING_MMPROJ = ['vision', 'omni', 'vision-embedding'];
-
-        // ============================================================
-        // LOAD QUEUE SYSTEM
-        // ============================================================
-        let loadQueue = [];
-        let isProcessingQueue = false;
-        let currentLoadController = null;
-        let cachedLocalModels = [];
-
-        function renderQueueStatus() {
-            const container = document.getElementById('loadQueueStatus');
-            const content = document.getElementById('queueContent');
-
-            if (loadQueue.length === 0) {
-                container.style.display = 'none';
-                return;
-            }
-
-            container.style.display = 'block';
-            content.innerHTML = loadQueue.map((item, idx) => `
-                <div class="queue-item" id="queue-item-${item.id}">
-                    <div class="queue-item-header">
-                        <span class="queue-item-name" title="${item.path}">${TYPE_ICONS[item.type] || '💬'} ${item.path.split('/').pop()}</span>
-                        <span class="queue-item-status ${item.status}">${item.status}</span>
-                    </div>
-                    <div style="font-size: 11px; color: var(--text2);">Slot :${item.slot}</div>
-                    ${item.status === 'loading' ? `
-                        <div class="queue-item-progress">
-                            <div class="queue-item-progress-bar" style="width: ${item.progress || 0}%; animation: pulse 1s infinite;"></div>
-                        </div>
-                        <style>@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }</style>
-                    ` : ''}
-                    ${item.status === 'error' ? `<div style="font-size: 11px; color: var(--red); margin-top: 4px;">${item.error || 'Failed'}</div>` : ''}
-                    <div class="queue-item-actions">
-                        ${item.status === 'pending' ? `<button class="btn btn-sm btn-danger" onclick="cancelQueueItem(${item.id})">Cancel</button>` : ''}
-                        ${item.status === 'loading' ? `<button class="btn btn-sm btn-danger" onclick="cancelCurrentLoad()">Cancel</button>` : ''}
-                        ${item.status === 'done' || item.status === 'error' ? `<button class="btn btn-sm" onclick="removeQueueItem(${item.id})">Dismiss</button>` : ''}
-                    </div>
-                </div>
-            `).join('');
-        }
-
-        function toggleQueueMinimize() {
-            const content = document.getElementById('queueContent');
-            content.classList.toggle('minimized');
-        }
-
-        function queueLoadModel() {
-            const slot = document.getElementById('loadSlot').value;
-            const path = document.getElementById('loadPath').value;
-            const type = document.getElementById('loadType').value;
-            const ctx = document.getElementById('loadCtx').value;
-            const threads = document.getElementById('loadThreads').value;
-            const mmproj = document.getElementById('loadMmproj').value;
-
-            if (!path) {
-                toast('Please enter a model path', 'error');
-                return;
-            }
-
-            // Add to queue
-            const queueItem = {
-                id: Date.now(),
-                slot: parseInt(slot),
-                path: path,
-                type: type,
-                ctx: ctx ? parseInt(ctx) : null,
-                threads: threads ? parseInt(threads) : null,
-                mmproj: mmproj || null,
-                status: 'pending',
-                progress: 0,
-                error: null
-            };
-
-            loadQueue.push(queueItem);
-            toast(`Added to queue: ${path.split('/').pop()}`);
-            closeModal('loadModal');
-            renderQueueStatus();
-
-            // Start processing if not already
-            if (!isProcessingQueue) {
-                processQueue();
-            }
-        }
-
-        async function processQueue() {
-            if (isProcessingQueue) return;
-            isProcessingQueue = true;
-
-            while (loadQueue.some(item => item.status === 'pending')) {
-                const item = loadQueue.find(item => item.status === 'pending');
-                if (!item) break;
-
-                item.status = 'loading';
-                item.progress = 10;
-                renderQueueStatus();
-
-                try {
-                    currentLoadController = new AbortController();
-                    const timeoutId = setTimeout(() => currentLoadController.abort(), 720000);
-
-                    // Simulate progress updates
-                    const progressInterval = setInterval(() => {
-                        if (item.progress < 90) {
-                            item.progress += Math.random() * 5;
-                            renderQueueStatus();
-                        }
-                    }, 2000);
-
-                    const resp = await fetch('/admin/api/slots/load', {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${API_KEY}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            slot: item.slot,
-                            model_path: item.path,
-                            model_type: item.type,
-                            ctx_size: item.ctx,
-                            threads: item.threads,
-                            mmproj_path: item.mmproj
-                        }),
-                        signal: currentLoadController.signal
-                    });
-
-                    clearTimeout(timeoutId);
-                    clearInterval(progressInterval);
-
-                    const result = await resp.json();
-
-                    if (resp.ok) {
-                        item.status = 'done';
-                        item.progress = 100;
-                        toast(`Loaded ${item.path.split('/').pop()} on slot :${item.slot}`);
-                        loadSlots();
-                        loadDashboard();
-                    } else {
-                        item.status = 'error';
-                        item.error = result.detail || 'Failed to load';
-                        toast(`Failed: ${item.error}`, 'error');
-                    }
-                } catch (e) {
-                    if (e.name === 'AbortError') {
-                        item.status = 'error';
-                        item.error = 'Cancelled';
-                    } else {
-                        item.status = 'error';
-                        item.error = e.message;
-                    }
-                }
-
-                currentLoadController = null;
-                renderQueueStatus();
-            }
-
-            isProcessingQueue = false;
-
-            // Auto-cleanup completed items after 10 seconds
-            setTimeout(() => {
-                loadQueue = loadQueue.filter(item => item.status === 'pending' || item.status === 'loading');
-                renderQueueStatus();
-            }, 10000);
-        }
-
-        function cancelQueueItem(id) {
-            loadQueue = loadQueue.filter(item => item.id !== id);
-            renderQueueStatus();
-            toast('Removed from queue');
-        }
-
-        function cancelCurrentLoad() {
-            if (currentLoadController) {
-                currentLoadController.abort();
-                toast('Cancelling current load...');
-            }
-        }
-
-        function removeQueueItem(id) {
-            loadQueue = loadQueue.filter(item => item.id !== id);
-            renderQueueStatus();
-        }
-
         // Auth
         function login() {
-            API_KEY = document.getElementById('apiKeyInput').value;
+            API_KEY = document.getElementById('adminKeyInput').value;
             localStorage.setItem('adminKey', API_KEY);
             checkAuth();
         }
@@ -920,7 +647,7 @@
             }
 
             try {
-                const resp = await fetch('/admin/api/users', {
+                const resp = await fetch('/admin/api/system', {
                     headers: { 'Authorization': `Bearer ${API_KEY}` }
                 });
 
@@ -929,7 +656,6 @@
                     document.getElementById('mainApp').style.display = 'grid';
                     init();
                 } else {
-                    // Invalid key - clear and show auth
                     localStorage.removeItem('adminKey');
                     API_KEY = '';
                     showAuthScreen();
@@ -973,692 +699,661 @@
         }
 
         // Navigation
+        function switchPage(page) {
+            document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.querySelector(`[data-page="${page}"]`).classList.add('active');
+            document.getElementById(`page-${page}`).classList.add('active');
+        }
+
         document.querySelectorAll('.nav-item').forEach(item => {
-            item.onclick = () => {
-                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-                item.classList.add('active');
-                document.getElementById(`page-${item.dataset.page}`).classList.add('active');
-            };
+            item.onclick = () => switchPage(item.dataset.page);
         });
 
         // Modal
         function openLoadModal() {
             document.getElementById('loadModal').classList.add('active');
-            // Update mmproj selector based on current type
-            onModelTypeChange();
+        }
+        function openPullModal() {
+            document.getElementById('pullModal').classList.add('active');
+        }
+        function openImportModal() {
+            document.getElementById('importModal').classList.add('active');
         }
         function openUserModal() {
             document.getElementById('userModal').classList.add('active');
         }
         function closeModal(id) {
             document.getElementById(id).classList.remove('active');
-            // Reset mmproj container when closing load modal
-            if (id === 'loadModal') {
-                document.getElementById('mmprojContainer').style.display = 'none';
-            }
         }
 
         // Dashboard
         async function loadDashboard() {
-            // Check pending signups
             try {
-                const signupsResp = await api('/admin/api/signups');
-                const signups = await signupsResp.json();
-                const pending = signups.filter(s => s.status === 'pending');
+                // Check pending signups
+                try {
+                    const signupsResp = await api('/admin/api/signups');
+                    const signups = await signupsResp.json();
+                    const pending = Array.isArray(signups) ? signups.filter(s => s.status === 'pending') : [];
 
-                if (pending.length > 0) {
-                    document.getElementById('pendingSignupsAlert').style.display = 'block';
-                    document.getElementById('pendingCount').textContent = `(${pending.length} waiting)`;
-                } else {
+                    if (pending.length > 0) {
+                        document.getElementById('pendingSignupsAlert').style.display = 'block';
+                        document.getElementById('pendingCount').textContent = ` (${pending.length} waiting)`;
+                    } else {
+                        document.getElementById('pendingSignupsAlert').style.display = 'none';
+                    }
+                } catch (e) {
                     document.getElementById('pendingSignupsAlert').style.display = 'none';
                 }
-            } catch (e) {
-                // Ignore
-            }
 
-            // System stats
-            const sysResp = await api('/admin/api/system');
-            const sys = await sysResp.json();
+                // System stats
+                const sysResp = await api('/admin/api/system');
+                const sys = await sysResp.json();
 
-            const ramPct = sys.memory.percent;
-            const ramClass = ramPct > 80 ? 'danger' : ramPct > 60 ? 'warning' : '';
-
-            document.getElementById('systemStats').innerHTML = `
-                <div class="stat-card">
-                    <div class="stat-value">${sys.cpu.total_percent.toFixed(1)}%</div>
-                    <div class="stat-label">CPU (${sys.cpu.cores} cores)</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">${sys.memory.used_gb}GB</div>
-                    <div class="stat-label">RAM Used / ${sys.memory.total_gb}GB</div>
-                    <div class="progress"><div class="progress-bar ${ramClass}" style="width: ${ramPct}%"></div></div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">${sys.slots.filter(s => s.status === 'running').length}</div>
-                    <div class="stat-label">Active Slots</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">${sys.memory.available_gb}GB</div>
-                    <div class="stat-label">RAM Available</div>
-                </div>
-            `;
-
-            // Slots overview
-            document.getElementById('dashboardSlots').innerHTML = sys.slots
-                .filter(s => s.status === 'running')
-                .map(s => `
-                    <div class="slot-card">
-                        <div class="slot-header">
-                            <span class="slot-port">:${s.port}</span>
-                            <span class="slot-status running">running</span>
-                        </div>
-                        <div class="slot-model">${s.model || '-'}</div>
-                        <div class="slot-stats">
-                            <span>RAM: ${s.ram_mb}MB</span>
-                            <span>CPU: ${s.cpu_percent || 0}%</span>
-                        </div>
-                    </div>
-                `).join('') || '<div style="color: var(--text2);">No models loaded</div>';
-
-            // Usage stats
-            const statsResp = await api('/v1/stats/summary');
-            const stats = await statsResp.json();
-
-            document.getElementById('usageStats').innerHTML = `
-                <p>${stats.summary}</p>
-                <div class="stats-grid" style="margin-top: 12px;">
-                    <div class="stat-card">
-                        <div class="stat-value">${stats.stats.total_requests}</div>
-                        <div class="stat-label">Requests</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">${stats.stats.total_tokens}</div>
-                        <div class="stat-label">Tokens</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">${stats.stats.avg_latency_ms}ms</div>
-                        <div class="stat-label">Avg Latency</div>
-                    </div>
-                </div>
-            `;
-
-            document.getElementById('lastUpdate').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
-        }
-
-        // Slots
-        async function loadSlots() {
-            const resp = await api('/admin/api/slots');
-            const slots = await resp.json();
-
-            // Use global TYPE_ICONS constant
-            document.getElementById('slotsContainer').innerHTML = slots.map(s => {
-                const typeIcon = TYPE_ICONS[s.model_type] || '💬';
-                const caps = s.capabilities || {};
-                const capBadges = [];
-                if (caps.text) capBadges.push('📝');
-                if (caps.vision) capBadges.push('👁️');
-                if (caps.audio) capBadges.push('🎤');
-                if (caps.embedding) capBadges.push('📊');
-
-                return `
-                <div class="slot-card">
-                    <div class="slot-header">
-                        <span class="slot-port">:${s.port}</span>
-                        <span class="slot-status ${s.status}">${s.status}</span>
-                    </div>
-                    ${s.model_name ? `
-                        <div class="slot-model">${s.model_name}</div>
-                        <div class="slot-stats">
-                            <span>${typeIcon} ${s.model_type}</span>
-                            <span>RAM: ${s.ram_mb}MB</span>
-                            <span>Ctx: ${s.ctx_size}</span>
-                        </div>
-                        <div style="font-size: 11px; color: var(--text2); margin: 4px 0;">
-                            Capabilities: ${capBadges.join(' ') || 'none'}
-                        </div>
-                        <div class="slot-actions">
-                            <button class="btn btn-danger btn-sm" onclick="unloadModel(${s.port})">Unload</button>
-                        </div>
-                    ` : `
-                        <div style="color: var(--text2); padding: 20px 0;">Empty slot</div>
-                    `}
-                </div>
-            `}).join('');
-
-            // Local models - cache for mmproj selector
-            const localResp = await api('/admin/api/models/local');
-            cachedLocalModels = await localResp.json();
-
-            document.getElementById('localModels').innerHTML = cachedLocalModels.length ? `
-                <table>
-                    <thead><tr><th>Name</th><th>Size</th><th>Type</th><th>Actions</th></tr></thead>
-                    <tbody>
-                        ${cachedLocalModels.map(m => {
-                            const detectedType = m.detected_type || 'text';
-                            const isMmproj = detectedType === 'mmproj';
-                            const typeIcon = TYPE_ICONS[detectedType] || '💬';
-                            const typeLabel = detectedType.charAt(0).toUpperCase() + detectedType.slice(1);
-
-                            return `
-                            <tr>
-                                <td>${m.name}</td>
-                                <td>${m.size_gb}GB</td>
-                                <td>${typeIcon} ${typeLabel}</td>
-                                <td>
-                                    ${isMmproj ? '' : `<button class="btn btn-sm btn-primary" onclick="quickLoad('${m.path}')">Load</button>`}
-                                    <button class="btn btn-sm btn-danger" onclick="deleteModel('${m.path}')" title="Delete">🗑️</button>
-                                </td>
-                            </tr>
-                        `}).join('')}
-                    </tbody>
-                </table>
-                <p style="font-size: 12px; color: var(--text2); margin-top: 8px;">
-                    👁️ Vision and 🌐 Omni models need both the model file AND the 🔗 mmproj file in the same folder.
-                </p>
-            ` : '<div style="color: var(--text2);">No local models found. Download from HF Browser.</div>';
-        }
-
-        // ============================================================
-        // MODEL PATH AND TYPE HANDLERS
-        // ============================================================
-
-        function onModelPathChange() {
-            autoDetectModelType();
-            updateMmprojSelector();
-        }
-
-        function onModelTypeChange() {
-            const type = document.getElementById('loadType').value;
-            const mmprojContainer = document.getElementById('mmprojContainer');
-
-            if (TYPES_REQUIRING_MMPROJ.includes(type)) {
-                mmprojContainer.style.display = 'block';
-                updateMmprojSelector();
-            } else {
-                mmprojContainer.style.display = 'none';
-            }
-        }
-
-        function updateMmprojSelector() {
-            const select = document.getElementById('loadMmproj');
-            const modelPath = document.getElementById('loadPath').value;
-            const type = document.getElementById('loadType').value;
-
-            // Only show for types that need mmproj
-            if (!TYPES_REQUIRING_MMPROJ.includes(type)) {
-                document.getElementById('mmprojContainer').style.display = 'none';
-                return;
-            }
-
-            document.getElementById('mmprojContainer').style.display = 'block';
-
-            // Get mmproj files from cached local models
-            const mmprojFiles = cachedLocalModels.filter(m =>
-                m.detected_type === 'mmproj' || m.name.toLowerCase().includes('mmproj')
-            );
-
-            // Build options
-            let options = '<option value="">✨ Auto-detect</option>';
-
-            if (mmprojFiles.length > 0) {
-                options += mmprojFiles.map(m =>
-                    `<option value="${m.path}">${m.name} (${m.size_gb}GB)</option>`
-                ).join('');
-            } else {
-                options += '<option value="" disabled>No mmproj files found</option>';
-            }
-
-            select.innerHTML = options;
-        }
-
-        function autoDetectModelType() {
-            const path = document.getElementById('loadPath').value.toLowerCase();
-            const typeSelect = document.getElementById('loadType');
-            const indicator = document.getElementById('typeAutoDetected');
-
-            let detected = null;
-
-            // Check for mmproj (not a loadable model)
-            if (path.includes('mmproj')) {
-                indicator.textContent = '(mmproj file - not loadable directly)';
-                indicator.style.color = 'var(--yellow)';
-                return;
-            }
-            indicator.style.color = 'var(--green)';
-
-            // TTS models - check FIRST (before other checks)
-            // Common TTS model identifiers: tts, speech, vocoder, outetts, parler, kokoro, f5-tts, coqui, xtts, bark
-            const ttsPatterns = ['tts', 'speech', 'vocoder', 'outetts', 'parler', 'kokoro', 'f5-tts', 'f5tts',
-                                 'coqui', 'xtts', 'bark', 'vits', 'piper', 'silero', 'speecht5'];
-            if (ttsPatterns.some(p => path.includes(p))) {
-                detected = 'tts';
-            }
-            // Omni models (audio + vision + text)
-            else if (path.includes('omni')) {
-                detected = 'omni';
-            }
-            // Audio-only models: whisper (STT)
-            else if (path.includes('whisper') || (path.includes('ggml-') &&
-                     (path.includes('.bin') || path.includes('large') || path.includes('medium') ||
-                      path.includes('small') || path.includes('base') || path.includes('tiny')))) {
-                detected = 'audio';
-            }
-            // Check for VL (vision) + embed combination
-            else {
-                const isVision = path.includes('-vl') || path.includes('_vl') ||
-                                 path.includes('vision') || path.includes('minicpm-v') ||
-                                 path.includes('minicpm_v');
-                const isEmbedding = path.includes('embed');
-
-                if (isVision && isEmbedding) {
-                    detected = 'vision-embedding';
-                } else if (isEmbedding) {
-                    detected = 'embedding';
-                } else if (isVision) {
-                    detected = 'vision';
-                } else if (path.length > 0) {
-                    detected = 'text';
+                // Ollama status
+                const statusDot = document.querySelector('#ollamaStatus .status-dot');
+                const statusText = document.querySelector('#ollamaStatus span:last-child');
+                if (sys.ollama && sys.ollama.healthy) {
+                    statusDot.className = 'status-dot status-healthy';
+                    statusText.textContent = 'Healthy';
+                } else {
+                    statusDot.className = 'status-dot status-unhealthy';
+                    statusText.textContent = 'Unhealthy';
                 }
-            }
+                document.getElementById('backendMode').textContent = sys.backend_mode || 'bare';
 
-            if (detected) {
-                typeSelect.value = detected;
-                indicator.textContent = '(auto-detected)';
-                // Trigger type change to show/hide mmproj selector
-                onModelTypeChange();
-            } else {
-                indicator.textContent = '';
+                // Models (server returns array directly)
+                const modelsResp = await api('/admin/api/models');
+                const models = await modelsResp.json();
+                const modelsList = Array.isArray(models) ? models : [];
+                document.getElementById('activeModels').textContent = modelsList.length;
+
+                // Users (server returns array directly)
+                const usersResp = await api('/admin/api/users');
+                const users = await usersResp.json();
+                const usersList = Array.isArray(users) ? users : [];
+                document.getElementById('totalUsers').textContent = usersList.length;
+
+                // 24h stats - not in system endpoint, show 0
+                document.getElementById('requests24h').textContent = '-';
+
+                // Active models grid
+                const grid = document.getElementById('activeModelsGrid');
+                if (modelsList.length > 0) {
+                    grid.innerHTML = modelsList.map(m => `
+                        <div class="model-card">
+                            <div class="model-header">
+                                <span class="model-name">${m.model_name}</span>
+                                <span class="model-badge loaded">${m.status || 'Loaded'}</span>
+                            </div>
+                            <div class="model-info">Type: ${m.model_type}</div>
+                            <div class="model-info">Keep Alive: ${m.keep_alive || 'Default'}</div>
+                        </div>
+                    `).join('');
+                } else {
+                    grid.innerHTML = '<div style="color: var(--text2);">No models loaded</div>';
+                }
+
+                document.getElementById('lastUpdate').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+            } catch (e) {
+                console.error('Dashboard load failed:', e);
             }
         }
 
-        // Old loadModel function replaced by queueLoadModel()
-        // Queue-based loading is now the default
+        // Models
+        async function loadModels() {
+            try {
+                const [gatewayResp, ollamaResp] = await Promise.all([
+                    api('/admin/api/models'),
+                    api('/admin/api/models/ollama')
+                ]);
 
-        async function unloadModel(slot) {
-            if (!confirm(`Unload model from slot ${slot}?`)) return;
+                const gatewayModels = await gatewayResp.json();
+                const ollamaModels = await ollamaResp.json();
+                const gwList = Array.isArray(gatewayModels) ? gatewayModels : [];
+                const olList = Array.isArray(ollamaModels) ? ollamaModels : [];
 
-            const resp = await api(`/admin/api/slots/${slot}/unload`, { method: 'POST' });
-            if (resp.ok) {
-                toast(`Slot ${slot} unloaded`);
-                loadSlots();
-                loadDashboard();
+                // Gateway models
+                const gatewayTable = document.getElementById('gatewayModelsTable');
+                if (gwList.length > 0) {
+                    gatewayTable.innerHTML = gwList.map(m => `
+                        <tr>
+                            <td>${m.model_name}</td>
+                            <td>${m.model_type}</td>
+                            <td>${m.keep_alive || 'Default'}</td>
+                            <td>${m.status || 'running'}</td>
+                            <td>
+                                <button class="btn btn-sm btn-danger" onclick="unloadModel('${m.model_name}')">Unload</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                } else {
+                    gatewayTable.innerHTML = '<tr><td colspan="5" style="color: var(--text2); text-align: center;">No models loaded</td></tr>';
+                }
+
+                // Ollama models
+                const ollamaTable = document.getElementById('ollamaModelsTable');
+                if (olList.length > 0) {
+                    ollamaTable.innerHTML = olList.map(m => `
+                        <tr>
+                            <td>${m.name}</td>
+                            <td>${m.size_gb ? m.size_gb + ' GB' : 'N/A'}</td>
+                            <td>${m.modified_at ? new Date(m.modified_at).toLocaleString() : 'N/A'}</td>
+                            <td>
+                                <button class="btn btn-sm btn-success" onclick="quickLoadModel('${m.name}')">Load</button>
+                                <button class="btn btn-sm btn-danger" onclick="deleteModel('${m.name}')">Delete</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                } else {
+                    ollamaTable.innerHTML = '<tr><td colspan="4" style="color: var(--text2); text-align: center;">No models in Ollama. Pull a model to get started.</td></tr>';
+                }
+            } catch (e) {
+                toast('Failed to load models: ' + e.message, 'error');
             }
         }
 
-        function quickLoad(path) {
-            document.getElementById('loadPath').value = path;
-            autoDetectModelType();
-            openLoadModal();
+        async function loadModel() {
+            const name = document.getElementById('loadModelName').value;
+            const type = document.getElementById('loadModelType').value;
+            const keepAlive = document.getElementById('loadKeepAlive').value;
+
+            if (!name) {
+                toast('Please enter a model name', 'error');
+                return;
+            }
+
+            try {
+                const resp = await api('/admin/api/models/load', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        model_name: name,
+                        model_type: type,
+                        keep_alive: keepAlive
+                    })
+                });
+
+                if (resp.ok) {
+                    toast(`Model ${name} loaded`);
+                    closeModal('loadModal');
+                    loadModels();
+                    loadDashboard();
+                } else {
+                    const err = await resp.json();
+                    toast(err.error || 'Failed to load', 'error');
+                }
+            } catch (e) {
+                toast('Failed to load: ' + e.message, 'error');
+            }
         }
 
-        async function deleteModel(path) {
-            if (!confirm(`Delete model "${path}"?\n\nThis cannot be undone!`)) return;
+        async function quickLoadModel(name) {
+            try {
+                const resp = await api('/admin/api/models/load', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        model_name: name,
+                        model_type: 'auto',
+                        keep_alive: '30m'
+                    })
+                });
 
-            const resp = await api('/admin/api/models/delete', {
-                method: 'POST',
-                body: JSON.stringify({ model_path: path })
-            });
+                if (resp.ok) {
+                    toast(`Model ${name} loaded`);
+                    loadModels();
+                    loadDashboard();
+                } else {
+                    const err = await resp.json();
+                    toast(err.error || 'Failed to load', 'error');
+                }
+            } catch (e) {
+                toast('Failed to load: ' + e.message, 'error');
+            }
+        }
 
-            const result = await resp.json();
-            if (resp.ok) {
-                toast('Model deleted');
-                loadSlots();
-            } else {
-                toast(result.detail || 'Failed to delete', 'error');
+        async function unloadModel(name) {
+            if (!confirm(`Unload model ${name}?`)) return;
+
+            try {
+                const resp = await api(`/admin/api/models/${encodeURIComponent(name)}/unload`, {
+                    method: 'POST'
+                });
+
+                if (resp.ok) {
+                    toast(`Model ${name} unloaded`);
+                    loadModels();
+                    loadDashboard();
+                } else {
+                    const err = await resp.json();
+                    toast(err.error || 'Failed to unload', 'error');
+                }
+            } catch (e) {
+                toast('Failed to unload: ' + e.message, 'error');
+            }
+        }
+
+        async function deleteModel(name) {
+            if (!confirm(`Delete model ${name} from Ollama? This cannot be undone.`)) return;
+
+            try {
+                const resp = await api('/admin/api/models/delete', {
+                    method: 'POST',
+                    body: JSON.stringify({ model_name: name })
+                });
+
+                if (resp.ok) {
+                    toast(`Model ${name} deleted`);
+                    loadModels();
+                } else {
+                    const err = await resp.json();
+                    toast(err.error || 'Failed to delete', 'error');
+                }
+            } catch (e) {
+                toast('Failed to delete: ' + e.message, 'error');
+            }
+        }
+
+        async function pullModel() {
+            const name = document.getElementById('pullModelName').value;
+            if (!name) {
+                toast('Please enter a model name', 'error');
+                return;
+            }
+
+            try {
+                toast(`Pulling model ${name}... This may take a while.`);
+                closeModal('pullModal');
+
+                const resp = await api('/admin/api/models/pull', {
+                    method: 'POST',
+                    body: JSON.stringify({ model_name: name })
+                });
+
+                if (resp.ok) {
+                    toast(`Model ${name} pulled successfully`);
+                    loadModels();
+                } else {
+                    const err = await resp.json();
+                    toast(err.error || 'Failed to pull', 'error');
+                }
+            } catch (e) {
+                toast('Failed to pull: ' + e.message, 'error');
+            }
+        }
+
+        async function importGGUF() {
+            const path = document.getElementById('importGGUFPath').value;
+            const name = document.getElementById('importModelName').value;
+
+            if (!path || !name) {
+                toast('Please enter both path and model name', 'error');
+                return;
+            }
+
+            try {
+                toast(`Importing GGUF... This may take a while.`);
+                closeModal('importModal');
+
+                const resp = await api('/admin/api/models/import-gguf', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        gguf_path: path,
+                        model_name: name
+                    })
+                });
+
+                if (resp.ok) {
+                    toast(`GGUF imported as ${name}`);
+                    loadModels();
+                } else {
+                    const err = await resp.json();
+                    toast(err.error || 'Failed to import', 'error');
+                }
+            } catch (e) {
+                toast('Failed to import: ' + e.message, 'error');
             }
         }
 
         // HF Browser
         async function searchHF() {
             const q = document.getElementById('hfSearchInput').value;
-            document.getElementById('hfResults').innerHTML = '<div>Searching...</div>';
-
-            const resp = await api(`/admin/api/models/search?q=${encodeURIComponent(q)}`);
-            const results = await resp.json();
-
-            if (results.error) {
-                document.getElementById('hfResults').innerHTML = `<div style="color: var(--red);">${results.error}</div>`;
+            if (!q) {
+                toast('Please enter a search query', 'error');
                 return;
             }
 
-            // Helper to get file icon
-            const getFileIcon = (f) => {
-                const name = f.toLowerCase();
-                if (name.includes('mmproj')) return '🔗';
-                // TTS patterns
-                const ttsPatterns = ['tts', 'speech', 'vocoder', 'outetts', 'parler', 'kokoro',
-                                     'f5-tts', 'f5tts', 'coqui', 'xtts', 'bark', 'vits', 'piper', 'silero', 'speecht5'];
-                if (ttsPatterns.some(p => name.includes(p))) return '🔊';
-                if (name.includes('omni')) return '🌐';
-                if (name.includes('whisper') || name.includes('ggml-')) return '🎵';
-                if (name.includes('-vl') || name.includes('vision')) return '👁️';
-                if (name.includes('embed')) return '📊';
-                return '💬';
-            };
+            const results = document.getElementById('hfResults');
+            results.innerHTML = '<div style="color: var(--text2);">Searching...</div>';
 
-            document.getElementById('hfResults').innerHTML = results.map(r => `
-                <div class="search-item">
-                    <div class="search-item-title">${r.repo_id}</div>
-                    <div class="search-item-meta">⬇️ ${r.downloads?.toLocaleString() || 0} | ❤️ ${r.likes || 0}</div>
-                    <div class="file-list">
-                        ${r.files.map(f => `
-                            <div class="file-item">
-                                <span>${getFileIcon(f)} ${f}</span>
-                                <button class="btn btn-sm btn-primary" onclick="downloadModel('${r.repo_id}', '${f}')">Download</button>
+            try {
+                const resp = await api(`/admin/api/models/search-hf?q=${encodeURIComponent(q)}`);
+                const data = await resp.json();
+                const repoList = Array.isArray(data) ? data : [];
+
+                if (repoList.length > 0) {
+                    results.innerHTML = repoList.map(r => `
+                        <div class="card">
+                            <div style="font-weight: 500; margin-bottom: 8px;">${r.repo_id}</div>
+                            <div style="font-size: 12px; color: var(--text2); margin-bottom: 4px;">
+                                Downloads: ${r.downloads || 0} | Likes: ${r.likes || 0}
                             </div>
-                        `).join('')}
-                    </div>
-                </div>
-            `).join('') || '<div>No results found</div>';
+                            <div style="font-size: 12px; margin-bottom: 8px;">
+                                ${(r.files || []).map(f => `
+                                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--border);">
+                                        <span style="color: var(--text2);">${f}</span>
+                                        <button class="btn btn-sm btn-primary" onclick="downloadHF('${r.repo_id}', '${f}')">Download</button>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `).join('');
+                } else if (data.error) {
+                    results.innerHTML = `<div style="color: var(--red);">${data.error}</div>`;
+                } else {
+                    results.innerHTML = '<div style="color: var(--text2);">No GGUF models found</div>';
+                }
+            } catch (e) {
+                results.innerHTML = `<div style="color: var(--red);">Search failed: ${e.message}</div>`;
+            }
         }
 
-        async function downloadModel(repo, file) {
-            toast('Starting download...');
-            const resp = await api('/admin/api/models/download', {
-                method: 'POST',
-                body: JSON.stringify({ repo_id: repo, filename: file })
-            });
-            const result = await resp.json();
-            if (result.error) {
-                toast(result.error, 'error');
-            } else {
-                toast(`Downloaded: ${result.path}`);
-                loadSlots();
+        async function downloadHF(repo, file) {
+            try {
+                toast(`Downloading ${file}... This may take a while.`);
+
+                const resp = await api('/admin/api/models/download-hf', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        repo_id: repo,
+                        filename: file
+                    })
+                });
+
+                if (resp.ok) {
+                    toast(`Downloaded ${file}`);
+                    loadLocalFiles();
+                } else {
+                    const err = await resp.json();
+                    toast(err.error || 'Download failed', 'error');
+                }
+            } catch (e) {
+                toast('Download failed: ' + e.message, 'error');
             }
+        }
+
+        async function loadLocalFiles() {
+            try {
+                const resp = await api('/admin/api/models/local');
+                const files = await resp.json();
+                const filesList = Array.isArray(files) ? files : [];
+
+                const table = document.getElementById('localFilesTable');
+                if (filesList.length > 0) {
+                    table.innerHTML = filesList.map(f => `
+                        <tr>
+                            <td>${f.name}</td>
+                            <td>${f.size_gb ? f.size_gb + ' GB' : f.size_mb + ' MB'}</td>
+                            <td style="font-size: 11px; color: var(--text2);">${f.path}</td>
+                            <td>
+                                <button class="btn btn-sm btn-primary" onclick="quickImport('${f.path}', '${f.name}')">Import to Ollama</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                } else {
+                    table.innerHTML = '<tr><td colspan="4" style="color: var(--text2); text-align: center;">No local GGUF files found</td></tr>';
+                }
+            } catch (e) {
+                toast('Failed to load local files: ' + e.message, 'error');
+            }
+        }
+
+        function quickImport(path, filename) {
+            const suggestedName = filename.replace('.gguf', '').replace(/[^a-z0-9.-]/gi, '-').toLowerCase() + ':latest';
+            document.getElementById('importGGUFPath').value = path;
+            document.getElementById('importModelName').value = suggestedName;
+            openImportModal();
         }
 
         // Users
         async function loadUsers() {
-            const resp = await api('/admin/api/users');
-            const users = await resp.json();
+            try {
+                const resp = await api('/admin/api/users');
+                const users = await resp.json();
+                const usersList = Array.isArray(users) ? users : [];
 
-            document.getElementById('usersTable').innerHTML = users.map(u => `
-                <tr>
-                    <td>${u.email}</td>
-                    <td>${u.tier}</td>
-                    <td>€${(u.balance || 0).toFixed(4)}</td>
-                    <td>${u.key_count}</td>
-                    <td>€${(u.total_usage || 0).toFixed(4)}</td>
-                    <td>
-                        <button class="btn btn-sm" onclick="openBalanceModal(${u.id}, ${u.balance})">💰</button>
-                        <button class="btn btn-sm" onclick="createApiKey(${u.id})">🔑</button>
-                        <button class="btn btn-sm ${u.active ? '' : 'btn-danger'}" onclick="toggleUser(${u.id}, ${u.active})">
-                            ${u.active ? '✓' : '✗'}
-                        </button>
-                    </td>
-                </tr>
-            `).join('');
+                const table = document.getElementById('usersTable');
+                if (usersList.length > 0) {
+                    table.innerHTML = usersList.map(u => `
+                        <tr>
+                            <td>${u.email}</td>
+                            <td style="font-size: 11px;">${u.tier || 'payg'}</td>
+                            <td>$${(u.balance || 0).toFixed(4)}</td>
+                            <td>${u.created_at ? new Date(u.created_at).toLocaleString() : 'N/A'}</td>
+                            <td>
+                                <button class="btn btn-sm btn-primary" onclick="createApiKey(${u.id})">+ Key</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                } else {
+                    table.innerHTML = '<tr><td colspan="5" style="color: var(--text2); text-align: center;">No users registered</td></tr>';
+                }
+            } catch (e) {
+                toast('Failed to load users: ' + e.message, 'error');
+            }
         }
 
         async function createUser() {
-            const email = document.getElementById('userEmail').value;
-            const tier = document.getElementById('userTier').value;
+            const email = document.getElementById('userUsername').value;
+            const tier = document.getElementById('userRpm').value || 'payg';
 
-            const resp = await api('/admin/api/users', {
-                method: 'POST',
-                body: JSON.stringify({ email, tier })
-            });
+            if (!email) {
+                toast('Please enter an email', 'error');
+                return;
+            }
 
-            if (resp.ok) {
-                toast('User created');
-                closeModal('userModal');
-                loadUsers();
-            } else {
-                const err = await resp.json();
-                toast(err.detail || 'Failed', 'error');
+            try {
+                const resp = await api('/admin/api/users', {
+                    method: 'POST',
+                    body: JSON.stringify({ email, tier })
+                });
+
+                if (resp.ok) {
+                    const result = await resp.json();
+                    toast(`User ${email} created (ID: ${result.id})`);
+                    closeModal('userModal');
+                    loadUsers();
+                } else {
+                    const err = await resp.json();
+                    toast(err.detail || 'Failed to create', 'error');
+                }
+            } catch (e) {
+                toast('Failed to create: ' + e.message, 'error');
             }
         }
 
         async function createApiKey(userId) {
-            const resp = await api(`/admin/api/users/${userId}/apikey`, {
-                method: 'POST',
-                body: JSON.stringify({ user_id: userId, name: 'default' })
-            });
-            const result = await resp.json();
-            if (resp.ok) {
-                prompt('New API Key (copy now, will not be shown again):', result.key);
-                loadUsers();
-            }
-        }
+            try {
+                const resp = await api(`/admin/api/users/${userId}/apikey`, {
+                    method: 'POST',
+                    body: JSON.stringify({ user_id: userId, name: 'default' })
+                });
 
-        function openBalanceModal(userId, currentBalance) {
-            document.getElementById('balanceUserId').value = userId;
-            document.getElementById('newBalance').value = currentBalance || 0;
-            document.getElementById('balanceModal').classList.add('active');
-        }
-
-        async function updateBalance() {
-            const userId = document.getElementById('balanceUserId').value;
-            const balance = parseFloat(document.getElementById('newBalance').value);
-
-            const resp = await api(`/admin/api/users/${userId}`, {
-                method: 'PATCH',
-                body: JSON.stringify({ balance })
-            });
-
-            if (resp.ok) {
-                toast('Balance updated');
-                closeModal('balanceModal');
-                loadUsers();
-            }
-        }
-
-        async function toggleUser(userId, current) {
-            await api(`/admin/api/users/${userId}`, {
-                method: 'PATCH',
-                body: JSON.stringify({ active: !current })
-            });
-            loadUsers();
-        }
-
-        // Config
-        async function loadConfig() {
-            const resp = await api('/admin/api/config');
-            const config = await resp.json();
-
-            document.getElementById('adminKeyDisplay').value = config.admin_key_display || 'Not set';
-            document.getElementById('hfTokenInput').value = config.hf_token || '';
-            document.getElementById('ctxSizeInput').value = config.default_ctx_size || 8192;
-            document.getElementById('threadsInput').value = config.default_threads || 10;
-            document.getElementById('priceInputInput').value = config.pricing?.input_per_1k || 0.0001;
-            document.getElementById('priceOutputInput').value = config.pricing?.output_per_1k || 0.0002;
-
-            // Performance settings
-            const perf = config.performance || {};
-            document.getElementById('perfFlashAttn').checked = perf.flash_attention !== false;
-            document.getElementById('perfMlock').checked = perf.mlock !== false;
-            document.getElementById('perfKvCache').value = perf.kv_cache_quantization || 'q8_0';
-            document.getElementById('perfBatchSize').value = perf.batch_size || 512;
-        }
-
-        async function saveConfig() {
-            const hfToken = document.getElementById('hfTokenInput').value;
-            const config = {
-                default_ctx_size: parseInt(document.getElementById('ctxSizeInput').value),
-                default_threads: parseInt(document.getElementById('threadsInput').value),
-                pricing: {
-                    input_per_1k: parseFloat(document.getElementById('priceInputInput').value),
-                    output_per_1k: parseFloat(document.getElementById('priceOutputInput').value)
-                },
-                performance: {
-                    flash_attention: document.getElementById('perfFlashAttn').checked,
-                    mlock: document.getElementById('perfMlock').checked,
-                    kv_cache_quantization: document.getElementById('perfKvCache').value,
-                    batch_size: parseInt(document.getElementById('perfBatchSize').value)
+                if (resp.ok) {
+                    const data = await resp.json();
+                    prompt('New API key (copy it now, it will not be shown again):', data.key);
+                    loadUsers();
+                } else {
+                    const err = await resp.json();
+                    toast(err.detail || 'Failed to create key', 'error');
                 }
-            };
-
-            if (hfToken && !hfToken.includes('...')) {
-                config.hf_token = hfToken;
-            }
-
-            const resp = await api('/admin/api/config', {
-                method: 'PATCH',
-                body: JSON.stringify(config)
-            });
-
-            if (resp.ok) {
-                toast('Config saved! Performance changes apply to newly loaded models.');
+            } catch (e) {
+                toast('Failed to create key: ' + e.message, 'error');
             }
         }
 
         // Signups
         async function loadSignups() {
-            const resp = await api('/admin/api/signups');
-            const signups = await resp.json();
+            try {
+                const resp = await api('/admin/api/signups');
+                const signups = await resp.json();
+                const signupsList = Array.isArray(signups) ? signups : [];
 
-            document.getElementById('signupsTable').innerHTML = signups.map(s => {
-                const statusClass = s.status === 'pending' ? 'style="color: var(--yellow)"' :
-                                   s.status === 'approved' ? 'style="color: var(--green)"' :
-                                   'style="color: var(--red)"';
-                const date = new Date(s.created_at).toLocaleDateString();
-
-                return `
-                    <tr>
-                        <td>${s.email}</td>
-                        <td>${s.tier}</td>
-                        <td>${s.message || '-'}</td>
-                        <td ${statusClass}>${s.status}</td>
-                        <td>${date}</td>
-                        <td>
-                            ${s.status === 'pending' ? `
-                                <button class="btn btn-sm btn-primary" onclick="approveSignup(${s.id})">✓ Approve</button>
-                                <button class="btn btn-sm btn-danger" onclick="rejectSignup(${s.id})">✗ Reject</button>
-                            ` : '-'}
-                        </td>
-                    </tr>
-                `;
-            }).join('') || '<tr><td colspan="6" style="color: var(--text2);">No signup requests</td></tr>';
-
-            // Update email templates
-            updateEmailTemplates();
-        }
-
-        function updateEmailTemplates() {
-            const baseUrl = window.location.origin;
-
-            document.getElementById('emailTemplatePAYG').value = `Hallo,
-
-willkommen bei LLM Gateway! Dein Account wurde erfolgreich erstellt.
-
-🔑 Dein API Key: [API_KEY_HERE]
-
-📖 Quick Start:
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="${baseUrl}/v1",
-    api_key="dein-api-key"
-)
-
-response = client.chat.completions.create(
-    model="model-name",
-    messages=[{"role": "user", "content": "Hallo!"}]
-)
-
-💰 Pricing: Pay As You Go
-- €0.0001 pro 1K Input Tokens
-- €0.0002 pro 1K Output Tokens
-- Rate Limit: 5 Requests/Minute
-
-💳 Guthaben aufladen:
-Überweise den gewünschten Betrag an:
-IBAN: [DEINE_IBAN]
-Verwendungszweck: LLM Gateway - [DEINE_EMAIL]
-
-Dashboard: ${baseUrl}/user/
-
-Bei Fragen einfach antworten!
-
-Viele Grüße`;
-
-            document.getElementById('emailTemplateSub').value = `Hallo,
-
-willkommen bei LLM Gateway! Dein Subscription Account wurde erfolgreich erstellt.
-
-🔑 Dein API Key: [API_KEY_HERE]
-
-📖 Quick Start:
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="${baseUrl}/v1",
-    api_key="dein-api-key"
-)
-
-response = client.chat.completions.create(
-    model="model-name",
-    messages=[{"role": "user", "content": "Hallo!"}]
-)
-
-💎 Subscription Plan: €39/Monat
-- Unlimited Tokens
-- Rate Limit: 10 Requests/Minute
-- Priority Support
-
-💳 Monatliche Zahlung:
-Bitte überweise €39 bis zum 1. des Monats an:
-IBAN: [DEINE_IBAN]
-Verwendungszweck: LLM Gateway Sub - [DEINE_EMAIL]
-
-Dashboard: ${baseUrl}/user/
-
-Bei Fragen einfach antworten!
-
-Viele Grüße`;
-        }
-
-        function copyTemplate(id) {
-            const textarea = document.getElementById(id);
-            textarea.select();
-            document.execCommand('copy');
-            toast('Template kopiert!');
-        }
-
-        async function approveSignup(id) {
-            const resp = await api(`/admin/api/signups/${id}/approve`, { method: 'POST' });
-            const result = await resp.json();
-
-            if (resp.ok) {
-                // Show API key in prompt so admin can copy and send to user
-                const key = result.api_key;
-                const tier = result.tier || 'payg';
-
-                // Copy key to clipboard
-                navigator.clipboard.writeText(key).catch(() => {});
-
-                alert(`✅ User approved!\n\nEmail: ${result.email}\nTier: ${tier}\n\nAPI Key (copied to clipboard):\n${key}\n\nGo to Signups tab to copy the email template.`);
-
-                toast('User approved and created');
-                loadSignups();
-                loadUsers();
-                loadDashboard();
-            } else {
-                toast(result.detail || 'Failed to approve', 'error');
+                const table = document.getElementById('signupsTable');
+                if (signupsList.length > 0) {
+                    table.innerHTML = signupsList.map(s => `
+                        <tr>
+                            <td>${s.email}</td>
+                            <td>${s.tier || 'payg'}</td>
+                            <td>${s.status}</td>
+                            <td>${s.created_at ? new Date(s.created_at).toLocaleString() : 'N/A'}</td>
+                            <td>
+                                ${s.status === 'pending' ? `
+                                    <button class="btn btn-sm btn-success" onclick="approveSignup(${s.id})">Approve</button>
+                                    <button class="btn btn-sm btn-danger" onclick="rejectSignup(${s.id})">Reject</button>
+                                ` : `<span style="color: var(--text2);">${s.status}</span>`}
+                            </td>
+                        </tr>
+                    `).join('');
+                } else {
+                    table.innerHTML = '<tr><td colspan="5" style="color: var(--text2); text-align: center;">No signup requests</td></tr>';
+                }
+            } catch (e) {
+                toast('Failed to load signups: ' + e.message, 'error');
             }
         }
 
-        async function rejectSignup(id) {
+        async function approveSignup(requestId) {
+            try {
+                const resp = await api(`/admin/api/signups/${requestId}/approve`, {
+                    method: 'POST'
+                });
+
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (data.api_key) {
+                        prompt('User approved! API key (copy now):', data.api_key);
+                    } else {
+                        toast('Signup approved');
+                    }
+                    loadSignups();
+                    loadDashboard();
+                    loadUsers();
+                } else {
+                    const err = await resp.json();
+                    toast(err.detail || 'Failed to approve', 'error');
+                }
+            } catch (e) {
+                toast('Failed to approve: ' + e.message, 'error');
+            }
+        }
+
+        async function rejectSignup(requestId) {
             if (!confirm('Reject this signup request?')) return;
 
-            const resp = await api(`/admin/api/signups/${id}/reject`, { method: 'POST' });
-            if (resp.ok) {
-                toast('Request rejected');
-                loadSignups();
+            try {
+                const resp = await api(`/admin/api/signups/${requestId}/reject`, {
+                    method: 'POST'
+                });
+
+                if (resp.ok) {
+                    toast('Signup rejected');
+                    loadSignups();
+                    loadDashboard();
+                } else {
+                    const err = await resp.json();
+                    toast(err.detail || 'Failed to reject', 'error');
+                }
+            } catch (e) {
+                toast('Failed to reject: ' + e.message, 'error');
             }
+        }
+
+        // Config
+        async function loadConfig() {
+            try {
+                const resp = await api('/admin/api/config');
+                const data = await resp.json();
+
+                document.getElementById('configOllamaUrl').value = data.ollama_url || '';
+                document.getElementById('configBackendMode').value = data.backend_mode || 'bare';
+                document.getElementById('configHfToken').value = data.hf_token || '';
+                const rl = data.rate_limits || {};
+                document.getElementById('configDefaultRpm').value = rl.payg || '';
+                document.getElementById('configDefaultRpd').value = rl.sub || '';
+                const pricing = data.pricing || {};
+                document.getElementById('configInputPrice').value = pricing.input_per_1k || '';
+                document.getElementById('configOutputPrice').value = pricing.output_per_1k || '';
+            } catch (e) {
+                toast('Failed to load config: ' + e.message, 'error');
+            }
+        }
+
+        async function saveConfig() {
+            const config = {
+                ollama_url: document.getElementById('configOllamaUrl').value,
+                backend_mode: document.getElementById('configBackendMode').value,
+            };
+
+            const hfToken = document.getElementById('configHfToken').value;
+            if (hfToken && !hfToken.endsWith('...')) config.hf_token = hfToken;
+
+            const payg = parseInt(document.getElementById('configDefaultRpm').value);
+            const sub = parseInt(document.getElementById('configDefaultRpd').value);
+            if (payg || sub) {
+                config.rate_limits = {};
+                if (payg) config.rate_limits.payg = payg;
+                if (sub) config.rate_limits.sub = sub;
+            }
+
+            const inputPrice = parseFloat(document.getElementById('configInputPrice').value);
+            const outputPrice = parseFloat(document.getElementById('configOutputPrice').value);
+            if (inputPrice || outputPrice) {
+                config.pricing = {};
+                if (inputPrice) config.pricing.input_per_1k = inputPrice;
+                if (outputPrice) config.pricing.output_per_1k = outputPrice;
+            }
+
+            try {
+                const resp = await api('/admin/api/config', {
+                    method: 'PATCH',
+                    body: JSON.stringify(config)
+                });
+
+                if (resp.ok) {
+                    toast('Configuration saved');
+                } else {
+                    const err = await resp.json();
+                    toast(err.detail || 'Failed to save', 'error');
+                }
+            } catch (e) {
+                toast('Failed to save: ' + e.message, 'error');
+            }
+        }
+
+        // Utilities
+        function formatSize(bytes) {
+            if (!bytes) return 'N/A';
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let size = bytes;
+            let unitIdx = 0;
+            while (size >= 1024 && unitIdx < units.length - 1) {
+                size /= 1024;
+                unitIdx++;
+            }
+            return `${size.toFixed(1)} ${units[unitIdx]}`;
         }
 
         // Init
         async function init() {
             await loadDashboard();
-            await loadSlots();
+            await loadModels();
             await loadUsers();
             await loadSignups();
             await loadConfig();
+            await loadLocalFiles();
 
-            // Auto refresh dashboard
-            refreshInterval = setInterval(loadDashboard, 5000);
+            // Auto refresh dashboard every 30 seconds
+            refreshInterval = setInterval(loadDashboard, 30000);
         }
 
         // Start

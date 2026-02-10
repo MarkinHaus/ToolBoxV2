@@ -1,173 +1,135 @@
 #!/bin/bash
 set -e
 
-# === LLM Gateway Setup Script ===
-# For Ryzen CPU (12 cores, 48GB RAM, no GPU)
+# LLM Gateway Setup Script for Linux/macOS
+# This script sets up the Python environment and optionally installs Ollama
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DATA_DIR="$SCRIPT_DIR/data"
-MODELS_DIR="$DATA_DIR/models"
-BUILD_DIR="$SCRIPT_DIR/build"
-
-echo "=== LLM Gateway Setup ==="
-echo "Script directory: $SCRIPT_DIR"
-
-# Create directories
-mkdir -p "$DATA_DIR" "$MODELS_DIR" "$BUILD_DIR" "$SCRIPT_DIR/static"
-
-# === 1. Install dependencies ===
-echo "[1/5] Installing dependencies..."
-sudo apt-get update
-sudo apt-get install -y \
-    build-essential \
-    cmake \
-    git \
-    curl \
-    libcurl4-openssl-dev \
-    python3 \
-    python3-pip \
-    python3-venv \
-    jq
-
-# === 2. Build llama.cpp ===
-echo "[2/5] Building llama.cpp..."
-cd "$BUILD_DIR"
-
-if [ ! -d "llama.cpp" ]; then
-    git clone https://github.com/ggml-org/llama.cpp.git
-fi
-
-cd llama.cpp
-git pull
-
-# Build with CPU optimizations for Ryzen (AVX2)
-cmake -B build \
-    -DBUILD_SHARED_LIBS=OFF \
-    -DGGML_NATIVE=ON \
-    -DGGML_CPU_ARM_ARCH=native \
-    -DLLAMA_CURL=ON \
-    -DCMAKE_BUILD_TYPE=Release
-
-cmake --build build --config Release -j$(nproc) --target llama-server llama-cli
-
-# Copy binaries
-cp build/bin/llama-server "$SCRIPT_DIR/llama-server"
-cp build/bin/llama-cli "$SCRIPT_DIR/llama-cli"
-
-# === 3. Build whisper.cpp ===
-echo "[3/5] Building whisper.cpp..."
-cd "$BUILD_DIR"
-
-if [ ! -d "whisper.cpp" ]; then
-    git clone https://github.com/ggerganov/whisper.cpp.git
-fi
-
-cd whisper.cpp
-git pull
-
-cmake -B build \
-    -DBUILD_SHARED_LIBS=OFF \
-    -DGGML_NATIVE=ON \
-    -DCMAKE_BUILD_TYPE=Release
-
-cmake --build build --config Release -j$(nproc) --target whisper-server
-
-cp build/bin/whisper-server "$SCRIPT_DIR/whisper-server"
-
-# === 4. Setup Python environment ===
-echo "[4/5] Setting up Python environment..."
 cd "$SCRIPT_DIR"
 
-python3 -m venv venv
-source venv/bin/activate
+echo "========================================="
+echo "LLM Gateway Setup"
+echo "========================================="
+echo
 
-pip install --upgrade pip
-pip install \
-    fastapi \
-    uvicorn[standard] \
-    httpx \
-    aiosqlite \
-    psutil \
-    huggingface_hub \
-    pydantic \
-    python-multipart \
-    passlib[bcrypt]
-
-# === 5. Create initial config ===
-echo "[5/5] Creating initial configuration..."
-
-if [ ! -f "$DATA_DIR/config.json" ]; then
-    # Generate secure admin key
-    ADMIN_KEY="sk-admin-$(openssl rand -hex 24)"
-
-    cat > "$DATA_DIR/config.json" << EOF
-{
-    "slots": {
-        "4801": null,
-        "4802": null,
-        "4803": null,
-        "4804": null,
-        "4805": null,
-        "4806": null,
-        "4807": null
-    },
-    "hf_token": null,
-    "admin_key": "$ADMIN_KEY",
-    "default_threads": 10,
-    "default_ctx_size": 8192,
-    "pricing": {
-        "input_per_1k": 0.0001,
-        "output_per_1k": 0.0002
-    }
-}
-EOF
-    echo ""
-    echo "=========================================="
-    echo "  ADMIN API KEY (save this!):"
-    echo "  $ADMIN_KEY"
-    echo "=========================================="
-    echo ""
+# Check Python version
+echo "[1/5] Checking Python version..."
+if ! command -v python3 &> /dev/null; then
+    echo "ERROR: Python 3 is not installed."
+    echo "Please install Python 3.12 or later and try again."
+    exit 1
 fi
 
-# === Create systemd service ===
-echo "Creating systemd service..."
+PYTHON_VERSION=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
+REQUIRED_VERSION="3.12"
 
-sudo tee /etc/systemd/system/llm-gateway.service > /dev/null << EOF
-[Unit]
-Description=LLM Gateway API Server
-After=network.target
+if [ "$(printf '%s\n' "$REQUIRED_VERSION" "$PYTHON_VERSION" | sort -V | head -n1)" != "$REQUIRED_VERSION" ]; then
+    echo "ERROR: Python $REQUIRED_VERSION or later is required."
+    echo "Current version: $PYTHON_VERSION"
+    exit 1
+fi
 
-[Service]
-Type=simple
-User=$USER
-WorkingDirectory=$SCRIPT_DIR
-Environment="PATH=$SCRIPT_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=$SCRIPT_DIR/venv/bin/uvicorn server:app --host 0.0.0.0 --port 4000 --workers 1
-Restart=always
-RestartSec=5
+echo "✓ Python $PYTHON_VERSION detected"
+echo
 
-[Install]
-WantedBy=multi-user.target
+# Create virtual environment
+echo "[2/5] Creating Python virtual environment..."
+if [ -d "venv" ]; then
+    echo "Virtual environment already exists. Skipping creation."
+else
+    python3 -m venv venv
+    echo "✓ Virtual environment created"
+fi
+echo
+
+# Activate virtual environment and install dependencies
+echo "[3/5] Installing Python dependencies..."
+source venv/bin/activate
+pip install --upgrade pip > /dev/null
+pip install -r requirements.txt
+echo "✓ Dependencies installed"
+echo
+
+# Check for Ollama
+echo "[4/5] Checking for Ollama..."
+if command -v ollama &> /dev/null; then
+    OLLAMA_VERSION=$(ollama --version 2>&1 | head -n1 || echo "unknown")
+    echo "✓ Ollama is already installed: $OLLAMA_VERSION"
+else
+    echo "Ollama is not installed."
+    read -p "Would you like to install Ollama now? (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        echo "Installing Ollama..."
+        curl -fsSL https://ollama.com/install.sh | sh
+        echo "✓ Ollama installed"
+    else
+        echo "Skipping Ollama installation."
+        echo "You can install it later with: curl -fsSL https://ollama.com/install.sh | sh"
+    fi
+fi
+echo
+
+# Generate initial config if it doesn't exist
+echo "[5/5] Setting up configuration..."
+mkdir -p data
+
+if [ -f "data/config.json" ]; then
+    echo "Configuration file already exists. Skipping generation."
+else
+    # Generate a random admin key
+    ADMIN_KEY=$(openssl rand -hex 32 2>/dev/null || cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 64 | head -n 1)
+
+    cat > data/config.json << EOF
+{
+  "api_keys": {
+    "$ADMIN_KEY": {
+      "name": "admin",
+      "role": "admin",
+      "created_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+      "rate_limit": {
+        "requests_per_minute": 100,
+        "tokens_per_minute": 100000
+      }
+    }
+  },
+  "ollama": {
+    "base_url": "http://localhost:11434",
+    "timeout": 300
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 4000,
+    "log_level": "info"
+  }
+}
 EOF
 
-sudo systemctl daemon-reload
-sudo systemctl enable llm-gateway
+    echo "✓ Configuration file created with admin API key"
+    echo
+    echo "========================================="
+    echo "IMPORTANT: Save your admin API key!"
+    echo "========================================="
+    echo "$ADMIN_KEY"
+    echo "========================================="
+    echo
+fi
 
-echo ""
-echo "=== Setup Complete ==="
-echo ""
-echo "Commands:"
-echo "  Start:   sudo systemctl start llm-gateway"
-echo "  Stop:    sudo systemctl stop llm-gateway"
-echo "  Status:  sudo systemctl status llm-gateway"
-echo "  Restart:  sudo systemctl restart llm-gateway"
-echo "  Logs:    journalctl -u llm-gateway -f"
-echo ""
-echo "Dev mode:"
-echo "  source venv/bin/activate"
-echo "  uvicorn server:app --host 0.0.0.0 --port 4000 --reload"
-echo ""
-echo "Access:"
-echo "  API:    http://localhost:4000/v1/"
-echo "  Admin:  http://localhost:4000/admin/"
-echo "  User:   http://localhost:4000/user/"
+echo "Setup complete!"
+echo
+echo "Next steps:"
+echo "1. Start Ollama (if not already running): ollama serve"
+echo "2. Pull a model: ollama pull llama3.2:latest"
+echo "3. Activate the virtual environment: source venv/bin/activate"
+echo "4. Run the gateway: python server.py"
+echo "   Or with uvicorn: uvicorn server:app --host 0.0.0.0 --port 4000"
+echo
+echo "The gateway will be available at: http://localhost:4000"
+echo "API documentation: http://localhost:4000/docs"
+echo
+echo "For Docker deployment:"
+echo "  Bare mode (gateway only): docker compose up gateway"
+echo "  Docker mode (both): docker compose --profile ollama up"
+echo
+
+deactivate 2>/dev/null || true

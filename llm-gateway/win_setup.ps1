@@ -1,217 +1,182 @@
-# === LLM Gateway Windows Setup Script ===
-# For Ryzen CPU (12 cores, 48GB RAM, no GPU)
-# Requires: Git, CMake, Visual Studio Build Tools, Python 3.10+
+# LLM Gateway Windows Setup Script
+# PowerShell script for setting up the LLM Gateway on Windows
 
 param(
-    [switch]$SkipBuild,
-    [switch]$SkipPython,
-    [switch]$SkipWhisper
+    [switch]$Help
 )
 
 $ErrorActionPreference = "Stop"
 
+if ($Help) {
+    Write-Host @"
+LLM Gateway Windows Setup Script
+
+Usage:
+    .\win_setup.ps1
+
+This script will:
+1. Check for Python 3.12 or later
+2. Create a Python virtual environment
+3. Install required Python dependencies
+4. Check for Ollama installation
+5. Generate initial configuration with admin API key
+
+"@
+    exit 0
+}
+
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location $SCRIPT_DIR
+
+Write-Host "=========================================" -ForegroundColor Cyan
+Write-Host "LLM Gateway Setup" -ForegroundColor Cyan
+Write-Host "=========================================" -ForegroundColor Cyan
+Write-Host ""
+
+# Check Python version
+Write-Host "[1/5] Checking Python version..." -ForegroundColor Yellow
+
+if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+    Write-Host "ERROR: Python is not installed." -ForegroundColor Red
+    Write-Host "Please install Python 3.12 or later from https://www.python.org/downloads/" -ForegroundColor Red
+    Write-Host "Or use winget: winget install Python.Python.3.12" -ForegroundColor Yellow
+    exit 1
+}
+
+$pythonVersionOutput = python --version 2>&1
+$pythonVersion = $pythonVersionOutput -replace "Python ", ""
+$versionParts = $pythonVersion.Split('.')
+$majorVersion = [int]$versionParts[0]
+$minorVersion = [int]$versionParts[1]
+
+if ($majorVersion -lt 3 -or ($majorVersion -eq 3 -and $minorVersion -lt 12)) {
+    Write-Host "ERROR: Python 3.12 or later is required." -ForegroundColor Red
+    Write-Host "Current version: $pythonVersion" -ForegroundColor Red
+    exit 1
+}
+
+Write-Host "✓ Python $pythonVersion detected" -ForegroundColor Green
+Write-Host ""
+
+# Create virtual environment
+Write-Host "[2/5] Creating Python virtual environment..." -ForegroundColor Yellow
+$VENV_DIR = Join-Path $SCRIPT_DIR "venv"
+
+if (Test-Path $VENV_DIR) {
+    Write-Host "Virtual environment already exists. Skipping creation." -ForegroundColor Gray
+} else {
+    python -m venv $VENV_DIR
+    Write-Host "✓ Virtual environment created" -ForegroundColor Green
+}
+Write-Host ""
+
+# Install dependencies
+Write-Host "[3/5] Installing Python dependencies..." -ForegroundColor Yellow
+$pipPath = Join-Path $VENV_DIR "Scripts\pip.exe"
+
+& $pipPath install --upgrade pip --quiet
+& $pipPath install -r requirements.txt --quiet
+
+Write-Host "✓ Dependencies installed" -ForegroundColor Green
+Write-Host ""
+
+# Check for Ollama
+Write-Host "[4/5] Checking for Ollama..." -ForegroundColor Yellow
+
+if (Get-Command ollama -ErrorAction SilentlyContinue) {
+    $ollamaVersion = ollama --version 2>&1
+    Write-Host "✓ Ollama is already installed: $ollamaVersion" -ForegroundColor Green
+} else {
+    Write-Host "Ollama is not installed." -ForegroundColor Yellow
+    $response = Read-Host "Would you like to install Ollama now? (y/n)"
+
+    if ($response -eq "y" -or $response -eq "Y") {
+        Write-Host "Installing Ollama via winget..." -ForegroundColor Yellow
+
+        # Try winget first
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            try {
+                winget install --id=Ollama.Ollama -e --silent
+                Write-Host "✓ Ollama installed" -ForegroundColor Green
+            } catch {
+                Write-Host "Failed to install via winget. Please download from https://ollama.com/download" -ForegroundColor Red
+            }
+        } else {
+            Write-Host "winget not found. Please download Ollama from https://ollama.com/download" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "Skipping Ollama installation." -ForegroundColor Gray
+        Write-Host "You can install it later from https://ollama.com/download" -ForegroundColor Yellow
+        Write-Host "Or use: winget install Ollama.Ollama" -ForegroundColor Yellow
+    }
+}
+Write-Host ""
+
+# Generate initial config
+Write-Host "[5/5] Setting up configuration..." -ForegroundColor Yellow
 $DATA_DIR = Join-Path $SCRIPT_DIR "data"
-$MODELS_DIR = Join-Path $DATA_DIR "models"
-$BUILD_DIR = Join-Path $SCRIPT_DIR "build"
-
-Write-Host "=== LLM Gateway Windows Setup ===" -ForegroundColor Cyan
-Write-Host "Script directory: $SCRIPT_DIR"
-
-# Create directories
 New-Item -ItemType Directory -Force -Path $DATA_DIR | Out-Null
-New-Item -ItemType Directory -Force -Path $MODELS_DIR | Out-Null
-New-Item -ItemType Directory -Force -Path $BUILD_DIR | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $SCRIPT_DIR "static") | Out-Null
-
-# === 1. Check prerequisites ===
-Write-Host "[1/5] Checking prerequisites..." -ForegroundColor Yellow
-
-$missingTools = @()
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) { $missingTools += "git" }
-if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) { $missingTools += "cmake" }
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) { $missingTools += "python" }
-
-if ($missingTools.Count -gt 0) {
-    Write-Host "Missing tools: $($missingTools -join ', ')" -ForegroundColor Red
-    Write-Host "Install with: winget install Git.Git; winget install Kitware.CMake; winget install Python.Python.3.12"
-    exit 1
-}
-
-# Check for Visual Studio Build Tools
-$vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-if (-not (Test-Path $vsWhere)) {
-    Write-Host "Visual Studio Build Tools not found!" -ForegroundColor Red
-    Write-Host "Install from: https://visualstudio.microsoft.com/visual-cpp-build-tools/"
-    Write-Host "Select 'Desktop development with C++'"
-    exit 1
-}
-
-Write-Host "All prerequisites found!" -ForegroundColor Green
-
-# === 2. Build llama.cpp ===
-if (-not $SkipBuild) {
-    Write-Host "[2/5] Building llama.cpp..." -ForegroundColor Yellow
-
-    $LLAMA_DIR = Join-Path $BUILD_DIR "llama.cpp"
-
-    if (-not (Test-Path $LLAMA_DIR)) {
-        Write-Host "Cloning llama.cpp..."
-        git clone https://github.com/ggml-org/llama.cpp.git $LLAMA_DIR
-    }
-
-    Push-Location $LLAMA_DIR
-    git pull
-
-    # Build with CPU optimizations (AVX2 for Ryzen)
-    $LLAMA_BUILD = Join-Path $LLAMA_DIR "build"
-
-    cmake -B $LLAMA_BUILD `
-        -DBUILD_SHARED_LIBS=OFF `
-        -DGGML_NATIVE=ON `
-        -DLLAMA_CURL=ON `
-        -DCMAKE_BUILD_TYPE=Release
-
-    cmake --build $LLAMA_BUILD --config Release --target llama-server llama-cli llama-quantize -j $env:NUMBER_OF_PROCESSORS
-
-    # Copy binaries
-    $binPath = Join-Path $LLAMA_BUILD "bin\Release"
-    if (-not (Test-Path $binPath)) { $binPath = Join-Path $LLAMA_BUILD "bin" }
-
-    Copy-Item (Join-Path $binPath "llama-server.exe") $SCRIPT_DIR -Force -ErrorAction SilentlyContinue
-    Copy-Item (Join-Path $binPath "llama-cli.exe") $SCRIPT_DIR -Force -ErrorAction SilentlyContinue
-    Copy-Item (Join-Path $binPath "llama-quantize.exe") $SCRIPT_DIR -Force -ErrorAction SilentlyContinue
-
-    Pop-Location
-    Write-Host "llama.cpp built successfully!" -ForegroundColor Green
-}
-
-# === 3. Build whisper.cpp (optional) ===
-if (-not $SkipWhisper -and -not $SkipBuild) {
-    Write-Host "[3/5] Building whisper.cpp..." -ForegroundColor Yellow
-
-    $WHISPER_DIR = Join-Path $BUILD_DIR "whisper.cpp"
-
-    if (-not (Test-Path $WHISPER_DIR)) {
-        git clone https://github.com/ggerganov/whisper.cpp.git $WHISPER_DIR
-    }
-
-    Push-Location $WHISPER_DIR
-    git pull
-
-    $WHISPER_BUILD = Join-Path $WHISPER_DIR "build"
-
-    cmake -B $WHISPER_BUILD `
-        -DBUILD_SHARED_LIBS=OFF `
-        -DGGML_NATIVE=ON `
-        -DCMAKE_BUILD_TYPE=Release
-
-    cmake --build $WHISPER_BUILD --config Release --target whisper-server -j $env:NUMBER_OF_PROCESSORS
-
-    $binPath = Join-Path $WHISPER_BUILD "bin\Release"
-    if (-not (Test-Path $binPath)) { $binPath = Join-Path $WHISPER_BUILD "bin" }
-
-    Copy-Item (Join-Path $binPath "whisper-server.exe") $SCRIPT_DIR -Force -ErrorAction SilentlyContinue
-
-    Pop-Location
-    Write-Host "whisper.cpp built successfully!" -ForegroundColor Green
-} else {
-    Write-Host "[3/5] Skipping whisper.cpp..." -ForegroundColor Gray
-}
-
-# === 4. Setup Python environment ===
-if (-not $SkipPython) {
-    Write-Host "[4/5] Setting up Python environment..." -ForegroundColor Yellow
-
-    $VENV_DIR = Join-Path $SCRIPT_DIR "venv"
-
-    if (-not (Test-Path $VENV_DIR)) {
-        python -m venv $VENV_DIR
-    }
-
-    # Activate and install
-    $pipPath = Join-Path $VENV_DIR "Scripts\pip.exe"
-
-    & $pipPath install --upgrade pip
-    & $pipPath install fastapi uvicorn[standard] httpx aiosqlite psutil huggingface_hub pydantic python-multipart "passlib[bcrypt]"
-
-    Write-Host "Python environment ready!" -ForegroundColor Green
-} else {
-    Write-Host "[4/5] Skipping Python setup..." -ForegroundColor Gray
-}
-
-# === 5. Create initial config ===
-Write-Host "[5/5] Creating initial configuration..." -ForegroundColor Yellow
 
 $CONFIG_FILE = Join-Path $DATA_DIR "config.json"
 
-if (-not (Test-Path $CONFIG_FILE)) {
-    # Generate secure admin key
-    $bytes = New-Object byte[] 24
+if (Test-Path $CONFIG_FILE) {
+    Write-Host "Configuration file already exists. Skipping generation." -ForegroundColor Gray
+} else {
+    # Generate a random admin key
+    $bytes = New-Object byte[] 32
     [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
-    $ADMIN_KEY = "sk-admin-" + [BitConverter]::ToString($bytes).Replace("-", "").ToLower()
+    $ADMIN_KEY = [BitConverter]::ToString($bytes).Replace("-", "").ToLower()
+
+    $timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 
     $config = @{
-        slots = @{
-            "4801" = $null
-            "4802" = $null
-            "4803" = $null
-            "4804" = $null
-            "4805" = $null
-            "4806" = $null
-            "4807" = $null
+        api_keys = @{
+            $ADMIN_KEY = @{
+                name = "admin"
+                role = "admin"
+                created_at = $timestamp
+                rate_limit = @{
+                    requests_per_minute = 100
+                    tokens_per_minute = 100000
+                }
+            }
         }
-        hf_token = $null
-        admin_key = $ADMIN_KEY
-        default_threads = 10
-        default_ctx_size = 8192
-        pricing = @{
-            input_per_1k = 0.0001
-            output_per_1k = 0.0002
+        ollama = @{
+            base_url = "http://localhost:11434"
+            timeout = 300
+        }
+        server = @{
+            host = "0.0.0.0"
+            port = 4000
+            log_level = "info"
         }
     }
 
-    $config | ConvertTo-Json -Depth 10 | Set-Content $CONFIG_FILE
+    $config | ConvertTo-Json -Depth 10 | Set-Content $CONFIG_FILE -Encoding UTF8
 
+    Write-Host "✓ Configuration file created with admin API key" -ForegroundColor Green
     Write-Host ""
-    Write-Host "==========================================" -ForegroundColor Cyan
-    Write-Host "  ADMIN API KEY (save this!):" -ForegroundColor Yellow
-    Write-Host "  $ADMIN_KEY" -ForegroundColor Green
-    Write-Host "==========================================" -ForegroundColor Cyan
+    Write-Host "=========================================" -ForegroundColor Cyan
+    Write-Host "IMPORTANT: Save your admin API key!" -ForegroundColor Yellow
+    Write-Host "=========================================" -ForegroundColor Cyan
+    Write-Host $ADMIN_KEY -ForegroundColor Green
+    Write-Host "=========================================" -ForegroundColor Cyan
     Write-Host ""
 }
 
-# === Create startup script ===
-$START_SCRIPT = Join-Path $SCRIPT_DIR "start_gateway.ps1"
-$startContent = @"
-# LLM Gateway Startup Script
-`$SCRIPT_DIR = Split-Path -Parent `$MyInvocation.MyCommand.Path
-`$VENV_PYTHON = Join-Path `$SCRIPT_DIR "venv\Scripts\python.exe"
-`$UVICORN = Join-Path `$SCRIPT_DIR "venv\Scripts\uvicorn.exe"
-
-Push-Location `$SCRIPT_DIR
-& `$UVICORN server:app --host 0.0.0.0 --port 4000 --workers 1
-Pop-Location
-"@
-$startContent | Set-Content $START_SCRIPT
-
+Write-Host "Setup complete!" -ForegroundColor Green
 Write-Host ""
-Write-Host "=== Setup Complete ===" -ForegroundColor Green
+Write-Host "Next steps:" -ForegroundColor Cyan
+Write-Host "1. Start Ollama (if not already running): ollama serve"
+Write-Host "2. Pull a model: ollama pull llama3.2:latest"
+Write-Host "3. Activate the virtual environment: .\venv\Scripts\Activate.ps1"
+Write-Host "4. Run the gateway: python server.py"
+Write-Host "   Or with uvicorn: uvicorn server:app --host 0.0.0.0 --port 4000"
 Write-Host ""
-Write-Host "Commands:" -ForegroundColor Cyan
-Write-Host "  Start:   .\start_gateway.ps1"
-Write-Host "  Dev:     .\venv\Scripts\activate; uvicorn server:app --host 0.0.0.0 --port 4000 --reload"
+Write-Host "The gateway will be available at: http://localhost:4000" -ForegroundColor Green
+Write-Host "API documentation: http://localhost:4000/docs" -ForegroundColor Green
 Write-Host ""
-Write-Host "Access:" -ForegroundColor Cyan
-Write-Host "  API:     http://localhost:4000/v1/"
-Write-Host "  Admin:   http://localhost:4000/admin/"
-Write-Host "  User:    http://localhost:4000/user/"
+Write-Host "For Docker deployment:" -ForegroundColor Cyan
+Write-Host "  Bare mode (gateway only): docker compose up gateway"
+Write-Host "  Docker mode (both): docker compose --profile ollama up"
 Write-Host ""
-Write-Host "llama.cpp binaries location: $SCRIPT_DIR" -ForegroundColor Yellow
-Write-Host "  - llama-server.exe"
-Write-Host "  - llama-cli.exe"
-Write-Host "  - llama-quantize.exe"
-Write-Host ""
-Write-Host "For ISAA RL integration, set LLAMA_CPP_PATH environment variable:" -ForegroundColor Yellow
-Write-Host "  `$env:LLAMA_CPP_PATH = '$BUILD_DIR\llama.cpp'"
-

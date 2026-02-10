@@ -1,292 +1,254 @@
 # LLM Gateway
 
-**OpenAI-kompatible API für lokale LLM-Modelle mit llama.cpp**
+OpenAI-compatible API gateway powered by **Ollama**. Provides user management, API key auth, usage tracking, rate limiting, and a web UI — all self-hosted.
 
-Ein leichtgewichtiger Gateway-Server, der lokale GGUF-Modelle über eine OpenAI-kompatible REST-API bereitstellt. Unterstützt Text, Vision, Audio (Omni), Embeddings und TTS.
+## Architecture
+
+```
+Clients (OpenAI SDK, curl, etc.)
+        │
+        ▼
+┌──────────────────────┐
+│   LLM Gateway :4000  │  FastAPI server
+│   (OpenAI-compat API)│  Auth, rate limiting, usage tracking
+└──────────┬───────────┘
+           │
+           ▼
+┌──────────────────────┐
+│   Ollama :11434      │  Native or Docker
+│   (Model runtime)    │  Text, Vision, Embedding, Audio, TTS
+└──────────────────────┘
+```
 
 ## Features
 
-### 🚀 Core Features
-- **OpenAI-kompatible API** - Drop-in Ersatz für OpenAI API
-- **Multi-Model Slots** - Bis zu 7 Modelle gleichzeitig (Ports 4801-4807)
-- **Smart Routing** - Automatische Modellauswahl basierend auf Request-Typ
-- **Streaming** - Server-Sent Events für Chat Completions
-- **Rate Limiting** - Konfigurierbare Limits pro User-Tier
+- **OpenAI-compatible API** — `/v1/chat/completions`, `/v1/embeddings`, `/v1/audio/speech`, `/v1/audio/transcriptions`
+- **Tool calling** — Full function calling support via Ollama
+- **Multi-modal** — Text, vision (llava, qwen-vl), audio, embeddings, TTS
+- **Smart routing** — Auto-detects content type (image/audio) and routes to capable model
+- **Admin UI** — Load/unload models, manage users, monitor system
+- **Playground** — Chat with streaming, image upload, audio recording
+- **Live Voice** — Real-time voice conversation via WebSocket
+- **User management** — API keys, tiers (PAYG/subscription), balance tracking
+- **HuggingFace integration** — Search and download GGUF models, import into Ollama
+- **Two deployment modes** — Bare metal (native Ollama) or Docker
+- **Cross-platform** — Linux + Windows, with systemd service support
 
-### 🎯 Modell-Typen
-| Typ | Beschreibung | Capabilities |
-|-----|--------------|--------------|
-| `text` | Standard Chat-Modelle | Text |
-| `vision` | Vision-Language Modelle (VL) | Text + Bild |
-| `omni` | Multimodale Modelle | Text + Bild + Audio |
-| `embedding` | Embedding-Modelle | Vektorisierung |
-| `vision-embedding` | Vision + Embedding | Bild-Vektorisierung |
-| `audio` | Whisper (Legacy) | Transkription |
-| `tts` | Text-to-Speech | Sprachsynthese |
+## Quick Start
 
-### 🔐 User Management
-- API-Key basierte Authentifizierung
-- User-Tiers: `payg` (Pay-as-you-go), `sub` (Subscription), `admin`
-- Balance-Tracking und Usage-Logging
-- Signup-Request System
+### 1. Install Ollama
 
-### 🎙️ Live Voice API
-- WebSocket-basierte Echtzeit-Sprachkonversation
-- Wake-Word Detection (pre/post/mid Modi)
-- Interrupt-Handling
-- Paralleles LLM + TTS Streaming
+**Linux/macOS:**
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
 
-## Installation
+**Windows:**
+Download from [ollama.com/download](https://ollama.com/download)
 
-### Voraussetzungen
-- Python 3.12+
-- CMake, Git, Build Tools
-- ~48GB RAM empfohlen für große Modelle
+### 2. Setup Gateway
 
-### Linux/macOS
 ```bash
 cd llm-gateway
-chmod +x setup.sh
-./setup.sh
+
+# Linux/macOS
+bash setup.sh
+
+# Windows
+powershell -ExecutionPolicy Bypass -File win_setup.ps1
 ```
 
-### Windows
-```powershell
-cd llm-gateway
-.\win_setup.ps1
-```
+### 3. Start
 
-### Mit ToolBoxV2 CLI
 ```bash
-tb llm-gateway setup
-tb llm-gateway start
-```
+# Activate venv
+source venv/bin/activate  # Linux
+# or: venv\Scripts\activate  # Windows
 
-## Konfiguration
-
-Die Konfiguration liegt in `data/config.json`:
-
-```json
-{
-  "slots": {
-    "4801": null,
-    "4802": null,
-    "4803": null,
-    "4804": null,
-    "4805": null,
-    "4806": null,
-    "4807": null
-  },
-  "hf_token": "hf_xxx",
-  "admin_key": "sk-admin-xxx",
-  "default_threads": 10,
-  "default_ctx_size": 8192,
-  "pricing": {
-    "input_per_1k": 0.0001,
-    "output_per_1k": 0.0002
-  },
-  "rate_limits": {
-    "payg": 25,
-    "sub": 100
-  },
-  "performance": {
-    "flash_attention": true,
-    "mlock": true,
-    "kv_cache_quantization": "q8_0",
-    "batch_size": 512
-  }
-}
-```
-
-## API Endpoints
-
-### OpenAI-kompatibel
-
-| Endpoint | Methode | Beschreibung |
-|----------|---------|--------------|
-| `/v1/models` | GET | Liste verfügbarer Modelle |
-| `/v1/chat/completions` | POST | Chat Completion (Streaming) |
-| `/v1/embeddings` | POST | Text Embeddings |
-| `/v1/audio/transcriptions` | POST | Audio Transkription |
-| `/v1/audio/speech` | POST | Text-to-Speech |
-
-### Live Voice API
-
-| Endpoint | Methode | Beschreibung |
-|----------|---------|--------------|
-| `/v1/audio/live` | POST | Session erstellen |
-| `/v1/audio/live/ws/{token}` | WS | WebSocket Verbindung |
-| `/v1/audio/live/{token}` | GET | Session Info |
-| `/v1/audio/live/{token}` | DELETE | Session beenden |
-
-### Admin Endpoints
-
-| Endpoint | Methode | Beschreibung |
-|----------|---------|--------------|
-| `/admin/api/slots` | GET | Slot-Status |
-| `/admin/api/slots/load` | POST | Modell laden |
-| `/admin/api/slots/{slot}/unload` | POST | Modell entladen |
-| `/admin/api/models/local` | GET | Lokale Modelle |
-| `/admin/api/models/search` | GET | HuggingFace suchen |
-| `/admin/api/models/download` | POST | Modell herunterladen |
-| `/admin/api/users` | GET/POST | User-Verwaltung |
-| `/admin/api/system` | GET | System-Stats |
-
-### User Endpoints
-
-| Endpoint | Methode | Beschreibung |
-|----------|---------|--------------|
-| `/user/api/me` | GET | User-Info |
-| `/user/api/usage` | GET | Usage-Statistiken |
-| `/user/api/models` | GET | Verfügbare Modelle |
-| `/user/api/ratelimit` | GET | Rate-Limit Status |
-
-### Public Endpoints (ohne Auth)
-
-| Endpoint | Methode | Beschreibung |
-|----------|---------|--------------|
-| `/health` | GET | Health Check |
-| `/api/models` | GET | Modell-Liste |
-| `/api/uptime` | GET | Uptime-Historie |
-| `/api/signup` | POST | Signup-Request |
-
-## Web Interfaces
-
-- **Landing Page**: `http://localhost:4000/`
-- **Admin Panel**: `http://localhost:4000/admin/`
-- **User Dashboard**: `http://localhost:4000/user/`
-- **Playground**: `http://localhost:4000/playground/`
-- **Live Voice**: `http://localhost:4000/live`
-
-## Verwendung
-
-### Server starten
-```bash
-# Mit venv
-source venv/bin/activate  # Linux/macOS
-.\venv\Scripts\activate   # Windows
-
+# Start server
 uvicorn server:app --host 0.0.0.0 --port 4000
-
-# Mit ToolBoxV2
-tb llm-gateway start
 ```
 
-### Modell laden (Admin)
-```bash
-curl -X POST http://localhost:4000/admin/api/slots/load \
-  -H "Authorization: Bearer sk-admin-xxx" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "slot": 4801,
-    "model_path": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
-    "model_type": "text"
-  }'
+### 4. Open Admin UI
+
+Navigate to `http://localhost:4000/admin/` and login with admin key from `data/config.json`.
+
+Pull and load a model:
+```
+Model name: llama3.2
+Type: auto
+→ Load
 ```
 
-### Chat Completion
-```bash
-curl http://localhost:4000/v1/chat/completions \
-  -H "Authorization: Bearer sk-xxx" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen",
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "stream": true
-  }'
-```
+### 5. Use the API
 
-### Python Client
 ```python
 from openai import OpenAI
 
 client = OpenAI(
     base_url="http://localhost:4000/v1",
-    api_key="sk-xxx"
+    api_key="sk-admin-..."  # your API key
 )
 
 response = client.chat.completions.create(
-    model="qwen",
-    messages=[{"role": "user", "content": "Hello!"}],
-    stream=True
+    model="llama3.2",
+    messages=[{"role": "user", "content": "Hello!"}]
 )
-
-for chunk in response:
-    print(chunk.choices[0].delta.content, end="")
+print(response.choices[0].message.content)
 ```
 
-## Architektur
+## Docker Deployment
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    LLM Gateway (Port 4000)                  │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
-│  │   FastAPI   │  │ Rate Limit  │  │   Auth (API Keys)   │  │
-│  └──────┬──────┘  └──────┬──────┘  └──────────┬──────────┘  │
-│         │                │                     │            │
-│  ┌──────┴────────────────┴─────────────────────┴──────────┐ │
-│  │                    Smart Router                         │ │
-│  │  (Model Selection based on capabilities)                │ │
-│  └─────────────────────────┬───────────────────────────────┘ │
-└────────────────────────────┼────────────────────────────────┘
-                             │
-     ┌───────────────────────┼───────────────────────┐
-     │                       │                       │
-┌────┴────┐  ┌────┴────┐  ┌────┴────┐  ┌────┴────┐
-│  4801   │  │  4802   │  │  4803   │  │  ...    │
-│  text   │  │ vision  │  │  omni   │  │         │
-│ llama-  │  │ llama-  │  │ llama-  │  │         │
-│ server  │  │ server  │  │ server  │  │         │
-└─────────┘  └─────────┘  └─────────┘  └─────────┘
+### Gateway only (Ollama on host)
+
+```bash
+# Ollama running natively on the host
+OLLAMA_URL=http://host.docker.internal:11434 docker compose up gateway
 ```
 
-## Verzeichnisstruktur
+### Full stack (Gateway + Ollama in Docker)
 
-```
-llm-gateway/
-├── server.py           # Haupt-Server (FastAPI)
-├── model_manager.py    # Modell-Verwaltung
-├── live_handler.py     # Live Voice API
-├── main.py             # Entry Point
-├── requirements.txt    # Python Dependencies
-├── setup.sh            # Linux Setup
-├── win_setup.ps1       # Windows Setup
-├── data/
-│   ├── config.json     # Konfiguration
-│   ├── gateway.db      # SQLite Datenbank
-│   └── models/         # GGUF Modelle
-├── static/
-│   ├── index.html      # Landing Page
-│   ├── admin.html      # Admin Panel
-│   ├── user.html       # User Dashboard
-│   ├── playground.html # Chat Playground
-│   └── live-playground.html  # Voice Playground
-└── build/              # llama.cpp Build
+```bash
+docker compose --profile ollama up
 ```
 
-## Performance-Optimierungen
+### Environment Variables
 
-- **Flash Attention**: 20-30% Speedup
-- **mlock**: Verhindert Swapping
-- **KV-Cache Quantization**: Spart RAM bei großem Context
-- **Continuous Batching**: Parallele Request-Verarbeitung
+Override config values via environment variables (useful for Docker/CI):
 
-## Troubleshooting
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OLLAMA_URL` | `http://ollama:11434` (Docker) | Ollama server URL |
+| `ADMIN_KEY` | from `config.json` | Admin API key |
 
-### Modell lädt nicht
-- Prüfe RAM-Verfügbarkeit (`/admin/api/system`)
-- Erhöhe Timeout für große Modelle
-- Prüfe mmproj für Vision-Modelle
+### GPU Support
 
-### Rate Limit erreicht
-- Warte 60 Sekunden
-- Upgrade auf höheren Tier
-- Admin hat kein Limit
+Uncomment in `compose.yaml`:
+```yaml
+ollama:
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+```
 
-### WebSocket Verbindung fehlgeschlagen
-- Prüfe Session-Token Gültigkeit
-- Session läuft nach 15-20 Minuten ab
+## Configuration
 
-## Lizenz
+`data/config.json`:
 
-Teil des ToolBoxV2 Projekts.
+| Key | Default | Description |
+|-----|---------|-------------|
+| `ollama_url` | `http://127.0.0.1:11434` | Ollama server URL |
+| `backend_mode` | `bare` | `bare` (native) or `docker` |
+| `admin_key` | generated | Admin API key |
+| `hf_token` | null | HuggingFace token for private models |
+| `pricing.input_per_1k` | 0.0001 | Input token price |
+| `pricing.output_per_1k` | 0.0002 | Output token price |
+| `rate_limits.payg` | 5 | Requests/min for PAYG users |
+| `rate_limits.sub` | 10 | Requests/min for subscribers |
+
+## Model Types
+
+| Type | Capabilities | Examples |
+|------|-------------|----------|
+| `text` | Chat, tool calling | llama3.2, qwen2.5, mistral |
+| `vision` | Chat + image understanding | llava, qwen2-vl, bakllava |
+| `omni` | Chat + image + audio | qwen2-audio |
+| `embedding` | Text embeddings | nomic-embed-text, mxbai-embed-large |
+| `tts` | Text-to-speech | kokoro |
+| `audio` | Speech-to-text | whisper |
+
+## API Endpoints
+
+### OpenAI-Compatible
+- `POST /v1/chat/completions` — Chat (streaming supported)
+- `POST /v1/embeddings` — Embeddings
+- `POST /v1/audio/speech` — TTS
+- `POST /v1/audio/transcriptions` — STT
+- `GET /v1/models` — List models
+
+### Live Voice
+- `POST /v1/audio/live` — Create session
+- `WS /v1/audio/live/ws/{token}` — WebSocket
+- `DELETE /v1/audio/live/{token}` — Close session
+
+### Admin
+- `GET/POST /admin/api/users` — User management
+- `GET/POST /admin/api/models/*` — Model management
+- `GET /admin/api/system` — System stats
+- `GET/PATCH /admin/api/config` — Configuration
+
+### Public
+- `GET /health` — Health check
+- `GET /api/models` — List models (no auth)
+- `GET /api/uptime` — Uptime history
+- `POST /api/signup` — Request access
+
+## Web UIs
+
+| URL | Description |
+|-----|-------------|
+| `/` | Landing page |
+| `/admin/` | Admin panel |
+| `/playground/` | Chat playground |
+| `/live` | Live voice playground |
+| `/user/` | User dashboard |
+
+## ToolBoxV2 CLI Integration
+
+```bash
+tb llm-gateway setup     # Install dependencies + check Ollama
+tb llm-gateway start     # Start gateway server
+tb llm-gateway stop      # Stop gateway
+tb llm-gateway status    # Show status
+tb llm-gateway restart   # Restart
+```
+
+## Importing GGUF Models
+
+Download GGUF from HuggingFace (via Admin UI or manually), then import:
+
+```bash
+# Via Admin UI: Models → Import GGUF
+# Or via API:
+curl -X POST http://localhost:4000/admin/api/models/import-gguf \
+  -H "Authorization: Bearer sk-admin-..." \
+  -H "Content-Type: application/json" \
+  -d '{"gguf_path": "data/models/model.gguf", "model_name": "my-model"}'
+```
+
+## Linux Service
+
+```bash
+# Copy service file
+sudo cp llm-gateway.service /etc/systemd/system/
+# Edit paths and user
+sudo systemctl daemon-reload
+sudo systemctl enable llm-gateway
+sudo systemctl start llm-gateway
+```
+
+## Development
+
+```bash
+# Install dev dependencies
+pip install -r requirements.txt
+
+# Run all tests (99 tests)
+python -m unittest discover tests/
+
+# Run specific test modules
+python -m unittest tests.test_server          # 38 tests — API, auth, rate limiting
+python -m unittest tests.test_model_manager   # 38 tests — model types, routing, Ollama API
+python -m unittest tests.test_live_handler    # 23 tests — WebSocket, TTS, sessions
+
+# Run server in dev mode
+uvicorn server:app --reload --port 4000
+```
+
+## License
+
+Part of the ToolBoxV2 project.
