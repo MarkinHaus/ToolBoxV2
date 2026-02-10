@@ -3,10 +3,8 @@
 import argparse
 import asyncio
 import pprint
-import shutil
 
 # Import default Pages
-import sys
 import textwrap
 import time
 from functools import wraps
@@ -35,7 +33,6 @@ from toolboxv2.utils.daemon import DaemonApp
 from toolboxv2.utils.extras.Style import Spinner, Style
 from toolboxv2.utils.proxy import ProxyApp
 from toolboxv2.utils.system import CallingObject, get_state_from_app
-from toolboxv2.utils.system.exe_bg import run_executable_in_background
 from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
 from toolboxv2.utils.workers import cli_event, cli_http_worker, cli_session, cli_ws_worker
@@ -268,18 +265,15 @@ async def setup_service_windows():
         path = input("Enter the path that opened: ")
 
     if mode == "1":
-        runner = "bg"
-        if runner_ := input("enter a runner default bg/or gui: ").strip():
-            runner = runner_
         if os.path.exists(path + "/tb_start.bat"):
             os.remove(path + "/tb_start.bat")
-        with open(path + "/tb_start.bat", "a", encoding="utf8") as f:
-            if runner.upper().strip() == "GUI":
-                command = '-c "from toolboxv2.__gui__ import start; start()"'
-            else:
-                command = f"-m toolboxv2 -bgr {runner}"
-            f.write(f"""{sys.executable} {command}""")
-        print(f"Init Service in {path}")
+        try:
+            with open(path + "/tb_start.bat", "a", encoding="utf8") as f:
+                command = f"-m tb --sm"
+                f.write(f"""{sys.executable} {command}""")
+            print(f"Init Service in {path}")
+        except PermissionError:
+            print("Pleas run as Admin")
     elif mode == "3":
         await get_app().show_console()
     elif mode == "4":
@@ -350,6 +344,7 @@ RUNNER_KEYS = [
     "registry",
     "manifest",
     "llm-gateway",
+    "docksh"
 ]
 
 DEFAULT_MODI = "cli"
@@ -619,7 +614,7 @@ def show_interactive_guide():
     └────────────────────────────────────────────────────────────────────────────┘
 
     ╔════════════════════════════════════════════════════════════════════════════╗
-    ║  For more information, visit: https://github.com/yourusername/ToolBoxV2    ║
+    ║  For more information, visit: https://markinhaus.github.io/ToolBoxV2/      ║
     ╚════════════════════════════════════════════════════════════════════════════╝
     """)
 
@@ -795,6 +790,9 @@ def parse_args():
     )
     extensions.add_argument(
         "ws_worker", help="WebSocket worker", nargs="?", const=True, default=False
+    )
+    extensions.add_argument(
+        "docksh", help="Start docker cli", nargs="?", const=True, default=False
     )
 
     # =================== CORE OPTIONS ===================
@@ -1394,17 +1392,6 @@ async def main(App=TbApp, do_exit=True):
         await tb_app.a_exit()
         exit(0)
 
-    if args.init_sm:
-        if tb_app.system_flag == "Linux":
-            setup_service_linux()
-        elif tb_app.system_flag == "Windows":
-            await setup_service_windows()
-        else:
-            tb_app.print(
-                f"Service manager not supported on this platform {tb_app.system_flag or system()}"
-            )
-        args.command = []
-
     if (
         args.load_all_mod_in_files
         or args.save_function_enums_in_file
@@ -1779,28 +1766,18 @@ def runner_setup():
     ║                            Login Options                                   ║
     ╠════════════════════════════════════════════════════════════════════════════╣
     ║                                                                            ║
-    ║  Remote Login (SimpleCore Hub):                                            ║
-    ║    $ tb login --remote                                                     ║
-    ║                                                                            ║
-    ║  Local Server Login:                                                       ║
-    ║    $ tb login --local                                                      ║
-    ║                                                                            ║
-    ║  Interactive (choose during login):                                        ║
     ║    $ tb login                                                              ║
+    ║    $ tb login --status                                                     ║
     ║                                                                            ║
     ╚════════════════════════════════════════════════════════════════════════════╝
             """,
         )
 
         parser.add_argument(
-            "--remote",
+            "--status",
             help="Force remote login to SimpleCore Hub",
             action="store_true",
             default=False,
-        )
-
-        parser.add_argument(
-            "--local", help="Force local server login", action="store_true", default=False
         )
 
         args = parser.parse_args()
@@ -1818,11 +1795,11 @@ def runner_setup():
 
         async def helper():
             app = get_app("CloudM.cli_web_login")
+            if args.status:
+                return await app.a_run_any("CloudM", "cli_status")
             res = await app.a_run_any(
                 "CloudM",
-                "cli_web_login",
-                force_remote=args.remote,
-                force_local=args.local,
+                "cli_login",
             )
             return res
 
@@ -1864,6 +1841,40 @@ def runner_setup():
         app = get_app("CloudM.RegistryServer")
         await app.a_run_any("CloudM.RegistryServer", "start")
 
+    def _run_docksh():
+        import sys
+
+        from toolboxv2.Docksh import docksh
+        argvs = sys.argv[1:]
+        if len(argvs) == 0:
+            print("tb docksh x  - quick reconnect")
+        elif 'x' in argvs:
+            docksh.cmd_connect([])
+
+        if not argvs:
+            docksh.cmd_connect([])
+        elif argvs[0] == "setup":
+            docksh.cmd_setup()
+        elif argvs[0] == "connect":
+            docksh.cmd_connect(argvs[1:])
+        else:
+            try:
+                from docksh_srv import main as Docksh_srv
+
+                Docksh_srv(docksh.docs)
+            except ModuleNotFoundError:
+                from pathlib import Path
+                print("1")
+                path = str(Path(__file__).parent.parent)+"/docksh_srv.py"
+                print(2)
+                if os.path.exists(path):
+                    print(3, path)
+                    os.system(f"{sys.executable} {path} {' '.join(argvs)}")
+                    print(4)
+                else:
+                    print(f"{path=} not found")
+
+
     runner = {
         "venv": lambda: __import__(
             "toolboxv2.utils.system.venv_runner", fromlist=["main"]
@@ -1899,6 +1910,7 @@ def runner_setup():
         "llm-gateway": lambda: __import__(
             "toolboxv2.utils.clis.llm_gateway_cli", fromlist=["cli_llm_gateway"]
         ).cli_llm_gateway(),
+        "docksh": _run_docksh,
     }
 
     return runner
@@ -1920,7 +1932,15 @@ def main_runner():
     # Service Manager special case - start all auto-start services and exit
     elif "--sm" in sys.argv:
         from toolboxv2.utils.clis.service_manager import run_service_manager_startup
-
+        if 'init' in sys.argv:
+            if system() == "Linux":
+                setup_service_linux()
+            elif system()  == "Windows":
+                asyncio.run(setup_service_windows())
+            else:
+                print(
+                    f"Service manager not supported on this platform {system()}"
+                )
         sys.exit(run_service_manager_startup())
 
     # Normale Main-App

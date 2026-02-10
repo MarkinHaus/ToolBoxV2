@@ -131,7 +131,7 @@ def _fmt_tasklist(idx: int, tl: dict) -> str:
 # Time parsing
 # ──────────────────────────────────────────────────────────────
 
-def _parse_time(time_str: str, reference: datetime | None = None) -> str:
+def _parse_time(time_str: str, reference: datetime | None = None, tzinfo: object = None) -> str:
     """Parse natural language or ISO time → UTC ISO string ending in Z."""
     if not time_str:
         return ""
@@ -139,11 +139,11 @@ def _parse_time(time_str: str, reference: datetime | None = None) -> str:
         reference = datetime.now(UTC)
     try:
         import dateparser
-        ref_naive = reference.replace(tzinfo=None) if reference.tzinfo else reference
+        ref_naive = reference.replace(tzinfo=tzinfo) if reference.tzinfo else reference
         parsed = dateparser.parse(time_str, settings={
             "PREFER_DATES_FROM": "future",
             "RELATIVE_BASE": ref_naive,
-            "RETURN_AS_TIMEZONE_AWARE": True,
+            "RETURN_AS_TIMEZONE_AWARE": True if tzinfo is None else False,
         })
         if parsed is None:
             parsed = dateutil_parser.parse(time_str, fuzzy=True, default=ref_naive)
@@ -379,11 +379,17 @@ class CalendarToolkit:
         service = self._get_session(sid)["calendar_service"]
         imap = self._imap(sid)
         try:
+            # Detect if this is an all-day event (no time component)
+            is_all_day = not any(char in start for char in [':', 'T', 't'])
+
             body: dict[str, Any] = {
                 "summary": summary,
-                "start": {"dateTime": _parse_time(start)},
-                "end": {"dateTime": _parse_time(end)},
             }
+
+            if is_all_day:
+                # All-day event uses 'date' field (YYYY-MM-DD format)
+                body["start"] = {"date": start[:10] if len(start) >= 10 else start}
+
             if description:
                 body["description"] = description
             if location:
@@ -404,6 +410,10 @@ class CalendarToolkit:
         try:
             eid = imap.resolve("events", ref)
             ev = service.events().get(calendarId="primary", eventId=eid).execute()
+
+            # Determine current event type to preserve it
+            current_is_all_day = "date" in ev.get("start", {})
+
             if summary is not None:
                 ev["summary"] = summary
             if start is not None:

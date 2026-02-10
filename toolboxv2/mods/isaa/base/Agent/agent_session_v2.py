@@ -177,7 +177,7 @@ class AgentSessionV2:
             max_length=self._max_history,
             space_name=space_name
         )
-
+        self.tools_initialized = False
         self._initialized = True
 
     def _ensure_initialized(self):

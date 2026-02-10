@@ -281,7 +281,7 @@ class ToolManager:
 
         # Store in registry
         self._registry[tool_name] = entry
-
+        print(f"Tool: {tool_name} in registry")
         # Update indexes
         self._update_indexes(entry)
 

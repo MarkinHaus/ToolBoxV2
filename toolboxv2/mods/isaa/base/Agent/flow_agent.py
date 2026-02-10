@@ -14,6 +14,7 @@ Author: FlowAgent V2
 import asyncio
 import copy
 import json
+import logging
 import os
 import re
 import time
@@ -39,6 +40,9 @@ from toolboxv2.mods.isaa.base.Agent.types import (
 try:
     import litellm
 
+    # Unterdrückt die störenden LiteLLM Konsolen-Logs
+    logging.getLogger('LiteLLM').setLevel(logging.WARNING)
+    logging.getLogger('litellm').setLevel(logging.WARNING)
     LITELLM_AVAILABLE = True
 except ImportError:
     LITELLM_AVAILABLE = False
@@ -75,8 +79,11 @@ try:
         from toolboxv2.mods.isaa.extras.toolkit.google_gmail_toolkit import GmailToolkit
         from toolboxv2.mods.isaa.extras.toolkit.google_calendar_toolkit import CalendarToolkit
 
-        gmail_toolkit = GmailToolkit(credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
-        calendar_toolkit = CalendarToolkit(credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+        google_token_dir = os.getenv("GOOGLE_TOKEN_DIR", "token")
+        if not os.path.exists(google_token_dir):
+            os.makedirs(google_token_dir, exist_ok=True)
+        gmail_toolkit = GmailToolkit(credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"), token_dir=google_token_dir)
+        calendar_toolkit = CalendarToolkit(credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"), token_dir=google_token_dir)
 except ImportError as e:
     gmail_toolkit = None
     calendar_toolkit = None
@@ -1503,7 +1510,7 @@ class FlowAgent:
 
         def vfs_open(path: str, line_start: int = 1, line_end: int = -1) -> dict:
             """
-            Open a file (make visible in LLM context).
+            Open a file (make permanent visible in context).
 
             Args:
                 path: Path to file
@@ -1575,6 +1582,76 @@ class FlowAgent:
                 List of executable files with path, language, size
             """
             return session.vfs.get_executable_files()
+
+        def fs_copy_dir_from_vfs(
+            vfs_path: str,
+            local_path: str,
+            overwrite: bool = False,
+            allowed_dirs: list[str] | None = None
+        ) -> str:
+            """
+            Recursively export a VFS directory to the real filesystem.
+
+            Args:
+                vfs_path: Source path in VFS (e.g., "/src")
+                local_path: Destination path on disk
+                overwrite: If True, overwrite existing files
+                allowed_dirs: Security restriction for write operations
+            """
+            # 1. Validate Source
+            if not session.vfs._is_directory(vfs_path):
+                return f"VFS path is not a directory: `{vfs_path}`"
+
+            # 2. Collect files to copy
+            files_to_copy = []
+            vfs_path = session.vfs._normalize_path(vfs_path)
+            prefix = vfs_path if vfs_path.endswith("/") else vfs_path + "/"
+
+            for f_path in session.vfs.files:
+                if f_path.startswith(prefix):
+                    rel_path = f_path[len(prefix):]
+                    files_to_copy.append((f_path, rel_path))
+
+            if not files_to_copy:
+                return f"No files found in VFS directory: `{vfs_path}`"
+
+            # 3. Perform Copy
+            success_count = 0
+            errors = []
+
+            try:
+                # Ensure target root exists
+                if not os.path.exists(local_path):
+                    os.makedirs(local_path, exist_ok=True)
+
+                for vfs_file, rel_path in files_to_copy:
+                    # Construct OS-specific path
+                    target_file = os.path.join(local_path, rel_path.replace("/", os.sep))
+
+                    # Use internal save_to_local for safety & consistency
+                    res = session.vfs.save_to_local(
+                        vfs_path=vfs_file,
+                        local_path=target_file,
+                        allowed_dirs=allowed_dirs,
+                        overwrite=overwrite,
+                        create_dirs=True
+                    )
+
+                    if res["success"]:
+                        success_count += 1
+                    else:
+                        errors.append(f"{rel_path}: {res['error']}")
+
+            except Exception as e:
+                return f"System error during recursive copy: {str(e)}"
+
+            # 4. Format Output
+            if errors:
+                return (f"⚠️ **Partial Success**\n"
+                        f"Copied {success_count} files to `{local_path}`\n"
+                        f"**Errors**:\n" + "\n".join([f"- {e}" for e in errors[:5]]))
+
+            return f"Recursively exported {success_count} files from `{vfs_path}` to `{local_path}`"
 
         # =========================================================================
         # FILESYSTEM COPY TOOLS (Flag: filesystem_access)
@@ -1733,6 +1810,85 @@ class FlowAgent:
             """
             return session.vfs.execute(path, args=args, timeout=timeout)
 
+        def vfs_grep(
+            pattern: str,
+            path: str = "/",
+            recursive: bool = True,
+            case_sensitive: bool = False
+        ) -> str:
+            """
+            Search for a regex pattern in files.
+            Efficiently searches in-memory VFS files and local shadow files.
+
+            Args:
+                pattern: Regex pattern to search for
+                path: Root path to start search
+                recursive: Search subdirectories
+                case_sensitive: Respect case (default: False)
+            """
+            import re
+
+            flags = 0 if case_sensitive else re.IGNORECASE
+            try:
+                regex = re.compile(pattern, flags)
+            except re.error as e:
+                return f"Invalid regex: {e}"
+
+            matches = []
+            files_scanned = 0
+
+            # Normalize path for filtering
+            search_root = path if path.startswith("/") else "/" + path
+            search_root = search_root.rstrip("/") + "/"
+            if search_root == "//": search_root = "/"
+
+            # Get candidate files from VFS registry
+            candidates = []
+            for file_path, file_obj in session.vfs.files.items():
+                if not file_path.startswith(search_root):
+                    continue
+                if not recursive and "/" in file_path[len(search_root):].strip("/"):
+                    continue
+                candidates.append((file_path, file_obj))
+
+            for f_path, f_obj in candidates:
+                files_scanned += 1
+                content = None
+
+                # Strategy: Get content without fully loading into VFS state if possible (peek)
+                # But for VFSFile, we usually just access what's available.
+
+                # 1. In-Memory or Modified Files
+                if hasattr(f_obj, "_content") and f_obj._content is not None:
+                    content = f_obj._content
+
+                # 2. Shadow Files (on disk)
+                elif hasattr(f_obj, "local_path") and f_obj.local_path:
+                    try:
+                        if os.path.exists(f_obj.local_path):
+                            # Read directly from disk to avoid polluting VFS memory with full loads
+                            # for a simple grep
+                            with open(f_obj.local_path, "r", encoding="utf-8", errors="ignore") as f:
+                                content = f.read()
+                    except:
+                        continue  # Skip unreadable
+
+                if content:
+                    lines = content.splitlines()
+                    for i, line in enumerate(lines):
+                        if regex.search(line):
+                            matches.append(f"{f_path}:{i + 1}: {line.strip()}")
+                            if len(matches) > 50:  # Cap results
+                                matches.append("... (limit reached)")
+                                break
+                if len(matches) > 50:
+                    break
+
+            if not matches:
+                return f"🔍 No matches found for `{pattern}` in {files_scanned} files."
+
+            return f"🔍 **Found matches** in {files_scanned} files:\n```\n" + "\n".join(matches) + "\n```"
+
         # =========================================================================
         # DOCKER TOOLS (Flag: requires_docker)
         # =========================================================================
@@ -1863,10 +2019,7 @@ class FlowAgent:
         # =========================================================================
         # REGISTER ALL TOOLS
         # =========================================================================
-
-        tools = [
-            # VFS File Operations
-            {"tool_func": vfs_list, "name": "vfs_list", "category": ["vfs", "read"]},
+        vfs_tools = [{"tool_func": vfs_list, "name": "vfs_list", "category": ["vfs", "read"]},
             {"tool_func": vfs_read, "name": "vfs_read", "category": ["vfs", "read"]},
             {"tool_func": vfs_create, "name": "vfs_create", "category": ["vfs", "write"]},
             {"tool_func": vfs_write, "name": "vfs_write", "category": ["vfs", "write"]},
@@ -1876,7 +2029,10 @@ class FlowAgent:
             # VFS Directory Operations
             {"tool_func": vfs_mkdir, "name": "vfs_mkdir", "category": ["vfs", "write"]},
             {"tool_func": vfs_rmdir, "name": "vfs_rmdir", "category": ["vfs", "write"]},
-            {"tool_func": vfs_mv, "name": "vfs_mv", "category": ["vfs", "write"]},
+            {"tool_func": vfs_mv, "name": "vfs_mv", "category": ["vfs", "write"]}]
+        tools = [] if hasattr(self, '_vfs_tools_registered') else vfs_tools
+        tools.extend( [
+            # VFS File Operations
             # VFS Open/Close
             {"tool_func": vfs_open, "name": "vfs_open", "category": ["vfs", "context"]},
             {
@@ -1886,6 +2042,19 @@ class FlowAgent:
                 "is_async": True,
             },
             {"tool_func": vfs_view, "name": "vfs_view", "category": ["vfs", "context"]},
+            {
+                "tool_func": vfs_grep,
+                "name": "vfs_grep",
+                "category": ["vfs", "search"],
+                "description": "Full-text search (grep) in files using regex. Supports recursion and case sensitivity."
+            },
+            {
+                "tool_func": fs_copy_dir_from_vfs,
+                "name": "fs_copy_dir_from_vfs",
+                "category": ["filesystem", "vfs"],
+                "flags": {"filesystem_access": True},
+                "description": "Recursively export a VFS directory to the real filesystem",
+            },
             # VFS Info & Diagnostics
             {"tool_func": vfs_info, "name": "vfs_info", "category": ["vfs", "read"]},
             {
@@ -1996,7 +2165,7 @@ class FlowAgent:
                 "name": "check_permissions",
                 "category": ["situation", "rules"],
             },
-        ]
+        ])
 
         if os.getenv("WITH_GOOGLE_TOOLS", "false") == "true":
             tools.extend(gmail_toolkit.get_tools(session.session_id))
@@ -2018,193 +2187,214 @@ class FlowAgent:
         self, session_id: str | None = None, print_visual: bool = True
     ) -> dict:
         """
-        Analysiert den aktuellen Token-Verbrauch des Kontexts und gibt eine Übersicht zurück.
-
-        Args:
-            session_id: Die zu analysierende Session (oder None für generische Analyse)
-            print_visual: Ob eine grafische CLI-Anzeige ausgegeben werden soll
-
-        Returns:
-            Ein Dictionary mit den detaillierten Token-Metriken.
+        Analysiert den *exakten* Token-Verbrauch, den der Agent im nächsten Schritt sehen würde.
+        Vergleicht "Actual" (optimiert) vs "Max Theoretical" (alles geladen).
         """
         if not LITELLM_AVAILABLE:
             logger.warning("LiteLLM not available, cannot count tokens.")
             return {}
 
-        # 1. Setup & Defaults
         target_session = session_id or self.active_session or "default"
-        model = self.amd.fast_llm_model.split("/")[
-            -1
-        ]  # Wir nutzen das schnelle Modell für die Tokenizer-Logik
+        session = await self.session_manager.get_or_create(target_session)
 
-        # Holen der Context Window Size (Fallback auf 128k wenn unbekannt)
+        # Determine Model
+        model = self.amd.fast_llm_model.split("/")[-1]
         try:
             model_info = litellm.get_model_info(model)
-            context_limit = (
-                model_info.get("max_input_tokens")
-                or model_info.get("max_tokens")
-                or 128000
-            )
+            context_limit = model_info.get("max_input_tokens") or model_info.get("max_tokens") or 128000
         except Exception:
             context_limit = 128000
 
+        # --- 1. Get Real Execution Context ---
+        # Try to find active execution to get working_history and dynamic tools
+        exec_ctx = None
+        if self._execution_engine_cache:
+            # We search for the execution that matches the session
+            # This is heuristics, as we might be between runs
+            for run_id, ctx in self._execution_engine_cache._active_executions.items():
+                if ctx.session_id == target_session:
+                    exec_ctx = ctx
+                    break
+
+        # --- 2. Calculate ACTUAL Components (What agent sees NOW + "hi") ---
+
+        # A. System Prompt + VFS + Skills
+        # We simulate the engine's _build_system_prompt behavior
+        vfs_str = session.build_vfs_context()
+        base_sys = self.amd.get_system_message()
+
+        # Add Skills (Mock or Real if ctx exists)
+        skills_str = ""
+        if exec_ctx and exec_ctx.matched_skills and hasattr(self._execution_engine_cache, 'skills_manager'):
+            skills_str = self._execution_engine_cache.skills_manager.build_skill_prompt_section(exec_ctx.matched_skills)
+
+        actual_sys_prompt = f"{base_sys}\n\n{skills_str}\n\n{vfs_str}"
+
+        # B. Tools (Active)
+        from toolboxv2.mods.isaa.base.Agent.execution_engine import DISCOVERY_TOOLS, STATIC_TOOLS
+
+        # Start with static
+        active_tools_list = STATIC_TOOLS + DISCOVERY_TOOLS
+        # Add dynamic if context exists, else none (fresh start)
+        if exec_ctx:
+            dynamic_names = exec_ctx.get_dynamic_tool_names()
+            all_avail = self.tool_manager.get_all_litellm()
+            for t in all_avail:
+                if t['function']['name'] in dynamic_names:
+                    active_tools_list.append(t)
+
+        # C. History (Permanent + Working)
+        # Permanent (Last N=6 default in engine)
+        perm_history = session.get_history_for_llm(last_n=6)
+
+        # Working (Current Chain)
+        work_history = exec_ctx.working_history if exec_ctx else []
+
+        # Simulated User Input
+        user_sim = [{"role": "user", "content": "hi"}]
+
+        # Actual Message Stack
+        actual_messages = [{"role": "system", "content": actual_sys_prompt}] + perm_history + work_history + user_sim
+
+        # --- 3. Calculate THEORETICAL MAX Components (If we loaded everything) ---
+
+        # A. Full History
+        full_perm_history = session.get_history_for_llm(last_n=9999)  # All history
+
+        # B. All Tools
+        all_tools_list = STATIC_TOOLS + DISCOVERY_TOOLS + self.tool_manager.get_all_litellm()
+
+        # Max Message Stack
+        max_messages = [{"role": "system",
+                         "content": actual_sys_prompt}] + full_perm_history + user_sim  # Assuming working history is part of full eventually
+
+        # --- 4. Token Counting ---
+
+        def count(text_or_msgs):
+            if isinstance(text_or_msgs, list):
+                # Optimize: Convert tools list to json string for counting
+                if len(text_or_msgs) > 0 and "type" in text_or_msgs[0]:  # It's a tool list
+                    return litellm.token_counter(model=model, text=json.dumps(text_or_msgs))
+                return litellm.token_counter(model=model, messages=text_or_msgs)
+            return litellm.token_counter(model=model, text=text_or_msgs)
+
+        t_sys = count(actual_sys_prompt)
+        t_tools_act = count(active_tools_list)
+        t_tools_max = count(all_tools_list)
+
+        t_hist_perm = count(perm_history)
+        t_hist_work = count(work_history)
+        t_hist_max = count(full_perm_history)
+
+        t_user = count(user_sim)
+
+        actual_total = t_sys + t_tools_act + t_hist_perm + t_hist_work + t_user
+        max_total = t_sys + t_tools_max + t_hist_max + t_user  # VFS is in sys, stays same roughly
+
+        savings = max_total - actual_total
+
         metrics = {
-            "system_prompt": 0,
-            "system_tool_definitions": 0,
-            "user_tool_definitions": 0,
-            "vfs_context": 0,
-            "history": 0,
-            "overhead": 0,
-            "total": 0,
+            "session_id": target_session,
+            "model": model,
             "limit": context_limit,
-            "session_id": target_session if session_id else "NONE (Base Config)",
+
+            # Actual Breakdown
+            "act_system": t_sys,
+            "act_tools": t_tools_act,
+            "act_hist_perm": t_hist_perm,
+            "act_hist_work": t_hist_work,
+            "act_user": t_user,
+            "act_total": actual_total,
+
+            # Max Breakdown
+            "max_tools": t_tools_max,
+            "max_hist": t_hist_max,
+            "max_total": max_total,
+
+            "savings": savings,
+
+            # Metadata
+            "tool_count_act": len(active_tools_list),
+            "tool_count_max": len(all_tools_list),
+            "msg_count_act": len(actual_messages),
+            "msg_count_max": len(max_messages)
         }
 
-        # 2. System Prompt Berechnung
-        # Wir simulieren den Prompt, den die Engine bauen würde
-        base_system_msg = self.amd.get_system_message()
-        # Hinweis: ExecutionEngine fügt oft noch spezifische Prompts hinzu (Immediate/React)
-        # Wir nehmen hier eine repräsentative Größe an.
-
-        full_sys_msg = f"{base_system_msg}" + "".join([
-            "IDENTITY: You are FlowAgent, an autonomous execution unit capable of file operations, code execution, and data processing.",
-            "",
-            "OPERATING PROTOCOL:",
-            "1. INITIATIVE: Do not complain about missing tools. If a task requires file access, USE `vfs_list` or `vfs_read`. If you need to search, USE the search tools.",
-            "2. FORMAT: When asked for data, output ONLY data (JSON/Markdown). Do not use conversational filler ('Here is the data').",
-            "3. HONESTY: Differentiate between 'Information missing in context' (Unknown) and 'Factually non-existent' (False). Never apologize.",
-            "4. ITERATION: If a step fails, analyze the error in `think()`, then try a different approach. Do not give up immediately.",
-            "",
-            "CAPABILITIES:",
-            "- Loaded Tools: ({len(ctx.dynamic_tools)}/{ctx.max_dynamic_tools}): [{active_str}]",
-            "- Context Access: {cat_list}",
-            "",
-            "MANDATORY WORKFLOW:",
-            "A. PLAN: Use `think()` to decompose the request.",
-            "B. ACT: Use tools (`load_tools`, `vfs_*`, etc.) to gather info or execute changes.",
-            "C. VERIFY: Check if the tool output matches expectations.",
-            "D. REPORT: Use `final_answer()` only when the objective is met or definitively impossible.",
-        ])
-        metrics["system_prompt"] = litellm.token_counter(model=model, text=full_sys_msg)
-
-        # 3. Tools Definitions Berechnung
-        # Wir sammeln alle Tools + Standard VFS Tools um die Definition-Größe zu berechnen
-        from toolboxv2.mods.isaa.base.Agent.execution_engine import (
-            DISCOVERY_TOOLS,
-            STATIC_TOOLS,
-        )
-
-        # System Tools die immer injected werden
-        all_tools = STATIC_TOOLS + DISCOVERY_TOOLS
-
-        # LiteLLM Token Counter kann Tools nicht direkt, wir dumpen das JSON als Näherungswert
-        # (Dies ist oft genauer als man denkt, da Definitionen als Text/JSON injected werden)
-        tools_json = json.dumps(all_tools)
-        metrics["system_tool_definitions"] = litellm.token_counter(
-            model=model, text=tools_json
-        )
-        tools_json = json.dumps(self.tool_manager.get_all_litellm())
-        metrics["user_tool_definitions"] = litellm.token_counter(
-            model=model, text=tools_json
-        )
-
-        # 4. Session Specific Data (VFS & History)
-        if session_id:
-            session = await self.session_manager.get_or_create(target_session)
-
-            # VFS Context
-            # Wir rufen build_context_string auf, um genau zu sehen, was das LLM sieht
-            vfs_str = session.build_vfs_context()
-            # Plus Auto-Focus (Letzte Änderungen)
-            # Wir müssen hier tricksen, da AutoFocus in der Engine Instanz liegt
-            # und private ist. Wir nehmen an, dass es leer ist oder klein,
-            # oder wir instanziieren eine temporäre Engine.
-            # Für Performance nehmen wir hier nur den VFS String.
-
-            metrics["vfs_context"] = litellm.token_counter(model=model, text=vfs_str)
-
-            # Chat History
-            # Wir nehmen an, dass standardmäßig ca. 10-15 Nachrichten gesendet werden
-            history = session.get_history_for_llm(last_n=15)
-            metrics["history"] = litellm.token_counter(model=model, messages=history)
-
-        # 5. Summe
-        # Puffer für Protokoll-Overhead (Role-Tags, JSON-Formatierung) ~50 Tokens
-        metrics["overhead"] = 50
-        metrics["total"] = sum(
-            [
-                v
-                for k, v in metrics.items()
-                if isinstance(v, (int, float)) and k not in ["limit", "total"]
-            ]
-        )
-
-        # 6. Visualisierung
         if print_visual:
             self._print_context_visual(metrics, model)
 
         return metrics
 
-    def _print_context_visual(self, metrics: dict, model_name: str):
-        """Helper für die CLI Visualisierung"""
-        total = metrics["total"]
-        limit = metrics["limit"]
-        percent = min(100, (total / limit) * 100)
+    def _print_context_visual(self, m: dict, model_name: str):
+        """Zen-Style Visualization of Context Load"""
 
-        # Farben (ANSI)
-        C_RESET = "\033[0m"
-        C_BOLD = "\033[1m"
-        C_GREEN = "\033[32m"
-        C_YELLOW = "\033[33m"
-        C_RED = "\033[31m"
-        C_BLUE = "\033[34m"
-        C_GRAY = "\033[90m"
+        # Colors
+        DIM = "\033[90m"
+        CYAN = "\033[36m"
+        GREEN = "\033[32m"
+        YELLOW = "\033[33m"
+        RED = "\033[31m"
+        WHITE = "\033[97m"
+        RESET = "\033[0m"
+        BOLD = "\033[1m"
 
-        # Farbe basierend auf Auslastung
-        bar_color = C_GREEN
-        if percent > 70:
-            bar_color = C_YELLOW
-        if percent > 90:
-            bar_color = C_RED
-
-        # Progress Bar bauen (Breite 30 Zeichen)
-        bar_width = 30
-        filled = int((percent / 100) * bar_width)
-        bar = "█" * filled + "░" * (bar_width - filled)
+        def bar(value, max_val, width=30, color=GREEN):
+            pct = min(1.0, value / max(1, max_val))
+            filled = int(pct * width)
+            # Zen style: thin blocks or dots
+            b = "█" * filled + DIM + "░" * (width - filled) + RESET
+            p_str = f"{value / max_val * 100:.1f}%"
+            return f"{color}{b}{RESET} {p_str}"
 
         print(
-            f"\n{C_BOLD}CONTEXT OVERVIEW{C_RESET} | Session: {C_BLUE}{metrics['session_id']}{C_RESET}"
-        )
-        print(f"{C_GRAY}Model: {model_name} | Limit: {limit:,} tokens{C_RESET}\n")
+            f"\n{BOLD}CONTEXT STATE{RESET}  {DIM}session:{RESET} {CYAN}{m['session_id']}{RESET}  {DIM}model:{RESET} {WHITE}{model_name}{RESET}")
+        print(f"{DIM}────────────────────────────────────────────────────────────{RESET}")
 
-        print(f"Usage:")
+        # 1. Real Load Bar
+        limit = m['limit']
+        act_col = GREEN if m['act_total'] < limit * 0.7 else (YELLOW if m['act_total'] < limit * 0.9 else RED)
         print(
-            f"{bar_color}[{bar}]{C_RESET} {C_BOLD}{percent:.1f}%{C_RESET} ({total:,} / {limit:,})"
-        )
+            f"Active Load:   {bar(m['act_total'], limit, color=act_col)}  {DIM}({m['act_total']:,} / {limit:,}){RESET}")
 
-        print(f"\n{C_BOLD}Breakdown:{C_RESET}")
-
-        def print_row(label, value, color=C_RESET):
-            pct = (value / total * 100) if total > 0 else 0
+        # 2. Theoretical Max Bar
+        # If max > limit, we scale it relative to limit (will show overflow)
+        max_val = m['max_total']
+        max_col = DIM
+        if max_val > limit:
+            max_col = RED
             print(
-                f" • {label:<18} {color}{value:>6,}{C_RESET} tokens {C_GRAY}({pct:>4.1f}%){C_RESET}"
-            )
+                f"Theoret. Max:  {bar(max_val, limit, color=max_col)}  {DIM}(would crash without optimization){RESET}")
+        else:
+            print(f"Theoret. Max:  {bar(max_val, limit, color=max_col)}  {DIM}(full potential load){RESET}")
 
-        print_row("System Prompts", metrics["system_prompt"], C_YELLOW)
-        print_row("Tools (Sys)", metrics["system_tool_definitions"], C_BLUE)
-        print_row("Tools (User)", metrics["user_tool_definitions"], C_BLUE)
-        if metrics["vfs_context"] > 0:
-            print_row("VFS / Files", metrics["vfs_context"], C_GREEN)
-        if metrics["history"] > 0:
-            print_row("Chat History", metrics["history"], C_BLUE)
+        print(f"\n{BOLD}Composition (Active Request){RESET}")
 
-        # Leerer Platz Berechnung
-        remaining = limit - total
-        print("-" * 40)
-        print(f" {C_BOLD}{'TOTAL':<18} {total:>6,}{C_RESET}")
-        print(f" {C_GRAY}{'Remaining':<18} {remaining:>6,}{C_RESET}")
+        def row(label, val, count=None, extra=""):
+            v_str = f"{val:>6,}"
+            c_str = f"{count:>3} items" if count is not None else "         "
+            pct = f"{DIM}{val / m['act_total'] * 100:>4.1f}%{RESET}"
+            print(
+                f"  {DIM}•{RESET} {label:<16} {CYAN}{v_str}{RESET} tok  {DIM}|{RESET} {c_str} {DIM}|{RESET} {pct} {extra}")
+
+        # System Group
+        row("System & VFS", m['act_system'])
+
+        # Tools Group
+        t_diff = m['max_tools'] - m['act_tools']
+        row("Tools", m['act_tools'], m['tool_count_act'], extra=f"{GREEN}-{t_diff:,} saved{RESET}")
+
+        # History Group
+        h_diff = m['max_hist'] - (m['act_hist_perm'] + m['act_hist_work'])
+        row("Perm. History", m['act_hist_perm'])
+        row("Work. Memory", m['act_hist_work'], extra=f"{GREEN}-{h_diff:,} saved{RESET}")
+
+        # User
+        row("User Input", m['act_user'], 1, extra=f"{DIM}(simulation){RESET}")
+
+        print(f"{DIM}────────────────────────────────────────────────────────────{RESET}")
+        print(
+            f"  {BOLD}TOTAL{RESET}            {WHITE}{m['act_total']:>6,}{RESET} tok  {DIM}|{RESET} {GREEN}-{m['savings']:,} tokens optimized away{RESET}")
         print("")
-
     # =========================================================================
     # CHECKPOINT
     # =========================================================================

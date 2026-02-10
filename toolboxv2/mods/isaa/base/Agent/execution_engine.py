@@ -30,6 +30,7 @@ from litellm.types.utils import (
     ModelResponseStream,
 )
 
+from toolboxv2 import get_app
 # Import Skills System
 from toolboxv2.mods.isaa.base.Agent.skills import (
     Skill,
@@ -833,7 +834,7 @@ class ExecutionEngine(SubAgentResumeExtension):
 
         agent_type = "SUB-AGENT" if self.is_sub_agent else "MAIN"
         action = "Resuming" if is_resume else "Start"
-        print(f"🚀 {action} Execution [{agent_type}] [{ctx.run_id}]: {query[:50]}...")
+        print(f"🚀 {action} Execution [{agent_type}] [{ctx.run_id}]: {query}")
         if ctx.matched_skills:
             print(f"📚 Matched Skills: {[s.name for s in ctx.matched_skills]}")
         if ctx.dynamic_tools:
@@ -932,21 +933,15 @@ class ExecutionEngine(SubAgentResumeExtension):
         await self._commit_run(ctx, session, query, final_response, success)
 
         # 8. Learn from successful runs
-        if success and len(ctx.tools_used) >= 2:
-            try:
-                await self.skills_manager.learn_from_run(
-                    query=query,
-                    tools_used=ctx.tools_used,
-                    final_answer=final_response,
-                    success=success,
-                    llm_completion_func=self.agent.a_run_llm_completion,
-                )
-            except Exception as e:
-                print(f"[ExecutionEngine] Skill learning failed: {e}")
-
-        # 9. Record skill usage
-        for skill in ctx.matched_skills:
-            self.skills_manager.record_skill_usage(skill.id, success)
+        if success:
+            app = get_app()
+            app.run_bg_task_advanced(self._background_learning_task,
+                query=query,
+                tools_used=ctx.tools_used,
+                final_response=final_response,
+                success=success,
+            matched_skills=ctx.matched_skills
+            )
 
         # Remove from active executions
         self._active_executions.pop(ctx.run_id, None)
@@ -971,6 +966,26 @@ class ExecutionEngine(SubAgentResumeExtension):
                 return True
 
         return False
+
+    async def _background_learning_task(self, query: str, tools_used: list, final_response: str, success: bool,
+                                        matched_skills: list):
+        """Runs learning and recording in background to not block the UI"""
+        try:
+            # 1. Record usage stats (Fast)
+            for skill in matched_skills:
+                self.skills_manager.record_skill_usage(skill.id, success)
+
+            # 2. Learn new skills (Slow - involves LLM)
+            if success and len(tools_used) >= 2:
+                await self.skills_manager.learn_from_run(
+                    query=query,
+                    tools_used=tools_used,
+                    final_answer=final_response,
+                    success=success,
+                    llm_completion_func=self.agent.a_run_llm_completion,
+                )
+        except Exception as e:
+            print(f"[Background Learning Error]: {e}")
 
     # =========================================================================
     # TOOL EXECUTION
@@ -1005,6 +1020,7 @@ class ExecutionEngine(SubAgentResumeExtension):
         if f_name == "think":
             thought = f_args.get("thought", "")
             result = f"Thought recorded."
+            print(thought) # "Agent thought:"
             # Record in AutoFocus
             ctx.auto_focus.record(f_name, f_args, thought[:200])
 
@@ -1608,34 +1624,87 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         success: bool,
     ):
         """
-        Compress working history and commit to permanent storage.
-
-        Order in permanent history: User → Summary → Assistant
-        Summary is stored in RAG for long-term retrieval.
+        Archiviert den Lauf im VFS und generiert eine LLM-Zusammenfassung.
         """
 
-        # 1. Create summary from working history (TRIGGER 1: final_answer)
+        # 1. Archivierung: Speichere den vollen Verlauf im VFS
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_dir = "/.memory/logs"
+        log_file = f"{log_dir}/{timestamp}_{ctx.run_id}.md"
+
+
         summary = HistoryCompressor.compress_to_summary(ctx.working_history, ctx.run_id)
 
-        # 2. Add to permanent history in correct order
+        try:
+            # Sicherstellen, dass Verzeichnis existiert
+            session.vfs.mkdir(log_dir, parents=True)
+
+            # Log formatieren
+            full_log = [f"# Execution Log: {ctx.run_id}", f"Query: {query}", "-" * 40]
+            for msg in ctx.working_history:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                full_log.append(f"\n### {role.upper()}")
+                if "tool_calls" in msg:
+                    for tc in msg["tool_calls"]:
+                        fn = tc.get("function", {}) if isinstance(tc, dict) else tc.function
+                        name = fn.get("name", "") if isinstance(fn, dict) else fn.name
+                        full_log.append(f"`Tool Call: {name}`")
+                full_log.append(content)
+
+            session.vfs.write(log_file, "\n".join(full_log))
+        except Exception as e:
+            print(f"Failed to write execution log: {e}")
+
+        # 2. LLM Summarization (Dynamisch statt Regelbasiert)
+        summary_text = "Keine Zusammenfassung."
+        try:
+            # Nutze schnelles Modell für Zusammenfassung
+            summary_prompt = (
+                f"Analysiere den folgenden Verlauf eines Agenten-Laufs.\n"
+                f"Aufgabe: {query}\n"
+                f"Status: {'Erfolg' if success else 'Fehlschlag'}\n"
+                f"Tools genutzt: {', '.join(ctx.tools_used)}\n\n"
+                f"compressed summary : {summary}"
+                f"Erstelle eine prägnante Zusammenfassung mit wichtigen details (max 2-3 Sätze) der durchgeführten Aktionen und des Ergebnisses."
+                f"Erwähne erstellte/bearbeitete Dateien."
+            )
+
+            # Wir nutzen working_history als Kontext, aber limitiert
+            summary_text = await self.agent.a_run_llm_completion(
+                messages=ctx.working_history[-10:] + [{"role": "user", "content": summary_prompt}],
+                model_preference="fast",
+                max_tokens=400,
+                stream=False
+            )
+        except Exception as e:
+            # Fallback auf Rule-Based Compressor bei Fehler
+            auto_sum = HistoryCompressor.compress_to_summary(ctx.working_history, ctx.run_id)
+            summary_text = auto_sum["content"] if auto_sum else "Fehler bei Zusammenfassung."
+
+        # 3. Permanent Speichern
         # User message
         await session.add_message({"role": "user", "content": query})
 
-        # Summary (stored in RAG too)
-        if summary:
-            await session.add_message(
-                summary,
-                direct=True,
-                type="action_summary",
-                run_id=ctx.run_id,
-                success=success,
-            )
+        # System Summary mit Referenz auf Log-Datei
+        summary_msg = {
+            "role": "system",
+            "content": f"⚡ RUN SUMMARY [{ctx.run_id}]: {summary_text}\n(Full Log: {log_file})",
+            "metadata": {"type": "run_summary", "log_file": log_file}
+        }
+
+        await session.add_message(
+            summary_msg,
+            direct=True,
+            type="action_summary",
+            run_id=ctx.run_id,
+            success=success,
+        )
 
         # Final response
         await session.add_message({"role": "assistant", "content": final_response})
 
-        print(f"  💾 Run {ctx.run_id} committed to permanent history")
-
+        print(f"  💾 Run {ctx.run_id} archived to {log_file} and committed to history")
     # =========================================================================
     # STATISTICS
     # =========================================================================
@@ -1821,7 +1890,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                 {"role": "user", "content": query},
             ]
 
-        # Return the generator function and context
+            # Return the generator function and context
         async def stream_generator(ctx: ExecutionContext):
             """Generator that yields chunks during execution"""
             nonlocal session, max_iterations
@@ -1829,13 +1898,37 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
             final_response = None
             success = True
 
+            # Context info for ZEN CLI
+            agent_name = self.agent.amd.name
+            # Determine depth/type (simple heuristic or passed param)
+            is_sub = self.is_sub_agent
+
+            # Helper to enrich chunks
+            def enrich(chunk):
+                chunk["agent"] = agent_name
+                chunk["iter"] = ctx.current_iteration
+                chunk["max_iter"] = max_iterations
+                chunk["is_sub"] = is_sub
+                return chunk
+
             while ctx.current_iteration < max_iterations:
                 ctx.current_iteration += 1
 
                 # Check pause
                 if ctx.status == "paused":
-                    yield {"type": "paused", "run_id": ctx.run_id}
+                    yield enrich({"type": "paused", "run_id": ctx.run_id})
                     return
+
+                if self._should_warn_loop(ctx):
+                    warning_msg = ctx.loop_detector.get_intervention_message()
+                    # Inject into history so LLM sees it
+                    ctx.working_history.append({
+                        "role": "system",
+                        "content": warning_msg
+                    })
+                    ctx.loop_warning_given = True
+                    # Optional: Inform UI about the warning
+                    yield enrich({"type": "warning", "message": warning_msg.splitlines()[0]})
 
                 # Build messages
                 messages = list(ctx.working_history)
@@ -1870,7 +1963,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                     # 1. Content sammeln
                     if delta and hasattr(delta, "content") and delta.content:
                         collected_content += delta.content
-                        yield {"type": "content", "chunk": delta.content}
+                        yield enrich({"type": "content", "chunk": delta.content})
 
                     # 2. Reasoning sammeln (falls vorhanden)
                     if (
@@ -1878,7 +1971,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                         and hasattr(delta, "reasoning_content")
                         and delta.reasoning_content
                     ):
-                        yield {"type": "reasoning", "chunk": delta.reasoning_content}
+                        yield enrich({"type": "reasoning", "chunk": delta.reasoning_content})
 
                     # 3. Tool Calls SAMMELN (nicht überschreiben!)
                     if delta and hasattr(delta, "tool_calls") and delta.tool_calls:
@@ -1925,7 +2018,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                         f_name = func_obj.get("name", "")
                         f_args = func_obj.get("arguments", "{}")
 
-                        yield {"type": "tool_start", "name": f_name}
+                        yield enrich({"type": "tool_start", "name": f_name, "args": f_args})
 
                         # Check final_answer
                         if f_name == "final_answer":
@@ -1936,13 +2029,15 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                                     else f_args
                                 )
                                 final_response = args.get("answer", collected_content)
+                                success_status = args.get("success", True)
                             except:
                                 final_response = collected_content
+                                success_status = True
 
-                            yield {"type": "final_answer", "answer": final_response}
+                            yield enrich({"type": "final_answer", "answer": final_response, "success": success_status})
                             break
 
-                        result = await self._execute_tool_call(ctx, tc)
+                        result, is_final  = await self._execute_tool_call(ctx, tc)
 
                         tool_msg = {
                             "role": "tool",
@@ -1950,15 +2045,16 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                             if hasattr(tc, "id")
                             else tc.get("id", ""),
                             "name": f_name,
-                            "content": str(result) if not isinstance(result, str) else result,
+                            "content": str(result),
                         }
                         ctx.working_history.append(tool_msg)
 
-                        yield {
+                        yield enrich({
                             "type": "tool_result",
                             "name": f_name,
-                            "result": str(result) if not isinstance(result, str) else result,
-                        }
+                            "is_final": is_final,
+                            "result": str(result),
+                        })
 
                     if final_response:
                         break
@@ -1966,37 +2062,32 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                     # No tool calls - treat content as final
                     if collected_content:
                         final_response = collected_content
-                        yield {"type": "final_answer", "answer": final_response}
+                        yield enrich({"type": "final_answer", "answer": final_response})
                         break
 
             # Handle max iterations
             if final_response is None:
                 final_response = self._handle_max_iterations(ctx, query)
                 success = False
-                yield {"type": "max_iterations", "answer": final_response}
+                yield enrich({"type": "max_iterations", "answer": final_response})
 
-            # Commit
+                # Commit
             await self._commit_run(ctx, session, query, final_response, success)
 
             # Learn
-            if success and len(ctx.tools_used) >= 2:
-                try:
-                    await self.skills_manager.learn_from_run(
-                        query=query,
-                        tools_used=ctx.tools_used,
-                        final_answer=final_response,
-                        success=success,
-                        llm_completion_func=self.agent.a_run_llm_completion,
-                    )
-                except:
-                    pass
-
-            for skill in ctx.matched_skills:
-                self.skills_manager.record_skill_usage(skill.id, success)
+            if success:
+                app = get_app()
+                app.run_bg_task_advanced(self._background_learning_task,
+                                         query=query,
+                                         tools_used=ctx.tools_used,
+                                         final_response=final_response,
+                                         success=success,
+                                         matched_skills=ctx.matched_skills
+                                         )
 
             self._active_executions.pop(ctx.run_id, None)
 
-            yield {"type": "done", "success": success, "final_answer": final_response}
+            yield enrich({"type": "done", "success": success, "final_answer": final_response})
 
         return stream_generator, ctx
 

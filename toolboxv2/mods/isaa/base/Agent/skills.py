@@ -688,6 +688,34 @@ class Skill:
                 self.tools_used.append(tool)
                 existing_tools.add(tool)
 
+        # call blitz model to merge (unify) instruction
+        import litellm
+        # ---- Merge instructions using Blitz model ----
+        sys_prompt = (
+            "You are an instruction unification engine.\n"
+            "Given two instructions, return a single merged instruction.\n"
+            "Return ONLY the merged instruction. No explanations."
+        )
+
+        user_prompt = (
+            f"Instruction A (old {self.confidence=}):\n"
+            f"{self.instruction}\n\n"
+            f"Instruction B (new {other.confidence}):\n"
+            f"{other.instruction}\n\n"
+            "Balanced Merged instruction:"
+        )
+
+        response = litellm.completion(
+            model=os.getenv("BLITZMODEL"),
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+
+        # Extract merged instruction text safely
+        self.instruction = response.choices[0].message.content.strip()
+
         self.last_used = datetime.now()
 
     def to_dict(self) -> dict:
@@ -1548,6 +1576,8 @@ class SkillsManager:
 
         except Exception as e:
             print(f"[SkillsManager] Failed to learn skill: {e}")
+            import traceback
+            traceback.print_exc()
 
         return None
 

@@ -18,6 +18,7 @@ Version: 4.0.0
 import asyncio
 import json
 import os
+import re
 import subprocess
 import sys
 import uuid
@@ -26,6 +27,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import tqdm
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import FuzzyCompleter, NestedCompleter, WordCompleter, PathCompleter
 from prompt_toolkit.formatted_text import HTML
@@ -89,6 +91,14 @@ class PTColors:
     MAGENTA = 'ansimagenta'
     BRIGHT_WHITE = '#ffffff'
     BRIGHT_CYAN = '#00ffff'
+
+
+    # Zen Colors
+    ZEN_DIM = '#6b7280'
+    ZEN_CYAN = '#67e8f9'
+    ZEN_AMBER = '#fbbf24'
+    ZEN_GREEN = '#4ade80'
+    ZEN_RED = '#fb7185'
 
 
 class Colors:
@@ -312,6 +322,7 @@ class BackgroundTask:
 
     task_id: str
     agent_name: str
+    run_id: str
     query: str
     task: asyncio.Task
     started_at: datetime = field(default_factory=datetime.now)
@@ -419,6 +430,166 @@ ALL_FEATURES = {
 # ISAA HOST - MAIN CLASS
 # =============================================================================
 
+class ZenRenderer:
+    """
+    Renders agent execution in 'Zen Mode': Minimalist, structured, vertical flow.
+    """
+
+    def __init__(self):
+        self.last_agent = None
+        self.last_phase = None
+        self.in_think_block = False
+        self.think_buffer = ""
+
+    def _print_status_bar(self, chunk: dict):
+        """Prints a single line status update (simulated via print for now)"""
+        # In a full TUI this would be a fixed bar. Here we print context headers on change.
+        agent = chunk.get("agent", "unknown")
+        iter_num = chunk.get("iter", 0)
+        max_iter = chunk.get("max_iter", 0)
+        is_sub = chunk.get("is_sub", False)
+
+        # Only print header if agent context changed
+        if agent != self.last_agent:
+            prefix = "◈" if is_sub else "◯"
+            color = PTColors.ZEN_DIM if is_sub else PTColors.ZEN_CYAN
+
+            c_print(HTML(
+                f"\n<style fg='{color}'>{prefix} {agent}</style>  <style fg='{PTColors.ZEN_DIM}'>∙  iter {iter_num}/{max_iter}</style>"))
+            self.last_agent = agent
+
+    def process_chunk(self, chunk: dict):
+        c_type = chunk.get("type")
+        self._print_status_bar(chunk)
+
+        # --- THINKING (◎) ---
+        if c_type == "reasoning":
+            text = chunk.get("chunk", "")
+            self.think_buffer += text
+            # Minimalist: Don't show thinking char-by-char, wait for block end or show simple dot
+            # For CLI responsiveness, we might show a dim dot per chunk, or nothing.
+            # Zen Concept: "Ultra-kompakt" -> We collect and summarize, or just show indicator.
+            if not self.in_think_block:
+                print_formatted_text(HTML(f"  <style fg='{PTColors.ZEN_DIM}'>◎ thinking...</style>"), end="\r")
+                self.in_think_block = True
+
+        # --- CONTENT (White) ---
+        elif c_type == "content":
+            if self.in_think_block:
+                # Close thinking block visually
+                c_print(
+                    HTML(f"  <style fg='{PTColors.ZEN_DIM}'>◎ thought recorded</style>          "))  # Overwrite line
+                self.in_think_block = False
+                self.think_buffer = ""
+
+            text = chunk.get("chunk", "")
+            # Plain white text for content
+            print_formatted_text(HTML(f"<style fg='{PTColors.WHITE}'>{esc(text)}</style>"), end="")
+
+        # --- TOOL START (◇) ---
+        elif c_type == "tool_start":
+            if self.in_think_block:
+                c_print(HTML(f"  <style fg='{PTColors.ZEN_DIM}'>◎ thought recorded</style>          "))
+                self.in_think_block = False
+
+            name = chunk.get("name", "unknown")
+            args = chunk.get("args", "")
+
+            # Format args compactly
+            arg_str = ""
+            if args:
+                try:
+                    args_dict = json.loads(args) if isinstance(args, str) else args
+                    # Extract key params for display
+                    if "path" in args_dict:
+                        arg_str = args_dict["path"]
+                    elif "query" in args_dict:
+                        arg_str = args_dict["query"]
+                    elif "thought" in args_dict:
+                        arg_str = "..."
+                    else:
+                        arg_str = "..."  # Keep it clean
+                except:
+                    pass
+
+            # Print the tool line (pending status)
+            c_print(HTML(
+                f"  <style fg='{PTColors.ZEN_CYAN}'>◇ {name:<12}</style>  <style fg='{PTColors.ZEN_DIM}'>{esc(arg_str)}</style>"),
+                    end="")
+
+        # --- TOOL RESULT (✓/✗) ---
+        elif c_type == "tool_result":
+            # Complete the previous line
+            result = chunk.get("result", "")
+            name = chunk.get("name", "")
+            if name == "final_answer":
+                return
+            # Parse result for metadata (size, success)
+            meta = ""
+            status_icon = "✓"
+            status_color = PTColors.ZEN_GREEN
+
+            try:
+                res_data = json.loads(result)
+                if isinstance(res_data, dict):
+                    if not res_data.get("success", True):
+                        status_icon = "✗"
+                        status_color = PTColors.ZEN_RED
+                        if "error" in res_data:
+                            meta = res_data["error"][:40]
+
+                    # File size
+                    if "size" in res_data:
+                        size = res_data["size"]
+                        if size < 1024:
+                            meta = f"{size}b"
+                        else:
+                            meta = f"{size / 1024:.1f}kb"
+
+                    # Content length
+                    elif "content" in res_data:
+                        meta = f"{len(res_data['content'])} chars"
+
+            except:
+                pass
+
+            # Print result on same line if possible, or next line indented
+            # Since we are in streaming mode, we might have printed newlines.
+            # Ideally we use \r but other output might interfere.
+            # Safe approach: Just print the status and meta.
+
+            c_print(HTML(
+                f"  <style fg='{PTColors.ZEN_DIM}'>{meta}</style>  <style fg='{status_color}'>{status_icon}</style>"))
+
+        # --- SUB-AGENT SPAWN (◈) ---
+        # Note: 'spawn_sub_agent' is a tool, so it's handled by tool_start/result above mostly.
+        # But if we had explicit events:
+
+        # --- DONE (●) ---
+        elif c_type == "done":
+            success = chunk.get("success", True)
+            color = PTColors.ZEN_GREEN if success else PTColors.ZEN_RED
+            icon = "●"
+            iter_count = chunk.get("iter", 0)
+
+            c_print(HTML(
+                f"\n  <style fg='{color}'>{icon} complete</style>  <style fg='{PTColors.ZEN_DIM}'>∙ {iter_count} iter</style>\n"))
+        elif c_type == "final_answer":
+            if self.in_think_block:
+                c_print(HTML(f"  <style fg='{PTColors.ZEN_DIM}'>◎ thought recorded</style>          "))
+                self.in_think_block = False
+
+            answer = chunk.get("answer", "")
+            # Print answer clearly in white (Zen style: text is content)
+            c_print(HTML(f"\n<style fg='{PTColors.WHITE}'>{esc(answer)}</style>\n"))
+        # --- WARNING/ERROR ---
+        elif c_type == "warning":
+            msg = chunk.get("message", "")
+            c_print(HTML(f"  <style fg='{PTColors.ZEN_AMBER}'>⚠ {esc(msg)}</style>"))
+
+        elif c_type == "error":
+            msg = chunk.get("error", "")
+            c_print(HTML(f"  <style fg='{PTColors.ZEN_RED}'>❌ {esc(msg)}</style>"))
 
 class ISAA_Host:
     """
@@ -1063,8 +1234,12 @@ class ISAA_Host:
         try:
             agent = await self.isaa_tools.get_agent(agent_name)
 
+            run_id = uuid.uuid4().hex[:8]
+
             if wait:
-                result = await agent.a_run(query=task, session_id=session_id)
+                # For synchronous wait, we still might want to see it in stats if possible,
+                # but usually CLI blocks here.
+                result = await agent.a_run(query=task, session_id=session_id, execution_id=run_id)
                 return str(result)
             else:
                 self._task_counter += 1
@@ -1072,26 +1247,32 @@ class ISAA_Host:
 
                 async def run_task():
                     try:
-                        result = await agent.a_run(query=task, session_id=session_id)
-                        self.background_tasks[task_id].status = "completed"
+                        # Pass execution_id explicitly to link with engine
+                        result = await agent.a_run(query=task, session_id=session_id, execution_id=run_id)
+                        if task_id in self.background_tasks:
+                            self.background_tasks[task_id].status = "completed"
                         return result
                     except asyncio.CancelledError:
-                        self.background_tasks[task_id].status = "cancelled"
+                        if task_id in self.background_tasks:
+                            self.background_tasks[task_id].status = "cancelled"
                         raise
-                    except Exception:
-                        self.background_tasks[task_id].status = "failed"
+                    except Exception as e:
+                        if task_id in self.background_tasks:
+                            self.background_tasks[task_id].status = "failed"
+                        print_status(f"Task {task_id} failed: {e}", "error")
                         raise
 
                 async_task = asyncio.create_task(run_task())
 
                 self.background_tasks[task_id] = BackgroundTask(
                     task_id=task_id,
+                    run_id=run_id,  # Store run_id
                     agent_name=agent_name,
                     query=task[:100],
                     task=async_task,
                 )
 
-                return f"✓ Background task started: {task_id}"
+                return f"✓ Background task started: {task_id} (RunID: {run_id})"
 
         except Exception as e:
             return f"✗ Delegation failed: {e}"
@@ -1568,13 +1749,67 @@ class ISAA_Host:
         print_separator()
 
         # Background Tasks
-        running_tasks = [
-            t for t in self.background_tasks.values() if t.status == "running"
-        ]
+        running_tasks = [t for t in self.background_tasks.values() if t.status == "running"]
         print_status(f"Background Tasks: {len(running_tasks)} running", "progress")
+        if running_tasks:
+            # Header for tasks table - Spaltenbreiten angepasst für tqdm
+            print_table_header(
+                [("ID/Agent", 18), ("Progress (tqdm)", 25), ("Iter", 8), ("Tokens", 10), ("Tool", 15)],
+                [18, 25, 8, 10, 15]
+            )
 
+            for t in running_tasks:
+                # Fetch live metrics from agent's execution engine
+                metrics = {"iter": 0, "max": 25, "tokens": 0, "tool": "-"}
+                try:
+                    agent = await self.isaa_tools.get_agent(t.agent_name)
+                    engine = agent._get_execution_engine()
+                    ctx = engine.get_execution(t.run_id)
 
-        print_box_footer()
+                    if ctx:
+                        metrics["iter"] = ctx.current_iteration
+                        # Tokens (Gesamtstatistik des Agents als Näherungswert)
+                        metrics["tokens"] = agent.total_tokens_out + agent.total_tokens_in
+                        # Last tool
+                        if ctx.tools_used:
+                            metrics["tool"] = ctx.tools_used[-1]
+                        elif ctx.dynamic_tools:
+                            metrics["tool"] = "thinking..."
+
+                except Exception:
+                    pass
+
+                # Echte TQDM Bar generieren
+                elapsed = (datetime.now() - t.started_at).total_seconds()
+
+                # format_meter liefert den String ohne zu drucken
+                tqdm_bar = tqdm.format_meter(
+                    n=metrics["iter"],
+                    total=metrics["max"],
+                    elapsed=elapsed,
+                    ncols=25,  # Exakte Breite für die Spalte
+                    prefix="",
+                    bar_format="{l_bar}{bar}|",  # Nur Balken und Prozent
+                    unit="it"
+                )
+
+                # ANSI Codes entfernen, da unsere print_table_row eigene Farben setzt
+                ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+                clean_bar = ansi_escape.sub('', tqdm_bar).strip()
+
+                iter_str = f"{metrics['iter']}/{metrics['max']}"
+
+                print_table_row(
+                    [
+                        f"{t.task_id[:8]}.. ({t.agent_name})",
+                        clean_bar,
+                        iter_str,
+                        f"{metrics['tokens']:,}",
+                        metrics["tool"][:15]
+                    ],
+                    [18, 25, 8, 10, 15],
+                    ["cyan", "green", "white", "yellow", "white"]
+                )
         c_print()
 
     def _print_help(self):
@@ -2956,79 +3191,93 @@ class ISAA_Host:
             print_status(f"Error: {e}", "error")
 
     async def _handle_agent_interaction(self, user_input: str):
-        """Handle regular agent interaction."""
+        """Handle regular agent interaction with ZEN Mode streaming."""
         try:
             agent = await self.isaa_tools.get_agent(self.active_agent_name)
 
-            # Check für #audio Flag
+            # Audio setup
             wants_audio = user_input.strip().endswith("#audio")
             if wants_audio:
                 user_input = user_input.rsplit("#audio", 1)[0].strip()
-
-            # Kombiniere mit verbose_audio Setting
             should_speak = wants_audio or getattr(self, 'verbose_audio', False)
-
-            # Audio Player starten wenn nötig
             if should_speak and hasattr(self, 'audio_player'):
                 await self.audio_player.start()
 
-            print_status(f"Processing with {self.active_agent_name}...", "progress")
+            # Zen Renderer Init
+            renderer = ZenRenderer()
+            print_status(f"Zen Mode: Processing with {self.active_agent_name}...", "progress")
+            c_print()  # Spacing
 
-            # Stream response
-            final_response = ""
-            full_response = ""
+            # State for final processing
+            final_response_text = ""
             current_sentence = ""
-            already_played = []
             stop_for_speech = False
-            async for chunk in agent.a_stream_verbose(
-                query=user_input,
-                session_id=self.active_session_id,
-            ):
 
-                if not full_response.endswith(chunk):
-                    print(chunk, end="", flush=True)
-                full_response += chunk
-
-                if '```' in chunk:
-                    stop_for_speech = True
-
-                # Für Audio: Sammle bis Satzende
-                if should_speak and hasattr(self, 'audio_player'):
-                    if chunk == remove_styles(chunk) and not stop_for_speech:
-                        current_sentence += chunk
-
-                    # Check ob Satzende erreicht
-                    if any(current_sentence.rstrip().endswith(p) for p in ['.', '!', '?', ':', '\n\n']):
-                        get_app("ci.audio.bg.task").run_bg_task_advanced(self.audio_player.queue_text,remove_styles(current_sentence.strip()))
-                        current_sentence = ""
-
-            c_print()  # Newline after streaming
-
-            # Try to visualize JSON responses
             try:
-                if "```json" in full_response or "```" in full_response:
-                    if "```json" in full_response:
-                        final_response = full_response.split("```json")[1].split("```")[0].strip()
-                    else:
-                        final_response = full_response.split("```")[1]
+                # Use enriched stream
+                async for chunk in agent.a_stream(
+                    query=user_input,
+                    session_id=self.active_session_id,
+                ):
+                    # 1. Render Chunk using Zen Renderer
+                    renderer.process_chunk(chunk)
 
-                    data = json.loads(final_response)
-                    if isinstance(data, list) and len(data) == 1:
-                        data = data[0]
-                    if isinstance(data, dict):
-                        print_separator()
-                        await visualize_data_terminal(
-                            data, agent, max_preview_chars=max(len(final_response), 8000)
-                        )
-            except (json.JSONDecodeError, Exception):
-                import traceback
-                traceback.print_exc()
+                    # 2. Accumulate text for audio/json-vis
+                    if chunk.get("type") == "content":
+                        text = chunk.get("chunk", "")
+                        final_response_text += text
+
+                        # Audio Logic (Foreground only)
+                        if should_speak and hasattr(self, 'audio_player'):
+                            if '```' in text: stop_for_speech = not stop_for_speech
+                            if not stop_for_speech:
+                                current_sentence += text
+                                if any(current_sentence.rstrip().endswith(p) for p in ['.', '!', '?', ':', '\n\n']):
+                                    clean_text = remove_styles(current_sentence.strip())
+                                    if clean_text:
+                                        get_app("ci.audio.bg.task").run_bg_task_advanced(
+                                            self.audio_player.queue_text, clean_text
+                                        )
+                                    current_sentence = ""
+
+            except KeyboardInterrupt:
+                c_print(HTML("\n<style fg='ansiyellow'>⚠️ Execution cancelled by user (Ctrl+C).</style>"))
+                for exec_info in agent.list_executions():
+                    if exec_info.get("session_id") == self.active_session_id:
+                        await agent.cancel_execution(exec_info.get("run_id"))
+                print_status("Stopped.", "success")
+                return
+
+            c_print()  # Final newline
+
+            # 3. Post-Processing: Visualize JSON
+            try:
+                async def _():
+                    try:
+                        if "```json" in final_response_text or "```" in final_response_text:
+                            if "```json" in final_response_text:
+                                json_str = final_response_text.split("```json")[1].split("```")[0].strip()
+                            else:
+                                json_str = final_response_text.split("```")[1]
+
+                            data = json.loads(json_str)
+                            if isinstance(data, list) and len(data) == 1:
+                                data = data[0]
+                            if isinstance(data, dict):
+                                print_separator()
+                                await visualize_data_terminal(
+                                    data, agent, max_preview_chars=max(len(final_response_text), 8000)
+                                )
+                    except:
+                        pass
+
+                get_app().run_bg_task_advanced(_)
+            except:
                 pass
 
         except Exception as e:
-            print_status(f"Error: {e}", "error")
+            print_status(f"System Error: {e}", "error")
             import traceback
-
             traceback.print_exc()
 
     async def _handle_shell(self, command: str):

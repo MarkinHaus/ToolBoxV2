@@ -921,6 +921,7 @@ def register_vfs_tools(
     enable_sharing: bool = True,
     enable_search: bool = True,
     enable_execute: bool = True,
+    enanle_mounting: bool = False
 ) -> dict:
     """
     Registriert alle VFS Tools beim Agent.
@@ -1125,52 +1126,6 @@ def register_vfs_tools(
         else:
             return f"Error: {result.get('error', 'Unknown error')}"
 
-    async def vfs_mount(
-        local_path: str,
-        vfs_path: str = "/project",
-        readonly: bool = False,
-        auto_sync: bool = True,
-    ) -> str:
-        """
-        Mount a local directory into VFS.
-
-        Args:
-            local_path: Local filesystem path
-            vfs_path: Mount point in VFS
-            readonly: Mount as read-only
-            auto_sync: Automatically sync changes to disk
-
-        Returns:
-            Result message with statistics
-        """
-        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-        vfs = session.vfs
-
-        result = vfs.mount(local_path, vfs_path, readonly=readonly, auto_sync=auto_sync)
-        if result.get("success"):
-            return f"Mounted {local_path} at {vfs_path}: {result.get('files_indexed', 0)} files, {result.get('dirs_indexed', 0)} dirs"
-        else:
-            return f"Error: {result.get('error', 'Unknown error')}"
-
-    async def vfs_unmount(vfs_path: str, save_changes: bool = True) -> str:
-        """
-        Unmount a directory from VFS.
-
-        Args:
-            vfs_path: Mount point to unmount
-            save_changes: Save pending changes before unmounting
-
-        Returns:
-            Result message
-        """
-        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-        vfs = session.vfs
-
-        result = vfs.unmount(vfs_path, save_changes=save_changes)
-        if result.get("success"):
-            return f"Unmounted {vfs_path}"
-        else:
-            return f"Error: {result.get('error', 'Unknown error')}"
 
     # Register core tools
     agent.add_tool(vfs_ls, "vfs_ls", "List files and directories in VFS", ["vfs", "filesystem"])
@@ -1181,12 +1136,61 @@ def register_vfs_tools(
     agent.add_tool(vfs_mkdir, "vfs_mkdir", "Create directory in VFS", ["vfs", "filesystem"])
     agent.add_tool(vfs_mv, "vfs_mv", "Move/rename file or directory", ["vfs", "filesystem"])
     agent.add_tool(vfs_cp, "vfs_cp", "Copy file or directory", ["vfs", "filesystem"])
-    agent.add_tool(vfs_mount, "vfs_mount", "Mount local directory into VFS", ["vfs", "filesystem"])
-    agent.add_tool(vfs_unmount, "vfs_unmount", "Unmount directory from VFS", ["vfs", "filesystem"])
 
     registered.extend(
-        ["vfs_ls", "vfs_read", "vfs_write", "vfs_edit", "vfs_delete", "vfs_mkdir", "vfs_mv", "vfs_cp", "vfs_mount",
-         "vfs_unmount"])
+        ["vfs_ls", "vfs_read", "vfs_write", "vfs_edit", "vfs_delete", "vfs_mkdir", "vfs_mv", "vfs_cp"])
+    if enanle_mounting:
+        async def vfs_mount(
+            local_path: str,
+            vfs_path: str = "/project",
+            readonly: bool = False,
+            auto_sync: bool = True,
+        ) -> str:
+            """
+            Mount a local directory into VFS.
+
+            Args:
+                local_path: Local filesystem path
+                vfs_path: Mount point in VFS
+                readonly: Mount as read-only
+                auto_sync: Automatically sync changes to disk
+
+            Returns:
+                Result message with statistics
+            """
+            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
+            vfs = session.vfs
+
+            result = vfs.mount(local_path, vfs_path, readonly=readonly, auto_sync=auto_sync)
+            if result.get("success"):
+                return f"Mounted {local_path} at {vfs_path}: {result.get('files_indexed', 0)} files, {result.get('dirs_indexed', 0)} dirs"
+            else:
+                return f"Error: {result.get('error', 'Unknown error')}"
+
+        async def vfs_unmount(vfs_path: str, save_changes: bool = True) -> str:
+            """
+            Unmount a directory from VFS.
+
+            Args:
+                vfs_path: Mount point to unmount
+                save_changes: Save pending changes before unmounting
+
+            Returns:
+                Result message
+            """
+            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
+            vfs = session.vfs
+
+            result = vfs.unmount(vfs_path, save_changes=save_changes)
+            if result.get("success"):
+                return f"Unmounted {vfs_path}"
+            else:
+                return f"Error: {result.get('error', 'Unknown error')}"
+
+        agent.add_tool(vfs_mount, "vfs_mount", "Mount local directory into VFS", ["vfs", "filesystem"])
+        agent.add_tool(vfs_unmount, "vfs_unmount", "Unmount directory from VFS", ["vfs", "filesystem"])
+
+        registered.extend(["vfs_mount", "vfs_unmount"])
 
     # =========================================================================
     # GLOBAL VFS TOOLS
@@ -1363,7 +1367,7 @@ def register_vfs_tools(
                 List of shares
             """
             sharing = get_sharing_manager()
-            shares = sharing.list_shares_for_agent(agent.name)
+            shares = sharing.list_shares_for_agent(agent.amd.name)
 
             if not shares:
                 return "No shares available"

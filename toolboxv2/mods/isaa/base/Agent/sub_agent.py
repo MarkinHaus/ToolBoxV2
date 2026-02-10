@@ -75,7 +75,7 @@ class SubAgentState:
 
     # Async handling
     _task: asyncio.Task | None = field(default=None, repr=False)
-    
+
     # NEW: Resume support
     execution_context: Optional['ExecutionContext'] = None  # Preserved context
     resumable: bool = False  # Can this be resumed?
@@ -97,7 +97,7 @@ class SubAgentResult:
     tokens_used: int
     duration_seconds: float
     task: str = ""  # NEW: Original task
-    
+
     # NEW: Resume support fields
     max_iterations_reached: bool = False  # NEW: Hit max iterations?
     resumable: bool = False  # NEW: Can be resumed?
@@ -401,42 +401,70 @@ class SubAgentManager:
                 sub_agent_output_dir=state.output_dir,
                 sub_agent_budget=state.config.max_tokens
             )
-            
+
             # Store engine and session_id for resume
             state.engine = sub_engine
             state.session_id = f"{self.parent_session.session_id}__sub__{state.id}"
             state.original_budget = state.config.max_tokens
 
-            # Execute with sub-agent context - GET CONTEXT BACK!
-            result, ctx = await sub_engine.execute(
+            # Execute with sub-agent context - STREAMING MODE
+            # We consume the stream internally to update state live for the CLI
+            stream_gen, ctx = await sub_engine.execute_stream(
                 query=state.task,
                 session_id=state.session_id,
-                max_iterations=state.config.max_iterations,
-                get_ctx=True  # IMPORTANT: Get context for resume!
+                max_iterations=state.config.max_iterations
             )
 
-            # Collect results
-            state.result = result
-            state.tokens_used = getattr(sub_engine, '_tokens_used', 0)
-            state.iterations_used = ctx.current_iteration
-            
-            # NEW: Check if max iterations reached
-            if ctx.current_iteration >= state.config.max_iterations:
-                # Max iterations hit - check if resumable
-                state.status = SubAgentStatus.MAX_ITERATIONS
-                
-                # Resumable if tools were used (progress was made)
-                if len(ctx.tools_used) > 0:
-                    state.resumable = True
-                    state.execution_context = ctx  # PRESERVE CONTEXT!
-                    print(f"[SubAgent {state.id}] Max iterations reached, but resumable (tools used: {len(ctx.tools_used)})")
-                else:
-                    state.resumable = False
-                    print(f"[SubAgent {state.id}] Max iterations reached, no progress (not resumable)")
-            else:
-                # Completed successfully
+            final_answer_acc = ""
+
+            # Consume stream to keep state alive
+            async for chunk in stream_gen(ctx):
+                c_type = chunk.get("type")
+
+                # Live State Updates for CLI
+                state.iterations_used = ctx.current_iteration
+
+                if c_type == "content":
+                    # Update token count approx (1 token ~= 4 chars)
+                    txt = chunk.get("chunk", "")
+                    state.tokens_used += len(txt) // 4
+                    final_answer_acc += txt
+
+                elif c_type == "tool_start":
+                    # CLI checks ctx.tools_used, which is updated by engine internally
+                    pass
+
+                elif c_type == "final_answer":
+                    final_answer_acc = chunk.get("answer", "")
+
+                elif c_type == "max_iterations":
+                    state.result = chunk.get("answer", "Max iterations reached")
+                    state.status = SubAgentStatus.MAX_ITERATIONS
+                    # Check resumability
+                    if len(ctx.tools_used) > 0:
+                        state.resumable = True
+                        state.execution_context = ctx
+                    else:
+                        state.resumable = False
+
+                elif c_type == "done":
+                    state.result = chunk.get("final_answer", final_answer_acc)
+                    if chunk.get("success", False):
+                        state.status = SubAgentStatus.COMPLETED
+                    elif state.status != SubAgentStatus.MAX_ITERATIONS:
+                        state.status = SubAgentStatus.FAILED
+                        state.error = "Execution finished without success flag"
+
+            # Ensure final state consistency
+            if state.status == SubAgentStatus.RUNNING:
+                # Fallback if loop ended without explicit done/max_iter
                 state.status = SubAgentStatus.COMPLETED
-                state.resumable = False
+                state.result = final_answer_acc
+
+            # Final token sync from agent
+            if sub_engine.agent:
+                # Add overhead that might have been missed
+                state.tokens_used = sub_engine.agent.total_tokens_out + sub_engine.agent.total_tokens_in
 
             # Collect files written
             # Check VFS for files in output_dir
@@ -448,6 +476,8 @@ class SubAgentManager:
                     ]
             except Exception:
                 pass
+
+            result = final_answer_acc
 
             # Write result to output_dir/result.md if not already done
             result_path = f"{state.output_dir}/result.md"
@@ -534,7 +564,7 @@ class SubAgentManager:
                 f"• {status_icon} [{sub_id}]: {result.status.value} "
                 f"→ {result.output_dir}"
             )
-            
+
             # NEW: Show resume info for MAX_ITERATIONS
             if result.max_iterations_reached:
                 lines.append(f"  ⏱️  Max Iterations erreicht!")

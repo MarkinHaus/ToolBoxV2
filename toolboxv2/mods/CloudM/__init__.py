@@ -2,7 +2,7 @@ from .AdminDashboard import Name as AdminDashboard
 from .email_services import Name as EmailServicesName
 from .extras import Name as ExtrasName
 from .hud_test import Name as HudGames
-from .LogInSystem import open_web_login_web
+from .LogInSystem import Name as LoginSystemName, open_web_login_web
 from .mini import *
 from .ModManager import Name as ModManagerName
 from .ModManager_tests import run_mod_manager_tests

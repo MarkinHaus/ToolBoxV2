@@ -78,7 +78,7 @@ def _clear_cli_session(username: str) -> bool:
 
 
 # =================== Main CLI Login ===================
-
+@export(mod_name=Name, version=version)
 async def cli_login(app: App = None, email: str = None):
     """
     CLI Login with Clerk Email + Code verification
@@ -96,7 +96,7 @@ async def cli_login(app: App = None, email: str = None):
 
         choice = input("\033[96m❯ Continue with existing session? (y/n): \033[0m").strip().lower()
         if choice == 'y':
-            return Result.ok("Already authenticated", data=existing_session)
+            return Result.ok(info="Already authenticated", data=existing_session)
         else:
             await cli_logout(app)
 
@@ -220,7 +220,7 @@ async def _wait_for_code_input(app: App, cli_session_id: str, email: str) -> Res
         print_box_content("Your CLI session has been established", "info")
         print_box_footer()
 
-        return Result.ok("Login successful", data=session_data)
+        return Result.ok(info="Login successful", data=session_data)
 
     # Max attempts reached
     print()
@@ -266,7 +266,7 @@ def _check_existing_session(app: App) -> Optional[dict]:
 
 
 # =================== Logout ===================
-
+@export(mod_name=Name, version=version)
 async def cli_logout(app: App = None):
     """Logout from CLI session"""
     if app is None:
@@ -302,7 +302,7 @@ async def cli_logout(app: App = None):
 
 
 # =================== Session Status ===================
-
+@export(mod_name=Name, version=version)
 async def cli_status(app: App = None):
     """Show current CLI session status"""
     if app is None:

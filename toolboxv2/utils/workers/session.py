@@ -30,6 +30,20 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
+# Custom Auth Integration
+# ============================================================================
+
+# Import CustomSessionVerifier if available (for CloudM.Auth support)
+try:
+    from .session_custom import CustomSessionVerifier, SessionData as CustomSessionData
+    CUSTOM_AUTH_AVAILABLE = True
+except ImportError:
+    CUSTOM_AUTH_AVAILABLE = False
+    CustomSessionVerifier = None
+    CustomSessionData = None
+
+
+# ============================================================================
 # Access Level Constants
 # ============================================================================
 
@@ -558,6 +572,11 @@ class SessionManager:
         self.clerk_verifier = None
         if app and clerk_enabled:
             self.clerk_verifier = ClerkSessionVerifier(app)
+
+        # Custom Auth verifier support (CloudM.Auth)
+        self.custom_verifier = None
+        if app and CUSTOM_AUTH_AVAILABLE:
+            self.custom_verifier = CustomSessionVerifier(app, auth_module="CloudM.Auth")
 
         self.api_key_header = api_key_header
         self.bearer_header = bearer_header
