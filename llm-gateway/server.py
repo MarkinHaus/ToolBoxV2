@@ -777,7 +777,7 @@ async def stats_summary(auth: Dict = Depends(verify_api_key)):
 
 @app.get("/admin/", response_class=HTMLResponse)
 async def admin_panel():
-    return (STATIC_DIR / "admin.html").read_text()
+    return (STATIC_DIR / "admin.html").read_text(encoding="utf-8")
 
 
 @app.get("/admin/api/users")
@@ -974,17 +974,17 @@ async def admin_update_config(updates: Dict, auth: Dict = Depends(verify_admin))
 
 @app.get("/user/", response_class=HTMLResponse)
 async def user_dashboard():
-    return (STATIC_DIR / "user.html").read_text()
+    return (STATIC_DIR / "user.html").read_text(encoding="utf-8")
 
 
 @app.get("/playground/", response_class=HTMLResponse)
 async def playground():
-    return (STATIC_DIR / "playground.html").read_text()
+    return (STATIC_DIR / "playground.html").read_text(encoding="utf-8")
 
 
 @app.get("/playground-live/", response_class=HTMLResponse)
 async def playground_live():
-    return (STATIC_DIR / "live-playground.html").read_text()
+    return (STATIC_DIR / "live-playground.html").read_text(encoding="utf-8")
 
 
 @app.get("/user/api/me")
@@ -1047,7 +1047,7 @@ async def health():
 
 @app.get("/", response_class=HTMLResponse)
 async def landing_page():
-    return (STATIC_DIR / "index.html").read_text()
+    return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
 
 @app.get("/api/models")
@@ -1178,7 +1178,7 @@ async def admin_reject_signup(request_id: int, auth: Dict = Depends(verify_admin
 async def live_playground_page():
     live_page = STATIC_DIR / "live-playground.html"
     if live_page.exists():
-        return live_page.read_text()
+        return live_page.read_text(encoding="utf-8")
     raise HTTPException(404, "Live playground not found")
 
 
