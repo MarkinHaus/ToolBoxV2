@@ -7,6 +7,7 @@ Features:
 - Interrupt handling with [INTERRUPTED BY USER] marker
 - Parallel LLM + TTS streaming for minimal latency
 - Session management with SQLite persistence
+- Uses Ollama backend instead of direct port connections
 """
 
 import asyncio
@@ -193,6 +194,7 @@ class LiveHandler:
     - Sessions stored in SQLite for persistence
     - In-memory cache for active sessions
     - Lazy cleanup on new session creation
+    - Uses Ollama backend for LLM and TTS
     """
 
     def __init__(self, db_path: str, model_manager):
@@ -288,18 +290,27 @@ class LiveHandler:
         """Create new live session"""
 
         # Verify TTS model is available
-        tts_slot = self.model_manager.find_tts_slot()
-        if not tts_slot:
+        try:
+            tts_model = self.model_manager.find_tts_model()
+        except Exception:
+            tts_model = None
+
+        if not tts_model:
             raise HTTPException(
                 503,
                 "No TTS model loaded. Load a TTS model (type='tts') first."
             )
 
         # Verify LLM model is available
-        llm_slot = self.model_manager.find_model_slot(request.llm_config.model)
-        if not llm_slot:
-            llm_slot = self.model_manager.find_text_slot()
-        if not llm_slot:
+        try:
+            llm_model = self.model_manager.find_model(request.llm_config.model)
+        except Exception:
+            try:
+                llm_model = self.model_manager.find_text_model()
+            except Exception:
+                llm_model = None
+
+        if not llm_model:
             raise HTTPException(
                 503,
                 f"No LLM model available. Load model '{request.llm_config.model}' or any text model."
@@ -550,24 +561,14 @@ class LiveHandler:
         tools_called = []
 
         try:
-            # Get LLM slot
-            llm_slot = self.model_manager.find_model_slot(session.llm_config.model)
-            if not llm_slot:
-                llm_slot = self.model_manager.find_text_slot()
-
-            if not llm_slot:
-                raise Exception("No LLM model available")
-
-            # Get TTS slot
-            tts_slot = self.model_manager.find_tts_slot()
-            if not tts_slot:
-                raise Exception("No TTS model available")
+            # Get Ollama URL
+            ollama_url = self.model_manager.ollama_url
 
             # Build LLM request
             messages = session.get_messages_for_llm()
 
-            llm_url = f"http://127.0.0.1:{llm_slot['port']}/v1/chat/completions"
-            tts_url = f"http://127.0.0.1:{tts_slot['port']}/v1/audio/speech"
+            llm_url = f"{ollama_url}/v1/chat/completions"
+            tts_url = f"{ollama_url}/v1/audio/speech"
 
             # Stream LLM response
             full_response = ""
@@ -770,7 +771,7 @@ class LiveHandler:
         text: str,
         session: LiveSession
     ):
-        """Generate TTS and stream audio to client"""
+        """Generate TTS and stream audio to client using Ollama"""
 
         if not session.is_generating:
             return

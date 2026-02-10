@@ -1,0 +1,42 @@
+[Unit]
+Description=LLM Gateway API Server
+Documentation=https://github.com/yourusername/llm-gateway
+After=network.target ollama.service
+Wants=ollama.service
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+Group=YOUR_USERNAME
+WorkingDirectory=/path/to/llm-gateway
+
+# Environment variables
+Environment="PATH=/path/to/llm-gateway/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="OLLAMA_URL=http://localhost:11434"
+
+# Start the gateway
+ExecStart=/path/to/llm-gateway/venv/bin/uvicorn server:app --host 0.0.0.0 --port 4000 --workers 1
+
+# Restart policy
+Restart=always
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/path/to/llm-gateway/data
+
+# Resource limits
+LimitNOFILE=65536
+TimeoutStopSec=30
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=llm-gateway
+
+[Install]
+WantedBy=multi-user.target

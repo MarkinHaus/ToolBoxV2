@@ -1,17 +1,19 @@
 """
 LLM Gateway CLI - Cross-Platform Management
 
-Verwendung:
+Usage:
     tb llm-gateway setup     # Setup/Installation
-    tb llm-gateway start     # Server starten
-    tb llm-gateway stop      # Server stoppen
-    tb llm-gateway status    # Status anzeigen
-    tb llm-gateway uninstall # Deinstallation
+    tb llm-gateway start     # Start server
+    tb llm-gateway stop      # Stop server
+    tb llm-gateway status    # Show status
+    tb llm-gateway restart   # Restart server
+    tb llm-gateway uninstall # Uninstall
 
 Features:
 - Cross-Platform (Linux, Windows, macOS)
-- Automatische venv-Verwaltung
-- PID-basiertes Prozess-Tracking
+- Automatic venv management
+- PID-based process tracking
+- Ollama backend integration
 """
 
 import os
@@ -90,6 +92,37 @@ def is_running() -> Tuple[bool, Optional[int]]:
         return False, None
 
 
+def check_ollama_installed() -> Tuple[bool, Optional[str]]:
+    """Check if Ollama is installed and get version"""
+    try:
+        result = subprocess.run(
+            ["ollama", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            version = result.stdout.strip()
+            return True, version
+        return False, None
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+        return False, None
+
+
+def check_ollama_running() -> bool:
+    """Check if Ollama service is running"""
+    try:
+        result = subprocess.run(
+            ["ollama", "list"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+        return False
+
+
 def cmd_setup() -> int:
     """Setup llm-gateway environment"""
     from toolboxv2.utils.clis.cli_printing import (
@@ -102,41 +135,90 @@ def cmd_setup() -> int:
 
     if not gateway_dir.exists():
         print_status(f"Gateway directory not found: {gateway_dir}", "error")
+        print_status("Please clone the llm-gateway repository first", "info")
         print_box_footer()
         return 1
 
-    # Check for setup scripts
-    if IS_WINDOWS:
-        setup_script = gateway_dir / "win_setup.ps1"
-        if setup_script.exists():
-            print_status("Running Windows setup script...", "progress")
-            result = subprocess.run(
-                ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(setup_script)],
-                cwd=gateway_dir
-            )
-            print_box_footer()
-            return result.returncode
+    print_status(f"Gateway directory: {gateway_dir}", "success")
+
+    # Check Ollama installation
+    ollama_installed, ollama_version = check_ollama_installed()
+    if ollama_installed:
+        print_status(f"Ollama: {ollama_version}", "success")
+
+        # Check if Ollama is running
+        if check_ollama_running():
+            print_status("Ollama service: running", "success")
+        else:
+            print_status("Ollama service: not running", "warning")
+            print_status("Start Ollama with: ollama serve", "info")
     else:
-        setup_script = gateway_dir / "setup.sh"
-        if setup_script.exists():
-            print_status("Running setup script...", "progress")
-            result = subprocess.run(["bash", str(setup_script)], cwd=gateway_dir)
-            print_box_footer()
-            return result.returncode
+        print_status("Ollama: not installed", "warning")
+        print_status("Install from: https://ollama.ai", "info")
 
-    # Fallback: Manual Python venv setup
-    print_status("Setting up Python environment...", "progress")
-
+    # Setup Python venv
     venv_dir = gateway_dir / "venv"
-    if not venv_dir.exists():
-        subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
+    if venv_dir.exists():
+        print_status("Python venv: already exists", "info")
+    else:
+        print_status("Creating Python venv...", "progress")
+        try:
+            subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
+            print_status("Python venv created", "success")
+        except subprocess.CalledProcessError as e:
+            print_status(f"Failed to create venv: {e}", "error")
+            print_box_footer()
+            return 1
 
-    pip = venv_dir / ("Scripts" if IS_WINDOWS else "bin") / ("pip.exe" if IS_WINDOWS else "pip")
+    # Install requirements
     requirements = gateway_dir / "requirements.txt"
-
     if requirements.exists():
-        subprocess.run([str(pip), "install", "-r", str(requirements)], check=True)
+        print_status("Installing Python dependencies...", "progress")
+        pip = venv_dir / ("Scripts" if IS_WINDOWS else "bin") / ("pip.exe" if IS_WINDOWS else "pip")
 
+        try:
+            subprocess.run(
+                [str(pip), "install", "-r", str(requirements)],
+                check=True,
+                capture_output=True
+            )
+            print_status("Dependencies installed", "success")
+        except subprocess.CalledProcessError as e:
+            print_status(f"Failed to install dependencies: {e}", "error")
+            print_box_footer()
+            return 1
+    else:
+        print_status(f"requirements.txt not found", "warning")
+
+    # Generate initial config if not exists
+    config_dir = gateway_dir / "data"
+    config_file = config_dir / "config.json"
+
+    if not config_file.exists():
+        print_status("Creating initial config.json...", "progress")
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        initial_config = {
+            "ollama_base_url": "http://localhost:11434",
+            "default_model": "llama2",
+            "slots": {},
+            "api_keys": [],
+            "cors_origins": ["*"]
+        }
+
+        try:
+            config_file.write_text(json.dumps(initial_config, indent=2))
+            print_status("config.json created", "success")
+        except Exception as e:
+            print_status(f"Failed to create config: {e}", "warning")
+
+    # Linux: offer systemd service
+    if IS_LINUX:
+        print_status("", "info")
+        print_status("To enable auto-start on Linux, you can create a systemd service:", "info")
+        print_status(f"  sudo systemctl enable --now llm-gateway.service", "info")
+
+    print_status("", "info")
     print_status("Setup complete!", "success")
     print_box_footer()
     return 0
@@ -163,6 +245,12 @@ def cmd_start(port: int = 4000, host: str = "0.0.0.0", background: bool = True) 
         print_status("uvicorn not found. Run 'tb llm-gateway setup' first.", "error")
         print_box_footer()
         return 1
+
+    # Check Ollama
+    if not check_ollama_running():
+        print_status("Ollama is not running", "warning")
+        print_status("The gateway will start but won't work until Ollama is running", "warning")
+        print_status("Start Ollama with: ollama serve", "info")
 
     cmd = [
         str(uvicorn),
@@ -200,8 +288,10 @@ def cmd_start(port: int = 4000, host: str = "0.0.0.0", background: bool = True) 
 
         if running:
             print_status(f"Started (PID {process.pid})", "success")
+            print_status("", "info")
             print_status(f"API: http://localhost:{port}/v1/", "info")
             print_status(f"Admin: http://localhost:{port}/admin/", "info")
+            print_status(f"Docs: http://localhost:{port}/docs", "info")
         else:
             print_status("Failed to start", "error")
             print_box_footer()
@@ -278,6 +368,8 @@ def cmd_status() -> int:
         print_status(f"Directory: {gateway_dir}", "success")
     else:
         print_status(f"Directory not found: {gateway_dir}", "error")
+        print_box_footer()
+        return 1
 
     # Venv check
     venv_python = get_venv_python(gateway_dir)
@@ -285,33 +377,64 @@ def cmd_status() -> int:
         print_status("Python venv: installed", "success")
     else:
         print_status("Python venv: not installed", "warning")
+        print_status("Run: tb llm-gateway setup", "info")
 
-    # llama-server check
-    llama_server = gateway_dir / ("llama-server.exe" if IS_WINDOWS else "llama-server")
-    if llama_server.exists():
-        print_status("llama-server: installed", "success")
+    # Ollama check
+    ollama_installed, ollama_version = check_ollama_installed()
+    if ollama_installed:
+        print_status(f"Ollama: {ollama_version}", "success")
+
+        if check_ollama_running():
+            print_status("Ollama service: running", "success")
+        else:
+            print_status("Ollama service: not running", "warning")
     else:
-        print_status("llama-server: not installed", "warning")
+        print_status("Ollama: not installed", "warning")
 
-    # Running status
+    # Gateway running status
     if running:
-        print_status(f"Server: running (PID {pid})", "success")
+        print_status(f"Gateway: running (PID {pid})", "success")
+
+        # Try to query health endpoint
+        try:
+            import httpx
+            response = httpx.get("http://localhost:4000/health", timeout=2)
+            if response.status_code == 200:
+                data = response.json()
+                model_count = len(data.get("models", []))
+                print_status(f"Health check: OK ({model_count} models)", "success")
+        except Exception:
+            print_status("Health check: failed (gateway may still be starting)", "warning")
     else:
-        print_status("Server: stopped", "info")
+        print_status("Gateway: stopped", "info")
 
     # Config check
     config_file = gateway_dir / "data" / "config.json"
     if config_file.exists():
         try:
             config = json.loads(config_file.read_text())
-            slots = config.get("slots", {})
-            active = sum(1 for v in slots.values() if v is not None)
-            print_status(f"Configured slots: {active}/7", "info")
-        except:
-            pass
+            ollama_url = config.get("ollama_base_url", "http://localhost:11434")
+            default_model = config.get("default_model", "N/A")
+            print_status(f"Config: {default_model} @ {ollama_url}", "info")
+        except Exception:
+            print_status("Config: exists but cannot parse", "warning")
+    else:
+        print_status("Config: not found", "warning")
 
     print_box_footer()
     return 0
+
+
+def cmd_restart(port: int = 4000, host: str = "0.0.0.0") -> int:
+    """Restart llm-gateway server"""
+    from toolboxv2.utils.clis.cli_printing import (
+        print_status
+    )
+
+    print_status("Restarting gateway...", "progress")
+    cmd_stop()
+    time.sleep(1)
+    return cmd_start(port=port, host=host)
 
 
 def cmd_uninstall(keep_models: bool = True) -> int:
@@ -340,19 +463,13 @@ def cmd_uninstall(keep_models: bool = True) -> int:
     if venv_dir.exists():
         print_status("Removing Python venv...", "progress")
         shutil.rmtree(venv_dir, ignore_errors=True)
+        print_status("Venv removed", "success")
 
     # Remove build directory
     build_dir = gateway_dir / "build"
     if build_dir.exists():
         print_status("Removing build directory...", "progress")
         shutil.rmtree(build_dir, ignore_errors=True)
-
-    # Remove binaries
-    for binary in ["llama-server", "llama-cli", "llama-quantize", "whisper-server"]:
-        ext = ".exe" if IS_WINDOWS else ""
-        binary_path = gateway_dir / f"{binary}{ext}"
-        if binary_path.exists():
-            binary_path.unlink()
 
     # Optionally keep models
     if not keep_models:
@@ -361,13 +478,15 @@ def cmd_uninstall(keep_models: bool = True) -> int:
             print_status("Removing models...", "progress")
             shutil.rmtree(models_dir, ignore_errors=True)
     else:
-        print_status("Keeping models directory", "info")
+        print_status("Keeping data directory", "info")
 
     # Remove PID file
     pid_file = get_pids_dir() / "llm-gateway.pid"
     pid_file.unlink(missing_ok=True)
 
+    print_status("", "info")
     print_status("Uninstall complete", "success")
+    print_status("Note: Ollama was not uninstalled (uninstall separately if needed)", "info")
     print_box_footer()
     return 0
 
@@ -378,7 +497,7 @@ def cli_llm_gateway():
 
     parser = argparse.ArgumentParser(
         prog="tb llm-gateway",
-        description="🌐 LLM Gateway - OpenAI-compatible local LLM server"
+        description="🌐 LLM Gateway - OpenAI-compatible local LLM server with Ollama backend"
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Commands")
@@ -399,14 +518,14 @@ def cli_llm_gateway():
     # status
     subparsers.add_parser("status", help="Show gateway status")
 
-    # uninstall
-    p_uninstall = subparsers.add_parser("uninstall", help="Uninstall llm-gateway")
-    p_uninstall.add_argument("--remove-models", action="store_true", help="Also remove downloaded models")
-
     # restart
     p_restart = subparsers.add_parser("restart", help="Restart the gateway server")
     p_restart.add_argument("--port", "-p", type=int, default=4000, help="Port (default: 4000)")
     p_restart.add_argument("--host", "-H", default="0.0.0.0", help="Host (default: 0.0.0.0)")
+
+    # uninstall
+    p_uninstall = subparsers.add_parser("uninstall", help="Uninstall llm-gateway")
+    p_uninstall.add_argument("--remove-models", action="store_true", help="Also remove data directory")
 
     args = parser.parse_args()
 
@@ -418,12 +537,10 @@ def cli_llm_gateway():
         return cmd_stop(force=args.force)
     elif args.command == "status":
         return cmd_status()
+    elif args.command == "restart":
+        return cmd_restart(port=args.port, host=args.host)
     elif args.command == "uninstall":
         return cmd_uninstall(keep_models=not args.remove_models)
-    elif args.command == "restart":
-        cmd_stop()
-        time.sleep(1)
-        return cmd_start(port=args.port, host=args.host)
     else:
         parser.print_help()
         return 0
@@ -431,4 +548,3 @@ def cli_llm_gateway():
 
 if __name__ == "__main__":
     sys.exit(cli_llm_gateway())
-
