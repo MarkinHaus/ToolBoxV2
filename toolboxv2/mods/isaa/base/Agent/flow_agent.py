@@ -27,7 +27,7 @@ from typing import Any, AsyncGenerator, Callable, Coroutine, Generator, Union
 import yaml
 from pydantic import BaseModel, ValidationError
 
-from toolboxv2 import get_logger, Style
+from toolboxv2 import Style, get_logger
 from toolboxv2.mods.isaa.base.Agent.chain import Chain, ConditionalChain
 from toolboxv2.mods.isaa.base.Agent.types import (
     AgentModelData,
@@ -41,8 +41,8 @@ try:
     import litellm
 
     # Unterdrückt die störenden LiteLLM Konsolen-Logs
-    logging.getLogger('LiteLLM').setLevel(logging.WARNING)
-    logging.getLogger('litellm').setLevel(logging.WARNING)
+    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+    logging.getLogger("litellm").setLevel(logging.WARNING)
     LITELLM_AVAILABLE = True
 except ImportError:
     LITELLM_AVAILABLE = False
@@ -71,19 +71,27 @@ except ImportError:
     class FastMCP:
         pass
 
-try:
 
+try:
     gmail_toolkit = None
     calendar_toolkit = None
     if os.getenv("WITH_GOOGLE_TOOLS", "false") == "true":
+        from toolboxv2.mods.isaa.extras.toolkit.google_calendar_toolkit import (
+            CalendarToolkit,
+        )
         from toolboxv2.mods.isaa.extras.toolkit.google_gmail_toolkit import GmailToolkit
-        from toolboxv2.mods.isaa.extras.toolkit.google_calendar_toolkit import CalendarToolkit
 
         google_token_dir = os.getenv("GOOGLE_TOKEN_DIR", "token")
         if not os.path.exists(google_token_dir):
             os.makedirs(google_token_dir, exist_ok=True)
-        gmail_toolkit = GmailToolkit(credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"), token_dir=google_token_dir)
-        calendar_toolkit = CalendarToolkit(credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"), token_dir=google_token_dir)
+        gmail_toolkit = GmailToolkit(
+            credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+            token_dir=google_token_dir,
+        )
+        calendar_toolkit = CalendarToolkit(
+            credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+            token_dir=google_token_dir,
+        )
 except ImportError as e:
     gmail_toolkit = None
     calendar_toolkit = None
@@ -95,6 +103,7 @@ logger = get_logger()
 AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
 litellm.suppress_debug_info = not AGENT_VERBOSE
 
+MAX_CONTINUATIONS = os.environ.get("AGENT_INTERN_MAX_CONTINUATIONS", 100)
 
 # ===== MEDIA PARSING UTILITIES =====
 def parse_media_from_query(query: str) -> tuple[str, list[dict]]:
@@ -117,7 +126,7 @@ def parse_media_from_query(query: str) -> tuple[str, list[dict]]:
         litellm uses the OpenAI vision format: {"type": "image_url", "image_url": {"url": "...", "format": "..."}}
         The "format" field is optional but recommended for explicit MIME type specification.
     """
-    media_pattern = r'\[media:([^\]]+)\]'
+    media_pattern = r"\[media:([^\]]+)\]"
     media_matches = re.findall(media_pattern, query)
 
     media_list = []
@@ -136,29 +145,22 @@ def parse_media_from_query(query: str) -> tuple[str, list[dict]]:
             if mime_type:
                 image_obj["format"] = mime_type
 
-            media_list.append({
-                "type": "image_url",
-                "image_url": image_obj
-            })
+            media_list.append({"type": "image_url", "image_url": image_obj})
         elif media_type in ["audio", "video", "pdf"]:
             # For non-image media, some models may support them
             # but we use image_url as the standard format
             # The model will handle or reject based on its capabilities
             if AGENT_VERBOSE:
-                print(f"Warning: Media type '{media_type}' detected. Not all models support non-image media.")
-            media_list.append({
-                "type": "image_url",
-                "image_url": {"url": media_path}
-            })
+                print(
+                    f"Warning: Media type '{media_type}' detected. Not all models support non-image media."
+                )
+            media_list.append({"type": "image_url", "image_url": {"url": media_path}})
         else:
             # Unknown type - try as image
-            media_list.append({
-                "type": "image_url",
-                "image_url": {"url": media_path}
-            })
+            media_list.append({"type": "image_url", "image_url": {"url": media_path}})
 
     # Remove media tags from query
-    cleaned_query = re.sub(media_pattern, '', query).strip()
+    cleaned_query = re.sub(media_pattern, "", query).strip()
     return cleaned_query, media_list
 
 
@@ -167,19 +169,28 @@ def _detect_media_type(path: str) -> str:
     path_lower = path.lower()
 
     # Image extensions
-    if any(path_lower.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg']):
+    if any(
+        path_lower.endswith(ext)
+        for ext in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg"]
+    ):
         return "image"
 
     # Audio extensions
-    if any(path_lower.endswith(ext) for ext in ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac']):
+    if any(
+        path_lower.endswith(ext)
+        for ext in [".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac"]
+    ):
         return "audio"
 
     # Video extensions
-    if any(path_lower.endswith(ext) for ext in ['.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv']):
+    if any(
+        path_lower.endswith(ext)
+        for ext in [".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv"]
+    ):
         return "video"
 
     # PDF
-    if path_lower.endswith('.pdf'):
+    if path_lower.endswith(".pdf"):
         return "pdf"
 
     return "unknown"
@@ -198,16 +209,16 @@ def _get_image_mime_type(path: str) -> str:
     path_lower = path.lower()
 
     mime_map = {
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.png': 'image/png',
-        '.gif': 'image/gif',
-        '.bmp': 'image/bmp',
-        '.webp': 'image/webp',
-        '.svg': 'image/svg+xml',
-        '.tiff': 'image/tiff',
-        '.tif': 'image/tiff',
-        '.ico': 'image/x-icon'
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".bmp": "image/bmp",
+        ".webp": "image/webp",
+        ".svg": "image/svg+xml",
+        ".tiff": "image/tiff",
+        ".tif": "image/tiff",
+        ".ico": "image/x-icon",
     }
 
     for ext, mime in mime_map.items():
@@ -215,6 +226,7 @@ def _get_image_mime_type(path: str) -> str:
             return mime
 
     return ""
+
 
 # Muti media Extention
 MEDIA_ERROR_PATTERNS = [
@@ -239,22 +251,24 @@ def _is_media_error(error: Exception) -> bool:
 def _extract_failed_media_type(error: Exception) -> str | None:
     """Extrahiert den fehlgeschlagenen Medientyp aus der Fehlermeldung"""
     error_str = str(error).lower()
-    for media_type in ['pdf', 'audio', 'video', 'mp3', 'wav', 'mp4', 'avi']:
+    for media_type in ["pdf", "audio", "video", "mp3", "wav", "mp4", "avi"]:
         if media_type in error_str:
             return media_type
     return None
 
 
-def _remove_media_by_type(messages: list[dict], types_to_remove: list[str]) -> tuple[list[dict], list[dict]]:
+def _remove_media_by_type(
+    messages: list[dict], types_to_remove: list[str]
+) -> tuple[list[dict], list[dict]]:
     """Entfernt bestimmte Medientypen aus den Messages"""
     cleaned = []
     removed = []
 
     type_extensions = {
-        'pdf': ['.pdf'],
-        'audio': ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac'],
-        'video': ['.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv'],
-        'image': ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg'],
+        "pdf": [".pdf"],
+        "audio": [".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac"],
+        "video": [".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv"],
+        "image": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg"],
     }
 
     def should_remove(url: str) -> tuple[bool, str]:
@@ -318,8 +332,6 @@ def _inject_media_notice(messages: list[dict], removed: list[dict]) -> list[dict
                         break
             break
     return result
-
-
 
 
 class FlowAgent:
@@ -473,18 +485,14 @@ class FlowAgent:
 
                     # Add text part if there's any text left
                     if cleaned_content.strip():
-                        content_parts.append({
-                            "type": "text",
-                            "text": cleaned_content
-                        })
+                        content_parts.append({"type": "text", "text": cleaned_content})
 
                     # Add media parts
                     content_parts.extend(media_list)
 
-                    processed_messages.append({
-                        "role": msg["role"],
-                        "content": content_parts
-                    })
+                    processed_messages.append(
+                        {"role": msg["role"], "content": content_parts}
+                    )
                 else:
                     # No valid media found, keep original
                     processed_messages.append(msg)
@@ -492,7 +500,6 @@ class FlowAgent:
                 # No media tags, keep original
                 processed_messages.append(msg)
         return processed_messages
-
 
     async def a_run_llm_completion(
         self,
@@ -526,9 +533,13 @@ class FlowAgent:
 
         # NEU: Entferne bereits bekannte problematische Typen
         if _removed_types:
-            processed_messages, newly_removed = _remove_media_by_type(processed_messages, _removed_types)
+            processed_messages, newly_removed = _remove_media_by_type(
+                processed_messages, _removed_types
+            )
             if newly_removed:
-                processed_messages = _inject_media_notice(processed_messages, newly_removed)
+                processed_messages = _inject_media_notice(
+                    processed_messages, newly_removed
+                )
 
         true_stream = kwargs.pop("true_stream", False)
 
@@ -574,50 +585,187 @@ class FlowAgent:
                 llm_kwargs["messages"] = sysmsg + full_history + current_msg
             else:
                 llm_kwargs["messages"] = [
-                                             {"role": "system", "content": f"{system_msg}"}
-                                         ] + llm_kwargs["messages"]
+                    {"role": "system", "content": f"{system_msg}"}
+                ] + llm_kwargs["messages"]
 
         try:
-            if use_stream:
-                llm_kwargs["stream_options"] = {"include_usage": True}
+            from litellm.types.utils import ChatCompletionMessageToolCall, Function, Message
 
-            response = await self.llm_handler.completion_with_rate_limiting(
-                litellm, **llm_kwargs
+            original_messages = llm_kwargs["messages"].copy()
+            original_tools = llm_kwargs.get("tools")
+
+            continuation_count = 0
+
+            final_text_content = ""
+            final_tool_calls_raw = []
+            accumulated_usage = None
+
+            active_cut_off_tool = None
+
+            # Edge Case für True-Streaming (wird vom UI-Streaming direkt an Nutzer geleitet)
+            if use_stream and true_stream:
+                if use_stream:
+                    llm_kwargs["stream_options"] = {"include_usage": True}
+                return await self.llm_handler.completion_with_rate_limiting(litellm, **llm_kwargs)
+
+            # --- AUTO-RESUME SCHLEIFE (bis zu 100x Output Limit!) ---
+            while continuation_count < MAX_CONTINUATIONS:
+
+                if use_stream:
+                    llm_kwargs["stream_options"] = {"include_usage": True}
+
+                response = await self.llm_handler.completion_with_rate_limiting(
+                    litellm, **llm_kwargs
+                )
+
+                chunk_text = ""
+                chunk_tool_calls = []
+                finish_reason = None
+                current_usage = None
+
+                # Datenextrahierung abhängig davon, ob es ein Stream ist oder nicht
+                if use_stream:
+                    result_obj, current_usage, finish_reason = await self._process_streaming_response(
+                        response, task_id, model, get_response_message=True
+                    )
+                    chunk_text = result_obj.content or ""
+                    chunk_tool_calls = getattr(result_obj, "tool_calls", []) or []
+                else:
+                    msg_obj = response.choices[0].message
+                    chunk_text = msg_obj.content or ""
+                    chunk_tool_calls = msg_obj.tool_calls or []
+                    finish_reason = response.choices[0].finish_reason
+                    current_usage = response.usage
+
+                # --- 1. USAGE MERGEN ---
+                if current_usage:
+                    if accumulated_usage is None:
+                        accumulated_usage = current_usage
+                    else:
+                        if hasattr(current_usage, "prompt_tokens"):
+                            accumulated_usage.prompt_tokens += current_usage.prompt_tokens
+                            accumulated_usage.completion_tokens += current_usage.completion_tokens
+                            accumulated_usage.total_tokens += current_usage.total_tokens
+
+                # --- 2. CONTENT & TOOL CALLS MERGEN ---
+                if active_cut_off_tool is not None:
+                    # Das LLM versucht gerade, einen Tool-Call (als reinen Text-Output) fortzusetzen.
+                    active_cut_off_tool["args"] += chunk_text
+
+                    # Manchmal schieben Modelle es trotzdem in den nativen tool_calls Parameter. Das fangen wir ab:
+                    for tc in chunk_tool_calls:
+                        if tc.function and tc.function.arguments:
+                            active_cut_off_tool["args"] += tc.function.arguments
+
+                    # Prüfen ob der fortgesetzte JSON-String nun valide ist
+                    try:
+                        json.loads(active_cut_off_tool["args"])
+                        # Success! Er ist nun vollständig generiert.
+                        final_tool_calls_raw.append(active_cut_off_tool)
+                        active_cut_off_tool = None
+                    except json.JSONDecodeError:
+                        pass  # Er ist weiterhin unvollständig, wir brauchen noch eine Iteration.
+                else:
+                    final_text_content += chunk_text
+
+                    for idx, tc in enumerate(chunk_tool_calls):
+                        tc_dict = {
+                            "id": getattr(tc, "id", f"call_{uuid.uuid4().hex[:8]}"),
+                            "name": tc.function.name,
+                            "args": tc.function.arguments
+                        }
+                        # Wenn wir am Token-Limit sind und dies der LETZTE Tool-Call im Chunk ist
+                        if finish_reason in ["length", "max_tokens"] and idx == len(chunk_tool_calls) - 1:
+                            try:
+                                json.loads(tc_dict["args"])
+                                final_tool_calls_raw.append(tc_dict)  # War zum Glück vollständig
+                            except json.JSONDecodeError:
+                                active_cut_off_tool = tc_dict  # Ist abgerissen! Speichern für die nächste Iteration.
+                        else:
+                            final_tool_calls_raw.append(tc_dict)
+
+                # --- 3. STOPP ODER FORTSETZUNG? ---
+                if finish_reason not in ["length", "max_tokens"]:
+                    break  # Generierung freiwillig beendet (stop, tool_calls, etc.)
+
+                # Token Limit erreicht - wir zwingen das LLM zur exakten Fortsetzung!
+                continuation_count += 1
+                if AGENT_VERBOSE:
+                    logger.info(
+                        f"LLM Max Output Token Limit erreicht. Auto-Resume ({continuation_count}/{MAX_CONTINUATIONS})...")
+
+                if active_cut_off_tool is not None:
+                    # Ein Tool-Call ist abgerissen. Wir zwingen das LLM, nur noch die fehlenden JSON-Teile (als normalen Text) auszugeben.
+                    resume_msg = (
+                        f"Du hast das Output-Token-Limit erreicht, während du das Tool '{active_cut_off_tool['name']}' ausgeführt hast. "
+                        f"Hier ist der JSON-Argument-String, den du bisher geschrieben hast:\n`{active_cut_off_tool['args']}`\n\n"
+                        f"Bitte antworte AUSSCHLIESSLICH mit den fehlenden Zeichen, um das JSON zu vervollständigen. "
+                        f"Gib keine Erklärungen und keinen Code-Block ab. Mache genau da weiter, wo der String abgerissen ist."
+                    )
+                    llm_kwargs["tools"] = None  # Verhindert, dass das LLM es erneut in native tools kapselt
+
+                    # Alte Tool-Calls aus der History löschen (API würde meckern wegen "Incomplete Tool Call")
+                    llm_kwargs["messages"] = original_messages + [
+                        {"role": "assistant",
+                         "content": final_text_content + f"\n[Starte Tool: {active_cut_off_tool['name']}]"},
+                        {"role": "user", "content": resume_msg}
+                    ]
+                else:
+                    # Reiner Text-Output ist abgerissen. Wir versuchen den letzten Satz/Zeilenanfang als Kontext zu geben.
+                    last_words = final_text_content[-100:]
+                    resume_msg = (
+                        f"Du hast das maximale Output-Token-Limit deines Modells erreicht. "
+                        f"Bitte fahre exakt an dem Punkt fort, an dem du aufgehört hast. "
+                        f"Hier sind deine letzten Worte zur Orientierung:\n'...{last_words}'\n\n"
+                        f"Setze den Text/Code lückenlos fort. Bitte benutze keine Floskeln wie 'Hier geht es weiter'."
+                    )
+                    llm_kwargs["tools"] = original_tools
+                    llm_kwargs["messages"] = original_messages + [
+                        {"role": "assistant", "content": final_text_content},
+                        {"role": "user", "content": resume_msg}
+                    ]
+
+            # --- NACH DER SCHLEIFE: ZUSAMMENFÜHREN ---
+            reconstructed_tool_calls = []
+            for tc in final_tool_calls_raw:
+                reconstructed_tool_calls.append(
+                    ChatCompletionMessageToolCall(
+                        id=tc["id"],
+                        type="function",
+                        function=Function(name=tc["name"], arguments=tc["args"])
+                    )
+                )
+
+            final_message = Message(
+                role="assistant",
+                content=final_text_content or None,
+                tool_calls=reconstructed_tool_calls if reconstructed_tool_calls else None
             )
 
-            if use_stream:
-                if true_stream:
-                    return response
-                result, usage = await self._process_streaming_response(
-                    response, task_id, model, get_response_message
-                )
-            else:
-                result = response.choices[0].message.content
-                usage = response.usage
-                if get_response_message:
-                    result = response.choices[0].message
-
-            input_tokens = usage.prompt_tokens if usage else 0
-            output_tokens = usage.completion_tokens if usage else 0
-            cost = self.calculate_llm_cost(model, input_tokens, output_tokens, response)
+            # Statistik Update
+            input_tokens = accumulated_usage.prompt_tokens if accumulated_usage else 0
+            output_tokens = accumulated_usage.completion_tokens if accumulated_usage else 0
+            cost = self.calculate_llm_cost(model, input_tokens, output_tokens, None)
 
             self.total_tokens_in += input_tokens
             self.total_tokens_out += output_tokens
             self.total_cost_accumulated += cost
-            self.total_llm_calls += 1
+            self.total_llm_calls += (continuation_count + 1)
 
-            if do_tool_execution and "tools" in llm_kwargs:
-                tool_response = await self.run_tool_response(
-                    result if get_response_message else response.choices[0].message,
-                    session_id,
-                )
-                llm_kwargs["messages"] += [
-                                              {
-                                                  "role": "assistant",
-                                                  "content": result.content if get_response_message else result,
-                                              }
-                                          ] + tool_response
-                del kwargs["tools"]
+            result_to_return = final_message if get_response_message else (final_text_content or "")
+
+            # Wenn Tool-Ausführung in FlowAgent verlangt war
+            if do_tool_execution and original_tools and reconstructed_tool_calls:
+                tool_response = await self.run_tool_response(final_message, session_id)
+                llm_kwargs["messages"] = original_messages + [
+                    {
+                        "role": "assistant",
+                        "content": final_text_content,
+                        "tool_calls": final_message.tool_calls
+                    }
+                ] + tool_response
+                llm_kwargs["tools"] = original_tools
+
                 return await self.a_run_llm_completion(
                     llm_kwargs["messages"],
                     model_preference,
@@ -631,7 +779,7 @@ class FlowAgent:
                     **kwargs,
                 )
 
-            return result
+            return result_to_return
 
         except Exception as e:
             # =====================================================================
@@ -647,13 +795,13 @@ class FlowAgent:
                     new_types = list(set(_removed_types + [failed_type]))
                 else:
                     # Entferne schrittweise: erst pdf, dann audio, dann video
-                    priority_order = ['pdf', 'audio', 'video', 'image']
+                    priority_order = ["pdf", "audio", "video", "image"]
                     for ptype in priority_order:
                         if ptype not in _removed_types:
                             new_types = _removed_types + [ptype]
                             break
                     else:
-                        new_types = _removed_types + ['image']  # Fallback
+                        new_types = _removed_types + ["image"]  # Fallback
 
                 logger.info(f"Retry ohne Media-Typen: {new_types}")
 
@@ -706,14 +854,13 @@ class FlowAgent:
         return cost or (input_tokens / 1000) * 0.002 + (output_tokens / 1000) * 0.01
 
     @staticmethod
-    async def _process_streaming_response(
-        response, task_id, model, get_response_message
-    ):
+    async def _process_streaming_response(response, task_id, model, get_response_message):
         from litellm.types.utils import ChatCompletionMessageToolCall, Function, Message
 
         result = ""
         tool_calls_acc = {}
         final_chunk = None
+        finish_reason = None
 
         async for chunk in response:
             delta = chunk.choices[0].delta
@@ -731,11 +878,13 @@ class FlowAgent:
                         )
                     if tc.function:
                         if tc.function.name:
-                            tool_calls_acc[idx].function.name = tc.function.name
+                            tool_calls_acc[idx].function.name += tc.function.name
                         if tc.function.arguments:
-                            tool_calls_acc[
-                                idx
-                            ].function.arguments += tc.function.arguments
+                            tool_calls_acc[idx].function.arguments += tc.function.arguments
+
+            if hasattr(chunk.choices[0], "finish_reason") and chunk.choices[0].finish_reason:
+                finish_reason = chunk.choices[0].finish_reason
+
             final_chunk = chunk
 
         usage = final_chunk.usage if hasattr(final_chunk, "usage") else None
@@ -747,7 +896,7 @@ class FlowAgent:
                 tool_calls=list(tool_calls_acc.values()) if tool_calls_acc else [],
             )
 
-        return result, usage
+        return result, usage, finish_reason
 
     async def run_tool_response(self, response, session_id):
         tool_calls = response.tool_calls
@@ -771,7 +920,6 @@ class FlowAgent:
             if session:
                 await session.add_message(tool_response)
         return all_results
-
 
     # =========================================================================
     # CORE: arun_function
@@ -825,7 +973,8 @@ class FlowAgent:
                 "complex" if model_preference == "fast" else "fast",
             ]:
                 data = await self.a_run_llm_completion(
-                    messages=(message_context or [] )+ [{"role": "user", "content": enhanced_prompt}],
+                    messages=(message_context or [])
+                    + [{"role": "user", "content": enhanced_prompt}],
                     model_preference=mp,
                     stream=False,
                     with_context=auto_context,
@@ -955,7 +1104,7 @@ class FlowAgent:
         session_id: str = "default",
         execution_id: str | None = None,
         human_online: bool = False,
-        max_iterations: int = 15,
+        max_iterations: int = 25,
         get_ctx: bool = False,
         **kwargs,
     ) -> str | tuple[str, Any]:
@@ -967,7 +1116,7 @@ class FlowAgent:
             session_id: Session identifier
             execution_id: For continuing paused execution
             human_online: Allow human-in-the-loop
-            max_iterations: Max ReAct iterations (default 15)
+            max_iterations: Max ReAct iterations (default 25)
             get_ctx: Return (result, ExecutionContext) tuple
             **kwargs: Additional options
 
@@ -1127,7 +1276,6 @@ class FlowAgent:
         session = await self.session_manager.get_or_create(session_id)
         self.init_session_tools(session)
 
-
         # Check for resume
         ctx = None
         if execution_id:
@@ -1143,7 +1291,11 @@ class FlowAgent:
 
             # Get stream generator
             stream_func, ctx = await engine.execute_stream(
-                query=query, session_id=session_id, max_iterations=max_iterations, ctx=ctx, model= os.getenv("BLITZMODEL") if user_lightning_model else None,
+                query=query,
+                session_id=session_id,
+                max_iterations=max_iterations,
+                ctx=ctx,
+                model=os.getenv("BLITZMODEL") if user_lightning_model else None,
             )
 
             # Yield all chunks
@@ -1276,7 +1428,9 @@ class FlowAgent:
         from toolboxv2.mods.isaa.base.audio_io.audioIo import process_audio_raw
 
         self.active_session = session_id
-        result = await process_audio_raw(audio, self.a_stream_verbose, language=language, **kwargs)
+        result = await process_audio_raw(
+            audio, self.a_stream_verbose, language=language, **kwargs
+        )
         # text_input = result.text_input
         text_output = result.text_output
         audio_output = result.audio_output
@@ -1325,7 +1479,6 @@ class FlowAgent:
         """Remove a tool."""
         self.tool_manager.un_register(name)
 
-
     def add_tools(self, tools: list[dict]):
         """Register multiple tools."""
         for tool in tools:
@@ -1333,6 +1486,8 @@ class FlowAgent:
 
     def remove_tools(self, names: list[str]):
         """Remove multiple tools."""
+        if names is None:
+            return
         for name in names:
             if isinstance(name, dict):
                 name = name.get("name")
@@ -1385,7 +1540,15 @@ class FlowAgent:
             Returns:
                 Dict with contents list including files and directories
             """
-            return session.vfs_ls(path, recursive)
+            try:
+                result = session.vfs_ls(path, recursive)
+                if isinstance(result, dict) and not result.get("success", True):
+                    error_msg = result.get("error", "Unknown error")
+                    logger.warning(f"VFS List failed for {path}: {error_msg}")
+                return result
+            except Exception as e:
+                logger.error(f"VFS List exception for {path}: {e}")
+                return {"success": False, "error": str(e)}
 
         def vfs_read(path: str) -> dict:
             """
@@ -1397,7 +1560,15 @@ class FlowAgent:
             Returns:
                 Dict with file content
             """
-            return session.vfs_read(path)
+            try:
+                result = session.vfs_read(path)
+                if isinstance(result, dict) and not result.get("success", True):
+                    error_msg = result.get("error", "Unknown error")
+                    logger.warning(f"VFS Read failed for {path}: {error_msg}")
+                return result
+            except Exception as e:
+                logger.error(f"VFS Read exception for {path}: {e}")
+                return {"success": False, "error": str(e)}
 
         def vfs_create(path: str, content: str = "") -> dict:
             """
@@ -1410,7 +1581,15 @@ class FlowAgent:
             Returns:
                 Dict with success status and file type info
             """
-            return session.vfs_create(path, content)
+            try:
+                result = session.vfs_create(path, content)
+                if isinstance(result, dict) and not result.get("success", True):
+                    error_msg = result.get("error", "Unknown error")
+                    logger.warning(f"VFS Create failed for {path}: {error_msg}")
+                return result
+            except Exception as e:
+                logger.error(f"VFS Create exception for {path}: {e}")
+                return {"success": False, "error": str(e)}
 
         def vfs_write(path: str, content: str) -> dict:
             """
@@ -1423,7 +1602,15 @@ class FlowAgent:
             Returns:
                 Dict with success status
             """
-            return session.vfs_write(path, content)
+            try:
+                result = session.vfs_write(path, content)
+                if isinstance(result, dict) and not result.get("success", True):
+                    error_msg = result.get("error", "Unknown error")
+                    logger.warning(f"VFS Write failed for {path}: {error_msg}")
+                return result
+            except Exception as e:
+                logger.error(f"VFS Write exception for {path}: {e}")
+                return {"success": False, "error": str(e)}
 
         def vfs_edit(path: str, line_start: int, line_end: int, new_content: str) -> dict:
             """
@@ -1438,7 +1625,19 @@ class FlowAgent:
             Returns:
                 Dict with success status
             """
-            return session.vfs.edit(path, line_start, line_end, new_content)
+            try:
+                result = session.vfs.edit(path, line_start, line_end, new_content)
+                if isinstance(result, dict) and not result.get("success", True):
+                    error_msg = result.get("error", "Unknown error")
+                    logger.warning(
+                        f"VFS Edit failed for {path} (lines {line_start}-{line_end}): {error_msg}"
+                    )
+                return result
+            except Exception as e:
+                logger.error(
+                    f"VFS Edit exception for {path} (lines {line_start}-{line_end}): {e}"
+                )
+                return {"success": False, "error": str(e)}
 
         def vfs_append(path: str, content: str) -> dict:
             """
@@ -1451,7 +1650,15 @@ class FlowAgent:
             Returns:
                 Dict with success status
             """
-            return session.vfs.append(path, content)
+            try:
+                result = session.vfs.append(path, content)
+                if isinstance(result, dict) and not result.get("success", True):
+                    error_msg = result.get("error", "Unknown error")
+                    logger.warning(f"VFS Append failed for {path}: {error_msg}")
+                return result
+            except Exception as e:
+                logger.error(f"VFS Append exception for {path}: {e}")
+                return {"success": False, "error": str(e)}
 
         def vfs_delete(path: str) -> dict:
             """
@@ -1463,7 +1670,15 @@ class FlowAgent:
             Returns:
                 Dict with success status
             """
-            return session.vfs.delete(path)
+            try:
+                result = session.vfs.delete(path)
+                if isinstance(result, dict) and not result.get("success", True):
+                    error_msg = result.get("error", "Unknown error")
+                    logger.warning(f"VFS Delete failed for {path}: {error_msg}")
+                return result
+            except Exception as e:
+                logger.error(f"VFS Delete exception for {path}: {e}")
+                return {"success": False, "error": str(e)}
 
         # --- Directory Operations ---
 
@@ -1478,7 +1693,15 @@ class FlowAgent:
             Returns:
                 Dict with success status
             """
-            return session.vfs_mkdir(path, parents)
+            try:
+                result = session.vfs_mkdir(path, parents)
+                if isinstance(result, dict) and not result.get("success", True):
+                    error_msg = result.get("error", "Unknown error")
+                    logger.warning(f"VFS Mkdir failed for {path}: {error_msg}")
+                return result
+            except Exception as e:
+                logger.error(f"VFS Mkdir exception for {path}: {e}")
+                return {"success": False, "error": str(e)}
 
         def vfs_rmdir(path: str, force: bool = False) -> dict:
             """
@@ -1491,7 +1714,15 @@ class FlowAgent:
             Returns:
                 Dict with success status
             """
-            return session.vfs_rmdir(path, force)
+            try:
+                result = session.vfs_rmdir(path, force)
+                if isinstance(result, dict) and not result.get("success", True):
+                    error_msg = result.get("error", "Unknown error")
+                    logger.warning(f"VFS Rmdir failed for {path}: {error_msg}")
+                return result
+            except Exception as e:
+                logger.error(f"VFS Rmdir exception for {path}: {e}")
+                return {"success": False, "error": str(e)}
 
         def vfs_mv(source: str, destination: str) -> dict:
             """
@@ -1504,35 +1735,41 @@ class FlowAgent:
             Returns:
                 Dict with success status
             """
-            return session.vfs_mv(source, destination)
+            try:
+                result = session.vfs_mv(source, destination)
+                if isinstance(result, dict) and not result.get("success", True):
+                    error_msg = result.get("error", "Unknown error")
+                    logger.warning(
+                        f"VFS Move failed from {source} to {destination}: {error_msg}"
+                    )
+                return result
+            except Exception as e:
+                logger.error(f"VFS Move exception from {source} to {destination}: {e}")
+                return {"success": False, "error": str(e)}
 
         # --- Open/Close Operations ---
 
         def vfs_open(path: str, line_start: int = 1, line_end: int = -1) -> dict:
-            """
-            Open a file (make permanent visible in context).
-
-            Args:
-                path: Path to file
-                line_start: First line to show (1-indexed)
-                line_end: Last line to show (-1 = all)
-
-            Returns:
-                Dict with preview of content
-            """
-            return session.vfs_open(path, line_start, line_end)
+            """Open a file (make permanent visible in context)."""
+            try:
+                result = session.vfs_open(path, line_start, line_end)
+                if isinstance(result, dict) and not result.get("success", True):
+                    logger.warning(f"VFS Open failed for {path}: {result.get('error', 'Unknown error')}")
+                return result
+            except Exception as e:
+                logger.error(f"VFS Open exception for {path}: {e}")
+                return {"success": False, "error": str(e)}
 
         async def vfs_close(path: str) -> dict:
-            """
-            Close a file (remove from context, generate summary).
-
-            Args:
-                path: Path to file
-
-            Returns:
-                Dict with generated summary
-            """
-            return await session.vfs_close(path)
+            """Close a file (remove from context, generate summary)."""
+            try:
+                result = await session.vfs_close(path)
+                if isinstance(result, dict) and not result.get("success", True):
+                    logger.warning(f"VFS Close failed for {path}: {result.get('error', 'Unknown error')}")
+                return result
+            except Exception as e:
+                logger.error(f"VFS Close exception for {path}: {e}")
+                return {"success": False, "error": str(e)}
 
         def vfs_view(path: str, line_start: int = 1, line_end: int = -1) -> dict:
             """
@@ -1587,7 +1824,7 @@ class FlowAgent:
             vfs_path: str,
             local_path: str,
             overwrite: bool = False,
-            allowed_dirs: list[str] | None = None
+            allowed_dirs: list[str] | None = None,
         ) -> str:
             """
             Recursively export a VFS directory to the real filesystem.
@@ -1609,7 +1846,7 @@ class FlowAgent:
 
             for f_path in session.vfs.files:
                 if f_path.startswith(prefix):
-                    rel_path = f_path[len(prefix):]
+                    rel_path = f_path[len(prefix) :]
                     files_to_copy.append((f_path, rel_path))
 
             if not files_to_copy:
@@ -1634,7 +1871,7 @@ class FlowAgent:
                         local_path=target_file,
                         allowed_dirs=allowed_dirs,
                         overwrite=overwrite,
-                        create_dirs=True
+                        create_dirs=True,
                     )
 
                     if res["success"]:
@@ -1647,9 +1884,11 @@ class FlowAgent:
 
             # 4. Format Output
             if errors:
-                return (f"⚠️ **Partial Success**\n"
-                        f"Copied {success_count} files to `{local_path}`\n"
-                        f"**Errors**:\n" + "\n".join([f"- {e}" for e in errors[:5]]))
+                return (
+                    f"⚠️ **Partial Success**\n"
+                    f"Copied {success_count} files to `{local_path}`\n"
+                    f"**Errors**:\n" + "\n".join([f"- {e}" for e in errors[:5]])
+                )
 
             return f"Recursively exported {success_count} files from `{vfs_path}` to `{local_path}`"
 
@@ -1724,7 +1963,7 @@ class FlowAgent:
             allowed_extensions: list[str] | None = None,
             exclude_patterns: list[str] | None = None,
             readonly: bool = False,
-            auto_sync: bool = True
+            auto_sync: bool = True,
         ) -> dict:
             """
             Mount a local folder as shadow into VFS.
@@ -1749,7 +1988,7 @@ class FlowAgent:
                 allowed_extensions=allowed_extensions,
                 exclude_patterns=exclude_patterns,
                 readonly=readonly,
-                auto_sync=auto_sync
+                auto_sync=auto_sync,
             )
 
         def vfs_unmount(vfs_path: str, save_changes: bool = True) -> dict:
@@ -1789,9 +2028,7 @@ class FlowAgent:
             return session.vfs.sync_all()
 
         def vfs_execute(
-            path: str,
-            args: list[str] | None = None,
-            timeout: float = 30.0
+            path: str, args: list[str] | None = None, timeout: float = 30.0
         ) -> dict:
             """
             Execute an executable file in VFS.
@@ -1814,7 +2051,7 @@ class FlowAgent:
             pattern: str,
             path: str = "/",
             recursive: bool = True,
-            case_sensitive: bool = False
+            case_sensitive: bool = False,
         ) -> str:
             """
             Search for a regex pattern in files.
@@ -1840,14 +2077,15 @@ class FlowAgent:
             # Normalize path for filtering
             search_root = path if path.startswith("/") else "/" + path
             search_root = search_root.rstrip("/") + "/"
-            if search_root == "//": search_root = "/"
+            if search_root == "//":
+                search_root = "/"
 
             # Get candidate files from VFS registry
             candidates = []
             for file_path, file_obj in session.vfs.files.items():
                 if not file_path.startswith(search_root):
                     continue
-                if not recursive and "/" in file_path[len(search_root):].strip("/"):
+                if not recursive and "/" in file_path[len(search_root) :].strip("/"):
                     continue
                 candidates.append((file_path, file_obj))
 
@@ -1868,7 +2106,9 @@ class FlowAgent:
                         if os.path.exists(f_obj.local_path):
                             # Read directly from disk to avoid polluting VFS memory with full loads
                             # for a simple grep
-                            with open(f_obj.local_path, "r", encoding="utf-8", errors="ignore") as f:
+                            with open(
+                                f_obj.local_path, "r", encoding="utf-8", errors="ignore"
+                            ) as f:
                                 content = f.read()
                     except:
                         continue  # Skip unreadable
@@ -1887,8 +2127,42 @@ class FlowAgent:
             if not matches:
                 return f"🔍 No matches found for `{pattern}` in {files_scanned} files."
 
-            return f"🔍 **Found matches** in {files_scanned} files:\n```\n" + "\n".join(matches) + "\n```"
+            return (
+                f"🔍 **Found matches** in {files_scanned} files:\n```\n"
+                + "\n".join(matches)
+                + "\n```"
+            )
 
+        # --- Sharing Tools ---
+        def vfs_share_create(vfs_path: str, readonly: bool = False, expires_hours: float = None) -> dict:
+            """Creates a shareable link for a directory"""
+            from toolboxv2.mods.isaa.base.patch.power_vfs import get_sharing_manager
+            try:
+                result = get_sharing_manager().create_share(session.vfs, vfs_path, readonly, expires_hours)
+                if not result.get("success"):
+                    logger.warning(f"Share create failed for {vfs_path}: {result.get('error')}")
+                return result
+            except Exception as e:
+                logger.error(f"Share create exception: {e}")
+                return {"success": False, "error": str(e)}
+
+        def vfs_share_list() -> list:
+            """Lists all directories currently shared with this agent"""
+            from toolboxv2.mods.isaa.base.patch.power_vfs import get_sharing_manager
+            shares = get_sharing_manager().list_shares_for_agent(session.agent_name)
+            return [{"id": s.share_id, "path": s.source_path, "owner": s.source_agent} for s in shares]
+
+        def vfs_share_mount(share_id: str, mount_point: str = None) -> dict:
+            """Mounts a shared directory into your VFS"""
+            from toolboxv2.mods.isaa.base.patch.power_vfs import get_sharing_manager
+            try:
+                result = get_sharing_manager().mount_share(session.vfs, share_id, mount_point)
+                if not result.get("success"):
+                    logger.warning(f"Share mount failed for {share_id}: {result.get('error')}")
+                return result
+            except Exception as e:
+                logger.error(f"Share mount exception: {e}")
+                return {"success": False, "error": str(e)}
         # =========================================================================
         # DOCKER TOOLS (Flag: requires_docker)
         # =========================================================================
@@ -2019,7 +2293,8 @@ class FlowAgent:
         # =========================================================================
         # REGISTER ALL TOOLS
         # =========================================================================
-        vfs_tools = [{"tool_func": vfs_list, "name": "vfs_list", "category": ["vfs", "read"]},
+        vfs_tools = [
+            {"tool_func": vfs_list, "name": "vfs_list", "category": ["vfs", "read"]},
             {"tool_func": vfs_read, "name": "vfs_read", "category": ["vfs", "read"]},
             {"tool_func": vfs_create, "name": "vfs_create", "category": ["vfs", "write"]},
             {"tool_func": vfs_write, "name": "vfs_write", "category": ["vfs", "write"]},
@@ -2029,143 +2304,179 @@ class FlowAgent:
             # VFS Directory Operations
             {"tool_func": vfs_mkdir, "name": "vfs_mkdir", "category": ["vfs", "write"]},
             {"tool_func": vfs_rmdir, "name": "vfs_rmdir", "category": ["vfs", "write"]},
-            {"tool_func": vfs_mv, "name": "vfs_mv", "category": ["vfs", "write"]}]
-        tools = [] if hasattr(self, '_vfs_tools_registered') else vfs_tools
-        tools.extend( [
-            # VFS File Operations
-            # VFS Open/Close
-            {"tool_func": vfs_open, "name": "vfs_open", "category": ["vfs", "context"]},
-            {
-                "tool_func": vfs_close,
-                "name": "vfs_close",
-                "category": ["vfs", "context"],
-                "is_async": True,
-            },
-            {"tool_func": vfs_view, "name": "vfs_view", "category": ["vfs", "context"]},
-            {
-                "tool_func": vfs_grep,
-                "name": "vfs_grep",
-                "category": ["vfs", "search"],
-                "description": "Full-text search (grep) in files using regex. Supports recursion and case sensitivity."
-            },
-            {
-                "tool_func": fs_copy_dir_from_vfs,
-                "name": "fs_copy_dir_from_vfs",
-                "category": ["filesystem", "vfs"],
-                "flags": {"filesystem_access": True},
-                "description": "Recursively export a VFS directory to the real filesystem",
-            },
-            # VFS Info & Diagnostics
-            {"tool_func": vfs_info, "name": "vfs_info", "category": ["vfs", "read"]},
-            {
-                "tool_func": vfs_diagnostics,
-                "name": "vfs_diagnostics",
-                "category": ["vfs", "lsp"],
-                "is_async": True,
-            },
-            {
-                "tool_func": vfs_executables,
-                "name": "vfs_executables",
-                "category": ["vfs", "read"],
-            },
-            # Filesystem Copy (Flag-based)
-            {
-                "tool_func": fs_copy_to_vfs,
-                "name": "fs_copy_to_vfs",
-                "category": ["filesystem", "vfs"],
-                "flags": {"filesystem_access": True},
-                "description": "Copy file from real filesystem to VFS",
-            },
-            {
-                "tool_func": fs_copy_from_vfs,
-                "name": "fs_copy_from_vfs",
-                "category": ["filesystem", "vfs"],
-                "flags": {"filesystem_access": True},
-                "description": "Copy file from VFS to real filesystem",
-            },
-            {
-                "tool_func": vfs_mount,
-                "name": "vfs_mount",
-                "category": ["filesystem", "vfs"],
-                "flags": {"filesystem_access": True},
-                "description": "Mount local folder as shadow into VFS (lazy loading, no content copied until file opened)",
-            },
-            {
-                "tool_func": vfs_unmount,
-                "name": "vfs_unmount",
-                "category": ["filesystem", "vfs"],
-                "flags": {"filesystem_access": True},
-                "description": "Unmount shadow mount and optionally save all changes to disk",
-            },
-            {
-                "tool_func": vfs_refresh_mount,
-                "name": "vfs_refresh_mount",
-                "category": ["filesystem", "vfs"],
-                "flags": {"filesystem_access": True},
-                "description": "Refresh mount to detect new/deleted files on disk",
-            },
-            {
-                "tool_func": vfs_sync_all,
-                "name": "vfs_sync_all",
-                "category": ["filesystem", "vfs"],
-                "flags": {"filesystem_access": True},
-                "description": "Sync all modified files to disk",
-            },
-            {
-                "tool_func": vfs_execute,
-                "name": "vfs_execute",
-                "category": ["filesystem", "vfs", "execution"],
-                "flags": {"filesystem_access": True, "code_execution": True},
-                "description": "Execute an executable file (Python, JS, Shell) in VFS",
-            },
-            # Docker (Flag-based)
-            {
-                "tool_func": docker_run,
-                "name": "docker_run",
-                "category": ["docker", "execute"],
-                "flags": {"requires_docker": True},
-                "is_async": True,
-            },
-            {
-                "tool_func": docker_start_app,
-                "name": "docker_start_app",
-                "category": ["docker", "web"],
-                "flags": {"requires_docker": True},
-                "is_async": True,
-            },
-            {
-                "tool_func": docker_stop_app,
-                "name": "docker_stop_app",
-                "category": ["docker", "web"],
-                "flags": {"requires_docker": True},
-                "is_async": True,
-            },
-            {
-                "tool_func": docker_logs,
-                "name": "docker_logs",
-                "category": ["docker", "read"],
-                "flags": {"requires_docker": True},
-                "is_async": True,
-            },
-            {
-                "tool_func": docker_status,
-                "name": "docker_status",
-                "category": ["docker", "read"],
-                "flags": {"requires_docker": True},
-            },
-            {"tool_func": history, "name": "history", "category": ["memory", "history"]},
-            # Situation/Behavior
-            {
-                "tool_func": set_agent_situation,
-                "name": "set_agent_situation",
-                "category": ["situation"],
-            },
-            {
-                "tool_func": check_permissions,
-                "name": "check_permissions",
-                "category": ["situation", "rules"],
-            },
-        ])
+            {"tool_func": vfs_mv, "name": "vfs_mv", "category": ["vfs", "write"]},
+        ]
+        tools = [] if hasattr(self, "_vfs_tools_registered") else vfs_tools
+        tools.extend(
+            [
+                # VFS File Operations
+                # VFS Open/Close
+                {
+                    "tool_func": vfs_open,
+                    "name": "vfs_open",
+                    "category": ["vfs", "context"],
+                },
+                {
+                    "tool_func": vfs_close,
+                    "name": "vfs_close",
+                    "category": ["vfs", "context"],
+                    "is_async": True,
+                },
+                {
+                    "tool_func": vfs_view,
+                    "name": "vfs_view",
+                    "category": ["vfs", "context"],
+                },
+                {
+                    "tool_func": vfs_grep,
+                    "name": "vfs_grep",
+                    "category": ["vfs", "search"],
+                    "description": "Full-text search (grep) in files using regex. Supports recursion and case sensitivity.",
+                },
+                {
+                    "tool_func": fs_copy_dir_from_vfs,
+                    "name": "fs_copy_dir_from_vfs",
+                    "category": ["filesystem", "vfs"],
+                    "flags": {"filesystem_access": True},
+                    "description": "Recursively export a VFS directory to the real filesystem",
+                },
+                # VFS Info & Diagnostics
+                {"tool_func": vfs_info, "name": "vfs_info", "category": ["vfs", "read"]},
+                {
+                    "tool_func": vfs_diagnostics,
+                    "name": "vfs_diagnostics",
+                    "category": ["vfs", "lsp"],
+                    "is_async": True,
+                },
+                {
+                    "tool_func": vfs_executables,
+                    "name": "vfs_executables",
+                    "category": ["vfs", "read"],
+                },
+                # Filesystem Copy (Flag-based)
+                {
+                    "tool_func": fs_copy_to_vfs,
+                    "name": "fs_copy_to_vfs",
+                    "category": ["filesystem", "vfs"],
+                    "flags": {"filesystem_access": True},
+                    "description": "Copy file from real filesystem to VFS",
+                },
+                {
+                    "tool_func": fs_copy_from_vfs,
+                    "name": "fs_copy_from_vfs",
+                    "category": ["filesystem", "vfs"],
+                    "flags": {"filesystem_access": True},
+                    "description": "Copy file from VFS to real filesystem",
+                },
+                {
+                    "tool_func": vfs_mount,
+                    "name": "vfs_mount",
+                    "category": ["filesystem", "vfs"],
+                    "flags": {"filesystem_access": True},
+                    "description": "Mount local folder as shadow into VFS (lazy loading, no content copied until file opened)",
+                },
+                {
+                    "tool_func": vfs_unmount,
+                    "name": "vfs_unmount",
+                    "category": ["filesystem", "vfs"],
+                    "flags": {"filesystem_access": True},
+                    "description": "Unmount shadow mount and optionally save all changes to disk",
+                },
+                {
+                    "tool_func": vfs_refresh_mount,
+                    "name": "vfs_refresh_mount",
+                    "category": ["filesystem", "vfs"],
+                    "flags": {"filesystem_access": True},
+                    "description": "Refresh mount to detect new/deleted files on disk",
+                },
+                {
+                    "tool_func": vfs_sync_all,
+                    "name": "vfs_sync_all",
+                    "category": ["filesystem", "vfs"],
+                    "flags": {"filesystem_access": True},
+                    "description": "Sync all modified files to disk",
+                },
+                {
+                    "tool_func": vfs_execute,
+                    "name": "vfs_execute",
+                    "category": ["filesystem", "vfs", "execution"],
+                    "flags": {"filesystem_access": True, "code_execution": True},
+                    "description": "Execute an executable file (Python, JS, Shell) in VFS",
+                },
+                # ============================================================
+                # VFS Sharing Tools
+                # ============================================================
+                {
+                    "tool_func": vfs_share_create,
+                    "name": "vfs_share_create",
+                    "category": ["vfs", "sharing"],
+                    "description": "Create a shareable link/ID for a VFS directory to share it with other sessions/agents.",
+                },
+                {
+                    "tool_func": vfs_share_list,
+                    "name": "vfs_share_list",
+                    "category": ["vfs", "sharing"],
+                    "description": "List all directories currently shared with this agent.",
+                },
+                {
+                    "tool_func": vfs_share_mount,
+                    "name": "vfs_share_mount",
+                    "category": ["vfs", "sharing"],
+                    "description": "Mount a shared directory from another agent into your VFS using the share ID.",
+                },
+                # Docker (Flag-based)
+                {
+                    "tool_func": docker_run,
+                    "name": "docker_run",
+                    "category": ["docker", "execute"],
+                    "flags": {"requires_docker": True},
+                    "is_async": True,
+                },
+                {
+                    "tool_func": docker_start_app,
+                    "name": "docker_start_app",
+                    "category": ["docker", "web"],
+                    "flags": {"requires_docker": True},
+                    "is_async": True,
+                },
+                {
+                    "tool_func": docker_stop_app,
+                    "name": "docker_stop_app",
+                    "category": ["docker", "web"],
+                    "flags": {"requires_docker": True},
+                    "is_async": True,
+                },
+                {
+                    "tool_func": docker_logs,
+                    "name": "docker_logs",
+                    "category": ["docker", "read"],
+                    "flags": {"requires_docker": True},
+                    "is_async": True,
+                },
+                {
+                    "tool_func": docker_status,
+                    "name": "docker_status",
+                    "category": ["docker", "read"],
+                    "flags": {"requires_docker": True},
+                },
+                {
+                    "tool_func": history,
+                    "name": "history",
+                    "category": ["memory", "history"],
+                },
+                # Situation/Behavior
+                {
+                    "tool_func": set_agent_situation,
+                    "name": "set_agent_situation",
+                    "category": ["situation"],
+                },
+                {
+                    "tool_func": check_permissions,
+                    "name": "check_permissions",
+                    "category": ["situation", "rules"],
+                },
+            ]
+        )
 
         if os.getenv("WITH_GOOGLE_TOOLS", "false") == "true":
             tools.extend(gmail_toolkit.get_tools(session.session_id))
@@ -2201,7 +2512,11 @@ class FlowAgent:
         model = self.amd.fast_llm_model.split("/")[-1]
         try:
             model_info = litellm.get_model_info(model)
-            context_limit = model_info.get("max_input_tokens") or model_info.get("max_tokens") or 128000
+            context_limit = (
+                model_info.get("max_input_tokens")
+                or model_info.get("max_tokens")
+                or 128000
+            )
         except Exception:
             context_limit = 128000
 
@@ -2225,13 +2540,24 @@ class FlowAgent:
 
         # Add Skills (Mock or Real if ctx exists)
         skills_str = ""
-        if exec_ctx and exec_ctx.matched_skills and hasattr(self._execution_engine_cache, 'skills_manager'):
-            skills_str = self._execution_engine_cache.skills_manager.build_skill_prompt_section(exec_ctx.matched_skills)
+        if (
+            exec_ctx
+            and exec_ctx.matched_skills
+            and hasattr(self._execution_engine_cache, "skills_manager")
+        ):
+            skills_str = (
+                self._execution_engine_cache.skills_manager.build_skill_prompt_section(
+                    exec_ctx.matched_skills
+                )
+            )
 
         actual_sys_prompt = f"{base_sys}\n\n{skills_str}\n\n{vfs_str}"
 
         # B. Tools (Active)
-        from toolboxv2.mods.isaa.base.Agent.execution_engine import DISCOVERY_TOOLS, STATIC_TOOLS
+        from toolboxv2.mods.isaa.base.Agent.execution_engine import (
+            DISCOVERY_TOOLS,
+            STATIC_TOOLS,
+        )
 
         # Start with static
         active_tools_list = STATIC_TOOLS + DISCOVERY_TOOLS
@@ -2240,7 +2566,7 @@ class FlowAgent:
             dynamic_names = exec_ctx.get_dynamic_tool_names()
             all_avail = self.tool_manager.get_all_litellm()
             for t in all_avail:
-                if t['function']['name'] in dynamic_names:
+                if t["function"]["name"] in dynamic_names:
                     active_tools_list.append(t)
 
         # C. History (Permanent + Working)
@@ -2254,7 +2580,12 @@ class FlowAgent:
         user_sim = [{"role": "user", "content": "hi"}]
 
         # Actual Message Stack
-        actual_messages = [{"role": "system", "content": actual_sys_prompt}] + perm_history + work_history + user_sim
+        actual_messages = (
+            [{"role": "system", "content": actual_sys_prompt}]
+            + perm_history
+            + work_history
+            + user_sim
+        )
 
         # --- 3. Calculate THEORETICAL MAX Components (If we loaded everything) ---
 
@@ -2262,19 +2593,28 @@ class FlowAgent:
         full_perm_history = session.get_history_for_llm(last_n=9999)  # All history
 
         # B. All Tools
-        all_tools_list = STATIC_TOOLS + DISCOVERY_TOOLS + self.tool_manager.get_all_litellm()
+        all_tools_list = (
+            STATIC_TOOLS + DISCOVERY_TOOLS + self.tool_manager.get_all_litellm()
+        )
 
         # Max Message Stack
-        max_messages = [{"role": "system",
-                         "content": actual_sys_prompt}] + full_perm_history + user_sim  # Assuming working history is part of full eventually
+        max_messages = (
+            [{"role": "system", "content": actual_sys_prompt}]
+            + full_perm_history
+            + user_sim
+        )  # Assuming working history is part of full eventually
 
         # --- 4. Token Counting ---
 
         def count(text_or_msgs):
             if isinstance(text_or_msgs, list):
                 # Optimize: Convert tools list to json string for counting
-                if len(text_or_msgs) > 0 and "type" in text_or_msgs[0]:  # It's a tool list
-                    return litellm.token_counter(model=model, text=json.dumps(text_or_msgs))
+                if (
+                    len(text_or_msgs) > 0 and "type" in text_or_msgs[0]
+                ):  # It's a tool list
+                    return litellm.token_counter(
+                        model=model, text=json.dumps(text_or_msgs)
+                    )
                 return litellm.token_counter(model=model, messages=text_or_msgs)
             return litellm.token_counter(model=model, text=text_or_msgs)
 
@@ -2289,7 +2629,9 @@ class FlowAgent:
         t_user = count(user_sim)
 
         actual_total = t_sys + t_tools_act + t_hist_perm + t_hist_work + t_user
-        max_total = t_sys + t_tools_max + t_hist_max + t_user  # VFS is in sys, stays same roughly
+        max_total = (
+            t_sys + t_tools_max + t_hist_max + t_user
+        )  # VFS is in sys, stays same roughly
 
         savings = max_total - actual_total
 
@@ -2297,7 +2639,6 @@ class FlowAgent:
             "session_id": target_session,
             "model": model,
             "limit": context_limit,
-
             # Actual Breakdown
             "act_system": t_sys,
             "act_tools": t_tools_act,
@@ -2305,19 +2646,16 @@ class FlowAgent:
             "act_hist_work": t_hist_work,
             "act_user": t_user,
             "act_total": actual_total,
-
             # Max Breakdown
             "max_tools": t_tools_max,
             "max_hist": t_hist_max,
             "max_total": max_total,
-
             "savings": savings,
-
             # Metadata
             "tool_count_act": len(active_tools_list),
             "tool_count_max": len(all_tools_list),
             "msg_count_act": len(actual_messages),
-            "msg_count_max": len(max_messages)
+            "msg_count_max": len(max_messages),
         }
 
         if print_visual:
@@ -2347,25 +2685,34 @@ class FlowAgent:
             return f"{color}{b}{RESET} {p_str}"
 
         print(
-            f"\n{BOLD}CONTEXT STATE{RESET}  {DIM}session:{RESET} {CYAN}{m['session_id']}{RESET}  {DIM}model:{RESET} {WHITE}{model_name}{RESET}")
+            f"\n{BOLD}CONTEXT STATE{RESET}  {DIM}session:{RESET} {CYAN}{m['session_id']}{RESET}  {DIM}model:{RESET} {WHITE}{model_name}{RESET}"
+        )
         print(f"{DIM}────────────────────────────────────────────────────────────{RESET}")
 
         # 1. Real Load Bar
-        limit = m['limit']
-        act_col = GREEN if m['act_total'] < limit * 0.7 else (YELLOW if m['act_total'] < limit * 0.9 else RED)
+        limit = m["limit"]
+        act_col = (
+            GREEN
+            if m["act_total"] < limit * 0.7
+            else (YELLOW if m["act_total"] < limit * 0.9 else RED)
+        )
         print(
-            f"Active Load:   {bar(m['act_total'], limit, color=act_col)}  {DIM}({m['act_total']:,} / {limit:,}){RESET}")
+            f"Active Load:   {bar(m['act_total'], limit, color=act_col)}  {DIM}({m['act_total']:,} / {limit:,}){RESET}"
+        )
 
         # 2. Theoretical Max Bar
         # If max > limit, we scale it relative to limit (will show overflow)
-        max_val = m['max_total']
+        max_val = m["max_total"]
         max_col = DIM
         if max_val > limit:
             max_col = RED
             print(
-                f"Theoret. Max:  {bar(max_val, limit, color=max_col)}  {DIM}(would crash without optimization){RESET}")
+                f"Theoret. Max:  {bar(max_val, limit, color=max_col)}  {DIM}(would crash without optimization){RESET}"
+            )
         else:
-            print(f"Theoret. Max:  {bar(max_val, limit, color=max_col)}  {DIM}(full potential load){RESET}")
+            print(
+                f"Theoret. Max:  {bar(max_val, limit, color=max_col)}  {DIM}(full potential load){RESET}"
+            )
 
         print(f"\n{BOLD}Composition (Active Request){RESET}")
 
@@ -2374,27 +2721,35 @@ class FlowAgent:
             c_str = f"{count:>3} items" if count is not None else "         "
             pct = f"{DIM}{val / m['act_total'] * 100:>4.1f}%{RESET}"
             print(
-                f"  {DIM}•{RESET} {label:<16} {CYAN}{v_str}{RESET} tok  {DIM}|{RESET} {c_str} {DIM}|{RESET} {pct} {extra}")
+                f"  {DIM}•{RESET} {label:<16} {CYAN}{v_str}{RESET} tok  {DIM}|{RESET} {c_str} {DIM}|{RESET} {pct} {extra}"
+            )
 
         # System Group
-        row("System & VFS", m['act_system'])
+        row("System & VFS", m["act_system"])
 
         # Tools Group
-        t_diff = m['max_tools'] - m['act_tools']
-        row("Tools", m['act_tools'], m['tool_count_act'], extra=f"{GREEN}-{t_diff:,} saved{RESET}")
+        t_diff = m["max_tools"] - m["act_tools"]
+        row(
+            "Tools",
+            m["act_tools"],
+            m["tool_count_act"],
+            extra=f"{GREEN}-{t_diff:,} saved{RESET}",
+        )
 
         # History Group
-        h_diff = m['max_hist'] - (m['act_hist_perm'] + m['act_hist_work'])
-        row("Perm. History", m['act_hist_perm'])
-        row("Work. Memory", m['act_hist_work'], extra=f"{GREEN}-{h_diff:,} saved{RESET}")
+        h_diff = m["max_hist"] - (m["act_hist_perm"] + m["act_hist_work"])
+        row("Perm. History", m["act_hist_perm"])
+        row("Work. Memory", m["act_hist_work"], extra=f"{GREEN}-{h_diff:,} saved{RESET}")
 
         # User
-        row("User Input", m['act_user'], 1, extra=f"{DIM}(simulation){RESET}")
+        row("User Input", m["act_user"], 1, extra=f"{DIM}(simulation){RESET}")
 
         print(f"{DIM}────────────────────────────────────────────────────────────{RESET}")
         print(
-            f"  {BOLD}TOTAL{RESET}            {WHITE}{m['act_total']:>6,}{RESET} tok  {DIM}|{RESET} {GREEN}-{m['savings']:,} tokens optimized away{RESET}")
+            f"  {BOLD}TOTAL{RESET}            {WHITE}{m['act_total']:>6,}{RESET} tok  {DIM}|{RESET} {GREEN}-{m['savings']:,} tokens optimized away{RESET}"
+        )
         print("")
+
     # =========================================================================
     # CHECKPOINT
     # =========================================================================

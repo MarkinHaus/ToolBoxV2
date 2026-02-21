@@ -1,5 +1,5 @@
 // /web/scripts/singup.js
-// ToolBox V2 Signup Script with Clerk Integration
+// ToolBox V2 Signup Script with Custom Auth via TB.user API
 
 function setupSignup() {
     // Play initial animation if graphics available
@@ -8,12 +8,12 @@ function setupSignup() {
     }
 
     setTimeout(async () => {
-        await initializeClerkSignup();
+        await initializeSignup();
     }, 100);
 }
 
-async function initializeClerkSignup() {
-    const container = document.getElementById('clerk-sign-up') || document.getElementById('signupForm');
+async function initializeSignup() {
+    const container = document.getElementById('auth-sign-up') || document.getElementById('signupForm');
 
     if (!container) {
         console.warn('[Signup] No signup container found');
@@ -34,10 +34,20 @@ async function initializeClerkSignup() {
             await new Promise(resolve => setTimeout(resolve, 500));
         }
 
+        if (!window.TB.user) {
+            console.error('[Signup] TB.user failed to initialize');
+            showError(container, 'Authentication service not available. Please refresh the page.');
+            return;
+        }
+
         // Check if user is already authenticated
-        if (window.TB.user?.isAuthenticated()) {
+        if (window.TB.user.isAuthenticated()) {
             const username = window.TB.user.getUsername();
             showSuccess(container, `Already logged in as ${username}. Redirecting...`);
+
+            if (window.TB.graphics?.playAnimationSequence) {
+                window.TB.graphics.playAnimationSequence("Z1+32:R0+50");
+            }
 
             setTimeout(() => {
                 const urlParams = new URLSearchParams(window.location.search);
@@ -47,100 +57,32 @@ async function initializeClerkSignup() {
             return;
         }
 
-        // Initialize Clerk sign-up
-        await initClerkSignUp(container);
+        // Auth buttons are rendered in the HTML fragment.
+        // Manage loading state: mark container as ready.
+        container.classList.remove('loading');
+        container.classList.add('ready');
+        showInfo('Create your account to get started.');
 
-    } catch (error) {
-        console.error('[Signup] Initialization error:', error);
-        showError(container, error.message || 'Failed to initialize signup');
-    }
-}
-
-async function initClerkSignUp(container) {
-    if (window.TB?.user?.mountSignUp) {
-        // Setup hash change listener for Clerk's #/continue route
-        setupClerkContinueHandler();
-
-        // Get redirect URL for after signup
+        // Listen for successful sign-in/sign-up event to redirect
         const urlParams = new URLSearchParams(window.location.search);
         const nextUrl = urlParams.get('next') || '/web/mainContent.html';
 
-        await window.TB.user.mountSignUp(container, {
-            fallbackRedirectUrl: nextUrl
-        });
-
-        // Listen for sign-up events
         window.TB.events?.on('user:signedIn', (data) => {
-            showSuccess(container, `Welcome, ${data.username}! Account created successfully.`);
+            const username = data?.username || window.TB.user?.getUsername() || 'User';
+            showSuccess(container, `Welcome, ${username}! Account created successfully.`);
 
             if (window.TB.graphics?.playAnimationSequence) {
                 window.TB.graphics.playAnimationSequence("Z1+32:R0+50");
             }
 
-            // Redirect nach erfolgreicher Registrierung
             setTimeout(() => {
-                window.TB?.router?.navigateTo(nextUrl) || (window.location.href = nextUrl);
+                window.TB.router?.navigateTo(nextUrl) || (window.location.href = nextUrl);
             }, 1000);
         });
 
-        return;
-    }
-
-    console.log('[Signup] TB.user.mountSignUp not available');
-}
-
-function setupClerkContinueHandler() {
-    // Listen for hash changes
-    window.addEventListener('hashchange', checkAndHandleContinueRoute);
-
-    // Bei #/continue: Clerk UI neu mounten, um Username-Eingabe zu ermöglichen
-    if (window.location.hash.includes('#/continue')) {
-        console.log('[Signup] Continue route detected, ensuring Clerk UI is mounted...');
-
-        // Kurze Verzögerung, dann prüfen ob Clerk UI vorhanden ist
-        // setTimeout(() => {
-        //     const container = document.getElementById('clerk-sign-up');
-        //     if (container && container.children.length <= 1) {
-        //         // Clerk UI nicht geladen - neu mounten
-        //         console.log('[Signup] Clerk UI not fully loaded, remounting...');
-        //         if (window.TB?.user?.mountSignUp) {
-        //             container.innerHTML = '';
-        //             window.TB.user.mountSignUp(container);
-        //         }
-        //     }
-        // }, 1000);
-    }
-}
-
-function checkAndHandleContinueRoute() {
-    const hash = window.location.hash;
-
-    if (hash.includes('#/continue')) {
-        console.log('[Signup] Detected Clerk continue route - allowing username entry...');
-
-        // NICHT weiterleiten! Clerk zeigt das Username-Formular an.
-        // Starte Polling um zu prüfen wann User fertig ist
-        const checkAuthInterval = setInterval(() => {
-            if (window.TB?.user?.isAuthenticated()) {
-                const clerkUser = window.TB.user.getClerkUser();
-                // Prüfe ob Username gesetzt ist
-                if (clerkUser?.username) {
-                    console.log('[Signup] User completed signup with username:', clerkUser.username);
-                    clearInterval(checkAuthInterval);
-
-                    // Redirect zu mainContent
-                    const urlParams = new URLSearchParams(window.location.search);
-                    const nextUrl = urlParams.get('next') || '/web/mainContent.html';
-
-                    setTimeout(() => {
-                        window.TB?.router?.navigateTo(nextUrl) || (window.location.href = nextUrl);
-                    }, 500);
-                }
-            }
-        }, 1000);
-
-        // Timeout nach 5 Minuten
-        setTimeout(() => clearInterval(checkAuthInterval), 300000);
+    } catch (error) {
+        console.error('[Signup] Initialization error:', error);
+        showError(container, error.message || 'Failed to initialize signup');
     }
 }
 
@@ -202,7 +144,6 @@ function showInfo(message) {
 if (window.TB?.once) {
     window.TB.onLoaded(setupSignup);
 } else {
-    // Fallback: wait for DOMContentLoaded
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', setupSignup);
     } else {
@@ -210,5 +151,4 @@ if (window.TB?.once) {
     }
 }
 
-// Export for module usage
-export { setupSignup, initializeClerkSignup };
+export { setupSignup, initializeSignup };

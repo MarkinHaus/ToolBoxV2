@@ -205,7 +205,7 @@ class ToolManager:
             tool_description = f"Tool: {tool_name}"
 
         # Ensure description is clean
-        tool_description = tool_description.strip().split('\n')[0][:500]
+        tool_description = tool_description.strip()[:2000]
 
         # Determine args schema
         if args_schema is None and func is not None:

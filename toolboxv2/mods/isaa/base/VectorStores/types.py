@@ -8,11 +8,13 @@ import numpy as np
 @dataclass(slots=True)
 class Chunk:
     """Represents a chunk of text with its embedding and metadata"""
+
     text: str
     embedding: np.ndarray
     metadata: dict[str, Any]
     content_hash: str
     cluster_id: int | None = None
+    score: float | None = None
 
 
 class AbstractVectorStore(ABC):
@@ -24,7 +26,9 @@ class AbstractVectorStore(ABC):
         pass
 
     @abstractmethod
-    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> list[Chunk]:
+    def search(
+        self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7
+    ) -> list[Chunk]:
         """Search for similar vectors"""
         pass
 
@@ -34,7 +38,7 @@ class AbstractVectorStore(ABC):
         pass
 
     @abstractmethod
-    def load(self, data: bytes) -> 'AbstractVectorStore':
+    def load(self, data: bytes) -> "AbstractVectorStore":
         """Load the vector store from disk"""
         pass
 
@@ -47,4 +51,3 @@ class AbstractVectorStore(ABC):
     def rebuild_index(self) -> None:
         """Optional for faster searches"""
         pass
-

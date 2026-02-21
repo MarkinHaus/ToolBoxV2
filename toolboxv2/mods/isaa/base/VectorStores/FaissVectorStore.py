@@ -15,21 +15,29 @@ class FaissVectorStore(AbstractVectorStore):
 
     def add_embeddings(self, embeddings: np.ndarray, chunks: list[Chunk]) -> None:
         if embeddings.shape[1] != self.dimension:
-            raise ValueError(f"Expected dimension {self.dimension}, got {embeddings.shape[1]}")
+            raise ValueError(
+                f"Expected dimension {self.dimension}, got {embeddings.shape[1]}"
+            )
         self.index.add(embeddings.astype(np.float32))
         self.chunks.extend(chunks)
 
-    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> list[Chunk]:
+    def search(
+        self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7
+    ) -> list[Chunk]:
         if len(self.chunks) == 0:
             return []
 
         query = query_embedding.reshape(1, -1).astype(np.float32)
         distances, indices = self.index.search(query, k)
 
+        from dataclasses import replace
+
         results = []
         for i, score in zip(indices[0], distances[0], strict=False):
             if score >= min_similarity and i < len(self.chunks):
-                results.append(self.chunks[i])
+                # Create a copy of the chunk with the score attached
+                chunk_with_score = replace(self.chunks[i], score=float(score))
+                results.append(chunk_with_score)
         return results
 
     def save(self) -> bytes:
@@ -37,19 +45,19 @@ class FaissVectorStore(AbstractVectorStore):
 
         index_bytes = faiss.serialize_index(self.index)
         data = {
-            'index_bytes': index_bytes,
-            'chunks': self.chunks,
-            'dimension': self.dimension
+            "index_bytes": index_bytes,
+            "chunks": self.chunks,
+            "dimension": self.dimension,
         }
         return pickle.dumps(data)
 
-    def load(self, data: bytes) -> 'FaissVectorStore':
+    def load(self, data: bytes) -> "FaissVectorStore":
         import faiss
 
         loaded = pickle.loads(data)
-        self.dimension = loaded['dimension']
-        self.index = faiss.deserialize_index(loaded['index_bytes'])
-        self.chunks = loaded['chunks']
+        self.dimension = loaded["dimension"]
+        self.index = faiss.deserialize_index(loaded["index_bytes"])
+        self.chunks = loaded["chunks"]
         return self
 
     def clear(self) -> None:
@@ -60,4 +68,3 @@ class FaissVectorStore(AbstractVectorStore):
 
     def rebuild_index(self) -> None:
         pass  # FAISS manages its own index
-

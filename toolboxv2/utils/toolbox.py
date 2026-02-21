@@ -205,6 +205,11 @@ class App(AppType, metaclass=Singleton):
         self.args_sto = args
         self.loop = None
 
+
+        if args.debug:
+            from toolboxv2.utils.extras.live_debugger import install as install_live_debugger
+            install_live_debugger(loop=self.loop_gard())
+
         from .system.session import Session
         self.session: Session = Session(self.get_username())
         self.logger.info(f"Session created for {self.session.username}")

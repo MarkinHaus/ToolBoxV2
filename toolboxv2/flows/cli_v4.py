@@ -17,8 +17,10 @@ Version: 4.0.0
 
 import asyncio
 import json
+import logging
 import os
 import re
+import shlex
 import subprocess
 import sys
 import uuid
@@ -26,6 +28,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+# Suppress noisy loggers
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("litellm").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 import tqdm
 from prompt_toolkit import PromptSession
@@ -48,9 +55,11 @@ from toolboxv2.mods.isaa.base.Agent.flow_agent import FlowAgent
 from toolboxv2.mods.isaa.base.Agent.instant_data_vis import (
     visualize_data_terminal,
 )
-from toolboxv2.mods.isaa.base.Agent.vfs_v2 import FileBackingType
+from toolboxv2.mods.isaa.base.Agent.vfs_v2 import FileBackingType, VFSFile
 from toolboxv2.mods.isaa.base.AgentUtils import detect_shell, anything_from_str_to_dict
 from toolboxv2.mods.isaa.base.audio_io.audioIo import AudioStreamPlayer
+
+from toolboxv2.mods.isaa.extras.zen_renderer import ZenRendererV2
 from toolboxv2.mods.isaa.module import Tools as IsaaTool
 
 import html
@@ -58,7 +67,7 @@ import json
 import sys
 from prompt_toolkit import print_formatted_text, HTML
 from prompt_toolkit.styles import Style
-
+from toolboxv2.mods.isaa.CodingAgent.coder import CoderAgent
 
 # =================== Helpers & Setup ===================
 MODEL_MAPPING = {
@@ -393,37 +402,86 @@ def load_desktop_auto_feature(fm: SimpleFeatureManager):
         print_status("Desktop Automation enabled.", "success")
     fm.add_feature("desktop_auto", activation_f=enable_desktop_auto, deactivation_f=disable_desktop_auto)
 
-def load_web_auto_feature(fm: SimpleFeatureManager):
-    def enable_web_auto(agent):
-        from toolboxv2.mods.isaa.extras.web_helper.web_agent import minimal_web_agent_integration
-        agent.add_tools(minimal_web_agent_integration())
-        print_status("Web Automation enabled.", "success")
 
-    def disable_web_auto(agent):
-        from toolboxv2.mods.isaa.extras.web_helper.web_agent import minimal_web_agent_integration
-        agent.remove_tools(minimal_web_agent_integration())
-        print_status("Web Automation disabled.", "success")
+def load_web_auto_feature(fm):
+    from toolboxv2.mods.isaa.extras.web_helper.tooklit import PlaywrightProxy
+    proxy = PlaywrightProxy(full=False, headless=True)
+    tools_set = [None]
+    def enable(agent):
+        proxy.start()
+        tools_set[0] = proxy.build_agent_tools()
+        agent.add_tools(tools_set[0])
+        print_status("Mini Web Automation enabled.", "success")
 
-    fm.add_feature("mini_web_auto", activation_f=enable_web_auto, deactivation_f=disable_web_auto)
+    def disable(agent):
+        proxy.shutdown()
+        agent.remove_tools(tools_set[0])
+        print_status("Mini Web Automation disabled.", "success")
 
-def load_full_web_auto_feature(fm: SimpleFeatureManager):
-    def enable_full_web_auto(agent):
-        from toolboxv2.mods.isaa.extras.web_helper.tooklit import get_full_tools
-        agent.add_tools(get_full_tools()[1])
+    fm.add_feature("mini_web_auto", activation_f=enable, deactivation_f=disable)
+
+
+def load_full_web_auto_feature(fm):
+    from toolboxv2.mods.isaa.extras.web_helper.tooklit import PlaywrightProxy
+    proxy = PlaywrightProxy(full=True, headless=True)
+    tools_set = [None]
+    def enable(agent):
+        proxy.start()
+        tools_set[0] = proxy.build_agent_tools()
+        agent.add_tools(tools_set[0])
         print_status("Full Web Automation enabled.", "success")
 
-    def disable_full_web_auto(agent):
-        from toolboxv2.mods.isaa.extras.web_helper.tooklit import get_full_tools
-        agent.remove_tools(get_full_tools()[1])
+    def disable(agent):
+        proxy.shutdown()
+        agent.remove_tools(tools_set[0])
         print_status("Full Web Automation disabled.", "success")
 
-    fm.add_feature("full_web_auto", activation_f=enable_full_web_auto, deactivation_f=disable_full_web_auto)
+    fm.add_feature("full_web_auto", activation_f=enable, deactivation_f=disable)
 
+def load_coder_toolkit(fm):
+    from toolboxv2.mods.isaa.CodingAgent.coder_toolset import coder_register_flow_tools
+    from toolboxv2 import init_cwd
+    pool = [None]
+
+    def enable(agent):
+        c_print(f"Starting coder from: {str(init_cwd)}")
+        _pool, tools = coder_register_flow_tools(agent, str(init_cwd))
+        pool[0] = _pool
+        agent.add_tools(tools)
+        print_status("Coder enabled.", "success")
+
+    def disable(agent):
+        _pool, tools = coder_register_flow_tools(agent, init_cwd)
+        agent.remove_tools(tools)
+        print_status("Coder disabled.", "success")
+
+    fm.add_feature("coder", activation_f=enable, deactivation_f=disable)
+
+def load_chain_toolkit(fm):
+    from toolboxv2.mods.isaa.base.chain.chain_tools import create_chain_tools
+    tools_set = [None]
+
+    agent_registry = {}
+    coder_registry = {}
+    format_registry = {}
+
+    def enable(agent):
+        tools_set[0] = create_chain_tools(agent, agent_registry=agent_registry, coder_registry=coder_registry, format_registry=format_registry)
+        agent.add_tools(tools_set[0])
+        print_status("Chains enabled.", "success")
+
+    def disable(agent):
+        agent.remove_tools(tools_set[0])
+        print_status("Chains disabled.", "success")
+
+    fm.add_feature("chain", activation_f=enable, deactivation_f=disable)
 
 ALL_FEATURES = {
     "desktop_auto": load_desktop_auto_feature,
     "mini_web_auto": load_web_auto_feature,
     "full_web_auto": load_full_web_auto_feature,
+    "coder": load_coder_toolkit,
+    "chain": load_chain_toolkit,
 }
 
 # =============================================================================
@@ -658,6 +716,11 @@ class ISAA_Host:
         self.audio_player = AudioStreamPlayer()
         self.verbose_audio = False  # /audio on aktiviert das
 
+        self.active_coder: CoderAgent | None = None
+        from toolboxv2 import init_cwd
+        self.init_dir = init_cwd
+        self.active_coder_path: str | None = init_cwd
+
         # Prompt Toolkit setup
         self.history = FileHistory(str(self.history_file))
         self.key_bindings = self._create_key_bindings()
@@ -665,6 +728,7 @@ class ISAA_Host:
 
         # Self Agent initialization flag
         self._self_agent_initialized = False
+        self._active_renderer: ZenRendererV2 | None = None
 
         # Load persisted state
         self._load_rate_limiter_config()
@@ -784,13 +848,18 @@ class ISAA_Host:
             """Show status dashboard with F5."""
             async def __():
                 await self._print_status_dashboard()
-                # Rate Limiter
                 await self._cmd_vfs(["list"])
                 await self._cmd_skill(["list"])
                 await self._cmd_mcp(["list"])
                 await self._cmd_session(["list"])
                 await self._cmd_session(["show"])
             asyncio.create_task(__())
+
+        @kb.add("f6")
+        def _(event):
+            """Toggle renderer minimize with F6."""
+            if hasattr(self, '_active_renderer') and self._active_renderer:
+                self._active_renderer.toggle_minimize()
 
         return kb
 
@@ -1559,8 +1628,10 @@ class ISAA_Host:
         """Build nested completer dictionary."""
         agents = self.isaa_tools.config.get("agents-name-list", ["self"])
 
-        # Try to get VFS files and mounts for autocomplete
+        # Try to get VFS files, dirs, and mounts for autocomplete
         vfs_files: dict = {}
+        vfs_dirs: dict = {}
+        vfs_all: dict = {}  # files + dirs combined
         vfs_mounts: dict = {}
         vfs_dirty: dict = {}
         model_options: dict = {}
@@ -1573,6 +1644,8 @@ class ISAA_Host:
                 session = agent.session_manager.get(self.active_session_id)
                 if session and hasattr(session, "vfs"):
                     vfs_files = {f: None for f in session.vfs.files}
+                    vfs_dirs = {d: None for d in session.vfs.directories if d != "/"}
+                    vfs_all = {**vfs_files, **vfs_dirs}
                     vfs_mounts = {m: None for m in session.vfs.mounts} if hasattr(session.vfs, 'mounts') else {}
                     vfs_dirty = {
                         f: None for f, file in session.vfs.files.items()
@@ -1608,6 +1681,16 @@ class ISAA_Host:
                 },
                 "lang": None,
             },
+            "/coder": {
+                "start": PathCompleter(only_directories=True, expanduser=True),
+                "stop": None,
+                "task": None,
+                "test": None,  # Freitext Befehl
+                "accept": None,
+                "reject": None,
+                "diff": None,
+                "files": None,
+            },
             "/agent": {
                 "switch": {a: None for a in agents},
                 "list": None,
@@ -1642,20 +1725,23 @@ class ISAA_Host:
                 "clear": None,
             },
             "/task": {
-                "status": {t: None for t in self.background_tasks.keys()},
+                "list": None,
+                "view": {t: None for t in self.background_tasks.keys()},
                 "cancel": {t: None for t in self.background_tasks.keys()},
+                "clean": None,
+                "status": {t: None for t in self.background_tasks.keys()},
             },
             "/vfs": {
                 "mount": path_compl, # /vfs mount <local_path> [vfs_path] [--readonly] [--no-sync]
                 "unmount": vfs_mounts if vfs_mounts else None,
-                "sync": vfs_dirty if vfs_dirty else vfs_files if vfs_files else None,
+                "sync": vfs_all if vfs_all else (vfs_dirty if vfs_dirty else None),
                 "refresh": vfs_mounts if vfs_mounts else None,
-                "pull": vfs_files if vfs_files else None,
-                "save": vfs_files if vfs_files else None,
+                "pull": vfs_all if vfs_all else None,
+                "save": vfs_all if vfs_all else None,
                 "mounts": None,
                 "dirty": None,
-                **vfs_files,  # Direct file access: /vfs <filename>
-            } if vfs_files or vfs_mounts else None,
+                **vfs_all,  # Direct file/dir access: /vfs <path>
+            } if vfs_all or vfs_mounts else None,
             "/context": {
                 "stats": None,
             },
@@ -1691,17 +1777,33 @@ class ISAA_Host:
         )
 
         audio_indicator = (
-            " <style fg='ansired'>🎤</style>" if self._audio_recording else ""
+            " <style fg='ansired'>REC</style>" if self._audio_recording else ""
         )
+
+        # Coder Mode Indicator
+        if self.active_coder:
+            mode_indicator = f"<style fg='ansimagenta'>[CODER:{Path(self.active_coder_path).name}]</style>"
+            agent_indicator = ""
+        else:
+            mode_indicator = ""
+            agent_indicator = f"<style fg='ansiyellow'>({self.active_agent_name})</style>"
+
+        # Active features - compact tag line
+        active_feats = [f for f in self.feature_manager.list_features() if self.feature_manager.is_enabled(f)]
+        feat_indicator = ""
+        if active_feats:
+            tags = " ".join(f"<style fg='{PTColors.ZEN_DIM}'>{f}</style>" for f in active_feats)
+            feat_indicator = f" {tags}"
 
         return HTML(
             f"<style fg='ansicyan'>[</style>"
             f"<style fg='ansigreen'>{cwd_name}</style>"
             f"<style fg='ansicyan'>]</style> "
-            f"<style fg='ansiyellow'>({self.active_agent_name})</style>"
+            f"{agent_indicator}"
+            f"{mode_indicator}"
             f"<style fg='grey'>@{self.active_session_id}</style>"
-            f"{bg_indicator}{audio_indicator}"
-            f"\n<style fg='ansiblue'>❯</style> "
+            f"{bg_indicator}{audio_indicator}{feat_indicator}"
+            f"\n<style fg='ansiblue'>></style> "
         )
 
     async def _print_status_dashboard(self):
@@ -1748,67 +1850,55 @@ class ISAA_Host:
 
         print_separator()
 
-        # Background Tasks
+        # Background Tasks - read from engine.live for real-time state
         running_tasks = [t for t in self.background_tasks.values() if t.status == "running"]
         print_status(f"Background Tasks: {len(running_tasks)} running", "progress")
         if running_tasks:
-            # Header for tasks table - Spaltenbreiten angepasst für tqdm
             print_table_header(
-                [("ID/Agent", 18), ("Progress (tqdm)", 25), ("Iter", 8), ("Tokens", 10), ("Tool", 15)],
-                [18, 25, 8, 10, 15]
+                [("ID/Agent", 18), ("Progress", 25), ("Phase", 10), ("Thought/Tool", 20)],
+                [18, 25, 10, 20]
             )
 
             for t in running_tasks:
-                # Fetch live metrics from agent's execution engine
-                metrics = {"iter": 0, "max": 25, "tokens": 0, "tool": "-"}
+                phase_str = "-"
+                bar_str = ""
+                focus_str = "-"
                 try:
                     agent = await self.isaa_tools.get_agent(t.agent_name)
                     engine = agent._get_execution_engine()
-                    ctx = engine.get_execution(t.run_id)
+                    live = engine.live
 
-                    if ctx:
-                        metrics["iter"] = ctx.current_iteration
-                        # Tokens (Gesamtstatistik des Agents als Näherungswert)
-                        metrics["tokens"] = agent.total_tokens_out + agent.total_tokens_in
-                        # Last tool
-                        if ctx.tools_used:
-                            metrics["tool"] = ctx.tools_used[-1]
-                        elif ctx.dynamic_tools:
-                            metrics["tool"] = "thinking..."
+                    # Progress bar from live state
+                    it, mx = live.iteration, live.max_iterations
+                    if mx > 0:
+                        filled = int(20 * it / mx)
+                        bar_str = f"{'━' * filled}{'─' * (20 - filled)} {it}/{mx}"
+                    else:
+                        bar_str = f"{'─' * 20} {it}/?"
+
+                    phase_str = live.phase.value[:10]
+
+                    # Show thought or tool (whichever is most recent)
+                    if live.tool.name:
+                        focus_str = f"◇ {live.tool.name[:18]}"
+                    elif live.thought:
+                        focus_str = f"◎ {live.thought[:18]}"
+                    elif live.status_msg:
+                        focus_str = live.status_msg[:20]
 
                 except Exception:
-                    pass
-
-                # Echte TQDM Bar generieren
-                elapsed = (datetime.now() - t.started_at).total_seconds()
-
-                # format_meter liefert den String ohne zu drucken
-                tqdm_bar = tqdm.format_meter(
-                    n=metrics["iter"],
-                    total=metrics["max"],
-                    elapsed=elapsed,
-                    ncols=25,  # Exakte Breite für die Spalte
-                    prefix="",
-                    bar_format="{l_bar}{bar}|",  # Nur Balken und Prozent
-                    unit="it"
-                )
-
-                # ANSI Codes entfernen, da unsere print_table_row eigene Farben setzt
-                ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-                clean_bar = ansi_escape.sub('', tqdm_bar).strip()
-
-                iter_str = f"{metrics['iter']}/{metrics['max']}"
+                    elapsed = (datetime.now() - t.started_at).total_seconds()
+                    bar_str = f"{'─' * 20} {elapsed:.0f}s"
 
                 print_table_row(
                     [
                         f"{t.task_id[:8]}.. ({t.agent_name})",
-                        clean_bar,
-                        iter_str,
-                        f"{metrics['tokens']:,}",
-                        metrics["tool"][:15]
+                        bar_str,
+                        phase_str,
+                        focus_str,
                     ],
-                    [18, 25, 8, 10, 15],
-                    ["cyan", "green", "white", "yellow", "white"]
+                    [18, 25, 10, 20],
+                    ["cyan", "green", "white", "grey"]
                 )
         c_print()
 
@@ -1821,6 +1911,8 @@ class ISAA_Host:
         print_box_content("/status - Show status dashboard (or F5)", "")
         print_box_content("/clear - Clear screen", "")
         print_box_content("/quit, /exit - Exit CLI", "")
+        print_box_content("F6 - Toggle minimize/expand agent output", "")
+        print_box_content("Ctrl+C - Safe stop agent (continue/fresh/quit)", "")
 
         print_separator()
 
@@ -1857,8 +1949,11 @@ class ISAA_Host:
         print_separator()
 
         print_status("Task Management", "info")
-        print_box_content("/task list - List background tasks", "")
-        print_box_content("/task cancel <id> - Cancel a task", "")
+        print_box_content("/task                    - Show all background tasks", "")
+        print_box_content("/task view [id]          - Live view of task (auto-selects if 1)", "")
+        print_box_content("/task cancel <id>        - Cancel a running task", "")
+        print_box_content("/task clean              - Remove finished tasks", "")
+        print_box_content("F6 during execution      - Move agent to background", "")
 
         print_separator()
 
@@ -1873,13 +1968,13 @@ class ISAA_Host:
         print_separator()
         print_status("VFS Management", "info")
         print_box_content("/vfs                         - Show VFS tree", "")
-        print_box_content("/vfs <file>                  - Show file content", "")
+        print_box_content("/vfs <path>                  - Show file content or dir listing", "")
         print_box_content("/vfs mount <path> [vfs_path] - Mount local folder", "")
         print_box_content("/vfs unmount <vfs_path>      - Unmount folder", "")
-        print_box_content("/vfs sync [file]             - Sync changes to disk", "")
-        print_box_content("/vfs save <vfs_path> [file]  - Save vfs file to disk", "")
+        print_box_content("/vfs sync [path]             - Sync file/dir to disk", "")
+        print_box_content("/vfs save <vfs_path> <local> - Save file/dir to local path", "")
         print_box_content("/vfs refresh <mount>         - Re-scan mount for changes", "")
-        print_box_content("/vfs pull <file>             - Reload file from disk", "")
+        print_box_content("/vfs pull <path>             - Reload file/dir from disk", "")
         print_box_content("/vfs mounts                  - List active mounts", "")
         print_box_content("/vfs dirty                   - Show modified files", "")
         print_separator()
@@ -1960,6 +2055,9 @@ class ISAA_Host:
 
         elif cmd == "/skill":
             await self._cmd_skill(args)
+
+        elif cmd == "/coder":
+            await self._cmd_coder(args)
 
         elif cmd == "/audio":
             await self._handle_audio_command(args)
@@ -2331,7 +2429,8 @@ class ISAA_Host:
     async def _cmd_task(self, args: list[str]):
         """Handle /task commands."""
         if not args:
-            print_status("Usage: /task <cancel|status> [id]", "warning")
+            # Default: show task overview
+            await self._task_show_overview()
             return
 
         action = args[0]
@@ -2341,23 +2440,143 @@ class ISAA_Host:
                 print_status("Usage: /task cancel <id>", "warning")
                 return
             task_id = args[1]
-            if task_id in self.background_tasks:
-                self.background_tasks[task_id].task.cancel()
-                self.background_tasks[task_id].status = "cancelled"
-                print_status(f"Task {task_id} cancelled", "success")
-            else:
-                print_status(f"Task {task_id} not found", "error")
+            # Allow partial match
+            matched = [t for t in self.background_tasks if t.startswith(task_id) or t == task_id]
+            if not matched:
+                print_status(f"Task '{task_id}' not found", "error")
+                return
+            for tid in matched:
+                self.background_tasks[tid].task.cancel()
+                self.background_tasks[tid].status = "cancelled"
+                print_status(f"Task {tid} cancelled", "success")
 
-        elif action == "status":
+        elif action in ("status", "list"):
+            await self._task_show_overview()
+
+        elif action == "view":
+            # /task view [id] - show live state or result of a task
             if len(args) < 2:
-                result = await self._tool_task_status()
-                c_print(result)
+                # Auto-select: if only 1 running, show that one
+                running = [t for t in self.background_tasks.values() if t.status == "running"]
+                if len(running) == 1:
+                    await self._task_view_detail(running[0].task_id)
+                elif not running:
+                    # Show most recent completed
+                    completed = [t for t in self.background_tasks.values() if t.status == "completed"]
+                    if completed:
+                        await self._task_view_detail(completed[-1].task_id)
+                    else:
+                        print_status("No tasks to view", "info")
+                else:
+                    print_status(f"{len(running)} tasks running. Specify: /task view <id>", "warning")
+                    await self._task_show_overview()
                 return
             task_id = args[1]
-            print_status(await self._tool_task_status(task_id), "info")
+            # Partial match
+            matched = [t for t in self.background_tasks if t.startswith(task_id) or t == task_id]
+            if matched:
+                await self._task_view_detail(matched[0])
+            else:
+                print_status(f"Task '{task_id}' not found", "error")
+
+        elif action == "clean":
+            # Remove completed/failed/cancelled tasks
+            to_remove = [tid for tid, t in self.background_tasks.items()
+                         if t.status in ("completed", "failed", "cancelled")]
+            for tid in to_remove:
+                del self.background_tasks[tid]
+            print_status(f"Cleaned {len(to_remove)} finished tasks", "success")
 
         else:
-            print_status(f"Unknown task action: {action}", "error")
+            print_status(f"Unknown task action: {action}. Use: list, view, cancel, clean", "error")
+
+    async def _task_show_overview(self):
+        """Show compact task overview table."""
+        if not self.background_tasks:
+            print_status("No background tasks", "info")
+            return
+
+        print_box_header("Background Tasks", "◈")
+        columns = [("ID", 22), ("Agent", 12), ("Status", 10), ("Elapsed", 8), ("Query", 22)]
+        widths = [22, 12, 10, 8, 22]
+        print_table_header(columns, widths)
+
+        for tid, t in self.background_tasks.items():
+            elapsed = (datetime.now() - t.started_at).total_seconds()
+            elapsed_str = f"{elapsed:.0f}s"
+            status_style = {
+                "running": "green", "completed": "cyan",
+                "failed": "red", "cancelled": "yellow"
+            }.get(t.status, "grey")
+
+            query_short = t.query[:20] + ".." if len(t.query) > 22 else t.query
+            print_table_row(
+                [tid[:22], t.agent_name[:12], t.status, elapsed_str, query_short],
+                widths,
+                ["cyan", "white", status_style, "grey", "grey"],
+            )
+        print_box_footer()
+
+    async def _task_view_detail(self, task_id: str):
+        """Show detailed view of a specific task (live state or result)."""
+        t = self.background_tasks.get(task_id)
+        if not t:
+            print_status(f"Task {task_id} not found", "error")
+            return
+
+        elapsed = (datetime.now() - t.started_at).total_seconds()
+        print_box_header(f"Task: {task_id}", "◈")
+        print_box_content(f"Agent: {t.agent_name}  Status: {t.status}  Elapsed: {elapsed:.1f}s", "info")
+        print_box_content(f"Query: {t.query}", "")
+
+        if t.status == "running":
+            # Show live engine state
+            try:
+                agent = await self.isaa_tools.get_agent(t.agent_name)
+                engine = agent._get_execution_engine()
+                live = engine.live
+
+                it, mx = live.iteration, live.max_iterations
+                if mx > 0:
+                    filled = int(20 * it / mx)
+                    bar = f"{'━' * filled}{'─' * (20 - filled)} {it}/{mx}"
+                else:
+                    bar = f"{'─' * 20} {it}/?"
+                print_box_content(f"Progress: {bar}", "")
+
+                if live.phase:
+                    print_box_content(f"Phase: {live.phase.value}", "info")
+                if live.thought:
+                    print_box_content(f"Thought: {live.thought[:80]}", "")
+                if live.tool.name:
+                    print_box_content(f"Tool: {live.tool.name} {live.tool.args_summary[:40]}", "")
+                if live.status_msg:
+                    print_box_content(f"Status: {live.status_msg}", "")
+            except Exception:
+                print_box_content("(live state unavailable)", "warning")
+
+        elif t.status == "completed":
+            # Show result
+            try:
+                result = t.task.result()
+                if result:
+                    result_str = str(result)
+                    if len(result_str) > 500:
+                        print_box_content(f"Result ({len(result_str)} chars):", "success")
+                        print_code_block(result_str[:500] + "\n... (truncated)")
+                    else:
+                        print_box_content("Result:", "success")
+                        c_print(result_str)
+            except Exception as e:
+                print_box_content(f"Result error: {e}", "error")
+
+        elif t.status == "failed":
+            try:
+                t.task.result()
+            except Exception as e:
+                print_box_content(f"Error: {e}", "error")
+
+        print_box_footer()
 
     async def _cmd_mcp(self, args: list[str]):
         """Handle live MCP management commands."""
@@ -2644,18 +2863,35 @@ class ISAA_Host:
                 else:
                     print_status(f"Unmount failed: {result.get('error')}", "error")
 
-            # /vfs sync [vfs_path]
+            # /vfs sync [vfs_path]  - file or directory
             elif cmd == "sync":
                 if len(args) > 1:
-                    # Sync specific file
-                    path = args[1]
-                    result = session.vfs._sync_to_local(path)
-                    if result.get("success"):
-                        print_status(f"Synced: {path} → {result['synced_to']}", "success")
+                    path = session.vfs._normalize_path(args[1])
+
+                    if session.vfs._is_directory(path):
+                        # Sync all dirty files under this directory
+                        prefix = path if path == "/" else path + "/"
+                        synced, errors = [], []
+                        for fpath, f in session.vfs.files.items():
+                            if fpath.startswith(prefix) and isinstance(f, VFSFile) and f.is_dirty and f.local_path:
+                                r = session.vfs._sync_to_local(fpath)
+                                if r.get("success"):
+                                    synced.append(fpath)
+                                else:
+                                    errors.append(f"{fpath}: {r.get('error')}")
+                        print_status(f"Synced {len(synced)} files in {path}", "success")
+                        for err in errors:
+                            print_status(err, "error")
+                    elif session.vfs._is_file(path):
+                        result = session.vfs._sync_to_local(path)
+                        if result.get("success"):
+                            print_status(f"Synced: {path} → {result['synced_to']}", "success")
+                        else:
+                            print_status(f"Sync failed: {result.get('error')}", "error")
                     else:
-                        print_status(f"Sync failed: {result.get('error')}", "error")
+                        print_status(f"Not found: {path}", "error")
                 else:
-                    # Sync all
+                    # Sync all dirty files
                     result = session.vfs.sync_all()
                     if result.get("success"):
                         print_status(f"Synced {len(result['synced'])} files", "success")
@@ -2663,17 +2899,41 @@ class ISAA_Host:
                         for err in result.get("errors", []):
                             print_status(err, "error")
 
+            # /vfs save <vfs_path> <local_path>  - file or directory
             elif cmd == "save":
-                if len(args) < 2:
+                if len(args) < 3:
                     print_status("Usage: /vfs save <vfs_path> <local_path>", "warning")
                     return
-                vfs_path = args[1]
+                vfs_path = session.vfs._normalize_path(args[1])
                 local_path = args[2]
-                result = session.vfs.save_to_local(vfs_path, local_path, overwrite=True, create_dirs=True)
-                if result.get("success"):
-                    print_status(f"Saved: {vfs_path} → {local_path}", "success")
+
+                if session.vfs._is_directory(vfs_path):
+                    # Save entire directory to local path
+                    prefix = vfs_path if vfs_path == "/" else vfs_path + "/"
+                    saved, errors = 0, 0
+                    local_base = os.path.abspath(os.path.expanduser(local_path))
+                    os.makedirs(local_base, exist_ok=True)
+
+                    for fpath, f in session.vfs.files.items():
+                        if fpath.startswith(prefix):
+                            relative = fpath[len(prefix):]
+                            target = os.path.join(local_base, relative.replace("/", os.sep))
+                            result = session.vfs.save_to_local(
+                                fpath, target, overwrite=True, create_dirs=True
+                            )
+                            if result.get("success"):
+                                saved += 1
+                            else:
+                                errors += 1
+                    print_status(f"Saved {saved} files from {vfs_path} → {local_path}", "success")
+                    if errors:
+                        print_status(f"{errors} files failed", "warning")
                 else:
-                    print_status(f"Save failed: {result.get('error')}", "error")
+                    result = session.vfs.save_to_local(vfs_path, local_path, overwrite=True, create_dirs=True)
+                    if result.get("success"):
+                        print_status(f"Saved: {vfs_path} → {local_path}", "success")
+                    else:
+                        print_status(f"Save failed: {result.get('error')}", "error")
 
             # /vfs refresh <vfs_path>
             elif cmd == "refresh":
@@ -2691,29 +2951,44 @@ class ISAA_Host:
                 else:
                     print_status(f"Refresh failed: {result.get('error')}", "error")
 
-            # /vfs pull <vfs_path> - reload from disk (discard local changes)
+            # /vfs pull <vfs_path> - reload from disk (file or directory)
             elif cmd == "pull":
                 if len(args) < 2:
-                    print_status("Usage: /vfs pull <file_path>", "warning")
+                    print_status("Usage: /vfs pull <path>", "warning")
                     return
 
                 path = session.vfs._normalize_path(args[1])
-                f = session.vfs.files.get(path)
 
-                if not f:
-                    print_status(f"File not found: {path}", "error")
-                    return
-
-                if hasattr(f, 'local_path') and f.local_path:
-                    result = session.vfs._load_shadow_content(path)
-                    if result.get("success"):
-                        f.is_dirty = False
-                        f.backing_type = FileBackingType.SHADOW
-                        print_status(f"Pulled: {path} ({result['loaded_bytes']} bytes)", "success")
+                if session.vfs._is_directory(path):
+                    # Pull all shadow files under this directory
+                    prefix = path if path == "/" else path + "/"
+                    pulled, skipped = 0, 0
+                    for fpath, f in session.vfs.files.items():
+                        if fpath.startswith(prefix) and hasattr(f, 'local_path') and f.local_path:
+                            result = session.vfs._load_shadow_content(fpath)
+                            if result.get("success"):
+                                f.is_dirty = False
+                                f.backing_type = FileBackingType.SHADOW
+                                pulled += 1
+                            else:
+                                skipped += 1
+                    print_status(f"Pulled {pulled} files in {path}", "success")
+                    if skipped:
+                        print_status(f"{skipped} files skipped/failed", "warning")
+                elif session.vfs._is_file(path):
+                    f = session.vfs.files.get(path)
+                    if f and hasattr(f, 'local_path') and f.local_path:
+                        result = session.vfs._load_shadow_content(path)
+                        if result.get("success"):
+                            f.is_dirty = False
+                            f.backing_type = FileBackingType.SHADOW
+                            print_status(f"Pulled: {path} ({result['loaded_bytes']} bytes)", "success")
+                        else:
+                            print_status(f"Pull failed: {result.get('error')}", "error")
                     else:
-                        print_status(f"Pull failed: {result.get('error')}", "error")
+                        print_status("Not a shadow file", "warning")
                 else:
-                    print_status("Not a shadow file", "warning")
+                    print_status(f"Not found: {path}", "error")
 
             # /vfs mounts - list all mounts
             elif cmd == "mounts":
@@ -2749,10 +3024,31 @@ class ISAA_Host:
                     print_box_content(f"{path} → {local}", "")
                 print_box_footer()
 
-            # /vfs <filename> - show file content (original behavior)
+            # /vfs <path> - show file content or directory listing
             else:
-                filename = " ".join(args)
-                await self._vfs_show_file(session, filename)
+                path_str = " ".join(args)
+                norm = session.vfs._normalize_path(path_str)
+
+                if session.vfs._is_directory(norm):
+                    # Directory: show listing
+                    contents = session.vfs._list_directory_contents(norm)
+                    print_box_header(f"VFS: {norm}", "📂")
+                    if not contents:
+                        print_box_content("(empty directory)", "")
+                    else:
+                        for item in contents:
+                            if item["type"] == "directory":
+                                print_box_content(f"  📁 {item['name']}/", "")
+                            else:
+                                size = item.get("size", 0)
+                                state = item.get("state", "")
+                                ftype = item.get("file_type", "")
+                                meta = f"{size}b" if size < 1024 else f"{size / 1024:.1f}kb"
+                                dirty = " ●" if session.vfs.files.get(item["path"], None) and getattr(session.vfs.files[item["path"]], 'is_dirty', False) else ""
+                                print_box_content(f"  {item['name']:<30} {meta:>8}  {ftype}{dirty}", "")
+                    print_box_footer()
+                else:
+                    await self._vfs_show_file(session, path_str)
 
         except Exception as e:
             print_status(f"Error: {e}", "error")
@@ -2896,6 +3192,249 @@ class ISAA_Host:
 
         else:
             print_status(f"Unknown audio command: {cmd} add args", "error")
+
+    async def _cmd_coder(self, args: list[str]):
+        """Handle /coder commands for native code generation."""
+        if not args:
+            print_status("Usage: /coder <start|stop|task|test|accept|reject|diff|rollback|files> [args]", "warning")
+            return
+
+        action = args[0].lower()
+
+        # --- START ---
+        if action == "start":
+            target_path = os.path.abspath(os.path.expanduser(args[1])) if len(args) >= 2 else self.init_dir
+            if not os.path.isdir(target_path):
+                print_status(f"Directory not found: {target_path}", "error")
+                return
+            try:
+                agent = await self.isaa_tools.get_agent(self.active_agent_name)
+                print_status(f"Initializing Coder on {target_path}...", "progress")
+                agent.verbose = True
+                self.active_coder = CoderAgent(agent, target_path)
+                self.active_coder_path = target_path
+
+                print_box_header("Coder Mode Activated", "👨‍💻")
+                print_box_content(f"Target: {target_path}", "info")
+                print_box_content(f"Agent: {self.active_agent_name}", "info")
+                print_box_content("Commands:", "bold")
+                for line in [
+                    "  /coder task <instruction>     - Auto-implement",
+                    "  <instruction>                 - Auto-implement (shortcut)",
+                    "  @<instruction>                - Normal agent / next line",
+                    "  /coder diff [file]            - Show changes",
+                    "  /coder accept [file ...]      - Apply all or cherry-pick files",
+                    "  /coder reject                 - Discard all changes",
+                    "  /coder rollback [file ...]    - Reset all or specific files",
+                    "  /coder test [cmd]             - Run tests in worktree",
+                    "  /coder files                  - List worktree contents",
+                    "  /coder stop                   - Exit (accept changes first!)",
+                ]:
+                    print_box_content(line, "")
+                print_box_footer()
+            except Exception as e:
+                print_status(f"Failed to start coder: {e}", "error")
+
+        # --- STOP ---
+        elif action == "stop":
+            if not self.active_coder:
+                print_status("Coder Mode is not active.", "warning")
+                return
+            # Warn about pending changes
+            try:
+                pending = await self.active_coder.worktree.changed_files()
+                if pending:
+                    print_status(f"⚠ {len(pending)} uncommitted file(s) will be lost:", "warning")
+                    for f in pending[:10]:
+                        c_print(f"  - {f}")
+                    if len(pending) > 10:
+                        c_print(f"  ... and {len(pending)-10} more")
+            except Exception:
+                pass
+            try:
+                self.active_coder.worktree.cleanup()
+            except Exception:
+                pass
+            self.active_coder = None
+            self.active_coder_path = self.init_dir
+            print_status("Coder Mode deactivated.", "success")
+
+        # --- ACTIONS (require active coder) ---
+        else:
+            if not self.active_coder:
+                print_status("Coder not active. Use '/coder start <path>' first.", "error")
+                return
+
+            wt = self.active_coder.worktree
+
+            if action == "task":
+                if len(args) < 2:
+                    print_status("Usage: /coder task <instruction>", "warning")
+                    return
+                task_prompt = " ".join(args[1:])
+                try:
+                    print_status(f"Coder working on: {task_prompt}", "progress")
+                except UnicodeEncodeError:
+                    task_prompt = task_prompt.encode('utf-8').decode('utf-8', errors="replace")
+
+                c_print(HTML("<style fg='ansimagenta'>⚡ Code Generation Loop...</style>"))
+                try:
+                    result = await self.active_coder.execute(task_prompt)
+                    if result.success:
+                        print_box_header("Done", "✅")
+                        print_box_content(result.message, "success")
+                        if result.changed_files:
+                            print_status("Modified:", "info")
+                            for f in result.changed_files:
+                                c_print(f"  → {f}")
+                        print_separator()
+                        print_box_content("'/coder diff' to review, '/coder accept' to apply.", "warning")
+                        print_box_footer()
+                    else:
+                        print_status(f"Failed: {result.message}", "error")
+                except Exception as e:
+                    print_status(f"Critical: {e}", "error")
+                    import traceback; traceback.print_exc()
+
+            elif action == "diff":
+                # /coder diff          → all changes
+                # /coder diff file.py  → single file
+                try:
+                    wt_path = wt.worktree_path
+                    if wt._is_git:
+                        # Stage everything first so new files show in diff
+                        await asyncio.create_subprocess_shell(
+                            "git add -A", cwd=str(wt_path),
+                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                        target = shlex.quote(args[1]) if len(args) > 1 else ""
+                        cmd = f"git diff --cached --color {target}"
+                        proc = await asyncio.create_subprocess_shell(
+                            cmd, cwd=str(wt_path),
+                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                        out, _ = await proc.communicate()
+                        if out:
+                            sys.stdout.buffer.write(out)
+                            sys.stdout.buffer.flush()
+                        else:
+                            print_status("No changes.", "info")
+                    else:
+                        # Non-git: manual diff
+                        changed = await wt.changed_files()
+                        if not changed:
+                            print_status("No changes.", "info")
+                        else:
+                            import difflib
+                            filter_file = args[1] if len(args) > 1 else None
+                            for rel in changed:
+                                if filter_file and rel != filter_file: continue
+                                orig = wt.origin_root / rel
+                                curr = wt.path / rel
+                                old = orig.read_text().splitlines() if orig.exists() else []
+                                new = curr.read_text().splitlines() if curr.exists() else []
+                                diff = difflib.unified_diff(old, new, fromfile=f"a/{rel}", tofile=f"b/{rel}", lineterm="")
+                                for line in diff:
+                                    c_print(line)
+                except Exception as e:
+                    print_status(f"Diff error: {e}", "error")
+
+            elif action == "accept":
+                # /coder accept              → apply all (git merge or copy)
+                # /coder accept f1.py f2.py  → cherry-pick specific files
+                try:
+                    if len(args) > 1:
+                        # Cherry-pick mode
+                        files = args[1:]
+                        available = await wt.changed_files()
+                        invalid = [f for f in files if f not in available]
+                        if invalid:
+                            print_status(f"Not changed in worktree: {', '.join(invalid)}", "error")
+                            if available:
+                                print_status("Available:", "info")
+                                for f in available: c_print(f"  {f}")
+                            return
+
+                        applied = await wt.apply_files(files)
+                        for f in applied:
+                            c_print(f"  ✓ {f}")
+                        print_status(f"Cherry-picked {len(applied)} file(s).", "success")
+                    else:
+                        # Full apply
+                        n = await wt.apply_back()
+                        if n == -1:
+                            print_status("Merged via git.", "success")
+                        else:
+                            print_status(f"Applied {n} file(s).", "success")
+
+                    # Reset worktree for next task
+                    wt.cleanup()
+                    wt.setup()
+                    print_status("Worktree reset for next task.", "info")
+                except subprocess.CalledProcessError as e:
+                    print_status(f"Merge conflict! Resolve manually in {wt.origin_root}", "error")
+                    if e.stderr:
+                        for line in e.stderr.splitlines()[:10]:
+                            c_print(f"  {line}")
+                except Exception as e:
+                    print_status(f"Accept failed: {e}", "error")
+
+            elif action == "reject":
+                print_status("Discarding all changes...", "warning")
+                wt.cleanup()
+                wt.setup()
+                print_status("Worktree reset.", "success")
+
+            elif action == "rollback":
+                # /coder rollback              → reset entire worktree
+                # /coder rollback f1.py f2.py  → reset specific files
+                try:
+                    if len(args) > 1:
+                        files = args[1:]
+                        wt.rollback(files)
+                        for f in files:
+                            c_print(f"  ↩ {f}")
+                        print_status(f"Rolled back {len(files)} file(s).", "success")
+                    else:
+                        changed = await wt.changed_files()
+                        if not changed:
+                            print_status("Nothing to rollback.", "info")
+                            return
+                        print_status(f"Rolling back {len(changed)} file(s)...", "warning")
+                        wt.rollback()
+                        print_status("Full rollback complete.", "success")
+                except Exception as e:
+                    print_status(f"Rollback failed: {e}", "error")
+
+            elif action == "test":
+                cmd = " ".join(args[1:]) if len(args) > 1 else "pytest"
+                print_status(f"Running in worktree: {cmd}", "progress")
+                try:
+                    print_separator(char=".")
+                    proc = await asyncio.create_subprocess_shell(
+                        cmd, cwd=str(wt.worktree_path), stdout=None, stderr=None)
+                    await proc.wait()
+                    print_separator(char=".")
+                    if proc.returncode == 0:
+                        print_status("Tests passed.", "success")
+                    else:
+                        print_status(f"Tests failed (exit {proc.returncode})", "error")
+                except Exception as e:
+                    print_status(f"Test error: {e}", "error")
+
+            elif action == "files":
+                wt_path = wt.worktree_path
+                changed = set(await wt.changed_files())
+                for root, dirs, files in os.walk(wt_path):
+                    if ".git" in root: continue
+                    level = root.replace(str(wt_path), "").count(os.sep)
+                    indent = "  " * level
+                    c_print(f"{indent}{os.path.basename(root)}/")
+                    for f in files:
+                        rel = str((Path(root) / f).relative_to(wt_path))
+                        marker = " ●" if rel in changed else ""
+                        c_print(f"{indent}  {f}{marker}")
+
+            else:
+                print_status(f"Unknown: {action}. Commands: task|diff|accept|reject|rollback|test|files|stop", "error")
 
     async def _cmd_skill(self, args: list[str]):
         """Handle /skill commands."""
@@ -3190,10 +3729,83 @@ class ISAA_Host:
         except Exception as e:
             print_status(f"Error: {e}", "error")
 
+    def _move_stream_to_background(self, stream_gen, agent, query: str):
+        """Move a running stream to background, continuing to drain chunks silently."""
+        self._task_counter += 1
+        agent_name = self.active_agent_name
+        task_id = f"bg_{self._task_counter}_{agent_name}"
+        run_id = uuid.uuid4().hex[:8]
+        host_ref = self
+
+        async def bg_drain():
+            result_text = ""
+            try:
+                while True:
+                    try:
+                        chunk = await stream_gen.__anext__()
+                    except StopAsyncIteration:
+                        break
+                    if chunk.get("type") == "content":
+                        result_text += chunk.get("chunk", "")
+                    elif chunk.get("type") == "final_answer":
+                        result_text = chunk.get("answer", result_text)
+
+                if task_id in host_ref.background_tasks:
+                    host_ref.background_tasks[task_id].status = "completed"
+                return result_text
+            except asyncio.CancelledError:
+                try:
+                    await stream_gen.aclose()
+                except Exception:
+                    pass
+                if task_id in host_ref.background_tasks:
+                    host_ref.background_tasks[task_id].status = "cancelled"
+                raise
+            except Exception:
+                if task_id in host_ref.background_tasks:
+                    host_ref.background_tasks[task_id].status = "failed"
+                raise
+
+        async_task = asyncio.create_task(bg_drain())
+
+        # Auto-notify on completion
+        def _on_bg_done(fut):
+            running = [t for t in host_ref.background_tasks.values() if t.status == "running"]
+            try:
+                result = fut.result()
+                result_preview = (result[:80] + "..") if len(result) > 82 else result
+                c_print(HTML(
+                    f"\n<style fg='{PTColors.ZEN_GREEN}'>✓ {task_id} complete</style>"
+                    f"  <style fg='{PTColors.ZEN_DIM}'>{esc(result_preview)}</style>\n"
+                ))
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        async_task.add_done_callback(_on_bg_done)
+
+        self.background_tasks[task_id] = BackgroundTask(
+            task_id=task_id,
+            run_id=run_id,
+            agent_name=agent_name,
+            query=query[:100],
+            task=async_task,
+        )
+        c_print(HTML(
+            f"<style fg='{PTColors.ZEN_DIM}'>  ▾ moved to background: {task_id}  "
+            f"(/task status to view)</style>"
+        ))
+        return task_id
+
     async def _handle_agent_interaction(self, user_input: str):
         """Handle regular agent interaction with ZEN Mode streaming."""
+        if self.active_coder and not user_input.startswith("@"):
+            await self._cmd_coder(["task", user_input])
+            return
+        elif self.active_coder and user_input.startswith("@"):
+            user_input = user_input[1:]
         try:
             agent = await self.isaa_tools.get_agent(self.active_agent_name)
+            engine = agent._get_execution_engine()
 
             # Audio setup
             wants_audio = user_input.strip().endswith("#audio")
@@ -3203,31 +3815,41 @@ class ISAA_Host:
             if should_speak and hasattr(self, 'audio_player'):
                 await self.audio_player.start()
 
-            # Zen Renderer Init
-            renderer = ZenRenderer()
-            print_status(f"Zen Mode: Processing with {self.active_agent_name}...", "progress")
+            # ZenRendererV2 with live state access
+            renderer = ZenRendererV2(engine)
+            self._active_renderer = renderer
             c_print()  # Spacing
 
             # State for final processing
             final_response_text = ""
             current_sentence = ""
             stop_for_speech = False
+            moved_to_bg = False
+
+            # Manual stream iteration so we can hand off the generator on minimize
+            stream = agent.a_stream(
+                query=user_input,
+                session_id=self.active_session_id,
+            )
 
             try:
-                # Use enriched stream
-                async for chunk in agent.a_stream(
-                    query=user_input,
-                    session_id=self.active_session_id,
-                ):
-                    # 1. Render Chunk using Zen Renderer
+                while True:
+                    try:
+                        chunk = await stream.__anext__()
+                    except StopAsyncIteration:
+                        break
+
+                    # F6 minimize check: hand off stream to background task
+                    if renderer.minimized:
+                        moved_to_bg = True
+                        break
+
                     renderer.process_chunk(chunk)
 
-                    # 2. Accumulate text for audio/json-vis
                     if chunk.get("type") == "content":
                         text = chunk.get("chunk", "")
                         final_response_text += text
 
-                        # Audio Logic (Foreground only)
                         if should_speak and hasattr(self, 'audio_player'):
                             if '```' in text: stop_for_speech = not stop_for_speech
                             if not stop_for_speech:
@@ -3241,16 +3863,78 @@ class ISAA_Host:
                                     current_sentence = ""
 
             except KeyboardInterrupt:
-                c_print(HTML("\n<style fg='ansiyellow'>⚠️ Execution cancelled by user (Ctrl+C).</style>"))
+                # --- Safe Ctrl+C: stop agent, don't exit program ---
+                try:
+                    await stream.aclose()
+                except Exception:
+                    pass
+
+                c_print()
+                c_print(HTML(f"\n<style fg='ansiyellow'>⚠ Interrupted</style>"))
+
                 for exec_info in agent.list_executions():
                     if exec_info.get("session_id") == self.active_session_id:
                         await agent.cancel_execution(exec_info.get("run_id"))
-                print_status("Stopped.", "success")
+
+                renderer.print_live_summary()
+                c_print()
+                c_print(HTML(
+                    f"<style fg='{PTColors.ZEN_DIM}'>"
+                    f"  [c] continue (add context)  "
+                    f"  [Enter/q] back to prompt"
+                    f"</style>"
+                ))
+
+                try:
+                    with patch_stdout():
+                        choice = await self.prompt_session.prompt_async(
+                            HTML(f"<style fg='{PTColors.ZEN_CYAN}'>▸ </style>")
+                        )
+                    choice = choice.strip().lower()
+
+                    if choice.startswith("c"):
+                        extra = choice[1:].strip() if len(choice) > 1 else ""
+                        if not extra:
+                            c_print(HTML(f"<style fg='{PTColors.ZEN_DIM}'>  (optional context, Enter to skip)</style>"))
+                            with patch_stdout():
+                                extra = await self.prompt_session.prompt_async(
+                                    HTML(f"<style fg='{PTColors.ZEN_CYAN}'>+ </style>")
+                                )
+                            extra = extra.strip()
+
+                        continue_query = user_input
+                        if extra:
+                            continue_query = f"{user_input}\n\n[User added after interruption]: {extra}"
+                        await self._handle_agent_interaction(continue_query)
+                        return
+
+                    elif choice and choice != "q":
+                        await self._handle_agent_interaction(choice)
+                        return
+
+                except (KeyboardInterrupt, EOFError):
+                    pass
+
+                self._active_renderer = None
                 return
 
-            c_print()  # Final newline
+            # --- Post-stream handling ---
+            if moved_to_bg:
+                # Hand off the still-open stream generator to a background task
+                self._move_stream_to_background(stream, agent, user_input)
+                self._active_renderer = None
+                return
 
-            # 3. Post-Processing: Visualize JSON
+            # Normal completion - close the generator
+            try:
+                await stream.aclose()
+            except Exception:
+                pass
+
+            self._active_renderer = None
+            c_print()
+
+            # Post-Processing: Visualize JSON
             try:
                 async def _():
                     try:
@@ -3305,14 +3989,25 @@ class ISAA_Host:
         """Main CLI execution loop."""
         # Print banner
         c_print()
-        print_box_header(f"{CLI_NAME} v{VERSION}", "🤖")
-        print_box_content("Multi-Agent Host System", "info")
-        print_box_content("Type /help for commands, F4 for voice input", "")
-        print_box_footer()
+        c_print(HTML(f"<style fg='{PTColors.ZEN_CYAN}'>{CLI_NAME}</style> <style fg='{PTColors.ZEN_DIM}'>v{VERSION}</style>"))
+        c_print(HTML(f"<style fg='{PTColors.ZEN_DIM}'>/help  F4 voice  F5 status  F6 minimize  Ctrl+C safe stop</style>"))
         c_print()
 
         # Initialize Self Agent
         await self._init_self_agent()
+
+        # Show active features
+        all_feats = self.feature_manager.list_features()
+        if all_feats:
+            active = [f for f in all_feats if self.feature_manager.is_enabled(f)]
+            inactive = [f for f in all_feats if not self.feature_manager.is_enabled(f)]
+            parts = []
+            for f in active:
+                parts.append(f"<style fg='{PTColors.ZEN_GREEN}'>{f}</style>")
+            for f in inactive:
+                parts.append(f"<style fg='{PTColors.ZEN_DIM}'>{f}</style>")
+            c_print(HTML(f"<style fg='{PTColors.ZEN_DIM}'>features:</style> {' '.join(parts)}"))
+            c_print()
 
         # Print status
         await self._print_status_dashboard()

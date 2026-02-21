@@ -1272,6 +1272,194 @@ def get_search_only_tools() -> list[dict]:
     return toolkit.get_tools(categories=[ToolCategory.SEARCH])
 
 
+import multiprocessing as mp
+import asyncio
+import traceback
+import threading
+from typing import Any
+from dataclasses import dataclass, field
+
+# ================================================================
+# Protocol: Messages zwischen Proxy ↔ Worker
+# ================================================================
+
+MSG_READY = "ready"
+MSG_CALL = "call"
+MSG_RESULT = "result"
+MSG_SHUTDOWN = "shutdown"
+MSG_STOPPED = "stopped"
+
+# ================================================================
+# Worker – eigener Prozess, eigener Main-Thread
+# ================================================================
+
+def _playwright_worker_main(
+    cmd_queue: mp.Queue,
+    result_queue: mp.Queue,
+    config: dict,
+):
+    """Entry point für den Browser-Prozess."""
+
+    async def _async_main():
+        # ── Setup ──
+        if config.get("full"):
+            from toolboxv2.mods.isaa.extras.web_helper.tooklit import WebAgentToolkit
+            toolkit = WebAgentToolkit(
+                headless=config.get("headless", True),
+                auto_start=True,
+                keep_open=True,
+            )
+            await toolkit.start_browser()
+            tool_map = {t.name: t.func for t in toolkit._tools}
+            tool_meta = [t.to_dict() for t in toolkit._tools]
+            # Entferne nicht-serialisierbare Felder
+            for meta in tool_meta:
+                meta.pop("tool_func", None)
+        else:
+            from toolboxv2.mods.isaa.extras.web_helper.web_agent import (
+                minimal_web_agent_integration,
+            )
+            raw = await minimal_web_agent_integration()
+            tool_map = {t["name"]: t["func"] for t in raw}
+            tool_meta = [{k: v for k, v in t.items() if k != "func"} for t in raw]
+            toolkit = None
+
+        # ── Ready Signal mit Metadaten ──
+        result_queue.put({
+            "type": MSG_READY,
+            "tools": tool_meta,
+        })
+
+        # ── Command Loop ──
+        while True:
+            try:
+                cmd = cmd_queue.get(timeout=0.5)
+            except Exception:
+                continue
+
+            if cmd.get("type") == MSG_SHUTDOWN:
+                break
+
+            req_id = cmd["id"]
+            tool_name = cmd["tool"]
+            kwargs = cmd.get("kwargs", {})
+
+            try:
+                result = await tool_map[tool_name](**kwargs)
+                result_queue.put({
+                    "type": MSG_RESULT,
+                    "id": req_id,
+                    "data": result,
+                })
+            except Exception as e:
+                result_queue.put({
+                    "type": MSG_RESULT,
+                    "id": req_id,
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                })
+
+        # ── Cleanup ──
+        if toolkit:
+            await toolkit.stop_browser()
+        result_queue.put({"type": MSG_STOPPED})
+
+    asyncio.run(_async_main())
+
+
+# ================================================================
+# Proxy – läuft im Agent-Prozess, beliebiger Thread
+# ================================================================
+
+class PlaywrightProxy:
+    """Thread-safe proxy zum Browser-Worker-Prozess."""
+
+    def __init__(self, full: bool = True, headless: bool = True):
+        self._config = {"full": full, "headless": headless}
+        self._cmd_q = mp.Queue()
+        self._result_q = mp.Queue()
+        self._proc: mp.Process | None = None
+        self._tool_meta: list[dict] = []
+        self._lock = threading.Lock()
+        self._counter = 0
+
+    # ── Lifecycle ──
+
+    def start(self, timeout: float = 30):
+        self._proc = mp.Process(
+            target=_playwright_worker_main,
+            args=(self._cmd_q, self._result_q, self._config),
+            daemon=True,
+            name="playwright-worker",
+        )
+        self._proc.start()
+
+        msg = self._result_q.get(timeout=timeout)
+        if msg.get("type") != MSG_READY:
+            raise RuntimeError(f"Worker startup failed: {msg}")
+
+        self._tool_meta = msg["tools"]
+
+    def shutdown(self):
+        if not self._proc or not self._proc.is_alive():
+            return
+        self._cmd_q.put({"type": MSG_SHUTDOWN})
+        try:
+            self._result_q.get(timeout=15)
+        except Exception:
+            pass
+        self._proc.join(timeout=5)
+        if self._proc.is_alive():
+            self._proc.kill()
+        self._proc = None
+
+    # ── Tool Calls ──
+
+    def call_tool(self, name: str, **kwargs) -> Any:
+        """Thread-safe synchroner Tool-Call."""
+        with self._lock:
+            self._counter += 1
+            req_id = self._counter
+
+        self._cmd_q.put({
+            "type": MSG_CALL,
+            "id": req_id,
+            "tool": name,
+            "kwargs": kwargs,
+        })
+
+        resp = self._result_q.get(timeout=120)
+
+        if resp.get("error"):
+            raise RuntimeError(
+                f"Tool '{name}' failed: {resp['error']}\n{resp.get('traceback', '')}"
+            )
+        return resp["data"]
+
+    # ── Tool Definitions für Agent ──
+
+    def build_agent_tools(self) -> list[dict]:
+        """Baut vollständige Tool-Dicts mit sync callables."""
+        tools = []
+        for meta in self._tool_meta:
+            name = meta["name"]
+
+            def _make_fn(tool_name: str):
+                def fn(**kw):
+                    return self.call_tool(tool_name, **kw)
+                fn.__name__ = tool_name
+                fn.__doc__ = meta.get("description", "")
+                return fn
+
+            tool_dict = {
+                **meta,
+                "tool_func": _make_fn(name),
+            }
+            tools.append(tool_dict)
+
+        return tools
+
+
 
 
 # ============================================================================

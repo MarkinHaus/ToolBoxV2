@@ -2,7 +2,7 @@
 import asyncio
 import copy
 from enum import Enum
-from typing import Any, Union
+from typing import Any, Union, Callable
 from pydantic import BaseModel
 
 
@@ -45,6 +45,26 @@ class IS:
 
 class ChainBase:
     """Abstract base class for all chain types, providing common operators."""
+    _printer: Callable = staticmethod(print)
+    _verbose: bool = True
+
+    @classmethod
+    def set_printer(cls, printer: Callable = print, verbose: bool = True):
+        """Setzt den Printer für ALLE Chain-Klassen.
+
+        Args:
+            printer: Callable(str) — z.B. print, logger.info, custom func
+            verbose: Ob Step-für-Step Ausgabe erfolgt
+        """
+        for klass in (ChainBase, Chain, ParallelChain, ConditionalChain, ErrorHandlingChain, Function):
+            klass._printer = staticmethod(printer)
+            klass._verbose = verbose
+
+    def _log(self, msg: str):
+        """Interner Log-Aufruf — nur wenn verbose aktiv."""
+        if self._verbose:
+            self._printer(msg)
+
 
     def __rshift__(self, other: Any) -> 'Chain':
         """Implements the >> operator to chain tasks sequentially."""
@@ -74,20 +94,8 @@ class ChainBase:
         # Allows creating a conditional chain directly
         return ConditionalChain(None, self, other)
 
-    def set_progress_callback(self, progress_tracker: 'ProgressTracker'):
-        """Recursively sets the progress callback for all tasks in the chain."""
-        tasks_to_process = []
-        if hasattr(self, 'tasks'): tasks_to_process.extend(self.tasks)  # Chain
-        if hasattr(self, 'agents'): tasks_to_process.extend(self.agents)  # ParallelChain
-        if hasattr(self, 'true_branch'): tasks_to_process.append(self.true_branch)  # ConditionalChain
-        if hasattr(self, 'false_branch') and self.false_branch: tasks_to_process.append(
-            self.false_branch)  # ConditionalChain
-        if hasattr(self, 'primary'): tasks_to_process.append(self.primary)  # ErrorHandlingChain
-        if hasattr(self, 'fallback'): tasks_to_process.append(self.fallback)  # ErrorHandlingChain
+        # Überschreibbarer Printer — default: print to terminal
 
-        for task in tasks_to_process:
-            if hasattr(task, 'set_progress_callback'):
-                task.set_progress_callback(progress_tracker)
 
     def __call__(self, *args, **kwargs):
         """Allows the chain to be called like a function, returning an awaitable runner."""
@@ -137,6 +145,7 @@ class ParallelChain(ChainBase):
 
     async def a_run(self, query: Any, **kwargs):
         """Runs all agents/chains in parallel."""
+        self._log(f"[Parallel] {len(self.agents)} branches starten")
         tasks = [agent.a_run(query, **kwargs) for agent in self.agents]
         results = await asyncio.gather(*tasks)
         return self._combine_results(results)
@@ -182,7 +191,7 @@ class ErrorHandlingChain(ChainBase):
         try:
             return await self.primary.a_run(query, **kwargs)
         except Exception as e:
-            print(f"Primary chain failed with error: {e}. Running fallback.")
+            self._log(f"[ErrorHandling] Primary failed: {e} → Fallback")
             return await self.fallback.a_run(query, **kwargs)
 
 
@@ -191,7 +200,6 @@ class Chain(ChainBase):
 
     def __init__(self, agent: 'FlowAgent' = None):
         self.tasks: list[Any] = [agent] if agent else []
-        self.progress_tracker: None = None
 
     @classmethod
     def _create_chain(cls, components: list[Any]) -> 'Chain':
@@ -229,14 +237,14 @@ class Chain(ChainBase):
             if hasattr(task, 'a_run') and hasattr(task, 'a_format_class'):
                 next_task = self.tasks[i + 1] if (i + 1) < len(self.tasks) else None
                 task.active_session = kwargs.get("session_id", "default")
-                # Dynamische Entscheidung: a_format_class oder a_run aufrufen?
+                agent_name = getattr(getattr(task, 'amd', None), 'name', type(task).__name__)
                 if isinstance(next_task, CF):
-                    # Nächste Aufgabe ist Formatierung, also a_format_class aufrufen
+                    self._log(f"[Chain] Step {i}: {agent_name} → format_class({next_task.format_class.__name__})")
                     current_data = await task.a_format_class(
                         next_task.format_class, str(current_data), **kwargs
                     )
                 else:
-                    # Standardausführung
+                    self._log(f"[Chain] Step {i}: {agent_name} → a_run")
                     current_data = await task.a_run(str(current_data), **kwargs)
                 task.active_session = None
 
@@ -257,8 +265,7 @@ class Chain(ChainBase):
                             ]
                             current_data = await asyncio.gather(*parallel_tasks)
 
-                            print("Parallel results:", type(current_data))
-                            print("Parallel results:", len(current_data))
+                            self._log(f"[Chain] Step {i}: Parallel → {len(current_data)} results")
                             # Überspringe die nächste Aufgabe, da sie bereits parallel ausgeführt wurde
                             i += 1
                         else:
@@ -270,9 +277,11 @@ class Chain(ChainBase):
                     pass
 
             elif isinstance(task, ParallelChain | ConditionalChain | ErrorHandlingChain):
+                self._log(f"[Chain] Step {i}: {type(task).__name__}")
                 current_data = await task.a_run(current_data, **kwargs)
 
             elif callable(task) and not isinstance(task, (ChainBase, type)):
+                self._log(f"[Chain] Step {i}: fn:{getattr(task, '__name__', 'lambda')}")
                 # Check if the function is async, then await it
                 if asyncio.iscoroutinefunction(task):
                     current_data = await task(current_data)
@@ -280,6 +289,7 @@ class Chain(ChainBase):
                 else:
                     current_data = task(current_data)
             elif hasattr(task, 'a_run'):
+                self._log(f"[Chain] Step {i}: {type(task).__name__}.a_run")
                 current_data = await task.a_run(current_data, **kwargs)
             elif isinstance(task, IS):
                 # IS needs to be paired with >> to form a ConditionalChain
@@ -535,13 +545,14 @@ def print_graph(self):
             color = override_color or COLORS.get(comp_type, COLORS['Unknown'])
             return f"{color}{display}{RESET}"
 
+    _p = self._printer
+
     def print_section_header(title, details=None):
-        """Print formatted section header."""
-        print(f"\n{BOLD}{'=' * 60}{RESET}")
-        print(f"{BOLD}🔗 {title}{RESET}")
+        _p(f"\n{BOLD}{'=' * 60}{RESET}")
+        _p(f"{BOLD}🔗 {title}{RESET}")
         if details:
-            print(f"{DIM}{details}{RESET}")
-        print(f"{BOLD}{'=' * 60}{RESET}")
+            _p(f"{DIM}{details}{RESET}")
+        _p(f"{BOLD}{'=' * 60}{RESET}")
 
     def render_task_flow(tasks, indent="", show_parallel_creation=True):
         """Render tasks with parallel creation detection."""
@@ -746,7 +757,3 @@ Chain.print_graph = print_graph
 ParallelChain.print_graph = print_graph
 ConditionalChain.print_graph = print_graph
 ErrorHandlingChain.print_graph = print_graph
-
-ParallelChain.print_graph = Chain.set_progress_callback
-ConditionalChain.print_graph = Chain.set_progress_callback
-ErrorHandlingChain.print_graph = Chain.set_progress_callback

@@ -1486,11 +1486,11 @@ class LiteLLMRateLimitHandler:
                 # Execute request
                 response = await litellm_module.acompletion(**kwargs)
 
-                if os.getenv("AGENT_VERBOSE", "f").lower() == "true":
-                    if not kwargs.get("stream", False):
-                        print_prompt(kwargs["messages"]+[{"role": "assistant", "content": response.choices[0].message.content}])
-                    else:
-                        print_prompt(kwargs["messages"] + [{"role": "assistant", "content": "streaming"}])
+                # if os.getenv("AGENT_VERBOSE", "f").lower() == "true":
+                #     if not kwargs.get("stream", False):
+                #         print_prompt(kwargs["messages"]+[{"role": "assistant", "content": response.choices[0].message.content}])
+                #     else:
+                #         print_prompt(kwargs["messages"] + [{"role": "assistant", "content": "streaming"}])
 
                 # Report success
                 if self.enable_rate_limiting:

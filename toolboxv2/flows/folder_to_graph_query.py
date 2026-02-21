@@ -12,7 +12,7 @@ def path_getter(path):
     return [doc.page_content for doc in docs], [doc.metadata if doc.metadata else {'doc-from': path} for doc in docs],
 
 async def run(app:App, __, mem_name=None, path=None):
-    from toolboxv2.mods.isaa.base.AgentUtils import AISemanticMemory
+    from toolboxv2.mods.isaa.base.ai_semantic_memory import AISemanticMemory
     from toolboxv2.mods.isaa.base.KnowledgeBase import KnowledgeBase
     from toolboxv2.mods.isaa.isaa_modi import get_multiline_input
 

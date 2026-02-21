@@ -35,8 +35,8 @@ class ChatSession:
         else:
             raise ValueError(f"Invalid role value {message['role']}")
         await self.mem.add_data(self.space_name, message['content'],
-                          [{'role': role,
-                            'timestamp': datetime.now().isoformat(), **kwargs}], direct=direct)
+                          {'role': role,
+                            'timestamp': datetime.now().isoformat(), **kwargs}, direct=direct)
         if self.max_length and len(self.history) > self.max_length:
             self.history.pop(0)
 

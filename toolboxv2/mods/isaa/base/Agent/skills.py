@@ -15,12 +15,15 @@ Author: FlowAgent V3
 """
 
 import json
+import logging
 import uuid
 import numpy as np
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Any, Dict, Tuple, Callable
+
+_log = logging.getLogger("isaa.skills")
 
 """
 Anthropic Skill Format - Import/Export für SkillsManager
@@ -110,18 +113,18 @@ class SkillIOAnthropicFormat:
         try:
             content = skill_md_path.read_text(encoding='utf-8')
         except Exception as e:
-            print(f"[SkillIO] Failed to read {skill_md_path}: {e}")
+            _log.debug(f"[SkillIO] Failed to read {skill_md_path}: {e}")
             return None, None
 
         # Check for YAML frontmatter
         if not content.startswith('---'):
-            print(f"[SkillIO] No YAML frontmatter in {skill_md_path}")
+            _log.debug(f"[SkillIO] No YAML frontmatter in {skill_md_path}")
             return None, None
 
         # Extract frontmatter
         match = re.match(r'^---\n(.*?)\n---\n?(.*)', content, re.DOTALL)
         if not match:
-            print(f"[SkillIO] Invalid frontmatter format in {skill_md_path}")
+            _log.debug(f"[SkillIO] Invalid frontmatter format in {skill_md_path}")
             return None, None
 
         frontmatter_text = match.group(1)
@@ -131,15 +134,15 @@ class SkillIOAnthropicFormat:
         try:
             fm = yaml.safe_load(frontmatter_text)
             if not isinstance(fm, dict):
-                print(f"[SkillIO] Frontmatter must be a dict in {skill_md_path}")
+                _log.debug(f"[SkillIO] Frontmatter must be a dict in {skill_md_path}")
                 return None, None
         except yaml.YAMLError as e:
-            print(f"[SkillIO] YAML parse error in {skill_md_path}: {e}")
+            _log.debug(f"[SkillIO] YAML parse error in {skill_md_path}: {e}")
             return None, None
 
         # Validate required fields
         if 'name' not in fm or 'description' not in fm:
-            print(f"[SkillIO] Missing name or description in {skill_md_path}")
+            _log.debug(f"[SkillIO] Missing name or description in {skill_md_path}")
             return None, None
 
         metadata = AnthropicSkillMetadata(
@@ -178,7 +181,7 @@ class SkillIOAnthropicFormat:
         results = {}
 
         if not skills_dir.exists():
-            print(f"[SkillIO] Directory not found: {skills_dir}")
+            _log.debug(f"[SkillIO] Directory not found: {skills_dir}")
             return results
 
         # Iterate through subdirectories
@@ -194,7 +197,7 @@ class SkillIOAnthropicFormat:
             results[item.name] = success
 
         imported = sum(1 for v in results.values() if v)
-        print(f"[SkillIO] Imported {imported}/{len(results)} skills from {skills_dir}")
+        _log.debug(f"[SkillIO] Imported {imported}/{len(results)} skills from {skills_dir}")
 
         return results
 
@@ -219,7 +222,7 @@ class SkillIOAnthropicFormat:
         skill_md_path = skill_dir / "SKILL.md"
 
         if not skill_md_path.exists():
-            print(f"[SkillIO] SKILL.md not found in {skill_dir}")
+            _log.debug(f"[SkillIO] SKILL.md not found in {skill_dir}")
             return False
 
         # Parse SKILL.md
@@ -232,7 +235,7 @@ class SkillIOAnthropicFormat:
 
         # Check if exists
         if skill_id in self.manager.skills and not overwrite:
-            print(f"[SkillIO] Skill already exists: {skill_id} (use overwrite=True)")
+            _log.debug(f"[SkillIO] Skill already exists: {skill_id} (use overwrite=True)")
             return False
 
         # Extract triggers from description (simple heuristic)
@@ -276,7 +279,7 @@ class SkillIOAnthropicFormat:
         self.manager.skills[skill_id] = skill
         self.manager._skill_embeddings_dirty = True
 
-        print(f"[SkillIO] Imported skill: {metadata.name} → {skill_id}")
+        _log.debug(f"[SkillIO] Imported skill: {metadata.name} → {skill_id}")
         return True
 
     def import_from_skill_file(
@@ -299,7 +302,7 @@ class SkillIOAnthropicFormat:
         skill_file = Path(skill_file)
 
         if not skill_file.exists():
-            print(f"[SkillIO] File not found: {skill_file}")
+            _log.debug(f"[SkillIO] File not found: {skill_file}")
             return False
 
         if extract_dir is None:
@@ -316,17 +319,17 @@ class SkillIOAnthropicFormat:
             skill_dirs = [d for d in extract_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists()]
 
             if not skill_dirs:
-                print(f"[SkillIO] No valid skill found in {skill_file}")
+                _log.debug(f"[SkillIO] No valid skill found in {skill_file}")
                 return False
 
             # Import first skill found
             return self.import_single_skill(skill_dirs[0], overwrite)
 
         except zipfile.BadZipFile:
-            print(f"[SkillIO] Invalid ZIP file: {skill_file}")
+            _log.debug(f"[SkillIO] Invalid ZIP file: {skill_file}")
             return False
         except Exception as e:
-            print(f"[SkillIO] Error importing {skill_file}: {e}")
+            _log.debug(f"[SkillIO] Error importing {skill_file}: {e}")
             return False
 
     # =========================================================================
@@ -369,7 +372,7 @@ class SkillIOAnthropicFormat:
             results[skill.id] = success
 
         exported = sum(1 for v in results.values() if v)
-        print(f"[SkillIO] Exported {exported}/{len(results)} skills to {output_dir}")
+        _log.debug(f"[SkillIO] Exported {exported}/{len(results)} skills to {output_dir}")
 
         return results
 
@@ -408,11 +411,11 @@ class SkillIOAnthropicFormat:
                 if meta.get('has_assets'):
                     (skill_dir / "assets").mkdir(exist_ok=True)
 
-            print(f"[SkillIO] Exported: {skill.name} → {skill_dir}")
+            _log.debug(f"[SkillIO] Exported: {skill.name} → {skill_dir}")
             return True
 
         except Exception as e:
-            print(f"[SkillIO] Failed to export {skill.name}: {e}")
+            _log.debug(f"[SkillIO] Failed to export {skill.name}: {e}")
             return False
 
     def export_to_skill_file(
@@ -431,7 +434,7 @@ class SkillIOAnthropicFormat:
             Path to created .skill file or None
         """
         if skill_id not in self.manager.skills:
-            print(f"[SkillIO] Skill not found: {skill_id}")
+            _log.debug(f"[SkillIO] Skill not found: {skill_id}")
             return None
 
         skill = self.manager.skills[skill_id]
@@ -461,11 +464,11 @@ class SkillIOAnthropicFormat:
                         arcname = file_path.relative_to(temp_dir)
                         zf.write(file_path, arcname)
 
-            print(f"[SkillIO] Created: {output_path}")
+            _log.debug(f"[SkillIO] Created: {output_path}")
             return output_path
 
         except Exception as e:
-            print(f"[SkillIO] Failed to create .skill file: {e}")
+            _log.debug(f"[SkillIO] Failed to create .skill file: {e}")
             return None
         finally:
             # Cleanup temp
@@ -1197,8 +1200,131 @@ class SkillsManager:
                 tools_used=["think", "spawn_sub_agent", "wait_for", "vfs_read", "final_answer"],
                 tool_groups=["vfs"],
                 source="predefined"
+            ),
+            # === 1. THE ARCHITECT SOP (When to use what) ===
+            Skill(
+                id="master_orchestrator",
+                name="System Orchestration Protocol",
+                triggers=[
+                    "entwickle", "programmiere", "bau mir", "schreibe code",
+                    "refactor", "projekt", "architektur", "feature"
+                ],
+                instruction="""DU BIST DER TECH-LEAD, NICHT DER PROGRAMMIERER. Schreibe NIEMALS manuell Code mit vfs_write!
+        Befolge strikt diese Delegations-Hierarchie:
+
+        1. FÜR KOMPLEXEN CODE (Features, Refactoring, Bugfixes):
+           -> ZWINGEND den Coder verwenden!
+           -> Ablauf: analyze_codebase() -> refine_task() -> spawn_coder() -> observe() -> validate_worktree() -> accept()
+
+        2. FÜR WIEDERKEHRENDE AUTOMATISIERUNG (Scraping, Deployments, Reports):
+           -> ZWINGEND Chains verwenden!
+           -> Ablauf: list_auto_get_fitting() -> run_chain() oder create_validate_chain()
+
+        3. FÜR PARALLELE RECHERCHE ODER DATENVERARBEITUNG:
+           -> ZWINGEND Sub-Agents verwenden!
+           -> Ablauf: spawn_sub_agent() für jeden Teil -> wait_for()
+
+        4. FÜR LOKALE NOTIZEN & WISSEN:
+           -> memory_save() für dauerhafte Architektur-Fakten.
+           -> vfs_write() NUR für kleine Markdown-Pläne (z.B. /plan.md).
+
+        Denke als Architekt: Plane die Lösung, delegiere die Ausführung, validiere das Ergebnis.""",
+                tools_used=["think", "analyze_codebase", "refine_task", "spawn_coder", "memory_save",
+                            "list_auto_get_fitting"],
+                tool_groups=["coder", "automation", "memory"],
+                source="predefined"
+            ),
+
+            # === 2. CODER DELEGATION SOP ===
+            Skill(
+                id="coder_delegation_sop",
+                name="CoderAgent Delegation Workflow",
+                triggers=[
+                    "coder", "lass den coder", "delegiere code", "bugfix", "schreibe das script"
+                ],
+                instruction="""Workflow für Code-Generierung (Der Coder ist eine isolierte Umgebung):
+        1. KONTEXT SCHAFFEN: Nutze `analyze_codebase(root=".")`, um den Baum und TODOs zu sehen.
+        2. TASK BAUEN: Nutze `refine_task(task, context)`, um Risiken zu klären.
+        3. WISSEN TEILEN: Nutze `memory_recall()`, um relevante Architekturentscheidungen zu finden, hänge diese Infos an den Task an.
+        4. AUSFÜHREN: `spawn_coder(refined_task)`. Notiere dir die coder_id.
+        5. ÜBERWACHEN: Führe regelmäßig `observe()` aus! Wenn der Coder im 'status': 'done' ist, mache weiter.
+        6. QA & MERGE: Führe `validate_worktree(coder_id)` aus. Wenn 'passed': True, DANN `accept(coder_id)`. Wenn False, gib dem Coder Feedback via `interact()`.
+        7. WISSEN SPEICHERN: Nach erfolgreichem `accept` speichere Zusammenfassungen der neuen Komponenten in `memory_save()`.
+        NIEMALS Code blind mergen!""",
+                tools_used=["analyze_codebase", "refine_task", "spawn_coder", "observe", "validate_worktree", "accept",
+                            "memory_recall", "memory_save"],
+                tool_groups=["coder"],
+                source="predefined"
+            ),
+
+            Skill(
+                id="memory_intelligence_sop",
+                name="Deep Memory Utilization",
+                triggers=[
+                    "erinnere dich", "zusammenhang", "kontext", "verstehe nicht",
+                    "analysiere projekt", "wie funktioniert", "was wissen wir über"
+                ],
+                instruction="""Nutzung des Langzeitgedächtnisses:
+
+        1. EINFACHE SUCHE (`memory_recall`):
+           - Nutze dies ZUERST. Es ist schnell und kostengünstig.
+           - Gut für: Konkrete Fragen, Dateipfade, Tech-Stack Infos.
+
+        2. TIEFE ANALYSE (`memory_analyse`):
+           - Nutze dies, wenn `memory_recall` keine guten Ergebnisse liefert oder das Thema komplex ist.
+           - Der Memory-Actor führt selbstständig mehrere Schritte aus (Suche -> Graph-Traversal -> Summarization).
+           - Gut für: "Fasse das Projekt zusammen", "Wie interagieren Modul A und B?", "Gibt es widersprüchliche Infos?".
+
+        3. SPEICHERN (`memory_save`):
+           - Speichere nur 'Ewige Wahrheiten' und Architektur-Entscheidungen.
+           - Speichere KEINE temporären Chat-Inhalte (passiert automatisch).
+           - Nutze 'concepts' tags für bessere Auffindbarkeit.""",
+                tools_used=["memory_recall", "memory_analyse", "memory_save"],
+                tool_groups=["memory"],
+                source="predefined"
+            ),
+
+            # === 3. VFS USAGE SOP ===
+            Skill(
+                id="vfs_strict_usage",
+                name="Strict VFS Guidelines",
+                triggers=[
+                    "lese datei", "schreibe datei", "vfs", "ordner", "filesystem"
+                ],
+                instruction="""VFS (Virtual File System) Richtlinien für den FlowAgent:
+        1. READ-ONLY FÜR CODE: Du darfst Code-Dateien via `vfs_read` oder `vfs_grep` LESEN, um sie zu verstehen.
+        2. NO CODE WRITING: Benutze `vfs_write`, `vfs_edit` oder `vfs_append` NIEMALS für Quellcode (.py, .js, .html etc.). Überlasse das dem CoderAgent!
+        3. ERLAUBTE WRITES: Du darfst VFS-Write-Tools NUR nutzen für:
+           - Markdown-Dateien für Pläne (/plan.md)
+           - Readme-Aktualisierungen
+           - Temporäre Log-Dateien
+           - JSON-Konfigurationen (nach Bestätigung)
+        4. ISOLIERUNG: Respektiere die Ordner von Sub-Agenten (/sub/...). Manipuliere deren Output nicht, bis sie fertig sind.""",
+                tools_used=["vfs_read", "vfs_grep", "vfs_list"],
+                tool_groups=["vfs"],
+                source="predefined"
+            ),
+
+            # === 4. CHAINS USAGE SOP ===
+            Skill(
+                id="chain_automation_sop",
+                name="Workflow Automation via Chains",
+                triggers=[
+                    "prozess", "ablauf", "kette", "chain", "standard operating procedure"
+                ],
+                instruction="""Richtlinien für Chains (SOPs):
+        1. DISCOVERY: Bevor du eine Standard-Aufgabe manuell in 10 LLM-Loops löst, nutze `list_auto_get_fitting("beschreibung")`, um zu sehen, ob eine Chain existiert.
+        2. EXECUTION: Wenn eine 'VALID' Chain existiert, nutze `run_chain(chain_id, input_data)`.
+        3. CREATION: Wenn ein komplexer Prozess immer wieder gebraucht wird (z.B. "Webseite scrapen, bereinigen, in DB speichern"):
+           - Erstelle EINE deterministische Chain via `create_validate_chain(dsl=...)`.
+           - Halte dich an das Format: `tool:step1 >> @agent >> CF(Model) - "key"`.
+        4. SICHERHEIT: Neue Chains sind UNSAFE. Du musst sie beim ersten `run_chain` mit `accept=True` validieren.""",
+                tools_used=["list_auto_get_fitting", "run_chain", "create_validate_chain"],
+                tool_groups=["automation"],
+                source="predefined"
             )
         ]
+
 
         for skill in predefined:
             self.skills[skill.id] = skill
@@ -1301,7 +1427,7 @@ class SkillsManager:
             return results[:max_results]
 
         except Exception as e:
-            print(f"[SkillsManager] Embedding match failed: {e}")
+            _log.debug(f"[SkillsManager] Embedding match failed: {e}")
             return []
 
     async def _ensure_skill_embeddings(self):
@@ -1331,7 +1457,7 @@ class SkillsManager:
             self._skill_embeddings_dirty = False
 
         except Exception as e:
-            print(f"[SkillsManager] Failed to create skill embeddings: {e}")
+            _log.debug(f"[SkillsManager] Failed to create skill embeddings: {e}")
 
     def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
         """Calculate cosine similarity between two vectors"""
@@ -1553,7 +1679,7 @@ class SkillsManager:
                 ))
                 self._skill_embeddings_dirty = True
 
-                print(f"[SkillsManager] Merged into existing skill: {similar_skill.name} "
+                _log.debug(f"[SkillsManager] Merged into existing skill: {similar_skill.name} "
                       f"(confidence: {similar_skill.confidence:.2f}, active: {similar_skill.is_active()})")
                 return similar_skill
 
@@ -1571,11 +1697,11 @@ class SkillsManager:
 
             self.skills[skill.id] = skill
             self._skill_embeddings_dirty = True
-            print(f"[SkillsManager] Learned new skill: {skill.name} (confidence: {skill.confidence})")
+            _log.debug(f"[SkillsManager] Learned new skill: {skill.name} (confidence: {skill.confidence})")
             return skill
 
         except Exception as e:
-            print(f"[SkillsManager] Failed to learn skill: {e}")
+            _log.debug(f"[SkillsManager] Failed to learn skill: {e}")
             import traceback
             traceback.print_exc()
 
@@ -1609,7 +1735,7 @@ class SkillsManager:
             return (name, triggers, '\n'.join(instruction_lines))
 
         except Exception as e:
-            print(f"[SkillsManager] Failed to parse skill response: {e}")
+            _log.debug(f"[SkillsManager] Failed to parse skill response: {e}")
             return None
 
     def record_skill_usage(self, skill_id: str, success: bool):
@@ -1696,7 +1822,7 @@ class SkillsManager:
             return True
 
         except Exception as e:
-            print(f"[SkillsManager] Failed to import skill: {e}")
+            _log.debug(f"[SkillsManager] Failed to import skill: {e}")
             return False
 
     def share_skill_with(

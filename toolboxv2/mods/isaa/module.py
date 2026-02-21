@@ -14,23 +14,17 @@ Author: FlowAgent V2
 import asyncio
 import copy
 import io
+import sys
 import tarfile
 import tempfile
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from collections.abc import Awaitable
 
 import requests
 from langchain_community.agent_toolkits.load_tools import load_tools
 from pydantic import BaseModel
-
-from toolboxv2.utils.extras.Style import print_prompt
-from toolboxv2.utils.system import FileCache
-from toolboxv2.utils.toolbox import stram_print
-
-import sys
 
 from toolboxv2 import (
     FileHandler,
@@ -41,9 +35,11 @@ from toolboxv2 import (
     get_app,
     get_logger,
 )
+from toolboxv2.mods.isaa.base.MemoryKnowledgeActor import MemoryKnowledgeActor
+from toolboxv2.utils.extras.Style import print_prompt
+from toolboxv2.utils.system import FileCache
+from toolboxv2.utils.toolbox import stram_print
 
-# FlowAgent imports
-from .base.Agent.flow_agent import FlowAgent
 from .base.Agent.builder import AgentConfig, FlowAgentBuilder
 
 # Chain imports - native support
@@ -51,11 +47,13 @@ from .base.Agent.chain import (
     Chain,
 )
 
+# FlowAgent imports
+from .base.Agent.flow_agent import FlowAgent
 from .base.AgentUtils import (
-    AISemanticMemory,
     ControllerManager,
     detect_shell,
 )
+from .base.ai_semantic_memory import AISemanticMemory
 
 # Optional dill import for tool serialization
 try:
@@ -76,27 +74,27 @@ except ImportError:
     cloudpickle = None
 
 PIPLINE = None
-Name = 'isaa'
+Name = "isaa"
 version = "0.3.0"  # Version bump for refactoring
 export = get_app("isaa.Export").tb
 pipeline_arr = [
-    'question-answering',
-    'summarization',
-    'text-classification',
-    'text-to-speech',
+    "question-answering",
+    "summarization",
+    "text-classification",
+    "text-to-speech",
 ]
 
 row_agent_builder_sto = {}
 
 
 def get_ip():
-    response = requests.get('https://api64.ipify.org?format=json').json()
+    response = requests.get("https://api64.ipify.org?format=json").json()
     return response["ip"]
 
 
 def get_location():
     ip_address = get_ip()
-    response = requests.get(f'https://ipapi.co/{ip_address}/json/').json()
+    response = requests.get(f"https://ipapi.co/{ip_address}/json/").json()
     location_data = f"city: {response.get('city')},region: {response.get('region')},country: {response.get('country_name')},"
     return location_data
 
@@ -105,13 +103,16 @@ def get_location():
 # TOOL SERIALIZATION HELPERS
 # =============================================================================
 
+
 class ToolSerializationError(Exception):
     """Raised when a tool cannot be serialized"""
+
     pass
 
 
 class ToolSerializationInfo(BaseModel):
     """Information about a tool's serialization status"""
+
     name: str
     serializable: bool
     error_message: str | None = None
@@ -129,7 +130,9 @@ def _get_serializer():
     return None
 
 
-def _serialize_tool(func: Callable, name: str) -> tuple[bytes | None, ToolSerializationInfo]:
+def _serialize_tool(
+    func: Callable, name: str
+) -> tuple[bytes | None, ToolSerializationInfo]:
     """
     Attempt to serialize a tool function.
 
@@ -141,13 +144,17 @@ def _serialize_tool(func: Callable, name: str) -> tuple[bytes | None, ToolSerial
     info = ToolSerializationInfo(
         name=name,
         serializable=False,
-        module_path=getattr(func, '__module__', None),
-        function_name=getattr(func, '__name__', name)
+        module_path=getattr(func, "__module__", None),
+        function_name=getattr(func, "__name__", name),
     )
 
     if serializer is None:
-        info.error_message = "No serializer available. Install 'dill' or 'cloudpickle': pip install dill"
-        info.source_hint = f"Recreate manually: from {info.module_path} import {info.function_name}"
+        info.error_message = (
+            "No serializer available. Install 'dill' or 'cloudpickle': pip install dill"
+        )
+        info.source_hint = (
+            f"Recreate manually: from {info.module_path} import {info.function_name}"
+        )
         return None, info
 
     try:
@@ -166,7 +173,9 @@ def _serialize_tool(func: Callable, name: str) -> tuple[bytes | None, ToolSerial
         elif info.module_path:
             info.source_hint = f"Try: from {info.module_path} import {info.function_name}"
         else:
-            info.source_hint = f"Recreate the tool '{name}' manually after loading the agent."
+            info.source_hint = (
+                f"Recreate the tool '{name}' manually after loading the agent."
+            )
 
         return None, info
 
@@ -194,8 +203,10 @@ def _deserialize_tool(data: bytes, name: str) -> tuple[Callable | None, str | No
 # AGENT EXPORT/IMPORT CLASSES
 # =============================================================================
 
+
 class AgentExportManifest(BaseModel):
     """Manifest file for exported agent archive"""
+
     version: str = "1.0"
     export_date: str
     agent_name: str
@@ -211,6 +222,7 @@ class AgentExportManifest(BaseModel):
 
 class AgentNetworkManifest(BaseModel):
     """Manifest for multi-agent network export"""
+
     version: str = "1.0"
     export_date: str
     agents: list[str]
@@ -222,8 +234,8 @@ class AgentNetworkManifest(BaseModel):
 # MAIN TOOLS CLASS
 # =============================================================================
 
-class Tools(MainTool):
 
+class Tools(MainTool):
     def __init__(self, app=None):
         self.run_callback = None
 
@@ -235,31 +247,34 @@ class Tools(MainTool):
         self.Name = "isaa"
         self.color = "VIOLET2"
         self.config = {
-            'controller-init': False,
-            'agents-name-list': [],
+            "controller-init": False,
+            "agents-name-list": [],
             "FASTMODEL": os.getenv("FASTMODEL", "ollama/llama3.1"),
             "AUDIOMODEL": os.getenv("AUDIOMODEL", "groq/whisper-large-v3-turbo"),
             "BLITZMODEL": os.getenv("BLITZMODEL", "ollama/llama3.1"),
             "COMPLEXMODEL": os.getenv("COMPLEXMODEL", "ollama/llama3.1"),
             "SUMMARYMODEL": os.getenv("SUMMARYMODEL", "ollama/llama3.1"),
             "IMAGEMODEL": os.getenv("IMAGEMODEL", "ollama/llama3.1"),
-            "DEFAULTMODELEMBEDDING": os.getenv("DEFAULTMODELEMBEDDING", "gemini/text-embedding-004"),
+            "DEFAULTMODELEMBEDDING": os.getenv(
+                "DEFAULTMODELEMBEDDING", "gemini/text-embedding-004"
+            ),
         }
         self.per_data = {}
         self.agent_data: dict[str, dict] = {}
-        self.keys = {
-            "KEY": "key~~~~~~~",
-            "Config": "config~~~~"
-        }
+        self.keys = {"KEY": "key~~~~~~~", "Config": "config~~~~"}
         self.initstate = {}
 
         extra_path = ""
         if self.toolID:
             extra_path = f"/{self.toolID}"
 
-        self.observation_term_mem_file = f"{app.data_dir}/Memory{extra_path}/observationMemory/"
-        self.config['controller_file'] = f"{app.data_dir}{extra_path}/controller.json"
-        self.mas_text_summaries_dict = FileCache(folder=f"{app.data_dir}/Memory{extra_path}/summaries/")
+        self.observation_term_mem_file = (
+            f"{app.data_dir}/Memory{extra_path}/observationMemory/"
+        )
+        self.config["controller_file"] = f"{app.data_dir}{extra_path}/controller.json"
+        self.mas_text_summaries_dict = FileCache(
+            folder=f"{app.data_dir}/Memory{extra_path}/summaries/"
+        )
 
         from .kernel.kernelin.run_unified_kernels import main as kernel_start
 
@@ -285,7 +300,7 @@ class Tools(MainTool):
             "import_agent_network": self.import_agent_network,
         }
 
-        self.working_directory = os.getenv('ISAA_WORKING_PATH', os.getcwd())
+        self.working_directory = os.getenv("ISAA_WORKING_PATH", os.getcwd())
         self.print_stream = stram_print
         self.global_stream_override = False
         self.global_verbose_override = False
@@ -299,10 +314,19 @@ class Tools(MainTool):
         self.default_setter = None
         self.initialized = False
 
-        self.file_handler = FileHandler(f"isaa{extra_path.replace('/', '-')}.config", app.id if app else __name__)
-        MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
-                          name=self.name, logs=None, color=self.color, on_exit=self.on_exit)
-
+        self.file_handler = FileHandler(
+            f"isaa{extra_path.replace('/', '-')}.config", app.id if app else __name__
+        )
+        MainTool.__init__(
+            self,
+            load=self.on_start,
+            v=self.version,
+            tool=self.tools,
+            name=self.name,
+            logs=None,
+            color=self.color,
+            on_exit=self.on_exit,
+        )
 
         from toolboxv2.mods.isaa.extras.web_helper.web_search import web_search
 
@@ -316,7 +340,9 @@ class Tools(MainTool):
 
         # top 5 dorking keys site, filetype, inurl, intitle, exclude
 
-        async def advanced_web_search_tool(query: str, dork_kwargs: dict[str, str]=None) -> str:
+        async def advanced_web_search_tool(
+            query: str, dork_kwargs: dict[str, str] = None
+        ) -> str:
             """
             🔎 Web-Suche mit Google Dorks Support.
 
@@ -331,11 +357,11 @@ class Tools(MainTool):
             results = await quick_search(query, **dork_kwargs)
             return str(results)
 
-        self.web_search = advanced_web_search_tool # web_search_tool
+        self.web_search = advanced_web_search_tool  # web_search_tool
         self.shell_tool_function = shell_tool_function
 
         self.print(f"Start {self.spec}.isaa")
-        with Spinner(message="Starting module", symbols='c'):
+        with Spinner(message="Starting module", symbols="c"):
             self.file_handler.load_file_handler()
             config_fh = self.file_handler.get_file_handler(self.keys["Config"])
             if config_fh is not None:
@@ -343,7 +369,9 @@ class Tools(MainTool):
                     try:
                         config_fh = json.loads(config_fh)
                     except json.JSONDecodeError:
-                        self.print(f"Warning: Could not parse config from file handler: {config_fh[:100]}...")
+                        self.print(
+                            f"Warning: Could not parse config from file handler: {config_fh[:100]}..."
+                        )
                         config_fh = {}
 
                 if isinstance(config_fh, dict):
@@ -353,9 +381,10 @@ class Tools(MainTool):
                             loaded_config[key] = value
                     self.config = loaded_config
 
-            if self.spec == 'app':
+            if self.spec == "app":
                 self.load_keys_from_env()
                 from .extras.agent_ui import initialize
+
                 initialize(self.app)
 
                 self.app.run_any(
@@ -366,8 +395,12 @@ class Tools(MainTool):
                     path="/api/Minu/render?view=agent_ui&ssr=true",
                 )
 
-            Path(f"{get_app('isaa-initIsaa').data_dir}/Agents/").mkdir(parents=True, exist_ok=True)
-            Path(f"{get_app('isaa-initIsaa').data_dir}/Memory/").mkdir(parents=True, exist_ok=True)
+            Path(f"{get_app('isaa-initIsaa').data_dir}/Agents/").mkdir(
+                parents=True, exist_ok=True
+            )
+            Path(f"{get_app('isaa-initIsaa').data_dir}/Memory/").mkdir(
+                parents=True, exist_ok=True
+            )
 
     # =========================================================================
     # CHAIN SUPPORT - Helper Methods
@@ -400,7 +433,7 @@ class Tools(MainTool):
             comp = agents_or_components[0]
             if isinstance(comp, Chain):
                 return comp
-            return Chain(comp) if hasattr(comp, 'a_run') else Chain._create_chain([comp])
+            return Chain(comp) if hasattr(comp, "a_run") else Chain._create_chain([comp])
 
         # Build chain from components
         chain = Chain()
@@ -408,11 +441,7 @@ class Tools(MainTool):
         return chain
 
     async def run_chain(
-        self,
-        chain: Chain | list,
-        query: str,
-        session_id: str = "default",
-        **kwargs
+        self, chain: Chain | list, query: str, session_id: str = "default", **kwargs
     ) -> Any:
         """
         Execute a chain with the given query.
@@ -478,7 +507,7 @@ class Tools(MainTool):
         path: str,
         include_checkpoint: bool = True,
         include_tools: bool = True,
-        notes: str | None = None
+        notes: str | None = None,
     ) -> tuple[bool, AgentExportManifest | str]:
         """
         Export an agent to a .tar.gz archive.
@@ -505,7 +534,7 @@ class Tools(MainTool):
             return False, "Agent name is required"
         if path is None:
             path = f"{agent_name}.tar.gz"
-        if not path.endswith('.tar.gz'):
+        if not path.endswith(".tar.gz"):
             path = f"{path}.tar.gz"
 
         try:
@@ -518,7 +547,9 @@ class Tools(MainTool):
                 if agent_name in row_agent_builder_sto:
                     builder_config = row_agent_builder_sto[agent_name].config.model_dump()
                 else:
-                    self.print(f"No builder config found for {agent_name}. Creating default. to save")
+                    self.print(
+                        f"No builder config found for {agent_name}. Creating default. to save"
+                    )
                     builder_config = AgentConfig(name=agent_name).model_dump()
 
             # Prepare tool serialization
@@ -526,17 +557,17 @@ class Tools(MainTool):
             non_serializable_tools = []
             tools_data = {}
 
-            if include_tools and hasattr(agent, 'tool_manager'):
+            if include_tools and hasattr(agent, "tool_manager"):
                 for tool_name, tool_info in agent.tool_manager.tools.items():
-                    func = tool_info.get('function') or tool_info.get('func')
+                    func = tool_info.get("function") or tool_info.get("func")
                     if func:
                         serialized, info = _serialize_tool(func, tool_name)
                         if serialized:
                             serializable_tools.append(tool_name)
                             tools_data[tool_name] = {
-                                'data': serialized,
-                                'description': tool_info.get('description', ''),
-                                'category': tool_info.get('category', []),
+                                "data": serialized,
+                                "description": tool_info.get("description", ""),
+                                "category": tool_info.get("category", []),
                             }
                         else:
                             non_serializable_tools.append(info)
@@ -547,64 +578,70 @@ class Tools(MainTool):
                 try:
                     checkpoint_path = await agent.checkpoint_manager.save_current()
                     if checkpoint_path and Path(checkpoint_path).exists():
-                        with open(checkpoint_path, 'r') as f:
+                        with open(checkpoint_path, "r") as f:
                             checkpoint_data = json.load(f)
                 except Exception as e:
                     self.print(f"Warning: Could not save checkpoint: {e}")
 
             # Get bindings
             bindings = []
-            if hasattr(agent, 'bind_manager'):
+            if hasattr(agent, "bind_manager"):
                 bindings = list(agent.bind_manager.bindings.keys())
 
             # Create manifest
             manifest = AgentExportManifest(
                 export_date=datetime.now().isoformat(),
                 agent_name=agent_name,
-                agent_version=builder_config.get('version', '1.0.0'),
+                agent_version=builder_config.get("version", "1.0.0"),
                 has_checkpoint=checkpoint_data is not None,
                 has_tools=len(tools_data) > 0,
                 tool_count=len(serializable_tools) + len(non_serializable_tools),
                 serializable_tools=serializable_tools,
                 non_serializable_tools=non_serializable_tools,
                 bindings=bindings,
-                notes=notes
+                notes=notes,
             )
 
             # Create tar.gz archive
             Path(path).parent.mkdir(parents=True, exist_ok=True)
 
-            with tarfile.open(path, 'w:gz') as tar:
+            with tarfile.open(path, "w:gz") as tar:
                 # Add manifest
-                manifest_bytes = manifest.model_dump_json(indent=2).encode('utf-8')
-                self._add_bytes_to_tar(tar, 'manifest.json', manifest_bytes)
+                manifest_bytes = manifest.model_dump_json(indent=2).encode("utf-8")
+                self._add_bytes_to_tar(tar, "manifest.json", manifest_bytes)
 
                 # Add config
-                config_bytes = json.dumps(builder_config, indent=2).encode('utf-8')
-                self._add_bytes_to_tar(tar, 'config.json', config_bytes)
+                config_bytes = json.dumps(builder_config, indent=2).encode("utf-8")
+                self._add_bytes_to_tar(tar, "config.json", config_bytes)
 
                 # Add checkpoint
                 if checkpoint_data:
-                    checkpoint_bytes = json.dumps(checkpoint_data, indent=2).encode('utf-8')
-                    self._add_bytes_to_tar(tar, 'checkpoint.json', checkpoint_bytes)
+                    checkpoint_bytes = json.dumps(checkpoint_data, indent=2).encode(
+                        "utf-8"
+                    )
+                    self._add_bytes_to_tar(tar, "checkpoint.json", checkpoint_bytes)
 
                 # Add serialized tools
                 if tools_data:
                     serializer = _get_serializer()
                     if serializer:
                         tools_bytes = serializer.dumps(tools_data)
-                        self._add_bytes_to_tar(tar, 'tools.dill', tools_bytes)
+                        self._add_bytes_to_tar(tar, "tools.dill", tools_bytes)
 
                 # Add tools manifest (human readable)
                 tools_manifest = {
-                    'serializable': serializable_tools,
-                    'non_serializable': [t.model_dump() for t in non_serializable_tools]
+                    "serializable": serializable_tools,
+                    "non_serializable": [t.model_dump() for t in non_serializable_tools],
                 }
-                tools_manifest_bytes = json.dumps(tools_manifest, indent=2).encode('utf-8')
-                self._add_bytes_to_tar(tar, 'tools_manifest.json', tools_manifest_bytes)
+                tools_manifest_bytes = json.dumps(tools_manifest, indent=2).encode(
+                    "utf-8"
+                )
+                self._add_bytes_to_tar(tar, "tools_manifest.json", tools_manifest_bytes)
 
             self.print(f"Agent '{agent_name}' exported to {path}")
-            self.print(f"  - Tools: {len(serializable_tools)} serialized, {len(non_serializable_tools)} manual")
+            self.print(
+                f"  - Tools: {len(serializable_tools)} serialized, {len(non_serializable_tools)} manual"
+            )
 
             return True, manifest
 
@@ -618,7 +655,7 @@ class Tools(MainTool):
         path: str,
         override_name: str | None = None,
         load_tools: bool = True,
-        register: bool = True
+        register: bool = True,
     ) -> tuple[FlowAgent | None, AgentExportManifest | None, list[str]]:
         """
         Import an agent from a .tar.gz archive.
@@ -643,22 +680,22 @@ class Tools(MainTool):
             return None, None, [f"Archive not found: {path}"]
 
         try:
-            with tarfile.open(path, 'r:gz') as tar:
+            with tarfile.open(path, "r:gz") as tar:
                 # Read manifest
-                manifest_data = self._read_from_tar(tar, 'manifest.json')
+                manifest_data = self._read_from_tar(tar, "manifest.json")
                 if not manifest_data:
                     return None, None, ["Invalid archive: missing manifest.json"]
                 manifest = AgentExportManifest(**json.loads(manifest_data))
 
                 # Read config
-                config_data = self._read_from_tar(tar, 'config.json')
+                config_data = self._read_from_tar(tar, "config.json")
                 if not config_data:
                     return None, None, ["Invalid archive: missing config.json"]
                 config_dict = json.loads(config_data)
 
                 # Override name if requested
                 agent_name = override_name or manifest.agent_name
-                config_dict['name'] = agent_name
+                config_dict["name"] = agent_name
 
                 # Create builder and agent
                 config = AgentConfig(**config_dict)
@@ -667,33 +704,44 @@ class Tools(MainTool):
 
                 # Load tools
                 if load_tools and manifest.has_tools:
-                    tools_bytes = self._read_from_tar(tar, 'tools.dill', binary=True)
+                    tools_bytes = self._read_from_tar(tar, "tools.dill", binary=True)
                     if tools_bytes:
                         serializer = _get_serializer()
                         if serializer:
                             try:
                                 tools_data = serializer.loads(tools_bytes)
                                 for tool_name, tool_info in tools_data.items():
-                                    func_data = tool_info.get('data')
+                                    func_data = tool_info.get("data")
                                     if func_data:
-                                        func, error = _deserialize_tool(func_data, tool_name)
+                                        func, error = _deserialize_tool(
+                                            func_data, tool_name
+                                        )
                                         if func:
                                             builder.add_tool(
                                                 func,
                                                 name=tool_name,
-                                                description=tool_info.get('description', ''),
-                                                category=tool_info.get('category')
+                                                description=tool_info.get(
+                                                    "description", ""
+                                                ),
+                                                category=tool_info.get("category"),
                                             )
                                         else:
-                                            warnings.append(f"Tool '{tool_name}': {error}")
+                                            warnings.append(
+                                                f"Tool '{tool_name}': {error}"
+                                            )
                             except Exception as e:
                                 warnings.append(f"Failed to load tools: {str(e)}")
                         else:
-                            warnings.append("No serializer available for tools. Install 'dill'.")
+                            warnings.append(
+                                "No serializer available for tools. Install 'dill'."
+                            )
 
                 # Report non-serializable tools
                 for tool_info in manifest.non_serializable_tools:
-                    hint = tool_info.source_hint or f"Recreate tool '{tool_info.name}' manually"
+                    hint = (
+                        tool_info.source_hint
+                        or f"Recreate tool '{tool_info.name}' manually"
+                    )
                     warnings.append(f"Tool '{tool_info.name}' not loaded: {hint}")
 
                 # Build agent
@@ -701,20 +749,22 @@ class Tools(MainTool):
 
                 # Load checkpoint
                 if manifest.has_checkpoint:
-                    checkpoint_data = self._read_from_tar(tar, 'checkpoint.json')
+                    checkpoint_data = self._read_from_tar(tar, "checkpoint.json")
                     if checkpoint_data:
                         try:
                             checkpoint = json.loads(checkpoint_data)
                             # Apply checkpoint to agent
-                            if hasattr(agent, 'checkpoint_manager'):
-                                await agent.checkpoint_manager.restore_from_dict(checkpoint)
+                            if hasattr(agent, "checkpoint_manager"):
+                                await agent.checkpoint_manager.restore_from_dict(
+                                    checkpoint
+                                )
                         except Exception as e:
                             warnings.append(f"Failed to restore checkpoint: {str(e)}")
 
                 # Register agent
                 if register:
                     self.agent_data[agent_name] = config_dict
-                    self.config[f'agent-instance-{agent_name}'] = agent
+                    self.config[f"agent-instance-{agent_name}"] = agent
                     if agent_name not in self.config.get("agents-name-list", []):
                         self.config.setdefault("agents-name-list", []).append(agent_name)
 
@@ -735,7 +785,7 @@ class Tools(MainTool):
         path: str,
         entry_agent: str | None = None,
         include_checkpoints: bool = True,
-        include_tools: bool = True
+        include_tools: bool = True,
     ) -> tuple[bool, str]:
         """
         Export multiple connected agents as a network archive.
@@ -757,7 +807,7 @@ class Tools(MainTool):
         if path is None and agent_names is not None:
             path = f"network_{agent_names[0]}.tar.gz"
 
-        if not path.endswith('.tar.gz'):
+        if not path.endswith(".tar.gz"):
             path = f"{path}.tar.gz"
 
         try:
@@ -765,8 +815,10 @@ class Tools(MainTool):
             bindings = {}
             for name in agent_names:
                 agent = await self.get_agent(name)
-                if hasattr(agent, 'bind_manager'):
-                    bound_names = [n for n in agent.bind_manager.bindings.keys() if n in agent_names]
+                if hasattr(agent, "bind_manager"):
+                    bound_names = [
+                        n for n in agent.bind_manager.bindings.keys() if n in agent_names
+                    ]
                     if bound_names:
                         bindings[name] = bound_names
 
@@ -775,7 +827,7 @@ class Tools(MainTool):
                 export_date=datetime.now().isoformat(),
                 agents=agent_names,
                 bindings=bindings,
-                entry_agent=entry_agent or (agent_names[0] if agent_names else None)
+                entry_agent=entry_agent or (agent_names[0] if agent_names else None),
             )
 
             # Create temporary directory for individual exports
@@ -787,7 +839,7 @@ class Tools(MainTool):
                         name,
                         str(agent_path),
                         include_checkpoint=include_checkpoints,
-                        include_tools=include_tools
+                        include_tools=include_tools,
                     )
                     if not success:
                         return False, f"Failed to export agent '{name}': {result}"
@@ -795,10 +847,12 @@ class Tools(MainTool):
                 # Create network archive
                 Path(path).parent.mkdir(parents=True, exist_ok=True)
 
-                with tarfile.open(path, 'w:gz') as tar:
+                with tarfile.open(path, "w:gz") as tar:
                     # Add network manifest
-                    manifest_bytes = network_manifest.model_dump_json(indent=2).encode('utf-8')
-                    self._add_bytes_to_tar(tar, 'network_manifest.json', manifest_bytes)
+                    manifest_bytes = network_manifest.model_dump_json(indent=2).encode(
+                        "utf-8"
+                    )
+                    self._add_bytes_to_tar(tar, "network_manifest.json", manifest_bytes)
 
                     # Add individual agent archives
                     for name in agent_names:
@@ -815,10 +869,7 @@ class Tools(MainTool):
             return False, f"Failed to export network: {str(e)}"
 
     async def import_agent_network(
-        self,
-        path: str,
-        name_prefix: str = "",
-        restore_bindings: bool = True
+        self, path: str, name_prefix: str = "", restore_bindings: bool = True
     ) -> tuple[dict[str, FlowAgent], list[str]]:
         """
         Import a network of agents from an archive.
@@ -843,11 +894,11 @@ class Tools(MainTool):
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 # Extract network archive
-                with tarfile.open(path, 'r:gz') as tar:
+                with tarfile.open(path, "r:gz") as tar:
                     tar.extractall(tmpdir)
 
                 # Read network manifest
-                manifest_path = Path(tmpdir) / 'network_manifest.json'
+                manifest_path = Path(tmpdir) / "network_manifest.json"
                 if not manifest_path.exists():
                     return {}, ["Invalid network archive: missing network_manifest.json"]
 
@@ -866,7 +917,7 @@ class Tools(MainTool):
                         str(agent_archive),
                         override_name=new_name,
                         load_tools=True,
-                        register=True
+                        register=True,
                     )
 
                     if agent:
@@ -876,18 +927,26 @@ class Tools(MainTool):
                 # Restore bindings
                 if restore_bindings:
                     for source_name, bound_names in network_manifest.bindings.items():
-                        source_full = f"{name_prefix}{source_name}" if name_prefix else source_name
+                        source_full = (
+                            f"{name_prefix}{source_name}" if name_prefix else source_name
+                        )
                         if source_full not in agents:
                             continue
 
                         source_agent = agents[source_full]
                         for target_name in bound_names:
-                            target_full = f"{name_prefix}{target_name}" if name_prefix else target_name
+                            target_full = (
+                                f"{name_prefix}{target_name}"
+                                if name_prefix
+                                else target_name
+                            )
                             if target_full in agents:
                                 try:
                                     await source_agent.bind(agents[target_full])
                                 except Exception as e:
-                                    all_warnings.append(f"Failed to bind {source_full} -> {target_full}: {e}")
+                                    all_warnings.append(
+                                        f"Failed to bind {source_full} -> {target_full}: {e}"
+                                    )
 
                 self.print(f"Agent network loaded from {path}")
                 self.print(f"  - Agents: {len(agents)}/{len(network_manifest.agents)}")
@@ -904,14 +963,16 @@ class Tools(MainTool):
         info.mtime = time.time()
         tar.addfile(info, io.BytesIO(data))
 
-    def _read_from_tar(self, tar: tarfile.TarFile, name: str, binary: bool = False) -> bytes | str | None:
+    def _read_from_tar(
+        self, tar: tarfile.TarFile, name: str, binary: bool = False
+    ) -> bytes | str | None:
         """Helper to read a file from tar archive"""
         try:
             member = tar.getmember(name)
             f = tar.extractfile(member)
             if f:
                 data = f.read()
-                return data if binary else data.decode('utf-8')
+                return data if binary else data.decode("utf-8")
         except KeyError:
             pass
         return None
@@ -926,11 +987,11 @@ class Tools(MainTool):
             "Agents": self.serialize_all(),
         }
 
-    async def init_from_augment(self, augment, agent_name: str = 'self'):
+    async def init_from_augment(self, augment, agent_name: str = "self"):
         """Initialize from augmented data (legacy compatibility)"""
         if isinstance(agent_name, str):
             pass
-        elif hasattr(agent_name, 'config'):
+        elif hasattr(agent_name, "config"):
             agent_name = agent_name.config.name
         else:
             raise ValueError(f"Invalid agent_name type: {type(agent_name)}")
@@ -938,29 +999,37 @@ class Tools(MainTool):
         a_keys = augment.keys()
 
         if "Agents" in a_keys:
-            agents_configs_dict = augment['Agents']
+            agents_configs_dict = augment["Agents"]
             self.deserialize_all(agents_configs_dict)
             self.print("Agent configurations loaded.")
 
         if "tools" in a_keys:
-            self.print("Tool configurations noted - will be applied during agent building")
+            self.print(
+                "Tool configurations noted - will be applied during agent building"
+            )
 
-    async def add_langchain_tools_to_builder(self, tools_config: dict, agent_builder: FlowAgentBuilder):
+    async def add_langchain_tools_to_builder(
+        self, tools_config: dict, agent_builder: FlowAgentBuilder
+    ):
         """Initialize tools from config (legacy compatibility)"""
-        lc_tools_names = tools_config.get('lagChinTools', [])
+        lc_tools_names = tools_config.get("lagChinTools", [])
         all_lc_tool_names = list(set(lc_tools_names))
 
         for tool_name in all_lc_tool_names:
             try:
                 loaded_tools = load_tools([tool_name], llm=None)
                 for lc_tool_instance in loaded_tools:
-                    if hasattr(lc_tool_instance, 'run') and callable(lc_tool_instance.run):
+                    if hasattr(lc_tool_instance, "run") and callable(
+                        lc_tool_instance.run
+                    ):
                         agent_builder.add_tool(
                             lc_tool_instance.run,
                             name=lc_tool_instance.name,
-                            description=lc_tool_instance.description
+                            description=lc_tool_instance.description,
                         )
-                        self.print(f"Added LangChain tool '{lc_tool_instance.name}' to builder.")
+                        self.print(
+                            f"Added LangChain tool '{lc_tool_instance.name}' to builder."
+                        )
             except Exception as e:
                 self.print(f"Failed to load/add LangChain tool '{tool_name}': {e}")
 
@@ -972,13 +1041,13 @@ class Tools(MainTool):
         """Load agent configurations"""
         self.agent_data.update(data)
         for agent_name in data:
-            self.config.pop(f'agent-instance-{agent_name}', None)
+            self.config.pop(f"agent-instance-{agent_name}", None)
 
     # =========================================================================
     # CORE METHODS (Preserved from original)
     # =========================================================================
 
-    async def init_isaa(self, name='self', build=False, **kwargs):
+    async def init_isaa(self, name="self", build=False, **kwargs):
         if self.initialized:
             self.print(f"Already initialized. Getting agent/builder: {name}")
             return self.get_agent_builder(name) if build else await self.get_agent(name)
@@ -987,8 +1056,8 @@ class Tools(MainTool):
         sys.setrecursionlimit(1500)
         self.load_keys_from_env()
 
-        with Spinner(message="Building Controller", symbols='c'):
-            self.controller.init(self.config['controller_file'])
+        with Spinner(message="Building Controller", symbols="c"):
+            self.controller.init(self.config["controller_file"])
         self.config["controller-init"] = True
 
         return self.get_agent_builder(name) if build else await self.get_agent(name)
@@ -1005,40 +1074,42 @@ class Tools(MainTool):
         for key in self.config:
             if key.startswith("DEFAULTMODEL"):
                 self.config[key] = os.getenv(key, self.config[key])
-        self.config['VAULTS'] = os.getenv("VAULTS")
+        self.config["VAULTS"] = os.getenv("VAULTS")
 
     async def on_exit(self):
         tasks = []
         for agent_name, agent_instance in self.config.items():
-            if agent_name.startswith('agent-instance-') and agent_instance:
+            if agent_name.startswith("agent-instance-") and agent_instance:
                 if isinstance(agent_instance, FlowAgent):
-                     tasks.append(agent_instance.close())
+                    tasks.append(agent_instance.close())
 
         threading.Thread(target=self.save_to_mem_sync, daemon=True).start()
         await asyncio.gather(*tasks)
         if self.config.get("controller-init"):
-            self.controller.save(self.config['controller_file'])
+            self.controller.save(self.config["controller_file"])
         cleanup_sessions()
         clean_config = {}
         for key, value in self.config.items():
-            if key.startswith('agent-instance-'):
+            if key.startswith("agent-instance-"):
                 continue
-            if key.startswith('LLM-model-'):
+            if key.startswith("LLM-model-"):
                 continue
             clean_config[key] = value
 
-        self.file_handler.add_to_save_file_handler(self.keys["Config"], json.dumps(clean_config))
+        self.file_handler.add_to_save_file_handler(
+            self.keys["Config"], json.dumps(clean_config)
+        )
         self.file_handler.save_file_handler()
 
     def save_to_mem_sync(self):
         memory_instance = self.get_memory()
-        if hasattr(memory_instance, 'save_all_memories'):
+        if hasattr(memory_instance, "save_all_memories"):
             memory_instance.save_all_memories(f"{get_app().data_dir}/Memory/")
         self.print("Memory saving process initiated")
 
     def load_to_mem_sync(self):
         memory_instance = self.get_memory()
-        if hasattr(memory_instance, 'load_all_memories'):
+        if hasattr(memory_instance, "load_all_memories"):
             memory_instance.load_all_memories(f"{get_app().data_dir}/Memory/")
         self.print("Memory loading process initiated")
 
@@ -1047,9 +1118,9 @@ class Tools(MainTool):
         name="self",
         extra_tools=None,
         add_base_tools=True,
-        with_dangerous_shell=False
+        with_dangerous_shell=False,
     ) -> FlowAgentBuilder:
-        if name == 'None':
+        if name == "None":
             name = "self"
 
         if extra_tools is None:
@@ -1059,15 +1130,19 @@ class Tools(MainTool):
 
         config = AgentConfig(
             name=name,
-            fast_llm_model=self.config.get(f'{name.upper()}MODEL', self.config['FASTMODEL']),
-            complex_llm_model=self.config.get(f'{name.upper()}MODEL', self.config['COMPLEXMODEL']),
+            fast_llm_model=self.config.get(
+                f"{name.upper()}MODEL", self.config["FASTMODEL"]
+            ),
+            complex_llm_model=self.config.get(
+                f"{name.upper()}MODEL", self.config["COMPLEXMODEL"]
+            ),
             system_message="You are a production-ready autonomous agent.",
             temperature=0.7,
             max_tokens_output=2048,
             max_tokens_input=32768,
             use_fast_response=True,
             max_parallel_tasks=3,
-            verbose_logging=False
+            verbose_logging=False,
         )
 
         builder = FlowAgentBuilder(config=config)
@@ -1090,90 +1165,142 @@ class Tools(MainTool):
         if self.default_setter:
             builder = self.default_setter(builder, name)
 
-        async def unified_memory_tool(
-            query: str,
-            scope: str = "global"
-        ) -> str:
+        async def memory_recall(query: str, search_type: str = "auto") -> str:
             """
-            Search the AI's long-term memory and current conversation context.
+            Ruft persistentes Wissen, Architektur-Dokus oder Projekt-Kontext ab.
 
             Args:
-                query: The detailed search question.
-                scope: 'global' (searches everything including general knowledge),
-                       'session' (searches only current conversation history),
-                       or specify a specific memory category name.
+                query: Wonach gesucht wird (z.B. "Wie funktioniert das Auth-System?")
+                search_type: "auto" (Vektor+BM25), "concept" (Sucht nach Konzept-Schlagwort) oder "relations" (Graph-Verbindungen für eine Entity)
             """
             mem_instance = self.get_memory()
+            # MKA initialisieren (nutzt den default space des Agenten)
+            mka = MemoryKnowledgeActor(memory=mem_instance, space_name=name)
 
-            # Determine which memories to search
-            targets = None
-            if scope == "session":
-                # Only search the chat history space
-                agent = await self.get_agent(name)
-                session = agent.active_session or agent.session_manager.get_or_create(agent.active_execution_id or "default")
-                targets = [session.space_name]
-            elif scope == "global":
-                # Search everything (session + knowledge bases)
-                targets = None
+            if search_type == "concept":
+                return await mka.search_by_concept(query, k=5)
+            elif search_type == "relations":
+                return await mka.get_related_entities(query, depth=2)
             else:
-                # Try to search specific category, fallback to global if not found
-                targets = [scope]
+                return await mka.search(query, k=4, min_similarity=0.4)
 
-            # Configuration for the search "mode" is now internal logic
-            # to reduce agent cognitive load
-            search_params = {
-                "k": 4,
-                "min_similarity": 0.45,  # Stricter to reduce noise
-                "max_sentences": 6,
-                "cross_ref_depth": 1
-            }
-
-            return await mem_instance.query(
-                query=query,
-                memory_names=targets,
-                query_params=search_params,
-                to_str=True
-            )
-
-        async def save_knowledge_tool(
-            info: str,
-            category: str = "general"
-        ) -> str:
+        async def memory_save(content: str, concepts: list[str] = None, entity_name: str = None) -> str:
             """
-            Save IMPORTANT facts, rules, or user preferences to long-term memory.
-            Do NOT save conversation logs here (they are saved automatically).
+            Speichert WICHTIGE Architektur-Entscheidungen, Regeln oder Zusammenfassungen dauerhaft.
 
             Args:
-                info: The fact or data to save.
-                category: A short name to categorize this info (e.g., 'user_bio', 'project_specs').
+                content: Der Text/Fakt, der gespeichert werden soll.
+                concepts: Liste von Schlagwörtern (z.B. ["auth", "database", "api"]).
+                entity_name: Optional. Wenn es eine Code-Komponente ist, benenne sie hier (z.B. "AuthService"), um den Graphen aufzubauen.
             """
             mem_instance = self.get_memory()
-            # We map 'category' to memory context_name
-            result = await mem_instance.add_data(category, str(info), direct=True)
-            return f"Information saved to category '{category}'." if result else "Error saving."
+            mka = MemoryKnowledgeActor(memory=mem_instance, space_name=name)
+
+            # Punkt hinzufügen
+            res = await mka.add_data_point(text=content, content_type="fact", concepts=concepts)
+
+            # Wenn es eine Entity ist, direkt in den Graphen einhängen
+            if entity_name:
+                await mka.add_entity(entity_id=entity_name.lower(), entity_type="component", name=entity_name)
+                res += f"\nEntity '{entity_name}' zum Architektur-Graphen hinzugefügt."
+
+            return res
+
+        async def memory_list_spaces() -> str:
+            """
+            Listet alle verfügbaren Memory-Spaces (Wissensbereiche) auf.
+            Nutze dies, um zu sehen, welche Kategorien oder Projekte bereits im Gedächtnis existieren.
+            """
+            mem_instance = self.get_memory()
+            spaces = list(mem_instance.memories.keys())
+            if not spaces:
+                return "Keine Memory-Spaces gefunden (Gedächtnis ist leer)."
+            return "Verfügbare Memory-Spaces:\n" + "\n".join([f"- {s}" for s in sorted(spaces)])
+
+        # --- UPDATE: memory_analyse mit target_space Parameter ---
+        async def memory_analyse(topic: str, depth: int = 5, target_space: str = None) -> str:
+            """
+            Startet eine tiefe, autonome Analyse im Langzeitgedächtnis zu einem Thema.
+
+            Args:
+                topic: Das Thema oder die Frage, die analysiert werden soll.
+                depth: Maximale Anzahl der Analyseschritte (Standard: 5).
+                target_space: Optional. Name des spezifischen Memory-Spaces (siehe memory_list_spaces).
+                              Wenn leer, wird der eigene Agent-Space genutzt.
+            """
+            mem_instance = self.get_memory()
+
+            # Wähle den Space: Entweder explizit angegeben oder der Standard-Space des Agenten
+            space_to_use = target_space if target_space else name
+
+            # Prüfen ob Space existiert, um Fehler zu vermeiden
+            if space_to_use not in mem_instance.memories:
+                # Fallback auf Default oder Fehler, falls explizit gewünscht
+                if target_space:
+                    return f"Fehler: Space '{target_space}' nicht gefunden. Verfügbar: {list(mem_instance.memories.keys())}"
+                # Falls Default-Space noch nicht existiert, wird er vom MKA erstellt, das ist OK.
+
+            # MKA initialisieren
+            mka = MemoryKnowledgeActor(memory=mem_instance, space_name=space_to_use)
+
+            # Startet den autonomen Loop
+            history = await mka.start_analysis_loop(user_task=topic, max_iterations=depth, agent_name="self")
+
+            final_result = None
+            steps_taken = []
+
+            for msg in history:
+                if msg.get("role") == "tool":
+                    content = msg.get("content", {})
+                    if isinstance(content, dict):
+                        if content.get("tool") == "final_analysis":
+                            final_result = content.get("result")
+                        elif "tool" in content:
+                            steps_taken.append(content["tool"])
+
+            if final_result:
+                return f"Analyse in Space '{space_to_use}' erfolgreich ({len(steps_taken)} Schritte):\n{final_result}"
+            else:
+                return f"Analyse in Space '{space_to_use}' ohne eindeutiges Ergebnis beendet."
 
         if add_base_tools:
-            # Only add these two. Remove 'recall' and 'memorySearch'.
-            builder.add_tool(unified_memory_tool, "search_memory", "Search knowledge base and chat history.")
-            builder.add_tool(save_knowledge_tool, "save_memory", "Save permanent knowledge.")
-            builder.add_tool(self.web_search, "searchWeb", "Search the web for information")
+            builder.add_tool(memory_recall, "memory_recall", "Wissen, Architektur und Kontext abrufen (Suchen).",
+                             category=["memory", "read"])
+
+            builder.add_tool(memory_save, "memory_save", "Wichtige Fakten und Architektur-Details dauerhaft speichern.",
+                             category=["memory", "write"])
+
+            builder.add_tool(memory_analyse, "memory_analyse", "Tiefe Analyse von Zusammenhängen im Memory (Verbindet Fakten). Optional in spezifischem Space.", category=["memory", "read", "deep"])
+
+            builder.add_tool(memory_list_spaces, "memory_list_spaces",
+                             "Listet alle verfügbaren Wissens-Kategorien (Spaces) auf.",
+                             category=["memory", "read", "meta"])
+            builder.add_tool(
+                self.web_search, "searchWeb", "Search the web for information"
+            )
 
             if with_dangerous_shell:
-                builder.add_tool(self.shell_tool_function, "shell", f"Run shell command in {detect_shell()}")
+                builder.add_tool(
+                    self.shell_tool_function,
+                    "shell",
+                    f"Run shell command in {detect_shell()}",
+                )
 
         builder.with_budget_manager(max_cost=100.0)
-        builder.save_config(str(agent_config_path), format='json')
+        builder.save_config(str(agent_config_path), format="json")
         return builder
 
     async def register_agent(self, agent_builder: FlowAgentBuilder):
         agent_name = agent_builder.config.name
 
-        if f'agent-instance-{agent_name}' in self.config:
-            self.print(f"Agent '{agent_name}' instance already exists. Overwriting config and rebuilding on next get.")
-            self.config.pop(f'agent-instance-{agent_name}', None)
+        if f"agent-instance-{agent_name}" in self.config:
+            self.print(
+                f"Agent '{agent_name}' instance already exists. Overwriting config and rebuilding on next get."
+            )
+            self.config.pop(f"agent-instance-{agent_name}", None)
 
         config_path = Path(f"{get_app().data_dir}/Agents/{agent_name}/agent.json")
-        agent_builder.save_config(str(config_path), format='json')
+        agent_builder.save_config(str(config_path), format="json")
         self.print(f"Saved FlowAgentBuilder config for '{agent_name}' to {config_path}")
 
         self.agent_data[agent_name] = agent_builder.config.model_dump()
@@ -1183,18 +1310,24 @@ class Tools(MainTool):
                 self.config["agents-name-list"] = []
             self.config["agents-name-list"].append(agent_name)
 
-        self.print(f"FlowAgent '{agent_name}' configuration registered. Will be built on first use.")
+        self.print(
+            f"FlowAgent '{agent_name}' configuration registered. Will be built on first use."
+        )
         row_agent_builder_sto[agent_name] = agent_builder
 
-    async def get_agent(self, agent_name="Normal", model_override: str | None = None) -> FlowAgent:
+    async def get_agent(
+        self, agent_name="Normal", model_override: str | None = None
+    ) -> FlowAgent:
         if "agents-name-list" not in self.config:
             self.config["agents-name-list"] = []
 
-        instance_key = f'agent-instance-{agent_name}'
+        instance_key = f"agent-instance-{agent_name}"
         if instance_key in self.config:
             agent_instance = self.config[instance_key]
             if model_override and agent_instance.amd.fast_llm_model != model_override:
-                self.print(f"Model override for {agent_name}: {model_override}. Rebuilding.")
+                self.print(
+                    f"Model override for {agent_name}: {model_override}. Rebuilding."
+                )
                 self.config.pop(instance_key, None)
             else:
                 self.print(f"Returning existing FlowAgent instance: {agent_name}")
@@ -1212,7 +1345,9 @@ class Tools(MainTool):
                 config = AgentConfig(**self.agent_data[agent_name])
                 builder_to_use = FlowAgentBuilder(config=config)
             except Exception as e:
-                self.print(f"Error loading config for {agent_name}: {e}. Falling back to default.")
+                self.print(
+                    f"Error loading config for {agent_name}: {e}. Falling back to default."
+                )
 
         if builder_to_use is None:
             self.print(f"get builder for FlowAgent: {agent_name}.")
@@ -1227,7 +1362,8 @@ class Tools(MainTool):
             builder_to_use.with_name(agent_name)
 
         self.print(
-            f"Building FlowAgent: {agent_name} with models {builder_to_use.config.fast_llm_model} - {builder_to_use.config.complex_llm_model}")
+            f"Building FlowAgent: {agent_name} with models {builder_to_use.config.fast_llm_model} - {builder_to_use.config.complex_llm_model}"
+        )
 
         agent_instance: FlowAgent = await builder_to_use.build()
 
@@ -1257,14 +1393,16 @@ class Tools(MainTool):
         request: RequestData | None = None,
         form_data: dict | None = None,
         data: dict | None = None,
-        **kwargs
+        **kwargs,
     ):
         if request is not None or form_data is not None or data is not None:
             data_dict = (request.request.body if request else None) or form_data or data
             mini_task = mini_task or data_dict.get("mini_task")
             user_task = user_task or data_dict.get("user_task")
             mode = mode or data_dict.get("mode")
-            max_tokens_override = max_tokens_override or data_dict.get("max_tokens_override")
+            max_tokens_override = max_tokens_override or data_dict.get(
+                "max_tokens_override"
+            )
             task_from = data_dict.get("task_from") or task_from
             agent_name = data_dict.get("agent_name") or agent_name
             use_complex = use_complex or data_dict.get("use_complex")
@@ -1285,7 +1423,7 @@ class Tools(MainTool):
         agent = await self.get_agent(agent_name)
 
         effective_system_message = agent.amd.system_message
-        if mode and hasattr(mode, 'system_msg') and mode.system_msg:
+        if mode and hasattr(mode, "system_msg") and mode.system_msg:
             effective_system_message = mode.system_msg
 
         messages = []
@@ -1305,20 +1443,22 @@ class Tools(MainTool):
             llm_params = {"model": agent.amd.complex_llm_model, "messages": messages}
         else:
             llm_params = {
-                "model": agent.amd.fast_llm_model if agent.amd.use_fast_response else agent.amd.complex_llm_model,
-                "messages": messages
+                "model": agent.amd.fast_llm_model
+                if agent.amd.use_fast_response
+                else agent.amd.complex_llm_model,
+                "messages": messages,
             }
 
         if max_tokens_override:
-            llm_params['max_tokens'] = max_tokens_override
+            llm_params["max_tokens"] = max_tokens_override
         else:
-            llm_params['max_tokens'] = agent.amd.max_tokens
+            llm_params["max_tokens"] = agent.amd.max_tokens
 
         if kwargs:
             llm_params.update(kwargs)
 
         if stream_function:
-            llm_params['stream'] = True
+            llm_params["stream"] = True
             original_stream_cb = agent.stream_callback
             original_stream_val = agent.stream
             agent.stream_callback = stream_function
@@ -1330,7 +1470,7 @@ class Tools(MainTool):
                 agent.stream = original_stream_val
             return response_content
 
-        llm_params['stream'] = False
+        llm_params["stream"] = False
         response_content = await agent.a_run_llm_completion(**llm_params)
         return response_content
 
@@ -1344,7 +1484,7 @@ class Tools(MainTool):
         mode_overload: Any = None,
         user_task: str | None = None,
         auto_context=False,
-        **kwargs
+        **kwargs,
     ):
         if mini_task is None:
             return None
@@ -1353,12 +1493,18 @@ class Tools(MainTool):
         agent = await self.get_agent(agent_name)
 
         effective_system_message = None
-        if mode_overload and hasattr(mode_overload, 'system_msg') and mode_overload.system_msg:
+        if (
+            mode_overload
+            and hasattr(mode_overload, "system_msg")
+            and mode_overload.system_msg
+        ):
             effective_system_message = mode_overload.system_msg
 
         message_context = []
         if effective_system_message:
-            message_context.append({"role": "system", "content": effective_system_message})
+            message_context.append(
+                {"role": "system", "content": effective_system_message}
+            )
 
         current_prompt = mini_task
         if user_task:
@@ -1369,10 +1515,14 @@ class Tools(MainTool):
                 pydantic_model=format_schema,
                 prompt=current_prompt,
                 message_context=message_context,
-                auto_context=auto_context
+                auto_context=auto_context,
             )
             if format_schema == bool:
-                return result_dict.get("value", False) if isinstance(result_dict, dict) else False
+                return (
+                    result_dict.get("value", False)
+                    if isinstance(result_dict, dict)
+                    else False
+                )
             return result_dict
         except Exception as e:
             self.print(f"Error in mini_task_completion_format: {e}")
@@ -1392,7 +1542,7 @@ class Tools(MainTool):
         request: RequestData | None = None,
         form_data: dict | None = None,
         data: dict | None = None,
-        **kwargs
+        **kwargs,
     ):
         if request is not None or form_data is not None or data is not None:
             data_dict = (request.request.body if request else None) or form_data or data
@@ -1420,9 +1570,9 @@ class Tools(MainTool):
         name: str | FlowAgent,
         text: str,
         verbose: bool = False,
-        session_id: str | None = 'default',
+        session_id: str | None = "default",
         progress_callback: Callable[[Any], None | Awaitable[None]] | None = None,
-        **kwargs
+        **kwargs,
     ):
         if text is None:
             return ""
@@ -1437,7 +1587,9 @@ class Tools(MainTool):
         elif isinstance(name, FlowAgent):
             agent_instance = name
         else:
-            return self.return_result().default_internal_error(f"Invalid agent identifier type: {type(name)}")
+            return self.return_result().default_internal_error(
+                f"Invalid agent identifier type: {type(name)}"
+            )
 
         self.print(f"Running agent {agent_instance.amd.name} for task: {text[:100]}...")
         save_p = None
@@ -1449,10 +1601,7 @@ class Tools(MainTool):
             agent_instance.verbose = True
 
         response = await agent_instance.a_run(
-            query=text,
-            session_id=session_id,
-            user_id=None,
-            stream_callback=None
+            query=text, session_id=session_id, user_id=None, stream_callback=None
         )
 
         if save_p:
@@ -1460,12 +1609,14 @@ class Tools(MainTool):
 
         return response
 
-    async def mas_text_summaries(self, text, min_length=36000, ref=None, max_tokens_override=None):
+    async def mas_text_summaries(
+        self, text, min_length=36000, ref=None, max_tokens_override=None
+    ):
         len_text = len(text)
         if len_text < min_length:
             return text
 
-        key = self.one_way_hash(text, 'summaries', 'isaa')
+        key = self.one_way_hash(text, "summaries", "isaa")
         value = self.mas_text_summaries_dict.get(key)
         if value is not None:
             return value
@@ -1476,7 +1627,7 @@ class Tools(MainTool):
             mini_task=f"Summarize this text, focusing on aspects related to '{ref if ref else 'key details'}'. The text is: {text}",
             mode=self.controller.rget(SummarizationMode),
             max_tokens_override=max_tokens_override,
-            agent_name="self"
+            agent_name="self",
         )
 
         if summary is None or not isinstance(summary, str):
@@ -1504,7 +1655,9 @@ class Tools(MainTool):
 
         self.load_to_mem_sync()
         for name, kb in self.get_memory().memories.items():
-            self.print(f"Saving to {name}.html with {len(kb.concept_extractor.concept_graph.concepts)} concepts")
+            self.print(
+                f"Saving to {name}.html with {len(kb.concept_extractor.concept_graph.concepts)} concepts"
+            )
             await kb.vis(output_file=f"{dir_path}/{name}.html")
         return dir_path
 
@@ -1513,20 +1666,20 @@ class Tools(MainTool):
 # SHELL TOOL
 # =============================================================================
 
-import subprocess
-import threading
-import queue
-import time
-import uuid
 import json
 import os
 import platform
-from typing import Dict, Optional, Any
+import queue
+import subprocess
+import threading
+import time
+import uuid
+from typing import Any, Dict, Optional
 
 # =============================================================================
 # GLOBALE SESSION-VERWALTUNG
 # =============================================================================
-_session_store: Dict[str, 'ShellSession'] = {}
+_session_store: Dict[str, "ShellSession"] = {}
 
 
 def is_admin() -> bool:
@@ -1534,6 +1687,7 @@ def is_admin() -> bool:
     try:
         if platform.system() == "Windows":
             import ctypes
+
             return ctypes.windll.shell32.IsUserAnAdmin() != 0
         else:
             return os.getuid() == 0
@@ -1544,6 +1698,7 @@ def is_admin() -> bool:
 # =============================================================================
 # SHELL SESSION KLASSE
 # =============================================================================
+
 
 class ShellSession:
     def __init__(self):
@@ -1562,12 +1717,15 @@ class ShellSession:
 
         if "powershell" in shell_exe.lower() or "pwsh" in shell_exe.lower():
             # PowerShell: NoLogo, NoExit für persistente Session
-            start_args.extend([
-                "-NoLogo",
-                "-NoExit",
-                "-NoProfile",  # Schnellerer Start
-                "-ExecutionPolicy", "Bypass"
-            ])
+            start_args.extend(
+                [
+                    "-NoLogo",
+                    "-NoExit",
+                    "-NoProfile",  # Schnellerer Start
+                    "-ExecutionPolicy",
+                    "Bypass",
+                ]
+            )
 
         self.process = subprocess.Popen(
             start_args,
@@ -1579,7 +1737,7 @@ class ShellSession:
             env=env,
             shell=False,
             # Windows-spezifisch: Verhindert Popup-Fenster
-            creationflags=subprocess.CREATE_NO_WINDOW if self.is_windows else 0
+            creationflags=subprocess.CREATE_NO_WINDOW if self.is_windows else 0,
         )
 
         self.out_queue = queue.Queue()
@@ -1615,7 +1773,7 @@ class ShellSession:
             cmd_str = command.strip()
             line_ending = "\r\n" if self.is_windows else "\n"
 
-            self.process.stdin.write((cmd_str + line_ending).encode('utf-8'))
+            self.process.stdin.write((cmd_str + line_ending).encode("utf-8"))
             self.process.stdin.flush()
         except (IOError, BrokenPipeError):
             self.active = False
@@ -1666,17 +1824,17 @@ class ShellSession:
         return {
             "stdout": self._safe_decode(stdout_acc),
             "stderr": self._safe_decode(stderr_acc),
-            "is_alive": self.process.poll() is None
+            "is_alive": self.process.poll() is None,
         }
 
     def _safe_decode(self, data: bytearray) -> str:
         """Multi-Codec Decoding mit Fallbacks"""
-        for encoding in ['utf-8', 'cp1252', 'latin-1']:
+        for encoding in ["utf-8", "cp1252", "latin-1"]:
             try:
                 return data.decode(encoding)
             except UnicodeDecodeError:
                 continue
-        return data.decode('latin-1', errors='replace')
+        return data.decode("latin-1", errors="replace")
 
     def terminate(self):
         if self.process:
@@ -1692,12 +1850,13 @@ class ShellSession:
 # TOOL FUNCTION - Verbesserte API
 # =============================================================================
 
+
 def shell_tool_function(
     command: Optional[str] = None,
     session_id: Optional[str] = None,
     user_input: Optional[str] = None,
     new_session: bool = False,
-    timeout: float = 2.0
+    timeout: float = 2.0,
 ) -> str:
     r"""
     Shell-Tool mit Session-Support und verbessertem Error-Handling.
@@ -1766,7 +1925,7 @@ def shell_tool_function(
         "stderr": output["stderr"].strip(),
         "status": status,
         "info": msg_info,
-        "system": session.system
+        "system": session.system,
     }
 
     # Auto-Cleanup für One-Shot Commands
@@ -1781,6 +1940,7 @@ def shell_tool_function(
 # UTILITY FUNCTIONS
 # =============================================================================
 
+
 def list_sessions() -> str:
     """Liste alle aktiven Sessions"""
     sessions = [
@@ -1788,7 +1948,7 @@ def list_sessions() -> str:
             "session_id": sid,
             "system": session.system,
             "active": session.active,
-            "pid": session.process.pid if session.process else None
+            "pid": session.process.pid if session.process else None,
         }
         for sid, session in _session_store.items()
     ]
@@ -1812,6 +1972,7 @@ def cleanup_sessions() -> str:
 # EXPORTS
 # =============================================================================
 
+
 @export(mod_name="isaa", name="listAllAgents", api=True, request_as_kwarg=True)
 async def list_all_agents(self, request: RequestData | None = None):
     return self.config.get("agents-name-list", [])
@@ -1822,6 +1983,7 @@ async def list_all_agents(self, request: RequestData | None = None):
 # =============================================================================
 
 if __name__ == "__main__":
+
     async def test_isaa_tools():
         app_instance = get_app("isaa_test_app")
         isaa_tool_instance = Tools(app=app_instance)
@@ -1836,10 +1998,11 @@ if __name__ == "__main__":
         print(f"Created chain: {chain}")
 
         # Test save_agent
-        success, manifest = await isaa_tool_instance.save_agent("self", "/tmp/test_agent.tar.gz")
+        success, manifest = await isaa_tool_instance.save_agent(
+            "self", "/tmp/test_agent.tar.gz"
+        )
         print(f"Save agent: {success}")
         if success:
             print(f"Manifest: {manifest}")
-
 
     asyncio.run(test_isaa_tools())

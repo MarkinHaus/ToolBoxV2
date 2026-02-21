@@ -2,6 +2,7 @@
 // ToolBox V2 User Management with Custom Auth (CloudM.Auth)
 
 import TB from '../index.js';
+import env from './env.js';
 
 const USER_STATE_KEY = 'tbjs_user_session';
 const USER_DATA_TIMESTAMP_KEY = 'tbjs_user_data_timestamp';
@@ -31,6 +32,30 @@ const user = {
     _signInInProgress: false,
     _lastSignInUserId: null,
 
+    // =================== URL Resolution (Web vs Tauri Worker) ===================
+
+    /**
+     * Returns the base URL for non-API routes (e.g. /validateSession, /auth/discord/url).
+     * Web: '' (relative), Tauri: 'http://localhost:5000' (worker).
+     */
+    _getBaseUrl() {
+        if (env.isTauri()) {
+            return env.getWorkerHttpUrl() || 'http://localhost:5000';
+        }
+        return '';
+    },
+
+    /**
+     * Returns the base URL for /api/* routes.
+     * Web: '' (relative), Tauri: 'http://localhost:5000' (worker).
+     */
+    _getApiBaseUrl() {
+        if (env.isTauri()) {
+            return env.getWorkerHttpUrl() || 'http://localhost:5000';
+        }
+        return '';
+    },
+
     // =================== Backend Session Validation ===================
 
     /**
@@ -49,7 +74,7 @@ const user = {
         try {
             TB.logger.debug('[User] Validating session with backend...');
 
-            const response = await fetch('/validateSession', {
+            const response = await fetch(`${this._getBaseUrl()}/validateSession`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -186,7 +211,7 @@ const user = {
             window.history.replaceState({}, '', cleanUrl.toString());
 
             // Validate the token
-            const response = await fetch('/api/CloudM.Auth/validate_session', {
+            const response = await fetch(`${this._getApiBaseUrl()}/api/CloudM.Auth/validate_session`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -208,7 +233,7 @@ const user = {
             const userData = result.result.data;
 
             // Fetch full user data
-            const userDataResponse = await fetch('/api/CloudM.Auth/get_user_data', {
+            const userDataResponse = await fetch(`${this._getApiBaseUrl()}/api/CloudM.Auth/get_user_data`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -267,8 +292,248 @@ const user = {
         const currentState = clearExisting ? defaultUserState : (TB.state.get('user') || defaultUserState);
         const newState = { ...currentState, ...updates };
         TB.state.set('user', newState);
+        // Emit both events: the state system event (triggers localStorage persist)
+        // and the user-specific event for UI listeners
+        TB.events.emit('state:changed:user', newState);
         TB.events.emit('user:stateChanged', newState);
         return newState;
+    },
+
+    // =================== OAuth & Passkey Methods ===================
+
+    /**
+     * Login with Discord OAuth.
+     * Fetches the OAuth URL from the backend and redirects the browser.
+     */
+    async loginWithDiscord() {
+        TB.logger.info('[User] Starting Discord OAuth login...');
+        try {
+            const redirectAfter = encodeURIComponent(window.location.origin);
+            const response = await fetch(`${this._getBaseUrl()}/auth/discord/url?redirect_after=${redirectAfter}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const json = await response.json();
+            const authUrl = json.result?.auth_url || json.auth_url;
+            if (!authUrl) throw new Error('No auth URL returned from server');
+            window.location.href = authUrl;
+        } catch (e) {
+            TB.logger.error('[User] Discord login failed:', e);
+            TB.events.emit('user:authError', { message: e.message });
+            throw e;
+        }
+    },
+
+    /**
+     * Login with Google OAuth.
+     * Fetches the OAuth URL from the backend and redirects the browser.
+     */
+    async loginWithGoogle() {
+        TB.logger.info('[User] Starting Google OAuth login...');
+        try {
+            const redirectAfter = encodeURIComponent(window.location.origin);
+            const response = await fetch(`${this._getBaseUrl()}/auth/google/url?redirect_after=${redirectAfter}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const json = await response.json();
+            const authUrl = json.result?.auth_url || json.auth_url;
+            if (!authUrl) throw new Error('No auth URL returned from server');
+            window.location.href = authUrl;
+        } catch (e) {
+            TB.logger.error('[User] Google login failed:', e);
+            TB.events.emit('user:authError', { message: e.message });
+            throw e;
+        }
+    },
+
+    /**
+     * Login with WebAuthn Passkey.
+     * @param {string|null} username - Optional username hint
+     */
+    async loginWithPasskey(username = null) {
+        TB.logger.info('[User] Starting Passkey login...');
+
+        if (typeof window.PublicKeyCredential === 'undefined') {
+            throw new Error('Passkeys are not supported on this device');
+        }
+
+        try {
+            // Step 1: Get challenge from server
+            const startResponse = await fetch(`${this._getApiBaseUrl()}/api/CloudM.Auth/passkey_login_start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username })
+            });
+            if (!startResponse.ok) throw new Error(`HTTP ${startResponse.status}`);
+
+            const startJson = await startResponse.json();
+            const options = startJson.result || startJson;
+
+            // Convert base64 to ArrayBuffer
+            options.challenge = this._base64ToArrayBuffer(options.challenge);
+            if (options.allowCredentials) {
+                options.allowCredentials = options.allowCredentials.map(cred => ({
+                    ...cred,
+                    id: this._base64ToArrayBuffer(cred.id)
+                }));
+            }
+
+            // Step 2: Get credential from browser
+            const credential = await navigator.credentials.get({ publicKey: options });
+
+            // Step 3: Send credential to server
+            const finishResponse = await fetch(`${this._getApiBaseUrl()}/api/CloudM.Auth/passkey_login_finish`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    credential: this._credentialToJSON(credential),
+                    username
+                })
+            });
+            if (!finishResponse.ok) throw new Error(`HTTP ${finishResponse.status}`);
+
+            const finishJson = await finishResponse.json();
+            const data = finishJson.result || finishJson;
+
+            // Update user state with tokens
+            this.setAuthData({
+                token: data.access_token || data.token,
+                refreshToken: data.refresh_token,
+                userId: data.user_id || data.user?.user_id,
+                username: data.username || data.user?.username || username,
+                email: data.email || data.user?.email || null
+            });
+
+            return data;
+        } catch (e) {
+            TB.logger.error('[User] Passkey login failed:', e);
+            TB.events.emit('user:authError', { message: e.message });
+            throw e;
+        }
+    },
+
+    /**
+     * Register a new Passkey for the current user.
+     * @param {string} username
+     * @param {string} displayName
+     */
+    async registerPasskey(username, displayName) {
+        TB.logger.info('[User] Starting Passkey registration...');
+
+        if (typeof window.PublicKeyCredential === 'undefined') {
+            throw new Error('Passkeys are not supported on this device');
+        }
+
+        const token = this.getToken();
+
+        try {
+            const startResponse = await fetch(`${this._getApiBaseUrl()}/api/CloudM.Auth/passkey_register_start`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                },
+                body: JSON.stringify({ username, displayName })
+            });
+            if (!startResponse.ok) throw new Error(`HTTP ${startResponse.status}`);
+
+            const startJson = await startResponse.json();
+            const options = startJson.result || startJson;
+
+            options.challenge = this._base64ToArrayBuffer(options.challenge);
+            options.user.id = this._base64ToArrayBuffer(options.user.id);
+            if (options.excludeCredentials) {
+                options.excludeCredentials = options.excludeCredentials.map(cred => ({
+                    ...cred,
+                    id: this._base64ToArrayBuffer(cred.id)
+                }));
+            }
+
+            const credential = await navigator.credentials.create({ publicKey: options });
+
+            const finishResponse = await fetch(`${this._getApiBaseUrl()}/api/CloudM.Auth/passkey_register_finish`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                },
+                body: JSON.stringify({
+                    credential: this._credentialToJSON(credential),
+                    username,
+                    displayName
+                })
+            });
+            if (!finishResponse.ok) throw new Error(`HTTP ${finishResponse.status}`);
+
+            const finishJson = await finishResponse.json();
+            const data = finishJson.result || finishJson;
+
+            // If registration returns tokens, set auth state
+            if (data.access_token || data.token) {
+                this.setAuthData({
+                    token: data.access_token || data.token,
+                    refreshToken: data.refresh_token,
+                    userId: data.user_id || data.user?.user_id,
+                    username: username,
+                    email: data.email || null
+                });
+            }
+
+            return data;
+        } catch (e) {
+            TB.logger.error('[User] Passkey registration failed:', e);
+            TB.events.emit('user:authError', { message: e.message });
+            throw e;
+        }
+    },
+
+    // =================== WebAuthn Helpers ===================
+
+    /**
+     * Convert base64url string (from py_webauthn) to ArrayBuffer.
+     * base64url uses: - instead of +, _ instead of /, no = padding.
+     */
+    _base64ToArrayBuffer(base64url) {
+        // Convert base64url to standard base64
+        let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+        // Add padding
+        const pad = (4 - (base64.length % 4)) % 4;
+        base64 += '='.repeat(pad);
+        const binaryString = atob(base64);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        return bytes.buffer;
+    },
+
+    /**
+     * Convert ArrayBuffer to base64url string (for py_webauthn).
+     */
+    _arrayBufferToBase64(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        // Convert standard base64 to base64url: replace +/ with -_, strip padding
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    },
+
+    _credentialToJSON(credential) {
+        return {
+            id: credential.id,
+            rawId: this._arrayBufferToBase64(credential.rawId),
+            type: credential.type,
+            response: {
+                clientDataJSON: this._arrayBufferToBase64(credential.response.clientDataJSON),
+                attestationObject: credential.response.attestationObject
+                    ? this._arrayBufferToBase64(credential.response.attestationObject) : null,
+                authenticatorData: credential.response.authenticatorData
+                    ? this._arrayBufferToBase64(credential.response.authenticatorData) : null,
+                signature: credential.response.signature
+                    ? this._arrayBufferToBase64(credential.response.signature) : null,
+                userHandle: credential.response.userHandle
+                    ? this._arrayBufferToBase64(credential.response.userHandle) : null
+            }
+        };
     },
 
     // =================== Authentication Methods ===================
@@ -312,7 +577,7 @@ const user = {
         // Notify backend
         if (userId && token) {
             try {
-                await fetch('/api/CloudM.Auth/logout', {
+                await fetch(`${this._getApiBaseUrl()}/api/CloudM.Auth/logout`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -412,7 +677,7 @@ const user = {
         }
 
         try {
-            const response = await fetch('/api/CloudM.Auth/refresh_token', {
+            const response = await fetch(`${this._getApiBaseUrl()}/api/CloudM.Auth/refresh_token`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -490,7 +755,7 @@ const user = {
         }
 
         try {
-            const response = await fetch('/api/CloudM.Auth/update_user_data', {
+            const response = await fetch(`${this._getApiBaseUrl()}/api/CloudM.Auth/update_user_data`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -532,7 +797,7 @@ const user = {
                 [modName]: { ...(currentModData[modName] || {}), ...data }
             };
 
-            const response = await fetch('/api/CloudM.Auth/update_user_data', {
+            const response = await fetch(`${this._getApiBaseUrl()}/api/CloudM.Auth/update_user_data`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -565,7 +830,7 @@ const user = {
         }
 
         try {
-            const response = await fetch('/api/CloudM.Auth/get_user_data', {
+            const response = await fetch(`${this._getApiBaseUrl()}/api/CloudM.Auth/get_user_data`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

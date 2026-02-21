@@ -6,11 +6,14 @@
  * Integrates with TBJS (TB.api, TB.events) when available
  *
  * @module CustomAuth
- * @version 2.0.0
+ * @version 2.1.0
  */
 
 class CustomAuth {
-    constructor() {
+    constructor(options = {}) {
+        // API base URL (empty string = relative URLs for web, e.g. 'http://localhost:5000' for Tauri)
+        this.baseUrl = (options.baseUrl || '').replace(/\/+$/, '');
+
         // Provider configuration
         this.providers = {
             discord: {
@@ -137,7 +140,7 @@ class CustomAuth {
      */
     async _fetchUserData() {
         try {
-            const response = await fetch('/api/CloudM.Auth/get_user_data', {
+            const response = await fetch(this.baseUrl + '/api/CloudM.Auth/get_user_data', {
                 method: 'GET',
                 headers: {
                     'Authorization': `Bearer ${this.token}`,
@@ -189,7 +192,8 @@ class CustomAuth {
         }
 
         try {
-            const response = await fetch(this.providers.discord.loginUrl);
+            const redirectAfter = encodeURIComponent(window.location.origin);
+            const response = await fetch(this.baseUrl + this.providers.discord.loginUrl + '?redirect_after=' + redirectAfter);
             const json = await response.json();
             const authUrl = json.result?.auth_url || json.auth_url;
             if (!authUrl) throw new Error('No auth URL returned');
@@ -209,7 +213,8 @@ class CustomAuth {
         }
 
         try {
-            const response = await fetch(this.providers.google.loginUrl);
+            const redirectAfter = encodeURIComponent(window.location.origin);
+            const response = await fetch(this.baseUrl + this.providers.google.loginUrl + '?redirect_after=' + redirectAfter);
             const json = await response.json();
             const authUrl = json.result?.auth_url || json.auth_url;
             if (!authUrl) throw new Error('No auth URL returned');
@@ -231,7 +236,7 @@ class CustomAuth {
         }
 
         try {
-            const response = await fetch('/api/CloudM.Auth/passkey_login_start', {
+            const response = await fetch(this.baseUrl + '/api/CloudM.Auth/passkey_login_start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username })
@@ -257,7 +262,7 @@ class CustomAuth {
                 publicKey: options
             });
 
-            const finishResponse = await fetch('/api/CloudM.Auth/passkey_login_finish', {
+            const finishResponse = await fetch(this.baseUrl + '/api/CloudM.Auth/passkey_login_finish', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -297,7 +302,7 @@ class CustomAuth {
         }
 
         try {
-            const response = await fetch('/api/CloudM.Auth/passkey_register_start', {
+            const response = await fetch(this.baseUrl + '/api/CloudM.Auth/passkey_register_start', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -327,7 +332,7 @@ class CustomAuth {
                 publicKey: options
             });
 
-            const finishResponse = await fetch('/api/CloudM.Auth/passkey_register_finish', {
+            const finishResponse = await fetch(this.baseUrl + '/api/CloudM.Auth/passkey_register_finish', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -375,7 +380,14 @@ class CustomAuth {
         };
     }
 
-    _base64ToArrayBuffer(base64) {
+    /**
+     * Convert base64url string (from py_webauthn) to ArrayBuffer.
+     * base64url uses: - instead of +, _ instead of /, no = padding.
+     */
+    _base64ToArrayBuffer(base64url) {
+        let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+        const pad = (4 - (base64.length % 4)) % 4;
+        base64 += '='.repeat(pad);
         const binaryString = atob(base64);
         const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
@@ -384,13 +396,16 @@ class CustomAuth {
         return bytes.buffer;
     }
 
+    /**
+     * Convert ArrayBuffer to base64url string (for py_webauthn).
+     */
     _arrayBufferToBase64(buffer) {
         const bytes = new Uint8Array(buffer);
         let binary = '';
         for (let i = 0; i < bytes.length; i++) {
             binary += String.fromCharCode(bytes[i]);
         }
-        return btoa(binary);
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     }
 
     // ==================== TOKEN METHODS ====================
@@ -409,7 +424,7 @@ class CustomAuth {
         }
 
         try {
-            const response = await fetch('/api/CloudM.Auth/refresh_token', {
+            const response = await fetch(this.baseUrl + '/api/CloudM.Auth/refresh_token', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ refresh_token: this.refreshToken })
@@ -449,7 +464,7 @@ class CustomAuth {
 
     async updateUserData(updates) {
         try {
-            const response = await fetch('/api/CloudM.Auth/update_user_data', {
+            const response = await fetch(this.baseUrl + '/api/CloudM.Auth/update_user_data', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -479,7 +494,7 @@ class CustomAuth {
     async logout() {
         try {
             if (this.token) {
-                await fetch('/api/CloudM.Auth/logout', {
+                await fetch(this.baseUrl + '/api/CloudM.Auth/logout', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

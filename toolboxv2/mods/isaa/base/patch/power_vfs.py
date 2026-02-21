@@ -39,21 +39,28 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Generator, Optional
 
 if TYPE_CHECKING:
-    from toolboxv2.mods.isaa.base.Agent.vfs_v2 import VirtualFileSystemV2, VFSFile, VFSDirectory, ShadowMount
+    from toolboxv2.mods.isaa.base.Agent.agent_session_v2 import AgentSessionV2
     from toolboxv2.mods.isaa.base.Agent.docker_vfs import DockerVFS
     from toolboxv2.mods.isaa.base.Agent.flow_agent import FlowAgent
-    from toolboxv2.mods.isaa.base.Agent.agent_session_v2 import AgentSessionV2
+    from toolboxv2.mods.isaa.base.Agent.vfs_v2 import (
+        ShadowMount,
+        VFSDirectory,
+        VFSFile,
+        VirtualFileSystemV2,
+    )
 
 
 # =============================================================================
 # CONSTANTS
 # =============================================================================
 
+
 def get_toolboxv2_data_dir() -> Path:
     """Get the ToolBoxV2 data directory for VFS sharing"""
     # Try to get from app
     try:
         from toolboxv2 import get_app
+
         app = get_app()
         data_dir = Path(app.data_dir) / "Agents" / "VFS"
     except:
@@ -71,6 +78,7 @@ SHARED_VFS_PATH = "/shared"  # Für Session/Agent Shares
 # =============================================================================
 # GLOBAL VFS MANAGER (Singleton)
 # =============================================================================
+
 
 class GlobalVFSManager:
     """
@@ -190,12 +198,16 @@ class GlobalVFSManager:
 
         items = []
         for item in dir_path.iterdir():
-            items.append({
-                "name": item.name,
-                "is_dir": item.is_dir(),
-                "size": item.stat().st_size if item.is_file() else 0,
-                "path": f"{GLOBAL_VFS_PATH}/{relative_path}/{item.name}".replace("//", "/"),
-            })
+            items.append(
+                {
+                    "name": item.name,
+                    "is_dir": item.is_dir(),
+                    "size": item.stat().st_size if item.is_file() else 0,
+                    "path": f"{GLOBAL_VFS_PATH}/{relative_path}/{item.name}".replace(
+                        "//", "/"
+                    ),
+                }
+            )
 
         return {
             "success": True,
@@ -239,6 +251,7 @@ def get_global_vfs() -> GlobalVFSManager:
 # =============================================================================
 # VFS SHARING
 # =============================================================================
+
 
 @dataclass
 class ShareInfo:
@@ -355,7 +368,7 @@ class VFSSharingManager:
         for file_path, vfs_file in vfs.files.items():
             if file_path.startswith(vfs_path + "/") or file_path == vfs_path:
                 # Berechne relativen Pfad
-                rel_path = file_path[len(vfs_path):].lstrip("/")
+                rel_path = file_path[len(vfs_path) :].lstrip("/")
                 if not rel_path:
                     rel_path = vfs_file.filename
 
@@ -378,6 +391,7 @@ class VFSSharingManager:
         expires_at = None
         if expires_hours:
             from datetime import timedelta
+
             expires_at = (datetime.now() + timedelta(hours=expires_hours)).isoformat()
 
         # Share Info erstellen
@@ -461,7 +475,9 @@ class VFSSharingManager:
                 result.append(share)
         return result
 
-    def mount_share(self, vfs: "VirtualFileSystemV2", share_id: str, mount_point: str = None) -> dict:
+    def mount_share(
+        self, vfs: "VirtualFileSystemV2", share_id: str, mount_point: str = None
+    ) -> dict:
         """
         Mountet einen Share in ein VFS.
 
@@ -501,7 +517,9 @@ class VFSSharingManager:
 
         if result.get("success"):
             result["share_id"] = share_id
-            result["source"] = f"{share.source_agent}:{share.source_session}:{share.source_path}"
+            result["source"] = (
+                f"{share.source_agent}:{share.source_session}:{share.source_path}"
+            )
 
         return result
 
@@ -544,8 +562,10 @@ def get_sharing_manager() -> VFSSharingManager:
 # VFS SEARCH
 # =============================================================================
 
+
 class SearchMode(Enum):
     """Suchmodus"""
+
     FILENAME = auto()  # Nur Dateinamen
     CONTENT = auto()  # Nur Dateiinhalt
     BOTH = auto()  # Beides
@@ -554,6 +574,7 @@ class SearchMode(Enum):
 @dataclass
 class SearchResult:
     """Ein Suchergebnis"""
+
     path: str
     filename: str
     match_type: str  # "filename", "content"
@@ -650,12 +671,14 @@ def search_vfs(
         # Filename Search
         if mode in (SearchMode.FILENAME, SearchMode.BOTH):
             if matches_query(vfs_file.filename):
-                results.append(SearchResult(
-                    path=file_path,
-                    filename=vfs_file.filename,
-                    match_type="filename",
-                    score=1.0,
-                ))
+                results.append(
+                    SearchResult(
+                        path=file_path,
+                        filename=vfs_file.filename,
+                        match_type="filename",
+                        score=1.0,
+                    )
+                )
                 if len(results) >= max_results:
                     break
 
@@ -666,7 +689,9 @@ def search_vfs(
                 if vfs_file.is_loaded:
                     content = vfs_file.content
                 elif vfs_file.local_path and os.path.exists(vfs_file.local_path):
-                    content = Path(vfs_file.local_path).read_text(encoding="utf-8", errors="ignore")
+                    content = Path(vfs_file.local_path).read_text(
+                        encoding="utf-8", errors="ignore"
+                    )
                 else:
                     continue
 
@@ -679,19 +704,27 @@ def search_vfs(
                         if include_content_context:
                             start = max(0, line_num - 1 - context_lines)
                             end = min(len(lines), line_num + context_lines)
-                            context_before = "\n".join(lines[start:line_num - 1]) if start < line_num - 1 else None
-                            context_after = "\n".join(lines[line_num:end]) if line_num < end else None
+                            context_before = (
+                                "\n".join(lines[start : line_num - 1])
+                                if start < line_num - 1
+                                else None
+                            )
+                            context_after = (
+                                "\n".join(lines[line_num:end]) if line_num < end else None
+                            )
 
-                        results.append(SearchResult(
-                            path=file_path,
-                            filename=vfs_file.filename,
-                            match_type="content",
-                            line_number=line_num,
-                            line_content=line[:200],  # Truncate long lines
-                            context_before=context_before,
-                            context_after=context_after,
-                            score=0.8,
-                        ))
+                        results.append(
+                            SearchResult(
+                                path=file_path,
+                                filename=vfs_file.filename,
+                                match_type="content",
+                                line_number=line_num,
+                                line_content=line[:200],  # Truncate long lines
+                                context_before=context_before,
+                                context_after=context_after,
+                                score=0.8,
+                            )
+                        )
 
                         if len(results) >= max_results:
                             break
@@ -771,7 +804,9 @@ def grep_vfs(
             if vfs_file.is_loaded:
                 content = vfs_file.content
             elif vfs_file.local_path and os.path.exists(vfs_file.local_path):
-                content = Path(vfs_file.local_path).read_text(encoding="utf-8", errors="ignore")
+                content = Path(vfs_file.local_path).read_text(
+                    encoding="utf-8", errors="ignore"
+                )
             else:
                 continue
 
@@ -799,6 +834,7 @@ def grep_vfs(
 # =============================================================================
 # VFS EXECUTE
 # =============================================================================
+
 
 async def execute_file(
     vfs: "VirtualFileSystemV2",
@@ -848,8 +884,10 @@ async def execute_file(
             return {"success": False, "error": "Rust files need to be compiled first"}
 
     if not interpreter:
-        return {"success": False,
-                "error": f"No interpreter for file type: {file_type.language_id if file_type else 'unknown'}"}
+        return {
+            "success": False,
+            "error": f"No interpreter for file type: {file_type.language_id if file_type else 'unknown'}",
+        }
 
     # Build command
     # Der file_path im VFS entspricht dem Pfad im Docker Container unter /workspace
@@ -912,813 +950,47 @@ async def execute_code(
 
 
 # =============================================================================
-# AGENT TOOLS REGISTRATION
+# AGENT TOOLS REGISTRATION - REMOVED
 # =============================================================================
 
-def register_vfs_tools(
-    agent: "FlowAgent",
-    enable_global: bool = True,
-    enable_sharing: bool = True,
-    enable_search: bool = True,
-    enable_execute: bool = True,
-    enanle_mounting: bool = False
-) -> dict:
-    """
-    Registriert alle VFS Tools beim Agent.
-
-    Args:
-        agent: FlowAgent Instanz
-        enable_global: Global VFS Tools aktivieren
-        enable_sharing: Sharing Tools aktivieren
-        enable_search: Search Tools aktivieren
-        enable_execute: Execute Tools aktivieren
-
-    Returns:
-        Dict mit registrierten Tools
-    """
-    registered = []
-
-    # =========================================================================
-    # CORE VFS TOOLS
-    # =========================================================================
-
-    async def vfs_ls(path: str = "/", recursive: bool = False, max_depth: int = 2) -> str:
-        """
-        List files and directories in the VFS.
-
-        Args:
-            path: Directory path to list (default: root)
-            recursive: Show subdirectories recursively
-            max_depth: Maximum depth for recursive listing
-
-        Returns:
-            Formatted directory listing
-        """
-        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-        vfs = session.vfs
-
-        if recursive:
-            return vfs.get_tree(path, max_depth=max_depth)
-        else:
-            return vfs.ls(path)
-
-    async def vfs_read(path: str, start_line: int = None, end_line: int = None) -> str:
-        """
-        Read a file from VFS. Opens the file if not already open.
-
-        Args:
-            path: File path in VFS
-            start_line: Start line (1-based, optional)
-            end_line: End line (optional, -1 for end of file)
-
-        Returns:
-            File content or windowed view
-        """
-        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-        vfs = session.vfs
-
-        # Open file if needed
-        if path not in vfs.files or vfs.files[path].state != "open":
-            result = await vfs.open(path)
-            if not result.get("success", True) and "error" in result:
-                return f"Error: {result['error']}"
-
-        # Window if specified
-        if start_line is not None:
-            result = vfs.window(path, start_line, end_line or -1)
-            if isinstance(result, dict) and "error" in result:
-                return f"Error: {result['error']}"
-
-        return vfs.get_file_content(path)
-
-    async def vfs_write(path: str, content: str, create_dirs: bool = True) -> str:
-        """
-        Write content to a file in VFS.
-
-        Args:
-            path: File path in VFS
-            content: Content to write
-            create_dirs: Create parent directories if they don't exist
-
-        Returns:
-            Result message
-        """
-        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-        vfs = session.vfs
-
-        # Create directories if needed
-        if create_dirs:
-            dir_path = os.path.dirname(path)
-            if dir_path and dir_path != "/":
-                vfs.mkdir(dir_path, parents=True)
-
-        result = vfs.create(path, content)
-        if result.get("success"):
-            return f"Written {len(content)} chars to {path}"
-        else:
-            return f"Error: {result.get('error', 'Unknown error')}"
-
-    async def vfs_edit(
-        path: str,
-        old_str: str,
-        new_str: str,
-    ) -> str:
-        """
-        Replace a string in a file. The old_str must appear exactly once.
-
-        Args:
-            path: File path in VFS
-            old_str: String to replace (must be unique in file)
-            new_str: Replacement string
-
-        Returns:
-            Result message
-        """
-        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-        vfs = session.vfs
-
-        result = vfs.str_replace(path, old_str, new_str)
-        if result.get("success"):
-            return f"Replaced in {path}"
-        else:
-            return f"Error: {result.get('error', 'Unknown error')}"
-
-    async def vfs_delete(path: str) -> str:
-        """
-        Delete a file or directory from VFS.
-
-        Args:
-            path: Path to delete
-
-        Returns:
-            Result message
-        """
-        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-        vfs = session.vfs
-
-        if path in vfs.directories:
-            result = vfs.rmdir(path, recursive=True)
-        else:
-            result = vfs.delete(path)
-
-        if result.get("success"):
-            return f"Deleted {path}"
-        else:
-            return f"Error: {result.get('error', 'Unknown error')}"
-
-    async def vfs_mkdir(path: str, parents: bool = True) -> str:
-        """
-        Create a directory in VFS.
-
-        Args:
-            path: Directory path
-            parents: Create parent directories if needed
-
-        Returns:
-            Result message
-        """
-        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-        vfs = session.vfs
-
-        result = vfs.mkdir(path, parents=parents)
-        if result.get("success"):
-            return f"Created directory {path}"
-        else:
-            return f"Error: {result.get('error', 'Unknown error')}"
-
-    async def vfs_mv(src: str, dest: str) -> str:
-        """
-        Move/rename a file or directory.
-
-        Args:
-            src: Source path
-            dest: Destination path
-
-        Returns:
-            Result message
-        """
-        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-        vfs = session.vfs
-
-        result = vfs.mv(src, dest)
-        if result.get("success"):
-            return f"Moved {src} to {dest}"
-        else:
-            return f"Error: {result.get('error', 'Unknown error')}"
-
-    async def vfs_cp(src: str, dest: str) -> str:
-        """
-        Copy a file or directory.
-
-        Args:
-            src: Source path
-            dest: Destination path
-
-        Returns:
-            Result message
-        """
-        session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-        vfs = session.vfs
-
-        result = vfs.cp(src, dest)
-        if result.get("success"):
-            return f"Copied {src} to {dest}"
-        else:
-            return f"Error: {result.get('error', 'Unknown error')}"
-
-
-    # Register core tools
-    agent.add_tool(vfs_ls, "vfs_ls", "List files and directories in VFS", ["vfs", "filesystem"])
-    agent.add_tool(vfs_read, "vfs_read", "Read file content from VFS", ["vfs", "filesystem"])
-    agent.add_tool(vfs_write, "vfs_write", "Write content to file in VFS", ["vfs", "filesystem"])
-    agent.add_tool(vfs_edit, "vfs_edit", "Replace string in file (str_replace)", ["vfs", "filesystem"])
-    agent.add_tool(vfs_delete, "vfs_delete", "Delete file or directory from VFS", ["vfs", "filesystem"])
-    agent.add_tool(vfs_mkdir, "vfs_mkdir", "Create directory in VFS", ["vfs", "filesystem"])
-    agent.add_tool(vfs_mv, "vfs_mv", "Move/rename file or directory", ["vfs", "filesystem"])
-    agent.add_tool(vfs_cp, "vfs_cp", "Copy file or directory", ["vfs", "filesystem"])
-
-    registered.extend(
-        ["vfs_ls", "vfs_read", "vfs_write", "vfs_edit", "vfs_delete", "vfs_mkdir", "vfs_mv", "vfs_cp"])
-    if enanle_mounting:
-        async def vfs_mount(
-            local_path: str,
-            vfs_path: str = "/project",
-            readonly: bool = False,
-            auto_sync: bool = True,
-        ) -> str:
-            """
-            Mount a local directory into VFS.
-
-            Args:
-                local_path: Local filesystem path
-                vfs_path: Mount point in VFS
-                readonly: Mount as read-only
-                auto_sync: Automatically sync changes to disk
-
-            Returns:
-                Result message with statistics
-            """
-            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-            vfs = session.vfs
-
-            result = vfs.mount(local_path, vfs_path, readonly=readonly, auto_sync=auto_sync)
-            if result.get("success"):
-                return f"Mounted {local_path} at {vfs_path}: {result.get('files_indexed', 0)} files, {result.get('dirs_indexed', 0)} dirs"
-            else:
-                return f"Error: {result.get('error', 'Unknown error')}"
-
-        async def vfs_unmount(vfs_path: str, save_changes: bool = True) -> str:
-            """
-            Unmount a directory from VFS.
-
-            Args:
-                vfs_path: Mount point to unmount
-                save_changes: Save pending changes before unmounting
-
-            Returns:
-                Result message
-            """
-            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-            vfs = session.vfs
-
-            result = vfs.unmount(vfs_path, save_changes=save_changes)
-            if result.get("success"):
-                return f"Unmounted {vfs_path}"
-            else:
-                return f"Error: {result.get('error', 'Unknown error')}"
-
-        agent.add_tool(vfs_mount, "vfs_mount", "Mount local directory into VFS", ["vfs", "filesystem"])
-        agent.add_tool(vfs_unmount, "vfs_unmount", "Unmount directory from VFS", ["vfs", "filesystem"])
-
-        registered.extend(["vfs_mount", "vfs_unmount"])
-
-    # =========================================================================
-    # GLOBAL VFS TOOLS
-    # =========================================================================
-
-    if enable_global:
-        async def global_read(path: str) -> str:
-            """
-            Read a file from the global shared directory (/global/).
-            All sessions and agents can read from this directory.
-
-            Args:
-                path: Path relative to /global/ (e.g., "data/config.json")
-
-            Returns:
-                File content
-            """
-            global_vfs = get_global_vfs()
-            result = global_vfs.read_file(path)
-            if result.get("success"):
-                return result["content"]
-            else:
-                return f"Error: {result.get('error', 'Unknown error')}"
-
-        async def global_write(path: str, content: str) -> str:
-            """
-            Write a file to the global shared directory (/global/).
-            All sessions and agents can write to this directory.
-
-            Args:
-                path: Path relative to /global/ (e.g., "data/config.json")
-                content: Content to write
-
-            Returns:
-                Result message
-            """
-            global_vfs = get_global_vfs()
-            result = global_vfs.write_file(path, content)
-            if result.get("success"):
-                return f"Written to {result['path']}"
-            else:
-                return f"Error: {result.get('error', 'Unknown error')}"
-
-        async def global_ls(path: str = "") -> str:
-            """
-            List files in the global shared directory.
-
-            Args:
-                path: Path relative to /global/ (default: root)
-
-            Returns:
-                Directory listing
-            """
-            global_vfs = get_global_vfs()
-            result = global_vfs.list_files(path)
-            if result.get("success"):
-                items = result["items"]
-                lines = [f"{result['path']}:"]
-                for item in items:
-                    icon = "📁" if item["is_dir"] else "📄"
-                    lines.append(f"  {icon} {item['name']}")
-                return "\n".join(lines)
-            else:
-                return f"Error: {result.get('error', 'Unknown error')}"
-
-        async def global_delete(path: str) -> str:
-            """
-            Delete a file from the global shared directory.
-
-            Args:
-                path: Path relative to /global/
-
-            Returns:
-                Result message
-            """
-            global_vfs = get_global_vfs()
-            result = global_vfs.delete_file(path)
-            if result.get("success"):
-                return f"Deleted {result['deleted']}"
-            else:
-                return f"Error: {result.get('error', 'Unknown error')}"
-
-        agent.add_tool(global_read, "global_read", "Read file from global shared directory", ["vfs", "global"])
-        agent.add_tool(global_write, "global_write", "Write file to global shared directory", ["vfs", "global"])
-        agent.add_tool(global_ls, "global_ls", "List files in global shared directory", ["vfs", "global"])
-        agent.add_tool(global_delete, "global_delete", "Delete file from global shared directory", ["vfs", "global"])
-
-        registered.extend(["global_read", "global_write", "global_ls", "global_delete"])
-
-    # =========================================================================
-    # SHARING TOOLS
-    # =========================================================================
-
-    if enable_sharing:
-        async def share_create(
-            vfs_path: str,
-            readonly: bool = False,
-            expires_hours: float = None,
-        ) -> str:
-            """
-            Create a share for a VFS directory.
-            Other sessions or agents can then mount this share.
-
-            Args:
-                vfs_path: Path in VFS to share (e.g., "/project/src")
-                readonly: Make share read-only for others
-                expires_hours: Optional expiration time in hours
-
-            Returns:
-                Share ID that can be used to mount the share
-            """
-            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-            vfs = session.vfs
-
-            sharing = get_sharing_manager()
-            result = sharing.create_share(vfs, vfs_path, readonly, expires_hours)
-
-            if result.get("success"):
-                return f"Share created: {result['share_id']}\nFiles: {result['files_copied']}\nMount with: share_mount('{result['share_id']}')"
-            else:
-                return f"Error: {result.get('error', 'Unknown error')}"
-
-        async def share_mount(share_id: str, mount_point: str = None) -> str:
-            """
-            Mount a shared directory from another session or agent.
-
-            Args:
-                share_id: The share ID from share_create
-                mount_point: Optional custom mount point (default: /shared/{share_id})
-
-            Returns:
-                Result message
-            """
-            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-            vfs = session.vfs
-
-            sharing = get_sharing_manager()
-            result = sharing.mount_share(vfs, share_id, mount_point)
-
-            if result.get("success"):
-                return f"Mounted share at {result['mount_point']}"
-            else:
-                return f"Error: {result.get('error', 'Unknown error')}"
-
-        async def share_grant(share_id: str, target: str, target_type: str = "agent") -> str:
-            """
-            Grant access to a share.
-
-            Args:
-                share_id: The share ID
-                target: Agent name or session ID to grant access
-                target_type: "agent" or "session"
-
-            Returns:
-                Result message
-            """
-            sharing = get_sharing_manager()
-
-            if target_type == "agent":
-                result = sharing.grant_access_agent(share_id, target)
-            else:
-                result = sharing.grant_access_session(share_id, target)
-
-            if result.get("success"):
-                return f"Access granted to {target}"
-            else:
-                return f"Error: {result.get('error', 'Unknown error')}"
-
-        async def share_list() -> str:
-            """
-            List all available shares for the current agent.
-
-            Returns:
-                List of shares
-            """
-            sharing = get_sharing_manager()
-            shares = sharing.list_shares_for_agent(agent.amd.name)
-
-            if not shares:
-                return "No shares available"
-
-            lines = ["Available shares:"]
-            for share in shares:
-                owner = f"{share.source_agent}:{share.source_session}"
-                lines.append(f"  {share.share_id}: {share.source_path} (from {owner})")
-
-            return "\n".join(lines)
-
-        agent.add_tool(share_create, "share_create", "Create a share for a VFS directory", ["vfs", "sharing"])
-        agent.add_tool(share_mount, "share_mount", "Mount a shared directory", ["vfs", "sharing"])
-        agent.add_tool(share_grant, "share_grant", "Grant access to a share", ["vfs", "sharing"])
-        agent.add_tool(share_list, "share_list", "List available shares", ["vfs", "sharing"])
-
-        registered.extend(["share_create", "share_mount", "share_grant", "share_list"])
-
-    # =========================================================================
-    # SEARCH TOOLS
-    # =========================================================================
-
-    if enable_search:
-        async def vfs_search(
-            query: str,
-            path: str = "/",
-            mode: str = "both",
-            case_sensitive: bool = False,
-            regex: bool = False,
-            max_results: int = 20,
-        ) -> str:
-            """
-            Search for files and content in VFS.
-
-            Args:
-                query: Search term or regex pattern
-                path: Start path for search
-                mode: "filename", "content", or "both"
-                case_sensitive: Case-sensitive search
-                regex: Interpret query as regex
-                max_results: Maximum number of results
-
-            Returns:
-                Search results
-            """
-            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-            vfs = session.vfs
-
-            mode_map = {
-                "filename": SearchMode.FILENAME,
-                "content": SearchMode.CONTENT,
-                "both": SearchMode.BOTH,
-            }
-
-            results = search_vfs(
-                vfs, query, path,
-                mode=mode_map.get(mode, SearchMode.BOTH),
-                case_sensitive=case_sensitive,
-                regex=regex,
-                max_results=max_results,
-            )
-
-            if not results:
-                return f"No results for '{query}'"
-
-            lines = [f"Found {len(results)} results for '{query}':"]
-            for r in results:
-                if r.match_type == "filename":
-                    lines.append(f"  📄 {r.path}")
-                else:
-                    lines.append(f"  📄 {r.path}:{r.line_number}: {r.line_content}")
-
-            return "\n".join(lines)
-
-        async def vfs_find(pattern: str, path: str = "/") -> str:
-            """
-            Find files by glob pattern (like Unix find).
-
-            Args:
-                pattern: Glob pattern (e.g., "*.py", "test_*.js")
-                path: Start path
-
-            Returns:
-                List of matching files
-            """
-            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-            vfs = session.vfs
-
-            results = find_files(vfs, pattern, path)
-
-            if not results:
-                return f"No files matching '{pattern}'"
-
-            return f"Found {len(results)} files:\n" + "\n".join(f"  {f}" for f in results)
-
-        async def vfs_grep(
-            pattern: str,
-            file_pattern: str = "*",
-            path: str = "/",
-            context: int = 0,
-        ) -> str:
-            """
-            Search file contents with regex (like Unix grep).
-
-            Args:
-                pattern: Regex pattern to search for
-                file_pattern: Glob pattern for files to search
-                path: Start path
-                context: Number of context lines
-
-            Returns:
-                Grep results
-            """
-            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-            vfs = session.vfs
-
-            results = grep_vfs(vfs, pattern, file_pattern, path, context)
-
-            if not results:
-                return f"No matches for '{pattern}'"
-
-            lines = [f"Found {len(results)} matches:"]
-            for r in results:
-                lines.append(f"  {r['file']}:{r['line']}: {r['match']}")
-
-            return "\n".join(lines)
-
-        agent.add_tool(vfs_search, "vfs_search", "Search files and content in VFS", ["vfs", "search"])
-        agent.add_tool(vfs_find, "vfs_find", "Find files by glob pattern", ["vfs", "search"])
-        agent.add_tool(vfs_grep, "vfs_grep", "Grep file contents with regex", ["vfs", "search"])
-
-        registered.extend(["vfs_search", "vfs_find", "vfs_grep"])
-
-    # =========================================================================
-    # EXECUTE TOOLS
-    # =========================================================================
-
-    if enable_execute:
-        async def vfs_execute(
-            file_path: str,
-            args: str = "",
-            timeout: int = 300,
-        ) -> str:
-            """
-            Execute a script file in Docker container.
-            Supports Python, JavaScript, TypeScript, Shell scripts.
-
-            Args:
-                file_path: Path to executable file in VFS
-                args: Command line arguments (space-separated)
-                timeout: Execution timeout in seconds
-
-            Returns:
-                Execution result with stdout/stderr
-            """
-            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-
-            if not session._docker_vfs:
-                return "Error: Docker not enabled for this session"
-
-            args_list = args.split() if args else []
-            result = await execute_file(
-                session.vfs,
-                session._docker_vfs,
-                file_path,
-                args_list,
-                timeout,
-            )
-
-            if result.get("success"):
-                output = f"Exit code: {result.get('exit_code', 0)}\n"
-                if result.get("stdout"):
-                    output += f"--- stdout ---\n{result['stdout']}\n"
-                if result.get("stderr"):
-                    output += f"--- stderr ---\n{result['stderr']}\n"
-                return output
-            else:
-                return f"Error: {result.get('error', 'Execution failed')}"
-
-        async def vfs_run_code(
-            code: str,
-            language: str = "python",
-            timeout: int = 60,
-        ) -> str:
-            """
-            Execute a code snippet directly (without creating a file).
-
-            Args:
-                code: Code to execute
-                language: "python", "javascript", "bash"
-                timeout: Execution timeout in seconds
-
-            Returns:
-                Execution result
-            """
-            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-
-            if not session._docker_vfs:
-                return "Error: Docker not enabled for this session"
-
-            result = await execute_code(
-                session._docker_vfs,
-                code,
-                language,
-                timeout,
-            )
-
-            if result.get("success"):
-                output = f"Exit code: {result.get('exit_code', 0)}\n"
-                if result.get("stdout"):
-                    output += f"{result['stdout']}"
-                if result.get("stderr"):
-                    output += f"\n[stderr] {result['stderr']}"
-                return output
-            else:
-                return f"Error: {result.get('error', 'Execution failed')}"
-
-        async def docker_shell(command: str, timeout: int = 300) -> str:
-            """
-            Run a shell command in the Docker container.
-            VFS files are synced before and after execution.
-
-            Args:
-                command: Shell command to execute
-                timeout: Timeout in seconds
-
-            Returns:
-                Command output
-            """
-            session = await agent.session_manager.get_or_create(agent.active_execution_id or "default")
-
-            if not session._docker_vfs:
-                return "Error: Docker not enabled for this session"
-
-            result = await session._docker_vfs.run_command(
-                command=command,
-                timeout=timeout,
-            )
-
-            if result.get("success"):
-                output = result.get("stdout", "")
-                if result.get("stderr"):
-                    output += f"\n[stderr] {result['stderr']}"
-                return output or "(no output)"
-            else:
-                return f"Error: {result.get('error', 'Command failed')}\n{result.get('stderr', '')}"
-
-        agent.add_tool(vfs_execute, "vfs_execute", "Execute script file in Docker", ["vfs", "execute", "docker"])
-        agent.add_tool(vfs_run_code, "vfs_run_code", "Execute code snippet in Docker", ["vfs", "execute", "docker"])
-        agent.add_tool(docker_shell, "docker_shell", "Run shell command in Docker", ["vfs", "execute", "docker"])
-
-        registered.extend(["vfs_execute", "vfs_run_code", "docker_shell"])
-
-    return {
-        "registered": registered,
-        "count": len(registered),
-        "categories": {
-            "core": ["vfs_ls", "vfs_read", "vfs_write", "vfs_edit", "vfs_delete", "vfs_mkdir", "vfs_mv", "vfs_cp",
-                     "vfs_mount", "vfs_unmount"],
-            "global": ["global_read", "global_write", "global_ls", "global_delete"] if enable_global else [],
-            "sharing": ["share_create", "share_mount", "share_grant", "share_list"] if enable_sharing else [],
-            "search": ["vfs_search", "vfs_find", "vfs_grep"] if enable_search else [],
-            "execute": ["vfs_execute", "vfs_run_code", "docker_shell"] if enable_execute else [],
-        },
-    }
+# NOTE: The register_vfs_tools() function has been removed as part of the
+# architecture refactoring. VFS tools are now directly registered in
+# FlowAgent.init_session_tools() in flow_agent.py.
+#
+# This eliminates tool bloat and monkey-patching patterns. The VFS operates
+# transparently through mount points (/global/, /shared/, etc.) without
+# requiring special tools like global_read, global_write, etc.
+#
+# Session initialization with VFS features (mounting /global/, etc.) is now
+# handled directly in AgentSessionV2.initialize() in agent_session_v2.py.
 
 
 # =============================================================================
-# SESSION INITIALIZATION HELPER
+# SESSION INITIALIZATION HELPER - REMOVED
 # =============================================================================
 
-async def init_session_with_vfs_features(
-    session: "AgentSessionV2",
-    mount_global: bool = True,
-    global_readonly: bool = False,
-) -> dict:
-    """
-    Initialisiert eine Session mit allen VFS Features.
-
-    - Mountet /global/ automatisch
-    - Registriert GlobalVFS
-    - Lädt verfügbare Shares
-
-    Args:
-        session: AgentSessionV2 Instanz
-        mount_global: /global/ automatisch mounten
-        global_readonly: /global/ nur lesend mounten
-
-    Returns:
-        Init-Status dict
-    """
-    result = {
-        "session_id": session.session_id,
-        "features": [],
-    }
-
-    # Mount global directory
-    if mount_global:
-        global_vfs = get_global_vfs()
-        global_vfs.register_vfs(session.vfs)
-
-        mount_result = session.vfs.mount(
-            local_path=global_vfs.local_path,
-            vfs_path=GLOBAL_VFS_PATH,
-            readonly=global_readonly,
-            auto_sync=not global_readonly,
-        )
-
-        if mount_result.get("success"):
-            result["features"].append("global_vfs")
-            result["global_mount"] = mount_result
-
-    # Load available shares
-    sharing = get_sharing_manager()
-    available_shares = sharing.list_shares_for_agent(session.agent_name)
-    result["available_shares"] = len(available_shares)
-    result["features"].append("sharing")
-
-    return result
-
-
-# =============================================================================
-# MODULE EXPORTS
-# =============================================================================
-
+# NOTE: The init_session_with_vfs_features() function has been removed.
+# Session initialization with VFS features has been moved to
+# AgentSessionV2.initialize() in agent_session_v2.py.
+#
+# This eliminates the need for monkey-patching and external initialization.
 __all__ = [
     # Global VFS
     "GlobalVFSManager",
     "get_global_vfs",
     "GLOBAL_VFS_PATH",
-
     # Sharing
     "VFSSharingManager",
     "get_sharing_manager",
     "ShareInfo",
     "SHARED_VFS_PATH",
-
     # Search
     "SearchMode",
     "SearchResult",
     "search_vfs",
     "find_files",
     "grep_vfs",
-
     # Execute
     "execute_file",
     "execute_code",
-
-    # Agent Tools
-    "register_vfs_tools",
-
-    # Session Init
-    "init_session_with_vfs_features",
 ]

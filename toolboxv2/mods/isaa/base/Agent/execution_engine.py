@@ -19,6 +19,8 @@ Author: FlowAgent V3
 
 import asyncio
 import json
+import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -31,6 +33,15 @@ from litellm.types.utils import (
 )
 
 from toolboxv2 import get_app
+
+# Import Live State Management
+from toolboxv2.mods.isaa.base.Agent.agent_live_state import (
+    AgentLiveState,
+    AgentPhase,
+    TokenStream,
+    ToolExecution,
+)
+
 # Import Skills System
 from toolboxv2.mods.isaa.base.Agent.skills import (
     Skill,
@@ -50,8 +61,8 @@ from toolboxv2.mods.isaa.base.Agent.sub_agent import (
 
 # Import Resume Extension
 from toolboxv2.mods.isaa.base.Agent.sub_agent_resume_extension import (
-    SubAgentResumeExtension,
     RESUME_SUB_AGENT_TOOL,
+    SubAgentResumeExtension,
 )
 
 # =============================================================================
@@ -97,27 +108,27 @@ STATIC_TOOLS = [
             },
         },
     },
-{
-    "type": "function",
-    "function": {
-        "name": "shift_focus",
-        "description": "Archiviert die aktuelle Working History und setzt den Fokus auf ein neues Ziel. Nutze dies, wenn ein Teilabschnitt erledigt ist, um Kontext-Rauschen zu vermeiden. Alle bisherigen Ergebnisse werden permanent gespeichert.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "summary_of_achievements": {
-                    "type": "string",
-                    "description": "Eine detaillierte Zusammenfassung dessen, was im letzten Abschnitt erreicht wurde (Pfade, Ergebnisse, Status)."
+    {
+        "type": "function",
+        "function": {
+            "name": "shift_focus",
+            "description": "Archiviert die aktuelle Working History und setzt den Fokus auf ein neues Ziel. Nutze dies, wenn ein Teilabschnitt erledigt ist, um Kontext-Rauschen zu vermeiden. Alle bisherigen Ergebnisse werden permanent gespeichert.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary_of_achievements": {
+                        "type": "string",
+                        "description": "Eine detaillierte Zusammenfassung dessen, was im letzten Abschnitt erreicht wurde (Pfade, Ergebnisse, Status).",
+                    },
+                    "next_objective": {
+                        "type": "string",
+                        "description": "Was ist das unmittelbare nächste Ziel?",
+                    },
                 },
-                "next_objective": {
-                    "type": "string",
-                    "description": "Was ist das unmittelbare nächste Ziel?"
-                }
+                "required": ["summary_of_achievements", "next_objective"],
             },
-            "required": ["summary_of_achievements", "next_objective"]
-        }
-    }
-}
+        },
+    },
 ]
 
 DISCOVERY_TOOLS = [
@@ -568,7 +579,7 @@ class HistoryCompressor:
             "final_answer",
             "list_tools",
             "load_tools",
-            "shift_focus"
+            "shift_focus",
         }
         if meaningful_tools:
             lines.append(f"• Tools genutzt: {', '.join(list(meaningful_tools)[:5])}")
@@ -680,6 +691,10 @@ class ExecutionEngine(SubAgentResumeExtension):
         """
         self.agent = agent
         self.human_online = human_online
+        self.live = AgentLiveState(
+            agent_name=getattr(agent, "amd", None) and agent.amd.name or "?",
+            is_sub=is_sub_agent,
+        )
 
         # Sub-agent state
         self.is_sub_agent = is_sub_agent
@@ -696,7 +711,10 @@ class ExecutionEngine(SubAgentResumeExtension):
         self._current_session = None
 
         # Get or create SkillsManager
-        if hasattr(agent.session_manager, "skills_manager") and agent.session_manager.skills_manager:
+        if (
+            hasattr(agent.session_manager, "skills_manager")
+            and agent.session_manager.skills_manager
+        ):
             self.skills_manager = agent.session_manager.skills_manager
         else:
             self.skills_manager = SkillsManager(
@@ -733,9 +751,9 @@ class ExecutionEngine(SubAgentResumeExtension):
                 min_group_size=2,
             )
             if groups:
-                print(f"[ExecutionEngine] Auto-created {len(groups)} tool groups")
+                self.live.log(f"Auto-created {len(groups)} tool groups")
         except Exception as e:
-            print(f"[ExecutionEngine] Failed to auto-group tools: {e}")
+            self.live.log(f"Failed to auto-group tools: {e}", logging.WARNING)
 
     # =========================================================================
     # MAIN EXECUTION LOOP
@@ -794,7 +812,7 @@ class ExecutionEngine(SubAgentResumeExtension):
             if self.sub_agent_output_dir:
                 session.vfs = RestrictedVFSWrapper(session.vfs, self.sub_agent_output_dir)
             # Limit iterations for sub-agents
-            max_iterations = min(max_iterations, 10)
+            max_iterations = min(max_iterations, 15)
 
         # Store session reference for sub-agent spawning
         self._current_session = session
@@ -834,11 +852,12 @@ class ExecutionEngine(SubAgentResumeExtension):
 
         agent_type = "SUB-AGENT" if self.is_sub_agent else "MAIN"
         action = "Resuming" if is_resume else "Start"
-        print(f"🚀 {action} Execution [{agent_type}] [{ctx.run_id}]: {query}")
-        if ctx.matched_skills:
-            print(f"📚 Matched Skills: {[s.name for s in ctx.matched_skills]}")
-        if ctx.dynamic_tools:
-            print(f"📦 Preloaded Tools: {ctx.get_dynamic_tool_names()}")
+        self.live.run_id = ctx.run_id
+        self.live.max_iterations = max_iterations
+        self.live.t_start = time.time()
+        self.live.skills = [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
+        self.live.tools_loaded = ctx.get_dynamic_tool_names() if ctx.dynamic_tools else []
+        self.live.enter(AgentPhase.INIT, f"{action} [{agent_type}] {ctx.run_id}: {query[:80]}")
 
         final_response = None
         success = True
@@ -847,7 +866,8 @@ class ExecutionEngine(SubAgentResumeExtension):
         while ctx.current_iteration < max_iterations:
             ctx.current_iteration += 1
 
-            print(f"─────────────── {ctx.current_iteration}/{max_iterations} ─────────────── ")
+            self.live.iteration = ctx.current_iteration
+            self.live.enter(AgentPhase.LLM_CALL, f"iter {ctx.current_iteration}/{max_iterations}")
 
             # Check for loop and inject warning if needed
             if self._should_warn_loop(ctx):
@@ -877,7 +897,8 @@ class ExecutionEngine(SubAgentResumeExtension):
                     with_context=False,  # We built context manually
                 )
             except Exception as e:
-                print(f"❌ LLM Error: {e}")
+                self.live.error = str(e)
+                self.live.enter(AgentPhase.ERROR, f"LLM Error: {e}")
                 final_response = f"Es ist ein Fehler aufgetreten: {str(e)}\n\nIch konnte die Aufgabe leider nicht abschließen."
                 success = False
                 break
@@ -918,7 +939,10 @@ class ExecutionEngine(SubAgentResumeExtension):
         if final_response is None:
             if self.is_sub_agent:
                 # Sub-agent: Special handling mit Resume-Option
-                final_response, should_mark_resumable = await self._handle_sub_agent_max_iterations(
+                (
+                    final_response,
+                    should_mark_resumable,
+                ) = await self._handle_sub_agent_max_iterations(
                     ctx, query, max_iterations
                 )
                 success = False
@@ -937,20 +961,20 @@ class ExecutionEngine(SubAgentResumeExtension):
         # 8. Learn from successful runs
         if success:
             app = get_app()
-            app.run_bg_task_advanced(self._background_learning_task,
+            app.run_bg_task_advanced(
+                self._background_learning_task,
                 query=query,
                 tools_used=ctx.tools_used,
                 final_response=final_response,
                 success=success,
-            matched_skills=ctx.matched_skills
+                matched_skills=ctx.matched_skills,
             )
 
         # Remove from active executions
         self._active_executions.pop(ctx.run_id, None)
 
-        print(
-            f"✅ Execution [{ctx.run_id}] complete (success={success}, iterations={ctx.current_iteration})"
-        )
+        self.live.status_msg = f"done (ok={success}, iters={ctx.current_iteration})"
+        self.live.enter(AgentPhase.DONE, f"Execution [{ctx.run_id}] complete (success={success}, iters={ctx.current_iteration})")
 
         if get_ctx:
             return final_response, ctx
@@ -969,8 +993,14 @@ class ExecutionEngine(SubAgentResumeExtension):
 
         return False
 
-    async def _background_learning_task(self, query: str, tools_used: list, final_response: str, success: bool,
-                                        matched_skills: list):
+    async def _background_learning_task(
+        self,
+        query: str,
+        tools_used: list,
+        final_response: str,
+        success: bool,
+        matched_skills: list,
+    ):
         """Runs learning and recording in background to not block the UI"""
         try:
             # 1. Record usage stats (Fast)
@@ -987,7 +1017,7 @@ class ExecutionEngine(SubAgentResumeExtension):
                     llm_completion_func=self.agent.a_run_llm_completion,
                 )
         except Exception as e:
-            print(f"[Background Learning Error]: {e}")
+            self.live.log(f"Background Learning Error: {e}", logging.WARNING)
 
     # =========================================================================
     # TOOL EXECUTION
@@ -1017,12 +1047,14 @@ class ExecutionEngine(SubAgentResumeExtension):
 
         result = ""
         is_final = False
+        self.live.tool = ToolExecution(name=f_name, args_summary=str(f_args)[:120], t_start=time.time())
+        self.live.enter(AgentPhase.TOOL_EXEC)
 
         # === STATIC TOOLS ===
         if f_name == "think":
             thought = f_args.get("thought", "")
             result = f"Thought recorded."
-            print(thought) # "Agent thought:"
+            self.live.thought = thought  # visible to renderer
             # Record in AutoFocus
             ctx.auto_focus.record(f_name, f_args, thought[:200])
 
@@ -1047,7 +1079,7 @@ class ExecutionEngine(SubAgentResumeExtension):
             result = await self._tool_shift_focus(
                 ctx,
                 f_args.get("summary_of_achievements", ""),
-                f_args.get("next_objective", "")
+                f_args.get("next_objective", ""),
             )
 
         # === SUB-AGENT TOOLS ===
@@ -1157,10 +1189,11 @@ class ExecutionEngine(SubAgentResumeExtension):
                         additional_iterations=additional_iterations,
                         additional_budget=additional_budget,
                         wait=wait,
-                        context=context  # Pass context parameter
+                        context=context,  # Pass context parameter
                     )
                 except Exception as e:
                     import traceback
+
                     traceback.print_exc()
                     result = f"ERROR resuming sub-agent: {str(e)}"
 
@@ -1266,7 +1299,9 @@ class ExecutionEngine(SubAgentResumeExtension):
                 category = categories[0] if categories else "unknown"
                 ctx.add_tool(tool_name, score, category)
 
-    async def _tool_shift_focus(self, ctx: ExecutionContext, summary_of_achievements: str, next_objective: str) -> str:
+    async def _tool_shift_focus(
+        self, ctx: ExecutionContext, summary_of_achievements: str, next_objective: str
+    ) -> str:
         """
         Verschiebt den aktuellen Arbeitsfortschritt in die Permanent History
         und leert die Working History für einen frischen Start.
@@ -1274,7 +1309,9 @@ class ExecutionEngine(SubAgentResumeExtension):
         session = await self.agent.session_manager.get_or_create(ctx.session_id)
 
         # 1. Erzeuge automatische Zusammenfassung der bisherigen Tool-Calls
-        auto_summary = HistoryCompressor.compress_to_summary(ctx.working_history, ctx.run_id)
+        auto_summary = HistoryCompressor.compress_to_summary(
+            ctx.working_history, ctx.run_id
+        )
 
         # 2. Kombiniere automatische Summary mit der manuellen des Agenten
         combined_content = (
@@ -1288,7 +1325,7 @@ class ExecutionEngine(SubAgentResumeExtension):
             {"role": "system", "content": combined_content},
             direct=True,
             type="milestone_summary",
-            run_id=ctx.run_id
+            run_id=ctx.run_id,
         )
 
         # 4. Working History RESET
@@ -1296,8 +1333,11 @@ class ExecutionEngine(SubAgentResumeExtension):
         system_prompt = ctx.working_history[0]
         ctx.working_history = [
             system_prompt,
-            {"role": "system", "content": f"Vorheriger Abschnitt abgeschlossen. Stand: {summary_of_achievements}"},
-            {"role": "user", "content": f"Neues Ziel: {next_objective}. Fahre fort."}
+            {
+                "role": "system",
+                "content": f"Vorheriger Abschnitt abgeschlossen. Stand: {summary_of_achievements}",
+            },
+            {"role": "user", "content": f"Neues Ziel: {next_objective}. Fahre fort."},
         ]
 
         # 5. Trackers zurücksetzen für neue Phase
@@ -1305,7 +1345,7 @@ class ExecutionEngine(SubAgentResumeExtension):
         ctx.loop_detector.reset()
         ctx.loop_warning_given = False
         # 1. Begrenze, wie oft ein Agent den Fokus shiften darf (Sicherung gegen Loops)
-        if not hasattr(ctx, 'focus_shifts_count'):
+        if not hasattr(ctx, "focus_shifts_count"):
             ctx.focus_shifts_count = 0
 
         if ctx.focus_shifts_count >= 3:  # Maximal 3 Resets pro Run
@@ -1332,8 +1372,13 @@ class ExecutionEngine(SubAgentResumeExtension):
         - Auto-removes lowest relevance tool when limit reached
         - Triggers partial compression on category change + len > 3
         """
-        print(f"Loading tools: {tools_input} - {type(tools_input)}")
-        if isinstance(tools_input, str) and tools_input.startswith("[") and tools_input.endswith("]"):
+        self.live.status_msg = f"Loading tools: {tools_input}"
+        self.live.log(f"Loading tools: {tools_input}")
+        if (
+            isinstance(tools_input, str)
+            and tools_input.startswith("[")
+            and tools_input.endswith("]")
+        ):
             names = tools_input[1:-1].replace(" ", "").replace('"', "").replace("'", "")
             if "," in names:
                 names = names.split(",")
@@ -1386,9 +1431,7 @@ class ExecutionEngine(SubAgentResumeExtension):
                         )
                         if summary:
                             ctx.working_history = new_history
-                            print(
-                                f"  📦 Partial compression triggered (category change: {majority_category} → {new_category})"
-                            )
+                            self.live.enter(AgentPhase.COMPRESSING, f"Partial compression ({majority_category} -> {new_category})")
 
                 # Remove least relevant tool
                 least_relevant = ctx.get_least_relevant_tool()
@@ -1567,15 +1610,6 @@ class ExecutionEngine(SubAgentResumeExtension):
             )
             prompt_parts.append(skill_section)
 
-        # Add VFS context if available
-        try:
-            vfs_context = session.build_vfs_context()
-            if vfs_context and len(vfs_context) > 10:
-                prompt_parts.append("")
-                prompt_parts.append(vfs_context)
-        except:
-            pass
-
         return "\n".join(prompt_parts)
 
     def _inject_auto_focus(self, ctx: ExecutionContext) -> List[dict]:
@@ -1634,7 +1668,6 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         log_dir = "/.memory/logs"
         log_file = f"{log_dir}/{timestamp}_{ctx.run_id}.md"
 
-
         summary = HistoryCompressor.compress_to_summary(ctx.working_history, ctx.run_id)
 
         try:
@@ -1649,14 +1682,18 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                 full_log.append(f"\n### {role.upper()}")
                 if "tool_calls" in msg:
                     for tc in msg["tool_calls"]:
-                        fn = tc.get("function", {}) if isinstance(tc, dict) else tc.function
+                        fn = (
+                            tc.get("function", {})
+                            if isinstance(tc, dict)
+                            else tc.function
+                        )
                         name = fn.get("name", "") if isinstance(fn, dict) else fn.name
                         full_log.append(f"`Tool Call: {name}`")
                 full_log.append(content)
 
             session.vfs.write(log_file, "\n".join(full_log))
         except Exception as e:
-            print(f"Failed to write execution log: {e}")
+            self.live.log(f"Failed to write execution log: {e}", logging.WARNING)
 
         # 2. LLM Summarization (Dynamisch statt Regelbasiert)
         summary_text = "Keine Zusammenfassung."
@@ -1674,15 +1711,20 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
 
             # Wir nutzen working_history als Kontext, aber limitiert
             summary_text = await self.agent.a_run_llm_completion(
-                messages=ctx.working_history[-10:] + [{"role": "user", "content": summary_prompt}],
+                messages=ctx.working_history[-10:]
+                + [{"role": "user", "content": summary_prompt}],
                 model_preference="fast",
                 max_tokens=400,
-                stream=False
+                stream=False,
             )
         except Exception as e:
             # Fallback auf Rule-Based Compressor bei Fehler
-            auto_sum = HistoryCompressor.compress_to_summary(ctx.working_history, ctx.run_id)
-            summary_text = auto_sum["content"] if auto_sum else "Fehler bei Zusammenfassung."
+            auto_sum = HistoryCompressor.compress_to_summary(
+                ctx.working_history, ctx.run_id
+            )
+            summary_text = (
+                auto_sum["content"] if auto_sum else "Fehler bei Zusammenfassung."
+            )
 
         # 3. Permanent Speichern
         # User message
@@ -1692,7 +1734,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         summary_msg = {
             "role": "system",
             "content": f"⚡ RUN SUMMARY [{ctx.run_id}]: {summary_text}\n(Full Log: {log_file})",
-            "metadata": {"type": "run_summary", "log_file": log_file}
+            "metadata": {"type": "run_summary", "log_file": log_file},
         }
 
         await session.add_message(
@@ -1706,7 +1748,8 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         # Final response
         await session.add_message({"role": "assistant", "content": final_response})
 
-        print(f"  💾 Run {ctx.run_id} archived to {log_file} and committed to history")
+        self.live.log(f"Run {ctx.run_id} archived to {log_file}")
+
     # =========================================================================
     # STATISTICS
     # =========================================================================
@@ -1739,7 +1782,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
             return None
 
         ctx.status = "paused"
-        print(f"⏸️ Execution [{execution_id}] paused at iteration {ctx.current_iteration}")
+        self.live.enter(AgentPhase.PAUSED, f"Paused [{execution_id}] at iter {ctx.current_iteration}")
         return ctx
 
     async def cancel(self, execution_id: str) -> bool:
@@ -1757,7 +1800,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
             return False
 
         ctx.status = "cancelled"
-        print(f"❌ Execution [{execution_id}] cancelled")
+        self.live.enter(AgentPhase.ERROR, f"Cancelled [{execution_id}]")
 
         # Clean up sub-agents if any
         if self._sub_agent_manager:
@@ -1892,7 +1935,14 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                 {"role": "user", "content": query},
             ]
 
-            # Return the generator function and context
+        # Init live state for stream path
+        self.live.run_id = ctx.run_id
+        self.live.max_iterations = max_iterations
+        self.live.t_start = time.time()
+        self.live.skills = [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
+        self.live.tools_loaded = ctx.get_dynamic_tool_names() if ctx.dynamic_tools else []
+        self.live.enter(AgentPhase.INIT, f"{'Resume' if is_resume else 'Start'} stream [{ctx.run_id}]")
+
         async def stream_generator(ctx: ExecutionContext):
             """Generator that yields chunks during execution"""
             nonlocal session, max_iterations
@@ -1915,8 +1965,8 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
 
             while ctx.current_iteration < max_iterations:
                 ctx.current_iteration += 1
-
-                print(f"─────────────── {ctx.current_iteration}/{max_iterations} ─────────────── ")
+                self.live.iteration = ctx.current_iteration
+                self.live.enter(AgentPhase.LLM_CALL, f"iter {ctx.current_iteration}/{max_iterations}")
 
                 # Check pause
                 if ctx.status == "paused":
@@ -1926,13 +1976,12 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                 if self._should_warn_loop(ctx):
                     warning_msg = ctx.loop_detector.get_intervention_message()
                     # Inject into history so LLM sees it
-                    ctx.working_history.append({
-                        "role": "system",
-                        "content": warning_msg
-                    })
+                    ctx.working_history.append({"role": "system", "content": warning_msg})
                     ctx.loop_warning_given = True
                     # Optional: Inform UI about the warning
-                    yield enrich({"type": "warning", "message": warning_msg.splitlines()[0]})
+                    yield enrich(
+                        {"type": "warning", "message": warning_msg.splitlines()[0]}
+                    )
 
                 # Build messages
                 messages = list(ctx.working_history)
@@ -1943,65 +1992,169 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                 # Get tool definitions
                 tool_definitions = self._get_tool_definitions(ctx)
 
-                # Stream LLM response
+                # Stream LLM response state
                 collected_content = ""
                 tool_calls_buffer = {}
 
-                stream_response = await self.agent.a_run_llm_completion(
-                    messages=messages,
-                    tools=tool_definitions if tool_definitions else None,
-                    stream=True,
-                    true_stream=True,
-                    model = model
+                # --- AUTO-RESUME SCHLEIFE FÜR STREAMING ---
+                MAX_CONTINUATIONS = 100
+                continuation_count = 0
+
+                current_messages = messages.copy()
+                current_tools = tool_definitions if tool_definitions else None
+
+                continuing_tool_idx = (
+                    None  # Verfolgt, welches Tool gerade durch Text fortgesetzt wird
                 )
 
-                if asyncio.iscoroutine(stream_response):
-                    stream_response = await stream_response
-
-                async for chunk in stream_response:
-                    delta = (
-                        chunk.choices[0].delta
-                        if hasattr(chunk, "choices") and chunk.choices
-                        else None
+                while continuation_count < MAX_CONTINUATIONS:
+                    stream_response = await self.agent.a_run_llm_completion(
+                        messages=current_messages,
+                        tools=current_tools,
+                        stream=True,
+                        true_stream=True,
+                        model=model,
                     )
-                    # 1. Content sammeln
-                    if delta and hasattr(delta, "content") and delta.content:
-                        collected_content += delta.content
-                        yield enrich({"type": "content", "chunk": delta.content})
 
-                    # 2. Reasoning sammeln (falls vorhanden)
-                    if (
-                        delta
-                        and hasattr(delta, "reasoning_content")
-                        and delta.reasoning_content
-                    ):
-                        yield enrich({"type": "reasoning", "chunk": delta.reasoning_content})
+                    if asyncio.iscoroutine(stream_response):
+                        stream_response = await stream_response
 
-                    # 3. Tool Calls SAMMELN (nicht überschreiben!)
-                    if delta and hasattr(delta, "tool_calls") and delta.tool_calls:
-                        for tc_chunk in delta.tool_calls:
-                            idx = tc_chunk.index
+                    finish_reason = None
 
-                            # Neuen Eintrag anlegen, falls Index noch nicht existiert
-                            if idx not in tool_calls_buffer:
-                                tool_calls_buffer[idx] = ChatCompletionMessageToolCall(
-                                    id=tc_chunk.id,
-                                    type="function",
-                                    function=Function(
-                                        name=tc_chunk.function.name or "",
-                                        arguments=tc_chunk.function.arguments or "",
-                                    ),
-                                )
+                    async for chunk in stream_response:
+                        delta = (
+                            chunk.choices[0].delta
+                            if hasattr(chunk, "choices") and chunk.choices
+                            else None
+                        )
+
+                        if (
+                            hasattr(chunk.choices[0], "finish_reason")
+                            and chunk.choices[0].finish_reason
+                        ):
+                            finish_reason = chunk.choices[0].finish_reason
+
+                        # 1. Content sammeln (oder abgebrochenes Tool fortsetzen)
+                        if delta and hasattr(delta, "content") and delta.content:
+                            if continuing_tool_idx is not None:
+                                # Das LLM spuckt den Rest des JSON-Strings als reinen Text aus -> ins Tool umleiten!
+                                tool_calls_buffer[continuing_tool_idx]["function"][
+                                    "arguments"
+                                ] += delta.content
                             else:
-                                # Bestehenden Eintrag erweitern (Name und Argumente anhängen)
-                                if tc_chunk.function.name:
-                                    tool_calls_buffer[idx]["function"]["name"] += (
-                                        tc_chunk.function.name
+                                collected_content += delta.content
+                                yield enrich({"type": "content", "chunk": delta.content})
+
+                        # 2. Reasoning sammeln (falls vorhanden)
+                        if (
+                            delta
+                            and hasattr(delta, "reasoning_content")
+                            and delta.reasoning_content
+                        ):
+                            yield enrich(
+                                {"type": "reasoning", "chunk": delta.reasoning_content}
+                            )
+
+                        # 3. Tool Calls SAMMELN
+                        if delta and hasattr(delta, "tool_calls") and delta.tool_calls:
+                            for tc_chunk in delta.tool_calls:
+                                idx = tc_chunk.index
+
+                                # Falls das LLM während eines Resumes trotzdem native Tool_calls nutzt
+                                target_idx = (
+                                    continuing_tool_idx
+                                    if continuing_tool_idx is not None
+                                    else idx
+                                )
+
+                                # Neuen Eintrag anlegen, falls Index noch nicht existiert
+                                if target_idx not in tool_calls_buffer:
+                                    tool_calls_buffer[target_idx] = (
+                                        ChatCompletionMessageToolCall(
+                                            id=tc_chunk.id,
+                                            type="function",
+                                            function=Function(
+                                                name=tc_chunk.function.name or "",
+                                                arguments=tc_chunk.function.arguments
+                                                or "",
+                                            ),
+                                        )
                                     )
-                                if tc_chunk.function.arguments:
-                                    tool_calls_buffer[idx]["function"]["arguments"] += (
-                                        tc_chunk.function.arguments
-                                    )
+                                else:
+                                    # Bestehenden Eintrag erweitern
+                                    if tc_chunk.function.name:
+                                        tool_calls_buffer[target_idx]["function"][
+                                            "name"
+                                        ] += tc_chunk.function.name
+                                    if tc_chunk.function.arguments:
+                                        tool_calls_buffer[target_idx]["function"][
+                                            "arguments"
+                                        ] += tc_chunk.function.arguments
+
+                    # --- Ende des Chunks. Prüfen auf Token Limit ---
+                    if finish_reason not in ["length", "max_tokens"]:
+                        break  # Generierung natürlich beendet
+
+                    continuation_count += 1
+                    self.live.status_msg = f"Auto-Resume ({continuation_count}/{MAX_CONTINUATIONS})"
+                    self.live.log(f"Output limit reached. Auto-Resume ({continuation_count}/{MAX_CONTINUATIONS})")
+
+                    # Analysieren, WAS genau abgebrochen ist (Text oder Tool-Call JSON?)
+                    is_tool_cut_off = False
+                    active_cut_off_tool_idx = None
+
+                    if tool_calls_buffer:
+                        last_idx = max(tool_calls_buffer.keys())
+                        last_tc = tool_calls_buffer[last_idx]
+                        try:
+                            json.loads(last_tc["function"]["arguments"])
+                            # Valide -> War nicht abgeschnitten
+                        except json.JSONDecodeError:
+                            is_tool_cut_off = True
+                            active_cut_off_tool_idx = last_idx
+
+                    if is_tool_cut_off:
+                        # Ein Tool Call wurde mitten im JSON abgeschnitten
+                        continuing_tool_idx = active_cut_off_tool_idx
+                        last_tc = tool_calls_buffer[continuing_tool_idx]
+                        t_name = last_tc["function"]["name"]
+                        t_args = last_tc["function"]["arguments"]
+
+                        resume_msg = (
+                            f"Du hast das Output-Token-Limit erreicht, während du das Tool '{t_name}' ausgeführt hast. "
+                            f"Hier ist der JSON-Argument-String, den du bisher geschrieben hast:\n`{t_args}`\n\n"
+                            f"Bitte antworte AUSSCHLIESSLICH mit den fehlenden Zeichen, um das JSON zu vervollständigen. "
+                            f"Gib keine Erklärungen und keinen Code-Block ab. Mache genau da weiter, wo der String abgerissen ist."
+                        )
+                        current_tools = (
+                            None  # Zwinge das LLM, als reinen Text zu antworten!
+                        )
+                        current_messages = messages.copy() + [
+                            {
+                                "role": "assistant",
+                                "content": collected_content
+                                + f"\n[Starte Tool: {t_name}]",
+                            },
+                            {"role": "user", "content": resume_msg},
+                        ]
+                    else:
+                        # Normaler Text wurde abgeschnitten
+                        continuing_tool_idx = None
+                        last_words = collected_content[-100:]
+                        resume_msg = (
+                            f"Du hast das maximale Output-Token-Limit deines Modells erreicht. "
+                            f"Bitte fahre exakt an dem Punkt fort, an dem du aufgehört hast. "
+                            f"Hier sind deine letzten Worte zur Orientierung:\n'...{last_words}'\n\n"
+                            f"Setze den Text/Code lückenlos fort. Bitte benutze keine Floskeln."
+                        )
+                        current_tools = tool_definitions if tool_definitions else None
+                        current_messages = messages.copy() + [
+                            {"role": "assistant", "content": collected_content},
+                            {"role": "user", "content": resume_msg},
+                        ]
+
+                # --- NACH DER SCHLEIFE ---
+                # Das Dictionary in eine Liste umwandeln
 
                 # Nach dem Loop: Das Dictionary in eine Liste umwandeln
                 tool_calls = list(tool_calls_buffer.values())
@@ -2022,7 +2175,9 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                         f_name = func_obj.get("name", "")
                         f_args = func_obj.get("arguments", "{}")
 
-                        yield enrich({"type": "tool_start", "name": f_name, "args": f_args})
+                        yield enrich(
+                            {"type": "tool_start", "name": f_name, "args": f_args}
+                        )
 
                         # Check final_answer
                         if f_name == "final_answer":
@@ -2038,27 +2193,25 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                                 final_response = collected_content
                                 success_status = True
 
-                            yield enrich({"type": "final_answer", "answer": final_response, "success": success_status})
+                            yield enrich(
+                                {
+                                    "type": "final_answer",
+                                    "answer": final_response,
+                                    "success": success_status,
+                                }
+                            )
                             break
 
-                        result, is_final  = await self._execute_tool_call(ctx, tc)
+                        result, is_final = await self._execute_tool_call(ctx, tc)
 
-                        tool_msg = {
-                            "role": "tool",
-                            "tool_call_id": tc.id
-                            if hasattr(tc, "id")
-                            else tc.get("id", ""),
-                            "name": f_name,
-                            "content": str(result),
-                        }
-                        ctx.working_history.append(tool_msg)
-
-                        yield enrich({
-                            "type": "tool_result",
-                            "name": f_name,
-                            "is_final": is_final,
-                            "result": str(result),
-                        })
+                        yield enrich(
+                            {
+                                "type": "tool_result",
+                                "name": f_name,
+                                "is_final": is_final,
+                                "result": str(result),
+                            }
+                        )
 
                     if final_response:
                         break
@@ -2081,24 +2234,37 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
             # Learn
             if success:
                 app = get_app()
-                app.run_bg_task_advanced(self._background_learning_task,
-                                         query=query,
-                                         tools_used=ctx.tools_used,
-                                         final_response=final_response,
-                                         success=success,
-                                         matched_skills=ctx.matched_skills
-                                         )
+                app.run_bg_task_advanced(
+                    self._background_learning_task,
+                    query=query,
+                    tools_used=ctx.tools_used,
+                    final_response=final_response,
+                    success=success,
+                    matched_skills=ctx.matched_skills,
+                )
 
             self._active_executions.pop(ctx.run_id, None)
 
-            yield enrich({"type": "done", "success": success, "final_answer": final_response})
+            yield enrich(
+                {"type": "done", "success": success, "final_answer": final_response}
+            )
 
         return stream_generator, ctx
+
 
 if __name__ == "__main__":
     print("ExecutionEngine loaded")
     ctx = ExecutionContext()
     print(ctx.run_id)
-    from toolboxv2.tests.test_mods.test_isaa.test_base.test_agent.test_execution_engine import MockAgent
+    from toolboxv2.tests.test_mods.test_isaa.test_base.test_agent.test_execution_engine import (
+        MockAgent,
+    )
+
     execution_engine = ExecutionEngine(MockAgent(), None, None)
-    print(asyncio.run(execution_engine._tool_load_tools(ctx, '["scout_interface", "execute_action"]')))
+    print(
+        asyncio.run(
+            execution_engine._tool_load_tools(
+                ctx, '["scout_interface", "execute_action"]'
+            )
+        )
+    )

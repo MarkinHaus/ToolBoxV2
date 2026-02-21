@@ -677,8 +677,7 @@ class AuthHandler:
             return error_response("Discord OAuth not configured", 500)
 
         data = result.get() if hasattr(result, 'get') else result
-        if isinstance(data, dict) and "auth_url" in data:
-            return redirect_response(data["auth_url"])
+        # Return JSON with auth_url (NOT a 302 redirect) so fetch() can read it
         return json_response(data)
 
     async def discord_callback(self, request: ParsedRequest) -> Tuple:
@@ -714,8 +713,7 @@ class AuthHandler:
             return error_response("Google OAuth not configured", 500)
 
         data = result.get() if hasattr(result, 'get') else result
-        if isinstance(data, dict) and "auth_url" in data:
-            return redirect_response(data["auth_url"])
+        # Return JSON with auth_url (NOT a 302 redirect) so fetch() can read it
         return json_response(data)
 
     async def google_callback(self, request: ParsedRequest) -> Tuple:
@@ -755,22 +753,23 @@ class AuthHandler:
     # ================================================================
 
     def _handle_oauth_result(self, result, request: ParsedRequest) -> Tuple:
-        """Process OAuth/magic link result: create session + redirect with tokens."""
+        """Process OAuth/magic link result: create session + return token bridge page.
+
+        Returns an inline HTML page that stores auth tokens in localStorage
+        and redirects to the appropriate app page. This works in both web
+        and Tauri contexts since the HTML is served directly by the worker.
+        """
         if hasattr(result, 'is_error') and result.is_error():
             error_msg = "Authentication failed"
             if hasattr(result, 'info') and hasattr(result.info, 'help_text'):
                 error_msg = result.info.help_text
-            return redirect_response(
-                f"/web/scripts/login.html?error={error_msg}",
-                status=302,
-            )
+            error_html = self._build_token_bridge_html(error=error_msg)
+            return html_response(error_html, status=200)
 
         data = result.get() if hasattr(result, 'get') else result
         if not data or not isinstance(data, dict):
-            return redirect_response(
-                "/web/scripts/login.html?error=Auth+failed",
-                status=302,
-            )
+            error_html = self._build_token_bridge_html(error="Authentication failed")
+            return html_response(error_html, status=200)
 
         # Create server-side session
         user_id = data.get("user_id", "")
@@ -786,25 +785,131 @@ class AuthHandler:
 
         access_token = data.get("access_token", "")
         refresh_token = data.get("refresh_token", "")
+        email = data.get("email", "")
+        redirect_after = data.get("redirect_after", "")
 
-        from urllib.parse import urlencode, quote
-        params = urlencode({
-            "token": access_token,
+        bridge_html = self._build_token_bridge_html(
+            token=access_token,
+            refresh_token=refresh_token,
+            user_id=user_id,
+            username=username,
+            email=email,
+            redirect_after=redirect_after,
+        )
+
+        extra_headers = {}
+        if cookie_header:
+            extra_headers["Set-Cookie"] = cookie_header
+
+        return html_response(bridge_html, status=200, headers=extra_headers)
+
+    @staticmethod
+    def _build_token_bridge_html(
+        token: str = "",
+        refresh_token: str = "",
+        user_id: str = "",
+        username: str = "",
+        email: str = "",
+        error: str = "",
+        redirect_after: str = "",
+    ) -> str:
+        """Build an inline HTML page that stores auth tokens and redirects.
+
+        The redirect_after parameter is the origin URL of the frontend that
+        initiated the OAuth flow (e.g. 'http://tauri.localhost', 'http://localhost:80').
+        Tokens are passed via URL params to the target origin so that
+        TB.user._checkAuthCallback() or CustomAuth can pick them up.
+        """
+        import json as _json
+        auth_data = _json.dumps({
+            "token": token,
             "refresh_token": refresh_token,
             "user_id": user_id,
             "username": username,
+            "email": email,
+            "error": error,
+            "redirect_after": redirect_after,
         })
-        redirect_url = f"/web/scripts/login.html?{params}"
+        return f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Authenticating...</title>
+<style>
+body {{ font-family: -apple-system, sans-serif; background: #1a1a2e; color: #fff;
+       display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }}
+.card {{ background: rgba(255,255,255,0.05); border-radius: 16px; padding: 40px;
+         text-align: center; max-width: 400px; border: 1px solid rgba(255,255,255,0.1); }}
+.spinner {{ width: 32px; height: 32px; border: 3px solid rgba(255,255,255,0.1);
+            border-top-color: #6366f1; border-radius: 50%; animation: spin 0.8s linear infinite;
+            margin: 0 auto 16px; }}
+@keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+.error {{ color: #fca5a5; }}
+a {{ color: #a5b4fc; text-decoration: none; }}
+a:hover {{ text-decoration: underline; }}
+</style></head><body>
+<div class="card" id="card">
+  <div class="spinner" id="spinner"></div>
+  <p id="msg">Authenticating...</p>
+</div>
+<script>
+(function() {{
+  var data = {auth_data};
+  var origin = data.redirect_after || '';
 
-        status_code = 302
-        headers = {
-            "Location": redirect_url,
-            "Content-Type": "text/plain",
-        }
-        if cookie_header:
-            headers["Set-Cookie"] = cookie_header
+  // Build token query string for cross-origin transfer
+  var tokenParams = 'token=' + encodeURIComponent(data.token || '') +
+    '&refresh_token=' + encodeURIComponent(data.refresh_token || '') +
+    '&user_id=' + encodeURIComponent(data.user_id || '') +
+    '&username=' + encodeURIComponent(data.username || '');
 
-        return (status_code, headers, b"")
+  if (data.error) {{
+    document.getElementById('spinner').style.display = 'none';
+    document.getElementById('msg').className = 'error';
+    document.getElementById('msg').textContent = 'Error: ' + data.error;
+    var errorTarget = (origin || '') + '/web/assets/login.html?error=' + encodeURIComponent(data.error);
+    setTimeout(function() {{ window.location.href = errorTarget; }}, 2000);
+    return;
+  }}
+
+  // Store auth data in localStorage (works if same origin as app)
+  try {{
+    var userState = {{
+      isAuthenticated: true,
+      token: data.token,
+      refreshToken: data.refresh_token,
+      userId: data.user_id,
+      username: data.username,
+      email: data.email,
+      userLevel: 2
+    }};
+    localStorage.setItem('tbjs_user_session', JSON.stringify(userState));
+  }} catch(e) {{ /* cross-origin — tokens will be passed via URL params */ }}
+
+  document.getElementById('msg').textContent = 'Login successful! Redirecting...';
+
+  // Redirect to the frontend origin with token params.
+  // TB.user._checkAuthCallback() will pick up the params on the target page.
+  var target;
+  if (origin && origin !== window.location.origin) {{
+    // Cross-origin redirect (e.g. Tauri, or nginx on different port)
+    target = origin + '/web/assets/login.html?' + tokenParams;
+  }} else if (origin) {{
+    // Same origin — use relative path
+    target = '/web/assets/login.html?' + tokenParams;
+  }} else {{
+    // No redirect_after provided — best effort
+    // If we're on the worker port directly, stay here and show success
+    if (window.location.port === '8000' || window.location.port === '5000') {{
+      document.getElementById('spinner').style.display = 'none';
+      document.getElementById('msg').innerHTML =
+        'Login successful! Tokens saved.<br><br>' +
+        '<a href="/web/assets/login.html?' + tokenParams + '">Continue to app</a>';
+      return;
+    }}
+    target = '/web/assets/login.html?' + tokenParams;
+  }}
+
+  setTimeout(function() {{ window.location.href = target; }}, 500);
+}})();
+</script></body></html>"""
 
     async def _verify_token(self, token: str) -> Tuple[bool, Optional[Dict]]:
         """Verify JWT token via auth module."""
