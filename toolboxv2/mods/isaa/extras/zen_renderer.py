@@ -28,7 +28,7 @@ from prompt_toolkit import print_formatted_text, HTML
 # Config
 # ---------------------------------------------------------------------------
 
-DEBUG = os.environ.get("ENGINE_DEBUG", "").lower() in ("1", "true", "yes")
+DEBUG = os.environ.get("AGENT_VERBOSE", "").lower() in ("1", "true", "yes")
 
 # IBM-style symbols (no emoji decoration)
 SYM = {
@@ -330,12 +330,12 @@ class ZenRendererV2:
         if args:
             try:
                 ad = json.loads(args) if isinstance(args, str) else args
-                for k in ("path", "query", "command", "url", "filename"):
+                for k in ("path", "query", "command", "url", "filename", "task", "timeout", "tools", "category"):
                     if k in ad:
                         arg_str = _short(str(ad[k]), 40)
                         break
                 if not arg_str:
-                    arg_str = "..."
+                    arg_str = ad[:15]+ "..." if isinstance(ad, str) else " - ".join(list(ad.keys())[:4])
             except Exception:
                 pass
 
@@ -372,6 +372,11 @@ class ZenRendererV2:
                 elif "size" in rd:
                     s = rd["size"]
                     meta = f"{s}b" if s < 1024 else f"{s / 1024:.1f}kb"
+                for k in rd:
+                    if k in ( "info", ):
+                        meta += _short(str(rd[k]), 40)
+                else:
+                    meta =  " - ".join(list(rd.keys())[:4])
         except Exception:
             pass
 

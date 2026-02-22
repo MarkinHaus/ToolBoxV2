@@ -35,6 +35,7 @@ from toolboxv2 import (
     get_app,
     get_logger,
 )
+from toolboxv2.mods.isaa.base.Agent.executors import register_code_exec_tools
 from toolboxv2.mods.isaa.base.MemoryKnowledgeActor import MemoryKnowledgeActor
 from toolboxv2.utils.extras.Style import print_prompt
 from toolboxv2.utils.system import FileCache
@@ -285,6 +286,7 @@ class Tools(MainTool):
             "run_agent": self.run_agent,
             "save_to_mem": self.save_to_mem_sync,
             "get_agent": self.get_agent,
+            "delete_agent": self.delete_agent,
             "format_class": self.format_class,
             "get_memory": self.get_memory,
             "save_all_memory_vis": self.save_all_memory_vis,
@@ -1290,6 +1292,16 @@ class Tools(MainTool):
         builder.save_config(str(agent_config_path), format="json")
         return builder
 
+    @staticmethod
+    def add_code_executor_to_agent_sync(agent: FlowAgent):
+        register_code_exec_tools(agent=agent)
+
+    async def add_code_executor_to_agent(self, agent_or_name: FlowAgent | str):
+        agent = agent_or_name
+        if isinstance(agent_or_name, str):
+            agent = await self.get_agent(agent_or_name)
+        self.add_code_executor_to_agent_sync(agent=agent)
+
     async def register_agent(self, agent_builder: FlowAgentBuilder):
         agent_name = agent_builder.config.name
 
@@ -1377,6 +1389,100 @@ class Tools(MainTool):
 
         self.print(f"Built and cached FlowAgent instance: {agent_name}")
         return agent_instance
+
+    @export(api=True, version=version, mod_name="isaa")
+    async def delete_agent(self, agent_name: str) -> bool:
+        """
+        Löscht einen Agenten vollständig aus dem System (RAM & Disk).
+
+        Aktionen:
+        1. Stoppt laufende Instanz (close).
+        2. Entfernt aus internen Registern (Registry, Builder-Cache).
+        3. LÖSCHT den Konfigurations-Ordner (data/Agents/{name}).
+        4. LÖSCHT den Memory-Ordner (data/Memory/{name}).
+
+        Args:
+            agent_name: Name des zu löschenden Agenten
+
+        Returns:
+            bool: True wenn erfolgreich ausgeführt.
+        """
+        if not agent_name:
+            return False
+
+        self.print(f"🗑️ START: Deleting agent '{agent_name}' completely...")
+
+        # Zugriff auf App-Verzeichnis
+        try:
+            app_data_dir = get_app().data_dir
+        except Exception:
+            # Fallback falls get_app() fehlschlägt (z.B. Testumgebung)
+            app_data_dir = self.working_directory
+
+        # --- SCHRITT 1: Laufende Instanz stoppen (Memory Leak Prevention) ---
+        instance_key = f"agent-instance-{agent_name}"
+        if instance_key in self.config:
+            agent_instance = self.config.pop(instance_key)
+            if hasattr(agent_instance, "close"):
+                try:
+                    await agent_instance.close()
+                    self.print(f"   - Instance stopped.")
+                except Exception as e:
+                    self.print(f"   - Warning: Error closing agent instance: {e}")
+
+        # --- SCHRITT 2: Interne Register bereinigen ---
+        # Builder Config entfernen
+        if agent_name in self.agent_data:
+            del self.agent_data[agent_name]
+
+        # Globalen Builder Cache bereinigen
+        if agent_name in row_agent_builder_sto:
+            del row_agent_builder_sto[agent_name]
+
+        # Aus der Namensliste entfernen
+        if "agents-name-list" in self.config:
+            if agent_name in self.config["agents-name-list"]:
+                try:
+                    self.config["agents-name-list"].remove(agent_name)
+                    self.print(f"   - Removed from registry list.")
+                except ValueError:
+                    pass
+
+        # --- SCHRITT 3: Konfigurations-Dateien löschen ---
+        # Pfad: .../data/Agents/{agent_name}/
+        agent_config_path = Path(f"{app_data_dir}/Agents/{agent_name}")
+        if agent_config_path.exists():
+            try:
+                import shutil
+                shutil.rmtree(agent_config_path)
+                self.print(f"   - Deleted config files at: {agent_config_path}")
+            except Exception as e:
+                self.print(f"   - CRITICAL: Could not delete config files: {e}")
+
+        # --- SCHRITT 4: Memory / Gedächtnis löschen ---
+        # A) Aus dem RAM-Objekt entfernen
+        try:
+            mem_instance = self.get_memory()
+            if hasattr(mem_instance, "memories") and agent_name in mem_instance.memories:
+                del mem_instance.memories[agent_name]
+        except Exception as e:
+            self.print(f"   - Warning accessing memory object: {e}")
+
+        # B) Von der Festplatte löschen
+        # Pfad: .../data/Memory/{agent_name}/
+        agent_memory_path = Path(f"{app_data_dir}/Memory/{agent_name}")
+        if agent_memory_path.exists():
+            try:
+                import shutil
+                shutil.rmtree(agent_memory_path)
+                self.print(f"   - Deleted memory files at: {agent_memory_path}")
+            except Exception as e:
+                self.print(f"   - CRITICAL: Could not delete memory files: {e}")
+        else:
+            self.print(f"   - No persistent memory found to delete.")
+
+        self.print(f"✅ Agent '{agent_name}' successfully deleted.")
+        return True
 
     @export(api=True, version=version, request_as_kwarg=True, mod_name="isaa")
     async def mini_task_completion(

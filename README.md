@@ -270,6 +270,49 @@ Automated processes are managed using GitHub Actions for:
 
 ---
 
+## 🐳 Docker
+
+### Build ToolBoxV2 Image
+
+Build the main ToolBoxV2 Docker image for deployment:
+
+```bash
+# Build as toolboxv2:latest
+tb docker-image
+
+# Build with specific tag
+tb docker-image --tag v1.0.0
+
+# Build and push to Docker Hub
+tb docker-image --tag v1.0.0 --push
+
+# Force rebuild without cache
+tb docker-image --no-cache
+```
+
+### Run Container
+
+```bash
+# Run with default CLI interface
+docker run -it --rm toolboxv2:latest
+
+# Run with persistent data volume
+docker run -it --rm -v tb_data:/data toolboxv2:latest
+
+# Run with exposed ports (for web interfaces)
+docker run -it --rm -p 8080:8080 -p 8501:8501 toolboxv2:latest
+```
+
+### Container Images
+
+| Image | Description | Use Case |
+|-------|-------------|----------|
+| `toolboxv2:latest` | Main ToolBoxV2 image | Production deployments |
+| `toolboxv2:dev` | Development build | Testing and development |
+| Docksh | SSH-accessible containers | Remote CLI access with tmux persistence |
+
+---
+
 ## 🌱 Example Projects & Ideas
 
 ToolBoxV2 can be used to build a wide range of applications, including:

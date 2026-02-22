@@ -33,7 +33,7 @@ import hashlib
 import contextlib
 import io
 
-from toolboxv2 import get_logger
+from toolboxv2 import get_logger, Spinner
 
 logger = get_logger()
 
@@ -616,6 +616,7 @@ class IntelligentRateLimiter:
         use_default_fallback_chains: bool = True,
         key_rotation_mode: str = "balance",  # "drain" or "balance"
     ):
+        self.wait_time = 0
         self.config_path = config_path or Path.home() / ".llm_rate_limits.json"
         self.default_rpm = default_rpm
         self.default_rps = default_rps
@@ -928,6 +929,7 @@ class IntelligentRateLimiter:
             if state.backoff_until > now:
                 wait_time = state.backoff_until - now
                 logger.info(f"[RateLimiter] In backoff for {key}, waiting {wait_time:.1f}s")
+                self.wait_time = wait_time
                 await asyncio.sleep(wait_time)
                 now = time.time()
 
@@ -1471,10 +1473,13 @@ class LiteLLMRateLimitHandler:
             try:
                 # Acquire rate limit slot and get active model/key
                 if self.enable_rate_limiting:
-                    current_model, api_key = await self.rate_limiter.acquire(
-                        model=current_model,
-                        estimated_input_tokens=estimated_tokens,
-                    )
+                    with Spinner(message=f"Rate limiter: {self.rate_limiter.wait_time}", symbols=[
+                        "[-]","[\\]","[|]","[/]"
+                    ]):
+                        current_model, api_key = await self.rate_limiter.acquire(
+                            model=current_model,
+                            estimated_input_tokens=estimated_tokens,
+                        )
 
                     # Track key hash for error handling
                     if api_key:

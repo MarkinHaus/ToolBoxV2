@@ -2482,6 +2482,20 @@ class FlowAgent:
             tools.extend(gmail_toolkit.get_tools(session.session_id))
             tools.extend(calendar_toolkit.get_tools(session.session_id))
 
+        # =========================================================================
+        # CODE EXECUTION TOOLS (Local + Docker)
+        # =========================================================================
+        from toolboxv2.mods.isaa.base.Agent.code_executor import (
+            create_local_code_exec_tool,
+            create_docker_code_exec_tool,
+        )
+
+        local_exec_tool = create_local_code_exec_tool(self)
+        docker_exec_tool = create_docker_code_exec_tool(self)
+
+        tools.append(local_exec_tool)
+        tools.append(docker_exec_tool)
+
         # Register all tools
         self.add_tools(tools)
 
@@ -2495,260 +2509,238 @@ class FlowAgent:
     # =========================================================================
 
     async def context_overview(
-        self, session_id: str | None = None, print_visual: bool = True
+        self,
+        session_id: str | None = None,
+        print_visual: bool = True,
+        f_print=None,
+        query_preview: str = ""
     ) -> dict:
         """
-        Analysiert den *exakten* Token-Verbrauch, den der Agent im nächsten Schritt sehen würde.
-        Vergleicht "Actual" (optimiert) vs "Max Theoretical" (alles geladen).
+        Analysiert den *exakten* Token-Verbrauch durch Simulation eines echten Engine-Schritts.
+        Schlüsselt System-Prompt, Tools und History präzise auf.
         """
         if not LITELLM_AVAILABLE:
-            logger.warning("LiteLLM not available, cannot count tokens.")
+            if f_print: f_print("LiteLLM not available.")
             return {}
 
         target_session = session_id or self.active_session or "default"
         session = await self.session_manager.get_or_create(target_session)
 
-        # Determine Model
+        # 1. Engine holen (Wichtig für exakten Prompt-Bau inkl. Rules & Sub-Agent Constraints)
+        engine = self._get_execution_engine()
+
+        # Versuch, den aktiven Kontext wiederherzustellen oder einen neuen zu simulieren
+        ctx = None
+        if engine._active_executions:
+            for c in engine._active_executions.values():
+                if c.session_id == target_session:
+                    ctx = c
+                    break
+
+        if not ctx:
+            from toolboxv2.mods.isaa.base.Agent.execution_engine import ExecutionContext
+            ctx = ExecutionContext(session_id=target_session)
+            # Simuliere Start-Zustand für korrekte Tool-Berechnung
+            # (Relevanz-Berechnung triggern, damit Dynamic Tools korrekt simuliert werden)
+            try:
+                engine._calculate_tool_relevance(ctx, query_preview or "status check")
+                engine._preload_skill_tools(ctx, query_preview or "status check")
+            except Exception:
+                pass  # Fallback falls SkillsManager noch nicht bereit
+
+        # 2. Exakte Komponenten generieren (DRY RUN)
+
+        # A. System Prompt (Der echte String, den die Engine bauen würde)
+        sys_prompt_content = engine._build_system_prompt(ctx, session)
+
+        # B. History-Komponenten
+        perm_history = session.get_history_for_llm(last_n=6)
+        work_history = ctx.working_history
+
+        # C. Tools (Das kritische Delta: Exakte API-Definition holen)
+        active_tools = engine._get_tool_definitions(ctx)
+
+        # D. Simulierter nächster User Input
+        next_msg = [{"role": "user", "content": query_preview or "(Next User Input Placeholder)"}]
+
+        # 3. Message Stack rekonstruieren (Engine-Logik)
+        final_messages = []
+
+        # Wenn Working History existiert, ist der System Prompt dort meist Index 0.
+        # Wir ersetzen ihn durch den FRISCHEN System Prompt (mit aktuellen VFS-Daten).
+        if work_history and len(work_history) > 0 and work_history[0].get('role') == 'system':
+            final_messages = [{"role": "system", "content": sys_prompt_content}] + work_history[1:] + next_msg
+        else:
+            final_messages = [{"role": "system", "content": sys_prompt_content}] + perm_history + next_msg
+
+        # 4. Präzises Token Counting mit Overhead
         model = self.amd.fast_llm_model.split("/")[-1]
         try:
             model_info = litellm.get_model_info(model)
-            context_limit = (
-                model_info.get("max_input_tokens")
-                or model_info.get("max_tokens")
-                or 128000
-            )
-        except Exception:
+            context_limit = model_info.get("max_input_tokens") or model_info.get("max_tokens") or 128000
+        except:
             context_limit = 128000
 
-        # --- 1. Get Real Execution Context ---
-        # Try to find active execution to get working_history and dynamic tools
-        exec_ctx = None
-        if self._execution_engine_cache:
-            # We search for the execution that matches the session
-            # This is heuristics, as we might be between runs
-            for run_id, ctx in self._execution_engine_cache._active_executions.items():
-                if ctx.session_id == target_session:
-                    exec_ctx = ctx
-                    break
+        def count(msgs, tools=None):
+            # Nutzt die exakte Tokenizer-Logik des Modells inkl. Protokoll-Overhead
+            try:
+                if tools:
+                    return litellm.token_counter(model=model, messages=msgs, tools=tools)
+                return litellm.token_counter(model=model, messages=msgs)
+            except Exception:
+                # Fallback: Grobe Schätzung
+                return len(str(msgs)) // 3 + len(str(tools or "")) // 3
 
-        # --- 2. Calculate ACTUAL Components (What agent sees NOW + "hi") ---
-
-        # A. System Prompt + VFS + Skills
-        # We simulate the engine's _build_system_prompt behavior
-        vfs_str = session.build_vfs_context()
+        # -- Deep Dive Analyse der System-Komponenten --
+        # Wir zerlegen den System-Prompt, um zu sehen, was Platz frisst
+        vfs_content = session.build_vfs_context()
         base_sys = self.amd.get_system_message()
+        skills_content = ""
+        if ctx.matched_skills and hasattr(engine, 'skills_manager'):
+            skills_content = engine.skills_manager.build_skill_prompt_section(ctx.matched_skills)
 
-        # Add Skills (Mock or Real if ctx exists)
-        skills_str = ""
-        if (
-            exec_ctx
-            and exec_ctx.matched_skills
-            and hasattr(self._execution_engine_cache, "skills_manager")
-        ):
-            skills_str = (
-                self._execution_engine_cache.skills_manager.build_skill_prompt_section(
-                    exec_ctx.matched_skills
-                )
-            )
+        # 5. Metriken berechnen
+        t_sys_total = count([{"role": "system", "content": sys_prompt_content}])
+        t_tools = count([], tools=active_tools)  # Nur die Tool-Definitionen
 
-        actual_sys_prompt = f"{base_sys}\n\n{skills_str}\n\n{vfs_str}"
+        # History ist alles zwischen System (Index 0) und User (Letzter Index)
+        msgs_between = final_messages[1:-1] if len(final_messages) > 2 else []
+        t_hist = count(msgs_between)
 
-        # B. Tools (Active)
-        from toolboxv2.mods.isaa.base.Agent.execution_engine import (
-            DISCOVERY_TOOLS,
-            STATIC_TOOLS,
-        )
+        t_user = count(next_msg)
 
-        # Start with static
-        active_tools_list = STATIC_TOOLS + DISCOVERY_TOOLS
-        # Add dynamic if context exists, else none (fresh start)
-        if exec_ctx:
-            dynamic_names = exec_ctx.get_dynamic_tool_names()
-            all_avail = self.tool_manager.get_all_litellm()
-            for t in all_avail:
-                if t["function"]["name"] in dynamic_names:
-                    active_tools_list.append(t)
+        # Total (Besser als Summe, da der Tokenizer Optimierungen bei Kontext-Fusion hat)
+        t_total = count(final_messages, tools=active_tools)
 
-        # C. History (Permanent + Working)
-        # Permanent (Last N=6 default in engine)
-        perm_history = session.get_history_for_llm(last_n=6)
-
-        # Working (Current Chain)
-        work_history = exec_ctx.working_history if exec_ctx else []
-
-        # Simulated User Input
-        user_sim = [{"role": "user", "content": "hi"}]
-
-        # Actual Message Stack
-        actual_messages = (
-            [{"role": "system", "content": actual_sys_prompt}]
-            + perm_history
-            + work_history
-            + user_sim
-        )
-
-        # --- 3. Calculate THEORETICAL MAX Components (If we loaded everything) ---
-
-        # A. Full History
-        full_perm_history = session.get_history_for_llm(last_n=9999)  # All history
-
-        # B. All Tools
-        all_tools_list = (
-            STATIC_TOOLS + DISCOVERY_TOOLS + self.tool_manager.get_all_litellm()
-        )
-
-        # Max Message Stack
-        max_messages = (
-            [{"role": "system", "content": actual_sys_prompt}]
-            + full_perm_history
-            + user_sim
-        )  # Assuming working history is part of full eventually
-
-        # --- 4. Token Counting ---
-
-        def count(text_or_msgs):
-            if isinstance(text_or_msgs, list):
-                # Optimize: Convert tools list to json string for counting
-                if (
-                    len(text_or_msgs) > 0 and "type" in text_or_msgs[0]
-                ):  # It's a tool list
-                    return litellm.token_counter(
-                        model=model, text=json.dumps(text_or_msgs)
-                    )
-                return litellm.token_counter(model=model, messages=text_or_msgs)
-            return litellm.token_counter(model=model, text=text_or_msgs)
-
-        t_sys = count(actual_sys_prompt)
-        t_tools_act = count(active_tools_list)
-        t_tools_max = count(all_tools_list)
-
-        t_hist_perm = count(perm_history)
-        t_hist_work = count(work_history)
-        t_hist_max = count(full_perm_history)
-
-        t_user = count(user_sim)
-
-        actual_total = t_sys + t_tools_act + t_hist_perm + t_hist_work + t_user
-        max_total = (
-            t_sys + t_tools_max + t_hist_max + t_user
-        )  # VFS is in sys, stays same roughly
-
-        savings = max_total - actual_total
+        # Sub-Komponenten Zählung (String-basiert, da reine Text-Teile)
+        t_vfs = count(vfs_content)
+        t_base = count(base_sys)
+        t_skills = count(skills_content)
 
         metrics = {
             "session_id": target_session,
             "model": model,
+            "t_total": t_total,
             "limit": context_limit,
-            # Actual Breakdown
-            "act_system": t_sys,
-            "act_tools": t_tools_act,
-            "act_hist_perm": t_hist_perm,
-            "act_hist_work": t_hist_work,
-            "act_user": t_user,
-            "act_total": actual_total,
-            # Max Breakdown
-            "max_tools": t_tools_max,
-            "max_hist": t_hist_max,
-            "max_total": max_total,
-            "savings": savings,
-            # Metadata
-            "tool_count_act": len(active_tools_list),
-            "tool_count_max": len(all_tools_list),
-            "msg_count_act": len(actual_messages),
-            "msg_count_max": len(max_messages),
+            "breakdown": {
+                "System & VFS": t_sys_total,
+                "Active Tools": t_tools,
+                "History (Perm+Work)": t_hist,
+                "Next Input": t_user
+            },
+            "system_details": {
+                "VFS Content": t_vfs,
+                "Base Rules": t_base,
+                "Skills": t_skills
+            },
+            "meta": {
+                "tool_count": len(active_tools),
+                "msg_count": len(final_messages),
+                "dynamic_tools_loaded": len(ctx.dynamic_tools) if ctx else 0
+            }
         }
 
         if print_visual:
-            self._print_context_visual(metrics, model)
+            self._print_context_visual(metrics, model, f_print=f_print)
 
         return metrics
 
-    def _print_context_visual(self, m: dict, model_name: str):
-        """Zen-Style Visualization of Context Load"""
+    def _print_context_visual(self, m: dict, model_name: str, f_print=None):
+        """
+        Visualisiert den Context-Load als übersichtliches Budget-Dashboard.
+        """
+        if f_print is None:
+            f_print = print
 
-        # Colors
-        DIM = "\033[90m"
-        CYAN = "\033[36m"
-        GREEN = "\033[32m"
-        YELLOW = "\033[33m"
-        RED = "\033[31m"
-        WHITE = "\033[97m"
-        RESET = "\033[0m"
-        BOLD = "\033[1m"
+        # Colors & Styles
+        C_RESET = "\033[0m"
+        C_DIM = "\033[90m"
+        C_CYAN = "\033[36m"
+        C_GREEN = "\033[32m"
+        C_YELLOW = "\033[33m"
+        C_RED = "\033[31m"
+        C_BOLD = "\033[1m"
+        C_WHITE = "\033[97m"
 
-        def bar(value, max_val, width=30, color=GREEN):
-            pct = min(1.0, value / max(1, max_val))
-            filled = int(pct * width)
-            # Zen style: thin blocks or dots
-            b = "█" * filled + DIM + "░" * (width - filled) + RESET
-            p_str = f"{value / max_val * 100:.1f}%"
-            return f"{color}{b}{RESET} {p_str}"
-
-        print(
-            f"\n{BOLD}CONTEXT STATE{RESET}  {DIM}session:{RESET} {CYAN}{m['session_id']}{RESET}  {DIM}model:{RESET} {WHITE}{model_name}{RESET}"
-        )
-        print(f"{DIM}────────────────────────────────────────────────────────────{RESET}")
-
-        # 1. Real Load Bar
+        total = m["t_total"]
         limit = m["limit"]
-        act_col = (
-            GREEN
-            if m["act_total"] < limit * 0.7
-            else (YELLOW if m["act_total"] < limit * 0.9 else RED)
-        )
-        print(
-            f"Active Load:   {bar(m['act_total'], limit, color=act_col)}  {DIM}({m['act_total']:,} / {limit:,}){RESET}"
-        )
+        usage_pct = (total / limit) * 100
 
-        # 2. Theoretical Max Bar
-        # If max > limit, we scale it relative to limit (will show overflow)
-        max_val = m["max_total"]
-        max_col = DIM
-        if max_val > limit:
-            max_col = RED
-            print(
-                f"Theoret. Max:  {bar(max_val, limit, color=max_col)}  {DIM}(would crash without optimization){RESET}"
-            )
+        # Ampel-Farben für die Load-Bar
+        if usage_pct < 50:
+            bar_color = C_GREEN
+        elif usage_pct < 80:
+            bar_color = C_YELLOW
         else:
-            print(
-                f"Theoret. Max:  {bar(max_val, limit, color=max_col)}  {DIM}(full potential load){RESET}"
-            )
+            bar_color = C_RED
 
-        print(f"\n{BOLD}Composition (Active Request){RESET}")
+        # Header
+        f_print(f"\n{C_BOLD}🔍 CONTEXT X-RAY{C_RESET}  {C_DIM}Session:{C_RESET} {C_CYAN}{m['session_id']}{C_RESET}")
+        f_print(f"{C_DIM}Model: {model_name} | Limit: {limit:,} tokens{C_RESET}")
+        f_print(f"{C_DIM}────────────────────────────────────────────────────────────{C_RESET}")
 
-        def row(label, val, count=None, extra=""):
-            v_str = f"{val:>6,}"
-            c_str = f"{count:>3} items" if count is not None else "         "
-            pct = f"{DIM}{val / m['act_total'] * 100:>4.1f}%{RESET}"
-            print(
-                f"  {DIM}•{RESET} {label:<16} {CYAN}{v_str}{RESET} tok  {DIM}|{RESET} {c_str} {DIM}|{RESET} {pct} {extra}"
-            )
+        # 1. The Budget Bar
+        bar_width = 40
+        filled = int((total / limit) * bar_width)
+        bar = "█" * filled + C_DIM + "░" * (bar_width - filled) + C_RESET
 
-        # System Group
-        row("System & VFS", m["act_system"])
+        f_print(f"Load:  {bar_color}{bar}{C_RESET} {C_BOLD}{usage_pct:.1f}%{C_RESET}")
+        f_print(f"       {total:,} / {limit:,} tokens used\n")
 
-        # Tools Group
-        t_diff = m["max_tools"] - m["act_tools"]
-        row(
-            "Tools",
-            m["act_tools"],
-            m["tool_count_act"],
-            extra=f"{GREEN}-{t_diff:,} saved{RESET}",
-        )
+        # 2. Detailed Breakdown Table
+        f_print(f"{C_BOLD}{'COMPONENT':<25} {'TOKENS':>10} {'% LOAD':>10}{C_RESET}")
+        f_print(f"{C_DIM}{'-' * 48}{C_RESET}")
 
-        # History Group
-        h_diff = m["max_hist"] - (m["act_hist_perm"] + m["act_hist_work"])
-        row("Perm. History", m["act_hist_perm"])
-        row("Work. Memory", m["act_hist_work"], extra=f"{GREEN}-{h_diff:,} saved{RESET}")
+        def print_row(label, value, is_sub=False, extra_info=""):
+            pct = (value / total) * 100 if total > 0 else 0
 
-        # User
-        row("User Input", m["act_user"], 1, extra=f"{DIM}(simulation){RESET}")
+            if is_sub:
+                prefix = f"{C_DIM}  └─ "
+                color = C_DIM
+            else:
+                prefix = ""
+                color = C_RESET
 
-        print(f"{DIM}────────────────────────────────────────────────────────────{RESET}")
-        print(
-            f"  {BOLD}TOTAL{RESET}            {WHITE}{m['act_total']:>6,}{RESET} tok  {DIM}|{RESET} {GREEN}-{m['savings']:,} tokens optimized away{RESET}"
-        )
-        print("")
+            fmt_label = f"{prefix}{label}"
+            f_print(f"{color}{fmt_label:<25} {value:>10,} {pct:>9.1f}%{C_RESET} {extra_info}")
+
+        # System Breakdown
+        bd = m["breakdown"]
+        sys_det = m["system_details"]
+
+        print_row("System Prompt", bd["System & VFS"])
+        print_row("VFS Files", sys_det["VFS Content"], True)
+        print_row("Base Rules", sys_det["Base Rules"], True)
+        if sys_det["Skills"] > 0:
+            print_row("Skills", sys_det["Skills"], True)
+
+        # Tools Breakdown
+        meta = m["meta"]
+        print_row("Active Tools", bd["Active Tools"])
+        tool_info = f"{C_DIM}({meta['tool_count']} defs, {meta['dynamic_tools_loaded']} dyn){C_RESET}"
+        f_print(f"     {C_DIM}└─ API Schema Cost{C_RESET}         {tool_info}")
+
+        # History Breakdown
+        print_row("History & Memory", bd["History (Perm+Work)"])
+        f_print(f"     {C_DIM}└─ {meta['msg_count']} messages in stack{C_RESET}")
+
+        # User Input
+        print_row("Next Input (Sim)", bd["Next Input"])
+
+        f_print(f"{C_DIM}{'-' * 48}{C_RESET}")
+
+        # 3. Smart Warnings
+        if usage_pct > 85:
+            f_print(f"\n{C_RED}⚠️  CRITICAL TOKEN LOAD{C_RESET}")
+            f_print("   Action: Execute 'shift_focus' tool to compress history.")
+        elif sys_det["VFS Content"] > 4000:
+            f_print(f"\n{C_YELLOW}⚠️  Heavy VFS Load{C_RESET}")
+            f_print("   Action: Close unused files using 'vfs_close'.")
+        elif bd["History (Perm+Work)"] > 6000:
+            f_print(f"\n{C_YELLOW}⚠️  Long Context{C_RESET}")
+            f_print("   Note: Working history is getting long. Consider summarizing.")
+
+        f_print("")
 
     # =========================================================================
     # CHECKPOINT

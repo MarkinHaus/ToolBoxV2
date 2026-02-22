@@ -677,9 +677,6 @@ Session: {self.session_id}
         self._init_root()
         self._init_system_files()
 
-        # 5. Clear Sync State
-        self._dirty_files.clear()
-
         if hasattr(self, "lsp_manager") and self.lsp_manager:
             # We don't stop the server (too slow), but we clear diagnostics
             pass

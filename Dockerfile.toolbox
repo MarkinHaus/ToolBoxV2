@@ -1,0 +1,157 @@
+# syntax=docker/dockerfile:1.4
+# ToolBoxV2 - Manifest-Based Docker Image
+# Baut nur das ein was WIRKLICH benötigt wird.
+#
+# Features werden über BUILD-ARGS gesteuert:
+#   FEATURE_CLI      - CLI Interface (prompt_toolkit, rich, readchar)
+#   FEATURE_WEB      - Web Interface (starlette, uvicorn, httpx)
+#   FEATURE_DESKTOP  - Desktop GUI (PyQt6)
+#   FEATURE_EXOTIC   - Data Science (scipy, matplotlib, pandas)
+#   FEATURE_ISAA     - AI Agents (litellm, langchain, groq)
+#
+# Usage:
+#   docker build --build-arg FEATURE_CLI=1 --build-arg FEATURE_WEB=1 -f Dockerfile.toolbox -t toolboxv2:latest .
+
+# ============================================================================
+# BUILD ARGUMENTS - Feature Selection
+# ============================================================================
+ARG PYTHON_VERSION=3.11
+ARG BASE_IMAGE=python:${PYTHON_VERSION}-slim
+ARG FEATURE_CLI=0
+ARG FEATURE_WEB=0
+ARG FEATURE_DESKTOP=0
+ARG FEATURE_EXOTIC=0
+ARG FEATURE_ISAA=0
+
+# ============================================================================
+# STAGE 1: Requirements Generator (generiert requirements.txt basierend auf Features)
+# ============================================================================
+FROM ${BASE_IMAGE} AS requirements-generator
+
+WORKDIR /app
+
+# Copy requirements filter script
+COPY docker/filter_requirements.py /tmp/filter_requirements.py
+
+# Copy base requirements
+COPY requirements.txt .
+
+# Build-args to environment
+ENV FEATURE_CLI=${FEATURE_CLI}
+ENV FEATURE_WEB=${FEATURE_WEB}
+ENV FEATURE_DESKTOP=${FEATURE_DESKTOP}
+ENV FEATURE_EXOTIC=${FEATURE_EXOTIC}
+ENV FEATURE_ISAA=${FEATURE_ISAA}
+
+# Run the script to filter requirements
+RUN python3 /tmp/filter_requirements.py
+
+# ============================================================================
+# STAGE 2: Builder - Install dependencies
+# ============================================================================
+FROM ${BASE_IMAGE} AS builder
+
+LABEL stage="builder"
+
+# Install build dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        gcc g++ git curl build-essential libffi-dev libssl-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Upgrade pip
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Copy requirements from generator
+COPY --from=requirements-generator /app/requirements-final.txt /tmp/requirements-final.txt
+COPY --from=requirements-generator /app/active-features.txt /tmp/active-features.txt
+
+# Display what we're building
+RUN echo "Building with features:" && cat /tmp/active-features.txt && echo ""
+
+# Install Python dependencies
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir --prefer-binary -r /tmp/requirements-final.txt || \
+    pip install --no-cache-dir -r /tmp/requirements-final.txt
+
+# ============================================================================
+# STAGE 3: Runtime - Minimal base with only installed dependencies
+# ============================================================================
+FROM ${BASE_IMAGE} AS runtime
+
+LABEL maintainer="ToolBoxV2"
+LABEL description="ToolBoxV2 - Manifest-Based Minimal Image"
+
+# Store build info as labels
+ARG FEATURE_CLI=0
+ARG FEATURE_WEB=0
+ARG FEATURE_DESKTOP=0
+ARG FEATURE_EXOTIC=0
+ARG FEATURE_ISAA=0
+LABEL features.cli=${FEATURE_CLI} \
+      features.web=${FEATURE_WEB} \
+      features.desktop=${FEATURE_DESKTOP} \
+      features.exotic=${FEATURE_EXOTIC} \
+      features.isaa=${FEATURE_ISAA}
+
+# Install runtime dependencies ONLY
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    apt-get clean
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+
+# Set environment
+ENV PATH="/opt/venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Create user
+RUN useradd -m -s /bin/bash toolbox && \
+    mkdir -p /app /data /home/toolbox/.config && \
+    chown -R toolbox:toolbox /home/toolbox /data
+
+WORKDIR /app
+
+# Copy ToolBoxV2 source
+COPY ./setup.py ./requirements.txt ./README.md ./setup.cfg ./MANIFEST.in ./pyproject.toml ./
+COPY ./toolboxv2/mods ./toolboxv2/mods
+COPY ./toolboxv2/flows ./toolboxv2/flows
+COPY ./toolboxv2/tests ./toolboxv2/tests
+COPY ./toolboxv2/web ./toolboxv2/web
+COPY ./toolboxv2/utils ./toolboxv2/utils
+COPY ./toolboxv2/__init__.py ./toolboxv2/__init__.py
+COPY ./toolboxv2/__main__.py ./toolboxv2/__main__.py
+COPY ./toolboxv2/favicon.ico ./toolboxv2/favicon.ico
+COPY ./toolboxv2/index.html ./toolboxv2/index.html
+COPY ./toolboxv2/index.js ./toolboxv2/index.js
+COPY ./toolboxv2/package.json ./toolboxv2/package.json
+
+# Copy active features info
+COPY --from=requirements-generator /app/active-features.txt /tmp/active-features.txt
+
+# Install ToolBoxV2
+RUN pip install --no-build-isolation --no-deps -e .
+
+# Switch to non-root user
+USER toolbox
+WORKDIR /home/toolbox
+
+# Default command
+CMD ["tb", "-m", "icli"]
+
+# Expose ports
+EXPOSE 8080
+
+# Volume for persistent data
+VOLUME /data
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import sys; sys.exit(0)" || exit 1

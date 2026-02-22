@@ -344,7 +344,8 @@ RUNNER_KEYS = [
     "registry",
     "manifest",
     "llm-gateway",
-    "docksh"
+    "docksh",
+    "docker-image"
 ]
 
 DEFAULT_MODI = "cli"
@@ -451,7 +452,7 @@ def show_interactive_guide():
     │    $ tb p2p [start|stop]              # Manage P2P client                  │
     │                                                                            │
     │  🗄️  Database:                                                             │
-    │    $ tb db [command]              # Manage r_blob_db                       │
+    │    $ tb db [command]              # Manage DB                              │
     │                                                                            │
     │  🌍 Browser Extension:                                                     │
     │    $ tb browser build             # Build browser extension                │
@@ -1864,13 +1865,9 @@ def runner_setup():
                 Docksh_srv(docksh.docs)
             except ModuleNotFoundError:
                 from pathlib import Path
-                print("1")
                 path = str(Path(__file__).parent.parent)+"/docksh_srv.py"
-                print(2)
                 if os.path.exists(path):
-                    print(3, path)
                     os.system(f"{sys.executable} {path} {' '.join(argvs)}")
-                    print(4)
                 else:
                     print(f"{path=} not found")
 
@@ -1911,6 +1908,9 @@ def runner_setup():
             "toolboxv2.utils.clis.llm_gateway_cli", fromlist=["cli_llm_gateway"]
         ).cli_llm_gateway(),
         "docksh": _run_docksh,
+        "docker-image": lambda: __import__(
+            "toolboxv2.utils.clis.docker_image_cli", fromlist=["main"]
+        ).main(),
     }
 
     return runner

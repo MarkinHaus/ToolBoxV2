@@ -31,9 +31,9 @@ if TYPE_CHECKING:
 @dataclass
 class DockerConfig:
     """Docker configuration"""
-    base_image: str = "python:3.12-slim"  # Official Python image
+    base_image: str = "toolboxv2:latest"  # Use local ToolBoxV2 image (built with Dockerfile.toolbox)
     workspace_dir: str = "/workspace"
-    toolboxv2_wheel_path: str | None = None  # Path to ToolboxV2 wheel on host
+    toolboxv2_wheel_path: str | None = None  # Path to ToolboxV2 wheel on host (not needed with toolboxv2:latest)
     container_name_prefix: str = "vfs_session"
     network_mode: str = "bridge"
     memory_limit: str = "2g"

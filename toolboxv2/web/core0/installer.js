@@ -97,21 +97,6 @@ setTimeout(() => {
             /nuitka.*linux/i
         ],
 
-        'BlobDB': [
-            /r_blob_db-windows.*\.exe$/,
-            /r_blob_db.*\.exe$/
-        ],
-        'BlobDB-Mac': [
-            /r_blob_db-macos.*$/,
-            /r_blob_db.*\.tar\.gz$/,
-            /r_blob_db.*macos/i
-        ],
-        'BlobDB-Linux': [
-            /r_blob_db-linux.*$/,
-            /r_blob_db.*\.tar\.gz$/,
-            /r_blob_db.*linux/i
-        ],
-
         // Rust Server
         'Server-Rust': [
             /simple-core-server-linux-x64$/,

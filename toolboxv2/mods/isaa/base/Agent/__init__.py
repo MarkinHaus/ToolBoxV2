@@ -46,6 +46,25 @@ from toolboxv2.mods.isaa.base.Agent.rule_set import (
     create_default_ruleset
 )
 
+# Docker & Execution
+from toolboxv2.mods.isaa.base.Agent.docker_vfs import (
+    DockerConfig,
+    DockerVFS,
+    CommandResult,
+    create_docker_vfs_tool,
+)
+
+# Code Execution (minimal)
+from toolboxv2.mods.isaa.base.Agent.code_executor import (
+    LocalCodeExecutor,
+    DockerCodeExecutor,
+    DockerConfig as CodeExecutorDockerConfig,
+    create_local_code_exec_tool,
+    create_docker_code_exec_tool,
+    register_code_exec_tools,
+    AgentToolProxy,
+)
+
 # Types (from existing types.py)
 from toolboxv2.mods.isaa.base.Agent.types import (
     AgentModelData,
@@ -97,6 +116,21 @@ __all__ = [
     'ToolGroup',
     'LearnedPattern',
     'create_default_ruleset',
+
+    # Docker & Execution (VFS)
+    'DockerConfig',
+    'DockerVFS',
+    'CommandResult',
+    'create_docker_vfs_tool',
+
+    # Code Execution
+    'LocalCodeExecutor',
+    'DockerCodeExecutor',
+    'CodeExecutorDockerConfig',
+    'create_local_code_exec_tool',
+    'create_docker_code_exec_tool',
+    'register_code_exec_tools',
+    'AgentToolProxy',
 
     # Types
     'AgentModelData',

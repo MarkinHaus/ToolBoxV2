@@ -461,24 +461,93 @@ class MockIPython:
             detector.visit(tree)
 
             if detector.has_top_level_await:
-                # Wrap code in async function
-                wrapped_code = "async def __wrapper():\n"
-                wrapped_code += "    global result\n"  # Allow writing to global scope
-                wrapped_code += "    result = None\n"
-                # add try:
-                wrapped_code +="    try:\n"
-                # Indent the original code
-                wrapped_code += "\n".join(f"        {line}" for line in code.splitlines())
-                # Add return statement for last expression
-                wrapped_code +="\n    except Exception as e:\n"
-                wrapped_code +="        import traceback\n"
-                wrapped_code +="        print(traceback.format_exc())\n"
-                wrapped_code +="        raise e\n"
-                if isinstance(tree.body[-1], ast.Expr):
-                    wrapped_code += "\n    return result"
+                # For top-level await, we need to capture the last expression in result
+                # Modify the AST to assign the last expression to result
+                import copy as copy_module
+                modified_tree = copy_module.deepcopy(tree)
 
-                # Parse and compile wrapped code
-                wrapped_tree = ast.parse(wrapped_code)
+                if isinstance(tree.body[-1], ast.Expr):
+                    # Replace last expression with assignment to result
+                    last_expr_value = tree.body[-1].value
+                    # Create: result = <last_expr>
+                    assign_node = ast.Assign(
+                        targets=[ast.Name(id='result', ctx=ast.Store())],
+                        value=last_expr_value,
+                        type_comment=None
+                    )
+                    # Fix line numbers
+                    ast.fix_missing_locations(assign_node)
+                    # Replace the last expression with the assignment
+                    modified_tree.body = tree.body[:-1] + [assign_node]
+
+                # Now wrap the modified tree in an async function
+                wrapper_func = ast.AsyncFunctionDef(
+                    name='__wrapper',
+                    args=ast.arguments(
+                        posonlyargs=[],
+                        args=[],
+                        kwonlyargs=[],
+                        kw_defaults=[],
+                        defaults=[]
+                    ),
+                    body=[
+                        # global result
+                        ast.Global(names=['result']),
+                        # result = None
+                        ast.Assign(
+                            targets=[ast.Name(id='result', ctx=ast.Store())],
+                            value=ast.Constant(value=None),
+                            type_comment=None
+                        ),
+                        # try block with the actual code
+                        ast.Try(
+                            body=modified_tree.body,
+                            handlers=[
+                                ast.ExceptHandler(
+                                    type=ast.Name(id='Exception', ctx=ast.Load()),
+                                    name='e',
+                                    body=[
+                                        ast.Import(names=[ast.alias(name='traceback')]),
+                                        ast.Expr(
+                                            value=ast.Call(
+                                                func=ast.Attribute(
+                                                    value=ast.Name(id='traceback', ctx=ast.Load()),
+                                                    attr='format_exc',
+                                                    ctx=ast.Load()
+                                                ),
+                                                args=[],
+                                                keywords=[]
+                                            )
+                                        ),
+                                        ast.Raise(exc=ast.Name(id='e', ctx=ast.Load()))
+                                    ]
+                                )
+                            ],
+                            orelse=[],
+                            finalbody=[]
+                        ),
+                        # return result
+                        ast.Return(
+                            value=ast.Name(id='result', ctx=ast.Load())
+                        ) if isinstance(tree.body[-1], ast.Expr) else None
+                    ],
+                    decorator_list=[],
+                    returns=None,
+                    type_comment=None
+                )
+
+                # Fix line numbers
+                ast.fix_missing_locations(wrapper_func)
+
+                # Create module with just the wrapper function
+                wrapped_module = ast.Module(body=[wrapper_func], type_ignores=[])
+
+                return (
+                    compile(wrapped_module, '<exec>', 'exec'),
+                    None,
+                    True,
+                    True
+                )
                 return (
                     compile(wrapped_tree, '<exec>', 'exec'),
                     None,

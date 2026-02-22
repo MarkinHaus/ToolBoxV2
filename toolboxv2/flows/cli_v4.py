@@ -477,12 +477,27 @@ def load_chain_toolkit(fm):
 
     fm.add_feature("chain", activation_f=enable, deactivation_f=disable)
 
+def load_execute(fm):
+    from toolboxv2.mods.isaa.base.Agent.executors import register_code_exec_tools
+    tools_set = [None]
+
+    def enable(agent):
+        tools_set[0] = register_code_exec_tools(agent)[0]
+        print_status("exec_code enabled.", "success")
+
+    def disable(agent):
+        agent.remove_tools(tools_set[0])
+        print_status("exec_code disabled.", "success")
+
+    fm.add_feature("chain", activation_f=enable, deactivation_f=disable)
+
 ALL_FEATURES = {
     "desktop_auto": load_desktop_auto_feature,
     "mini_web_auto": load_web_auto_feature,
     "full_web_auto": load_full_web_auto_feature,
     "coder": load_coder_toolkit,
     "chain": load_chain_toolkit,
+    "execute": load_execute,
 }
 
 # =============================================================================
@@ -3639,12 +3654,24 @@ class ISAA_Host:
                     "  /coder test [cmd]             - Run tests in worktree",
                     "  /coder files                  - List worktree contents",
                     "  /coder info                   - Show paths + status",
+                    "  /coder stream [on/off]        - Show paths + status",
                     "  /coder stop                   - Exit (accept changes first!)",
                 ]:
                     print_box_content(line, "")
                 print_box_footer()
             except Exception as e:
                 print_status(f"Failed to start coder: {e}", "error")
+        elif action == "stream":
+            if len(args) < 2:
+                c_print("/coder stream on or off")
+                return
+            do = args[1]
+            if do == "on":
+                self.active_coder.stream_enabled = True
+            else:
+                self.active_coder.stream_enabled = False
+            c_print(f"Coder streaming {'enabled' if self.active_coder.stream_enabled else 'disabled'}")
+
         elif action == "info":
 
             wt = self.active_coder.worktree

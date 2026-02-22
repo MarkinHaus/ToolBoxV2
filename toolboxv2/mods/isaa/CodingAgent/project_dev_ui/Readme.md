@@ -166,7 +166,7 @@ The application supports two modes:
 1. **Mock Mode** (Default): Generates sample code without LLM
 2. **Real Mode**: Uses ToolBoxV2's FlowAgent for AI generation
 
-To enable real mode, ensure ToolBoxV2 is installed and set `use_mock=False` in `agent_connector.py`.
+To enable real mode, set `MOCK_MODE = False` in `connector.py`.
 
 ### Database Location
 
@@ -191,26 +191,31 @@ python -m unittest tests.test_db
 
 ## 📝 API Reference
 
-### ProxyAgent
+### Connector
 
 ```python
-agent = ProxyAgent(
-    workspace_path="./workspace",
+from connector import Connector
+
+agent = Connector(
+    project_id="my_project",
     status_callback=my_callback,
-    use_mock=False
+    workspace_path="./workspace"
 )
 
-# Parse user intent
-task, files = agent.parse_task("Create a function to process data")
+# Execute task (main method)
+result = agent.run("Create a REST API")
 
-# Execute task
-result = await agent.execute_task("Create a REST API")
+# Parse user intent (internal)
+task, files = agent._parse_task("Create a function to process data")
 
-# Run tests
-test_result = await agent.run_tests("utils.py")
+# Execute task (internal)
+result = await agent._execute_task("Create a REST API")
 
-# Execute arbitrary code
-exec_result = await agent.execute_code("print('hello')")
+# Run tests (internal)
+test_result = await agent._run_tests("utils.py")
+
+# Execute arbitrary code (internal)
+exec_result = await agent._execute_code("print('hello')")
 ```
 
 ### DatabaseManager
