@@ -3,116 +3,125 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Moderne Landing Page mit Hero, Features und Gallery Sektionen">
-    <title>Landing Page - Hero, Features & Gallery</title>
-    <link rel="stylesheet" href="assets/css/styles.css">
+    <title>Coffee Sass - Premium Kaffee</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <nav class="navbar" role="navigation">
+    <!-- Navigation -->
+    <nav class="navbar">
         <div class="container">
-            <a href="#" class="logo">Logo</a>
+            <div class="logo">☕ Coffee Sass</div>
             <ul class="nav-menu">
-                <li><a href="#hero" class="nav-link">Start</a></li>
-                <li><a href="#features" class="nav-link">Features</a></li>
-                <li><a href="#gallery" class="nav-link">Galerie</a></li>
+                <li><a href="#home">Home</a></li>
+                <li><a href="#products">Produkte</a></li>
+                <li><a href="#about">Über Uns</a></li>
+                <li><a href="#contact">Kontakt</a></li>
             </ul>
         </div>
     </nav>
 
-    <main>
-        <section id="hero" class="hero-section">
-            <div class="container">
-                <div class="hero-content">
-                    <h1>Willkommen auf unserer Plattform</h1>
-                    <p>Entdecke innovative Lösungen für deine Projekte</p>
-                    <div class="hero-actions">
-                        <a href="#features" class="btn btn-primary">Mehr erfahren</a>
-                        <a href="#gallery" class="btn btn-secondary">Galerie ansehen</a>
-                    </div>
+    <!-- Hero Section -->
+    <section id="home" class="hero">
+        <div class="hero-content">
+            <h1>Entdecke Perfektion</h1>
+            <p>Handverlesene Bohnen. Römisch geröstet. Mit Liebe zubereitet.</p>
+            <a href="#products" class="cta-button">Jetzt Probieren</a>
+        </div>
+        <div class="hero-image">
+            <img src="https://images.unsplash.com/photo-1447933601403-0c6688de566e?w=800" alt="Premium Kaffee">
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="features">
+        <div class="container">
+            <h2>Warum Coffee Sass?</h2>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">🌱</div>
+                    <h3>100% Bio</h3>
+                    <p>Nachhaltig angebaut ohne Pestizide</p>
                 </div>
-                <div class="hero-visual">
-                    <div class="hero-placeholder"></div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔥</div>
+                    <h3>Frisch Geröstet</h3>
+                    <p>Täglich geröstet für maximalen Geschmack</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🚀</div>
+                    <h3>Schnelle Lieferung</h3>
+                    <p>Innerhalb von 24h bei Ihnen</p>
                 </div>
             </div>
-        </section>
+        </div>
+    </section>
 
-        <section id="features" class="features-section">
-            <div class="container">
-                <h2 class="section-title">Unsere Features</h2>
-                <div class="features-grid">
-                    <article class="feature-card">
-                        <div class="feature-icon">⚡</div>
-                        <h3>Blitzschnell</h3>
-                        <p>Optimierte Performance für beste Nutzererfahrung</p>
-                    </article>
-                    <article class="feature-card">
-                        <div class="feature-icon">🛡️</div>
-                        <h3>Sicher</h3>
-                        <p>Höchste Sicherheitsstandards für deine Daten</p>
-                    </article>
-                    <article class="feature-card">
-                        <div class="feature-icon">👥</div>
-                        <h3>Benutzerfreundlich</h3>
-                        <p>Intuitive Bedienung für alle Nutzer</p>
-                    </article>
-                    <article class="feature-card">
-                        <div class="feature-icon">📱</div>
-                        <h3>Responsive</h3>
-                        <p>Perfekte Darstellung auf allen Geräten</p>
-                    </article>
-                    <article class="feature-card">
-                        <div class="feature-icon">📦</div>
-                        <h3>Skalierbar</h3>
-                        <p>Wächst mit deinen Anforderungen mit</p>
-                    </article>
-                    <article class="feature-card">
-                        <div class="feature-icon">⚙️</div>
-                        <h3>Anpassbar</h3>
-                        <p>Flexible Konfiguration für deine Bedürfnisse</p>
-                    </article>
+    <!-- Products Section -->
+    <section id="products" class="products">
+        <div class="container">
+            <h2>Unsere Bestseller</h2>
+            <div class="product-grid">
+                <div class="product-card">
+                    <img src="https://images.unsplash.com/photo-1559056199-641a0ac8b55e?w=400" alt="Espresso">
+                    <h3>Espresso Premium</h3>
+                    <p class="price">€12.99</p>
+                    <button class="buy-button">In den Warenkorb</button>
+                </div>
+                <div class="product-card">
+                    <img src="https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=400" alt="Cappuccino">
+                    <h3>Cappuccino Mix</h3>
+                    <p class="price">€14.99</p>
+                    <button class="buy-button">In den Warenkorb</button>
+                </div>
+                <div class="product-card">
+                    <img src="https://images.unsplash.com/photo-1461023058943-07fcbe16d735?w=400" alt="Latte">
+                    <h3>Latte Art Collection</h3>
+                    <p class="price">€16.99</p>
+                    <button class="buy-button">In den Warenkorb</button>
                 </div>
             </div>
-        </section>
+        </div>
+    </section>
 
-        <section id="gallery" class="gallery-section">
-            <div class="container">
-                <h2 class="section-title">Galerie</h2>
-                <div class="gallery-grid">
-                    <figure class="gallery-item">
-                        <div class="gallery-placeholder"></div>
-                        <figcaption>Projekt Alpha</figcaption>
-                    </figure>
-                    <figure class="gallery-item">
-                        <div class="gallery-placeholder"></div>
-                        <figcaption>Mobile App</figcaption>
-                    </figure>
-                    <figure class="gallery-item">
-                        <div class="gallery-placeholder"></div>
-                        <figcaption>E-Commerce</figcaption>
-                    </figure>
-                    <figure class="gallery-item">
-                        <div class="gallery-placeholder"></div>
-                        <figcaption>Corporate Website</figcaption>
-                    </figure>
-                    <figure class="gallery-item">
-                        <div class="gallery-placeholder"></div>
-                        <figcaption>Analytics Dashboard</figcaption>
-                    </figure>
-                    <figure class="gallery-item">
-                        <div class="gallery-placeholder"></div>
-                        <figcaption>Social Media</figcaption>
-                    </figure>
+    <!-- About Section -->
+    <section id="about" class="about">
+        <div class="container">
+            <div class="about-content">
+                <div class="about-text">
+                    <h2>Unsere Geschichte</h2>
+                    <p>Seit 2015 sind wir leidenschaftliche Kaffeeröster. Unsere Reise begann in einer kleinen Küche und ist heute zu einer Marke geworden, die Kaffeeliebhaber weltweit begeistert.</p>
+                    <p>Jede Tasse Coffee Sass erzählt eine Geschichte von Hingabe, Qualität und dem Streben nach Perfektion.</p>
+                </div>
+                <div class="about-image">
+                    <img src="https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=600" alt="Kaffee Rösterei">
                 </div>
             </div>
-        </section>
-    </main>
+        </div>
+    </section>
 
+    <!-- Contact Section -->
+    <section id="contact" class="contact">
+        <div class="container">
+            <h2>Kontaktiere Uns</h2>
+            <form class="contact-form">
+                <input type="text" placeholder="Dein Name" required>
+                <input type="email" placeholder="Deine E-Mail" required>
+                <textarea placeholder="Deine Nachricht" rows="5" required></textarea>
+                <button type="submit" class="submit-button">Nachricht Senden</button>
+            </form>
+        </div>
+    </section>
+
+    <!-- Footer -->
     <footer class="footer">
         <div class="container">
-            <p>&copy; 2024 Landing Page. Alle Rechte vorbehalten.</p>
+            <p>&copy; 2024 Coffee Sass. Alle Rechte vorbehalten.</p>
+            <div class="social-links">
+                <a href="#">📘</a>
+                <a href="#">📸</a>
+                <a href="#">🐦</a>
+            </div>
         </div>
     </footer>
-
-    <script src="assets/js/main.js"></script>
 </body>
 </html>
