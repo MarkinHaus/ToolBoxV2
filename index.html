@@ -512,7 +512,149 @@
             color: var(--color-text-muted);
             line-height: 1.7;
         }
-        
+
+        /* ========================================
+           UTILITY CLASSES - BORDERS
+           ======================================== */
+        .border {
+            border: 1px solid var(--color-border);
+        }
+
+        .border-t { border-top: 1px solid var(--color-border); }
+        .border-b { border-bottom: 1px solid var(--color-border); }
+        .border-l { border-left: 1px solid var(--color-border); }
+        .border-r { border-right: 1px solid var(--color-border); }
+
+        .border-primary {
+            border: 1px solid var(--color-primary);
+        }
+
+        .border-secondary {
+            border: 1px solid var(--color-secondary);
+        }
+
+        .border-light {
+            border: 1px solid var(--color-border-light);
+        }
+
+        .rounded { border-radius: var(--radius-md); }
+        .rounded-lg { border-radius: var(--radius-lg); }
+        .rounded-xl { border-radius: var(--radius-xl); }
+        .rounded-full { border-radius: 9999px; }
+
+        /* ========================================
+           UTILITY CLASSES - BADGES
+           ======================================== */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--space-2);
+            padding: var(--space-2) var(--space-3);
+            font-size: var(--text-sm);
+            font-weight: var(--font-semibold);
+            border-radius: var(--radius-full);
+            line-height: 1;
+        }
+
+        .badge-primary {
+            background-color: var(--color-primary-light);
+            color: var(--color-bg-white);
+        }
+
+        .badge-secondary {
+            background-color: var(--color-secondary);
+            color: var(--color-bg-white);
+        }
+
+        .badge-accent {
+            background-color: var(--color-accent);
+            color: var(--color-bg-white);
+        }
+
+        .badge-outline {
+            background-color: transparent;
+            border: 1px solid var(--color-border);
+            color: var(--color-text-main);
+        }
+
+        .badge-soft {
+            background-color: var(--color-bg-light);
+            color: var(--color-text-muted);
+        }
+
+        .badge-success {
+            background-color: var(--color-secondary);
+            color: var(--color-bg-white);
+        }
+
+        .badge-warning {
+            background-color: var(--color-accent);
+            color: var(--color-bg-white);
+        }
+
+        .badge-danger {
+            background-color: var(--color-primary);
+            color: var(--color-bg-white);
+        }
+
+        .badge-sm {
+            font-size: var(--text-xs);
+            padding: var(--space-1) var(--space-2);
+        }
+
+        .badge-lg {
+            font-size: var(--text-base);
+            padding: var(--space-2) var(--space-4);
+        }
+
+        /* ========================================
+           UTILITY CLASSES - SCORE BARS
+           ======================================== */
+        .score-bar {
+            width: 100%;
+            height: 8px;
+            background-color: var(--color-bg-muted);
+            border-radius: var(--radius-full);
+            overflow: hidden;
+            position: relative;
+        }
+
+        .score-bar-fill {
+            height: 100%;
+            border-radius: var(--radius-full);
+            transition: width 0.5s ease-out;
+            position: relative;
+        }
+
+        .score-bar-primary .score-bar-fill {
+            background: linear-gradient(90deg, var(--color-primary-light) 0%, var(--color-primary) 100%);
+        }
+
+        .score-bar-secondary .score-bar-fill {
+            background: linear-gradient(90deg, var(--color-secondary) 0%, var(--color-secondary-dark) 100%);
+        }
+
+        .score-bar-accent .score-bar-fill {
+            background: linear-gradient(90deg, var(--color-accent) 0%, #d97706 100%);
+        }
+
+        .score-bar-lg {
+            height: 12px;
+        }
+
+        .score-bar-sm {
+            height: 6px;
+        }
+
+        /* Animation für Score Bars */
+        @keyframes fillProgress {
+            from { width: 0; }
+        }
+
+        .score-bar-fill {
+            animation: fillProgress 0.8s ease-out forwards;
+        }
+
     </style>
 </head>
 <body>
