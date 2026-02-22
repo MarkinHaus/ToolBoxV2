@@ -60,6 +60,7 @@ from toolboxv2.mods.isaa.base.AgentUtils import detect_shell, anything_from_str_
 from toolboxv2.mods.isaa.base.audio_io.audioIo import AudioStreamPlayer
 
 from toolboxv2.mods.isaa.extras.zen_renderer import ZenRendererV2
+from toolboxv2.mods.isaa.extras.jobs import JobDefinition, TriggerConfig, JobScheduler
 from toolboxv2.mods.isaa.module import Tools as IsaaTool
 
 import html
@@ -730,6 +731,10 @@ class ISAA_Host:
         self._self_agent_initialized = False
         self._active_renderer: ZenRendererV2 | None = None
 
+        # Job Scheduler
+        self.jobs_file = Path(self.app.appdata) / "icli" / "isaa_host_jobs.json"
+        self.job_scheduler: JobScheduler | None = None
+
         # Load persisted state
         self._load_rate_limiter_config()
         self._load_state()
@@ -1223,6 +1228,111 @@ class ISAA_Host:
             "updateAgentConfig",
             "Update agent configuration for next restart",
             category=["agent_management"],
+        )
+
+        # ===== JOB MANAGEMENT TOOLS =====
+
+        async def cli_create_job(
+            name: str,
+            agent_name: str,
+            query: str,
+            trigger_type: str,
+            trigger_config: dict | None = None,
+            timeout_seconds: int = 300,
+            session_id: str = "default",
+        ) -> str:
+            """
+            Create a persistent scheduled job that fires an agent query on a trigger.
+
+            Args:
+                name: Human-readable job name
+                agent_name: Which agent runs this job (e.g. 'self', 'researcher')
+                query: The prompt/query to send to the agent
+                trigger_type: Trigger type (on_time, on_interval, on_cron, on_cli_start, on_cli_exit, on_job_completed, on_job_failed, on_file_changed, on_network_available, on_system_idle, etc.)
+                trigger_config: Optional trigger parameters dict (at_datetime, interval_seconds, cron_expression, watch_job_id, watch_path, watch_patterns, idle_seconds, etc.)
+                timeout_seconds: Max execution time in seconds (default 300)
+                session_id: Session ID for the agent (default 'default')
+
+            Returns:
+                Job ID or error message
+            """
+            if not host_ref.job_scheduler:
+                return "Job scheduler not initialized"
+            try:
+                tc = TriggerConfig(trigger_type=trigger_type)
+                if trigger_config:
+                    for k, v in trigger_config.items():
+                        if hasattr(tc, k):
+                            setattr(tc, k, v)
+                job = JobDefinition(
+                    job_id=JobDefinition.generate_id(),
+                    name=name,
+                    agent_name=agent_name,
+                    query=query,
+                    trigger=tc,
+                    timeout_seconds=timeout_seconds,
+                    session_id=session_id,
+                )
+                job_id = host_ref.job_scheduler.add_job(job)
+                return f"✓ Job created: {job_id} ({name})"
+            except Exception as e:
+                return f"✗ Failed to create job: {e}"
+
+        async def cli_delete_job(job_id: str) -> str:
+            """
+            Delete a scheduled job by ID.
+
+            Args:
+                job_id: The job ID to delete
+
+            Returns:
+                Status message
+            """
+            if not host_ref.job_scheduler:
+                return "Job scheduler not initialized"
+            if host_ref.job_scheduler.remove_job(job_id):
+                return f"✓ Job {job_id} deleted"
+            return f"✗ Job {job_id} not found"
+
+        async def cli_list_jobs() -> str:
+            """
+            List all scheduled jobs with their status.
+
+            Returns:
+                Formatted list of all jobs
+            """
+            if not host_ref.job_scheduler:
+                return "Job scheduler not initialized"
+            jobs = host_ref.job_scheduler.list_jobs()
+            if not jobs:
+                return "No scheduled jobs."
+            lines = ["=== Scheduled Jobs ===\n"]
+            for j in jobs:
+                lines.append(
+                    f"  {j.job_id} | {j.name} | {j.trigger.trigger_type} | "
+                    f"{j.status} | runs:{j.run_count} fails:{j.fail_count}"
+                )
+                if j.last_result:
+                    lines.append(f"    Last: {j.last_result} at {j.last_run_at}")
+            return "\n".join(lines)
+
+        builder.add_tool(
+            cli_create_job,
+            "createJob",
+            "Create a persistent scheduled job that fires an agent on a trigger",
+            category=["job_management"],
+        )
+        builder.add_tool(
+            cli_delete_job,
+            "deleteJob",
+            "Delete a scheduled job",
+            category=["job_management"],
+        )
+        builder.add_tool(
+            cli_list_jobs,
+            "listJobs",
+            "List all scheduled jobs with status",
+            category=["job_management"],
         )
 
     # =========================================================================
@@ -1731,6 +1841,16 @@ class ISAA_Host:
                 "clean": None,
                 "status": {t: None for t in self.background_tasks.keys()},
             },
+            "/job": {
+                "list": None,
+                "add": None,
+                "remove": {j.job_id: None for j in (self.job_scheduler.list_jobs() if self.job_scheduler else [])},
+                "pause": {j.job_id: None for j in (self.job_scheduler.list_jobs() if self.job_scheduler else []) if j.status == "active"},
+                "resume": {j.job_id: None for j in (self.job_scheduler.list_jobs() if self.job_scheduler else []) if j.status == "paused"},
+                "fire": {j.job_id: None for j in (self.job_scheduler.list_jobs() if self.job_scheduler else [])},
+                "detail": {j.job_id: None for j in (self.job_scheduler.list_jobs() if self.job_scheduler else [])},
+                "autowake": {"install": None, "remove": None, "status": None},
+            },
             "/vfs": {
                 "mount": path_compl, # /vfs mount <local_path> [vfs_path] [--readonly] [--no-sync]
                 "unmount": vfs_mounts if vfs_mounts else None,
@@ -1900,6 +2020,14 @@ class ISAA_Host:
                     [18, 25, 10, 20],
                     ["cyan", "green", "white", "grey"]
                 )
+
+        # Jobs summary
+        if self.job_scheduler and self.job_scheduler.total_count > 0:
+            print_status(
+                f"Scheduled Jobs: {self.job_scheduler.active_count} active / {self.job_scheduler.total_count} total",
+                "data"
+            )
+
         c_print()
 
     def _print_help(self):
@@ -1954,6 +2082,18 @@ class ISAA_Host:
         print_box_content("/task cancel <id>        - Cancel a running task", "")
         print_box_content("/task clean              - Remove finished tasks", "")
         print_box_content("F6 during execution      - Move agent to background", "")
+
+        print_separator()
+
+        print_status("Job Scheduler", "info")
+        print_box_content("/job list                - List all scheduled jobs", "")
+        print_box_content("/job add                 - Add a new job (interactive)", "")
+        print_box_content("/job remove <id>         - Remove a job", "")
+        print_box_content("/job pause <id>          - Pause a job", "")
+        print_box_content("/job resume <id>         - Resume a paused job", "")
+        print_box_content("/job fire <id>           - Manually fire a job now", "")
+        print_box_content("/job detail <id>         - Show job details", "")
+        print_box_content("/job autowake <cmd>      - Manage OS auto-wake (install/remove/status)", "")
 
         print_separator()
 
@@ -2061,6 +2201,9 @@ class ISAA_Host:
 
         elif cmd == "/audio":
             await self._handle_audio_command(args)
+
+        elif cmd == "/job":
+            await self._cmd_job(args)
 
         elif cmd == "/context":
             await self._cmd_context(args)
@@ -2577,6 +2720,273 @@ class ISAA_Host:
                 print_box_content(f"Error: {e}", "error")
 
         print_box_footer()
+
+    # =========================================================================
+    # JOB SCHEDULER INTEGRATION
+    # =========================================================================
+
+    async def _fire_job_from_scheduler(self, job: JobDefinition) -> str:
+        """Callback for JobScheduler: run an agent query as a BackgroundTask."""
+        self._task_counter += 1
+        task_id = f"job_{self._task_counter}_{job.agent_name}"
+        run_id = uuid.uuid4().hex[:8]
+        host_ref = self
+
+        async def _run_job():
+            try:
+                agent = await host_ref.isaa_tools.get_agent(job.agent_name)
+                result = await agent.a_run(
+                    job.query,
+                    session_id=job.session_id,
+                    execution_id=run_id,
+                )
+                if task_id in host_ref.background_tasks:
+                    host_ref.background_tasks[task_id].status = "completed"
+                return result or ""
+            except Exception as e:
+                if task_id in host_ref.background_tasks:
+                    host_ref.background_tasks[task_id].status = "failed"
+                raise
+
+        async_task = asyncio.create_task(_run_job())
+
+        def _on_done(fut):
+            try:
+                r = fut.result()
+                preview = (r[:60] + "..") if len(r) > 62 else r
+                c_print(HTML(f"\n<style fg='{PTColors.ZEN_GREEN}'>✓ {task_id}</style>"
+                             f"  <style fg='{PTColors.ZEN_DIM}'>{html.escape(preview)}</style>\n"))
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        async_task.add_done_callback(_on_done)
+        self.background_tasks[task_id] = BackgroundTask(
+            task_id=task_id, agent_name=job.agent_name,
+            run_id=run_id, query=job.query, task=async_task,
+        )
+
+        # Wait for it (scheduler handles timeout externally)
+        return await async_task
+
+    async def _cmd_job(self, args: list[str]):
+        """Handle /job commands."""
+        if not self.job_scheduler:
+            print_status("Job scheduler not initialized", "error")
+            return
+
+        if not args:
+            args = ["list"]
+
+        action = args[0]
+
+        if action == "list":
+            jobs = self.job_scheduler.list_jobs()
+            if not jobs:
+                print_status("No scheduled jobs", "info")
+                return
+            print_box_header(f"Scheduled Jobs ({len(jobs)})", "◎")
+            columns = [("ID", 14), ("Name", 18), ("Trigger", 16), ("Status", 8), ("Runs", 5), ("Last", 12)]
+            widths = [14, 18, 16, 8, 5, 12]
+            print_table_header(columns, widths)
+            for j in jobs:
+                status_style = {
+                    "active": "green", "paused": "yellow",
+                    "expired": "grey", "disabled": "red",
+                }.get(j.status, "white")
+                last = j.last_run_at[:10] if j.last_run_at else "-"
+                print_table_row(
+                    [j.job_id[:14], j.name[:18], j.trigger.trigger_type[:16],
+                     j.status, str(j.run_count), last],
+                    widths,
+                    ["cyan", "white", "magenta", status_style, "grey", "grey"],
+                )
+            print_box_footer()
+
+        elif action == "add":
+            await self._job_add_interactive()
+
+        elif action == "remove":
+            if len(args) < 2:
+                print_status("Usage: /job remove <id>", "warning")
+                return
+            if self.job_scheduler.remove_job(args[1]):
+                print_status(f"Job {args[1]} removed", "success")
+            else:
+                print_status(f"Job {args[1]} not found", "error")
+
+        elif action == "pause":
+            if len(args) < 2:
+                print_status("Usage: /job pause <id>", "warning")
+                return
+            if self.job_scheduler.pause_job(args[1]):
+                print_status(f"Job {args[1]} paused", "success")
+            else:
+                print_status(f"Job {args[1]} not found or not active", "error")
+
+        elif action == "resume":
+            if len(args) < 2:
+                print_status("Usage: /job resume <id>", "warning")
+                return
+            if self.job_scheduler.resume_job(args[1]):
+                print_status(f"Job {args[1]} resumed", "success")
+            else:
+                print_status(f"Job {args[1]} not found or not paused", "error")
+
+        elif action == "fire":
+            if len(args) < 2:
+                print_status("Usage: /job fire <id>", "warning")
+                return
+            job = self.job_scheduler.get_job(args[1])
+            if not job:
+                print_status(f"Job {args[1]} not found", "error")
+                return
+            print_status(f"Firing job {job.job_id} ({job.name})...", "info")
+            asyncio.create_task(self.job_scheduler._fire_job(job))
+
+        elif action == "detail":
+            if len(args) < 2:
+                print_status("Usage: /job detail <id>", "warning")
+                return
+            job = self.job_scheduler.get_job(args[1])
+            if not job:
+                # Try partial match
+                matches = self.job_scheduler.find_jobs_by_name(args[1])
+                if matches:
+                    job = matches[0]
+                else:
+                    print_status(f"Job {args[1]} not found", "error")
+                    return
+            print_box_header(f"Job: {job.name}", "◎")
+            print_box_content(f"ID: {job.job_id}", "")
+            print_box_content(f"Agent: {job.agent_name}", "")
+            print_box_content(f"Query: {job.query[:80]}", "")
+            print_box_content(f"Trigger: {job.trigger.trigger_type}", "info")
+            if job.trigger.at_datetime:
+                print_box_content(f"  At: {job.trigger.at_datetime}", "")
+            if job.trigger.interval_seconds:
+                print_box_content(f"  Interval: {job.trigger.interval_seconds}s", "")
+            if job.trigger.cron_expression:
+                print_box_content(f"  Cron: {job.trigger.cron_expression}", "")
+            if job.trigger.watch_job_id:
+                print_box_content(f"  Watch Job: {job.trigger.watch_job_id}", "")
+            if job.trigger.watch_path:
+                print_box_content(f"  Watch Path: {job.trigger.watch_path}", "")
+            print_box_content(f"Status: {job.status}", "")
+            print_box_content(f"Session: {job.session_id}", "")
+            print_box_content(f"Timeout: {job.timeout_seconds}s", "")
+            print_box_content(f"Runs: {job.run_count}  Fails: {job.fail_count}", "")
+            if job.last_run_at:
+                print_box_content(f"Last Run: {job.last_run_at}", "")
+            if job.last_result:
+                print_box_content(f"Last Result: {job.last_result}", "")
+            print_box_content(f"Created: {job.created_at}", "")
+            print_box_footer()
+
+        elif action == "autowake":
+            await self._job_autowake(args[1:])
+
+        else:
+            print_status(f"Unknown job action: {action}. Use: list, add, remove, pause, resume, fire, detail, autowake", "error")
+
+    async def _job_add_interactive(self):
+        """Interactive job creation."""
+        if not self.prompt_session:
+            print_status("Prompt session not available", "error")
+            return
+
+        agents = self.isaa_tools.config.get("agents-name-list", ["self"])
+        available_triggers = self.job_scheduler.trigger_registry.available_types() if self.job_scheduler else []
+
+        print_box_header("Add New Job", "◎")
+        print_box_content(f"Agents: {', '.join(agents)}", "info")
+        print_box_content(f"Triggers: {', '.join(available_triggers)}", "info")
+        print_box_footer()
+
+        try:
+            name = await self.prompt_session.prompt_async(HTML("<style fg='grey'>Name: </style>"))
+            if not name.strip():
+                print_status("Cancelled", "warning")
+                return
+
+            agent_name = await self.prompt_session.prompt_async(HTML("<style fg='grey'>Agent: </style>"))
+            if not agent_name.strip():
+                agent_name = "self"
+
+            query = await self.prompt_session.prompt_async(HTML("<style fg='grey'>Query: </style>"))
+            if not query.strip():
+                print_status("Query is required", "error")
+                return
+
+            trigger_type = await self.prompt_session.prompt_async(HTML("<style fg='grey'>Trigger type: </style>"))
+            if not trigger_type.strip():
+                print_status("Trigger type is required", "error")
+                return
+
+            trigger_cfg = TriggerConfig(trigger_type=trigger_type.strip())
+
+            if trigger_type.strip() == "on_time":
+                dt = await self.prompt_session.prompt_async(HTML("<style fg='grey'>Datetime (ISO): </style>"))
+                trigger_cfg.at_datetime = dt.strip()
+            elif trigger_type.strip() == "on_interval":
+                secs = await self.prompt_session.prompt_async(HTML("<style fg='grey'>Interval (seconds): </style>"))
+                trigger_cfg.interval_seconds = int(secs.strip())
+            elif trigger_type.strip() == "on_cron":
+                expr = await self.prompt_session.prompt_async(HTML("<style fg='grey'>Cron expression: </style>"))
+                trigger_cfg.cron_expression = expr.strip()
+            elif trigger_type.strip() in ("on_job_completed", "on_job_failed", "on_job_timeout"):
+                jid = await self.prompt_session.prompt_async(HTML("<style fg='grey'>Watch job ID: </style>"))
+                trigger_cfg.watch_job_id = jid.strip()
+            elif trigger_type.strip() == "on_file_changed":
+                path = await self.prompt_session.prompt_async(HTML("<style fg='grey'>Watch path: </style>"))
+                trigger_cfg.watch_path = path.strip()
+                pats = await self.prompt_session.prompt_async(HTML("<style fg='grey'>Patterns (comma-sep, empty=all): </style>"))
+                if pats.strip():
+                    trigger_cfg.watch_patterns = [p.strip() for p in pats.split(",")]
+            elif trigger_type.strip() == "on_system_idle":
+                idle = await self.prompt_session.prompt_async(HTML("<style fg='grey'>Idle seconds threshold [300]: </style>"))
+                trigger_cfg.idle_seconds = int(idle.strip()) if idle.strip() else 300
+
+            timeout = await self.prompt_session.prompt_async(HTML("<style fg='grey'>Timeout seconds [300]: </style>"))
+            timeout_s = int(timeout.strip()) if timeout.strip() else 300
+
+            job = JobDefinition(
+                job_id=JobDefinition.generate_id(),
+                name=name.strip(),
+                agent_name=agent_name.strip(),
+                query=query.strip(),
+                trigger=trigger_cfg,
+                timeout_seconds=timeout_s,
+            )
+            job_id = self.job_scheduler.add_job(job)
+            print_status(f"Job created: {job_id} ({name.strip()})", "success")
+
+        except (EOFError, KeyboardInterrupt):
+            print_status("Cancelled", "warning")
+
+    async def _job_autowake(self, args: list[str]):
+        """Handle /job autowake install/remove/status."""
+        if not args:
+            print_status("Usage: /job autowake <install|remove|status>", "warning")
+            return
+
+        try:
+            from toolboxv2.mods.isaa.extras.jobs.os_scheduler import install_autowake, remove_autowake, autowake_status
+        except ImportError:
+            print_status("OS scheduler module not available", "error")
+            return
+
+        action = args[0]
+        if action == "install":
+            result = install_autowake(self.jobs_file)
+            print_status(result, "success" if "installed" in result.lower() else "error")
+        elif action == "remove":
+            result = remove_autowake()
+            print_status(result, "success" if "removed" in result.lower() else "error")
+        elif action == "status":
+            result = autowake_status()
+            print_status(result, "info")
+        else:
+            print_status("Usage: /job autowake <install|remove|status>", "warning")
 
     async def _cmd_mcp(self, args: list[str]):
         """Handle live MCP management commands."""
@@ -3336,6 +3746,8 @@ class ISAA_Host:
                                     c_print(line)
                 except Exception as e:
                     print_status(f"Diff error: {e}", "error")
+                    import traceback
+                    traceback.print_exc()
 
             elif action == "accept":
                 # /coder accept              → apply all (git merge or copy)
@@ -3389,7 +3801,7 @@ class ISAA_Host:
                 try:
                     if len(args) > 1:
                         files = args[1:]
-                        wt.rollback(files)
+                        await wt.rollback(files)
                         for f in files:
                             c_print(f"  ↩ {f}")
                         print_status(f"Rolled back {len(files)} file(s).", "success")
@@ -3399,7 +3811,7 @@ class ISAA_Host:
                             print_status("Nothing to rollback.", "info")
                             return
                         print_status(f"Rolling back {len(changed)} file(s)...", "warning")
-                        wt.rollback()
+                        await wt.rollback()
                         print_status("Full rollback complete.", "success")
                 except Exception as e:
                     print_status(f"Rollback failed: {e}", "error")
@@ -3996,6 +4408,11 @@ class ISAA_Host:
         # Initialize Self Agent
         await self._init_self_agent()
 
+        # Start Job Scheduler
+        self.job_scheduler = JobScheduler(self.jobs_file, self._fire_job_from_scheduler)
+        await self.job_scheduler.start()
+        await self.job_scheduler.fire_lifecycle("on_cli_start")
+
         # Show active features
         all_feats = self.feature_manager.list_features()
         if all_feats:
@@ -4066,6 +4483,11 @@ class ISAA_Host:
 
         # Cleanup
         self._save_state()
+
+        # Stop job scheduler
+        if self.job_scheduler:
+            await self.job_scheduler.fire_lifecycle("on_cli_exit")
+            await self.job_scheduler.stop()
 
         # Cancel background tasks
         for _, bg_task in self.background_tasks.items():

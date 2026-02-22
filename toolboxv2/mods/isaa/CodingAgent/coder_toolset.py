@@ -10,11 +10,14 @@ logger = logging.getLogger(__name__)
 
 # Lazy import — CoderAgent wird erst bei spawn gebraucht
 CoderAgent = None
+ParallelManager = None
+
 def _ensure_coder_import():
-    global CoderAgent
+    global CoderAgent, ParallelManager
     if CoderAgent is None:
         from toolboxv2.mods.isaa.CodingAgent.coder import CoderAgent as _CA
-        CoderAgent = _CA
+        from toolboxv2.mods.isaa.CodingAgent.manager import ParallelManager as _PM
+        CoderAgent, ParallelManager = _CA, _PM
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -526,6 +529,140 @@ def _make_tools(pool: CoderPool, agent: Any, project_root: str, config: dict | N
 
         return result
 
+    # ─── 9. parallel_execute ──────────────────────────────────
+    async def parallel_execute(task: str, pre_analyze: bool = True,
+                               max_parallel: int | None = None) -> dict:
+        """
+        Führt eine komplexe Aufgabe mit ParallelManager aus.
+
+        Dekomponiert die Aufgabe in unabhängige Subtasks, führt diese parallel aus,
+        und merged die Ergebnisse. Optional mit Pre-Analysis-Phase.
+
+        Args:
+            task: Die zu erledigende Aufgabe (klar beschrieben)
+            pre_analyze: Vorher Projekt analysieren? (Default: True)
+            max_parallel: Max parallele CoderAgents (Default: aus config oder 4)
+
+        Returns:
+            {
+                "success": bool,
+                "summary": str,
+                "applied_files": [str],
+                "failed_tasks": [str],
+                "total_tokens": int,
+                "coder_count": int,
+                "duration_s": float,
+                "decomposition": [{"id": str, "description": str, "scope": [str]}]
+            }
+        """
+        _ensure_coder_import()
+
+        mgr_config = {**config}
+        if max_parallel is not None:
+            mgr_config["max_parallel"] = max_parallel
+
+        mgr = ParallelManager(agent or flow_agent, root, mgr_config)
+        result = await mgr.run(task)
+
+        # Umwandlung in dict für JSON-Serialisierung
+        return {
+            "success": result.success,
+            "summary": result.summary,
+            "applied_files": result.applied_files,
+            "failed_tasks": result.failed_tasks,
+            "total_tokens": result.total_tokens,
+            "coder_count": result.coder_count,
+            "duration_s": result.duration_s,
+        }
+
+    # ─── 10. sequential_execute ────────────────────────────────
+    async def sequential_execute(task: str, max_retries: int | None = None) -> dict:
+        """
+        Führt eine Aufgabe mit SequentialManager aus (Pipeline mit Retry).
+
+        Analysiert Projekt, verfeinert Aufgabe, führt mit Retry aus,
+        validiert und übernimmt Ergebnisse.
+
+        Args:
+            task: Die zu erledigende Aufgabe
+            max_retries: Maximale Wiederholungsversuche bei Fehlern (Default: aus config oder 2)
+
+        Returns:
+            {
+                "success": bool,
+                "summary": str,
+                "applied_files": [str],
+                "total_tokens": int,
+                "coder_count": int,
+                "duration_s": float
+            }
+        """
+        _ensure_coder_import()
+        from toolboxv2.mods.isaa.CodingAgent.manager import SequentialManager
+
+        mgr_config = {**config}
+        if max_retries is not None:
+            mgr_config["max_retries"] = max_retries
+
+        mgr = SequentialManager(agent or flow_agent, root, mgr_config)
+        result = await mgr.run(task)
+
+        return {
+            "success": result.success,
+            "summary": result.summary,
+            "applied_files": result.applied_files,
+            "total_tokens": result.total_tokens,
+            "coder_count": result.coder_count,
+            "duration_s": result.duration_s,
+        }
+
+    # ─── 11. swarm_execute ─────────────────────────────────────
+    async def swarm_execute(task: str, max_iterations: int | None = None,
+                            max_parallel: int | None = None) -> dict:
+        """
+        Führt eine komplexe Aufgabe mit SwarmManager aus (LLM-adaptiver Multi-Agent).
+
+        Der Manager selbst ist ein LLM-Agent der dynamisch plant, coders spawned,
+        überwacht, bei Fehlern neu plant und entscheidet wann fertig.
+
+        Args:
+            task: Die zu erledigende Aufgabe
+            max_iterations: Maximale Manager-Iterationen (Default: aus config oder 30)
+            max_parallel: Maximale parallele CoderAgents (Default: aus config oder 4)
+
+        Returns:
+            {
+                "success": bool,
+                "summary": str,
+                "applied_files": [str],
+                "failed_tasks": [str],
+                "total_tokens": int,
+                "coder_count": int,
+                "duration_s": float
+            }
+        """
+        _ensure_coder_import()
+        from toolboxv2.mods.isaa.CodingAgent.manager import SwarmManager
+
+        mgr_config = {**config}
+        if max_iterations is not None:
+            mgr_config["max_manager_iterations"] = max_iterations
+        if max_parallel is not None:
+            mgr_config["max_parallel"] = max_parallel
+
+        mgr = SwarmManager(agent or flow_agent, root, mgr_config)
+        result = await mgr.run(task)
+
+        return {
+            "success": result.success,
+            "summary": result.summary,
+            "applied_files": result.applied_files,
+            "failed_tasks": result.failed_tasks,
+            "total_tokens": result.total_tokens,
+            "coder_count": result.coder_count,
+            "duration_s": result.duration_s,
+        }
+
     # ─── Tool-Dicts für add_tool() ────────────────────────────
     return [
         {"tool_func": analyze_codebase, "name": "analyze_codebase",
@@ -559,6 +696,18 @@ def _make_tools(pool: CoderPool, agent: Any, project_root: str, config: dict | N
         {"tool_func": accept, "name": "accept",
          "description": "Übernimmt validierte Arbeit ins Origin-Repo. NUR nach validate_worktree(passed=True). Cherry-Pick einzelner Files möglich. Cleanup Worktree.",
          "category": ["coder", "post", "lifecycle"], "flags": {"destructive": True, "selective": True, "requires_validation": True}},
+
+        # {"tool_func": parallel_execute, "name": "parallel_execute",
+        #  "description": "Komplexe Aufgabe PARALLEL ausführen mit mehreren CoderAgents. Dekomposition → Spawn N Coders → Monitor → Merge. Ideal für große Refactorings oder modulabhängige Tasks.",
+        #  "category": ["coder", "parallel", "orchestration"], "flags": {"multi_agent": True, "auto_decompose": True, "async_execution": True}},
+
+        {"tool_func": sequential_execute, "name": "sequential_execute",
+         "description": "Aufgabe mit Pipeline + Retry ausführen: analyze → refine → execute → validate → accept. Für fokussierte Aufgaben mit starker Abhängigkeit. Wiederholt bei Fehlern automatisch.",
+         "category": ["coder", "sequential", "orchestration"], "flags": {"retry": True, "validation": True, "atomic": True}},
+
+        # {"tool_func": swarm_execute, "name": "swarm_execute",
+        #  "description": "Komplexe Aufgabe mit LLM-adaptivem Multi-Agent ausführen. Manager plant dynamisch, spawned Coders, überwacht, plant bei Fehlern neu. Für unbekannte komplexe Tasks mit evolvierenden Anforderungen.",
+        #  "category": ["coder", "swarm", "orchestration"], "flags": {"adaptive": True, "multi_agent": True, "llm_managed": True, "max_iterations": True}},
     ]
 
 

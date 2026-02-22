@@ -643,7 +643,7 @@ class TestCoderAgentTools(unittest.TestCase):
         agent = MockAgent()
         coder = CoderAgent(agent, tempfile.mkdtemp())
         tools = coder._tools()
-        self.assertEqual(len(tools), 3)
+        self.assertEqual(len(tools), 4)
         names = {t["function"]["name"] for t in tools}
         self.assertEqual(names, {"read_file", "bash", "grep"})
 

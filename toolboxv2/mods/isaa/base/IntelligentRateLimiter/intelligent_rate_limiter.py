@@ -30,10 +30,12 @@ import random
 from collections import defaultdict
 from contextlib import asynccontextmanager
 import hashlib
+import contextlib
+import io
 
-from toolboxv2.utils.extras.Style import print_prompt
+from toolboxv2 import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger()
 
 
 class QuotaType(Enum):
@@ -1482,9 +1484,20 @@ class LiteLLMRateLimitHandler:
 
                 # Update model in kwargs if changed by fallback
                 kwargs["model"] = current_model
+                if os.getenv("AGENT_VERBOSE", "false") == "true":
+                    print(f"[Calling] -> {current_model}")
+                # mute litellm_module
+                try:
+                    devnull = open(os.devnull, "w")
+                except Exception as e:
+                    devnull = io.StringIO()
+                    if os.getenv("AGENT_VERBOSE", "false") == "true":
+                        print(e, "\nWhile trying to get devnull")
 
-                # Execute request
-                response = await litellm_module.acompletion(**kwargs)
+                with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+                    logging.getLogger("litellm").setLevel(logging.CRITICAL)
+                    logging.getLogger().setLevel(logging.CRITICAL)
+                    response = await litellm_module.acompletion(**kwargs)
 
                 # if os.getenv("AGENT_VERBOSE", "f").lower() == "true":
                 #     if not kwargs.get("stream", False):

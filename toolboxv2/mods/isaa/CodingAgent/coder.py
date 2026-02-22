@@ -6,7 +6,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-logger = logging.getLogger(__name__)
+from toolboxv2 import get_logger
+logger = get_logger()
 
 # --- Optional Imports ---
 try:
@@ -182,15 +183,17 @@ async def smart_read_file(
     messages = messages or []
     target = (worktree / path).resolve()
     if not target.exists(): return f"Error: {path} not found."
-    if b'\x00' in target.read_bytes()[:512]: return f"Binary: {path}. Use bash+xxd."
+    # Binary check: read only first 512 bytes, not entire file
+    with open(target, "rb") as _bf:
+        if b'\x00' in (_bf.read(512) or b''): return f"Binary: {path}. Use bash+xxd."
 
     content = await asyncio.to_thread(target.read_text, encoding="utf-8", errors="replace")
     lines = content.splitlines()
     total = len(lines)
 
-    # Explicit range always honored
-    if start or end:
-        return _fmt(path, lines, start or 1, end or total)
+    # Explicit range always honored (None-check, not falsy-check)
+    if start is not None or end is not None:
+        return _fmt(path, lines, start if start is not None else 1, end if end is not None else total)
 
     usage = _count_tokens(messages, model) / _ctx_limit(model) if model else 0
 
@@ -211,9 +214,11 @@ async def smart_read_file(
             if l.strip().startswith(("def ", "class ", "import ", "from ", "if __"))
             or (query and any(t in l for t in query.split()[:3]))
         )
+        # Cap content to ~8k tokens (~32KB) to avoid blowing summarization context
+        max_chars = min(32_000, int((_ctx_limit(model) * 0.4) * 4))
         resp = await agent.a_run_llm_completion(
             messages=[{"role": "system", "content": "Extrahiere relevante Abschnitte mit Zeilennummern."},
-                      {"role": "user", "content": f"File: {path} ({total} lines)\nQuery: {query}\n\nStructure:\n{skeleton}\n\nFull (first 4000 lines):\n{content[:150_000]}"}],
+                      {"role": "user", "content": f"File: {path} ({total} lines)\nQuery: {query}\n\nStructure:\n{skeleton}\n\nContent (capped):\n{content[:max_chars]}"}],
             stream=False)
         return f"[Extracted from {path} ({total} lines)]\n{resp}"
 
@@ -258,27 +263,104 @@ def _file_hash_md5(p: Path) -> str:
 
 
 class GitWorktree:
+    # Directories to exclude when scanning non-git repos (or as fallback)
+    SCAN_EXCLUDES = frozenset({
+        ".git", "node_modules", ".venv", "venv", "__pycache__", ".tox",
+        "dist", "build", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+        ".eggs", "*.egg-info", ".next", ".nuxt", "target", "out",
+        "coverage", ".coverage", "htmlcov", ".idea", ".vscode",
+    })
+
     def __init__(self, root: str):
         self.origin_root = Path(root)
-        self._is_git = (self.origin_root / ".git").exists()
+        self._is_git, self._git_root = self._detect_git()
         self._branch = f"coder-{uuid.uuid4().hex[:8]}"
         self.path: Optional[Path] = None
+        self._last_sync_time: float = 0.0
+
+    def _detect_git(self) -> Tuple[bool, Optional[Path]]:
+        """Detect git repo via rev-parse — works from subdirectories, submodules, worktrees."""
+        try:
+            r = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=self.origin_root, capture_output=True, text=True, timeout=5)
+            if r.returncode == 0 and r.stdout.strip():
+                return True, Path(r.stdout.strip())
+        except (FileNotFoundError, subprocess.TimeoutExpired, NotADirectoryError):
+            pass
+        # Fallback: walk parents for .git
+        for parent in [self.origin_root] + list(self.origin_root.parents):
+            if (parent / ".git").exists():
+                return True, parent
+        return False, None
 
     @property
     def worktree_path(self) -> Optional[Path]:
         """Compat alias for _cmd_coder integration."""
         return self.path
 
+    def _list_tracked_files(self, root: Path) -> List[Path]:
+        """List relevant files: git ls-files for git repos, filtered rglob for non-git."""
+        if self._is_git:
+            try:
+                # --cached (tracked) + --others --exclude-standard (untracked but not ignored)
+                r = subprocess.run(
+                    ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+                    cwd=root, capture_output=True, text=True, timeout=15)
+                if r.returncode == 0:
+                    return [root / f for f in r.stdout.splitlines() if f.strip() and (root / f).is_file()]
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                logger.warning("git ls-files failed, falling back to filtered rglob")
+        # Fallback: rglob with exclusions
+        return [f for f in root.rglob("*")
+                if not f.is_dir() and not (self.SCAN_EXCLUDES & set(f.parts))]
+
     def setup(self):
         if self.path and self.path.exists(): return
+        import time
+        self._last_sync_time = time.time()
+
         if self._is_git:
             self.path = Path(tempfile.mkdtemp(prefix="coder_wt_"))
-            subprocess.run(
-                ["git", "worktree", "add", "-b", self._branch, str(self.path)],
-                cwd=self.origin_root, check=True, capture_output=True)
+            try:
+                # Pre-validate: ensure branch name is unique
+                existing = subprocess.run(
+                    ["git", "branch", "--list", self._branch],
+                    cwd=self.origin_root, capture_output=True, text=True, timeout=5)
+                if existing.stdout.strip():
+                    self._branch = f"coder-{uuid.uuid4().hex[:8]}"
+
+                # Check for worktree lock
+                wt_list = subprocess.run(
+                    ["git", "worktree", "list", "--porcelain"],
+                    cwd=self.origin_root, capture_output=True, text=True, timeout=5)
+                if "locked" in wt_list.stdout:
+                    logger.warning("Locked worktrees detected, cleaning up stale entries")
+                    subprocess.run(["git", "worktree", "prune"],
+                                   cwd=self.origin_root, capture_output=True, timeout=5)
+
+                subprocess.run(
+                    ["git", "worktree", "add", "-b", self._branch, str(self.path)],
+                    cwd=self.origin_root, capture_output=True, text=True, check=True, timeout=30)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
+                logger.warning(f"git worktree add failed ({e}), falling back to copytree")
+                self._is_git = False
+                if self.path.exists():
+                    shutil.rmtree(self.path, ignore_errors=True)
+                self.path = Path(tempfile.mkdtemp(prefix="coder_cp_"))
+                self._copy_filtered(self.origin_root, self.path)
         else:
             self.path = Path(tempfile.mkdtemp(prefix="coder_cp_"))
-            shutil.copytree(self.origin_root, self.path, dirs_exist_ok=True)
+            self._copy_filtered(self.origin_root, self.path)
+
+    def _copy_filtered(self, src_root: Path, dst_root: Path):
+        """Copy only tracked/relevant files instead of blind copytree."""
+        files = self._list_tracked_files(src_root)
+        for f in files:
+            rel = f.relative_to(src_root)
+            dst = dst_root / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, dst)
 
     def commit(self, msg: str):
         if self._is_git and self.path:
@@ -315,9 +397,8 @@ class GitWorktree:
                            cwd=self.origin_root, capture_output=True, check=True)
             return -1
 
-        # Parallel hash-based comparison
-        src_files = [f for f in self.path.rglob("*")
-                     if not f.is_dir() and ".git" not in f.parts]
+        # Filtered file list + parallel hash-based comparison
+        src_files = self._list_tracked_files(self.path)
         dst_files = [(self.origin_root / f.relative_to(self.path)) for f in src_files]
 
         src_hashes = await self._compute_hashes_parallel(src_files)
@@ -326,7 +407,6 @@ class GitWorktree:
 
         count = 0
         for src, dst in zip(src_files, dst_files):
-            rel = src.relative_to(self.path)
             if not dst.exists() or src_hashes.get(str(src)) != dst_hashes.get(str(dst)):
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
@@ -344,14 +424,15 @@ class GitWorktree:
             shutil.rmtree(self.path, ignore_errors=True)
         self.path = None
 
-    def rollback(self, files: list[str] | None = None):
-        """Reset worktree to origin state. If files given, only those."""
+    async def rollback(self, files: list[str] | None = None):
+        """Reset worktree to origin state. ATOMIC: only reverts changed files, never deletes entire tree."""
         if not self.path: return
         if files:
             for f in files:
                 src = self.origin_root / f
                 dst = self.path / f
                 if src.exists():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, dst)
                 elif dst.exists():
                     dst.unlink()
@@ -359,8 +440,23 @@ class GitWorktree:
             subprocess.run(["git", "checkout", "."], cwd=self.path, capture_output=True)
             subprocess.run(["git", "clean", "-fd"], cwd=self.path, capture_output=True)
         else:
-            shutil.rmtree(self.path, ignore_errors=True)
-            shutil.copytree(self.origin_root, self.path, dirs_exist_ok=True)
+            # ATOMIC: detect changed files, revert only those
+            changed = await self.changed_files()
+            for f in changed:
+                src = self.origin_root / f
+                dst = self.path / f
+                if src.exists():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dst)
+                elif dst.exists():
+                    dst.unlink()
+            # Also remove files that exist in worktree but not in origin (newly created)
+            wt_files = set(str(f.relative_to(self.path)) for f in self._list_tracked_files(self.path))
+            origin_files = set(str(f.relative_to(self.origin_root)) for f in self._list_tracked_files(self.origin_root))
+            for new_file in (wt_files - origin_files):
+                target = self.path / new_file
+                if target.exists():
+                    target.unlink()
 
     async def apply_files(self, files: list[str]) -> list[str]:
         """Cherry-pick: apply only specific files back to origin. Returns applied list."""
@@ -399,9 +495,8 @@ class GitWorktree:
                                cwd=self.path, capture_output=True, text=True)
             return [f for f in (r.stdout + u.stdout).splitlines() if f.strip()]
 
-        # Parallel hash-based comparison
-        src_files = [f for f in self.path.rglob("*")
-                     if not f.is_dir() and ".git" not in f.parts]
+        # Filtered file list + parallel hash-based comparison
+        src_files = self._list_tracked_files(self.path)
         dst_files = [(self.origin_root / f.relative_to(self.path)) for f in src_files]
 
         src_hashes = await self._compute_hashes_parallel(src_files)
@@ -415,24 +510,54 @@ class GitWorktree:
                 changed.append(rel)
         return changed
 
-    async def sync_from_origin(self) -> list[str]:
+    async def sync_from_origin(self, sync_enabled: bool = True, sync_interval: float = 30.0) -> list[str]:
         """Sync files changed in origin since worktree was created.
         Returns list of files that were updated. Does NOT overwrite
-        files the agent has already modified in the worktree."""
-        if not self.path: return []
+        files the agent has already modified in the worktree.
+
+        Args:
+            sync_enabled: If False, skip sync entirely (isolated mode).
+            sync_interval: Minimum seconds between syncs (timestamp-based).
+        """
+        import time
+        if not self.path or not sync_enabled:
+            return []
+
+        # Timestamp gate: don't scan more often than sync_interval
+        now = time.time()
+        if self._last_sync_time and (now - self._last_sync_time) < sync_interval:
+            return []
+
         agent_changed = set(await self.changed_files())
 
-        # Get origin files excluding agent-changed files
-        src_files = [f for f in self.origin_root.rglob("*")
-                     if not f.is_dir() and ".git" not in f.parts
-                     and str(f.relative_to(self.origin_root)) not in agent_changed]
+        if self._is_git:
+            # Efficient: ask git which files changed since last sync
+            try:
+                # Use mtime-based pre-filter: only check files modified after last sync
+                r = subprocess.run(
+                    ["git", "diff", "--name-only"],
+                    cwd=self.origin_root, capture_output=True, text=True, timeout=10)
+                u = subprocess.run(
+                    ["git", "ls-files", "--others", "--exclude-standard"],
+                    cwd=self.origin_root, capture_output=True, text=True, timeout=10)
+                candidates = [f.strip() for f in (r.stdout + u.stdout).splitlines()
+                              if f.strip() and f.strip() not in agent_changed]
+                src_files = [self.origin_root / f for f in candidates if (self.origin_root / f).is_file()]
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                src_files = []
+        else:
+            # Non-git: use mtime pre-filter to avoid hashing everything
+            src_files = [f for f in self._list_tracked_files(self.origin_root)
+                         if str(f.relative_to(self.origin_root)) not in agent_changed
+                         and f.stat().st_mtime > self._last_sync_time]
+
+        self._last_sync_time = now
 
         if not src_files:
             return []
 
         dst_files = [(self.path / f.relative_to(self.origin_root)) for f in src_files]
 
-        # Parallel hash-based comparison
         src_hashes = await self._compute_hashes_parallel(src_files)
         dst_hashes = await self._compute_hashes_parallel(
             [d for d in dst_files if d.exists()])
@@ -455,7 +580,10 @@ class CoderAgent:
         "REGELN:\n"
         "1. ARCHITEKTUR ZUERST: Nutze 'memory_recall', um Zusammenhänge zu verstehen, BEVOR du Code schreibst.\n"
         "2. LIES Dateien (read_file) BEVOR du editierst. Niemals blind raten!\n"
-        "3. Änderungen NUR via Edit-Blöcke.\n"
+        "3. Änderungen NUR via Edit-Blöcke. BENUTZE NIEMALS 'bash' mit 'cat' oder 'echo' um Code zu schreiben!"
+        " du must Edit-Blöcke verwenden für (Datein erstellen, Datein schriben, Datein berabeiten)\n"
+        "   VERBOTEN: Nutze NIEMALS 'bash', 'cat', 'echo' oder 'printf' um Dateien zu erstellen oder zu ändern!\n"  # <--- HINZUGEFÜGT
+        "   Das System erkennt Änderungen nur über Edit-Blöcke.\n"
         "4. Beende mit [DONE] wenn fertig.\n"
         "5. Schreibe VOR jedem Edit einen <thought>...</thought> Block, der Folgendes enthält:\n"
         "   - Was du in der Datei gesehen hast und wie es zur Architektur passt.\n"
@@ -481,6 +609,21 @@ class CoderAgent:
         self.model = self.config.get("model", "gpt-4o")
         self.run_tests = self.config.get("run_tests", False)
         self.bash_timeout = self.config.get("bash_timeout", 300)
+        self.sync_enabled = self.config.get("sync_enabled", True)
+        self.sync_interval = self.config.get("sync_interval", 30.0)
+        # --- STREAMING SETUP ---
+        # 1. Aktivierung via Config oder Environment
+        self.stream_enabled = self.config.get("stream",
+                                              os.getenv("CODER_STREAM", "false").lower() == "true")
+
+        # 2. Callback-Funktion (Standard: Terminal Print mit Flush)
+        # Kann durch config["stream_callback"] überschrieben werden (z.B. für Websockets)
+        self.stream_callback = self.config.get("stream_callback", self._default_stream_handler)
+        self.debug_mode = (
+            os.getenv("CODER_DEBUG", "false").lower() == "true" or
+            os.getenv("AGENT_VERBOSE", "false").lower() == "true"
+        )
+
         self.memory = ExecutionMemory(project_root)
         self.tracker = TokenTracker(self.model, agent)
         self.worktree = GitWorktree(project_root)
@@ -492,11 +635,31 @@ class CoderAgent:
             "last_error": None
         }
 
+    @staticmethod
+    def _default_stream_handler(chunk: str):
+        """Standard: Schreibt direkt in stdout ohne Newline."""
+        print(chunk, end="", flush=True)
+
+    def _log(self, section: str, content: str, color: str = "white"):
+        """Interne Debug-Hilfe für strukturierte Ausgabe."""
+        if not self.debug_mode: return
+
+        # ANSI Colors
+        C = {
+            "cyan": "\033[96m", "yellow": "\033[93m", "green": "\033[92m",
+            "red": "\033[91m", "grey": "\033[90m", "bold": "\033[1m", "reset": "\033[0m"
+        }
+
+        c_code = C.get(color, C["reset"])
+        header = f"{C['bold']}[{section}]{C['reset']}"
+        print(f"{c_code}{header} {content}{C['reset']}")
+
     async def execute(self, task: str) -> CoderResult:
         self.worktree.setup()
 
         # Sync any external changes before starting
-        synced = await self.worktree.sync_from_origin()
+        synced = await self.worktree.sync_from_origin(
+            sync_enabled=self.sync_enabled, sync_interval=0)
 
         sys_msg = self.SYSTEM_PROMPT
         if prev := self.memory.get_context():
@@ -545,98 +708,230 @@ class CoderAgent:
                            compressions_done=self.tracker.compressions_done)
 
     async def _loop(self, messages: list) -> Tuple[List[EditBlock], str]:
-        """Core execution loop with Anti-Loop protection."""
+        """Core execution loop with Anti-Loop protection and Enhanced Debugging."""
         tools = self._tools()
         thought = ""
-        recent_actions = []  # Speichert Signaturen der letzten Tool-Calls
+        recent_actions = []
         max_iters = 25
+        _transient_status_idx = None
 
         for iteration in range(max_iters):
-            # 1. State-Update in den Prompt injizieren
-            # Wir hängen eine "System-Status" Nachricht an, die den Agenten zentriert
+            # --- DEBUG: Iteration Start ---
+            self._log("LOOP", f"Iteration {iteration + 1}/{max_iters} | Tokens: {self.tracker.total_tokens}", "cyan")
+
+            # Remove previous transient status message
+            if _transient_status_idx is not None and _transient_status_idx < len(messages):
+                messages.pop(_transient_status_idx)
+
             status_update = (
                 f"### AKTUELLE ITERATION: {iteration + 1}/{max_iters}\n"
                 f"**STATUS:**\n"
                 f"- Datei im Fokus: {self.state['current_file']}\n"
                 f"- Erledigt: {', '.join(self.state['done']) or 'Nichts'}\n"
-                f"- Offen: {', '.join(self.state['plan']) or 'Unbekannt (bitte Plan definieren)'}\n"
+                f"- Offen: {', '.join(self.state['plan']) or 'Unbekannt'}\n"
             )
-
             if iteration == max_iters - 1:
                 status_update += "\n⚠️ LETZTE ITERATION! Beende deine Arbeit oder fasse exakt zusammen, was noch fehlt!"
 
-            # Wir fügen den Status als flüchtige User-Nachricht ein (nicht dauerhaft in History)
-            messages += [{"role": "user", "content": status_update}]
+            messages.append({"role": "user", "content": status_update})
+            _transient_status_idx = len(messages) - 1
 
             # 1. Sync & Compression
-            if iteration > 0 and iteration % 3 == 0:
-                synced = await self.worktree.sync_from_origin()
+            if iteration > 0:
+                synced = await self.worktree.sync_from_origin(
+                    sync_enabled=self.sync_enabled, sync_interval=self.sync_interval)
                 if synced:
-                    messages.append(
-                        {"role": "user", "content": f"[SYNC] Dateien vom System aktualisiert: {', '.join(synced)}"})
+                    msg = f"[SYNC] Dateien vom System aktualisiert: {', '.join(synced)}"
+                    self._log("SYNC", msg, "grey")
+                    messages.append({"role": "user", "content": msg})
 
             if self.tracker.needs_compression(messages):
+                self._log("MEMORY", "Compressing context...", "yellow")
                 messages[:] = await self.tracker.compress(messages)
 
             # 2. LLM Call
-            resp = await self.agent.a_run_llm_completion(
-                messages=messages, tools=tools, stream=False, get_response_message=True)
+            self._log("LLM", "Waiting for response...", "grey")
 
-            content = resp.content or ""
-            tool_calls = resp.tool_calls
+            content = ""
+            tool_calls = []
+
+            if self.stream_enabled:
+                # --- STREAMING MODE ---
+                self._log("STREAM", "Streaming started...", "cyan")
+
+                # Wir sammeln Deltas, um am Ende das volle Message-Objekt zu haben
+                full_tool_calls_json = {}  # Index-basiertes Sammeln für parallele Tool-Calls
+
+                # Hinweis: Wir gehen davon aus, dass a_run_llm_completion bei stream=True einen Generator liefert
+                response_gen = await self.agent.a_run_llm_completion(
+                    messages=messages, tools=tools, stream=True, true_stream=True
+                )
+
+                async for chunk in response_gen:
+                    # 1. Text Content extrahieren (Adapter für verschiedene LLM-Wrapper)
+                    delta_content = ""
+                    delta_tool_calls = None
+
+                    # Versuche Standard OpenAI/LiteLLM Struktur
+                    if hasattr(chunk, "choices") and chunk.choices:
+                        delta = chunk.choices[0].delta
+                        delta_content = getattr(delta, "content", "") or ""
+                        delta_tool_calls = getattr(delta, "tool_calls", None)
+                    # Fallback für direkten String/Dict Yield
+                    elif isinstance(chunk, dict):
+                        delta_content = chunk.get("content", "")
+                    elif isinstance(chunk, str):
+                        delta_content = chunk
+
+                    # 2. Callback aufrufen (Live-Ausgabe)
+                    if delta_content:
+                        content += delta_content
+                        if self.stream_callback:
+                            try:
+                                if asyncio.iscoroutinefunction(self.stream_callback):
+                                    await self.stream_callback(delta_content)
+                                else:
+                                    self.stream_callback(delta_content)
+                            except Exception:
+                                pass
+
+                    # 3. Tool Calls aggregieren (komplex bei Streams)
+                    if delta_tool_calls:
+                        for tc in delta_tool_calls:
+                            idx = tc.index
+                            if idx not in full_tool_calls_json:
+                                full_tool_calls_json[idx] = {"id": tc.id, "name": "", "args": ""}
+
+                            if hasattr(tc, "id") and tc.id:
+                                full_tool_calls_json[idx]["id"] = tc.id
+                            if hasattr(tc, "function"):
+                                if tc.function.name:
+                                    full_tool_calls_json[idx]["name"] += tc.function.name
+                                if tc.function.arguments:
+                                    full_tool_calls_json[idx]["args"] += tc.function.arguments
+
+                # Zeilenumbruch nach Stream-Ende für sauberes Terminal
+                if self.stream_callback == self._default_stream_handler:
+                    print()
+
+                    # Reconstruct Tool Calls List
+                # Wir müssen das Format {id, function: {name, arguments}} nachbauen
+                if full_tool_calls_json:
+                    from types import SimpleNamespace
+                    for idx in sorted(full_tool_calls_json.keys()):
+                        data = full_tool_calls_json[idx]
+                        if data["name"] or data["args"]:
+                            # Mock Object Struktur für kompatibilität mit existing logic
+                            tc_obj = SimpleNamespace(
+                                id=data["id"],
+                                function=SimpleNamespace(
+                                    name=data["name"],
+                                    arguments=data["args"]
+                                )
+                            )
+                            tool_calls.append(tc_obj)
+
+            else:
+                # --- NON-STREAMING MODE (Legacy) ---
+                resp = await self.agent.a_run_llm_completion(
+                    messages=messages, tools=tools, stream=False, get_response_message=True)
+                content = resp.content or ""
+                tool_calls = resp.tool_calls or []
+
+            # Add to history
             messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
-
+            # --- DEBUG: Thought Analysis ---
             if thought_match := re.search(r"<thought>(.*?)</thought>", content, re.DOTALL):
-                thought = thought_match.group(1).strip()
-                self._update_internal_state(thought)
+                current_thought = thought_match.group(1).strip()
+                self._update_internal_state(current_thought)
+                # Nur den neuen Gedanken anzeigen
+                new_thought_part = current_thought.replace(thought, "").strip()
+                if new_thought_part:
+                    self._log("THOUGHT", new_thought_part, "yellow")
+                thought = current_thought
+            elif content.strip():
+                # Fallback: Wenn kein Thought-Block da ist, aber Text existiert
+                self._log("MSG", content[:300] + ("..." if len(content) > 300 else ""), "yellow")
 
             # 3. Tool Execution & Loop-Check
             if tool_calls:
                 for tc in tool_calls:
                     try:
-                        # Deterministische Signatur: Name + sortierte Argumente
                         args_data = json.loads(tc.function.arguments)
                         sig = f"{tc.function.name}:{json.dumps(args_data, sort_keys=True)}"
 
+                        # --- DEBUG: Tool Call ---
+                        self._log("TOOL CALL", f"{tc.function.name}({json.dumps(args_data, indent=None)})", "green")
+
                         if sig in recent_actions:
-                            # Loop erkannt -> Fehler zurückgeben statt ausführen
-                            res = f"FEHLER: Du wiederholst dich! Den Aufruf '{sig}' hast du bereits getätigt. Ändere deine Strategie oder lies die Datei neu, falls du denkst, sie hätte sich geändert."
+                            res = f"FEHLER: Loop erkannt! '{sig}' wurde bereits ausgeführt."
                             logger.warning(f"Loop blocked: {sig}")
+                            self._log("LOOP-GUARD", f"Blocked repetition: {sig}", "red")
                         else:
                             recent_actions.append(sig)
                             if tc.function.name == "read_file":
-                                self.state["current_file"] = args.get("path")
-                            if len(recent_actions) > 8: recent_actions.pop(0)  # Gedächtnis-Fenster
+                                self.state["current_file"] = args_data.get("path")
+                            if len(recent_actions) > 8: recent_actions.pop(0)
+
                             res = await self._dispatch(tc.function.name, args_data, messages)
+
+                        # --- DEBUG: Tool Result (Trunziert) ---
+                        display_res = res if len(res) < 500 else (
+                                res[:200] + f"\n... [+{len(res) - 200} chars] ...\n" + res[-200:])
+                        self._log("TOOL RESULT", display_res, "grey")
 
                         messages.append({"role": "tool", "tool_call_id": tc.id, "content": res})
                     except Exception as e:
-                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": f"Fehler: {e}"})
+                        err_msg = f"Fehler: {e}"
+                        self._log("TOOL ERROR", err_msg, "red")
+                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
                 continue
 
             # 4. Finalizing
-            if blocks := self._parse_edits(content):
+            blocks = self._parse_edits(content)
+            if blocks:
+                self._log("ACTION", f"Found {len(blocks)} edit blocks. Stopping loop.", "green")
                 return blocks, thought
+
             if "[DONE]" in content:
+                self._log("DONE", "Agent marked task as complete.", "green")
                 return [], thought
 
+        self._log("EXIT", "Max iterations reached without explicit done.", "red")
         return [], thought
 
     def _update_internal_state(self, thought: str):
-        """Versucht den Plan des Agenten aus seinen Gedanken zu lesen."""
-        # Suche nach Zeilen wie "- [ ]" oder "Plan: ..."
+        """Versucht den Plan des Agenten aus seinen Gedanken zu lesen und loggt Änderungen."""
         lines = thought.splitlines()
         new_plan = []
+        newly_done = []
+
+        # Snapshot vor Änderungen
+        old_done_count = len(self.state["done"])
+
         for l in lines:
             l = l.strip()
             if l.startswith("- [ ]"):
-                new_plan.append(l[5:].strip())
+                task = l[5:].strip()
+                new_plan.append(task)
             elif l.startswith("- [x]"):
                 done_item = l[5:].strip()
-                if done_item not in self.state["done"]: self.state["done"].append(done_item)
+                if done_item not in self.state["done"]:
+                    self.state["done"].append(done_item)
+                    newly_done.append(done_item)
 
         if new_plan:
             self.state["plan"] = new_plan
+
+        # --- DEBUG LOGGING ---
+        if self.debug_mode:
+            if newly_done:
+                for item in newly_done:
+                    self._log("PLAN UPDATE", f"✔ Erledigt: {item}", "green")
+
+            if len(new_plan) != len(self.state.get("last_plan_snapshot", [])):
+                self._log("PLAN UPDATE", f"Neue Agenda: {len(new_plan)} offene Punkte", "cyan")
+                self.state["last_plan_snapshot"] = new_plan  # State tracking update
 
     async def _repair(self, messages: list, failed: list, errors: list) -> Tuple[List[EditBlock], str]:
         """Force re-read of failed files before retry."""
@@ -658,76 +953,101 @@ class CoderAgent:
         return await self._loop(messages)
 
     def _apply_edits(self, edits: List[EditBlock]) -> list:
-        """ATOMIC MULTI-FILE TRANSACTION: Validate ALL, then write ALL."""
-        import difflib
+        """ATOMIC TRANSACTION with IO Logging."""
         results = []
         my_module = Path(__file__).resolve()
-        pending = []  # (target, content, is_self, original_backup)
+        pending = []  # (target, new_content, original_content_or_None)
+
+        self._log("IO", f"Starting Transaction for {len(edits)} files...", "cyan")
 
         for e in edits:
             target = (self.worktree.path / e.file_path).resolve()
             is_self = target.samefile(my_module) if target.exists() and my_module.exists() else False
+            match_type = "NONE"
 
             try:
                 # --- New file ---
                 if not e.search.strip():
-                    pending.append((target, e.replace, is_self, None))
+                    new_bytes = len(e.replace.encode('utf-8'))
+                    self._log("IO-CALC", f"[NEW] {e.file_path} (+{new_bytes} bytes)", "green")
+
+                    pending.append((target, e.replace, None))
                     results.append({"file_path": e.file_path, "success": True})
                     continue
 
                 if not target.exists():
+                    self._log("IO-ERR", f"{e.file_path} not found!", "red")
                     results.append({"file_path": e.file_path, "success": False, "error": "File missing"})
                     continue
 
                 txt = target.read_text(encoding="utf-8", errors="replace")
-                backup = txt if is_self else None
+                original_bytes = len(txt.encode('utf-8'))
 
                 # --- 1. Exact match ---
                 if e.search in txt:
+                    match_type = "EXACT"
                     new_txt = txt.replace(e.search, e.replace, 1)
 
-                # --- 2. Stripped-line match (whitespace tolerance) ---
+                # --- 2. Fuzzy match ---
                 elif (idx := self._fuzzy_find(txt, e.search)) is not None:
+                    match_type = "FUZZY"
                     src_lines = txt.splitlines(keepends=True)
                     s_lines = e.search.splitlines()
+                    # Rekonstruktion
                     new_lines = src_lines[:idx] + [e.replace + "\n"] + src_lines[idx + len(s_lines):]
                     new_txt = "".join(new_lines)
 
                 else:
+                    self._log("IO-ERR", f"SEARCH block not found in {e.file_path}", "red")
                     results.append({"file_path": e.file_path, "success": False,
                                     "error": "SEARCH not found (exact + fuzzy)"})
                     continue
 
-                # Self-edit: validate BEFORE transaction
+                # --- Stats Calculation ---
+                new_bytes = len(new_txt.encode('utf-8'))
+                byte_diff = new_bytes - original_bytes
+                sign = "+" if byte_diff > 0 else ""
+
+                self._log("IO-CALC",
+                          f"[{match_type}] {e.file_path} | {original_bytes} -> {new_bytes} bytes ({sign}{byte_diff})",
+                          "yellow" if match_type == "FUZZY" else "green")
+
+                # Self-edit Check
                 if is_self and e.file_path.endswith(".py"):
                     try:
                         compile(new_txt, e.file_path, "exec")
                     except SyntaxError as se:
+                        self._log("IO-FAIL", f"Self-edit SyntaxError: {se}", "red")
                         results.append({"file_path": e.file_path, "success": False,
-                                        "error": f"Self-edit blocked: SyntaxError L{se.lineno}: {se.msg}"})
+                                        "error": f"Self-edit blocked: SyntaxError L{se.lineno}"})
                         continue
 
-                pending.append((target, new_txt, is_self, backup))
+                pending.append((target, new_txt, txt))
                 results.append({"file_path": e.file_path, "success": True})
 
             except Exception as ex:
+                self._log("IO-EXC", str(ex), "red")
                 results.append({"file_path": e.file_path, "success": False, "error": str(ex)})
 
-        # === ATOMIC WRITE PHASE: All-or-nothing ===
+        # === ATOMIC WRITE PHASE ===
         written = []
         try:
-            for target, content, is_self, backup in pending:
-                self._atomic_write(target, content)
-                written.append((target, backup))
+            for target, new_content, original_content in pending:
+                self._atomic_write(target, new_content)
+                written.append((target, original_content))
+            self._log("IO-COMMIT", "All files written successfully.", "green")
         except BaseException as commit_err:
-            # Rollback all written files
-            for target, backup in written:
-                if backup is not None:
-                    try:
-                        self._atomic_write(target, backup)
-                    except:
-                        pass
-            # Mark all as failed
+            self._log("IO-ROLLBACK", f"Transaction failed: {commit_err}. Rolling back...", "red")
+            # Rollback
+            for target, original in written:
+                try:
+                    if original is not None:
+                        self._atomic_write(target, original)
+                    elif target.exists():
+                        target.unlink()
+                except Exception:
+                    pass
+            # Update results to fail
             for r in results:
                 if r["success"]:
                     r["success"] = False
@@ -740,13 +1060,20 @@ class CoderAgent:
     def _atomic_write(path: Path, content: str):
         """Write via tempfile + os.replace for crash safety."""
         import tempfile as _tf
+        path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = _tf.mkstemp(dir=path.parent, suffix=".tmp")
+        fd_closed = False
         try:
             os.write(fd, content.encode("utf-8"))
             os.close(fd)
+            fd_closed = True
             os.replace(tmp, path)
         except BaseException:
-            os.close(fd) if not os.get_inheritable(fd) else None
+            if not fd_closed:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
             try:
                 os.unlink(tmp)
             except OSError:
@@ -806,14 +1133,17 @@ class CoderAgent:
                 return (await asyncio.to_thread(_sync)).decode(errors="replace")
             except subprocess.TimeoutExpired:
                 return f"ERROR: Timeout after {self.bash_timeout}s"
-        return (out + err).decode(errors="replace")
+        result_output = (out + err).decode(errors="replace").strip()
+        if not result_output:
+            return "Command executed (no output)."  # Explizites Feedback für den Agenten
+        return result_output
 
     async def _run_grep(self, pattern: str) -> str:
         """Cross-platform grep: rg > git grep > findstr/grep."""
         quoted = shlex.quote(pattern) if platform.system() != "Windows" else pattern
         if shutil.which("rg"):
             return await self._run_bash(f"rg -n {quoted} .")
-        if (self.worktree.path / ".git").exists() or (self.worktree.path / ".git").is_file():
+        if self.worktree._is_git:
             return await self._run_bash(f"git grep -n {quoted}")
         if platform.system() == "Windows":
             # findstr is always available on Windows, /S=recursive /N=line numbers
@@ -856,14 +1186,17 @@ class CoderAgent:
         ]
 
     def _parse_edits(self, text: str) -> List[EditBlock]:
-        """State-machine parser — immune to content containing markers.
-        Markers must be EXACT standalone lines. Content is captured verbatim."""
+        """State-machine parser mit detaillierten Logs."""
         IDLE, IN_SEARCH, IN_REPLACE = 0, 1, 2
         state = IDLE
         path = ""
         search_lines: list[str] = []
         replace_lines: list[str] = []
         blocks: list[EditBlock] = []
+
+        # --- DEBUG: Raw Text Stats ---
+        if self.debug_mode and "~~~edit:" in text:
+            self._log("PARSER", f"Scanning {len(text)} chars for edit blocks...", "grey")
 
         for raw_line in text.split("\n"):
             stripped = raw_line.strip()
@@ -873,12 +1206,13 @@ class CoderAgent:
                 if m:
                     path = m.group(1).strip()
                     search_lines, replace_lines = [], []
-                    state = IN_SEARCH  # next expect <<<<<<< SEARCH, but we skip it
-                continue  # skip non-block lines in IDLE
+                    state = IN_SEARCH
+                    self._log("PARSER", f"Start Block: {path}", "cyan")
+                continue
 
             if state == IN_SEARCH:
                 if stripped == "<<<<<<< SEARCH":
-                    continue  # opening marker, skip
+                    continue
                 if stripped == "=======":
                     state = IN_REPLACE
                     continue
@@ -886,8 +1220,18 @@ class CoderAgent:
 
             elif state == IN_REPLACE:
                 if stripped == ">>>>>>> REPLACE":
-                    continue  # closing marker, skip
+                    continue
                 if stripped == "~~~end~~~":
+                    # Block fertig -> Stats berechnen
+                    s_count = len(search_lines)
+                    r_count = len(replace_lines)
+                    diff = r_count - s_count
+                    diff_sign = "+" if diff > 0 else ""
+
+                    self._log("PARSER",
+                              f"End Block: {path} | Search: {s_count} lines | Replace: {r_count} lines | Delta: {diff_sign}{diff}",
+                              "yellow")
+
                     blocks.append(EditBlock(
                         file_path=path,
                         search="\n".join(search_lines),
@@ -949,12 +1293,13 @@ if __name__ == "__main__":
     p.add_argument("--run-tests", action="store_true", help="Run pytest after edits")
     p.add_argument("--timeout", type=int, default=300, help="Bash timeout in seconds")
     p.add_argument("--apply", action="store_true", help="Auto-apply changes to repo")
+    p.add_argument("--stream", action="store_true", help="Stream output to terminal")
     args = p.parse_args()
 
     async def _main():
         agent = None
         coder = CoderAgent(agent, os.path.abspath(args.project),
-                           {"model": args.model, "run_tests": args.run_tests,
+                           {"model": args.model,"stream": args.stream, "run_tests": args.run_tests,
                             "bash_timeout": args.timeout})
         result = await coder.execute(args.task)
         status = '✓' if result.success else '✗'

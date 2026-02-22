@@ -97,7 +97,7 @@ def _dump_async_tasks():
 def dump_project_threads(reason="manual"):
     lines = []
     lines.append(f"\n{'=' * 70}")
-    lines.append(f"⚠ HANG DUMP ({reason}) - {time.strftime('%H:%M:%S')}")
+    lines.append(f"DEBUG STACK DUMP ({reason}) - {time.strftime('%H:%M:%S')}")
     lines.append(f"{'=' * 70}")
 
     frames = sys._current_frames()
@@ -141,7 +141,7 @@ class HangWatchdog:
 
     def _loop(self):
         while not self._stop.wait(self.timeout):
-            dump_project_threads(reason=f"no activity for {self.timeout}s")
+            dump_project_threads(reason=f"auto all {self.timeout}s")
 
     def stop(self):
         self._stop.set()

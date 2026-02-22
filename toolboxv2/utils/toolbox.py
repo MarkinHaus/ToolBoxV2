@@ -1303,16 +1303,14 @@ class App(AppType, metaclass=Singleton):
         Exit the ToolBox interface asynchronously.
         Properly cleans up async resources before calling sync exit.
         """
-        import inspect
-        self.sprint(
-            f"exit requested from: {inspect.stack()[1].filename}::"
-            f"{inspect.stack()[1].lineno} function: {inspect.stack()[1].function}"
-        )
 
         # Cleanup session before removing modules
         try:
             if hasattr(self, 'session') and self.session is not None:
                 await self.session.cleanup()
+                print("Session closed")
+            else:
+                print("No session To close")
         except Exception as e:
             self.logger.debug(f"Session cleanup error (ignored): {e}")
 
