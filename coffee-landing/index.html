@@ -3,68 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Brew & Bean - Premium Kaffee</title>
-    <link rel="stylesheet" href="style.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <meta name="description" content="Premium Kaffee - Entdecke die besten Kaffeesorten der Welt">
+    <meta name="keywords" content="Kaffee, Coffee, Premium, Bio, Fairtrade">
+    <title>Premium Kaffee | Genuss in jeder Tasse</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <!-- Navigation -->
     <nav class="navbar">
         <div class="container">
             <div class="nav-brand">
-                <span class="logo">☕ Brew & Bean</span>
+                <h1>☕ CoffeeBar</h1>
             </div>
             <ul class="nav-menu">
-                <li><a href="#home" class="nav-link">Home</a></li>
+                <li><a href="#home" class="nav-link active">Start</a></li>
                 <li><a href="#about" class="nav-link">Über uns</a></li>
                 <li><a href="#products" class="nav-link">Produkte</a></li>
                 <li><a href="#gallery" class="nav-link">Galerie</a></li>
                 <li><a href="#contact" class="nav-link">Kontakt</a></li>
             </ul>
-            <button class="cta-button nav-cta">Jetzt Probieren</button>
+            <button class="mobile-toggle" aria-label="Mobile Navigation">☰</button>
         </div>
     </nav>
 
     <!-- Hero Section -->
     <section id="home" class="hero">
         <div class="hero-overlay"></div>
-        <div class="container">
-            <div class="hero-content">
-                <h1 class="hero-title">Entdecke den Perfekten Kaffee</h1>
-                <p class="hero-subtitle">Handgepflückt aus den besten Anbaugebieten der Welt. 
-                Jede Tasse ein Erlebnis. Jeder Schluck eine Reise.</p>
-                <div class="hero-buttons">
-                    <button class="cta-button primary">Jetzt Entdecken</button>
-                    <button class="cta-button secondary">Mehr Erfahren</button>
-                </div>
-            </div>
-            <div class="hero-image">
-                <img src="https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=800" alt="Premium Kaffee">
-            </div>
-        </div>
-    </section>
-
-    <!-- Features -->
-    <section class="features">
-        <div class="container">
-            <div class="features-grid">
-                <div class="feature-card">
-                    <div class="feature-icon">🌱</div>
-                    <h3>Nachhaltig</h3>
-                    <p>Fair Trade & Bio zertifizierte Bohnen von kleinen Kaffeebauern.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">✨</div>
-                    <h3>Premium Qualität</h3>
-                    <p>Hochwertige Arabica-Bohnen für den perfekten Geschmack.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">🚀</div>
-                    <h3>Frisch Geröstet</h3>
-                    <p>Täglich frisch geröstet für maximales Aroma.</p>
-                </div>
+        <div class="hero-content">
+            <h2 class="hero-title">Entdecke den perfekten Kaffee</h2>
+            <p class="hero-subtitle">Handverlesen, geröstet mit Liebe, serviert mit Leidenschaft</p>
+            <div class="hero-buttons">
+                <a href="#products" class="btn btn-primary">Jetzt entdecken</a>
+                <a href="#about" class="btn btn-secondary">Mehr erfahren</a>
             </div>
         </div>
     </section>
@@ -72,32 +42,19 @@
     <!-- About Section -->
     <section id="about" class="about">
         <div class="container">
+            <h2 class="section-title">Unsere Geschichte</h2>
             <div class="about-grid">
-                <div class="about-content">
-                    <h2 class="section-title">Unsere Geschichte</h2>
-                    <p class="about-text">
-                        Seit 2015 sind wir auf der Suche nach dem perfekten Kaffee. 
-                        Unsere Reise begann in den Bergen Äthiopiens und führte uns 
-                        um die ganze Welt. Heute bringen wir die besten Bohnen direkt 
-                        in Ihre Tasse.
-                    </p>
-                    <div class="stats">
-                        <div class="stat">
-                            <span class="stat-number">8+</span>
-                            <span class="stat-label">Länder</span>
-                        </div>
-                        <div class="stat">
-                            <span class="stat-number">50K+</span>
-                            <span class="stat-label">Kunden</span>
-                        </div>
-                        <div class="stat">
-                            <span class="stat-number">100%</span>
-                            <span class="stat-label">Fair Trade</span>
-                        </div>
-                    </div>
+                <div class="about-text">
+                    <p>Seit über 20 Jahren sind wir leidenschaftlich Kaffeeröster. Unsere Bohnen stammen aus den besten Anbaugebieten der Welt – von Äthiopien bis Kolumbien.</p>
+                    <p>Wir glauben an nachhaltigen Anbau, fairen Handel und perfekten Röstgrad. Jede Tasse erzählt eine Geschichte von Handwerk und Tradition.</p>
+                    <ul class="features">
+                        <li>✓ 100% Bio & Fairtrade</li>
+                        <li>✓ Frisch geröstet nach Bestellung</li>
+                        <li>✓ CO₂-neutrale Produktion</li>
+                    </ul>
                 </div>
                 <div class="about-image">
-                    <img src="https://images.unsplash.com/photo-1447933601403-0c6688de566e?w=800" alt="Kaffee Plantage">
+                    <img src="images/coffee-roast.jpg" alt="Kaffeeröstung" loading="lazy">
                 </div>
             </div>
         </div>
@@ -106,43 +63,48 @@
     <!-- Products Section -->
     <section id="products" class="products">
         <div class="container">
-            <h2 class="section-title center">Unsere Produkte</h2>
+            <h2 class="section-title">Unsere Bestseller</h2>
             <div class="products-grid">
-                <div class="product-card">
-                    <div class="product-image">
-                        <img src="https://images.unsplash.com/photo-1559056199-641a0ac8b55e?w=600" alt="Espresso">
-                        <span class="product-badge">Bestseller</span>
-                    </div>
+                <article class="product-card">
+                    <img src="images/ethiopian.jpg" alt="Äthiopischer Kaffee" loading="lazy">
                     <div class="product-info">
-                        <h3>Espresso Premium</h3>
-                        <p class="product-desc">Intensiv & vollmundig mit schokoladigem Abgang</p>
-                        <div class="product-price">€ 12,99</div>
-                        <button class="cta-button product-cta">In den Warenkorb</button>
+                        <h3>Äthiopien Yirgacheffe</h3>
+                        <p class="product-desc">Fruchtig & blumig mit Noten von Jasmin und Bergamotte</p>
+                        <div class="product-price">€12,90 / 250g</div>
+                        <button class="btn btn-cart">In den Warenkorb</button>
                     </div>
-                </div>
-                <div class="product-card">
-                    <div class="product-image">
-                        <img src="https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=600" alt="Cappuccino">
-                        <span class="product-badge new">Neu</span>
-                    </div>
+                </article>
+
+                <article class="product-card featured">
+                    <span class="badge">Bestseller</span>
+                    <img src="images/colombian.jpg" alt="Kolumbianischer Kaffee" loading="lazy">
                     <div class="product-info">
-                        <h3>Cappuccino Blend</h3>
-                        <p class="product-desc">Sanft & cremig mit hauchfeiner Crema</p>
-                        <div class="product-price">€ 14,99</div>
-                        <button class="cta-button product-cta">In den Warenkorb</button>
+                        <h3>Kolumbien Supremo</h3>
+                        <p class="product-desc">Ausgewogen mit Noten von Karamell und Nuss</p>
+                        <div class="product-price">€11,50 / 250g</div>
+                        <button class="btn btn-cart">In den Warenkorb</button>
                     </div>
-                </div>
-                <div class="product-card">
-                    <div class="product-image">
-                        <img src="https://images.unsplash.com/photo-1461023058943-07fcbe16d735?w=600" alt="Latte">
-                    </div>
+                </article>
+
+                <article class="product-card">
+                    <img src="images/espresso.jpg" alt="Espresso Mix" loading="lazy">
                     <div class="product-info">
-                        <h3>Latte Art Collection</h3>
-                        <p class="product-desc">Perfekt für barista-quality Drinks zu Hause</p>
-                        <div class="product-price">€ 16,99</div>
-                        <button class="cta-button product-cta">In den Warenkorb</button>
+                        <h3>Espresso Forte</h3>
+                        <p class="product-desc">Intensiv & kräftig mit schokoladigem Abgang</p>
+                        <div class="product-price">€13,90 / 250g</div>
+                        <button class="btn btn-cart">In den Warenkorb</button>
                     </div>
-                </div>
+                </article>
+
+                <article class="product-card">
+                    <img src="images/decaf.jpg" alt="Entkoffeinierter Kaffee" loading="lazy">
+                    <div class="product-info">
+                        <h3>Decaf Delight</h3>
+                        <p class="product-desc">Mild & aromatisch, natürlich entkoffeiniert</p>
+                        <div class="product-price">€10,90 / 250g</div>
+                        <button class="btn btn-cart">In den Warenkorb</button>
+                    </div>
+                </article>
             </div>
         </div>
     </section>
@@ -150,53 +112,32 @@
     <!-- Gallery Section -->
     <section id="gallery" class="gallery">
         <div class="container">
-            <h2 class="section-title center">Kaffee-Galerie</h2>
+            <h2 class="section-title">Bildergalerie</h2>
             <div class="gallery-grid">
-                <div class="gallery-item">
-                    <img src="https://images.unsplash.com/photo-1509042239860-f550ce710b93?w=600" alt="Kaffee Kunst">
-                </div>
-                <div class="gallery-item">
-                    <img src="https://images.unsplash.com/photo-1511920170033-f8396924c348?w=600" alt="Kaffee Tasse">
-                </div>
-                <div class="gallery-item">
-                    <img src="https://images.unsplash.com/photo-1498804103079-a6351b050096?w=600" alt="Kaffee Bohnen">
-                </div>
-                <div class="gallery-item">
-                    <img src="https://images.unsplash.com/photo-1485808191679-5f86510681a2?w=600" alt="Kaffee Zubereitung">
-                </div>
-                <div class="gallery-item">
-                    <img src="https://images.unsplash.com/photo-1442512595331-e89e73853f31?w=600" alt="Kaffee Röstung">
-                </div>
-                <div class="gallery-item">
-                    <img src="https://images.unsplash.com/photo-1507133750069-69d3cdad1637?w=600" alt="Kaffee Genuss">
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- Testimonials -->
-    <section class="testimonials">
-        <div class="container">
-            <h2 class="section-title center">Was Unsere Kunden Sagen</h2>
-            <div class="testimonials-grid">
-                <div class="testimonial-card">
-                    <div class="testimonial-rating">★★★★★</div>
-                    <p class="testimonial-text">"Der beste Kaffee, den ich je getrunken habe! 
-                    Die Qualität ist unschlagbar und der Service top."</p>
-                    <div class="testimonial-author">- Maria K.</div>
-                </div>
-                <div class="testimonial-card">
-                    <div class="testimonial-rating">★★★★★</div>
-                    <p class="testimonial-text">"Endlich ein Kaffee, der meinen hohen Ansprüchen 
-                    gerecht wird. Absolute Empfehlung!"</p>
-                    <div class="testimonial-author">- Thomas M.</div>
-                </div>
-                <div class="testimonial-card">
-                    <div class="testimonial-rating">★★★★★</div>
-                    <p class="testimonial-text">"Super Preis-Leistung und blitzschnelle Lieferung. 
-                    Werde wieder bestellen!"</p>
-                    <div class="testimonial-author">- Lisa S.</div>
-                </div>
+                <figure class="gallery-item">
+                    <img src="images/coffee-cup.jpg" alt="Kaffeetasse" loading="lazy">
+                    <figcaption>Perfekte Crema</figcaption>
+                </figure>
+                <figure class="gallery-item">
+                    <img src="images/coffee-beans.jpg" alt="Kaffeebohnen" loading="lazy">
+                    <figcaption>Handverlesene Bohnen</figcaption>
+                </figure>
+                <figure class="gallery-item">
+                    <img src="images/cafe-interior.jpg" alt="Café Interior" loading="lazy">
+                    <figcaption>Unser Café</figcaption>
+                </figure>
+                <figure class="gallery-item">
+                    <img src="images/barista.jpg" alt="Barista bei der Arbeit" loading="lazy">
+                    <figcaption>Meisterhafte Zubereitung</figcaption>
+                </figure>
+                <figure class="gallery-item">
+                    <img src="images/coffee-pour.jpg" alt="Kaffee eingießen" loading="lazy">
+                    <figcaption>Slow Coffee</figcaption>
+                </figure>
+                <figure class="gallery-item">
+                    <img src="images/coffee-art.jpg" alt="Latte Art" loading="lazy">
+                    <figcaption>Kunst in der Tasse</figcaption>
+                </figure>
             </div>
         </div>
     </section>
@@ -204,28 +145,23 @@
     <!-- Contact Section -->
     <section id="contact" class="contact">
         <div class="container">
+            <h2 class="section-title">Kontakt & Anfahrt</h2>
             <div class="contact-grid">
                 <div class="contact-info">
-                    <h2 class="section-title">Kontaktiere Uns</h2>
-                    <p>Haben Sie Fragen? Wir sind für Sie da!</p>
-                    <div class="contact-item">
-                        <span class="contact-icon">📍</span>
-                        <span>Kaffeestraße 42, 10115 Berlin</span>
-                    </div>
-                    <div class="contact-item">
-                        <span class="contact-icon">📧</span>
-                        <span>info@brewandbean.de</span>
-                    </div>
-                    <div class="contact-item">
-                        <span class="contact-icon">📞</span>
-                        <span>+49 30 12345678</span>
-                    </div>
+                    <h3>Besuch uns</h3>
+                    <p>☕ CoffeeBar GmbH</p>
+                    <p>Kaffeestraße 42</p>
+                    <p>10115 Berlin</p>
+                    <p>📞 Tel: 030 / 123 456 78</p>
+                    <p>✉️ E-Mail: info@coffeebar.de</p>
+                    <p>🕐 Mo-Fr: 7:00 - 20:00 Uhr</p>
+                    <p>🕐 Sa-So: 8:00 - 18:00 Uhr</p>
                 </div>
                 <form class="contact-form">
-                    <input type="text" placeholder="Ihr Name" class="form-input">
-                    <input type="email" placeholder="Ihre E-Mail" class="form-input">
-                    <textarea placeholder="Ihre Nachricht" class="form-input" rows="5"></textarea>
-                    <button type="submit" class="cta-button primary">Nachricht Senden</button>
+                    <input type="text" placeholder="Dein Name" required aria-label="Name">
+                    <input type="email" placeholder="Deine E-Mail" required aria-label="E-Mail">
+                    <textarea placeholder="Deine Nachricht" rows="5" required aria-label="Nachricht"></textarea>
+                    <button type="submit" class="btn btn-primary">Nachricht senden</button>
                 </form>
             </div>
         </div>
@@ -235,62 +171,92 @@
     <footer class="footer">
         <div class="container">
             <div class="footer-content">
-                <div class="footer-brand">
-                    <span class="logo">☕ Brew & Bean</span>
-                    <p>Premium Kaffee für Genießer</p>
+                <div class="footer-section">
+                    <h4>CoffeeBar</h4>
+                    <p>Premium Kaffee aus Leidenschaft</p>
                 </div>
-                <div class="footer-links">
-                    <div class="footer-column">
-                        <h4>Unternehmen</h4>
-                        <a href="#">Über Uns</a>
-                        <a href="#">Karriere</a>
-                        <a href="#">Presse</a>
-                    </div>
-                    <div class="footer-column">
-                        <h4>Produkte</h4>
-                        <a href="#">Espresso</a>
-                        <a href="#">Filter</a>
-                        <a href="#">Accessoires</a>
-                    </div>
-                    <div class="footer-column">
-                        <h4>Rechtliches</h4>
-                        <a href="#">Impressum</a>
-                        <a href="#">Datenschutz</a>
-                        <a href="#">AGB</a>
+                <div class="footer-section">
+                    <h4>Links</h4>
+                    <ul>
+                        <li><a href="#home">Start</a></li>
+                        <li><a href="#about">Über uns</a></li>
+                        <li><a href="#products">Produkte</a></li>
+                        <li><a href="#contact">Kontakt</a></li>
+                    </ul>
+                </div>
+                <div class="footer-section">
+                    <h4>Rechtliches</h4>
+                    <ul>
+                        <li><a href="#impressum">Impressum</a></li>
+                        <li><a href="#datenschutz">Datenschutz</a></li>
+                        <li><a href="#agb">AGB</a></li>
+                    </ul>
+                </div>
+                <div class="footer-section">
+                    <h4>Folge uns</h4>
+                    <div class="social-links">
+                        <a href="#" aria-label="Facebook">📘</a>
+                        <a href="#" aria-label="Instagram">📷</a>
+                        <a href="#" aria-label="Twitter">🐦</a>
                     </div>
                 </div>
             </div>
             <div class="footer-bottom">
-                <p>&copy; 2024 Brew & Bean. Alle Rechte vorbehalten.</p>
-                <div class="social-links">
-                    <a href="#">Instagram</a>
-                    <a href="#">Facebook</a>
-                    <a href="#">Twitter</a>
-                </div>
+                <p>&copy; 2024 CoffeeBar GmbH. Alle Rechte vorbehalten.</p>
             </div>
         </div>
     </footer>
 
     <script>
+        // Mobile Navigation Toggle
+        const mobileToggle = document.querySelector('.mobile-toggle');
+        const navMenu = document.querySelector('.nav-menu');
+
+        mobileToggle.addEventListener('click', () => {
+            navMenu.classList.toggle('active');
+            mobileToggle.textContent = navMenu.classList.contains('active') ? '✕' : '☰';
+        });
+
         // Smooth Scroll
         document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-            anchor.addEventListener('click', function(e) {
+            anchor.addEventListener('click', function (e) {
                 e.preventDefault();
                 const target = document.querySelector(this.getAttribute('href'));
-                if(target) {
-                    target.scrollIntoView({ behavior: 'smooth' });
+                if (target) {
+                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    navMenu.classList.remove('active');
+                    mobileToggle.textContent = '☰';
                 }
             });
         });
 
-        // Navbar Scroll Effect
+        // Active Nav Link
+        const sections = document.querySelectorAll('section[id]');
+        const navLinks = document.querySelectorAll('.nav-link');
+
         window.addEventListener('scroll', () => {
-            const navbar = document.querySelector('.navbar');
-            if(window.scrollY > 50) {
-                navbar.classList.add('scrolled');
-            } else {
-                navbar.classList.remove('scrolled');
-            }
+            let current = '';
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop;
+                const sectionHeight = section.clientHeight;
+                if (scrollY >= sectionTop - 200) {
+                    current = section.getAttribute('id');
+                }
+            });
+
+            navLinks.forEach(link => {
+                link.classList.remove('active');
+                if (link.getAttribute('href') === `#${current}`) {
+                    link.classList.add('active');
+                }
+            });
+        });
+
+        // Form Submit Handler
+        document.querySelector('.contact-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            alert('Vielen Dank für deine Nachricht! Wir melden uns schnellstmöglich.');
+            e.target.reset();
         });
     </script>
 </body>

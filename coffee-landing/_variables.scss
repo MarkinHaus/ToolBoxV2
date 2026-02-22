@@ -1,0 +1,75 @@
+// ============================================
+// Sass Variables - CoffeeBar Landing Page
+// ============================================
+
+// Colors
+$primary-color: #4a3728;      // Dunkelbraun (Kaffee)
+$secondary-color: #6b4423;    // Mittleres Braun
+$accent-color: #d2b48c;       // Creme/Beige
+$bg-color: #faf8f5;           // Helles Beige
+$bg-light: #f5f0eb;           // Sehr helles Beige
+$white: #ffffff;
+$black: #000000;
+
+$text-color: #3d3d3d;
+$text-light: #ffffff;
+$text-muted: #666666;
+
+$border-color: #e0d8cf;
+$nav-bg: #3a2a1f;
+$success-color: #28a745;
+$error-color: #dc3545;
+
+// Spacing
+$spacing-xs: 0.5rem;    // 8px
+$spacing-sm: 1rem;      // 16px
+$spacing-md: 1.5rem;    // 24px
+$spacing-lg: 2rem;      // 32px
+$spacing-xl: 3rem;      // 48px
+$spacing-xxl: 4rem;     // 64px
+
+// Typography
+$font-family-base: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+$font-family-heading: 'Georgia', serif;
+
+$font-size-xs: 0.75rem;    // 12px
+$font-size-sm: 0.875rem;   // 14px
+$font-size-base: 1rem;     // 16px
+$font-size-lg: 1.125rem;   // 18px
+$font-size-xl: 1.25rem;    // 20px
+$font-size-2xl: 1.5rem;    // 24px
+$font-size-3xl: 2rem;      // 32px
+$font-size-4xl: 2.5rem;    // 40px
+$font-size-5xl: 3rem;      // 48px
+
+// Layout
+$container-width: 1200px;
+$max-width-sm: 640px;
+$max-width-md: 768px;
+$max-width-lg: 1024px;
+$max-width-xl: 1280px;
+
+// Borders & Shadows
+$border-radius: 8px;
+$border-radius-sm: 4px;
+$border-radius-lg: 12px;
+$border-radius-full: 9999px;
+
+$shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+$shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+$shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+$shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.15);
+
+// Transitions
+$transition: all 0.3s ease;
+$transition-fast: all 0.15s ease;
+$transition-slow: all 0.5s ease;
+
+// Z-index Layers
+$z-dropdown: 100;
+$z-sticky: 200;
+$z-fixed: 300;
+$z-modal-backdrop: 400;
+$z-modal: 500;
+$z-popover: 600;
+$z-tooltip: 700;
