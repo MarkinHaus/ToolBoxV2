@@ -3,125 +3,731 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Coffee Sass - Premium Kaffee</title>
-    <link rel="stylesheet" href="styles.css">
+    <title>Deine Lösung - Mehr Effizienz, Weniger Aufwand</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <style>
+        /* ========================================
+           CSS VARIABLES
+           ======================================== */
+        :root {
+            /* Farben */
+            --color-primary: #2563eb;
+            --color-primary-dark: #1d4ed8;
+            --color-primary-light: #3b82f6;
+            
+            --color-secondary: #10b981;
+            --color-secondary-dark: #059669;
+            
+            --color-accent: #f59e0b;
+            
+            --color-text-main: #1f2937;
+            --color-text-muted: #6b7280;
+            --color-text-light: #9ca3af;
+            
+            --color-bg-white: #ffffff;
+            --color-bg-light: #f9fafb;
+            --color-bg-muted: #f3f4f6;
+            --color-bg-dark: #111827;
+            
+            --color-border: #e5e7eb;
+            --color-border-light: #f3f4f6;
+            
+            /* Typografie */
+            --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            
+            --text-xs: 0.75rem;
+            --text-sm: 0.875rem;
+            --text-base: 1rem;
+            --text-lg: 1.125rem;
+            --text-xl: 1.25rem;
+            --text-2xl: 1.5rem;
+            --text-3xl: 1.875rem;
+            --text-4xl: 2.25rem;
+            --text-5xl: 3rem;
+            --text-6xl: 3.75rem;
+            
+            --font-light: 300;
+            --font-normal: 400;
+            --font-medium: 500;
+            --font-semibold: 600;
+            --font-bold: 700;
+            --font-extrabold: 800;
+            
+            /* Spacing */
+            --space-1: 0.25rem;
+            --space-2: 0.5rem;
+            --space-3: 0.75rem;
+            --space-4: 1rem;
+            --space-5: 1.25rem;
+            --space-6: 1.5rem;
+            --space-8: 2rem;
+            --space-10: 2.5rem;
+            --space-12: 3rem;
+            --space-16: 4rem;
+            --space-20: 5rem;
+            --space-24: 6rem;
+            --space-32: 8rem;
+            
+            /* Container */
+            --container-sm: 640px;
+            --container-md: 768px;
+            --container-lg: 1024px;
+            --container-xl: 1280px;
+            --container-2xl: 1536px;
+            
+            /* Border Radius */
+            --radius-sm: 0.25rem;
+            --radius-md: 0.5rem;
+            --radius-lg: 0.75rem;
+            --radius-xl: 1rem;
+            --radius-2xl: 1.5rem;
+            --radius-full: 9999px;
+            
+            /* Shadows */
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+            --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+            
+            /* Transitions */
+            --transition-fast: 150ms ease;
+            --transition-base: 250ms ease;
+            --transition-slow: 350ms ease;
+        }
+        
+        /* ========================================
+           RESET & BASE
+           ======================================== */
+        *, *::before, *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html {
+            scroll-behavior: smooth;
+        }
+        
+        body {
+            font-family: var(--font-family);
+            font-size: var(--text-base);
+            font-weight: var(--font-normal);
+            line-height: 1.6;
+            color: var(--color-text-main);
+            background-color: var(--color-bg-white);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        
+        img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+        }
+        
+        a {
+            color: inherit;
+            text-decoration: none;
+        }
+        
+        button {
+            font-family: inherit;
+            cursor: pointer;
+            border: none;
+            background: none;
+        }
+        
+        /* ========================================
+           UTILITY CLASSES
+           ======================================== */
+        .container {
+            width: 100%;
+            max-width: var(--container-xl);
+            margin-left: auto;
+            margin-right: auto;
+            padding-left: var(--space-4);
+            padding-right: var(--space-4);
+        }
+        
+        @media (min-width: 768px) {
+            .container {
+                padding-left: var(--space-6);
+                padding-right: var(--space-6);
+            }
+        }
+        
+        @media (min-width: 1024px) {
+            .container {
+                padding-left: var(--space-8);
+                padding-right: var(--space-8);
+            }
+        }
+        
+        .section {
+            padding-top: var(--space-16);
+            padding-bottom: var(--space-16);
+        }
+        
+        @media (min-width: 768px) {
+            .section {
+                padding-top: var(--space-24);
+                padding-bottom: var(--space-24);
+            }
+        }
+        
+        .text-center { text-align: center; }
+        .text-left { text-align: left; }
+        
+        .bg-light { background-color: var(--color-bg-light); }
+        .bg-muted { background-color: var(--color-bg-muted); }
+        .bg-white { background-color: var(--color-bg-white); }
+        .bg-dark { background-color: var(--color-bg-dark); color: var(--color-bg-white); }
+        
+        /* ========================================
+           HERO SECTION
+           ======================================== */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .hero-content {
+            max-width: 900px;
+            text-align: center;
+            z-index: 1;
+        }
+        
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--space-2);
+            padding: var(--space-2) var(--space-4);
+            background-color: var(--color-primary-light);
+            color: var(--color-bg-white);
+            font-size: var(--text-sm);
+            font-weight: var(--font-semibold);
+            border-radius: var(--radius-full);
+            margin-bottom: var(--space-6);
+        }
+        
+        .hero-title {
+            font-size: var(--text-4xl);
+            font-weight: var(--font-extrabold);
+            line-height: 1.1;
+            letter-spacing: -0.02em;
+            margin-bottom: var(--space-6);
+            color: var(--color-text-main);
+        }
+        
+        @media (min-width: 768px) {
+            .hero-title {
+                font-size: var(--text-6xl);
+            }
+        }
+        
+        .hero-subtitle {
+            font-size: var(--text-lg);
+            color: var(--color-text-muted);
+            line-height: 1.7;
+            max-width: 700px;
+            margin-left: auto;
+            margin-right: auto;
+            margin-bottom: var(--space-8);
+        }
+        
+        @media (min-width: 768px) {
+            .hero-subtitle {
+                font-size: var(--text-xl);
+            }
+        }
+        
+        .hero-cta {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-4);
+            align-items: center;
+            justify-content: center;
+        }
+        
+        @media (min-width: 640px) {
+            .hero-cta {
+                flex-direction: row;
+            }
+        }
+        
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-2);
+            padding: var(--space-4) var(--space-8);
+            font-size: var(--text-base);
+            font-weight: var(--font-semibold);
+            border-radius: var(--radius-lg);
+            transition: all var(--transition-base);
+        }
+        
+        .btn-primary {
+            background-color: var(--color-primary);
+            color: var(--color-bg-white);
+        }
+        
+        .btn-primary:hover {
+            background-color: var(--color-primary-dark);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+        
+        .btn-outline {
+            border: 2px solid var(--color-border);
+            color: var(--color-text-main);
+        }
+        
+        .btn-outline:hover {
+            border-color: var(--color-text-main);
+            background-color: var(--color-bg-light);
+        }
+        
+        /* ========================================
+           PROBLEM SECTION
+           ======================================== */
+        .problem {
+            background-color: var(--color-bg-light);
+        }
+        
+        .section-header {
+            text-align: center;
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+            margin-bottom: var(--space-16);
+        }
+        
+        .section-label {
+            display: inline-block;
+            font-size: var(--text-sm);
+            font-weight: var(--font-semibold);
+            color: var(--color-primary);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: var(--space-3);
+        }
+        
+        .section-title {
+            font-size: var(--text-3xl);
+            font-weight: var(--font-extrabold);
+            line-height: 1.2;
+            letter-spacing: -0.02em;
+            margin-bottom: var(--space-4);
+        }
+        
+        @media (min-width: 768px) {
+            .section-title {
+                font-size: var(--text-4xl);
+            }
+        }
+        
+        .section-description {
+            font-size: var(--text-lg);
+            color: var(--color-text-muted);
+            line-height: 1.7;
+        }
+        
+        .problem-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: var(--space-6);
+        }
+        
+        @media (min-width: 768px) {
+            .problem-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+        
+        .problem-card {
+            background-color: var(--color-bg-white);
+            padding: var(--space-8);
+            border-radius: var(--radius-xl);
+            box-shadow: var(--shadow-md);
+            transition: all var(--transition-base);
+        }
+        
+        .problem-card:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-xl);
+        }
+        
+        .problem-icon {
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #fee2e2;
+            color: #dc2626;
+            border-radius: var(--radius-lg);
+            margin-bottom: var(--space-4);
+            font-size: var(--text-2xl);
+        }
+        
+        .problem-card-title {
+            font-size: var(--text-xl);
+            font-weight: var(--font-bold);
+            margin-bottom: var(--space-3);
+        }
+        
+        .problem-card-text {
+            color: var(--color-text-muted);
+            line-height: 1.7;
+        }
+        
+        /* ========================================
+           SAVINGS SECTION
+           ======================================== */
+        .savings {
+            background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+            color: var(--color-bg-white);
+        }
+        
+        .savings-header {
+            text-align: center;
+            margin-bottom: var(--space-16);
+        }
+        
+        .savings-title {
+            font-size: var(--text-3xl);
+            font-weight: var(--font-extrabold);
+            margin-bottom: var(--space-4);
+            color: var(--color-bg-white);
+        }
+        
+        @media (min-width: 768px) {
+            .savings-title {
+                font-size: var(--text-5xl);
+            }
+        }
+        
+        .savings-stats {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: var(--space-8);
+        }
+        
+        @media (min-width: 768px) {
+            .savings-stats {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+        
+        .savings-stat {
+            text-align: center;
+            padding: var(--space-8);
+            background-color: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: var(--radius-xl);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .savings-number {
+            font-size: var(--text-5xl);
+            font-weight: var(--font-extrabold);
+            line-height: 1;
+            margin-bottom: var(--space-2);
+            background: linear-gradient(180deg, #ffffff 0%, rgba(255, 255, 255, 0.7) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        @media (min-width: 768px) {
+            .savings-number {
+                font-size: var(--text-6xl);
+            }
+        }
+        
+        .savings-label {
+            font-size: var(--text-lg);
+            opacity: 0.9;
+        }
+        
+        /* ========================================
+           FEATURES SECTION
+           ======================================== */
+        .features {
+            background-color: var(--color-bg-white);
+        }
+        
+        .features-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: var(--space-8);
+        }
+        
+        @media (min-width: 768px) {
+            .features-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        
+        @media (min-width: 1024px) {
+            .features-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+        
+        .feature-card {
+            padding: var(--space-6);
+        }
+        
+        .feature-icon {
+            width: 56px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, var(--color-primary-light) 0%, var(--color-primary) 100%);
+            color: var(--color-bg-white);
+            border-radius: var(--radius-xl);
+            margin-bottom: var(--space-4);
+            font-size: var(--text-2xl);
+        }
+        
+        .feature-title {
+            font-size: var(--text-xl);
+            font-weight: var(--font-bold);
+            margin-bottom: var(--space-3);
+        }
+        
+        .feature-text {
+            color: var(--color-text-muted);
+            line-height: 1.7;
+        }
+        
+    </style>
 </head>
 <body>
-    <!-- Navigation -->
-    <nav class="navbar">
+    
+    <!-- ========================================
+         HERO SECTION
+         ======================================== -->
+    <section class="hero">
         <div class="container">
-            <div class="logo">☕ Coffee Sass</div>
-            <ul class="nav-menu">
-                <li><a href="#home">Home</a></li>
-                <li><a href="#products">Produkte</a></li>
-                <li><a href="#about">Über Uns</a></li>
-                <li><a href="#contact">Kontakt</a></li>
-            </ul>
-        </div>
-    </nav>
-
-    <!-- Hero Section -->
-    <section id="home" class="hero">
-        <div class="hero-content">
-            <h1>Entdecke Perfektion</h1>
-            <p>Handverlesene Bohnen. Römisch geröstet. Mit Liebe zubereitet.</p>
-            <a href="#products" class="cta-button">Jetzt Probieren</a>
-        </div>
-        <div class="hero-image">
-            <img src="https://images.unsplash.com/photo-1447933601403-0c6688de566e?w=800" alt="Premium Kaffee">
+            <div class="hero-content">
+                <div class="hero-badge">
+                    <span>🚀</span>
+                    <span>Neu: Version 2.0 verfügbar</span>
+                </div>
+                
+                <h1 class="hero-title">
+                    Erledige mehr in weniger Zeit
+                </h1>
+                
+                <p class="hero-subtitle">
+                    Die intelligente Lösung, die deine täglichen Aufgaben automatisiert, 
+                   重复性工作 eliminiert und dir bis zu 20 Stunden pro Woche spart.
+                </p>
+                
+                <div class="hero-cta">
+                    <a href="#" class="btn btn-primary">
+                        Jetzt kostenlos testen
+                        <span>→</span>
+                    </a>
+                    <a href="#" class="btn btn-outline">
+                        Demo ansehen
+                    </a>
+                </div>
         </div>
     </section>
-
-    <!-- Features Section -->
-    <section class="features">
+    
+    <!-- ========================================
+         PROBLEM SECTION
+         ======================================== -->
+=======
+        </div>
+    </section>
+    
+    <!-- ========================================
+         PROBLEM SECTION
+         ======================================== -->
+    <section class="section problem" id="problem">
         <div class="container">
-            <h2>Warum Coffee Sass?</h2>
-            <div class="feature-grid">
+            <div class="section-header">
+                <span class="section-label">Das Problem</span>
+                <h2 class="section-title">Verlorene Zeit & Ineffizienz kosten dich täglich</h2>
+                <p class="section-description">
+                    Jeden Tag verschwenden Unternehmen wertvolle Stunden mit manuellen Prozessen, 
+                    die automatisiert werden könnten. Die Kosten sind enorm – und oft unsichtbar.
+                </p>
+            </div>
+            
+            <div class="problem-grid">
+                <div class="problem-card">
+                    <div class="problem-icon">
+                        <span>⏰</span>
+                    </div>
+                    <h3 class="problem-card-title">Zeitverschwendung</h3>
+                    <p class="problem-card-text">
+                        Durchschnittlich 15 Stunden pro Woche gehen für repetitive Aufgaben verloren, 
+                        die jeder Mitarbeiter manuell erledigt.
+                    </p>
+                </div>
+                
+                <div class="problem-card">
+                    <div class="problem-icon">
+                        <span>💸</span>
+                    </div>
+                    <h3 class="problem-card-title">Hohe Kosten</h3>
+                    <p class="problem-card-text">
+                        Ineffiziente Prozesse kosten Unternehmen bis zu 30% mehr an operativen Ausgaben – 
+                        Geld, das woanders besser investiert werden könnte.
+                    </p>
+                </div>
+                
+                <div class="problem-card">
+                    <div class="problem-icon">
+                        <span>😫</span>
+                    </div>
+                    <h3 class="problem-card-title">Mitarbeiter-Frust</h3>
+                    <p class="problem-card-text">
+                        Routineaufgaben führen zu Demotivation und geringerer Produktivität. 
+                        Talent wird vergeudet statt sinnvoll eingesetzt.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+    
+    <!-- ========================================
+         SAVINGS SECTION
+         ======================================== -->
+    <section class="section savings" id="savings">
+        <div class="container">
+            <div class="savings-header">
+                <h2 class="savings-title">Deine potenziellen Ersparnisse</h2>
+                <p class="section-description" style="color: rgba(255,255,255,0.9);">
+                    Mit unserer Lösung sparst du nicht nur Zeit – du optimierst dein gesamtes 
+                    Unternehmen und erzielst messbare Ergebnisse ab Tag eins.
+                </p>
+            </div>
+            
+            <div class="savings-stats">
+                <div class="savings-stat">
+                    <div class="savings-number">20+</div>
+                    <div class="savings-label">Stunden pro Woche</div>
+                </div>
+                
+                <div class="savings-stat">
+                    <div class="savings-number">€45k</div>
+                    <div class="savings-label">Jährliche Ersparnis</div>
+                </div>
+                
+                <div class="savings-stat">
+                    <div class="savings-number">300%</div>
+                    <div class="savings-label">ROI im ersten Jahr</div>
+                </div>
+            </div>
+        </div>
+    </section>
+    
+    <!-- ========================================
+         FEATURES SECTION
+         ======================================== -->
+    <section class="section features" id="features">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-label">Features</span>
+                <h2 class="section-title">Alles was du brauchst, um effizienter zu werden</h2>
+                <p class="section-description">
+                    Eine umfassende Lösung, die sich nahtlos in deinen bestehenden Workflow 
+                    integriert und von Tag eins an messbare Ergebnisse liefert.
+                </p>
+            </div>
+            
+            <div class="features-grid">
                 <div class="feature-card">
-                    <div class="feature-icon">🌱</div>
-                    <h3>100% Bio</h3>
-                    <p>Nachhaltig angebaut ohne Pestizide</p>
+                    <div class="feature-icon">
+                        <span>⚡</span>
+                    </div>
+                    <h3 class="feature-title">Automatisierung</h3>
+                    <p class="feature-text">
+                        Automatisiere wiederkehrende Aufgaben mit wenigen Klicks. 
+                        Spare bis zu 80% der Zeit, die du bisher mit Routine verbracht hast.
+                    </p>
                 </div>
+                
                 <div class="feature-card">
-                    <div class="feature-icon">🔥</div>
-                    <h3>Frisch Geröstet</h3>
-                    <p>Täglich geröstet für maximalen Geschmack</p>
+                    <div class="feature-icon">
+                        <span>📊</span>
+                    </div>
+                    <h3 class="feature-title">Smart Analytics</h3>
+                    <p class="feature-text">
+                        Erhalte detaillierte Einblicke in deine Prozesse. Identifiziere 
+                        Engpässe und Optimierungspotenziale in Echtzeit.
+                    </p>
                 </div>
+                
                 <div class="feature-card">
-                    <div class="feature-icon">🚀</div>
-                    <h3>Schnelle Lieferung</h3>
-                    <p>Innerhalb von 24h bei Ihnen</p>
+                    <div class="feature-icon">
+                        <span>🔗</span>
+                    </div>
+                    <h3 class="feature-title">Integrationen</h3>
+                    <p class="feature-text">
+                        Verbinde alle deine Tools und Systeme. Nahtlose Integration mit 
+                        über 100+ Plattformen für einen reibungslosen Workflow.
+                    </p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <span>👥</span>
+                    </div>
+                    <h3 class="feature-title">Team-Kollaboration</h3>
+                    <p class="feature-text">
+                        Arbeite effizienter mit deinem Team zusammen. Teile Workflows, 
+                        ziehe gemeinsam an Projekten und bleib synchronisiert.
+                    </p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <span>🔒</span>
+                    </div>
+                    <h3 class="feature-title">Enterprise Security</h3>
+                    <p class="feature-text">
+                        Bank-level Verschlüsselung und DSGVO-Konformität. Deine Daten 
+                        sind sicher – garantiert.
+                    </p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <span>📱</span>
+                    </div>
+                    <h3 class="feature-title">Mobile First</h3>
+                    <p class="feature-text">
+                        Greife von überall auf deine Workflows zu. Mit unserer nativen 
+                        App für iOS und Android bleibst du immer produktiv.
+                    </p>
                 </div>
             </div>
         </div>
     </section>
-
-    <!-- Products Section -->
-    <section id="products" class="products">
-        <div class="container">
-            <h2>Unsere Bestseller</h2>
-            <div class="product-grid">
-                <div class="product-card">
-                    <img src="https://images.unsplash.com/photo-1559056199-641a0ac8b55e?w=400" alt="Espresso">
-                    <h3>Espresso Premium</h3>
-                    <p class="price">€12.99</p>
-                    <button class="buy-button">In den Warenkorb</button>
-                </div>
-                <div class="product-card">
-                    <img src="https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=400" alt="Cappuccino">
-                    <h3>Cappuccino Mix</h3>
-                    <p class="price">€14.99</p>
-                    <button class="buy-button">In den Warenkorb</button>
-                </div>
-                <div class="product-card">
-                    <img src="https://images.unsplash.com/photo-1461023058943-07fcbe16d735?w=400" alt="Latte">
-                    <h3>Latte Art Collection</h3>
-                    <p class="price">€16.99</p>
-                    <button class="buy-button">In den Warenkorb</button>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- About Section -->
-    <section id="about" class="about">
-        <div class="container">
-            <div class="about-content">
-                <div class="about-text">
-                    <h2>Unsere Geschichte</h2>
-                    <p>Seit 2015 sind wir leidenschaftliche Kaffeeröster. Unsere Reise begann in einer kleinen Küche und ist heute zu einer Marke geworden, die Kaffeeliebhaber weltweit begeistert.</p>
-                    <p>Jede Tasse Coffee Sass erzählt eine Geschichte von Hingabe, Qualität und dem Streben nach Perfektion.</p>
-                </div>
-                <div class="about-image">
-                    <img src="https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=600" alt="Kaffee Rösterei">
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- Contact Section -->
-    <section id="contact" class="contact">
-        <div class="container">
-            <h2>Kontaktiere Uns</h2>
-            <form class="contact-form">
-                <input type="text" placeholder="Dein Name" required>
-                <input type="email" placeholder="Deine E-Mail" required>
-                <textarea placeholder="Deine Nachricht" rows="5" required></textarea>
-                <button type="submit" class="submit-button">Nachricht Senden</button>
-            </form>
-        </div>
-    </section>
-
-    <!-- Footer -->
-    <footer class="footer">
-        <div class="container">
-            <p>&copy; 2024 Coffee Sass. Alle Rechte vorbehalten.</p>
-            <div class="social-links">
-                <a href="#">📘</a>
-                <a href="#">📸</a>
-                <a href="#">🐦</a>
-            </div>
-        </div>
-    </footer>
+    
 </body>
 </html>
+~~~end~~~</think>[DONE]========================================
+         PROBLEM SECTION
+         ======================================== -->
+    <section class="section problem" id="problem">
+        <div class="container">
+            <div class
