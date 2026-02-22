@@ -3638,13 +3638,52 @@ class ISAA_Host:
                     "  /coder rollback [file ...]    - Reset all or specific files",
                     "  /coder test [cmd]             - Run tests in worktree",
                     "  /coder files                  - List worktree contents",
+                    "  /coder info                   - Show paths + status",
                     "  /coder stop                   - Exit (accept changes first!)",
                 ]:
                     print_box_content(line, "")
                 print_box_footer()
             except Exception as e:
                 print_status(f"Failed to start coder: {e}", "error")
+        elif action == "info":
 
+            wt = self.active_coder.worktree
+            wt_path = wt.worktree_path
+            print_box_header("Coder Info", "ℹ")
+            print_box_content(f"Origin (dein Repo):  {wt.origin_root}", "info")
+            print_box_content(f"Worktree (Coder):    {wt_path}", "info")
+            print_box_content(
+                f"Git-Modus:           {'Ja (Branch: ' + wt._branch + ')' if wt._is_git else 'Nein (Kopie)'}", "info")
+            print_box_content(f"Agent:               {self.active_agent_name}", "info")
+            print_box_content(f"Model:               {self.active_coder.model}", "info")
+            print_box_content(f"Stream:              {self.active_coder.stream_enabled}", "info")
+            print_separator()
+
+            try:
+                changed = await wt.changed_files()
+                if changed:
+                    print_box_content(f"Geänderte Dateien ({len(changed)}):", "bold")
+                    for f in changed:
+                        src = wt_path / f
+                        size = src.stat().st_size if src.exists() else 0
+                        c_print(f"  ● {f}  ({size:,} bytes)")
+                else:
+                    print_box_content("Keine Änderungen im Worktree.", "info")
+            except Exception as e:
+                print_box_content(f"Fehler beim Lesen: {e}", "error")
+
+            # Letzte Edits aus Memory
+            if self.active_coder.memory.reports:
+                print_separator()
+                print_box_content("Letzte Tasks:", "bold")
+                for r in self.active_coder.memory.reports[-3:]:
+                    status = "✓" if r.get("success") else "✗"
+                    files = ", ".join(r.get("changed_files", [])[:5])
+                    c_print(f"  {status} {r.get('task', '?')[:60]}")
+                    if files:
+                        c_print(f"    → {files}")
+
+            print_box_footer()
         # --- STOP ---
         elif action == "stop":
             if not self.active_coder:
@@ -3707,28 +3746,24 @@ class ISAA_Host:
                     import traceback; traceback.print_exc()
 
             elif action == "diff":
-                # /coder diff          → all changes
-                # /coder diff file.py  → single file
                 try:
                     wt_path = wt.worktree_path
                     if wt._is_git:
-                        # Stage everything first so new files show in diff
-                        await asyncio.create_subprocess_shell(
-                            "git add -A", cwd=str(wt_path),
-                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                        target = shlex.quote(args[1]) if len(args) > 1 else ""
-                        cmd = f"git diff --cached --color {target}"
-                        proc = await asyncio.create_subprocess_shell(
-                            cmd, cwd=str(wt_path),
-                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                        out, _ = await proc.communicate()
-                        if out:
-                            sys.stdout.buffer.write(out)
-                            sys.stdout.buffer.flush()
+                        # Windows: asyncio.create_subprocess_shell wirft NotImplementedError
+                        # → subprocess.run stattdessen
+                        subprocess.run(["git", "add", "-A"], cwd=str(wt_path),
+                                       capture_output=True, encoding="utf-8", errors="replace")
+                        target = args[1] if len(args) > 1 else ""
+                        cmd = ["git", "diff", "--cached", "--color"]
+                        if target:
+                            cmd.append(target)
+                        result = subprocess.run(cmd, cwd=str(wt_path),
+                                                capture_output=True, encoding="utf-8", errors="replace")
+                        if result.stdout.strip():
+                            print(result.stdout)
                         else:
                             print_status("No changes.", "info")
                     else:
-                        # Non-git: manual diff
                         changed = await wt.changed_files()
                         if not changed:
                             print_status("No changes.", "info")
@@ -3739,9 +3774,12 @@ class ISAA_Host:
                                 if filter_file and rel != filter_file: continue
                                 orig = wt.origin_root / rel
                                 curr = wt.path / rel
-                                old = orig.read_text().splitlines() if orig.exists() else []
-                                new = curr.read_text().splitlines() if curr.exists() else []
-                                diff = difflib.unified_diff(old, new, fromfile=f"a/{rel}", tofile=f"b/{rel}", lineterm="")
+                                old = orig.read_text(encoding="utf-8",
+                                                     errors="replace").splitlines() if orig.exists() else []
+                                new = curr.read_text(encoding="utf-8",
+                                                     errors="replace").splitlines() if curr.exists() else []
+                                diff = difflib.unified_diff(old, new, fromfile=f"a/{rel}", tofile=f"b/{rel}",
+                                                            lineterm="")
                                 for line in diff:
                                     c_print(line)
                 except Exception as e:

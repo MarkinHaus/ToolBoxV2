@@ -17,7 +17,7 @@ from typing import Dict, List, Any
 # report_a = await bench.run(model_a, seed=42)
 # report_b = await bench.run(model_b, seed=42)
 
-from benchmark import Benchmark, Report, RowModelAdapter, MAKERAdapter, AgentAdapter
+from benchmark import Benchmark, Report, RowModelAdapter, AgentAdapter
 from dashboard import Dashboard
 
 filepath_ = r"reports6.json"

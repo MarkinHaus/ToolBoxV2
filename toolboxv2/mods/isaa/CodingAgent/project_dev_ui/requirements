@@ -1,0 +1,19 @@
+# ProjectDeveloper Studio - Dependencies
+
+# Core Streamlit
+streamlit>=1.40.0
+
+# Async support
+asyncio-compat>=0.1.0
+
+# Data handling
+pydantic>=2.0.0
+PyYAML>=6.0
+
+# Optional: For full ToolBoxV2 integration
+# toolboxv2  # Install from source
+
+# Development tools (optional)
+# pytest  # User prefers unittest
+black>=24.0.0
+isort>=5.13.0

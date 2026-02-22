@@ -656,6 +656,34 @@ Session: {self.session_id}
             self.files[path].updated_at = datetime.now().isoformat()
         self._dirty = True
 
+    def wipe(self):
+        """
+        HARD RESET: Completely erases the file system state.
+        Used for benchmarking to ensure 0% state leakage between runs.
+        """
+        # 1. Clear Memory Files
+        self.files.clear()
+
+        # 2. Clear Directory Structure
+        self.directories.clear()
+
+        # 3. Unmount all shadow mounts (except global if needed)
+        # We iterate a copy of keys to avoid modification errors
+        for mount_point in list(self.mounts.keys()):
+            if mount_point != "/global":  # Preserve global tools
+                self.unmount(mount_point, save_changes=False)
+
+        # 4. Re-initialize Root & System Files
+        self._init_root()
+        self._init_system_files()
+
+        # 5. Clear Sync State
+        self._dirty_files.clear()
+
+        if hasattr(self, "lsp_manager") and self.lsp_manager:
+            # We don't stop the server (too slow), but we clear diagnostics
+            pass
+
     # =========================================================================
     # PATH UTILITIES
     # =========================================================================

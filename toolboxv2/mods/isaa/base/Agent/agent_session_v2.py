@@ -630,6 +630,44 @@ class AgentSessionV2:
 
         return stats
 
+    async def hard_reset(self):
+        """
+        BENCHMARK UTILITY: Resets session to 'Factory Settings'.
+
+        Clears:
+        1. Chat History (Memory)
+        2. Virtual File System (Files)
+        3. Rule Set (Situation/Intent)
+        4. Tool Restrictions
+        5. Docker Container (Restart/Clean)
+        """
+        self._ensure_initialized()
+
+        # 1. Clear Chat History
+        self.clear_history()
+
+        # 2. Wipe VFS
+        self.vfs.wipe()
+
+        # 3. Reset Rules & Situation
+        self.rule_set.clear_situation()
+        self._sync_ruleset_to_vfs()
+
+        # 4. Reset Restrictions
+        self.reset_restrictions()
+
+        # 5. Docker Cleanup (if enabled)
+        # We don't destroy the container (too slow for benchmarks),
+        # but we clean the workspace inside it.
+        if self._docker_vfs:
+            try:
+                # Fast cleanup command inside container
+                await self._docker_vfs.run_command("rm -rf /workspace/*")
+            except Exception as e:
+                logger.warning(f"Docker cleanup failed during hard_reset: {e}")
+
+        logger.debug(f"[{self.session_id}] Hard Reset complete.")
+
     def __repr__(self) -> str:
         status = (
             "closed"
