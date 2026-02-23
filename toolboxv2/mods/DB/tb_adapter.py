@@ -217,7 +217,6 @@ class Tools(MainTool, FileHandler):
 
         self.app.logger.info(f"Running DB in mode : {self.mode.value}")
         self.print(f"Running DB.{self.spec} in mode : {self.mode.value}")
-        print(self.get('all-k'))
         return Result.ok()
 
     def _autoresize(self):
@@ -262,7 +261,7 @@ class Tools(MainTool, FileHandler):
     def close_db(self) -> Result:
         if self.data_base is None:
             return Result.default_user_error(info="Database is not configured therefor cand be closed")
-        result = self.data_base.exit().print()
+        result = self.data_base.exit()
         self.data_base = None
         return result
 

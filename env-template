@@ -170,3 +170,33 @@ EXTERNAL_PATH_RUNNABELS=
 EXTERNAL_PATH_RUNNABLE=                     # (Keep both to satisfy request)
 LITELLM_LOG="NOTSET"
 ANONYMIZED_TELEMETRY="false"
+
+
+# ENV Configuration:
+#   OPENOBSERVE_ENDPOINT      = http://localhost:5080       (API endpoint)
+#   OPENOBSERVE_USER          = root@example.com            (root user email)
+#   OPENOBSERVE_PASSWORD      = <password>                  (root user password)
+#   OPENOBSERVE_ORG           = default                     (organization)
+#   OPENOBSERVE_DATA_DIR      = ./openobserve-data          (host volume mount)
+#   OPENOBSERVE_PORT          = 5080                        (exposed port)
+#   OPENOBSERVE_DOCKER_IMAGE  = public.ecr.aws/zinclabs/openobserve:latest
+#   OPENOBSERVE_CONTAINER     = toolbox-openobserve         (container name)
+#
+#   # Storage backend — default: local disk. Set these for MinIO-backed storage:
+#   OPENOBSERVE_STORAGE       = disk | s3                   (default: disk)
+#   OPENOBSERVE_S3_ENDPOINT   = http://localhost:9000
+#   OPENOBSERVE_S3_ACCESS_KEY = <key>
+#   OPENOBSERVE_S3_SECRET_KEY = <secret>
+#   OPENOBSERVE_S3_BUCKET     = openobserve-data            (must pre-exist)
+#
+#   # Historical import — set to enable:
+#   OPENOBSERVE_IMPORT_ENABLED = false | true
+#   OPENOBSERVE_IMPORT_BUCKET  = system-audit-logs          (source MinIO bucket)
+#   OPENOBSERVE_IMPORT_PREFIX  =                            (e.g. "toolbox-instance-01/")
+#   OPENOBSERVE_IMPORT_FROM    =                            (e.g. "2026-01-01")
+#   OPENOBSERVE_IMPORT_TO      =                            (e.g. "2026-02-23")
+#
+#   # MinIO connection for import (reuses S3 keys if not set):
+#   MINIO_ENDPOINT             = localhost:9000
+#   MINIO_ACCESS_KEY           = <key>
+#   MINIO_SECRET_KEY           = <secret>

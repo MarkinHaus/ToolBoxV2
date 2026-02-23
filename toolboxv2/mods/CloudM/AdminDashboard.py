@@ -1080,6 +1080,10 @@ async def get_dashboard_main_page(app: App, request: RequestData):
                 <span class="material-symbols-outlined">group</span>
                 <span>Users</span>
             </button>
+            <button class="tab-btn" data-section="minio-management" role="tab" aria-selected="false">
+                <span class="material-symbols-outlined">storage</span>
+                <span>MinIO</span>
+            </button>
             <button class="tab-btn" data-section="module-management" role="tab" aria-selected="false">
                 <span class="material-symbols-outlined">extension</span>
                 <span>Modules</span>
@@ -1121,6 +1125,20 @@ async def get_dashboard_main_page(app: App, request: RequestData):
                     <h3><span class="material-symbols-outlined">person_add</span>Waiting List</h3>
                     <div id="user-waiting-list-content">
                         <p class="text-muted">Loading waiting list...</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- MinIO Management -->
+            <section id="minio-management-section" class="content-section">
+                <div class="section-header">
+                    <h2><span class="material-symbols-outlined">storage</span>MinIO User Management</h2>
+                    <p style="color:var(--text-muted); margin:0;">Manage user MinIO credentials and access</p>
+                </div>
+                <div id="minio-management-content">
+                    <div class="loading-state">
+                        <div class="spinner"></div>
+                        <span>Loading MinIO users...</span>
                     </div>
                 </div>
             </section>
@@ -1314,6 +1332,70 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
                     TB.ui.Toast.showError("Network error.");
                 }
             }
+            // MinIO: Rotate Credentials
+            else if (target.dataset.action === 'rotate-creds' && target.dataset.uid) {
+                if (!confirm('Rotate MinIO credentials for user? This will invalidate the old credentials.')) return;
+
+                TB.ui.Loader.show('Rotating credentials...');
+                try {
+                    var res = await TB.api.request('CloudM.AdminDashboard', 'rotate_minio_credentials_admin',
+                        { uid: target.dataset.uid }, 'POST');
+                    TB.ui.Loader.hide();
+                    if (res.error === TB.ToolBoxError.none) {
+                        TB.ui.Toast.showSuccess('Credentials rotated successfully!');
+                        await loadMinIOMangement();
+                    } else {
+                        TB.ui.Toast.showError('Failed: ' + TB.utils.escapeHtml(res.info.help_text));
+                    }
+                } catch (e) {
+                    TB.ui.Loader.hide();
+                    TB.ui.Toast.showError("Network error.");
+                }
+            }
+            // MinIO: Revoke Credentials
+            else if (target.dataset.action === 'revoke-creds' && target.dataset.uid) {
+                if (!confirm('Revoke MinIO access for this user? This cannot be undone.')) return;
+
+                TB.ui.Loader.show('Revoking access...');
+                try {
+                    var res = await TB.api.request('CloudM.AdminDashboard', 'revoke_minio_credentials_admin',
+                        { uid: target.dataset.uid }, 'POST');
+                    TB.ui.Loader.hide();
+                    if (res.error === TB.ToolBoxError.none) {
+                        TB.ui.Toast.showSuccess('MinIO access revoked.');
+                        await loadMinIOMangement();
+                    } else {
+                        TB.ui.Toast.showError('Failed: ' + TB.utils.escapeHtml(res.info.help_text));
+                    }
+                } catch (e) {
+                    TB.ui.Loader.hide();
+                    TB.ui.Toast.showError("Network error.");
+                }
+            }
+            // MinIO: Create Credentials
+            else if (target.dataset.action === 'create-creds' && target.dataset.uid) {
+                TB.ui.Loader.show('Creating credentials...');
+                try {
+                    var res = await TB.api.request('CloudM.AdminDashboard', 'ensure_minio_credentials_admin',
+                        { uid: target.dataset.uid }, 'POST');
+                    TB.ui.Loader.hide();
+                    if (res.error === TB.ToolBoxError.none) {
+                        TB.ui.Toast.showSuccess('MinIO credentials created!');
+                        await loadMinIOMangement();
+                    } else {
+                        TB.ui.Toast.showError('Failed: ' + TB.utils.escapeHtml(res.info.help_text));
+                    }
+                } catch (e) {
+                    TB.ui.Loader.hide();
+                    TB.ui.Toast.showError("Network error.");
+                }
+            }
+                    }
+                } catch (e) {
+                    TB.ui.Loader.hide();
+                    TB.ui.Toast.showError("Network error.");
+                }
+            }
             // Module Reload
             else if (target.dataset.module && target.classList.contains('btn-restart')) {
                 var modName = target.dataset.module;
@@ -1359,6 +1441,9 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
                 case 'user-management':
                     await loadUserManagement();
                     await loadWaitingListUsers();
+                    break;
+                case 'minio-management':
+                    await loadMinIOMangement();
                     break;
                 case 'module-management':
                     await loadModuleManagement();
@@ -1731,6 +1816,116 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
         content.innerHTML = html;
     }
 
+    // ========== MinIO Management ==========
+    async function loadMinIOMangement() {
+        var content = document.getElementById('minio-management-content');
+        if (!content) return;
+
+        try {
+            var res = await TB.api.request('CloudM.AdminDashboard', 'get_minio_users_admin', null, 'GET');
+            if (res.error === TB.ToolBoxError.none) {
+                renderMinIOMangement(res.get(), content);
+            } else {
+                content.innerHTML = '<p class="text-error">Error: ' + TB.utils.escapeHtml(res.info.help_text) + '</p>';
+            }
+        } catch (e) {
+            content.innerHTML = '<p class="text-error">Network error.</p>';
+            console.error(e);
+        }
+    }
+
+    function renderMinIOMangement(users, content) {
+        if (!users || users.length === 0) {
+            content.innerHTML = '<div class="empty-state">' +
+                '<span class="material-symbols-outlined">storage</span>' +
+                '<p>No users found.</p>' +
+            '</div>';
+            return;
+        }
+
+        // Count stats
+        var totalUsers = users.length;
+        var minioEnabled = 0;
+        var minioDisabled = 0;
+
+        users.forEach(function(u) {
+            if (u.has_minio) minioEnabled++;
+            else minioDisabled++;
+        });
+
+        // Stats Grid
+        var html = '<div class="stats-grid">' +
+            '<div class="stat-card">' +
+                '<div class="stat-value">' + totalUsers + '</div>' +
+                '<div class="stat-label">Total Users</div>' +
+            '</div>' +
+            '<div class="stat-card">' +
+                '<div class="stat-value" style="color:var(--color-success);">' + minioEnabled + '</div>' +
+                '<div class="stat-label">MinIO Enabled</div>' +
+            '</div>' +
+            '<div class="stat-card">' +
+                '<div class="stat-value" style="color:var(--color-warning);">' + minioDisabled + '</div>' +
+                '<div class="stat-label">MinIO Disabled</div>' +
+            '</div>' +
+            '<div class="stat-card">' +
+                '<div class="stat-value" style="color:var(--color-info);">' + Math.round((minioEnabled / totalUsers) * 100) + '%</div>' +
+                '<div class="stat-label">Adoption Rate</div>' +
+            '</div>' +
+        '</div>';
+
+        // Users Table
+        html += '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">people</span>Users with MinIO Status</h3>' +
+            '<div class="table-wrapper">' +
+                '<table class="admin-table" data-users="' + TB.utils.escapeHtml(JSON.stringify(users)) + '">' +
+                    '<thead><tr>' +
+                        '<th>User</th>' +
+                        '<th>Email</th>' +
+                        '<th>Level</th>' +
+                        '<th>MinIO Status</th>' +
+                        '<th>Access Key</th>' +
+                        '<th>Actions</th>' +
+                    '</tr></thead>' +
+                    '<tbody>';
+
+        users.forEach(function(u) {
+            var minioStatus = u.has_minio ?
+                '<span class="status-dot green"></span> Enabled' :
+                '<span class="status-dot red"></span> Disabled';
+
+            var levelBadge = '';
+            if (u.level >= 10) levelBadge = '<span class="level-badge admin">ADMIN</span>';
+            else if (u.level >= 5) levelBadge = '<span class="level-badge" style="background:oklch(from var(--color-info) l c h / 0.2);">MOD</span>';
+            else levelBadge = '<span class="level-badge" style="background:var(--bg-sunken);">USER</span>';
+
+            var actions = '';
+            if (u.has_minio) {
+                actions += '<button class="action-btn btn-restart" data-action="rotate-creds" data-uid="' + TB.utils.escapeHtml(u.uid) + '" title="Rotate Credentials">' +
+                    '<span class="material-symbols-outlined">sync</span>' +
+                '</button>';
+                actions += '<button class="action-btn btn-delete" data-action="revoke-creds" data-uid="' + TB.utils.escapeHtml(u.uid) + '" title="Revoke Access">' +
+                    '<span class="material-symbols-outlined">block</span>' +
+                '</button>';
+            } else {
+                actions += '<button class="action-btn btn-send-invite" data-action="create-creds" data-uid="' + TB.utils.escapeHtml(u.uid) + '" title="Create Credentials">' +
+                    '<span class="material-symbols-outlined">add</span>' +
+                '</button>';
+            }
+
+            html += '<tr>' +
+                '<td><strong>' + TB.utils.escapeHtml(u.name || 'N/A') + '</strong></td>' +
+                '<td>' + TB.utils.escapeHtml(u.email || 'N/A') + '</td>' +
+                '<td>' + levelBadge + '</td>' +
+                '<td>' + minioStatus + '</td>' +
+                '<td><code style="font-size:var(--text-xs);">' + TB.utils.escapeHtml(u.minio_access_key || '-') + '</code></td>' +
+                '<td><div class="action-group">' + actions + '</div></td>' +
+            '</tr>';
+        });
+
+        html += '</tbody></table></div></div>';
+        content.innerHTML = html;
+    }
+
     // ========== Module Management ==========
     async function loadModuleManagement() {
         var content = document.getElementById('module-management-content');
@@ -1972,6 +2167,9 @@ async def list_users_admin(app: App, request: RequestData):
                     if uid not in seen_ids:
                         seen_ids.add(uid)
                         providers = list(user_dict.get("oauth_providers", {}).keys())
+                        # MinIO Credentials Status
+                        minio_creds = user_dict.get("minio_credentials", {})
+                        has_minio = bool(minio_creds.get("access_key") and minio_creds.get("enabled", True))
                         users_data.append({
                             "uid": uid,
                             "name": user_dict.get("username", user_dict.get("name", "N/A")),
@@ -1981,7 +2179,9 @@ async def list_users_admin(app: App, request: RequestData):
                             "settings": user_dict.get("settings", {}),
                             "providers": providers,
                             "has_passkey": bool(user_dict.get("passkeys")),
-                            "source": "custom_auth"
+                            "source": "custom_auth",
+                            "minio_credentials": minio_creds,
+                            "has_minio": has_minio
                         })
     except Exception as e:
         app.print("Error fetching Custom Auth users: " + str(e), "WARNING")
@@ -2374,4 +2574,250 @@ async def list_spps_admin(app: App, request: RequestData):
     except Exception as e:
         app.print("Error fetching SPP list from CloudM.extras.uis: " + str(e), "ERROR")
         return Result.default_internal_error(info="Could not retrieve SPP list.")
+
+
+# =================== MinIO User Management API ===================
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
+async def get_minio_users_admin(app: App, request: RequestData):
+    """
+    Listet alle Users mit MinIO Status
+    Für Admin Dashboard - MinIO User Management Tab
+    """
+    admin_user = await _is_admin(app, request)
+    if not admin_user:
+        return Result.default_user_error(info="Permission denied", exec_code=403)
+
+    # Hole Users mit MinIO Status
+    users_result = await list_users_admin(app, request)
+    if users_result.is_error():
+        return users_result
+
+    users = users_result.get()
+    result = []
+
+    for user in users:
+        minio_creds = user.get("minio_credentials", {})
+        has_minio = bool(minio_creds.get("access_key") and minio_creds.get("enabled", True))
+
+        result.append({
+            "uid": user.get("uid"),
+            "name": user.get("name"),
+            "email": user.get("email"),
+            "level": user.get("level", 1),
+            "minio_enabled": has_minio,
+            "minio_access_key": minio_creds.get("access_key") if has_minio else None,
+            "minio_created_at": minio_creds.get("created_at") if has_minio else None,
+            "minio_last_rotated": minio_creds.get("last_rotated") if has_minio else None,
+        })
+
+    return Result.json(data=result)
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
+async def rotate_minio_credentials_admin(app: App, request: RequestData, data: dict = None, **kwargs):
+    """
+    Rotiert MinIO Credentials für einen User
+    """
+    admin_user = await _is_admin(app, request)
+    if not admin_user:
+        return Result.default_user_error(info="Permission denied", exec_code=403)
+
+    if data is None:
+        data = kwargs
+
+    user_id = data.get("uid") or data.get("user_id")
+    if not user_id:
+        return Result.default_user_error(info="User ID is required")
+
+    try:
+        # Hole User
+        user_result = await app.a_run_any(TBEF.DB.GET, query=f"AUTH_USER::{user_id}", get_results=True)
+        if user_result.is_error() or not user_result.get():
+            return Result.default_user_error(info="User not found")
+
+        # Parse User Data
+        import json
+        from toolboxv2.mods.CloudM.auth.models import UserData, MinIOCredentials
+        import time
+        import secrets
+        import hashlib
+        from toolboxv2.utils.security.cryp import Code
+
+        raw_data = user_result.get()
+        if isinstance(raw_data, list):
+            raw_data = raw_data[0]
+        if isinstance(raw_data, bytes):
+            raw_data = raw_data.decode()
+
+        user_dict = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+        user_data = UserData.from_dict(user_dict)
+
+        # Generiere neuen Secret Key
+        new_secret = secrets.token_urlsafe(32)
+
+        # Hole bestehende Credentials
+        creds = user_data.minio_credentials
+        if not creds or not creds.access_key:
+            return Result.default_user_error(info="User has no MinIO credentials to rotate")
+
+        # Verschlüssele neuen Secret Key
+        key = Code.DK()()
+        if isinstance(key, str):
+            key = key.encode()
+
+        encrypted_secret = Code.encrypt_symmetric(new_secret.encode(), key).hex()
+        creds.secret_key = encrypted_secret
+        creds.last_rotated = time.time()
+
+        # Save updated user
+        user_data.minio_credentials = creds
+        await app.a_run_any(TBEF.DB.SET, query=f"AUTH_USER::{user_id}", data=json.dumps(user_data.to_dict()))
+
+        return Result.ok(
+            data={
+                "access_key": creds.access_key,
+                "secret_key": new_secret,  # Return unencrypted for display
+                "last_rotated": creds.last_rotated
+            },
+            info="MinIO credentials rotated successfully"
+        )
+
+    except Exception as e:
+        app.print(f"Error rotating MinIO credentials: {e}", "ERROR")
+        return Result.default_internal_error(info=f"Error: {str(e)}")
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
+async def revoke_minio_credentials_admin(app: App, request: RequestData, data: dict = None, **kwargs):
+    """
+    Entzieht MinIO Credentials von einem User
+    """
+    admin_user = await _is_admin(app, request)
+    if not admin_user:
+        return Result.default_user_error(info="Permission denied", exec_code=403)
+
+    if data is None:
+        data = kwargs
+
+    user_id = data.get("uid") or data.get("user_id")
+    if not user_id:
+        return Result.default_user_error(info="User ID is required")
+
+    try:
+        # Hole User
+        user_result = await app.a_run_any(TBEF.DB.GET, query=f"AUTH_USER::{user_id}", get_results=True)
+        if user_result.is_error() or not user_result.get():
+            return Result.default_user_error(info="User not found")
+
+        # Parse User Data
+        import json
+        from toolboxv2.mods.CloudM.auth.models import UserData, MinIOCredentials
+
+        raw_data = user_result.get()
+        if isinstance(raw_data, list):
+            raw_data = raw_data[0]
+        if isinstance(raw_data, bytes):
+            raw_data = raw_data.decode()
+
+        user_dict = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+        user_data = UserData.from_dict(user_dict)
+
+        # Entferne MinIO Credentials
+        user_data.minio_credentials = MinIOCredentials(enabled=False)
+
+        # Save updated user
+        await app.a_run_any(TBEF.DB.SET, query=f"AUTH_USER::{user_id}", data=json.dumps(user_data.to_dict()))
+
+        return Result.ok(info="MinIO credentials revoked successfully")
+
+    except Exception as e:
+        app.print(f"Error revoking MinIO credentials: {e}", "ERROR")
+        return Result.default_internal_error(info=f"Error: {str(e)}")
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
+async def ensure_minio_credentials_admin(app: App, request: RequestData, data: dict = None, **kwargs):
+    """
+    Erstellt MinIO Credentials für einen User (falls nicht vorhanden)
+    """
+    admin_user = await _is_admin(app, request)
+    if not admin_user:
+        return Result.default_user_error(info="Permission denied", exec_code=403)
+
+    if data is None:
+        data = kwargs
+
+    user_id = data.get("uid") or data.get("user_id")
+    if not user_id:
+        return Result.default_user_error(info="User ID is required")
+
+    try:
+        # Hole User
+        user_result = await app.a_run_any(TBEF.DB.GET, query=f"AUTH_USER::{user_id}", get_results=True)
+        if user_result.is_error() or not user_result.get():
+            return Result.default_user_error(info="User not found")
+
+        # Parse User Data
+        import json
+        from toolboxv2.mods.CloudM.auth.models import UserData, MinIOCredentials
+        import time
+        import secrets
+        import hashlib
+        from toolboxv2.utils.security.cryp import Code
+
+        raw_data = user_result.get()
+        if isinstance(raw_data, list):
+            raw_data = raw_data[0]
+        if isinstance(raw_data, bytes):
+            raw_data = raw_data.decode()
+
+        user_dict = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+        user_data = UserData.from_dict(user_dict)
+
+        # Prüfe ob Credentials schon existieren
+        if user_data.minio_credentials and user_data.minio_credentials.access_key:
+            return Result.ok(
+                data={
+                    "access_key": user_data.minio_credentials.access_key,
+                    "created_at": user_data.minio_credentials.created_at
+                },
+                info="User already has MinIO credentials"
+            )
+
+        # Generiere neue Credentials
+        access_key = f"tb_{hashlib.sha256(user_id.encode()).hexdigest()[:8]}_{secrets.token_hex(2)}"
+        secret_key = secrets.token_urlsafe(32)
+
+        # Verschlüssele Secret Key
+        key = Code.DK()()
+        if isinstance(key, str):
+            key = key.encode()
+
+        encrypted_secret = Code.encrypt_symmetric(secret_key.encode(), key).hex()
+
+        # Speichere in UserData
+        user_data.minio_credentials = MinIOCredentials(
+            access_key=access_key,
+            secret_key=encrypted_secret,
+            created_at=time.time(),
+            last_rotated=time.time(),
+            enabled=True
+        )
+
+        # Save updated user
+        await app.a_run_any(TBEF.DB.SET, query=f"AUTH_USER::{user_id}", data=json.dumps(user_data.to_dict()))
+
+        return Result.ok(
+            data={
+                "access_key": access_key,
+                "secret_key": secret_key,
+                "created_at": user_data.minio_credentials.created_at
+            },
+            info="MinIO credentials created successfully"
+        )
+
+    except Exception as e:
+        app.print(f"Error creating MinIO credentials: {e}", "ERROR")
+        return Result.default_internal_error(info=f"Error: {str(e)}")
     return Result.json(data=spp_list)

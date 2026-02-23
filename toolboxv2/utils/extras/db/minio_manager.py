@@ -29,19 +29,23 @@ except ImportError:
 # Logger setup
 _logger: Optional[logging.Logger] = None
 
-
-def get_logger() -> logging.Logger:
-    global _logger
-    if _logger is None:
-        _logger = logging.getLogger("minio_manager")
-        if not _logger.handlers:
-            handler = logging.StreamHandler()
-            handler.setFormatter(logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            ))
-            _logger.addHandler(handler)
-            _logger.setLevel(logging.INFO)
-    return _logger
+try:
+    from toolboxv2.utils.system.tb_logger import get_logger
+    _logger = get_logger()
+except ImportError:
+    print("Default minio logging")
+    def get_logger() -> logging.Logger:
+        global _logger
+        if _logger is None:
+            _logger = logging.getLogger("minio_manager")
+            if not _logger.handlers:
+                handler = logging.StreamHandler()
+                handler.setFormatter(logging.Formatter(
+                    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+                ))
+                _logger.addHandler(handler)
+                _logger.setLevel(logging.INFO)
+        return _logger
 
 
 class MinIOMode(Enum):

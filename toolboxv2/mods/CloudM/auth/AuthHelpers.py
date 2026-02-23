@@ -127,8 +127,8 @@ def get_user_by_name(app: App, username: str, uid: str = '*') -> Result:
 
     # Try CloudM.Auth first (modern path)
     try:
-        from .auth.user_store import get_user_by_name as auth_get_user
-        from .auth.user_store import get_user_by_username
+        from .user_store import get_user_by_name as auth_get_user
+        from .user_store import get_user_by_username
 
         user_data = get_user_by_username(app, username)
         if user_data:

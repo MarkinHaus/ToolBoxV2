@@ -324,6 +324,48 @@ const Api = {
     },
 
     /**
+     * POST buffered client logs to the server.
+     * Called internally by RemoteBuffer._flush().
+     * Can also be called manually: Api.sendClientLogs([...entries])
+     *
+     * @param {Array<object>} logs - Array of log/audit entries
+     * @returns {Promise<{ingested: number}>}
+     */
+    sendClientLogs: async (logs) => {
+        if (!logs || !logs.length) return { ingested: 0 };
+
+        let baseUrl;
+        if (env.isTauri()) {
+            baseUrl = env.getWorkerHttpUrl() || 'http://localhost:5000';
+        } else {
+            baseUrl = (config.get('baseApiUrl') || '').replace(/\/api\/?$/, '');
+        }
+
+        const url = `${baseUrl}/api/client-logs`;
+
+        try {
+            const headers = await Api._getRequestHeadersAsync(true);
+            const response = await fetch(url, {
+                method: 'POST',
+                headers,
+                credentials: 'include',
+                body: JSON.stringify({ logs }),
+                keepalive: true,
+            });
+
+            if (!response.ok) {
+                // Silent fail — log shipping must never break the app
+                return { ingested: 0, status: response.status };
+            }
+            return await response.json();
+        } catch {
+            // Network down — entries were already removed from queue,
+            // accept the loss (or implement retry in RemoteBuffer if needed)
+            return { ingested: 0, error: 'network' };
+        }
+    },
+
+    /**
      * Fetches HTML content for a given path.
      * @param {string} path - The path to the HTML file (e.g., /web/pages/home.html).
      * @returns {Promise<string>} - HTML content or error string.

@@ -12,10 +12,8 @@ import json
 from dataclasses import asdict
 
 from toolboxv2 import App, RequestData, Result, get_app
-from toolboxv2.mods.CloudM.auth.AuthHelpers import db_helper_save_user
-from toolboxv2.mods.CloudM.auth.AuthHelpers import (
-    get_magic_link_email as request_magic_link_backend,
-)
+from toolboxv2.mods.CloudM.auth.user_store import _load_user, _save_user
+from toolboxv2.mods.CloudM.auth.api_magic_link import request_magic_link
 
 from .UserAccountManager import get_current_user_from_request
 from .UserInstances import get_user_instance as get_user_instance_internal
@@ -156,7 +154,7 @@ async def get_user_dashboard_main_page(app: App, request: RequestData):
     white-space: nowrap;
     flex-shrink: 0;
     transition: all var(--duration-fast) var(--ease-default);
-    width: max-content; !important;
+    width: max-content !important;
 }
 
 .tab-btn:hover {
@@ -1186,7 +1184,7 @@ input:checked + .toggle-slider::before {
     </main>
 </div>
 
-<script type="module">
+<script type="module" unSave="ture">
 if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     console.error('CRITICAL: TB (tbjs) not loaded.');
     document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--color-error);">Fehler: Frontend-Bibliothek konnte nicht geladen werden.</div>';
@@ -2363,13 +2361,14 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                     '<div class="setting-description">Level ' + userLevel + '</div></div></div>' +
             '</div></div>';
 
-        html += '<div class="dashboard-card">' +
-            '<h3><span class="material-symbols-outlined">key</span>Sicherheit</h3>' +
-            '<div class="quick-actions">' +
-                '<button class="tb-btn tb-btn-secondary" onclick="requestMagicLink()">' +
-                    '<span class="material-symbols-outlined">link</span>Magic Link anfordern</button>' +
-                '<button class="tb-btn tb-btn-secondary" onclick="openClerkProfile()">' +
-                    '<span class="material-symbols-outlined">security</span>Sicherheitseinstellungen</button>' +
+        html += '<div class="dashboard-card" id="security-card">' +
+            '<h3><span class="material-symbols-outlined">security</span>Sicherheit & Anbindung</h3>' +
+            '<p class="text-sm text-muted mb-4">Verwalten Sie Ihre Anmeldemethoden und MinIO-Zugangsdaten.</p>' +
+            '<div id="security-content">' +
+                '<div class="loading-state">' +
+                    '<div class="spinner"></div>' +
+                    '<span>Lade Sicherheitsdaten...</span>' +
+                '</div>' +
             '</div></div>';
 
         html += '<div class="dashboard-card">' +
@@ -2399,7 +2398,235 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                 '<span class="material-symbols-outlined">logout</span>Abmelden</button></div>';
 
         content.innerHTML = html;
+
+        // Load Security Data after rendering
+        loadSecurityData();
     }
+
+    window.loadSecurityData = async function() {
+        var securityContent = document.getElementById('security-content');
+        if (!securityContent) return;
+
+        try {
+            var res = await TB.api.request('CloudM.UserDashboard', 'get_security_data', null, 'GET');
+            if (res.error === TB.ToolBoxError.none) {
+                renderSecurityData(res.get(), securityContent);
+            } else {
+                securityContent.innerHTML = '<p class="text-error">Fehler beim Laden: ' + TB.utils.escapeHtml(res.info.help_text) + '</p>';
+            }
+        } catch (e) {
+            securityContent.innerHTML = '<p class="text-error">Netzwerkfehler.</p>';
+            console.error(e);
+        }
+    };
+
+    window.renderSecurityData = function(data, content) {
+        if (!data) {
+            content.innerHTML = '<p class="text-muted">Keine Sicherheitsdaten verfügbar.</p>';
+            return;
+        }
+
+        var html = '';
+
+        // MinIO Credentials Section
+        html += '<div class="settings-section">' +
+            '<h4><span class="material-symbols-outlined">storage</span>MinIO Speicherzugang</h4>';
+
+        if (data.minio_enabled) {
+            var maskedKey = data.minio_access_key ? data.minio_access_key.substring(0, 8) + '***' : 'N/A';
+            html += '<div class="setting-item">' +
+                '<div class="setting-info">' +
+                    '<div class="setting-label">Zugang aktiv</div>' +
+                    '<div class="setting-description">Access Key: ' + TB.utils.escapeHtml(maskedKey) + '<br>' +
+                    'Erstellt: ' + new Date(data.minio_created_at * 1000).toLocaleString() + '</div>' +
+                '</div>' +
+                '<div class="quick-actions">' +
+                    '<button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="showMinIOCreds()">' +
+                        '<span class="material-symbols-outlined">visibility</span>Anzeigen</button>' +
+                    '<button class="tb-btn tb-btn-warning tb-btn-sm" onclick="rotateMinIOCreds()">' +
+                        '<span class="material-symbols-outlined">sync</span>Rotieren</button>' +
+                '</div>' +
+            '</div>';
+        } else {
+            html += '<div class="setting-item">' +
+                '<div class="setting-info">' +
+                    '<div class="setting-label">Kein Zugang</div>' +
+                    '<div class="setting-description">Sie haben noch keinen MinIO-Speicherzugang.</div>' +
+                '</div>' +
+                '<button class="tb-btn tb-btn-success tb-btn-sm" onclick="createMinIOCreds()">' +
+                    '<span class="material-symbols-outlined">add</span>Erstellen</button>' +
+            '</div>';
+        }
+        html += '</div>';
+
+        // OAuth Providers Section
+        html += '<div class="settings-section">' +
+            '<h4><span class="material-symbols-outlined">link</span>Verknüpfte Konten</h4>';
+
+        if (data.oauth_providers && data.oauth_providers.length > 0) {
+            data.oauth_providers.forEach(function(provider) {
+                var icon = provider === 'discord' ? 'gamepad' : (provider === 'google' ? 'login' : 'link');
+                html += '<div class="setting-item">' +
+                    '<div class="setting-info">' +
+                        '<div class="setting-label">' + TB.utils.escapeHtml(provider.toUpperCase()) + '</div>' +
+                        '<div class="setting-description">Verknüpft</div>' +
+                    '</div>' +
+                    '<button class="tb-btn tb-btn-danger tb-btn-sm" onclick="unlinkOAuth(\'' + TB.utils.escapeHtml(provider) + '\')">' +
+                        '<span class="material-symbols-outlined">link_off</span>Entfernen</button>' +
+                    '</div>';
+            });
+        } else {
+            html += '<p class="text-muted text-sm">Keine verknüpften Konten.</p>';
+        }
+
+        html += '<div class="quick-actions mt-4">' +
+            '<button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="linkOAuth(\'discord\')">' +
+                '<span class="material-symbols-outlined">add</span>Discord hinzufügen</button>' +
+            '<button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="linkOAuth(\'google\')">' +
+                '<span class="material-symbols-outlined">add</span>Google hinzufügen</button>' +
+        '</div></div>';
+
+        // Passkeys Section
+        html += '<div class="settings-section">' +
+            '<h4><span class="material-symbols-outlined">password_key</span>Passkeys</h4>';
+
+        if (data.passkeys && data.passkeys.length > 0) {
+            data.passkeys.forEach(function(passkey, index) {
+                html += '<div class="setting-item">' +
+                    '<div class="setting-info">' +
+                        '<div class="setting-label">' + TB.utils.escapeHtml(passkey.name || 'Passkey #' + (index + 1)) + '</div>' +
+                        '<div class="setting-description">Hinzugefügt: ' + new Date(passkey.created_at * 1000).toLocaleString() + '</div>' +
+                    '</div>' +
+                    '<button class="tb-btn tb-btn-danger tb-btn-sm" onclick="deletePasskey(\'' + TB.utils.escapeHtml(passkey.credential_id) + '\')">' +
+                        '<span class="material-symbols-outlined">delete</span>Entfernen</button>' +
+                    '</div>';
+            });
+        } else {
+            html += '<p class="text-muted text-sm">Keine Passkeys registriert.</p>';
+        }
+
+        html += '<button class="tb-btn tb-btn-secondary tb-btn-sm mt-4" onclick="registerPasskey()">' +
+            '<span class="material-symbols-outlined">add</span>Passkey hinzufügen</button>' +
+        '</div>';
+
+        content.innerHTML = html;
+    };
+
+    window.showMinIOCreds = async function() {
+        if (!confirm('Möchten Sie Ihre MinIO-Zugangsdaten anzeigen? Diese sollten nicht geteilt werden.')) return;
+
+        TB.ui.Loader.show('Lade Zugangsdaten...');
+        try {
+            var res = await TB.api.request('CloudM.UserDashboard', 'get_minio_credentials', null, 'GET');
+            TB.ui.Loader.hide();
+            if (res.error === TB.ToolBoxError.none) {
+                var creds = res.get();
+                alert('Access Key: ' + creds.access_key + '\\nSecret Key: ' + creds.secret_key + '\\n\\nDiese Daten sollten nicht geteilt werden!');
+            } else {
+                TB.ui.Toast.showError('Fehler beim Laden: ' + TB.utils.escapeHtml(res.info.help_text));
+            }
+        } catch (e) {
+            TB.ui.Loader.hide();
+            TB.ui.Toast.showError('Netzwerkfehler');
+        }
+    };
+
+    window.rotateMinIOCreds = async function() {
+        if (!confirm('Möchten Sie Ihre MinIO-Zugangsdaten rotieren? Die alten_credentials werden ungültig.')) return;
+
+        TB.ui.Loader.show('Rotiere Zugangsdaten...');
+        try {
+            var res = await TB.api.request('CloudM.UserDashboard', 'rotate_minio_credentials', null, 'POST');
+            TB.ui.Loader.hide();
+            if (res.error === TB.ToolBoxError.none) {
+                TB.ui.Toast.showSuccess('Zugangsdaten erfolgreich rotiert!');
+                loadSecurityData();
+            } else {
+                TB.ui.Toast.showError('Fehler: ' + TB.utils.escapeHtml(res.info.help_text));
+            }
+        } catch (e) {
+            TB.ui.Loader.hide();
+            TB.ui.Toast.showError('Netzwerkfehler');
+        }
+    };
+
+    window.createMinIOCreds = async function() {
+        TB.ui.Loader.show('Erstelle Zugangsdaten...');
+        try {
+            var res = await TB.api.request('CloudM.UserDashboard', 'create_minio_credentials', null, 'POST');
+            TB.ui.Loader.hide();
+            if (res.error === TB.ToolBoxError.none) {
+                TB.ui.Toast.showSuccess('Zugangsdaten erstellt!');
+                loadSecurityData();
+            } else {
+                TB.ui.Toast.showError('Fehler: ' + TB.utils.escapeHtml(res.info.help_text));
+            }
+        } catch (e) {
+            TB.ui.Loader.hide();
+            TB.ui.Toast.showError('Netzwerkfehler');
+        }
+    };
+
+    window.linkOAuth = async function(provider) {
+        TB.ui.Toast.showInfo('Weiterleitung zu ' + provider + '...');
+        // OAuth Flow would be handled by the auth system
+        window.location.href = '/api/CloudM.Auth/oauth/' + provider;
+    };
+
+    window.unlinkOAuth = async function(provider) {
+        if (!confirm('Möchten Sie die Verknüpfung mit ' + provider + ' wirklich entfernen?')) return;
+
+        TB.ui.Loader.show('Entferne Verknüpfung...');
+        try {
+            var res = await TB.api.request('CloudM.UserDashboard', 'unlink_oauth', {provider: provider}, 'POST');
+            TB.ui.Loader.hide();
+            if (res.error === TB.ToolBoxError.none) {
+                TB.ui.Toast.showSuccess(provider + ' entfernt');
+                loadSecurityData();
+            } else {
+                TB.ui.Toast.showError('Fehler: ' + TB.utils.escapeHtml(res.info.help_text));
+            }
+        } catch (e) {
+            TB.ui.Loader.hide();
+            TB.ui.Toast.showError('Netzwerkfehler');
+        }
+    };
+
+    window.registerPasskey = async function() {
+        TB.ui.Toast.showInfo('Passkey-Registrierung wird gestartet...');
+        // Passkey registration would be handled by WebAuthn API
+        try {
+            var res = await TB.api.request('CloudM.UserDashboard', 'start_passkey_registration', null, 'POST');
+            if (res.error === TB.ToolBoxError.none) {
+                var options = res.get();
+                // WebAuthn registration would go here
+                TB.ui.Toast.showInfo('Passkey-Registrierung gestartet (Demo)');
+            } else {
+                TB.ui.Toast.showError('Fehler: ' + TB.utils.escapeHtml(res.info.help_text));
+            }
+        } catch (e) {
+            TB.ui.Toast.showError('Netzwerkfehler');
+        }
+    };
+
+    window.deletePasskey = async function(credentialId) {
+        if (!confirm('Möchten Sie diesen Passkey wirklich entfernen?')) return;
+
+        TB.ui.Loader.show('Entferne Passkey...');
+        try {
+            var res = await TB.api.request('CloudM.UserDashboard', 'delete_passkey', {credential_id: credentialId}, 'POST');
+            TB.ui.Loader.hide();
+            if (res.error === TB.ToolBoxError.none) {
+                TB.ui.Toast.showSuccess('Passkey entfernt');
+                loadSecurityData();
+            } else {
+                TB.ui.Toast.showError('Fehler: ' + TB.utils.escapeHtml(res.info.help_text));
+            }
+        } catch (e) {
+            TB.ui.Loader.hide();
+            TB.ui.Toast.showError('Netzwerkfehler');
+        }
+    };
 
     window.openClerkProfile = function() {
         if (TB.user && TB.user.getClerkInstance) {
@@ -2696,7 +2923,7 @@ async def request_my_magic_link(app: App, request: RequestData):
     if not username:
         return Result.default_user_error(info="Benutzername nicht gefunden")
 
-    magic_link_result = await request_magic_link_backend(app, username=username)
+    magic_link_result = await request_magic_link(app, username=username)
 
     if not magic_link_result.as_result().is_error():
         email = getattr(current_user, 'email', 'Ihre E-Mail')
@@ -2721,7 +2948,7 @@ async def update_my_settings(app: App, request: RequestData, data: dict):
 
     current_user.settings.update(settings_payload)
 
-    save_result = db_helper_save_user(app, asdict(current_user))
+    save_result = await _save_user(app, current_user)
     if save_result.is_error():
         return Result.default_internal_error(f"Fehler beim Speichern: {save_result.info}")
 
@@ -2982,3 +3209,311 @@ async def delete_user_file(app: App, request: RequestData, data: dict = None, pa
         return Result.default_internal_error("Speichersystem nicht verfügbar")
     except Exception as e:
         return Result.default_internal_error(f"Fehler beim Löschen: {e}")
+
+
+# =================== Security API Endpoints ===================
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
+async def get_security_data(app: App, request: RequestData):
+    """Gibt Sicherheitsdaten für den aktuellen User zurück"""
+    current_user = await get_current_user_from_request(app, request)
+    if not current_user:
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
+
+    user_id = getattr(current_user, 'user_id', None) or getattr(current_user, 'uid', None) or getattr(current_user, 'clerk_user_id', None)
+    if not user_id:
+        return Result.default_user_error(info="Benutzer-ID nicht gefunden")
+
+    try:
+        from toolboxv2.mods.CloudM.auth.user_store import _load_user
+
+        user_data = await _load_user(app, user_id)
+        if not user_data:
+            return Result.default_user_error(info="Benutzer nicht gefunden")
+
+        # MinIO Status
+        minio_creds = user_data.minio_credentials
+        has_minio = bool(minio_creds and minio_creds.access_key and minio_creds.enabled)
+
+        # OAuth Providers
+        oauth_providers = list(user_data.oauth_providers.keys()) if user_data.oauth_providers else []
+
+        # Passkeys
+        passkeys = user_data.passkeys if user_data.passkeys else []
+
+        return Result.json(data={
+            "minio_enabled": has_minio,
+            "minio_access_key": minio_creds.access_key if has_minio else None,
+            "minio_created_at": minio_creds.created_at if has_minio else None,
+            "minio_last_rotated": minio_creds.last_rotated if has_minio else None,
+            "oauth_providers": oauth_providers,
+            "passkeys": passkeys
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return Result.default_internal_error(f"Fehler: {str(e)}")
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
+async def get_minio_credentials(app: App, request: RequestData):
+    """Gibt die MinIO Credentials zurück (entschlüsselt)"""
+    current_user = await get_current_user_from_request(app, request)
+    if not current_user:
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
+
+    user_id = getattr(current_user, 'uid', None) or getattr(current_user, 'clerk_user_id', None)
+    if not user_id:
+        return Result.default_user_error(info="Benutzer-ID nicht gefunden")
+
+    try:
+        from toolboxv2 import TBEF
+        from toolboxv2.utils.security.cryp import Code
+        from toolboxv2.mods.CloudM.auth.models import UserData
+        import json
+
+        user_result = await app.a_run_any(TBEF.DB.GET, query=f"AUTH_USER::{user_id}", get_results=True)
+
+        if user_result.is_error() or not user_result.get():
+            return Result.default_user_error(info="Benutzer nicht gefunden")
+
+        raw_data = user_result.get()
+        if isinstance(raw_data, list):
+            raw_data = raw_data[0]
+        if isinstance(raw_data, bytes):
+            raw_data = raw_data.decode()
+
+        user_dict = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+        user_data = UserData.from_dict(user_dict)
+
+        creds = user_data.minio_credentials
+        if not creds or not creds.access_key or not creds.secret_key:
+            return Result.default_user_error(info="Keine MinIO Credentials gefunden")
+
+        # Entschlüssele Secret Key
+        key = Code.DK()()
+        if isinstance(key, str):
+            key = key.encode()
+
+        encrypted = bytes.fromhex(creds.secret_key)
+        decrypted = Code.decrypt_symmetric(encrypted, key)
+        secret_key = decrypted.decode()
+
+        return Result.json(data={
+            "access_key": creds.access_key,
+            "secret_key": secret_key
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return Result.default_internal_error(f"Fehler: {str(e)}")
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
+async def rotate_minio_credentials(app: App, request: RequestData):
+    """Rotiert die MinIO Credentials des aktuellen Users"""
+    current_user = await get_current_user_from_request(app, request)
+    if not current_user:
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
+
+    user_id = getattr(current_user, 'user_id', None) or getattr(current_user, 'uid', None) or getattr(current_user, 'clerk_user_id', None)
+    if not user_id:
+        return Result.default_user_error(info="Benutzer-ID nicht gefunden")
+
+    try:
+        from toolboxv2.mods.CloudM.auth.user_store import _load_user, _save_user
+        from toolboxv2.utils.security.cryp import Code
+        import secrets
+        import time
+
+        user_data = await _load_user(app, user_id)
+        if not user_data:
+            return Result.default_user_error(info="Benutzer nicht gefunden")
+
+        creds = user_data.minio_credentials
+        if not creds or not creds.access_key:
+            return Result.default_user_error(info="Keine MinIO Credentials zum Rotieren gefunden")
+
+        # Neuen Secret Key generieren
+        new_secret = secrets.token_urlsafe(32)
+
+        # Verschlüssele neuen Secret Key
+        key = Code.DK()()
+        if isinstance(key, str):
+            key = key.encode()
+
+        encrypted_secret = Code.encrypt_symmetric(new_secret.encode(), key).hex()
+        creds.secret_key = encrypted_secret
+        creds.last_rotated = time.time()
+
+        # Speichern
+        await _save_user(app, user_data)
+
+        return Result.ok(info="MinIO Credentials erfolgreich rotiert")
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return Result.default_internal_error(f"Fehler: {str(e)}")
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
+async def create_minio_credentials(app: App, request: RequestData):
+    """Erstellt MinIO Credentials für den aktuellen User"""
+    current_user = await get_current_user_from_request(app, request)
+    if not current_user:
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
+
+    user_id = getattr(current_user, 'user_id', None) or getattr(current_user, 'uid', None) or getattr(current_user, 'clerk_user_id', None)
+    if not user_id:
+        return Result.default_user_error(info="Benutzer-ID nicht gefunden")
+
+    try:
+        from toolboxv2.mods.CloudM.auth.user_store import _load_user, _save_user
+        from toolboxv2.utils.security.cryp import Code
+        from toolboxv2.mods.CloudM.auth.models import MinIOCredentials
+        import secrets
+        import hashlib
+        import time
+
+        user_data = await _load_user(app, user_id)
+        if not user_data:
+            return Result.default_user_error(info="Benutzer nicht gefunden")
+
+        # Prüfe ob schon vorhanden
+        if user_data.minio_credentials and user_data.minio_credentials.access_key:
+            return Result.default_user_error(info="MinIO Credentials existieren bereits")
+
+        # Generiere Credentials
+        access_key = f"tb_{hashlib.sha256(user_id.encode()).hexdigest()[:8]}_{secrets.token_hex(2)}"
+        secret_key = secrets.token_urlsafe(32)
+
+        # Verschlüssele Secret Key
+        key = Code.DK()()
+        if isinstance(key, str):
+            key = key.encode()
+
+        encrypted_secret = Code.encrypt_symmetric(secret_key.encode(), key).hex()
+
+        # Speichern
+        user_data.minio_credentials = MinIOCredentials(
+            access_key=access_key,
+            secret_key=encrypted_secret,
+            created_at=time.time(),
+            last_rotated=time.time(),
+            enabled=True
+        )
+
+        await _save_user(app, user_data)
+
+        return Result.ok(info="MinIO Credentials erfolgreich erstellt")
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return Result.default_internal_error(f"Fehler: {str(e)}")
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
+async def unlink_oauth(app: App, request: RequestData, data: dict = None, **kwargs):
+    """Entfernt OAuth Provider Verknüpfung"""
+    current_user = await get_current_user_from_request(app, request)
+    if not current_user:
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
+
+    if data is None:
+        data = kwargs
+
+    provider = data.get("provider")
+    if not provider:
+        return Result.default_user_error(info="Provider erforderlich")
+
+    user_id = getattr(current_user, 'user_id', None) or getattr(current_user, 'uid', None) or getattr(current_user, 'clerk_user_id', None)
+    if not user_id:
+        return Result.default_user_error(info="Benutzer-ID nicht gefunden")
+
+    try:
+        from toolboxv2.mods.CloudM.auth.user_store import _load_user, _save_user
+        from toolboxv2.mods.CloudM.auth.db_helpers import _db_delete
+
+        user_data = await _load_user(app, user_id)
+        if not user_data:
+            return Result.default_user_error(info="Benutzer nicht gefunden")
+
+        # Prüfe ob Provider verknüpft
+        if provider not in user_data.oauth_providers:
+            return Result.default_user_error(info=f"{provider} nicht verknüpft")
+
+        # Hole provider_id vor dem Löschen
+        pdata = user_data.oauth_providers[provider]
+        pid = pdata.get("provider_id", "")
+
+        # Entfernen
+        del user_data.oauth_providers[provider]
+
+        await _save_user(app, user_data)
+
+        # Provider-Index löschen
+        if pid:
+            await _db_delete(app, f"AUTH_USER_PROVIDER::{provider}::{pid}")
+
+        return Result.ok(info=f"{provider} erfolgreich entfernt")
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return Result.default_internal_error(f"Fehler: {str(e)}")
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
+async def start_passkey_registration(app: App, request: RequestData):
+    """Startet Passkey Registrierung (Placeholder)"""
+    # Dies würde WebAuthnintegration erfordern
+    return Result.default_internal_error("Passkey-Registrierung noch nicht implementiert")
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
+async def delete_passkey(app: App, request: RequestData, data: dict = None, **kwargs):
+    """Löscht einen Passkey"""
+    current_user = await get_current_user_from_request(app, request)
+    if not current_user:
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
+
+    if data is None:
+        data = kwargs
+
+    credential_id = data.get("credential_id")
+    if not credential_id:
+        return Result.default_user_error(info="Credential ID erforderlich")
+
+    user_id = getattr(current_user, 'user_id', None) or getattr(current_user, 'uid', None) or getattr(current_user, 'clerk_user_id', None)
+    if not user_id:
+        return Result.default_user_error(info="Benutzer-ID nicht gefunden")
+
+    try:
+        from toolboxv2.mods.CloudM.auth.user_store import _load_user, _save_user
+        from toolboxv2.mods.CloudM.auth.db_helpers import _db_delete
+
+        user_data = await _load_user(app, user_id)
+        if not user_data:
+            return Result.default_user_error(info="Benutzer nicht gefunden")
+
+        # Passkey finden und entfernen
+        passkeys = user_data.passkeys or []
+        passkeys = [pk for pk in passkeys if pk.get("credential_id") != credential_id]
+
+        user_data.passkeys = passkeys
+
+        await _save_user(app, user_data)
+
+        # Passkey-Index löschen
+        await _db_delete(app, f"AUTH_USER_PROVIDER::passkey::{credential_id}")
+
+        return Result.ok(info="Passkey entfernt")
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return Result.default_internal_error(f"Fehler: {str(e)}")

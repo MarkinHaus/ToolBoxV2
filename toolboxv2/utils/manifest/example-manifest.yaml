@@ -210,6 +210,41 @@ utilities:
   enabled: []
 
 # =============================================================================
+# Observability (Log Analysis + Dashboard)
+# =============================================================================
+observability:
+  # Sync logs to MinIO (backup / long-term storage)
+  sync:
+    enabled: false
+    target: minio            # minio = use database.minio | remote_minio = separate server
+    # remote_endpoint: "${MINIO_REMOTE_ENDPOINT:}"
+    # remote_access_key: "${MINIO_REMOTE_ACCESS_KEY:}"
+    # remote_secret_key: "${MINIO_REMOTE_SECRET_KEY:}"
+    remote_bucket: system-audit-logs
+    interval_seconds: 300    # 0 = manual only
+
+  # Live dashboard (OpenObserve)
+  dashboard:
+    enabled: false
+    endpoint: "${OPENOBSERVE_ENDPOINT:http://localhost:5080}"
+    user: "${OPENOBSERVE_USER:root@example.com}"
+    password: "${OPENOBSERVE_PASSWORD:}"
+    org: default
+    system_stream: system_logs
+    audit_stream: audit_logs
+    flush_interval: 5.0      # seconds between batch pushes
+
+  # Automatic log cleanup
+  cleanup:
+    enabled: false
+    max_age_days: 30
+    max_size_mb: 500
+    keep_levels:
+      - ERROR
+      - WARNING
+    keep_audit: true
+
+# =============================================================================
 # Environment-Specific Overrides
 # =============================================================================
 environments:

@@ -371,6 +371,63 @@ class FeaturesConfig(BaseModel):
         )
     )
 
+# =============================================================================
+# Observability Configuration
+# =============================================================================
+
+
+class LogCleanupConfig(BaseModel):
+    """Automatic log cleanup rules."""
+    enabled: bool = Field(default=False, description="Enable automatic cleanup")
+    max_age_days: int = Field(default=30, description="Delete logs older than N days")
+    max_size_mb: int = Field(default=500, description="Max total log size before cleanup")
+    keep_levels: List[str] = Field(
+        default_factory=lambda: ["ERROR", "WARNING"],
+        description="Always keep these levels (even past max_age)"
+    )
+    keep_audit: bool = Field(default=True, description="Never delete audit logs automatically")
+
+
+class ObservabilitySyncConfig(BaseModel):
+    """Log sync target configuration."""
+    enabled: bool = Field(default=False)
+    target: Literal["minio", "remote_minio"] = Field(
+        default="minio",
+        description="minio = local MinIO from database.minio, remote_minio = separate endpoint"
+    )
+    remote_endpoint: str = Field(default="${MINIO_REMOTE_ENDPOINT:}")
+    remote_access_key: str = Field(default="${MINIO_REMOTE_ACCESS_KEY:}")
+    remote_secret_key: str = Field(default="${MINIO_REMOTE_SECRET_KEY:}")
+    remote_bucket: str = Field(default="system-audit-logs")
+    remote_secure: bool = Field(default=False)
+    interval_seconds: int = Field(default=300, description="Auto-sync interval (0 = manual only)")
+
+
+class ObservabilityDashboardConfig(BaseModel):
+    """OpenObserve / dashboard connection."""
+    enabled: bool = Field(default=False)
+    endpoint: str = Field(default="${OPENOBSERVE_ENDPOINT:http://localhost:5080}")
+    user: str = Field(default="${OPENOBSERVE_USER:root@example.com}")
+    password: str = Field(default="${OPENOBSERVE_PASSWORD:}")
+    org: str = Field(default="${OPENOBSERVE_ORG:default}")
+    system_stream: str = Field(default="system_logs")
+    audit_stream: str = Field(default="audit_logs")
+    flush_interval: float = Field(default=5.0, description="Seconds between batch pushes")
+    verify_ssl: bool = Field(default=False)
+
+
+class ObservabilityConfig(BaseModel):
+    """
+    Observability configuration — log analysis, sync, and dashboard.
+
+    Controls:
+    - Live log streaming to OpenObserve dashboard
+    - Log sync to local/remote MinIO
+    - Automatic log cleanup
+    """
+    sync: ObservabilitySyncConfig = Field(default_factory=ObservabilitySyncConfig)
+    dashboard: ObservabilityDashboardConfig = Field(default_factory=ObservabilityDashboardConfig)
+    cleanup: LogCleanupConfig = Field(default_factory=LogCleanupConfig)
 
 # =============================================================================
 # ISAA Configuration (conditional - only when isaa is installed)
@@ -494,6 +551,7 @@ class TBManifest(BaseModel):
     registry: RegistryConfig = Field(default_factory=RegistryConfig)
     toolbox: ToolboxConfig = Field(default_factory=ToolboxConfig)
     utilities: UtilitiesConfig = Field(default_factory=UtilitiesConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
 
     # Feature system
     features: FeaturesConfig = Field(default_factory=FeaturesConfig)

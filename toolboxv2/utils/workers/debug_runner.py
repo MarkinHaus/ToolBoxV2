@@ -24,9 +24,10 @@ import uvicorn
 
 try:
     from a2wsgi import WSGIMiddleware
+    IS_A2WSGI = True
 except ImportError:
-    print("FEHLER: Bitte a2wsgi installieren: pip install a2wsgi uvicorn")
-    sys.exit(1)
+    IS_A2WSGI = False
+    WSGIMiddleware = None
 
 # ToolBoxV2 Imports (Passe die Pfade an, falls du das Skript verschiebst)
 from toolboxv2.utils.workers.config import load_config
@@ -135,6 +136,9 @@ class DebugASGIDispatcher:
 
 
 def run_debug_server(dist_path: str, port: int):
+    if not IS_A2WSGI:
+        print("FEHLER: Bitte a2wsgi installieren: pip install a2wsgi uvicorn")
+        return
     # 1. Setup Environment (Windows Event-Loop fix für ZMQ)
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())

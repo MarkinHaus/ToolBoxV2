@@ -1667,6 +1667,16 @@ class HTTPWorker:
         "/auth/magic/verify": "magic_link_verify",
     }
 
+    # Client-Log level mapping (browser string → Python level)
+    _CLIENT_LEVEL_MAP = {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARN": logging.WARNING,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "AUDIT": logging.INFO,  # audit entries go through INFO
+    }
+
     def __init__(
         self,
         worker_id: str,
@@ -1711,6 +1721,7 @@ class HTTPWorker:
             from ..system.getting_and_closing_app import get_app
             instance_id = f"{self.config.toolbox.instance_id}_{self.worker_id}"
             self._app = get_app(name=instance_id, from_="HTTPWorker")
+            self._audit_logger = self._app.audit_logger
             logger.info(f"ToolBoxV2 initialized: {instance_id}")
         except Exception as e:
             logger.error(f"ToolBoxV2 init failed: {e}")
@@ -1914,6 +1925,8 @@ class HTTPWorker:
                 status, headers, body = self._handle_health()
             elif request.path == "/metrics":
                 status, headers, body = self._handle_metrics()
+            elif request.path == "/api/client-logs":
+                status, headers, body = self._handle_client_logs(request)
             else:
                 status, headers, body = error_response("Not Found", 404, "NotFound")
 
@@ -2052,6 +2065,102 @@ class HTTPWorker:
             metrics["zmq"] = self._event_manager.get_metrics()
 
         return json_response(metrics)
+
+    def _handle_client_logs(self, request: ParsedRequest) -> Tuple:
+        """POST /api/client-logs — ingest browser logs into the server logging pipeline.
+
+        Accepts JSON body:
+            { "logs": [ { type, timestamp, level, source, message, url, ... }, ... ] }
+
+        Consent filtering happens client-side; this endpoint trusts the batch
+        and caps at 200 entries per request to prevent abuse.
+        """
+        if request.method != "POST":
+            return error_response("Method not allowed", 405, "MethodNotAllowed")
+
+        logs = (request.json_data or {}).get("logs")
+        if not logs or not isinstance(logs, list):
+            return json_response({"status": "ok", "ingested": 0})
+
+        client_ip = request.client_ip
+        session = request.session
+        session_id = session.session_id if session else ""
+        user_name = ""
+        if session and hasattr(session, "user_name"):
+            user_name = session.user_name or ""
+
+        ingested = 0
+        audit_db = getattr(self, "_audit_logger", None)
+
+        for entry in logs[:200]:
+            if not isinstance(entry, dict):
+                continue
+
+            entry_type = entry.get("type", "log")
+            level_str = entry.get("level", "INFO").upper()
+            py_level = self._CLIENT_LEVEL_MAP.get(level_str, logging.INFO)
+            message = entry.get("message", "")
+            client_ts = entry.get("timestamp", "")
+            page_url = entry.get("url", "")
+
+            if entry_type == "audit":
+                # Route audit entries through AuditLogger if available
+                action = entry.get("action", "CLIENT_EVENT")
+                resource = entry.get("resource", page_url)
+                status = entry.get("status", "SUCCESS")
+                details = entry.get("details")
+
+                if audit_db:
+                    audit_db.log_action(
+                        user_id=user_name or session_id or client_ip,
+                        action=action,
+                        resource=resource,
+                        status=status,
+                        details={
+                            **(details if isinstance(details, dict) else {}),
+                            "source": "browser",
+                            "client_ip": client_ip,
+                            "client_ts": client_ts,
+                        },
+                    )
+                else:
+                    # Fallback: log as structured INFO
+                    logger.info(
+                        "[CLIENT:AUDIT] %s %s %s",
+                        action, resource, status,
+                        extra={
+                            "source": "browser",
+                            "entry_type": "audit",
+                            "client_ip": client_ip,
+                            "session_id": session_id,
+                            "user_name": user_name,
+                            "action": action,
+                            "resource": resource,
+                            "audit_status": status,
+                            "details": details,
+                            "client_ts": client_ts,
+                        },
+                    )
+            else:
+                # Regular log entry
+                logger.log(
+                    py_level,
+                    "[CLIENT] %s",
+                    message,
+                    extra={
+                        "source": "browser",
+                        "entry_type": "log",
+                        "client_ip": client_ip,
+                        "session_id": session_id,
+                        "user_name": user_name,
+                        "page_url": page_url,
+                        "client_ts": client_ts,
+                    },
+                )
+
+            ingested += 1
+
+        return json_response({"status": "ok", "ingested": ingested})
 
     def run(self, host: str = None, port: int = None, do_run=True):
         """Run the HTTP worker."""

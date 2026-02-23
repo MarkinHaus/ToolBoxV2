@@ -1,5 +1,6 @@
 """Main module."""
 import asyncio
+import datetime
 import inspect
 import json
 import logging
@@ -17,10 +18,11 @@ from importlib import import_module, reload
 from inspect import signature
 from platform import node, system
 from types import ModuleType
-from typing import Any
+from typing import Any, Optional
 
 from dotenv import load_dotenv
 
+from .extras.db.mobile_db import create_mobile_db
 from .extras.mkdocs import add_to_app
 from ..utils.system.main_tool import get_version_from_pyproject
 from .extras.Style import Spinner, Style, stram_print
@@ -28,7 +30,7 @@ from .singelton_class import Singleton
 from .system.cache import FileCache, MemoryCache
 from .system.file_handler import FileHandler
 from .system.getting_and_closing_app import get_app
-from .system.tb_logger import get_logger, setup_logging, loggerNameOfToolboxv2
+from .system.tb_logger import get_logger, setup_logging, loggerNameOfToolboxv2, AuditLogger, set_log_db, LogSyncManager
 from .system.types import (
     ApiResult,
     AppArgs,
@@ -46,6 +48,7 @@ load_dotenv()
 class App(AppType, metaclass=Singleton):
 
     def __init__(self, prefix: str = "", args=AppArgs().default()):
+        self.log_sync = None
         if "test" not in prefix:
             self.logger_prefix = self.REFIX = prefix
             prefix = "main"
@@ -144,7 +147,29 @@ class App(AppType, metaclass=Singleton):
         with open(pid_file, "w", encoding="utf8") as f:
             f.write(app_pid)
 
+        # Initialize the log database (encrypted, offline-first)
+        self.log_db = create_mobile_db(
+            path=f"{self.data_dir}/system_logs.db",
+            max_size_mb=200,
+        )
+        # Register globally so setup_logging() picks it up automatically
+        set_log_db(self.log_db, node_id=node())
+
+        # Now call set_logger (same signature as before)
         logger_info_str, self.logger, self.logging_filename = self.set_logger(args.debug, self.logger_prefix)
+
+        # Audit logger for business/compliance events
+        self.audit_logger = AuditLogger(self.logger, db=self.log_db, node_id=node())
+        # ── Observability (from manifest) ─────────────────────────────
+        self._obs_adapter = None
+        self._obs_sync_manager = None
+        self.manifest = None
+        try:
+            self._setup_observability()
+        except Exception as e:
+            self.logger.debug(f"Observability setup skipped: {e}")
+
+        self.logger.info("Logger initialized", extra={"event": "SYSTEM_STARTUP"})
 
         self.print("Logger " + logger_info_str)
         self.print("================================")
@@ -222,6 +247,157 @@ class App(AppType, metaclass=Singleton):
         self.mkdocs = add_to_app(self)
         # self._start_event_loop()
 
+    def _setup_observability(self):
+        """Configure observability from manifest (dashboard + sync + cleanup)."""
+        from toolboxv2.utils.manifest.loader import ManifestLoader
+        from toolboxv2.utils.system.tb_logger import enable_live_observability, get_logger
+
+        loader = ManifestLoader(self.start_dir)
+        if not loader.exists():
+            return
+
+        try:
+            manifest = loader.load()
+            self.manifest = manifest
+        except Exception:
+            return
+
+        obs = manifest.observability
+
+        # ── Live Dashboard ──
+        if obs.dashboard.enabled and obs.dashboard.password:
+            try:
+                from toolboxv2.utils.system.observability_adapter import OpenObserveAdapter
+
+                self._obs_adapter = OpenObserveAdapter(
+                    endpoint=obs.dashboard.endpoint,
+                    org=obs.dashboard.org,
+                    credentials=(obs.dashboard.user, obs.dashboard.password),
+                    stream=obs.dashboard.system_stream,
+                    audit_stream=obs.dashboard.audit_stream,
+                    verify_ssl=obs.dashboard.verify_ssl,
+                )
+
+                if self._obs_adapter.health_check():
+                    enable_live_observability(
+                        self._obs_adapter,
+                        system_stream=obs.dashboard.system_stream,
+                        audit_stream=obs.dashboard.audit_stream,
+                        flush_interval=obs.dashboard.flush_interval,
+                    )
+                    self.logger.info("Live observability connected",
+                                     extra={"endpoint": obs.dashboard.endpoint})
+                else:
+                    self.logger.debug(f"OpenObserve not reachable at {obs.dashboard.endpoint}")
+                    self._obs_adapter = None
+            except Exception as e:
+                self.logger.debug(f"Dashboard setup failed: {e}")
+
+        # ── MinIO Log Sync ──
+        if obs.sync.enabled:
+            try:
+                from toolboxv2.utils.system.tb_logger import LogSyncManager
+                from minio import Minio
+
+                if obs.sync.target == "minio":
+                    mc = Minio(
+                        manifest.database.minio.endpoint,
+                        access_key=manifest.database.minio.access_key,
+                        secret_key=manifest.database.minio.secret_key,
+                        secure=manifest.database.minio.use_ssl,
+                    )
+                else:
+                    mc = Minio(
+                        obs.sync.remote_endpoint,
+                        access_key=obs.sync.remote_access_key,
+                        secret_key=obs.sync.remote_secret_key,
+                        secure=obs.sync.remote_secure,
+                    )
+
+                self._obs_sync_manager = LogSyncManager(
+                    db=self.log_db,
+                    minio_client=mc,
+                    bucket=obs.sync.remote_bucket,
+                    app_id=self.id,
+                    node_id=node(),
+                )
+                self._obs_sync_manager.ensure_bucket()
+
+                # Attach dashboard adapter to sync manager too (for historical catch-up)
+                if self._obs_adapter:
+                    self._obs_sync_manager.set_observability_adapter(self._obs_adapter)
+
+                if obs.sync.interval_seconds > 0:
+                    self._obs_sync_manager.start_auto_sync(
+                        interval_seconds=obs.sync.interval_seconds
+                    )
+                    self.logger.info("Log auto-sync started",
+                                     extra={"interval": obs.sync.interval_seconds})
+
+                self.log_sync = self._obs_sync_manager
+            except ImportError:
+                self.logger.debug("minio package not installed, sync disabled")
+            except Exception as e:
+                self.logger.debug(f"Sync setup failed: {e}")
+
+        # ── Log Cleanup ──
+        if obs.cleanup.enabled:
+            try:
+                self._schedule_log_cleanup(obs.cleanup)
+            except Exception as e:
+                self.logger.debug(f"Cleanup setup failed: {e}")
+
+    def _schedule_log_cleanup(self, cleanup_config):
+        """Schedule automatic log cleanup based on manifest config."""
+        import threading
+
+        def _cleanup():
+            import time as _time
+            date_cutoff = (
+                datetime.datetime.now() - datetime.timedelta(days=cleanup_config.max_age_days)
+            ).strftime("%Y-%m-%d")
+
+            prefix = "logs/"
+            blobs = self.log_db.list(prefix=prefix)
+
+            for meta in blobs:
+                parts = meta.path.split("/")
+                if len(parts) < 4:
+                    continue
+
+                fname = parts[-1]
+                date_folder = parts[-2]
+
+                # Skip if newer than cutoff
+                if date_folder >= date_cutoff:
+                    continue
+
+                # Skip audit if keep_audit
+                if cleanup_config.keep_audit and fname.startswith("audit_"):
+                    continue
+
+                # Skip protected levels
+                if cleanup_config.keep_levels:
+                    try:
+                        data = self.log_db.get(meta.path)
+                        if data:
+                            first_line = data.decode("utf-8", errors="replace").split("\n")[0]
+                            import json as _json
+                            entry = _json.loads(first_line)
+                            if entry.get("level") in cleanup_config.keep_levels:
+                                continue
+                    except Exception:
+                        pass
+
+                try:
+                    self.log_db.delete(meta.path)
+                except Exception:
+                    pass
+
+        # Run cleanup once on startup (background thread)
+        t = threading.Thread(target=_cleanup, daemon=True, name="LogCleanup")
+        t.start()
+
     def _start_event_loop(self):
         """Starts the asyncio event loop in a separate thread."""
         if self.loop is None:
@@ -259,46 +435,115 @@ class App(AppType, metaclass=Singleton):
         """proxi attr"""
 
     def set_logger(self, debug=False, logger_prefix=None):
-        # remove existing logger
+        # Clear existing handlers
         try:
             logging.getLogger(loggerNameOfToolboxv2).handlers.clear()
-        except Exception as e:
-            print("No logger to clear or potetial doubel logging")
+        except Exception:
+            print("No logger to clear or potential double logging")
+
         if debug is None and os.getenv("TOOLBOX_LOGGING_LEVEL") is not None:
             debug = True
         if logger_prefix is None:
             logger_prefix = self.logger_prefix
+
         if "test" in self.logger_prefix and not debug:
-            logger, logging_filename = setup_logging(logging.NOTSET, name="toolbox-test", interminal=True,
-                                                     file_level=logging.NOTSET, app_name=logger_prefix)
+            logger, logging_filename = setup_logging(
+                logging.NOTSET,
+                name="toolbox-test",
+                interminal=True,
+                file_level=logging.NOTSET,
+                app_name=logger_prefix,
+            )
             logger_info_str = "in Test Mode"
+
         elif "live" in self.logger_prefix and not debug:
-            logger, logging_filename = setup_logging(logging.DEBUG, name="toolbox-live", interminal=False,
-                                                     file_level=logging.WARNING, app_name=logger_prefix)
+            logger, logging_filename = setup_logging(
+                logging.DEBUG,
+                name="toolbox-live",
+                interminal=False,
+                file_level=logging.WARNING,
+                app_name=logger_prefix,
+            )
             logger_info_str = "in Live Mode"
-            # setup_logging(logging.WARNING, name="toolbox-live", is_online=True
-            #              , online_level=logging.WARNING).info("Logger initialized")
+
         elif "debug" in self.logger_prefix or self.logger_prefix.endswith("D"):
             self.logger_prefix = self.logger_prefix.replace("-debug", '').replace("debug", '')
-            logger, logging_filename = setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,
-                                                     file_level=logging.WARNING, app_name=logger_prefix)
+            logger, logging_filename = setup_logging(
+                logging.DEBUG,
+                name="toolbox-debug",
+                interminal=True,
+                file_level=logging.WARNING,
+                app_name=logger_prefix,
+            )
             logger_info_str = "in debug Mode"
             self.debug = True
+
         elif debug:
             if hasattr(logging, "getLevelNamesMapping"):
-                level = logging.getLevelNamesMapping().get(os.getenv("TOOLBOX_LOGGING_LEVEL", "WARNING"))
+                level = logging.getLevelNamesMapping().get(
+                    os.getenv("TOOLBOX_LOGGING_LEVEL", "WARNING")
+                )
             else:
                 level = logging.WARNING
             logger, logging_filename = setup_logging(
-                level=level, name=f"toolbox-{self.logger_prefix}-debug",
+                level=level,
+                name=f"toolbox-{self.logger_prefix}-debug",
                 interminal=True,
-                file_level=level, app_name=logger_prefix)
+                file_level=level,
+                app_name=logger_prefix,
+            )
             logger_info_str = "in args debug Mode"
+
         else:
-            logger, logging_filename = setup_logging(logging.ERROR, name=f"toolbox-{self.logger_prefix}", app_name=logger_prefix)
+            logger, logging_filename = setup_logging(
+                logging.ERROR,
+                name=f"toolbox-{self.logger_prefix}",
+                app_name=logger_prefix,
+            )
             logger_info_str = "in Default"
 
         return logger_info_str, logger, logging_filename
+
+    def setup_log_sync(self, minio_client, auto_interval: Optional[float] = None):
+        """
+        Initialize log sync to the RYZEN root server.
+
+        Args:
+            minio_client:   minio.Minio connected to the root server
+            auto_interval:  If set, start auto-sync every N seconds.
+                            None = manual sync only.
+
+        Usage:
+            # Manual sync
+            app.setup_log_sync(minio_client)
+            app.log_sync.sync_all()                                    # everything
+            app.log_sync.sync_time_range("2026-02-20", "2026-02-23")   # date range
+            app.log_sync.sync_audit_only(date_from="2026-02-23")       # only audit
+
+            # Automatic (every 5 minutes)
+            app.setup_log_sync(minio_client, auto_interval=300)
+
+            # Check pending
+            print(app.log_sync.get_pending_stats())
+
+            # Stop auto sync
+            app.log_sync.stop_auto_sync()
+        """
+        self.log_sync = LogSyncManager(
+            db=self.log_db,
+            minio_client=minio_client,
+            bucket="system-audit-logs",
+            app_id=self.id,
+            node_id=node(),
+        )
+        self.log_sync.ensure_bucket()
+
+        if auto_interval is not None:
+            self.log_sync.start_auto_sync(interval_seconds=auto_interval)
+            self.logger.info(
+                "Auto log sync started",
+                extra={"interval": auto_interval},
+            )
 
     @property
     def debug(self):
@@ -1218,7 +1463,9 @@ class App(AppType, metaclass=Singleton):
                         o = await f_()
                     else:
                         o = f_()
-                    if o is not None:
+                    if isinstance(o, Result):
+                        o.log()
+                    elif o is not None:
                         self.print(f"Function On Exit result: {o}")
                 else:
                     self.logger.warning("closing function not found")
@@ -1286,6 +1533,19 @@ class App(AppType, metaclass=Singleton):
             self.remove_all_modules()
 
         self.logger.info("Exiting ToolBox interface")
+        # ── Flush observability ──
+        try:
+            from toolboxv2.utils.system.tb_logger import disable_live_observability
+            disable_live_observability()  # flushes remaining batch + closes worker
+        except Exception:
+            pass
+
+        if self._obs_sync_manager:
+            try:
+                self._obs_sync_manager.stop_auto_sync()
+                self._obs_sync_manager.sync_all()  # final push
+            except Exception:
+                pass
         self.alive = False
         self.called_exit = True, time.time()
         self.save_exit()

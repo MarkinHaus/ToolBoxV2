@@ -35,54 +35,68 @@ export = get_app(f"{Name}.EXPORT").tb
 AUTH_MODULE = "CloudM.Auth"
 
 
-# =================== CLI Token Storage (via TBEF.DB) ===================
+# =================== CLI Token Storage (via BlobFile - Encrypted) ===================
+
+def _get_cli_session_storage_dir():
+    """Get unified storage directory for CLI sessions."""
+    from pathlib import Path
+    from toolboxv2 import tb_root_dir
+
+    # Use toolbox data directory for consistent storage
+    storage_dir = tb_root_dir / ".data" / "cli_sessions"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    return str(storage_dir)
+
+
+def _get_blob_storage():
+    """Get unified BlobStorage instance for CLI sessions."""
+    from toolboxv2.utils.extras.blobs import BlobStorage, StorageMode
+
+    storage = BlobStorage(
+        mode=StorageMode.OFFLINE,
+        storage_directory=_get_cli_session_storage_dir()
+    )
+    return storage
+
 
 async def _save_cli_token(app: App, username: str, token_data: dict) -> bool:
-    """Save CLI session token to TBEF.DB."""
+    """Save CLI session token via BlobFile (encrypted with device key)."""
     try:
-        result = await app.a_run_any(
-            TBEF.DB.SET,
-            query=f"CLI_SESSION::{username}",
-            data=json.dumps(token_data),
-            get_results=True,
-        )
-        return not result.is_error()
+        from toolboxv2.utils.extras.blobs import BlobFile
+        from toolboxv2.utils.security.cryp import Code
+
+        key = Code.DK()()  # Device Key für Verschlüsselung
+
+        # Speichere verschlüsselt via BlobFile
+        with BlobFile(f"cli_sessions/{username}/session.json", mode="w", key=key, storage=_get_blob_storage()) as blob:
+            blob.write_json(token_data)
+
+        return True
     except Exception as e:
         print_status(f"Failed to save session: {e}", "error")
         return False
 
 
 async def _load_cli_token(app: App, username: str) -> Optional[dict]:
-    """Load CLI session token from TBEF.DB."""
+    """Load CLI session token via BlobFile (encrypted with device key)."""
     try:
-        result = await app.a_run_any(
-            TBEF.DB.GET,
-            query=f"CLI_SESSION::{username}",
-            get_results=True,
-        )
-        if result.is_error():
-            return None
-        raw = result.get()
-        if isinstance(raw, list):
-            raw = raw[0] if raw else None
-        if isinstance(raw, bytes):
-            raw = raw.decode()
-        if isinstance(raw, str):
-            return json.loads(raw)
-        return raw if isinstance(raw, dict) else None
+        from toolboxv2.utils.extras.blobs import BlobFile
+        from toolboxv2.utils.security.cryp import Code
+
+        key = Code.DK()()
+
+        with BlobFile(f"cli_sessions/{username}/session.json", mode="r", key=key, storage=_get_blob_storage()) as blob:
+            return blob.read_json()
     except Exception:
         return None
 
 
 async def _clear_cli_token(app: App, username: str) -> bool:
-    """Clear CLI session token from TBEF.DB."""
+    """Clear CLI session token via BlobFile."""
     try:
-        result = await app.a_run_any(
-            TBEF.DB.DELETE,
-            query=f"CLI_SESSION::{username}",
-            get_results=True,
-        )
-        return not result.is_error()
+        storage = _get_blob_storage()
+        storage.delete_blob(f"cli_sessions/{username}")
+        return True
     except Exception:
         return False
 
@@ -291,24 +305,35 @@ async def _complete_login(app: App, result: Result, email: str = None) -> Result
 
 # =================== Session Check ===================
 
-async def _check_existing_session(app: App) -> Optional[dict]:
-    """Check for existing valid session."""
-    if hasattr(app, 'session') and app.session and getattr(app.session, 'valid', False):
-        username = getattr(app.session, 'username', None)
-        if username:
-            token_data = await _load_cli_token(app, username)
-            if token_data and token_data.get("access_token"):
-                # Validate token is still valid
-                try:
-                    result = await app.a_run_any(
-                        (AUTH_MODULE, "validate_session"),
-                        token=token_data["access_token"],
-                        get_results=True,
-                    )
-                    if not result.is_error():
-                        return token_data
-                except Exception:
-                    pass
+async def _check_existing_session(app: App, username: str = None) -> Optional[dict]:
+    """Check for existing valid CLI session via BlobFile."""
+    try:
+        from toolboxv2.utils.extras.blobs import BlobFile
+        from toolboxv2.utils.security.cryp import Code
+
+        if not username:
+            # Try to find any CLI session
+            storage = _get_blob_storage()
+            blobs = storage.list_blobs(prefix="cli_sessions/")
+            if not blobs:
+                return None
+            username = blobs[0]['blob_id'].replace('cli_sessions/', '')
+
+        key = Code.DK()()
+        with BlobFile(f"cli_sessions/{username}/session.json", mode="r", key=key, storage=_get_blob_storage()) as blob:
+            token_data = blob.read_json()
+
+        if token_data and token_data.get("access_token"):
+            # Validate token is still valid
+            result = await app.a_run_any(
+                (AUTH_MODULE, "validate_session"),
+                token=token_data["access_token"],
+                get_results=True,
+            )
+            if not result.is_error():
+                return token_data
+    except Exception:
+        pass
     return None
 
 
@@ -316,23 +341,31 @@ async def _check_existing_session(app: App) -> Optional[dict]:
 
 @export(mod_name=Name, version=version)
 async def cli_logout(app: App = None):
-    """Logout from CLI session."""
+    """Logout from CLI session via BlobFile."""
     if app is None:
         app = get_app("CloudM.cli_logout")
 
     print_box_header("Logout", "~")
 
+    # Get username from BlobFile session
+    from toolboxv2.utils.extras.blobs import BlobFile
+    from toolboxv2.utils.security.cryp import Code
+
     username = None
-    if hasattr(app, 'session') and app.session:
-        username = getattr(app.session, 'username', None)
-    if not username and hasattr(app, 'get_username'):
-        username = app.get_username()
+    storage = _get_blob_storage()
+    blobs = storage.list_blobs(prefix="cli_sessions/")
+
+    if blobs:
+        username = blobs[0]['blob_id'].replace('cli_sessions/', '')
 
     if username:
         print_status(f"Logging out {username}...", "progress")
 
         # Load token to blacklist it
-        token_data = await _load_cli_token(app, username)
+        key = Code.DK()()
+        with BlobFile(f"cli_sessions/{username}/session.json", mode="r", key=key, storage=_get_blob_storage()) as blob:
+            token_data = blob.read_json()
+
         if token_data and token_data.get("access_token"):
             try:
                 await app.a_run_any(
@@ -360,30 +393,46 @@ async def cli_logout(app: App = None):
 
 @export(mod_name=Name, version=version)
 async def cli_status(app: App = None):
-    """Show current CLI session status."""
+    """Show current CLI session status via BlobFile."""
     if app is None:
         app = get_app("CloudM.cli_status")
 
     print_box_header("Session Status", "i")
 
-    if hasattr(app, 'session') and app.session and getattr(app.session, 'valid', False):
-        username = getattr(app.session, 'username', 'Unknown')
-        print_box_content(f"+ Authenticated as: {username}", "success")
+    # Check for CLI session via BlobFile
+    try:
+        from toolboxv2.utils.extras.blobs import BlobFile
+        from toolboxv2.utils.security.cryp import Code
 
-        token_data = await _load_cli_token(app, username)
-        if token_data:
+        storage = _get_blob_storage()
+        blobs = storage.list_blobs(prefix="cli_sessions/")
+
+        if blobs:
+            username = blobs[0]['blob_id'].replace('cli_sessions/', '')
+
+            key = Code.DK()()
+            with BlobFile(f"cli_sessions/{username}/session.json", mode="r", key=key, storage=_get_blob_storage()) as blob:
+                token_data = blob.read_json()
+
             provider = token_data.get("provider", "unknown")
             auth_time = token_data.get("authenticated_at", 0)
+
+            print_box_content(f"+ Authenticated as: {username}", "success")
+
             if auth_time:
                 elapsed = time.time() - auth_time
                 hours = int(elapsed // 3600)
                 minutes = int((elapsed % 3600) // 60)
                 print_box_content(f"  Provider: {provider}", "info")
                 print_box_content(f"  Session age: {hours}h {minutes}m", "info")
-        print_box_content("Session is valid", "info")
-    else:
+
+            print_box_content("Session is valid", "info")
+        else:
+            print_box_content("X Not authenticated", "warning")
+            print_box_content("Run 'tb login' to authenticate", "info")
+    except Exception as e:
         print_box_content("X Not authenticated", "warning")
-        print_box_content("Run 'tb login' to authenticate", "info")
+        print_box_content(f"Error checking session: {e}", "info")
 
     print_box_footer()
     return Result.ok()
@@ -393,21 +442,27 @@ async def cli_status(app: App = None):
 
 @export(mod_name=Name, version=version)
 async def cli_generate_invite(app: App = None):
-    """Generate a device invite code for CLI pairing."""
+    """Generate a device invite code for CLI pairing via BlobFile."""
     if app is None:
         app = get_app("CloudM.cli_generate_invite")
 
-    # Check if logged in
-    if not (hasattr(app, 'session') and app.session and getattr(app.session, 'valid', False)):
+    # Check if logged in via BlobFile
+    from toolboxv2.utils.extras.blobs import BlobFile
+    from toolboxv2.utils.security.cryp import Code
+
+    storage = _get_blob_storage()
+    blobs = storage.list_blobs(prefix="cli_sessions/")
+
+    if not blobs:
         print_status("You must be logged in to generate an invite code", "error")
         return Result.default_user_error("Not authenticated")
 
-    username = getattr(app.session, 'username', None)
-    if not username:
-        print_status("No username in session", "error")
-        return Result.default_user_error("No username")
+    username = blobs[0]['blob_id'].replace('cli_sessions/', '')
 
-    token_data = await _load_cli_token(app, username)
+    key = Code.DK()()
+    with BlobFile(f"cli_sessions/{username}/session.json", mode="r", key=key, storage=_get_blob_storage()) as blob:
+        token_data = blob.read_json()
+
     if not token_data or not token_data.get("user_id"):
         print_status("No valid session found", "error")
         return Result.default_user_error("No valid session")

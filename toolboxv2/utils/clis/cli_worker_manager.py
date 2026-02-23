@@ -36,7 +36,7 @@ from threading import Lock, Thread
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from build.lib.toolboxv2 import tb_root_dir
+from toolboxv2 import tb_root_dir
 from toolboxv2.utils.workers.debug_runner import run_debug_server
 
 # ZMQ optional import

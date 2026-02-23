@@ -23,7 +23,7 @@ from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils import get_app
 from toolboxv2.utils.clis.cli_worker_manager import main as cli_worker_manager
 from toolboxv2.utils.clis.db_cli_manager import cli_db_runner
-from toolboxv2.utils.clis.minio_user_manager import main as minio_user_manager_main
+from toolboxv2.utils.clis.user_manager import main as user_manager_main
 from toolboxv2.utils.clis.tb_lang_cli import cli_tbx_main
 from toolboxv2.utils.clis.tcm_p2p_cli import cli_tcm_runner
 
@@ -339,6 +339,7 @@ RUNNER_KEYS = [
     "event",
     "broker",
     "http_worker",
+    "obs",
     "ws_worker",
     "services",
     "registry",
@@ -753,6 +754,9 @@ def parse_args():
 
     extensions.add_argument(
         "logout", help="Logout from ToolBoxV2", nargs="?", const=True, default=False
+    )
+    extensions.add_argument(
+        "obs", help="ToolBoxV2 Observability layer", nargs="?", const=True, default=False
     )
 
     extensions.add_argument(
@@ -1702,32 +1706,52 @@ def runner_setup():
         print("🔍 ToolBoxV2 System Status")
         print("═" * 40)
 
-        # Check login status
+        # Check login status via BlobFile (encrypted CLI sessions)
         try:
-            from toolboxv2.utils.system.session import get_app
+            from toolboxv2 import get_app, tb_root_dir
+            from toolboxv2.utils.extras.blobs import BlobStorage, BlobFile
+            from toolboxv2.utils.extras.blobs import StorageMode
+            from toolboxv2.utils.security.cryp import Code
 
             app = get_app("status_check")
 
-            # Check if user is logged in
-            try:
-                from toolboxv2.utils.security.cryp import Code
-                from toolboxv2.utils.system.session import BlobFile
+            # Use unified storage directory
+            from pathlib import Path
+            storage_dir = tb_root_dir / ".data" / "cli_sessions"
+            storage = BlobStorage(
+                mode=StorageMode.OFFLINE,
+                storage_directory=str(storage_dir)
+            )
 
-                username = app.get_username()
+            # Check for CLI sessions in BlobStorage
+            blobs = storage.list_blobs(prefix="cli_sessions/")
 
-                with BlobFile(
-                    f"claim/{username}/jwt.c", key=Code.DK()(), mode="r"
-                ) as blob:
-                    claim = blob.read()
-                    if claim and claim != b"Error decoding":
-                        print(f"🔐 Authentication: ✅ Logged in as {username}")
+            if blobs:
+                # Found at least one CLI session
+                blob_meta = blobs[0]
+                username = blob_meta['blob_id'].replace('cli_sessions/', '')
 
-                        # Try to determine server
-                        base_url = getattr(app, "base_url", None) or "Unknown"
-                        print(f"🌐 Server: {base_url}")
-                    else:
-                        print("🔐 Authentication: ❌ Not logged in")
-            except Exception:
+                # Load session data via BlobFile (encrypted)
+                key = Code.DK()()
+                with BlobFile(f"cli_sessions/{username}/session.json", mode="r", key=key, storage=storage) as blob:
+                    session_data = blob.read_json()
+
+                provider = session_data.get("provider", "unknown")
+                auth_time = session_data.get("authenticated_at", 0)
+
+                if auth_time:
+                    import time
+                    elapsed = time.time() - auth_time
+                    hours = int(elapsed // 3600)
+                    minutes = int((elapsed % 3600) // 60)
+                    time_str = f"{hours}h {minutes}m ago"
+                else:
+                    time_str = "Unknown"
+
+                print(f"🔐 Authentication: ✅ Logged in as {username}")
+                print(f"   Provider: {provider}")
+                print(f"   Session: {time_str}")
+            else:
                 print("🔐 Authentication: ❌ Not logged in")
 
             from toolboxv2.mods.CloudM.mini import get_service_status
@@ -1891,12 +1915,15 @@ def runner_setup():
         "mods": mods_manager,
         "registry": registry,
         "run": cli_tbx_main,
-        "user": minio_user_manager_main,
+        "user": user_manager_main,
         "default": interactive_user_dashboard,
         "workers": cli_worker_manager,
         "session": cli_session,
         "broker": cli_event,
         "http_worker": cli_http_worker,
+        "obs": lambda: __import__(
+            "toolboxv2.utils.clis.observability_helper", fromlist=["main"]
+        ).main(),
         "ws_worker": cli_ws_worker,
         "services": lambda: __import__(
             "toolboxv2.utils.clis.service_manager", fromlist=["cli_services"]

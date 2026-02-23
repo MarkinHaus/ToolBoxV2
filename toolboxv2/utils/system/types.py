@@ -20,11 +20,14 @@ from typing import Any, TypeVar, Dict, Coroutine
 import psutil
 from pydantic import BaseModel
 
+from toolboxv2.utils.system.tb_logger import AuditLogger
 from ..extras import generate_test_cases
 from ..extras.blobs import BlobStorage
 from ..extras.Style import Spinner
 from .all_functions_enums import *
 from .file_handler import FileHandler
+
+import inspect
 
 T = TypeVar('T')
 
@@ -1365,6 +1368,18 @@ class Result(Generic[T]):
         return cls(error=error, info=info, result=result)
 
     def print(self, show=True, show_data=True, prifix="", full_data=False):
+        # frame = inspect.currentframe().f_back
+        # info = inspect.getframeinfo(frame)
+#
+        # cls = None
+        # if "self" in frame.f_locals:
+        #     cls = frame.f_locals["self"].__class__.__name__
+#
+        # print(
+        #     f"Caller: {cls + '.' if cls else ''}{frame.f_code.co_name} "
+        #     f"| File: {info.filename} "
+        #     f"| Line: {info.lineno}"
+        # )
         data = '\n' + f"{((prifix + f'Data_{self.result.data_type}: ' + str(self.result.data) if self.result.data is not None else 'NO Data') if not isinstance(self.result.data, Result) else self.result.data.print(show=False, show_data=show_data, prifix=prifix + '-')) if show_data else 'Data: private'}"
         origin = '\n' + f"{prifix + 'Origin: ' + str(self.origin) if self.origin is not None else 'NO Origin'}"
         text = (f"Function Exec code: {self.info.exec_code}"
@@ -1382,6 +1397,18 @@ class Result(Generic[T]):
         return self
 
     def __str__(self):
+        # frame = inspect.currentframe().f_back
+        # info = inspect.getframeinfo(frame)
+#
+        # cls = None
+        # if "self" in frame.f_locals:
+        #     cls = frame.f_locals["self"].__class__.__name__
+#
+        # print(
+        #     f"Caller: {cls + '.' if cls else ''}{frame.f_code.co_name} "
+        #     f"| File: {info.filename} "
+        #     f"| Line: {info.lineno}"
+        # )
         return self.print(show=False, show_data=True)
 
     def get(self, key=None, default=None):
@@ -1741,6 +1768,7 @@ class AppType:
 
     logger: logging.Logger
     logging_filename: str
+    audit_logger: AuditLogger
 
     api_allowed_mods_list: list[str] = []
 
