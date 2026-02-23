@@ -36,6 +36,9 @@ from threading import Lock, Thread
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+from build.lib.toolboxv2 import tb_root_dir
+from toolboxv2.utils.workers.debug_runner import run_debug_server
+
 # ZMQ optional import
 try:
     import zmq
@@ -2317,7 +2320,7 @@ def main():
         freeze_support()
 
     parser = argparse.ArgumentParser(description="ToolBoxV2 Worker Manager", prog="tb workers")
-    parser.add_argument("command", nargs="?", default="start", choices=["start", "stop", "restart", "status", "update", "nginx-config", "nginx-reload", "worker-start", "worker-stop", "cluster-join"])
+    parser.add_argument("command", nargs="?", default="start", choices=["start", "stop", "restart", "status", "update", "nginx-config", "nginx-reload", "worker-start", "worker-stop", "cluster-join", "debug"])
     parser.add_argument("-c", "--config", help="Config file")
     parser.add_argument("-w", "--worker-id")
     parser.add_argument("-t", "--type", choices=["http", "ws"], default="http")
@@ -2355,6 +2358,15 @@ def main():
         print(json.dumps(manager.get_status(), indent=2))
     elif args.command == "update":
         manager.rolling_update()
+    elif args.command == "debug":
+        path = tb_root_dir / "dist"
+        if not path.exists():
+            os.system("npm run build")
+
+        if path.exists():
+            run_debug_server(args.dist, args.port)
+        else:
+            print(f"not dist path found at {str(path)}")
     elif args.command == "nginx-config":
         print(manager._nginx.generate_config([config.http_worker.port + i for i in range(config.http_worker.workers)], [config.ws_worker.port]))
     elif args.command == "nginx-reload":

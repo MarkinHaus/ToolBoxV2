@@ -1390,7 +1390,6 @@ class Tools(MainTool):
         self.print(f"Built and cached FlowAgent instance: {agent_name}")
         return agent_instance
 
-    @export(api=True, version=version, mod_name="isaa")
     async def delete_agent(self, agent_name: str) -> bool:
         """
         Löscht einen Agenten vollständig aus dem System (RAM & Disk).

@@ -52,13 +52,47 @@ export class HudWebSocket {
     /**
      * Connect to WebSocket server
      * Uses existing ToolBoxV2 API URL
+     * CRITICAL: Must include authentication token to avoid session invalidation
      */
     async connect() {
         try {
+            // Get authentication token BEFORE connecting
+            // Try multiple sources to ensure we have the token
+            let token = null;
+            if (typeof TB !== 'undefined') {
+                if (TB.state?.get) {
+                    token = TB.state.get('user.token');
+                }
+                if (!token && TB.user?.getToken) {
+                    token = TB.user.getToken();
+                }
+            }
+
+            // If still no token, check localStorage directly
+            if (!token) {
+                try {
+                    const storedSession = localStorage.getItem('tbjs_user_session');
+                    if (storedSession) {
+                        const session = JSON.parse(storedSession);
+                        token = session.token;
+                    }
+                } catch (e) {
+                    console.warn('[HudWS] Failed to read token from localStorage:', e);
+                }
+            }
+
+            if (!token) {
+                const errorMsg = '[HudWS] Cannot connect: No authentication token available. User must be logged in first.';
+                console.error(errorMsg);
+                this.callbacks.onError(new Error(errorMsg));
+                return;
+            }
+
             const urls = await getApiUrls();
-            const wsUrl = urls.ws_url;
-            
-            console.log('[HudWS] Connecting to:', wsUrl);
+            // Add session_token as query parameter to authenticate the WebSocket connection
+            const wsUrl = `${urls.ws_url}?session_token=${encodeURIComponent(token)}`;
+
+            console.log('[HudWS] Connecting to:', wsUrl.replace(/session_token=[^&]+/, 'session_token=***'));
             this.ws = new WebSocket(wsUrl);
             
             this.ws.onopen = () => {

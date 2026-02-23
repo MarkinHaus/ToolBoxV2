@@ -201,9 +201,24 @@ const Config = {
                         const token = await window.TB.user.getSessionToken();
                         if (token) return token;
                     }
-                    // Fallback to stored token
+                    // Fallback to TB.state
                     if (window.TB?.state?.get) {
-                        return window.TB.state.get('user.token');
+                        const token = window.TB.state.get('user.token');
+                        if (token) return token;
+                    }
+                    // Last resort: read directly from localStorage
+                    // This handles the case where TB hasn't finished init yet but token exists in localStorage
+                    const storedSession = localStorage.getItem('tbjs_user_session');
+                    if (storedSession) {
+                        try {
+                            const session = JSON.parse(storedSession);
+                            if (session.token) {
+                                console.log('[Config] Retrieved token from localStorage fallback');
+                                return session.token;
+                            }
+                        } catch (parseError) {
+                            console.warn('[Config] Failed to parse stored session:', parseError);
+                        }
                     }
                 } catch (e) {
                     console.debug('[Config] Could not get auth token:', e);

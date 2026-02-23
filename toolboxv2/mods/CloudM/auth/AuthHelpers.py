@@ -1,3 +1,14 @@
+"""
+ToolBox V2 - Legacy Auth Manager
+
+@deprecated Use CloudM.Auth and CloudM.UserAccountManager instead.
+This module is kept for backward compatibility and will be removed in v2.1.0.
+
+For new code, use:
+- CloudM.Auth for authentication (OAuth, Passkeys, Magic Links)
+- CloudM.UserAccountManager for user management
+"""
+
 import os
 from dataclasses import asdict
 from urllib.parse import quote
@@ -8,14 +19,27 @@ from toolboxv2 import TBEF, App, Result, get_app, get_logger
 from toolboxv2.utils.security.cryp import Code
 from toolboxv2.utils.system.types import ToolBoxInterfaces
 
-from .email_services import send_magic_link_email
-from .types import User, UserCreator
+from toolboxv2.mods.CloudM.email_services import send_magic_link_email
+from toolboxv2.mods.CloudM.types import User, UserCreator
 
-version = "0.0.2"
-Name = 'CloudM.AuthManager'
+version = "0.0.3"  # incremented for deprecation notice
+Name = 'CloudM.AuthHelper'
 export = get_app(f"{Name}.Export").tb
 default_export = export(mod_name=Name, test=False)
 test_only = export(mod_name=Name, test_only=True)
+
+# Deprecation warning
+_deprecation_shown = False
+
+def _show_deprecation_warning():
+    global _deprecation_shown
+    if not _deprecation_shown:
+        get_logger().warning(
+            f"[{Name}] DEPRECATED: Use CloudM.Auth and CloudM.UserAccountManager instead. "
+            "This module will be removed in v2.1.0"
+        )
+        _deprecation_shown = True
+
 # app Helper functions interaction with the db
 
 def db_helper_test_exist(app: App, username: str):
@@ -93,9 +117,33 @@ def get_user_by_name(app: App, username: str, uid: str = '*') -> Result:
     """
     Get user by name - supports both Legacy and Clerk users.
     First tries Legacy database (USER::), then Clerk database (CLERK_USER::).
+
+    @deprecated Use CloudM.Auth.user_store.get_user_by_name() instead.
     """
+    _show_deprecation_warning()
+
     if app is None:
         app = get_app(Name + '.get_user_by_name')
+
+    # Try CloudM.Auth first (modern path)
+    try:
+        from .auth.user_store import get_user_by_name as auth_get_user
+        from .auth.user_store import get_user_by_username
+
+        user_data = get_user_by_username(app, username)
+        if user_data:
+            # Convert to legacy User format
+            legacy_user = User(
+                name=user_data.username,
+                email=user_data.email,
+                uid=user_data.user_id,
+                user_pass_sync='',
+                challenge='',
+                level=user_data.level
+            )
+            return Result.ok(data=legacy_user)
+    except Exception as e:
+        get_logger().debug(f"[{Name}] CloudM.Auth lookup failed: {e}, trying legacy...")
 
     # Try Legacy user first
     if db_helper_test_exist(app, username):

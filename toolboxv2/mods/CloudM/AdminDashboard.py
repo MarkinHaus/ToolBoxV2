@@ -5,7 +5,7 @@ from dataclasses import asdict
 
 from toolboxv2 import TBEF, App, RequestData, Result, get_app
 from toolboxv2.mods.CloudM import mini
-from toolboxv2.mods.CloudM.AuthManager import (
+from toolboxv2.mods.CloudM.auth.AuthHelpers import (
     db_helper_delete_user,
     db_helper_save_user,
     db_helper_test_exist,

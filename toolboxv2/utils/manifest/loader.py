@@ -164,7 +164,7 @@ class ManifestLoader:
             mods={
                 "installed": {"CloudM": "^0.1.0", "DB": "^0.0.3"},
                 "init_modules": ["CloudM", "DB"],
-                "open_modules": ["CloudM.AuthManager", "CloudM.Auth"],
+                "open_modules": ["CloudM.AuthHelper", "CloudM.Auth"],
             },
             database={"mode": "LC"},
             services={"enabled": ["workers", "db"]},

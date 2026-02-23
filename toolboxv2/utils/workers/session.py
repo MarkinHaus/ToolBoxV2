@@ -555,29 +555,15 @@ class SessionManager:
             domain=cookie_domain,
         )
 
-        # Primary auth verifier
-        self.auth_verifier = None
-        if app:
-            self.auth_verifier = AuthSessionVerifier(
-                app, auth_module=auth_module, verify_func=verify_func
-            )
-
-        # Custom Auth verifier support (session_custom.py - with caching)
-        self.custom_verifier = None
-        if app and CUSTOM_AUTH_AVAILABLE:
-            self.custom_verifier = CustomSessionVerifier(app, auth_module=auth_module)
+        # Single auth verifier — CloudM.Auth is the sole source of truth
+        self.auth_verifier = AuthSessionVerifier(app, auth_module=auth_module, verify_func=verify_func) if app else None
+        self.custom_verifier = None  # Deprecated: auth_verifier handles all verification
 
         self.api_key_header = api_key_header
         self.bearer_header = bearer_header
         self.cookie_max_age = cookie_max_age
-
-        # API key storage (consider using Redis for multi-worker)
         self._api_keys: Dict[str, SessionData] = {}
-
-        # Track sessions that need cookie updates
-        # Key: session_id, Value: SessionData
         self._pending_updates: Dict[str, SessionData] = {}
-
     # =========================================================================
     # Session Creation
     # =========================================================================
@@ -948,34 +934,7 @@ class SessionManager:
         return False, None
 
     async def verify_session_token_async(self, token: str) -> Tuple[bool, Optional[SessionData]]:
-        """
-        Verify a session token (async).
-
-        Prefers custom verifier (with caching) if available,
-        falls back to auth_verifier.
-
-        Returns:
-            Tuple of (is_valid, session_data)
-        """
-        # Try custom verifier first (has caching)
-        if self.custom_verifier:
-            try:
-                custom_session = await self.custom_verifier.verify_session(token)
-                if custom_session and custom_session.valid:
-                    session = SessionData(
-                        user_id=custom_session.user_id,
-                        session_id=custom_session.session_id,
-                        user_name=custom_session.user_name,
-                        level=custom_session.level,
-                        spec=custom_session.spec,
-                        validated=True,
-                        anonymous=False,
-                    )
-                    return True, session
-            except Exception as e:
-                logger.debug(f"Custom verifier error, falling back: {e}")
-
-        # Fallback to auth_verifier
+        """Verify a session token (async). Single path via auth_verifier."""
         if self.auth_verifier:
             return await self.auth_verifier.verify_session_async(token)
         return False, None

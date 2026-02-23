@@ -56,12 +56,13 @@ async def on_chat_message(app: App, conn_id: str, session: dict, payload: dict):
     )
 
 
-async def on_user_disconnect(app: App, conn_id: str, session: dict=None):
+async def on_user_disconnect(conn_id: str, session: dict=None):
     """
     Wird aufgerufen, wenn die Verbindung eines Clients geschlossen wird.
     """
     if session is None:
         session = {}
+    app = get_app()
     username = session.get("user_name", "Anonymous")
     app.print(f"WS DISCONNECT: User '{username}' disconnected (conn_id: {conn_id})")
 

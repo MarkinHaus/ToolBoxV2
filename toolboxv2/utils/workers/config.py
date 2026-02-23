@@ -191,7 +191,7 @@ class ToolBoxV2Config:
     api_allowed_mods: List[str] = field(default_factory=list)
     # CloudM Auth
     auth_module: str = "CloudM.Auth"
-    verify_session_func: str = "verify_session"
+    verify_session_func: str = "validate_session"
 
     # === Access Control ===
     # Modules that are publicly accessible (no auth required)
@@ -535,7 +535,7 @@ toolbox:
   api_prefix: "/api"
   api_allowed_mods: []
   auth_module: "CloudM.Auth"
-  verify_session_func: "verify_session"
+  verify_session_func: "validate_session"
 
   # === Access Control Configuration ===
   #

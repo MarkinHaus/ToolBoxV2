@@ -386,7 +386,7 @@ class CLOUDM_EMAIL_SERVICES(Enum):
 
 @dataclass
 class CLOUDM_AUTHMANAGER(Enum):
-    NAME = 'CloudM.AuthManager'
+    NAME = 'CloudM.AuthHelper'
     DELETE_USER = 'delete_user' # Input: (['app', 'username']), Output: <class 'inspect._empty'>
     LIST_USERS = 'list_users' # Input: (['app']), Output: <class 'inspect._empty'>
     GET_USER_BY_NAME = 'get_user_by_name' # Input: (['app', 'username', 'uid']), Output: <class 'toolboxv2.utils.system.types.Result'>

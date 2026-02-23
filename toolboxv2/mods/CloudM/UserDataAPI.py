@@ -48,7 +48,7 @@ except ImportError:
         return logging.getLogger()
 
 # Local imports
-from scoped_storage import (
+from toolboxv2.utils.extras.db.scoped_storage import (
     Permission,
     Scope,
     ScopedBlobStorage,
@@ -56,6 +56,38 @@ from scoped_storage import (
     UserContext,
     create_storage_from_clerk_session,
 )
+
+# Import MinIO Policy Helper for permission enforcement
+try:
+    from .auth.minio_policy import PermissionChecker, PolicyGenerator, CredentialBroker
+    MINIO_POLICY_AVAILABLE = True
+except ImportError:
+    MINIO_POLICY_AVAILABLE = False
+    CredentialBroker = None
+    # Fallback implementations
+    class PermissionChecker:
+        LEVEL_GUEST = 0
+        LEVEL_USER = 1
+        LEVEL_MODERATOR = 5
+        LEVEL_ADMIN = 10
+
+        @classmethod
+        def can_access_user_data(cls, requesting_user_id, requesting_user_level, target_user_id, scope):
+            if requesting_user_id == target_user_id:
+                return True
+            if requesting_user_level >= cls.LEVEL_ADMIN:
+                return True
+            if scope == "USER_PUBLIC":
+                return True
+            return False
+
+        @classmethod
+        def can_modify_user_data(cls, requesting_user_id, requesting_user_level, target_user_id, scope):
+            if requesting_user_id == target_user_id:
+                return True
+            if requesting_user_level >= cls.LEVEL_ADMIN:
+                return True
+            return False
 
 Name = 'CloudM.UserDataAPI'
 version = '2.0.0'
@@ -325,50 +357,110 @@ _storage_providers: Dict[str, StorageProvider] = {}
 
 async def _get_storage_provider(app: App, request: RequestData) -> StorageProvider | None:
     """Holt StorageProvider für aktuellen User"""
-    # Hole User aus Request
     user_data = await _get_current_user(app, request)
-
     if not user_data:
         return None
 
-    user_id = getattr(user_data, 'uid', None) or getattr(user_data, 'clerk_user_id', None)
+    user_id = user_data.uid or user_data.user_id
     if not user_id:
         return None
 
-    username = getattr(user_data, 'username', '') or getattr(user_data, 'email', '').split('@')[0]
+    username = user_data.username or (user_data.email.split('@')[0] if user_data.email else '')
     is_admin = getattr(user_data, 'level', 0) >= 10
 
-    # User Context
     user_context = UserContext(
         user_id=user_id,
         username=username,
         is_admin=is_admin,
         is_authenticated=True
     )
+    # Setze level für PermissionChecker
+    user_context.level = getattr(user_data, 'level', 1)
 
-    # Hole oder erstelle Provider
     if user_id not in _storage_providers:
-        # TODO: Lade MinIO Credentials aus User Manager
+        import os
         _storage_providers[user_id] = StorageProvider(
             user_context=user_context,
-            # MinIO Config würde hier aus Environment/Config kommen
-            minio_endpoint=None,
-            minio_access_key=None,
-            minio_secret_key=None
+            minio_endpoint=os.environ.get('MINIO_ENDPOINT'),
+            minio_access_key=os.environ.get('MINIO_ACCESS_KEY'),
+            minio_secret_key=os.environ.get('MINIO_SECRET_KEY'),
         )
 
     return _storage_providers[user_id]
 
 
 async def _get_current_user(app: App, request: RequestData):
-    """Aktuellen Benutzer aus Request holen"""
+    """Aktuellen Benutzer aus Request via JWT (Auth.py) holen."""
+    token = None
+    if hasattr(request, 'session') and hasattr(request.session, 'get'):
+        s = request.session if isinstance(request.session, dict) else (request.session.to_dict() if hasattr(request.session, 'to_dict') else {})
+        token = s.get('session_token') or s.get('token')
+    if not token and hasattr(request, 'request'):
+        r = request.request if isinstance(request.request, dict) else (request.request.to_dict() if hasattr(request.request, 'to_dict') else {})
+        headers = r.get('headers', {})
+        auth = headers.get('authorization', '')
+        if auth.startswith('Bearer '):
+            token = auth[7:]
+    if not token:
+        return None
     try:
-        from .UserAccountManager import get_current_user_from_request
-        return await get_current_user_from_request(app, request)
-    except ImportError:
-        pass
+        result = await app.a_run_any(
+            ("CloudM.Auth", "validate_session"), token=token, get_results=True
+        )
+        if hasattr(result, 'is_error') and result.is_error():
+            return None
+        data = result.get() if hasattr(result, 'get') else result
+        if not data or not data.get('authenticated'):
+            return None
+        # Return als SimpleNamespace für Attribut-Zugriff
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            uid=data.get('user_id', ''),
+            user_id=data.get('user_id', ''),
+            username=data.get('user_name', data.get('username', '')),
+            email=data.get('email', ''),
+            level=data.get('level', 1),
+        )
+    except Exception:
+        return None
 
-    return None
+
+async def _check_cross_user_permission(
+    provider: StorageProvider,
+    target_user_id: str,
+    scope: Scope,
+    action: str = "read"
+) -> bool:
+    """
+    Prüft ob der aktuelle User berechtigt ist, auf Daten eines anderen Users zuzugreifen.
+
+    Args:
+        provider: StorageProvider des aktuellen Users
+        target_user_id: User dessen Daten abgerufen werden sollen
+        scope: Angefragter Scope
+        action: 'read', 'write', oder 'delete'
+
+    Returns:
+        True wenn Zugriff erlaubt, False sonst
+    """
+    current_user_id = provider.user.user_id
+    current_user_level = getattr(provider.user, 'level', PermissionChecker.LEVEL_USER)
+
+    # Same user always has access
+    if current_user_id == target_user_id:
+        return True
+
+    # Use PermissionChecker for cross-user access validation
+    scope_str = scope.value if hasattr(scope, 'value') else str(scope)
+
+    if action == "read":
+        return PermissionChecker.can_access_user_data(
+            current_user_id, current_user_level, target_user_id, scope_str
+        )
+    else:  # write or delete
+        return PermissionChecker.can_modify_user_data(
+            current_user_id, current_user_level, target_user_id, scope_str
+        )
 
 
 def _scope_from_string(scope_str: str) -> Scope:
@@ -432,6 +524,25 @@ async def get_data(
 
     storage_scope = _scope_from_string(scope)
 
+    # Cross-User Permission Check
+    if owner_id and owner_id != provider.user.user_id:
+        has_permission = await _check_cross_user_permission(
+            provider, owner_id, storage_scope, "read"
+        )
+        if not has_permission:
+            provider._log_access(
+                source_mod=mod_name or "direct",
+                target_mod=mod_name or "user",
+                action="read",
+                scope=storage_scope,
+                keys=[path],
+                success=False
+            )
+            return Result.default_user_error(
+                info=f"Keine Berechtigung für Zugriff auf Daten von User '{owner_id}'",
+                exec_code=403
+            )
+
     try:
         data = provider.storage.read(
             path=path,
@@ -482,7 +593,8 @@ async def set_data(
     data: Any,
     scope: str = "private",
     mod_name: str = None,
-    content_type: str = "application/json"
+    content_type: str = "application/json",
+    owner_id: str = None
 ):
     """
     Universelle Daten-Speicher Funktion
@@ -493,6 +605,7 @@ async def set_data(
         scope: Storage Scope
         mod_name: Modulname (nur für mod_data scope)
         content_type: MIME Type
+        owner_id: Owner-ID (für Schreibzugriff auf fremde Daten - nur Admin)
 
     Returns:
         Result mit Metadaten
@@ -502,6 +615,25 @@ async def set_data(
         return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
 
     storage_scope = _scope_from_string(scope)
+
+    # Cross-User Write Permission Check (stricter than read)
+    if owner_id and owner_id != provider.user.user_id:
+        has_permission = await _check_cross_user_permission(
+            provider, owner_id, storage_scope, "write"
+        )
+        if not has_permission:
+            provider._log_access(
+                source_mod=mod_name or "direct",
+                target_mod=mod_name or "user",
+                action="write",
+                scope=storage_scope,
+                keys=[path],
+                success=False
+            )
+            return Result.default_user_error(
+                info=f"Keine Schreibberechtigung für Daten von User '{owner_id}'",
+                exec_code=403
+            )
 
     # Konvertiere Daten zu bytes
     if isinstance(data, (dict, list)):
@@ -520,7 +652,8 @@ async def set_data(
             data=store_data,
             scope=storage_scope,
             mod_name=mod_name,
-            content_type=content_type
+            content_type=content_type,
+            owner_id=owner_id
         )
 
         provider._log_access(
@@ -933,6 +1066,62 @@ async def sync(app: App, request: RequestData):
 
 # =================== Convenience Client ===================
 
+# =================== Credential Broker Endpoint (Szenario A) ===================
+
+_credential_broker = None
+
+def _get_credential_broker():
+    """Lazy-init CredentialBroker from environment."""
+    global _credential_broker
+    if _credential_broker is None:
+        import os
+        endpoint = os.environ.get('MINIO_ENDPOINT')
+        access_key = os.environ.get('MINIO_ACCESS_KEY')
+        secret_key = os.environ.get('MINIO_SECRET_KEY')
+        secure = os.environ.get('MINIO_SECURE', 'false').lower() == 'true'
+        if not endpoint or not access_key:
+            return None
+        try:
+            from .auth.minio_policy import CredentialBroker, MinIOPolicyConfig
+            config = MinIOPolicyConfig(
+                endpoint=endpoint, access_key=access_key, secret_key=secret_key,
+                secure=secure,
+            )
+            _credential_broker = CredentialBroker(config)
+        except Exception:
+            return None
+    return _credential_broker
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
+async def get_secure_storage_credentials(app: App, request: RequestData):
+    """
+    Vend scoped MinIO credentials for the authenticated user.
+    Client uses these to talk DIRECTLY to MinIO (encrypted, no server proxy).
+
+    Returns:
+        {endpoint, access_key, secret_key, secure, buckets, user_prefix}
+    """
+    provider = await _get_storage_provider(app, request)
+    if not provider:
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
+
+    broker = _get_credential_broker()
+    if not broker:
+        return Result.default_internal_error(
+            info="Storage credentials not available (MINIO_ENDPOINT not configured)"
+        )
+
+    try:
+        creds = broker.vend_user_credentials(provider.user.user_id)
+        return Result.ok(
+            data=creds,
+            data_info="Scoped storage credentials",
+        )
+    except Exception as e:
+        return Result.default_internal_error(info=f"Credential vending failed: {e}")
+
+
 class ModDataClient:
     """
     Hilfsklasse für einfachen Zugriff auf Mod-Daten
@@ -1030,6 +1219,8 @@ class ModDataClient:
             scope='user_public'
         )
         return result.get('ok', False) if isinstance(result, dict) else False
+
+
 
 
 # =================== Test ===================

@@ -26,7 +26,7 @@ class TestConfigConverter:
             mods={
                 "installed": {"CloudM": "^0.1.0"},
                 "init_modules": ["CloudM"],
-                "open_modules": ["CloudM.AuthManager"],
+                "open_modules": ["CloudM.AuthHelper"],
             },
             database={"mode": "LC"},
             workers={
@@ -91,7 +91,7 @@ class TestConfigConverter:
             with open(config_path) as f:
                 content = f.read()
 
-            assert 'open_modules = ["CloudM.AuthManager"]' in content
+            assert 'open_modules = ["CloudM.AuthHelper"]' in content
             assert 'init_modules = ["CloudM"]' in content
             assert 'client_prefix = "api-client"' in content
 

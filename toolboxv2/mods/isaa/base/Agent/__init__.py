@@ -55,7 +55,7 @@ from toolboxv2.mods.isaa.base.Agent.docker_vfs import (
 )
 
 # Code Execution (minimal)
-from toolboxv2.mods.isaa.base.Agent.code_executor import (
+from toolboxv2.mods.isaa.base.Agent.executors import (
     LocalCodeExecutor,
     DockerCodeExecutor,
     DockerConfig as CodeExecutorDockerConfig,

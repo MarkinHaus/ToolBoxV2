@@ -656,6 +656,197 @@ Session: {self.session_id}
             self.files[path].updated_at = datetime.now().isoformat()
         self._dirty = True
 
+    # =========================================================================
+    # SYSTEM FILE MANAGEMENT (Permanent Read-Only Local Files)
+    # =========================================================================
+
+    def add_system_file(
+        self,
+        local_path: str,
+        vfs_path: str | None = None,
+        auto_refresh: bool = False,
+    ) -> dict:
+        """
+        Füge eine lokale Datei als permanente Read-Only System-Datei zum VFS hinzu.
+
+        Die Datei wird im VFS als read-only markiert und bleibt über die gesamte
+        Session hinweg verfügbar. Mit auto_refresh wird der Inhalt bei jedem Zugriff
+        neu vom lokalen Dateisystem geladen.
+
+        Args:
+            local_path: Pfad zur lokalen Datei
+            vfs_path: VFS-Pfad (default: /<filename>)
+            auto_refresh: Bei True wird der Inhalt bei jedem Zugriff neu geladen
+
+        Returns:
+            Result dict mit success status
+        """
+        try:
+            local_path = os.path.abspath(os.path.expanduser(local_path))
+
+            if not os.path.exists(local_path):
+                return {"success": False, "error": f"File not found: {local_path}"}
+
+            if not os.path.isfile(local_path):
+                return {"success": False, "error": f"Not a file: {local_path}"}
+
+            filename = os.path.basename(local_path)
+
+            if vfs_path is None:
+                vfs_path = f"/{filename}"
+            else:
+                vfs_path = self._normalize_path(vfs_path)
+
+            # Check if already exists
+            if vfs_path in self.files:
+                return {"success": False, "error": f"Path already exists: {vfs_path}"}
+
+            # Ensure parent directory exists
+            parent = self._get_parent_path(vfs_path)
+            if parent != "/" and not self._is_directory(parent):
+                self.mkdir(parent, parents=True)
+
+            # Read file content
+            with open(local_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+
+            file_size = os.path.getsize(local_path)
+            file_type = get_file_type(filename)
+
+            # Create system file entry
+            self.files[vfs_path] = VFSFile(
+                filename=filename,
+                _content=content,
+                state="closed",  # Start closed, user can open if needed
+                readonly=True,
+                local_path=local_path,  # Store reference for refresh
+                size_bytes=file_size,
+                line_count=len(content.splitlines()),
+                file_type=file_type,
+            )
+
+            # Store auto-refresh preference
+            if auto_refresh:
+                self.files[vfs_path].__dict__["_auto_refresh"] = True
+
+            self._dirty = True
+
+            return {
+                "success": True,
+                "vfs_path": vfs_path,
+                "local_path": local_path,
+                "size_bytes": file_size,
+                "lines": len(content.splitlines()),
+                "auto_refresh": auto_refresh,
+                "message": f"Added system file: {vfs_path} ← {local_path}",
+            }
+
+        except Exception as e:
+            return {"success": False, "error": f"Error adding system file: {e}"}
+
+    def remove_system_file(self, vfs_path: str) -> dict:
+        """
+        Entferne eine System-Datei aus dem VFS.
+
+        Args:
+            vfs_path: VFS-Pfad der zu entfernenden Datei
+
+        Returns:
+            Result dict mit success status
+        """
+        vfs_path = self._normalize_path(vfs_path)
+
+        if vfs_path not in self.files:
+            return {"success": False, "error": f"File not found: {vfs_path}"}
+
+        f = self.files[vfs_path]
+
+        # Allow removal of readonly system files (but protect core system files)
+        protected_files = ["/system_context", "/active_rules"]
+        if vfs_path in protected_files:
+            return {"success": False, "error": f"Cannot remove protected system file: {vfs_path}"}
+
+        # Store info for response
+        local_path = getattr(f, "local_path", None)
+        filename = f.filename
+
+        del self.files[vfs_path]
+        self._dirty = True
+
+        msg = f"Removed system file: {vfs_path}"
+        if local_path:
+            msg += f" (was: {local_path})"
+
+        return {"success": True, "message": msg, "filename": filename}
+
+    def refresh_system_file(self, vfs_path: str) -> dict:
+        """
+        Lade den Inhalt einer System-Datei neu vom lokalen Dateisystem.
+
+        Args:
+            vfs_path: VFS-Pfad der zu aktualisierenden Datei
+
+        Returns:
+            Result dict mit success status
+        """
+        vfs_path = self._normalize_path(vfs_path)
+
+        if vfs_path not in self.files:
+            return {"success": False, "error": f"File not found: {vfs_path}"}
+
+        f = self.files[vfs_path]
+
+        local_path = getattr(f, "local_path", None)
+        if not local_path:
+            return {"success": False, "error": f"File has no local backing: {vfs_path}"}
+
+        if not os.path.exists(local_path):
+            return {"success": False, "error": f"Local file not found: {local_path}"}
+
+        try:
+            with open(local_path, "r", encoding="utf-8", errors="replace") as file:
+                content = file.read()
+
+            f._content = content
+            f.size_bytes = len(content.encode("utf-8"))
+            f.line_count = len(content.splitlines())
+            f.updated_at = datetime.now().isoformat()
+
+            self._dirty = True
+
+            return {
+                "success": True,
+                "message": f"Refreshed: {vfs_path}",
+                "size_bytes": f.size_bytes,
+                "lines": f.line_count,
+            }
+
+        except Exception as e:
+            return {"success": False, "error": f"Error reading file: {e}"}
+
+    def list_system_files(self) -> dict:
+        """
+        Liste alle System-Dateien (readonly Dateien mit lokalem Backing) auf.
+
+        Returns:
+            Dict mit Liste der System-Dateien
+        """
+        system_files = []
+        for path, f in self.files.items():
+            if f.readonly:
+                info = {
+                    "path": path,
+                    "filename": f.filename,
+                    "local_path": getattr(f, "local_path", None),
+                    "size": f.size,
+                    "lines": f.line_count if f.line_count >= 0 else "unknown",
+                    "auto_refresh": getattr(f, "_auto_refresh", False),
+                    "file_type": f.file_type.description if f.file_type else "Unknown",
+                }
+                system_files.append(info)
+
+        return {"success": True, "system_files": system_files, "count": len(system_files)}
+
     def wipe(self):
         """
         HARD RESET: Completely erases the file system state.
@@ -1092,7 +1283,7 @@ Session: {self.session_id}
 
     def read(self, path: str) -> dict:
         """
-        Read file content with auto-load for shadow files.
+        Read file content with auto-load for shadow files and auto-refresh for system files.
         """
         path = self._normalize_path(path)
 
@@ -1103,8 +1294,16 @@ Session: {self.session_id}
 
         f = self.files[path]
 
+        # Auto-refresh for system files with auto-refresh enabled
+        if (isinstance(f, VFSFile) and f.readonly
+            and getattr(f, "_auto_refresh", False)
+            and getattr(f, "local_path", None)):
+            refresh_result = self._load_shadow_content(path)
+            if not refresh_result["success"]:
+                return refresh_result
+
         # Auto-load for shadow files
-        if isinstance(f, VFSFile) and f.backing_type == FileBackingType.SHADOW and not f.is_loaded:
+        elif isinstance(f, VFSFile) and f.backing_type == FileBackingType.SHADOW and not f.is_loaded:
             load_result = self._load_shadow_content(path)
             if not load_result["success"]:
                 return load_result

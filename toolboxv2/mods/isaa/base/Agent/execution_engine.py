@@ -731,6 +731,52 @@ class ExecutionEngine(SubAgentResumeExtension):
                 **PARALLEL_SUBTASKS_SKILL
             )
 
+        # Add job_management skill if not present (LÖSUNG 3: Agent-Verhalten verbessern)
+        # Verwende das korrekte Dict-Format wie PARALLEL_SUBTASKS_SKILL
+        if "job_management" not in self.skills_manager.skills:
+            JOB_MANAGEMENT_SKILL = {
+                "id": "job_management",
+                "name": "Job Management Best Practices",
+                "triggers": [
+                    "create job", "scheduled job", "cron job", "interval job",
+                    "job erstellen", "geplanter job", "automatisierung", "schedule",
+                    "timer", "periodisch", "wöchentlich", "täglich", "stündlich"
+                ],
+                "instruction": """FÜR GEPLANTE JOBS (SCHEDULED TASKS):
+
+1. JOB ERSTELLEN mit createJob():
+   - name: Klare Bezeichnung (z.B. "daily-backup")
+   - trigger_type: "on_cron", "on_interval", "on_time", etc.
+   - Trigger-Parameter DIREKT übergeben (nicht in trigger_config):
+     * cron_expression="0 2 * * 0" (für cron)
+     * interval_seconds=300 (für interval)
+     * at_datetime="2025-01-01T10:00:00Z" (für einmalig)
+   - agent_name: "self" oder registrierter Agent
+   - query: Die Aufgabe/Auftrag für den Agent
+
+2. VERIFIZIERUNG mit listJobs():
+   - IMMER nach createJob() listJobs() aufrufen!
+   - Prüfen dass der Job in der Liste erscheint
+   - Parameter überprüfen
+
+3. FEHLERBEHANDLUNG:
+   - Wenn createJob() mit "✗" antwortet: Fehler melden
+   - NICHT erfolgreich behaupten ohne listJobs() Bestätigung
+   - Fehlermeldung lesen und Parameter korrigieren
+
+BEISPIELE:
+   - Wöchentlich Sonntag 02:00:
+     createJob(name="weekly-update", trigger_type="on_cron", cron_expression="0 2 * * 0", agent_name="self", query="run updates")
+   - Alle 5 Minuten:
+     createJob(name="heartbeat", trigger_type="on_interval", interval_seconds=300, agent_name="self", query="ping server")""",
+                "tools_used": ["createJob", "listJobs", "deleteJob", "think", "final_answer"],
+                "tool_groups": ["job_management"],
+                "source": "predefined"
+            }
+
+            from toolboxv2.mods.isaa.base.Agent.skills import Skill
+            self.skills_manager.skills["job_management"] = Skill(**JOB_MANAGEMENT_SKILL)
+
         # Auto-group tools if not done yet
         if not self.skills_manager.tool_groups:
             self._auto_setup_tool_groups()
@@ -1600,6 +1646,7 @@ class ExecutionEngine(SubAgentResumeExtension):
                 "A. PLAN: Use `think()` to decompose the request.",
                 "B. ACT: Use tools (`load_tools`, `vfs_*`, etc.) to gather info or execute changes. (if no fitting tool is loaded, discover it with list_tools and load it with load_tools!)",
                 "C. VERIFY: Check if the tool output matches expectations.",
+                "   → AFTER state-changing tools (createJob, deleteJob, spawn_sub_agent, etc.), ALWAYS call the corresponding list tool (listJobs, list_agents, etc.) to verify!",
                 "D. REPORT: Use `final_answer()` only when the objective is met or definitively impossible.",
             ]
 

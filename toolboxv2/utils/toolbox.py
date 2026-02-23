@@ -417,7 +417,7 @@ class App(AppType, metaclass=Singleton):
             self.remove_mod(mod_name, spec=spec, delete=False)
 
         # Convert dotted module name to file path for existence check
-        # e.g., "CloudM.AuthManager" -> "CloudM/AuthManager"
+        # e.g., "CloudM.AuthHelper" -> "CloudM/AuthHelper"
         mod_path = mod_name.replace('.', '/')
 
         if (os.path.exists(self.start_dir + '/mods/' + mod_path) or os.path.exists(

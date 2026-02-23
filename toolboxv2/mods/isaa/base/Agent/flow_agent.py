@@ -2485,19 +2485,21 @@ class FlowAgent:
         # =========================================================================
         # CODE EXECUTION TOOLS (Local + Docker)
         # =========================================================================
-        from toolboxv2.mods.isaa.base.Agent.code_executor import (
-            create_local_code_exec_tool,
-            create_docker_code_exec_tool,
-        )
+        if os.getenv("WITH_CODE_TOOLS", "true") == "true":
 
-        local_exec_tool = create_local_code_exec_tool(self)
-        docker_exec_tool = create_docker_code_exec_tool(self)
+            from toolboxv2.mods.isaa.base.Agent.executors import (
+                create_local_code_exec_tool,
+                #create_docker_code_exec_tool,
+            )
 
-        tools.append(local_exec_tool)
-        tools.append(docker_exec_tool)
+            local_exec_tool = create_local_code_exec_tool(self)
+            #docker_exec_tool = create_docker_code_exec_tool(self)
 
-        # Register all tools
-        self.add_tools(tools)
+            tools.append(local_exec_tool)
+            #tools.append(docker_exec_tool)
+
+            # Register all tools
+            self.add_tools(tools)
 
         session.tools_initialized = True
         logger.info(f"{len(tools)} Tools initialized for session {session.session_id}")

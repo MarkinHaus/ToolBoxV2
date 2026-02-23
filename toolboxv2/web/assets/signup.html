@@ -314,216 +314,88 @@
     </div>
 
     <!-- Signup Script -->
-    <script>
+    <script unSave="true">>
     (function() {
         'use strict';
 
-        function setupSignup() {
-            console.log('[Signup] Initializing custom auth signup...');
-
-            // Check if already authenticated
-            if (window.TB && window.TB.user && window.TB.user.isAuthenticated && window.TB.user.isAuthenticated()) {
-                console.log('[Signup] User already authenticated, redirecting...');
-                redirectUser();
-                return;
-            }
-
-            // Check for OAuth callback errors
-            var urlParams = new URLSearchParams(window.location.search);
-            if (urlParams.has('error')) {
-                showError(urlParams.get('error'));
-            }
-
-            // Check passkey support
-            checkPasskeySupport();
-
-            // Bind button handlers
-            var discordBtn = document.getElementById('btn-discord-signup');
-            var googleBtn = document.getElementById('btn-google-signup');
-            var passkeyBtn = document.getElementById('btn-passkey-register');
-
-            if (discordBtn) discordBtn.addEventListener('click', handleDiscordSignup);
-            if (googleBtn) googleBtn.addEventListener('click', handleGoogleSignup);
-            if (passkeyBtn) passkeyBtn.addEventListener('click', handlePasskeyRegister);
-
-            // Listen for sign-in event (OAuth redirect comes back as signed in)
-            if (window.TB && window.TB.events) {
-                window.TB.events.on('user:signedIn', function(data) {
-                    console.log('[Signup] User signed in successfully:', (data && data.userId) || '');
-                    showLoading('Account ready! Redirecting...');
-                    redirectUser();
-                });
-
-                window.TB.events.on('user:authError', function(data) {
-                    console.error('[Signup] Auth error:', (data && data.message) || (data && data.error));
-                    showError((data && data.message) || (data && data.error && data.error.message) || 'Authentication failed');
-                    hideLoading();
-                });
-            }
-
-            console.log('[Signup] Custom auth signup ready.');
+        function showError(msg) {
+            const el = document.getElementById('error-message');
+            if (el) { el.textContent = msg; el.classList.add('show'); }
+            if (window.TB?.ui?.Toast) TB.ui.Toast.showError(msg);
+        }
+        function toggleLoad(show, msg) {
+            const el = document.getElementById('loading');
+            if (!el) return;
+            if (msg) el.querySelector('p').textContent = msg;
+            show ? el.classList.add('show') : el.classList.remove('show');
         }
 
-        function checkPasskeySupport() {
-            var badge = document.getElementById('passkeyBadge');
-            var btn = document.getElementById('btn-passkey-register');
+        window.handleDiscordSignup = function() {
+            toggleLoad(true, 'Connecting to Discord...');
+            window.TB.user.loginWithDiscord().catch(() => {
+                showError('Discord Signup fehlgeschlagen.');
+                toggleLoad(false);
+            });
+        };
 
-            if (!badge || !btn) return;
+        window.handleGoogleSignup = function() {
+            toggleLoad(true, 'Connecting to Google...');
+            window.TB.user.loginWithGoogle().catch(() => {
+                showError('Google Signup fehlgeschlagen.');
+                toggleLoad(false);
+            });
+        };
 
-            var supported = window.PublicKeyCredential !== undefined &&
-                typeof window.PublicKeyCredential === 'function';
+        window.handlePasskeyRegister = async function() {
+            const username = prompt('Wähle einen Usernamen:');
+            if (!username) return showError('Username ist Pflicht für Passkeys.');
 
-            if (supported) {
-                badge.textContent = 'Supported';
-                badge.classList.remove('unsupported');
-            } else {
-                badge.textContent = 'Not Supported';
-                badge.classList.add('unsupported');
-                btn.disabled = true;
-            }
-        }
-
-        async function handleDiscordSignup() {
-            showLoading('Connecting to Discord...');
-
-            if (window.TB && window.TB.user && window.TB.user.loginWithDiscord) {
-                window.TB.user.loginWithDiscord().catch(function(error) {
-                    console.error('[Signup] Discord signup error:', error);
-                    showError('Failed to connect to Discord. Please try again.');
-                    hideLoading();
-                });
-            } else {
-                // Fallback: fetch auth URL as JSON then redirect
-                try {
-                    var baseUrl = '';
-                    if (window.TB && window.TB.env && window.TB.env.isTauri && window.TB.env.isTauri()) {
-                        baseUrl = (window.TB.env.getWorkerHttpUrl && window.TB.env.getWorkerHttpUrl()) || 'http://localhost:5000';
-                    }
-                    var redirectAfter = encodeURIComponent(window.location.origin);
-                    var resp = await fetch(baseUrl + '/auth/discord/url?redirect_after=' + redirectAfter);
-                    var json = await resp.json();
-                    var authUrl = (json.result && json.result.auth_url) || json.auth_url;
-                    if (authUrl) { window.location.href = authUrl; }
-                    else { throw new Error('No auth URL'); }
-                } catch (e) {
-                    showError('Failed to connect to Discord. Please try again.');
-                    hideLoading();
-                }
-            }
-        }
-
-        async function handleGoogleSignup() {
-            showLoading('Connecting to Google...');
-
-            if (window.TB && window.TB.user && window.TB.user.loginWithGoogle) {
-                window.TB.user.loginWithGoogle().catch(function(error) {
-                    console.error('[Signup] Google signup error:', error);
-                    showError('Failed to connect to Google. Please try again.');
-                    hideLoading();
-                });
-            } else {
-                // Fallback: fetch auth URL as JSON then redirect
-                try {
-                    var baseUrl = '';
-                    if (window.TB && window.TB.env && window.TB.env.isTauri && window.TB.env.isTauri()) {
-                        baseUrl = (window.TB.env.getWorkerHttpUrl && window.TB.env.getWorkerHttpUrl()) || 'http://localhost:5000';
-                    }
-                    var redirectAfter = encodeURIComponent(window.location.origin);
-                    var resp = await fetch(baseUrl + '/auth/google/url?redirect_after=' + redirectAfter);
-                    var json = await resp.json();
-                    var authUrl = (json.result && json.result.auth_url) || json.auth_url;
-                    if (authUrl) { window.location.href = authUrl; }
-                    else { throw new Error('No auth URL'); }
-                } catch (e) {
-                    showError('Failed to connect to Google. Please try again.');
-                    hideLoading();
-                }
-            }
-        }
-
-        async function handlePasskeyRegister() {
-            var username = prompt('Choose a username:');
-            if (!username || !username.trim()) {
-                showError('Username is required for passkey registration.');
-                return;
-            }
-            username = username.trim();
-
-            var displayName = prompt('Enter your display name (optional):', username);
-            if (displayName === null) return;
-            displayName = displayName.trim() || username;
-
-            showLoading('Registering passkey...');
+            const displayName = prompt('Anzeigename (optional):') || username;
+            toggleLoad(true, 'Erstelle Passkey...');
 
             try {
-                if (window.TB && window.TB.user && window.TB.user.registerPasskey) {
-                    await window.TB.user.registerPasskey(username, displayName);
-                } else {
-                    throw new Error('Auth system not ready. Please refresh.');
-                }
-
-                showLoading('Passkey registered! Redirecting...');
-                redirectUser();
+                await window.TB.user.registerPasskey(username.trim(), displayName.trim());
+                // Event 'user:signedIn' will handle the redirect
             } catch (error) {
-                console.error('[Signup] Passkey registration error:', error);
-                if (error.name === 'NotAllowedError') {
-                    showError('Passkey registration was cancelled.');
-                } else {
-                    showError(error.message || 'Passkey registration failed. Please try another method.');
-                }
-                hideLoading();
+                showError(error.message || 'Passkey Registrierung abgebrochen.');
+                toggleLoad(false);
+            }
+        };
+
+        function setupSignup() {
+            if (window.TB?.user?.isAuthenticated?.()) {
+                if (window.TB.router) window.TB.router.navigateTo('/web/mainContent.html');
+                return;
+            }
+
+            const params = new URLSearchParams(window.location.search);
+            if (params.has('error')) showError(params.get('error'));
+
+            if (window.PublicKeyCredential) {
+                const badge = document.getElementById('passkeyBadge');
+                if (badge) { badge.textContent = 'Supported'; badge.classList.remove('unsupported'); }
+            }
+
+            // Bind global handlers to buttons just in case inline onclick fails
+            document.getElementById('btn-discord-signup')?.addEventListener('click', window.handleDiscordSignup);
+            document.getElementById('btn-google-signup')?.addEventListener('click', window.handleGoogleSignup);
+            document.getElementById('btn-passkey-register')?.addEventListener('click', window.handlePasskeyRegister);
+
+            if (window.TB?.events) {
+                window.TB.events.on('user:signedIn', () => {
+                    toggleLoad(true, 'Account ready! Redirecting...');
+                    setTimeout(() => window.TB.router.navigateTo('/web/mainContent.html'), 500);
+                });
+                window.TB.events.on('user:authError', (d) => {
+                    showError(d.message || 'Authentifizierung fehlgeschlagen');
+                    toggleLoad(false);
+                });
             }
         }
 
-        function redirectUser() {
-            var nextUrl = getRedirectUrl();
-            setTimeout(function() {
-                if (window.TB && window.TB.router && window.TB.router.navigateTo) {
-                    window.TB.router.navigateTo(nextUrl);
-                } else {
-                    window.location.href = nextUrl;
-                }
-            }, 500);
-        }
-
-        function getRedirectUrl() {
-            var urlParams = new URLSearchParams(window.location.search);
-            return urlParams.get('next') || '/web/mainContent.html';
-        }
-
-        function showError(message) {
-            if (window.TB && window.TB.ui && window.TB.ui.Toast && window.TB.ui.Toast.showError) {
-                window.TB.ui.Toast.showError(message);
-            }
-            var errorEl = document.getElementById('error-message');
-            if (errorEl) {
-                errorEl.textContent = message;
-                errorEl.classList.add('show');
-            }
-        }
-
-        function showLoading(message) {
-            var loadingEl = document.getElementById('loading');
-            if (loadingEl) {
-                var msgEl = loadingEl.querySelector('p');
-                if (msgEl && message) msgEl.textContent = message;
-                loadingEl.classList.add('show');
-            }
-        }
-
-        function hideLoading() {
-            var loadingEl = document.getElementById('loading');
-            if (loadingEl) loadingEl.classList.remove('show');
-        }
-
-        // Initialization
-        if (window.TB && window.TB.onLoaded) {
-            window.TB.onLoaded(setupSignup);
-        } else if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', setupSignup);
-        } else {
-            setupSignup();
-        }
+        // Init
+        if (typeof TB !== 'undefined') setupSignup();
+        else document.addEventListener('tb:loaded', setupSignup, { once: true });
     })();
     </script>
 

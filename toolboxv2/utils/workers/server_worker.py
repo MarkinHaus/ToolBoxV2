@@ -1876,6 +1876,21 @@ class HTTPWorker:
             # Add session to environ
             if self._session_manager:
                 session = self._session_manager.get_session_from_request_sync(environ)
+
+                # Bearer token fallback for cross-origin requests (e.g. Tauri).
+                # Cookie is set on worker origin (localhost:5000) but requests come
+                # from tauri.localhost — cookie not sent. Fall back to JWT in header.
+                if (not session or session.anonymous) and environ.get("HTTP_AUTHORIZATION", "").startswith(
+                    "Bearer "):
+                    bearer_token = environ["HTTP_AUTHORIZATION"][7:]
+                    try:
+                        valid, jwt_session = self._session_manager.verify_session_token(bearer_token)
+                        if valid and jwt_session:
+                            session = jwt_session
+                            session.mark_dirty()
+                    except Exception as e:
+                        logger.debug(f"Bearer fallback failed: {e}")
+
                 environ["tb.session"] = session
 
             # Parse request - mit upload temp directory aus app config

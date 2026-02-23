@@ -12,13 +12,12 @@ import json
 from dataclasses import asdict
 
 from toolboxv2 import App, RequestData, Result, get_app
-from toolboxv2.mods.CloudM.AuthManager import db_helper_save_user
-from toolboxv2.mods.CloudM.AuthManager import (
+from toolboxv2.mods.CloudM.auth.AuthHelpers import db_helper_save_user
+from toolboxv2.mods.CloudM.auth.AuthHelpers import (
     get_magic_link_email as request_magic_link_backend,
 )
 
 from .UserAccountManager import get_current_user_from_request
-from .UserInstances import close_user_instance as close_user_instance_internal
 from .UserInstances import get_user_instance as get_user_instance_internal
 
 Name = 'CloudM.UserDashboard'

@@ -31,6 +31,7 @@ const user = {
     _tokenRefreshTimerId: null,
     _signInInProgress: false,
     _lastSignInUserId: null,
+    _authCallbackProcessed: false, // NEW: Track if callback was already processed
 
     // =================== URL Resolution (Web vs Tauri Worker) ===================
 
@@ -124,9 +125,28 @@ const user = {
         return (Date.now() - this._lastActivityTimestamp) < INACTIVITY_TIMEOUT;
     },
 
+    // =========================================================================
+    // FIX 1: init() re-checks auth callback on subsequent calls
+    // =========================================================================
+    // Problem: In Tauri, _doInit() runs on /index.html where URL has no token
+    //          params. Router later navigates to /login.html?token=eyJ... via SPA.
+    //          login.html calls TB.user.init() but the old code returned the
+    //          already-resolved promise without re-checking URL params.
+    // Fix:    If init was already called and user is NOT authenticated, re-run
+    //         _checkAuthCallback() which now reads current window.location.
+    // =========================================================================
     async init(forceServerFetch = false) {
         if (this._initPromise) {
-            return this._initPromise;
+            await this._initPromise;
+
+            // Re-check auth callback if user is still not authenticated
+            // This handles the Tauri case where router navigated to a URL
+            // with token params AFTER the initial init completed
+            if (!this.isAuthenticated() && !this._authCallbackProcessed) {
+                await this._checkAuthCallback();
+            }
+
+            return true;
         }
         this._initPromise = this._doInit(forceServerFetch);
         return this._initPromise;
@@ -136,47 +156,40 @@ const user = {
         this._initActivityMonitor();
         TB.logger.info('[User] Initializing with Custom Auth...');
 
-        // Load state from localStorage
-        let initialState = TB.state.get('user');
+        // STEP 1: Load from localStorage FIRST (synchronous, before async ops)
+        let initialState = null;
 
-        if (!initialState || Object.keys(initialState).length === 0) {
-            try {
-                const storedSession = localStorage.getItem(USER_STATE_KEY);
-                if (storedSession) {
-                    initialState = JSON.parse(storedSession);
-                    TB.logger.debug('[User] Loaded session from localStorage.');
-                }
-            } catch (e) {
-                TB.logger.warn('[User] Could not parse stored session.', e);
-                localStorage.removeItem(USER_STATE_KEY);
-                initialState = null;
+        // Try localStorage first (most likely to have fresh data from OAuth callback)
+        try {
+            const storedSession = localStorage.getItem(USER_STATE_KEY);
+            if (storedSession) {
+                initialState = JSON.parse(storedSession);
+                TB.logger.debug('[User] Loaded session from localStorage.');
             }
+        } catch (e) {
+            TB.logger.warn('[User] Could not parse stored session.', e);
+            localStorage.removeItem(USER_STATE_KEY);
         }
 
+        // Fallback to TB.state if localStorage is empty
+        if (!initialState || Object.keys(initialState).length === 0) {
+            initialState = TB.state.get('user');
+        }
+
+        // STEP 2: Set state IMMEDIATELY (synchronous)
+        // This ensures token is available for fetch override before any async ops
         const mergedState = { ...defaultUserState, ...(initialState || {}) };
         TB.state.set('user', mergedState);
 
-        // Check if we have a stored token and validate it
-        if (mergedState.token && mergedState.isAuthenticated) {
-            const isValid = await this.validateBackendSession();
-            if (isValid) {
-                TB.logger.info('[User] Restored valid session from storage.');
-                authInitialized = true;
-                this._startTokenRefreshTimer();
-                TB.events.emit('user:signedIn', {
-                    username: mergedState.username,
-                    userId: mergedState.userId
-                });
-            } else {
-                TB.logger.warn('[User] Stored session invalid, clearing.');
-                this._updateUserState({}, true);
-            }
+        if (mergedState.userId) {
+            TB.logger.info('[User] Session restored:', {
+                isAuthenticated: mergedState.isAuthenticated,
+                userId: mergedState.userId,
+                username: mergedState.username
+            });
         }
 
-        // Check URL for auth callback tokens (OAuth redirect)
-        await this._checkAuthCallback();
-
-        // Listen for state changes to persist
+        // STEP 3: Register state change listener for future updates (NOT for initial load)
         TB.events.on('state:changed:user', (newState) => {
             try {
                 localStorage.setItem(USER_STATE_KEY, JSON.stringify(newState));
@@ -186,13 +199,45 @@ const user = {
             }
         });
 
+        // STEP 4: Async operations (token validation, OAuth callback processing)
+        // Check if we have a stored token and validate it
+        if (mergedState.token && mergedState.isAuthenticated) {
+            const isValid = await this.validateBackendSession();
+            if (isValid) {
+                TB.logger.info('[User] Restored valid session from storage.');
+                this._startTokenRefreshTimer();
+                // Don't emit user:signedIn here - it may trigger unwanted redirects
+            } else {
+                TB.logger.warn('[User] Stored session invalid, clearing.');
+                this._updateUserState({}, true);
+            }
+        }
+
+        // Check URL for auth callback tokens (OAuth redirect)
+        await this._checkAuthCallback();
+
         authInitialized = true;
         return true;
     },
 
+    // =========================================================================
+    // FIX 2: _checkAuthCallback() uses /validateSession (AuthHandler) instead of
+    //         /api/CloudM.Auth/validate_session (blocked by AccessController at level=0)
+    // =========================================================================
+    // Problem: After OAuth redirect, the client has a JWT token but NO cookie session.
+    //          /api/CloudM.Auth/* goes through ToolBoxHandler → AccessController which
+    //          checks the cookie session (level=0 = anonymous) → 401.
+    //          /validateSession goes through AuthHandler which validates the JWT
+    //          directly, bypassing AccessController.
+    // =========================================================================
     /**
      * Check URL for auth callback parameters (after OAuth redirect).
      * Handles ?token=xxx&refresh_token=xxx from OAuth callbacks.
+     *
+     * CRITICAL: Uses /validateSession (AuthHandler endpoint) which bypasses
+     * ToolBoxHandler access control. /api/CloudM.Auth/* would fail because
+     * the AccessController requires a valid cookie session, which doesn't
+     * exist at this point (cross-origin: Tauri → Worker, or fresh browser).
      */
     async _checkAuthCallback() {
         const urlParams = new URLSearchParams(window.location.search);
@@ -201,65 +246,78 @@ const user = {
 
         if (!token) return;
 
+        // Guard: don't process the same callback twice
+        if (this._authCallbackProcessed) return;
+        this._authCallbackProcessed = true;
+
         TB.logger.info('[User] Auth callback detected, processing tokens...');
 
-        try {
-            // Clean up URL (remove token params)
-            const cleanUrl = new URL(window.location.href);
-            cleanUrl.searchParams.delete('token');
-            cleanUrl.searchParams.delete('refresh_token');
-            window.history.replaceState({}, '', cleanUrl.toString());
+        // Clean up URL (remove token params) IMMEDIATELY to prevent re-processing
+        const cleanUrl = new URL(window.location.href);
+        ['token', 'refresh_token', 'user_id', 'username'].forEach(p => cleanUrl.searchParams.delete(p));
+        window.history.replaceState({}, '', cleanUrl.toString());
 
-            // Validate the token
-            const response = await fetch(`${this._getApiBaseUrl()}/api/CloudM.Auth/validate_session`, {
+        try {
+            // ================================================================
+            // Use /validateSession (AuthHandler) — NOT /api/CloudM.Auth/validate_session
+            // AuthHandler endpoints bypass AccessController, which is critical because
+            // at this point we have NO cookie session (cross-origin from bridge page)
+            // ================================================================
+            const baseUrl = this._getBaseUrl();
+            TB.logger.debug('[User] Validating OAuth token via /validateSession...');
+
+            const response = await fetch(`${baseUrl}/validateSession`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
-                body: JSON.stringify({ token: token })
+                body: JSON.stringify({
+                    session_token: token,
+                    user_id: urlParams.get('user_id') || ''
+                })
             });
 
             if (!response.ok) {
-                throw new Error(`Validation failed: ${response.status}`);
+                throw new Error(`Validation HTTP ${response.status}`);
             }
 
             const result = await response.json();
 
             if (result.error !== "none" || !result.result?.data?.authenticated) {
-                throw new Error('Token validation rejected');
+                throw new Error(result.error || 'Token rejected by server');
             }
 
             const userData = result.result.data;
+            TB.logger.debug('[User] Token validated, user:', userData.user_id);
 
-            // Fetch full user data
-            const userDataResponse = await fetch(`${this._getApiBaseUrl()}/api/CloudM.Auth/get_user_data`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({ user_id: userData.user_id })
-            });
-
+            // Fetch full user data via /api_user_data (also AuthHandler, no AccessController)
             let settings = {};
-            let userLevel = 1;
+            let userLevel = userData.level || 1;
             let modData = {};
 
-            if (userDataResponse.ok) {
-                const userDataResult = await userDataResponse.json();
-                if (userDataResult.error === "none" && userDataResult.result?.data) {
-                    const data = userDataResult.result.data;
-                    settings = data.settings || {};
-                    userLevel = data.level || 1;
-                    modData = data.mod_data || {};
+            try {
+                const udResp = await fetch(`${baseUrl}/api_user_data`, {
+                    method: 'GET',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (udResp.ok) {
+                    const udResult = await udResp.json();
+                    if (udResult.error === "none" && udResult.result?.data) {
+                        const data = udResult.result.data;
+                        settings = data.settings || {};
+                        userLevel = data.level || userLevel;
+                        modData = data.mod_data || {};
+                    }
                 }
+            } catch (e) {
+                TB.logger.debug('[User] User data fetch optional, continuing:', e.message);
             }
 
-            // Update state
-            this._updateUserState({
+            // Create new state object
+            const newState = {
                 isAuthenticated: true,
-                username: userData.username || userData.user_name || '',
+                username: userData.username || userData.user_name || urlParams.get('username') || '',
                 email: userData.email || '',
                 userId: userData.user_id,
                 userLevel: userLevel,
@@ -271,21 +329,65 @@ const user = {
                     provider: userData.provider || '',
                     imageUrl: userData.image_url || ''
                 }
-            });
+            };
 
-            TB.logger.info('[User] Auth callback processed successfully');
+            // Update state via _updateUserState (uses TB.state.set)
+            this._updateUserState(newState);
+
+            // CRITICAL: Explicitly write to localStorage IMMEDIATELY (synchronous)
+            // This ensures tokens are available before the user:signedIn event triggers navigation
+            localStorage.setItem(USER_STATE_KEY, JSON.stringify(TB.state.get('user')));
+            localStorage.setItem(USER_DATA_TIMESTAMP_KEY, Date.now().toString());
+
+            TB.logger.info('[User] Auth callback processed successfully, userId:', newState.userId);
             TB.events.emit('user:signedIn', {
-                username: userData.username,
-                userId: userData.user_id
+                username: newState.username,
+                userId: newState.userId
             });
 
             this._startTokenRefreshTimer();
             this._handlePostAuthRedirect();
 
         } catch (e) {
-            TB.logger.error('[User] Auth callback failed:', e);
+            TB.logger.error('[User] Auth callback FAILED:', e);
+            this._authCallbackProcessed = false; // Allow retry
             await this._handleAuthFailure(e.message);
         }
+    },
+
+    // =========================================================================
+    // FIX 3: Public method for login.html to process auth tokens directly
+    // =========================================================================
+    /**
+     * Process auth callback from a given URL string.
+     * Use this when the URL has token params but _checkAuthCallback couldn't
+     * run at the right time (e.g., SPA navigation changed the URL after init).
+     *
+     * @param {string} [url] - URL to extract tokens from. Defaults to window.location.href.
+     * @returns {Promise<boolean>} True if tokens were found and processed.
+     */
+    async processAuthCallback(url) {
+        const targetUrl = url || window.location.href;
+        const urlParams = new URLSearchParams(new URL(targetUrl, window.location.origin).search);
+        const token = urlParams.get('token');
+
+        if (!token) {
+            TB.logger.debug('[User] processAuthCallback: no token found in URL');
+            return false;
+        }
+
+        if (this.isAuthenticated()) {
+            TB.logger.debug('[User] processAuthCallback: already authenticated');
+            return true;
+        }
+
+        // Reset the guard so _checkAuthCallback can run
+        this._authCallbackProcessed = false;
+
+        // Temporarily update window.location.search if needed (for _checkAuthCallback)
+        // Actually, we can just call _checkAuthCallback since window.location should have the params
+        await this._checkAuthCallback();
+        return this.isAuthenticated();
     },
 
     _updateUserState(updates, clearExisting = false) {
@@ -308,12 +410,22 @@ const user = {
     async loginWithDiscord() {
         TB.logger.info('[User] Starting Discord OAuth login...');
         try {
-            const redirectAfter = encodeURIComponent(window.location.origin);
+            // Fix: In Tauri, window.location.origin may be empty. Use a proper origin.
+            let redirectAfter;
+            if (env.isTauri()) {
+                // In Tauri, use the Tauri dev URL or configured base URL
+                // The worker will redirect back to this origin after OAuth
+                redirectAfter = encodeURIComponent(window.location.origin || 'http://localhost:8080');
+                TB.logger.debug(`[User] Tauri mode, using redirect_after: ${redirectAfter}`);
+            } else {
+                redirectAfter = encodeURIComponent(window.location.origin);
+            }
             const response = await fetch(`${this._getBaseUrl()}/auth/discord/url?redirect_after=${redirectAfter}`);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const json = await response.json();
             const authUrl = json.result?.auth_url || json.auth_url;
             if (!authUrl) throw new Error('No auth URL returned from server');
+            TB.logger.debug(`[User] Redirecting to Discord OAuth URL`);
             window.location.href = authUrl;
         } catch (e) {
             TB.logger.error('[User] Discord login failed:', e);
@@ -329,12 +441,21 @@ const user = {
     async loginWithGoogle() {
         TB.logger.info('[User] Starting Google OAuth login...');
         try {
-            const redirectAfter = encodeURIComponent(window.location.origin);
+            // Fix: In Tauri, window.location.origin may be empty. Use a proper origin.
+            let redirectAfter;
+            if (env.isTauri()) {
+                // In Tauri, use the Tauri dev URL or configured base URL
+                redirectAfter = encodeURIComponent(window.location.origin || 'http://localhost:8080');
+                TB.logger.debug(`[User] Tauri mode, using redirect_after: ${redirectAfter}`);
+            } else {
+                redirectAfter = encodeURIComponent(window.location.origin);
+            }
             const response = await fetch(`${this._getBaseUrl()}/auth/google/url?redirect_after=${redirectAfter}`);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const json = await response.json();
             const authUrl = json.result?.auth_url || json.auth_url;
             if (!authUrl) throw new Error('No auth URL returned from server');
+            TB.logger.debug(`[User] Redirecting to Google OAuth URL`);
             window.location.href = authUrl;
         } catch (e) {
             TB.logger.error('[User] Google login failed:', e);
@@ -366,7 +487,6 @@ const user = {
             const startJson = await startResponse.json();
             const options = startJson.result || startJson;
 
-            // Convert base64 to ArrayBuffer
             options.challenge = this._base64ToArrayBuffer(options.challenge);
             if (options.allowCredentials) {
                 options.allowCredentials = options.allowCredentials.map(cred => ({
@@ -375,10 +495,10 @@ const user = {
                 }));
             }
 
-            // Step 2: Get credential from browser
+            // Step 2: Ask authenticator
             const credential = await navigator.credentials.get({ publicKey: options });
 
-            // Step 3: Send credential to server
+            // Step 3: Send response to server
             const finishResponse = await fetch(`${this._getApiBaseUrl()}/api/CloudM.Auth/passkey_login_finish`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -392,14 +512,15 @@ const user = {
             const finishJson = await finishResponse.json();
             const data = finishJson.result || finishJson;
 
-            // Update user state with tokens
-            this.setAuthData({
-                token: data.access_token || data.token,
-                refreshToken: data.refresh_token,
-                userId: data.user_id || data.user?.user_id,
-                username: data.username || data.user?.username || username,
-                email: data.email || data.user?.email || null
-            });
+            if (data.access_token || data.token) {
+                this.setAuthData({
+                    token: data.access_token || data.token,
+                    refreshToken: data.refresh_token,
+                    userId: data.user_id || data.user?.user_id,
+                    username: data.username || data.user?.username || username,
+                    email: data.email || null
+                });
+            }
 
             return data;
         } catch (e) {
@@ -513,10 +634,15 @@ const user = {
         for (let i = 0; i < bytes.length; i++) {
             binary += String.fromCharCode(bytes[i]);
         }
-        // Convert standard base64 to base64url: replace +/ with -_, strip padding
-        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        // Standard base64
+        let base64 = btoa(binary);
+        // Convert to base64url
+        return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     },
 
+    /**
+     * Convert PublicKeyCredential to JSON-serializable object.
+     */
     _credentialToJSON(credential) {
         return {
             id: credential.id,
@@ -524,12 +650,12 @@ const user = {
             type: credential.type,
             response: {
                 clientDataJSON: this._arrayBufferToBase64(credential.response.clientDataJSON),
-                attestationObject: credential.response.attestationObject
-                    ? this._arrayBufferToBase64(credential.response.attestationObject) : null,
                 authenticatorData: credential.response.authenticatorData
-                    ? this._arrayBufferToBase64(credential.response.authenticatorData) : null,
+                    ? this._arrayBufferToBase64(credential.response.authenticatorData) : undefined,
                 signature: credential.response.signature
-                    ? this._arrayBufferToBase64(credential.response.signature) : null,
+                    ? this._arrayBufferToBase64(credential.response.signature) : undefined,
+                attestationObject: credential.response.attestationObject
+                    ? this._arrayBufferToBase64(credential.response.attestationObject) : undefined,
                 userHandle: credential.response.userHandle
                     ? this._arrayBufferToBase64(credential.response.userHandle) : null
             }
@@ -570,6 +696,7 @@ const user = {
         TB.logger.info('[User] Signing out...');
 
         this._stopTokenRefreshTimer();
+        this._authCallbackProcessed = false; // Reset for next login
 
         const userId = this.getUserId();
         const token = this.getToken();
@@ -666,30 +793,27 @@ const user = {
      * Refresh the JWT access token using the refresh token.
      */
     async _refreshToken() {
-        TB.logger.debug('[User] Refreshing session token...');
-
         const refreshToken = TB.state.get('user.refreshToken');
         const currentToken = this.getToken();
-
         if (!refreshToken && !currentToken) {
-            TB.logger.warn('[User] No tokens available for refresh');
             throw new Error('No active session');
+        }
+
+        // Skip refresh if token was updated very recently (< 2 min)
+        const lastUpdate = parseInt(localStorage.getItem(USER_DATA_TIMESTAMP_KEY) || '0');
+        if (Date.now() - lastUpdate < 120000) {
+            TB.logger.debug('[User] Token recently updated, skipping refresh');
+            return;
         }
 
         try {
             const response = await fetch(`${this._getApiBaseUrl()}/api/CloudM.Auth/refresh_token`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    refresh_token: refreshToken,
-                    token: currentToken
-                })
+                body: JSON.stringify({ refresh_token: refreshToken, token: currentToken })
             });
 
-            if (!response.ok) {
-                throw new Error(`Refresh failed: ${response.status}`);
-            }
-
+            if (!response.ok) throw new Error(`Refresh failed: ${response.status}`);
             const result = await response.json();
 
             if (result.error !== "none" || !result.result?.data?.access_token) {
@@ -701,9 +825,7 @@ const user = {
                 token: data.access_token,
                 refreshToken: data.refresh_token || refreshToken
             });
-
             TB.logger.info('[User] Session token refreshed');
-
         } catch (e) {
             TB.logger.error('[User] Token refresh failed:', e);
             await this.signOut();
@@ -719,13 +841,9 @@ const user = {
 
         this._tokenRefreshTimerId = setInterval(async () => {
             try {
-                if (this._isUserActive() && this.getToken()) {
-                    // Validate first, refresh if needed
-                    const isValid = await this.validateBackendSession();
-                    if (!isValid) {
-                        await this._refreshToken();
-                    }
-                }
+                if (!this._isUserActive() || !this.getToken()) return;
+                // Proactive refresh — single call, no validate-then-refresh double-call
+                await this._refreshToken();
             } catch (e) {
                 TB.logger.warn('[User] Token auto-refresh failed:', e);
             }
@@ -770,9 +888,7 @@ const user = {
 
             if (result.error === "none") {
                 const currentSettings = TB.state.get('user.settings') || {};
-                this._updateUserState({
-                    settings: { ...currentSettings, ...settings }
-                });
+                this._updateUserState({ settings: { ...currentSettings, ...settings } });
                 return { success: true };
             }
 

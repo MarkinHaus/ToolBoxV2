@@ -350,11 +350,8 @@ async def on_exit_whatsapp():
     """Cleanup on module exit"""
     global _kernel_instances
 
-    print("🛑 Stopping all WhatsApp kernel instances...")
     for instance_id in list(_kernel_instances.keys()):
         await remove_kernel_instance(instance_id)
-
-    print("✓ All WhatsApp kernel instances stopped")
 
 
 @export(mod_name=Name, version=version)

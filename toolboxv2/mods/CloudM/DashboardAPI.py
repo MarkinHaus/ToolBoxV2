@@ -9,15 +9,13 @@ Backend-Endpunkte für die Minu-basierten Dashboards mit:
 
 import json
 from dataclasses import asdict
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from toolboxv2 import App, RequestData, Result, get_app, TBEF
-from toolboxv2.mods.Minu import register_view, get_or_create_session
 
 # Imports für User/Auth Management
-from toolboxv2.mods.CloudM.AuthManager import db_helper_save_user
+from toolboxv2.mods.CloudM.auth.AuthHelpers import db_helper_save_user
 from toolboxv2.mods.CloudM.UserAccountManager import get_current_user_from_request
-from toolboxv2.mods.CloudM.types import User
 
 Name = "CloudM.DashboardAPI"
 export = get_app(Name + ".Export").tb
@@ -592,7 +590,7 @@ async def _handle_request_magic_link(app: App, user):
         return Result.default_user_error(info="Benutzername nicht gefunden")
 
     try:
-        from toolboxv2.mods.CloudM.AuthManager import get_magic_link_email
+        from toolboxv2.mods.CloudM.auth.AuthHelpers import get_magic_link_email
 
         result = await get_magic_link_email(app, username=username)
 
@@ -634,7 +632,7 @@ async def _handle_delete_user(app: App, payload: dict):
         return Result.default_user_error(info="Benutzer-ID und Name erforderlich")
 
     try:
-        from toolboxv2.mods.CloudM.AuthManager import db_helper_delete_user
+        from toolboxv2.mods.CloudM.auth.AuthHelpers import db_helper_delete_user
 
         result = db_helper_delete_user(app, username, uid, matching=True)
 

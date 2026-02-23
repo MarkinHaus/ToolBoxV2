@@ -120,7 +120,7 @@ class TBXCoreManager:
                 "allowed_origins": ["*"]
             },
             "auth": {
-                "jwt_validation_module": "CloudM.AuthManager",
+                "jwt_validation_module": "CloudM.AuthHelper",
                 "jwt_validation_function": "jwt_check_claim_server_side",
                 "session_validation_endpoint": "/validateSession",
                 "anonymous_allowed": False

@@ -125,7 +125,7 @@ class Colors:
 
 def esc(text: Any) -> str:
     """Escaped Text für HTML-Tags, verhindert Crash bei < oder > im Text"""
-    return html.escape(str(text))
+    return html.escape(str(text).encode().decode(encoding="utf-8", errors="replace"))
 
 
 def c_print(*args, **kwargs):
@@ -139,7 +139,10 @@ def c_print(*args, **kwargs):
     elif isinstance(args[0], HTML):
         print_formatted_text(*args, **kwargs)
     else:
-        print_formatted_text(HTML(esc(text)), **kwargs)
+        try:
+            print_formatted_text(HTML(esc(text)), **kwargs)
+        except:
+            print(text)
 
 
 def print_box_header(title: str, icon: str = "ℹ", width: int = 76):
@@ -1255,30 +1258,126 @@ class ISAA_Host:
             trigger_config: dict | None = None,
             timeout_seconds: int = 300,
             session_id: str = "default",
+            # Trigger-specific parameters (for backward compatibility)
+            cron_expression: str | None = None,
+            interval_seconds: int | None = None,
+            at_datetime: str | None = None,
+            watch_job_id: str | None = None,
+            watch_path: str | None = None,
+            watch_patterns: list[str] | None = None,
+            webhook_path: str | None = None,
+            idle_seconds: int | None = None,
+            # Allow additional trigger parameters via **kwargs
+            **extra_trigger_kwargs
         ) -> str:
             """
             Create a persistent scheduled job that fires an agent query on a trigger.
+
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            ⚠️  IMPORTANT: TRIGGER PARAMETER USAGE
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+            Trigger-specific parameters (cron_expression, interval_seconds, etc.)
+            can be passed in THREE ways:
+
+            1. DIRECTLY as function parameters (recommended):
+               createJob(name="my-job", trigger_type="on_cron", cron_expression="0 2 * * 0")
+
+            2. Via trigger_config dict:
+               createJob(name="my-job", trigger_type="on_cron",
+                        trigger_config={"cron_expression": "0 2 * * 0"})
+
+            3. Mixed - parameters in trigger_config override direct parameters
+
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
             Args:
                 name: Human-readable job name
                 agent_name: Which agent runs this job (e.g. 'self', 'researcher')
                 query: The prompt/query to send to the agent
-                trigger_type: Trigger type (on_time, on_interval, on_cron, on_cli_start, on_cli_exit, on_job_completed, on_job_failed, on_file_changed, on_network_available, on_system_idle, etc.)
-                trigger_config: Optional trigger parameters dict (at_datetime, interval_seconds, cron_expression, watch_job_id, watch_path, watch_patterns, idle_seconds, etc.)
+                trigger_type: Trigger type (on_time, on_interval, on_cron, on_cli_start,
+                               on_cli_exit, on_job_completed, on_job_failed, on_file_changed,
+                               on_network_available, on_system_idle, on_webhook_received, etc.)
+                trigger_config: Optional trigger parameters dict - overrides direct params
                 timeout_seconds: Max execution time in seconds (default 300)
                 session_id: Session ID for the agent (default 'default')
 
+            Trigger-Specific Parameters (for on_cron, on_interval, etc.):
+                cron_expression: Cron schedule string (e.g. "0 2 * * 0" for Sunday 2am)
+                interval_seconds: Fire every N seconds
+                at_datetime: ISO datetime string for one-time execution
+                watch_job_id: Job ID to watch for job_completion/failed/timeout triggers
+                watch_path: File/directory path to watch for on_file_changed
+                watch_patterns: Glob patterns for file watching
+                webhook_path: HTTP path for on_webhook_received
+                idle_seconds: Idle threshold for on_system_idle
+
             Returns:
                 Job ID or error message
+
+            Examples:
+                # Cron job (weekly Sunday 2am)
+                createJob(name="weekly-update", trigger_type="on_cron",
+                         agent_name="self", query="run updates",
+                         cron_expression="0 2 * * 0")
+
+                # Interval job (every 5 minutes)
+                createJob(name="heartbeat", trigger_type="on_interval",
+                         agent_name="self", query="ping server",
+                         interval_seconds=300)
+
+                # Using trigger_config dict
+                createJob(name="daily-backup", trigger_type="on_cron",
+                         agent_name="self", query="backup database",
+                         trigger_config={"cron_expression": "0 3 * * *"})
             """
             if not host_ref.job_scheduler:
-                return "Job scheduler not initialized"
+                return "✗ Job scheduler not initialized"
+
             try:
-                tc = TriggerConfig(trigger_type=trigger_type)
+                import traceback
+
+                # Build trigger config from multiple sources
+                # Priority: trigger_config > direct parameters > None
+                trigger_params = {}
+
+                # Add direct parameters if provided
+                if cron_expression is not None:
+                    trigger_params["cron_expression"] = cron_expression
+                if interval_seconds is not None:
+                    trigger_params["interval_seconds"] = interval_seconds
+                if at_datetime is not None:
+                    trigger_params["at_datetime"] = at_datetime
+                if watch_job_id is not None:
+                    trigger_params["watch_job_id"] = watch_job_id
+                if watch_path is not None:
+                    trigger_params["watch_path"] = watch_path
+                if watch_patterns is not None:
+                    trigger_params["watch_patterns"] = watch_patterns
+                if webhook_path is not None:
+                    trigger_params["webhook_path"] = webhook_path
+                if idle_seconds is not None:
+                    trigger_params["idle_seconds"] = idle_seconds
+
+                # Add extra kwargs (for extensibility)
+                trigger_params.update(extra_trigger_kwargs)
+
+                # Override with trigger_config if provided
                 if trigger_config:
-                    for k, v in trigger_config.items():
-                        if hasattr(tc, k):
-                            setattr(tc, k, v)
+                    trigger_params.update(trigger_config)
+
+                # Create TriggerConfig
+                tc = TriggerConfig(trigger_type=trigger_type)
+
+                # Apply all trigger parameters
+                for k, v in trigger_params.items():
+                    if hasattr(tc, k):
+                        setattr(tc, k, v)
+                    else:
+                        # Warn about unknown parameters but don't fail
+                        _log.warning(f"Unknown trigger parameter: {k}={v}")
+
+                # Create job definition
                 job = JobDefinition(
                     job_id=JobDefinition.generate_id(),
                     name=name,
@@ -1288,10 +1387,35 @@ class ISAA_Host:
                     timeout_seconds=timeout_seconds,
                     session_id=session_id,
                 )
+
+                # Add job to scheduler
                 job_id = host_ref.job_scheduler.add_job(job)
-                return f"✓ Job created: {job_id} ({name})"
+
+                return (
+                    f"✓ Job created successfully!\n"
+                    f"  Job ID: {job_id}\n"
+                    f"  Name: {name}\n"
+                    f"  Trigger: {trigger_type}\n"
+                    f"  Config: {trigger_params or '(default)'}\n"
+                    f"  Agent: {agent_name}\n"
+                    f"  Verify with: listJobs()"
+                )
+
             except Exception as e:
-                return f"✗ Failed to create job: {e}"
+                # LÖSUNG 2: Bessere Fehlerbehandlung mit Traceback
+                import traceback
+                error_details = traceback.format_exc()
+
+                _log.error(f"Failed to create job '{name}': {e}\n{error_details}")
+
+                return (
+                    f"✗ Failed to create job '{name}'\n"
+                    f"  Error: {e}\n"
+                    f"  Trigger Type: {trigger_type}\n"
+                    f"  Parameters: {locals().get('trigger_params', {})}\n\n"
+                    f"  Debug Info:\n"
+                    f"  {error_details}"
+                )
 
         async def cli_delete_job(job_id: str) -> str:
             """
@@ -1813,6 +1937,8 @@ class ISAA_Host:
                 "test": None,  # Freitext Befehl
                 "accept": None,
                 "reject": None,
+                "info": None,
+                "stream": {"on":None,"off":None},
                 "diff": None,
                 "files": None,
             },
@@ -1875,6 +2001,11 @@ class ISAA_Host:
                 "save": vfs_all if vfs_all else None,
                 "mounts": None,
                 "dirty": None,
+                # System file management
+                "sys-add": path_compl,
+                "sys-remove": None,  # VFS path completion would be ideal
+                "sys-refresh": None,
+                "sys-list": None,
                 **vfs_all,  # Direct file/dir access: /vfs <path>
             } if vfs_all or vfs_mounts else None,
             "/context": {
@@ -2132,6 +2263,12 @@ class ISAA_Host:
         print_box_content("/vfs pull <path>             - Reload file/dir from disk", "")
         print_box_content("/vfs mounts                  - List active mounts", "")
         print_box_content("/vfs dirty                   - Show modified files", "")
+        print_separator()
+        print_status("System Files (Read-Only)", "info")
+        print_box_content("/vfs sys-add <local> [path]  - Add file as read-only system file", "")
+        print_box_content("/vfs sys-remove <vfs_path>    - Remove a system file", "")
+        print_box_content("/vfs sys-refresh <vfs_path>  - Reload system file from disk", "")
+        print_box_content("/vfs sys-list                 - List all system files", "")
         print_separator()
         print_status("Mount Options", "info")
         print_box_content("  --readonly                 - No write operations", "")
@@ -3449,6 +3586,77 @@ class ISAA_Host:
                     print_box_content(f"{path} → {local}", "")
                 print_box_footer()
 
+            # /vfs sys-add <local_path> [vfs_path] [--refresh]
+            elif cmd == "sys-add":
+                if len(args) < 2:
+                    print_status("Usage: /vfs sys-add <local_path> [vfs_path] [--refresh]", "warning")
+                    return
+
+                local_path = args[1]
+                vfs_path = args[2] if len(args) > 2 and not args[2].startswith("--") else None
+                auto_refresh = "--refresh" in args
+
+                print_status(f"Adding system file: {local_path}...", "info")
+                result = session.vfs.add_system_file(
+                    local_path=local_path,
+                    vfs_path=vfs_path,
+                    auto_refresh=auto_refresh
+                )
+
+                if result.get("success"):
+                    print_status(f"✓ {result['message']}", "success")
+                    print_box_content(f"Size: {result['size_bytes']} bytes, Lines: {result['lines']}", "info")
+                    if result.get('auto_refresh'):
+                        print_box_content("Auto-refresh: enabled", "info")
+                else:
+                    print_status(f"✗ {result.get('error')}", "error")
+
+            # /vfs sys-remove <vfs_path>
+            elif cmd == "sys-remove":
+                if len(args) < 2:
+                    print_status("Usage: /vfs sys-remove <vfs_path>", "warning")
+                    return
+
+                vfs_path = args[1]
+                result = session.vfs.remove_system_file(vfs_path)
+
+                if result.get("success"):
+                    print_status(f"✓ {result['message']}", "success")
+                else:
+                    print_status(f"✗ {result.get('error')}", "error")
+
+            # /vfs sys-refresh <vfs_path>
+            elif cmd == "sys-refresh":
+                if len(args) < 2:
+                    print_status("Usage: /vfs sys-refresh <vfs_path>", "warning")
+                    return
+
+                vfs_path = args[1]
+                result = session.vfs.refresh_system_file(vfs_path)
+
+                if result.get("success"):
+                    print_status(f"✓ {result['message']}", "success")
+                    print_box_content(f"Size: {result['size_bytes']} bytes, Lines: {result['lines']}", "info")
+                else:
+                    print_status(f"✗ {result.get('error')}", "error")
+
+            # /vfs sys-list - list all system files
+            elif cmd == "sys-list":
+                result = session.vfs.list_system_files()
+
+                if not result.get("system_files"):
+                    print_status("No system files", "info")
+                    return
+
+                print_box_header("System Files (Read-Only)", "📄")
+                for info in result["system_files"]:
+                    path = info["path"]
+                    local = info.get("local_path") or "memory"
+                    refresh = " [auto-refresh]" if info.get("auto_refresh") else ""
+                    print_box_content(f"{path} ← {local}{refresh}", "")
+                    print_box_content(f"  {info['lines']} lines, {info['file_type']}", "dim")
+                print_box_footer()
+
             # /vfs <path> - show file content or directory listing
             else:
                 path_str = " ".join(args)
@@ -3621,7 +3829,7 @@ class ISAA_Host:
     async def _cmd_coder(self, args: list[str]):
         """Handle /coder commands for native code generation."""
         if not args:
-            print_status("Usage: /coder <start|stop|task|test|accept|reject|diff|rollback|files> [args]", "warning")
+            print_status("Usage: /coder <start|stop|stream|info|task|diff|accept|reject|test|files> [args]", "warning")
             return
 
         action = args[0].lower()
@@ -4202,9 +4410,11 @@ class ISAA_Host:
         """Handle /context commands."""
         try:
             agent = await self.isaa_tools.get_agent(self.active_agent_name)
-            overview = await agent.context_overview(self.active_session_id)
+            overview = await agent.context_overview(self.active_session_id, f_print=c_print)
         except Exception as e:
             print_status(f"Error: {e}", "error")
+            import traceback
+            traceback.print_exc()
 
     def _move_stream_to_background(self, stream_gen, agent, query: str):
         """Move a running stream to background, continuing to drain chunks silently."""

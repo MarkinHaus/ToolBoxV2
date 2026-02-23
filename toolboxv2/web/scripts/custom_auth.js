@@ -2,6 +2,9 @@
  * CustomAuth - Custom Authentication Module for ToolBoxV2
  * Replaces Clerk SDK with provider-agnostic auth system
  *
+ * @deprecated Use TB.user instead. This file will be removed in v2.1.0.
+ *             All functionality has been migrated to tbjs/src/core/user.js
+ *
  * Supports: Discord OAuth, Google OAuth, Passkeys (WebAuthn)
  * Integrates with TBJS (TB.api, TB.events) when available
  *

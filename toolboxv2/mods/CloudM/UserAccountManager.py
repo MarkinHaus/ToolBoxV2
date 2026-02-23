@@ -7,7 +7,6 @@ Stellt API-Endpunkte für Dashboard und programmatischen Zugriff bereit
 
 import time
 from dataclasses import asdict
-from typing import Optional, Dict, Any
 
 from toolboxv2 import App, RequestData, Result, get_app
 
@@ -83,12 +82,12 @@ def _save_user_data(app: App, user_data) -> Result:
             return Result.ok("Benutzerdaten gespeichert")
 
         # Legacy User Objekt
-        from .AuthManager import db_helper_save_user
+        from toolboxv2.mods.CloudM.auth.AuthHelpers import db_helper_save_user
         return db_helper_save_user(app, asdict(user_data))
 
     except ImportError:
         # Nur Legacy verfügbar
-        from .AuthManager import db_helper_save_user
+        from toolboxv2.mods.CloudM.auth.AuthHelpers import db_helper_save_user
         return db_helper_save_user(app, asdict(user_data))
     except Exception as e:
         return Result.default_internal_error(f"Fehler beim Speichern: {e}")

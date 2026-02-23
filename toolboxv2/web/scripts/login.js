@@ -35,9 +35,12 @@ async function initializeLogin() {
         // Check server authentication status first
         console.log('[Login] Checking authentication status with server...');
 
-        const serverCheckResponse = await fetch('/validateSession', {
+        const serverCheckResponse = await fetch('/IsValidSession', {
             method: 'GET',
-            credentials: 'include'
+            credentials: 'include',
+            headers: {
+                'Authorization': `Bearer ${window.TB?.state?.get('user.token') || ''}`
+            }
         });
 
         let serverAuthenticated = false;

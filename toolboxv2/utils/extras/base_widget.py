@@ -6,7 +6,7 @@ try:
 except ImportError:
     def CLOUDM_AUTHMANAGER():
         return None
-    CLOUDM_AUTHMANAGER.GET_USER_BY_NAME = ("CloudM.AuthManager", "GET_USER_BY_NAME".lower())
+    CLOUDM_AUTHMANAGER.GET_USER_BY_NAME = ("CloudM.AuthHelper", "GET_USER_BY_NAME".lower())
 try:
     from ..system.all_functions_enums import MINIMALHTML
 except ImportError:
