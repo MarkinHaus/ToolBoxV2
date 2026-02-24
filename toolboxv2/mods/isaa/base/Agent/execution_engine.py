@@ -2627,87 +2627,111 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                         stream_kwargs["model_preference"] = ctx.active_persona.model_preference
                     if ctx.active_persona.temperature is not None:
                         stream_kwargs["temperature"] = ctx.active_persona.temperature
-                    stream_response = await self.agent.a_run_llm_completion(
-                        messages=current_messages,
-                        tools=current_tools,
-                        **stream_kwargs,
-                    )
+                    stream_response = None
+                    try:
+                        stream_response = await self.agent.a_run_llm_completion(
+                            messages=current_messages,
+                            tools=current_tools,
+                            **stream_kwargs,
+                        )
 
-                    if asyncio.iscoroutine(stream_response):
-                        stream_response = await stream_response
+                        if asyncio.iscoroutine(stream_response):
+                            stream_response = await stream_response
+                    except Exception as e:
+                        err_msg = str(e)
+                        if "Event loop is closed" in err_msg:
+                            yield enrich({
+                                "type": "error",
+                                "error": f"LLM stream failed: {err_msg[:200]}"
+                            })
+                            break
+                        raise
 
                     finish_reason = None
 
-                    async for chunk in stream_response:
-                        delta = (
-                            chunk.choices[0].delta
-                            if hasattr(chunk, "choices") and chunk.choices
-                            else None
-                        )
-
-                        if (
-                            hasattr(chunk.choices[0], "finish_reason")
-                            and chunk.choices[0].finish_reason
-                        ):
-                            finish_reason = chunk.choices[0].finish_reason
-
-                        # 1. Content sammeln (oder abgebrochenes Tool fortsetzen)
-                        if delta and hasattr(delta, "content") and delta.content:
-                            if continuing_tool_idx is not None:
-                                # Das LLM spuckt den Rest des JSON-Strings als reinen Text aus -> ins Tool umleiten!
-                                tool_calls_buffer[continuing_tool_idx]["function"][
-                                    "arguments"
-                                ] += delta.content
-                            else:
-                                collected_content += delta.content
-                                yield enrich({"type": "content", "chunk": delta.content})
-
-                        # 2. Reasoning sammeln (falls vorhanden)
-                        if (
-                            delta
-                            and hasattr(delta, "reasoning_content")
-                            and delta.reasoning_content
-                        ):
-                            yield enrich(
-                                {"type": "reasoning", "chunk": delta.reasoning_content}
+                    try:
+                        async for chunk in stream_response:
+                            delta = (
+                                chunk.choices[0].delta
+                                if hasattr(chunk, "choices") and chunk.choices
+                                else None
                             )
 
-                        # 3. Tool Calls SAMMELN
-                        if delta and hasattr(delta, "tool_calls") and delta.tool_calls:
-                            for tc_chunk in delta.tool_calls:
-                                idx = tc_chunk.index
+                            if (
+                                hasattr(chunk.choices[0], "finish_reason")
+                                and chunk.choices[0].finish_reason
+                            ):
+                                finish_reason = chunk.choices[0].finish_reason
 
-                                # Falls das LLM während eines Resumes trotzdem native Tool_calls nutzt
-                                target_idx = (
-                                    continuing_tool_idx
-                                    if continuing_tool_idx is not None
-                                    else idx
+                            # 1. Content sammeln (oder abgebrochenes Tool fortsetzen)
+                            if delta and hasattr(delta, "content") and delta.content:
+                                if continuing_tool_idx is not None:
+                                    # Das LLM spuckt den Rest des JSON-Strings als reinen Text aus -> ins Tool umleiten!
+                                    tool_calls_buffer[continuing_tool_idx]["function"][
+                                        "arguments"
+                                    ] += delta.content
+                                else:
+                                    collected_content += delta.content
+                                    yield enrich({"type": "content", "chunk": delta.content})
+
+                            # 2. Reasoning sammeln (falls vorhanden)
+                            if (
+                                delta
+                                and hasattr(delta, "reasoning_content")
+                                and delta.reasoning_content
+                            ):
+                                yield enrich(
+                                    {"type": "reasoning", "chunk": delta.reasoning_content}
                                 )
 
-                                # Neuen Eintrag anlegen, falls Index noch nicht existiert
-                                if target_idx not in tool_calls_buffer:
-                                    tool_calls_buffer[target_idx] = (
-                                        ChatCompletionMessageToolCall(
-                                            id=tc_chunk.id,
-                                            type="function",
-                                            function=Function(
-                                                name=tc_chunk.function.name or "",
-                                                arguments=tc_chunk.function.arguments
-                                                or "",
-                                            ),
-                                        )
-                                    )
-                                else:
-                                    # Bestehenden Eintrag erweitern
-                                    if tc_chunk.function.name:
-                                        tool_calls_buffer[target_idx]["function"][
-                                            "name"
-                                        ] += tc_chunk.function.name
-                                    if tc_chunk.function.arguments:
-                                        tool_calls_buffer[target_idx]["function"][
-                                            "arguments"
-                                        ] += tc_chunk.function.arguments
+                            # 3. Tool Calls SAMMELN
+                            if delta and hasattr(delta, "tool_calls") and delta.tool_calls:
+                                for tc_chunk in delta.tool_calls:
+                                    idx = tc_chunk.index
 
+                                    # Falls das LLM während eines Resumes trotzdem native Tool_calls nutzt
+                                    target_idx = (
+                                        continuing_tool_idx
+                                        if continuing_tool_idx is not None
+                                        else idx
+                                    )
+
+                                    # Neuen Eintrag anlegen, falls Index noch nicht existiert
+                                    if target_idx not in tool_calls_buffer:
+                                        tool_calls_buffer[target_idx] = (
+                                            ChatCompletionMessageToolCall(
+                                                id=tc_chunk.id,
+                                                type="function",
+                                                function=Function(
+                                                    name=tc_chunk.function.name or "",
+                                                    arguments=tc_chunk.function.arguments
+                                                    or "",
+                                                ),
+                                            )
+                                        )
+                                    else:
+                                        # Bestehenden Eintrag erweitern
+                                        if tc_chunk.function.name:
+                                            tool_calls_buffer[target_idx]["function"][
+                                                "name"
+                                            ] += tc_chunk.function.name
+                                        if tc_chunk.function.arguments:
+                                            tool_calls_buffer[target_idx]["function"][
+                                                "arguments"
+                                            ] += tc_chunk.function.arguments
+                    except RuntimeError as e:
+                        if "Event loop is closed" in str(e):
+                            # Partial result recovery
+                            if collected_content:
+                                final_response = collected_content
+                                yield enrich({"type": "final_answer", "answer": final_response})
+                            else:
+                                yield enrich({
+                                    "type": "error",
+                                    "error": f"Stream aborted: {str(e)[:200]}"
+                                })
+                            break
+                        raise
                     # --- Ende des Chunks. Prüfen auf Token Limit ---
                     if finish_reason not in ["length", "max_tokens"]:
                         break  # Generierung natürlich beendet
@@ -2820,6 +2844,52 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                             break
 
                         result, is_final = await self._execute_tool_call(ctx, tc)
+
+                        yield enrich(
+                            {
+                                "type": "tool_result",
+                                "name": f_name,
+                                "is_final": is_final,
+                                "result": str(result),
+                            }
+                        )
+
+                        # Sub-agent tools: forward chunks while awaiting
+                        if (
+                            f_name in ("spawn_sub_agent", "wait_for", "resume_sub_agent")
+                            and self._sub_agent_manager
+                        ):
+                            tool_task = asyncio.create_task(
+                                self._execute_tool_call(ctx, tc)
+                            )
+                            # Drain sub-agent chunk queue while tool runs
+                            while not tool_task.done():
+                                try:
+                                    sub_chunk = await asyncio.wait_for(
+                                        self._sub_agent_manager._chunk_queue.get(),
+                                        timeout=0.05,
+                                    )
+                                    # Skip internal sentinel
+                                    if sub_chunk.get("type") == "_sub_done":
+                                        continue
+                                    yield sub_chunk  # already enriched by sub-agent
+                                except asyncio.TimeoutError:
+                                    continue
+                                except Exception:
+                                    break
+
+                            result, is_final = await tool_task
+
+                            # Drain remaining queued chunks
+                            while not self._sub_agent_manager._chunk_queue.empty():
+                                try:
+                                    sub_chunk = self._sub_agent_manager._chunk_queue.get_nowait()
+                                    if sub_chunk.get("type") != "_sub_done":
+                                        yield sub_chunk
+                                except asyncio.QueueEmpty:
+                                    break
+                        else:
+                            result, is_final = await self._execute_tool_call(ctx, tc)
 
                         yield enrich(
                             {

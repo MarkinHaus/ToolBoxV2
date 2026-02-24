@@ -16,30 +16,27 @@ Version: 4.0.0
 """
 
 import asyncio
-import json
 import logging
 import os
-import re
-import shlex
 import subprocess
-import sys
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
-from toolboxv2.mods.isaa.extras.dream_graph import dream_with_viz
+from prompt_toolkit.document import Document
+
+from toolboxv2.mods.isaa.extras.dream_graph import dream_with_viz_v2
+from toolboxv2.mods.isaa.extras.zen.zen_plus import ZenPlus
 
 # Suppress noisy loggers
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 logging.getLogger("litellm").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-import tqdm
-from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import FuzzyCompleter, NestedCompleter, WordCompleter, PathCompleter
-from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit import PromptSession, ANSI
+from prompt_toolkit.completion import FuzzyCompleter, NestedCompleter, PathCompleter, Completer, \
+    Completion
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -49,30 +46,25 @@ from toolboxv2 import get_app, remove_styles, get_logger
 
 # ISAA Agent Imports
 from toolboxv2.mods.isaa.base.Agent.builder import (
-    AgentConfig,
     FlowAgentBuilder,
-    RateLimiterConfig,
 )
 from toolboxv2.mods.isaa.base.Agent.flow_agent import FlowAgent
 from toolboxv2.mods.isaa.base.Agent.instant_data_vis import (
     visualize_data_terminal,
 )
 from toolboxv2.mods.isaa.base.Agent.vfs_v2 import FileBackingType, VFSFile
-from toolboxv2.mods.isaa.base.AgentUtils import detect_shell, anything_from_str_to_dict
+from toolboxv2.mods.isaa.base.AgentUtils import detect_shell
 from toolboxv2.mods.isaa.base.audio_io.audioIo import AudioStreamPlayer
 
-from toolboxv2.mods.isaa.extras.zen_renderer import ZenRendererV2
+from toolboxv2.mods.isaa.extras.zen.zen_renderer import ZenRendererV2
 from toolboxv2.mods.isaa.extras.jobs import JobDefinition, TriggerConfig, JobScheduler
-from toolboxv2.mods.isaa.module import Tools as IsaaTool
 
 import html
 from pathlib import Path
 from toolboxv2.utils.extras.mkdocs import DocsSystem
 from toolboxv2 import init_cwd, tb_root_dir
 import json
-import sys
 from prompt_toolkit import print_formatted_text, HTML
-from prompt_toolkit.styles import Style
 from toolboxv2.mods.isaa.CodingAgent.coder import CoderAgent
 
 # =================== Helpers & Setup ===================
@@ -624,6 +616,340 @@ ALL_FEATURES = {
     "execute": load_execute,
 }
 
+
+# ─── Subcommand Definitions ─────────────────────────────────────────────────
+
+# Maps subcommand → argument spec
+# Spec: list of (arg_type, required) tuples
+#   arg_type: "vfs_path" | "vfs_file" | "vfs_dir" | "local_path" | "mount"
+#             | "dirty" | "subcmd:<options>" | None (no completion)
+
+SUBCOMMANDS: dict[str, dict] = {
+    "mount":       {"args": ["local_path", "vfs_path"], "flags": ["--readonly", "--no-sync"]},
+    "unmount":     {"args": ["mount"],                  "flags": ["--no-save"]},
+    "sync":        {"args": ["vfs_dirty_or_all"],       "flags": []},
+    "refresh":     {"args": ["mount"],                  "flags": []},
+    "pull":        {"args": ["vfs_path"],               "flags": []},
+    "save":        {"args": ["vfs_path", "local_path"], "flags": []},
+    "mounts":      {"args": [],                         "flags": []},
+    "dirty":       {"args": [],                         "flags": []},
+    "rm":          {"args": ["vfs_path"],               "flags": []},
+    "remove":      {"args": ["vfs_path"],               "flags": []},
+    "sys-add":     {"args": ["local_path", "vfs_path"], "flags": ["--refresh"]},
+    "sys-remove":  {"args": ["vfs_path"],               "flags": []},
+    "sys-refresh": {"args": ["vfs_path"],               "flags": []},
+    "sys-list":    {"args": [],                         "flags": []},
+    "obsidian":    {"args": ["subcmd:mount|unmount|sync", "local_path", "vfs_path"], "flags": []},
+}
+
+
+class VFSCompleter(Completer):
+    """
+    Hierarchischer VFS-Completer.
+
+    Wird als Sub-Completer eingehängt — empfängt nur den Text nach '/vfs '.
+    Beispiel: User tippt '/vfs mount /ho' → dieser Completer sieht 'mount /ho'.
+    """
+
+    def __init__(self, vfs: 'VirtualFileSystemV2'):
+        self._vfs = vfs
+
+    # ─── Entry Point ─────────────────────────────────────────────────────
+
+    def get_completions(
+        self, document: 'Document', complete_event: 'CompleteEvent'
+    ):
+        text = document.text_before_cursor
+        stripped = text.lstrip()
+
+        # ── Case 1: Kein Text oder kein Space → Subcommand + Top-Level VFS Pfade
+        if " " not in stripped:
+            yield from self._complete_subcommand_or_path(stripped)
+            return
+
+        # ── Case 2: Subcommand erkannt → Argumente completieren
+        parts = stripped.split(None, 1)  # maxsplit=1
+        subcmd = parts[0]
+        rest = parts[1] if len(parts) > 1 else ""
+
+        if subcmd in SUBCOMMANDS:
+            yield from self._complete_subcmd_args(subcmd, rest)
+        else:
+            # Kein bekannter Subcommand → als VFS-Pfad interpretieren
+            yield from self._complete_vfs_path(stripped)
+
+    # ─── Subcommand / Top-Level Path Completion ──────────────────────────
+
+    def _complete_subcommand_or_path(self, partial: str):
+        """Complete subcommand names AND top-level VFS paths."""
+        partial_lower = partial.lower()
+
+        # Subcommands
+        for cmd in SUBCOMMANDS:
+            if cmd.startswith(partial_lower):
+                yield Completion(cmd, start_position=-len(partial), display=cmd)
+
+        # Top-level VFS paths (direct access: /vfs <path>)
+        yield from self._complete_vfs_path(partial)
+
+    # ─── Subcommand Argument Completion ──────────────────────────────────
+
+    def _complete_subcmd_args(self, subcmd: str, rest: str):
+        """Complete arguments for a known subcommand."""
+        spec = SUBCOMMANDS[subcmd]
+        arg_defs = spec["args"]
+        flags = spec["flags"]
+
+        # Split rest into tokens, but keep track of current partial
+        tokens = rest.split()
+        # If rest ends with space → completing NEW token, else completing last token
+        if rest.endswith(" ") or not rest:
+            completed_args = tokens
+            current_partial = ""
+        else:
+            completed_args = tokens[:-1]
+            current_partial = tokens[-1]
+
+        # Filter out already-used flags from completed args
+        used_flags = {t for t in completed_args if t.startswith("--")}
+        non_flag_args = [t for t in completed_args if not t.startswith("--")]
+
+        # ── Flag completion (if partial starts with -)
+        if current_partial.startswith("-"):
+            for flag in flags:
+                if flag not in used_flags and flag.startswith(current_partial):
+                    yield Completion(
+                        flag, start_position=-len(current_partial), display=flag
+                    )
+            return
+
+        # ── Determine which positional arg we're on
+        arg_index = len(non_flag_args)
+
+        if arg_index < len(arg_defs):
+            arg_type = arg_defs[arg_index]
+            yield from self._complete_arg_type(arg_type, current_partial)
+
+        # ── Always offer remaining flags
+        if not current_partial or current_partial.startswith("-"):
+            for flag in flags:
+                if flag not in used_flags and flag.startswith(current_partial):
+                    yield Completion(
+                        flag, start_position=-len(current_partial), display=flag
+                    )
+
+    def _complete_arg_type(self, arg_type: str, partial: str):
+        """Dispatch completion based on argument type."""
+        if arg_type == "vfs_path":
+            yield from self._complete_vfs_path(partial)
+        elif arg_type == "vfs_dirty_or_all":
+            yield from self._complete_vfs_dirty_or_all(partial)
+        elif arg_type == "local_path":
+            yield from self._complete_local_path(partial)
+        elif arg_type == "mount":
+            yield from self._complete_mount_points(partial)
+        elif arg_type.startswith("subcmd:"):
+            options = arg_type.split(":", 1)[1].split("|")
+            for opt in options:
+                if opt.startswith(partial):
+                    yield Completion(opt, start_position=-len(partial), display=opt)
+
+    # ─── VFS Path Completion (hierarchisch!) ─────────────────────────────
+
+    def _complete_vfs_path(self, partial: str):
+        """
+        Hierarchische VFS-Pfad-Completion.
+
+        Löst nur direkte Kinder des aktuellen Parent-Dirs auf.
+        '/project/sr' → listet Kinder von /project die mit 'sr' anfangen.
+        """
+        # Normalize: ensure starts with /
+        if not partial:
+            partial_path = "/"
+        elif not partial.startswith("/"):
+            partial_path = "/" + partial
+        else:
+            partial_path = partial
+
+        # Determine parent dir and search prefix
+        if partial_path.endswith("/") and self._vfs._is_directory(partial_path.rstrip("/") or "/"):
+            # User typed full dir with trailing slash → list children
+            parent = partial_path.rstrip("/") or "/"
+            search = ""
+        elif "/" in partial_path[1:]:
+            # Has path separator → split into parent + partial name
+            parent = partial_path.rsplit("/", 1)[0] or "/"
+            search = partial_path.rsplit("/", 1)[1].lower()
+        else:
+            # Top-level: /something
+            parent = "/"
+            search = partial_path.lstrip("/").lower()
+
+        # Verify parent exists
+        if not self._vfs._is_directory(parent):
+            return
+
+        # Get direct children
+        contents = self._vfs._list_directory_contents(parent)
+
+        for item in contents:
+            name = item["name"]
+            if search and not name.lower().startswith(search):
+                continue
+
+            is_dir = item["type"] == "directory"
+            suffix = "/" if is_dir else ""
+            full_path = f"{parent.rstrip('/')}/{name}{suffix}"
+
+            # Display: just the name + type indicator
+            if is_dir:
+                display = f"📁 {name}/"
+            else:
+                f = self._vfs.files.get(item["path"])
+                icon = f.file_type.icon if f and f.file_type else "📄"
+                state = " ●" if f and f.state == "open" else ""
+                dirty = " ✱" if f and hasattr(f, "is_dirty") and f.is_dirty else ""
+                display = f"{icon} {name}{state}{dirty}"
+
+            yield Completion(
+                full_path,
+                start_position=-len(partial),
+                display=display,
+                display_meta=item.get("file_type", "") if not is_dir else "",
+            )
+
+    # ─── Dirty / All VFS Paths ───────────────────────────────────────────
+
+    def _complete_vfs_dirty_or_all(self, partial: str):
+        """Complete with dirty files first, then fall back to all VFS paths."""
+        partial_lower = partial.lower() if partial else ""
+
+        # Dirty files zuerst (Priorität für sync)
+        dirty_yielded = set()
+        for path, f in self._vfs.files.items():
+            if hasattr(f, "is_dirty") and f.is_dirty:
+                if not partial or path.lower().startswith(partial_lower) or (
+                    not partial.startswith("/") and path.lower().startswith("/" + partial_lower)
+                ):
+                    dirty_yielded.add(path)
+                    yield Completion(
+                        path,
+                        start_position=-len(partial),
+                        display=f"✱ {path}",
+                        display_meta="modified",
+                    )
+
+        # Dann normale Pfad-Completion (ohne bereits gezeigte)
+        for completion in self._complete_vfs_path(partial):
+            if completion.text not in dirty_yielded:
+                yield completion
+
+    # ─── Mount Point Completion ──────────────────────────────────────────
+
+    def _complete_mount_points(self, partial: str):
+        """Complete with active mount points."""
+        partial_lower = partial.lower() if partial else ""
+
+        if not hasattr(self._vfs, "mounts"):
+            return
+
+        for mount_path, mount in self._vfs.mounts.items():
+            if not partial or mount_path.lower().startswith(partial_lower) or (
+                not partial.startswith("/") and mount_path.lower().startswith("/" + partial_lower)
+            ):
+                local = getattr(mount, "local_path", "")
+                yield Completion(
+                    mount_path,
+                    start_position=-len(partial),
+                    display=f"📂 {mount_path}",
+                    display_meta=local,
+                )
+
+    # ─── Local Path Completion ───────────────────────────────────────────
+
+    def _complete_local_path(self, partial: str):
+        """
+        Complete local filesystem paths.
+
+        Handles ~ expansion and hierarchical directory traversal.
+        """
+        if not partial:
+            partial = "./"
+
+        # Expand user home
+        expanded = os.path.expanduser(partial)
+
+        # Determine dir to scan and prefix to match
+        if os.path.isdir(expanded):
+            scan_dir = expanded
+            name_prefix = ""
+            # Ensure partial ends with separator for correct start_position
+            if not partial.endswith(os.sep) and not partial.endswith("/"):
+                partial += os.sep
+        else:
+            scan_dir = os.path.dirname(expanded) or "."
+            name_prefix = os.path.basename(expanded).lower()
+
+        if not os.path.isdir(scan_dir):
+            return
+
+        try:
+            entries = os.listdir(scan_dir)
+        except PermissionError:
+            return
+
+        entries.sort()
+
+        for entry in entries:
+            # Skip hidden unless user explicitly typed dot
+            if entry.startswith(".") and not name_prefix.startswith("."):
+                continue
+
+            if name_prefix and not entry.lower().startswith(name_prefix):
+                continue
+
+            full = os.path.join(scan_dir, entry)
+            is_dir = os.path.isdir(full)
+
+            # Build the completion text preserving user's original format
+            if partial.startswith("~"):
+                # Keep ~ prefix
+                rel_to_home = os.path.relpath(full, os.path.expanduser("~"))
+                completion_text = f"~/{rel_to_home}"
+            elif os.path.isabs(partial) or os.path.isabs(expanded):
+                completion_text = full
+            else:
+                try:
+                    completion_text = os.path.relpath(full)
+                except ValueError:
+                    completion_text = full
+
+            if is_dir:
+                completion_text += os.sep
+                display = f"📁 {entry}/"
+            else:
+                display = f"  {entry}"
+
+            yield Completion(
+                completion_text,
+                start_position=-len(partial),
+                display=display,
+            )
+class SmartCompleter(Completer):
+    """FuzzyCompleter für alles AUSSER /vfs — dort direkt, damit Tab akzeptiert."""
+
+    def __init__(self, nested_dict: dict, vfs_completer: VFSCompleter | None = None):
+        self._fuzzy = FuzzyCompleter(NestedCompleter.from_nested_dict(nested_dict))
+        self._vfs = vfs_completer
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor.lstrip()
+        if text.startswith("/vfs ") and self._vfs:
+            sub_doc = Document(text[5:], len(text[5:]))
+            yield from self._vfs.get_completions(sub_doc, complete_event)
+        else:
+            yield from self._fuzzy.get_completions(document, complete_event)
+
 # =============================================================================
 # ISAA HOST - MAIN CLASS
 # =============================================================================
@@ -645,7 +971,15 @@ class ISAA_Host:
 
     def __init__(self, app_instance: Any = None):
         """Initialize the ISAA Host system."""
+        self.zen_plus_mode = False
         self.app = app_instance or get_app("isaa-host")
+        def _(*args, **k):
+            text = " ".join(str(a) for a in args)
+            try:
+                print_formatted_text(ANSI(text), **k)
+            except:
+                print_formatted_text(ANSI(text))
+        self.app._print = _
 
         # Get ISAA Tools module - THE source of truth for agent management
         self.isaa_tools: 'IsaaTools' = self.app.get_mod("isaa")
@@ -843,6 +1177,36 @@ class ISAA_Host:
             """Toggle renderer minimize with F6."""
             if hasattr(self, '_active_renderer') and self._active_renderer:
                 self._active_renderer.toggle_minimize()
+            else:
+                print("Not active")
+
+        @kb.add("f2")
+        def _(event):
+            self.zen_plus_mode = not self.zen_plus_mode
+            mode = "ZEN+" if self.zen_plus_mode else "ZEN"
+            from prompt_toolkit import print_formatted_text, HTML
+            print_formatted_text(HTML(
+                f"<style fg='#67e8f9'>  ◎ Mode: {mode}</style>"
+            ))
+
+        @kb.add("tab")
+        def handle_tab(event):
+            buf = event.app.current_buffer
+            if buf.complete_state:
+                # Completion offen: aktuelle oder erste akzeptieren
+                if buf.complete_state.current_completion is None:
+                    buf.complete_state.go_to_index(0)
+                buf.apply_completion(buf.complete_state.current_completion)
+                # Directory → nächste Ebene
+                if buf.text.rstrip().endswith("/"):
+                    buf.start_completion()
+                    if buf.complete_state:
+                        buf.complete_state.go_to_index(0)
+            else:
+                # Completion starten + erste vorauswählen
+                buf.start_completion()
+                if buf.complete_state:
+                    buf.complete_state.go_to_index(0)
 
         return kb
 
@@ -1612,6 +1976,10 @@ class ISAA_Host:
                     query=task[:100],
                     task=async_task,
                 )
+                zp = ZenPlus.get()
+                if zp.active:
+                    zp.inject_job(task_id, agent_name, task[:60], "running",
+                                  run_id=run_id, kind="delegate")
 
                 return f"✓ Background task started: {task_id} (RunID: {run_id})"
 
@@ -1736,8 +2104,6 @@ class ISAA_Host:
         Unterstützt Windows (CMD/PowerShell) und Unix (Bash/Zsh).
         """
         import subprocess
-        import shlex
-        import sys
 
         # Shell-Erkennung (Windows/Unix)
         shell_exe, cmd_flag = detect_shell()
@@ -1896,18 +2262,22 @@ class ISAA_Host:
     # CLI INTERFACE
     # =========================================================================
 
-    def _build_completer(self) -> dict:
+    def _build_completer(self) -> tuple[dict[
+        str | Any, None | dict[str, dict[str, None] | None] | dict[str, PathCompleter | None | dict[str, None]] | dict[
+            str | Any, dict[Any, None] | None | dict[str, dict] | dict[str, dict[Any, None]] | Any] | dict[
+            str, dict[Any, None] | None] | dict[str, dict[Any, Any] | None] | Any], VFSCompleter | dict[str, None]]:
         """Build nested completer dictionary."""
         agents = self.isaa_tools.config.get("agents-name-list", ["self"])
 
         # Try to get VFS files, dirs, and mounts for autocomplete
-        vfs_files: dict = {}
-        vfs_dirs: dict = {}
-        vfs_all: dict = {}  # files + dirs combined
-        vfs_mounts: dict = {}
-        vfs_dirty: dict = {}
+        session = None
+        is_vfs = False
         model_options: dict = {}
         current_skills: dict = {}
+        checkpoint_structure: dict = {
+                    "save": {a: None for a in agents},
+                    "load": {a: None for a in agents},
+                }
         features: dict = {_:None for _ in self.feature_manager.list_features()}
         try:
             instance_key = f"agent-instance-{self.active_agent_name}"
@@ -1915,20 +2285,38 @@ class ISAA_Host:
                 agent = self.isaa_tools.config[instance_key]
                 session = agent.session_manager.get(self.active_session_id)
                 if session and hasattr(session, "vfs"):
-                    vfs_files = {f: None for f in session.vfs.files}
-                    vfs_dirs = {d: None for d in session.vfs.directories if d != "/"}
-                    vfs_all = {**vfs_files, **vfs_dirs}
-                    vfs_mounts = {m: None for m in session.vfs.mounts} if hasattr(session.vfs, 'mounts') else {}
-                    vfs_dirty = {
-                        f: None for f, file in session.vfs.files.items()
-                        if hasattr(file, 'is_dirty') and file.is_dirty
-                    }
+                    is_vfs = True
 
                 engine = agent._get_execution_engine()
                 if hasattr(engine, 'skills_manager'):
                     current_skills = {s_id: None for s_id in engine.skills_manager.skills.keys()}
             model_options = {m: None for m in MODEL_MAPPING.keys()}
-        except Exception:
+
+            # Tools-Optionen
+            tools_flag = {
+                "true": None,
+                "false": None,
+                "t": None,
+                "f": None,
+            }
+
+            # Agent-Unterstruktur für save/load
+            checkpoint_structure = {}
+
+            for action in ["save", "load"]:
+                checkpoint_structure[action] = {
+                    # Agent auswählen
+                    **{
+                        agent: {
+                            # optionaler Checkpoint-Name (frei)
+                            # danach Pfad
+                            None: PathCompleter(only_directories=True, expanduser=True)
+                        }
+                        for agent in agents
+                    }
+                }
+        except Exception as e:
+            print(e)
             pass
 
         path_compl = PathCompleter(expanduser=True)
@@ -1941,6 +2329,7 @@ class ISAA_Host:
             "/exit": None,
             "/clear": None,
             "/status": None,
+            "/vfs": {"init":None},
             "/audio": {
                 "on": None,
                 "off": None,
@@ -1965,6 +2354,7 @@ class ISAA_Host:
                 "diff": None,
                 "files": None,
             },
+            "/zenplus": None,
             "/agent": {
                 "switch": {a: None for a in agents},
                 "list": None,
@@ -1974,10 +2364,7 @@ class ISAA_Host:
                     "fast": model_options,
                     "complex": model_options
                 },
-                "checkpoint": {
-                    "save": {a: None for a in agents},
-                    "load": {a: None for a in agents},
-                },
+                "checkpoint": checkpoint_structure,
                 "load-all": None,
                 "save-all": None,
                 "stats": {a: None for a in agents},
@@ -2016,22 +2403,7 @@ class ISAA_Host:
                 "autowake": {"install": None, "remove": None, "status": None},
                 "dream": {"create": None,"status": None, "live": None},
             },
-            "/vfs": {
-                "mount": path_compl, # /vfs mount <local_path> [vfs_path] [--readonly] [--no-sync]
-                "unmount": vfs_mounts if vfs_mounts else None,
-                "sync": vfs_all if vfs_all else (vfs_dirty if vfs_dirty else None),
-                "refresh": vfs_mounts if vfs_mounts else None,
-                "pull": vfs_all if vfs_all else None,
-                "save": vfs_all if vfs_all else None,
-                "mounts": None,
-                "dirty": None,
-                # System file management
-                "sys-add": path_compl,
-                "sys-remove": None,  # VFS path completion would be ideal
-                "sys-refresh": None,
-                "sys-list": None,
-                **vfs_all,  # Direct file/dir access: /vfs <path>
-            } if vfs_all or vfs_mounts else None,
+
             "/context": {
                 "stats": None,
             },
@@ -2042,8 +2414,11 @@ class ISAA_Host:
                 "delete": current_skills if current_skills else None,
                 "boost": current_skills if current_skills else None,
                 "merge": current_skills if current_skills else None,
-                "import": {},
-                "export": {s_id: path_compl for s_id in ["all"]+list(current_skills.keys())} if current_skills else None,
+                "import": PathCompleter(only_directories=True, expanduser=True),
+                "export": {
+                    "id":
+                    {s_id: path_compl for s_id in ["all"] + list(current_skills.keys())} if current_skills else None},
+                    "path": PathCompleter(only_directories=True, expanduser=True)
             },
             "/bind": {a: None for a in agents},
             "/teach": {a: None for a in agents},
@@ -2056,7 +2431,8 @@ class ISAA_Host:
                 "status": None,
                 "config": None,
             },
-        }
+
+        }, VFSCompleter(session.vfs) if is_vfs else None
 
     def get_prompt_text(self) -> HTML:
         """Generate prompt text with status indicators."""
@@ -2205,9 +2581,10 @@ class ISAA_Host:
         print_box_header("ISAA Host Commands", "❓")
 
         print_status("Navigation", "info")
-        print_box_content("/help - Show this help", "")
+        print_box_content("/help   - Show this help", "")
         print_box_content("/status - Show status dashboard (or F5)", "")
-        print_box_content("/clear - Clear screen", "")
+        print_box_content("/clear   - Clear screen", "")
+        print_box_content("/zenplus - Togged full Screen agent live vier", "")
         print_box_content("/quit, /exit - Exit CLI", "")
         print_box_content("F6 - Toggle minimize/expand agent output", "")
         print_box_content("Ctrl+C - Safe stop agent (continue/fresh/quit)", "")
@@ -2220,7 +2597,8 @@ class ISAA_Host:
         print_box_content("/agent spawn <name> <persona> - Create new agent", "")
         print_box_content("/agent stop <name> - Stop agent tasks", "")
         print_box_content("/agent model <fast|complex> <name> - Change LLM model on the fly", "")
-        print_box_content("/agent checkpoint <save|load> [name] - Manage state persistence", "")
+        print_box_content("/agent checkpoint <save|load> [name]   - Manage state persistence", "")
+        print_box_content("/agent checkpoint help        - list information's about addition args like path", "")
         print_box_content("/agent load-all               - Initialize all agents from disk", "")
         print_box_content("/agent save-all               - Save checkpoints for all active agents", "")
         print_box_content("/agent stats [name]           - Show token usage and cost metrics", "")
@@ -2291,6 +2669,7 @@ class ISAA_Host:
         print_box_content("/vfs pull <path>             - Reload file/dir from disk", "")
         print_box_content("/vfs mounts                  - List active mounts", "")
         print_box_content("/vfs dirty                   - Show modified files", "")
+        print_box_content("/vfs rm/remove               - Remove Folder or File", "")
         print_separator()
         print_status("System Files (Read-Only)", "info")
         print_box_content("/vfs sys-add <local> [path]  - Add file as read-only system file", "")
@@ -2361,6 +2740,9 @@ class ISAA_Host:
         elif cmd == "/agent":
             await self._cmd_agent(args)
 
+        elif cmd == "/zenplus":
+            await self._cmd_zenplus(args)
+
         elif cmd == "/session":
             await self._cmd_session(args)
 
@@ -2429,6 +2811,15 @@ class ISAA_Host:
 
         else:
             print_status(f"Unknown command: {cmd}. Type /help for help.", "error")
+
+    async def _cmd_zenplus(self, args: list):
+        """Toggle Zen+ mode. Usage: /zenplus"""
+        self.zen_plus_mode = not self.zen_plus_mode
+        mode = "ZEN+" if self.zen_plus_mode else "ZEN"
+        from prompt_toolkit import print_formatted_text, HTML
+        print_formatted_text(HTML(
+            f"<style fg='#67e8f9'>  ◎ Renderer: {mode}</style>"
+        ))
 
     async def _cmd_agent(self, args: list[str]):
         """Handle /agent commands."""
@@ -2508,21 +2899,126 @@ class ISAA_Host:
 
         elif action == "checkpoint":
             if len(args) < 2:
-                print_status("Usage: /agent checkpoint <save|load> [name]", "warning")
+                w = ( "info" if (args[1] if len(args) > 1 else "warning") == "help" else "warning")
+                print_status("Usage: /agent checkpoint <save|load> [name] <path> <tools[t/f]>", w)
                 return
             sub = args[1].lower()
             target = args[2] if len(args) > 2 else self.active_agent_name
-            try:
-                agent = await self.isaa_tools.get_agent(target)
-                if sub == "save":
-                    path = await agent.save()
-                    print_status(f"Checkpoint saved: {path}", "success")
-                else:
-                    await agent.restore()
-                    print_status(f"State restored for {target}", "success")
-            except Exception as e:
-                print_status(f"Checkpoint error: {e}", "error")
+            path = args[3] if len(args) > 3 else None
+            with_tools = args[4] if len(args) > 4 else None
+            if path is None:
+                try:
+                    agent = await self.isaa_tools.get_agent(target)
+                    if sub == "save":
+                        path = await agent.save()
+                        print_status(f"Checkpoint saved: {path}", "success")
+                    else:
+                        await agent.restore()
+                        print_status(f"State restored for {target}", "success")
+                except Exception as e:
+                    print_status(f"Checkpoint error: {e}", "error")
 
+                return
+            data = None
+            if sub == "save":
+                sucsess, data = await self.isaa_tools.save_agent(
+                    agent_name=target,
+                    path=path,
+                    include_checkpoint=True,
+                    include_tools=with_tools,
+                    notes="cli-export"
+                )
+                if not sucsess:
+                    print_status(f"Agent saved: {target} Failed {data}", "error")
+                    return
+
+            elif path:
+                warnings: list[str]
+                _, data, warnings = await self.isaa_tools.load_agent(
+                    path=path, override_name=target, load_tools=with_tools, register=True
+                )
+                if _ is None:
+                    print_status(f"Agent loading: {target}", "error")
+
+                    if warnings:
+                        print_box_header("Load Warnings", icon="⚠")
+                        for w in warnings:
+                            print_box_content(w, style="warning")
+                        print_box_footer()
+
+                    return
+
+            agent_version = data.agent_version if hasattr(data, "agent_version") else None
+            has_checkpoint = data.has_checkpoint if hasattr(data, "has_checkpoint") else None
+            has_tools = data.has_tools if hasattr(data, "has_tools") else None
+            tool_count = data.tool_count if hasattr(data, "tool_count") else None
+            serializable_tools = data.serializable_tools if hasattr(data, "serializable_tools") else None
+            non_serializable_tools = data.non_serializable_tools if hasattr(data, "non_serializable_tools") else None
+            bindings = data.bindings if hasattr(data, "bindings") else None
+            # ─────────────────────────────────────────────
+            # Header
+            # ─────────────────────────────────────────────
+            print_box_header("Agent Overview", icon="🤖")
+
+            # ─────────────────────────────────────────────
+            # Basisinformationen
+            # ─────────────────────────────────────────────
+            print_box_content(f"Version: {agent_version or 'N/A'}", style="info")
+
+            if has_checkpoint is True:
+                print_box_content("Checkpoint verfügbar", style="success")
+            elif has_checkpoint is False:
+                print_box_content("Kein Checkpoint vorhanden", style="warning")
+
+            if has_tools is True:
+                print_box_content(f"Tools aktiviert ({tool_count or 0})", style="success")
+            elif has_tools is False:
+                print_box_content("Keine Tools registriert", style="warning")
+
+            print_separator()
+
+            # ─────────────────────────────────────────────
+            # Tool-Details (Tabelle)
+            # ─────────────────────────────────────────────
+            print_table_header(
+                columns=[
+                    ("Kategorie", None),
+                    ("Anzahl", None)
+                ],
+                widths=[30, 10]
+            )
+
+            print_table_row(
+                ["Serializable Tools", serializable_tools or 0],
+                widths=[30, 10],
+                styles=["cyan", "green"]
+            )
+
+            print_table_row(
+                ["Non-Serializable Tools", non_serializable_tools or 0],
+                widths=[30, 10],
+                styles=["cyan", "yellow"]
+            )
+
+            print_separator()
+
+            # ─────────────────────────────────────────────
+            # Bindings
+            # ─────────────────────────────────────────────
+            if bindings:
+                print_box_content("Bindings registriert:", style="info")
+                print_code_block(
+                    code=str(bindings),
+                    language="json",
+                    show_line_numbers=False
+                )
+            else:
+                print_box_content("Keine Bindings vorhanden", style="warning")
+
+            # ─────────────────────────────────────────────
+            # Footer
+            # ─────────────────────────────────────────────
+            print_box_footer()
         elif action == "load-all":
             print_status("Scanning agent directory...", "progress")
             agent_dir = Path(self.app.data_dir) / "Agents"
@@ -2934,9 +3430,15 @@ class ISAA_Host:
             try:
                 r = fut.result()
                 preview = (r[:60] + "..") if len(r) > 62 else r
+                zp = ZenPlus.get()
+                if zp.active:
+                    zp.update_job(task_id, preview)
                 c_print(HTML(f"\n<style fg='{PTColors.ZEN_GREEN}'>✓ {task_id}</style>"
                              f"  <style fg='{PTColors.ZEN_DIM}'>{html.escape(preview)}</style>\n"))
             except (asyncio.CancelledError, Exception):
+                zp = ZenPlus.get()
+                if zp.active:
+                    zp.update_job(task_id, "failed")
                 pass
 
         async_task.add_done_callback(_on_done)
@@ -2944,6 +3446,10 @@ class ISAA_Host:
             task_id=task_id, agent_name=job.agent_name,
             run_id=run_id, query=job.query, task=async_task,
         )
+
+        zp = ZenPlus.get()
+        if zp.active:
+            zp.inject_job(task_id, job.agent_name, job.query[:60], "running", kind="job")
 
         # Wait for it (scheduler handles timeout externally)
         return await async_task
@@ -3072,7 +3578,7 @@ class ISAA_Host:
                 if not hasattr(self, '_current_agent') or not self._current_agent:
                     print_status("No active agent", "error")
                     return
-                from toolboxv2.mods.isaa.base.Agent.dreamer import DreamConfig, a_dream
+                from toolboxv2.mods.isaa.base.Agent.dreamer import a_dream
                 agent = self._current_agent
                 if not hasattr(agent, 'a_dream'):
                     agent.a_dream = a_dream.__get__(agent, type(agent))
@@ -3090,7 +3596,9 @@ class ISAA_Host:
                             "info"
                         )
             elif sub == "live":
-                await dream_with_viz(self.isaa_tools, self.active_agent_name)
+                agent: FlowAgent= await self.isaa_tools.get_agent(self.active_agent_name)
+                agent.active_session = self.active_session_id
+                await dream_with_viz_v2(self.isaa_tools, self.active_agent_name)
 
         else:
             print_status(f"Unknown job action: {action}. Use: list, add, remove, pause, resume, fire, detail, autowake", "error")
@@ -3390,7 +3898,10 @@ class ISAA_Host:
             cmd = args[0].lower()
 
             # /vfs mount <local_path> [vfs_path] [--readonly] [--no-sync]
-            if cmd == "mount":
+            if cmd == "init":
+                print_status("VFS Online")
+                return
+            elif cmd == "mount":
                 if len(args) < 2:
                     print_status("Usage: /vfs mount <local_path> [vfs_path] [--readonly] [--no-sync]", "warning")
                     return
@@ -3679,6 +4190,90 @@ class ISAA_Host:
                     print_status(f"✓ {result['message']}", "success")
                 else:
                     print_status(f"✗ {result.get('error')}", "error")
+
+            elif cmd in ["remove", "rm"]:
+                if len(args) < 2:
+                    print_status("Usage: /vfs remove <vfs_path>", "warning")
+                    return
+
+                # Unterstützt Pfade mit Leerzeichen
+                vfs_path = " ".join(args[1:])
+                norm_path = session.vfs._normalize_path(vfs_path)
+
+                # 1. Existenz und Typ prüfen
+                is_file = session.vfs._is_file(norm_path)
+                is_dir = session.vfs._is_directory(norm_path)
+
+                if not is_file and not is_dir:
+                    print_status(f"✗ Path not found: {norm_path}", "error")
+                    return
+
+                # Systemdateien (Read-Only) vorher abfangen (Verhindert Absturz beim Bestätigen)
+                if is_file and session.vfs.files[norm_path].readonly:
+                    print_status(f"✗ Cannot delete system file: {norm_path} (Use sys-remove instead)", "error")
+                    return
+                if is_dir and session.vfs.directories[norm_path].readonly:
+                    print_status(f"✗ Cannot delete readonly directory: {norm_path}", "error")
+                    return
+
+                # 2. Statistiken sammeln
+                total_size = 0
+                file_count = 0
+                dir_count = 0
+
+                if is_file:
+                    f = session.vfs.files[norm_path]
+                    file_count = 1
+                    total_size = f.size
+                    target_desc = f"File: 📄 {f.filename}"
+                else:
+                    # Ordner rekursiv analysieren
+                    ls_result = session.vfs.ls(norm_path, recursive=True)
+                    if ls_result.get("success"):
+                        for item in ls_result["contents"]:
+                            if item["type"] == "directory":
+                                dir_count += 1
+                            else:
+                                file_count += 1
+                                total_size += item.get("size", 0)
+                    dir_count += 1  # Den Hauptordner selbst mitzählen
+                    target_desc = f"Directory: 📁 {norm_path}"
+
+                # Größe formatieren
+                size_str = f"{total_size} bytes" if total_size < 1024 else f"{total_size / 1024:.2f} KB"
+
+                # 3. Bestätigungs-Dialog anzeigen
+                print_box_header("Confirm Deletion", "⚠️")
+                print_box_content(target_desc, "")
+
+                if is_dir:
+                    print_box_content(f"  Includes: {file_count} files, {dir_count - 1} subdirectories", "warning")
+
+                print_box_content(f"  Total size: {size_str}", "warning")
+                print_box_footer()
+
+                # Nutzer um Erlaubnis fragen
+                try:
+                    confirm = input("\nAre you sure you want to permanently delete this? (y/N): ").strip().lower()
+                except (KeyboardInterrupt, EOFError):
+                    confirm = "n"
+
+                if confirm not in ['y', 'yes']:
+                    print_status("Deletion cancelled.", "info")
+                    return
+
+                # 4. Löschen ausführen
+                if is_file:
+                    result = session.vfs.delete(norm_path)
+                else:
+                    # force=True zwingt das VFS, auch gefüllte Ordner rekursiv zu löschen
+                    result = session.vfs.rmdir(norm_path, force=True)
+
+                # 5. Ergebnis ausgeben
+                if result.get("success"):
+                    print_status(f"✓ {result['message']}", "success")
+                else:
+                    print_status(f"✗ Failed to delete: {result.get('error')}", "error")
 
             # /vfs sys-refresh <vfs_path>
             elif cmd == "sys-refresh":
@@ -4513,15 +5108,19 @@ class ISAA_Host:
         # Auto-notify on completion
         def _on_bg_done(fut):
             running = [t for t in host_ref.background_tasks.values() if t.status == "running"]
+            zp = ZenPlus.get()
             try:
                 result = fut.result()
+                if zp.active:
+                    zp.update_job(task_id, f"completed of {len(running)}")
                 result_preview = (result[:80] + "..") if len(result) > 82 else result
                 c_print(HTML(
                     f"\n<style fg='{PTColors.ZEN_GREEN}'>✓ {task_id} complete</style>"
                     f"  <style fg='{PTColors.ZEN_DIM}'>{esc(result_preview)}</style>\n"
                 ))
             except (asyncio.CancelledError, Exception):
-                pass
+                if zp.active:
+                    zp.update_job(task_id, "failed")
 
         async_task.add_done_callback(_on_bg_done)
 
@@ -4532,6 +5131,9 @@ class ISAA_Host:
             query=query[:100],
             task=async_task,
         )
+        zp = ZenPlus.get()
+        if zp.active:
+            zp.inject_job(task_id, agent_name, query[:60], "running", kind="bg")
         c_print(HTML(
             f"<style fg='{PTColors.ZEN_DIM}'>  ▾ moved to background: {task_id}  "
             f"(/task status to view)</style>"
@@ -4574,35 +5176,88 @@ class ISAA_Host:
                 session_id=self.active_session_id,
             )
 
-            try:
-                while True:
+            if self.zen_plus_mode:
+                from toolboxv2.mods.isaa.extras.zen.zen_plus import ZenPlus  # adjust import path
+
+                zp = ZenPlus.get()
+                zp.clear_panes()
+                renderer.set_zen_plus(zp)
+
+                # Replay any chunks already buffered (falls mid-toggle)
+                for c in renderer._chunk_buffer:
+                    zp.feed_chunk(c)
+
+                async def _drain_stream():
+                    """Consume stream, push through renderer (→ bridge → ZenPlus)."""
                     try:
-                        chunk = await stream.__anext__()
-                    except StopAsyncIteration:
-                        break
+                        while True:
+                            try:
+                                chunk = await stream.__anext__()
+                            except StopAsyncIteration:
+                                break
+                            renderer.process_chunk(chunk)
 
-                    # F6 minimize check: hand off stream to background task
-                    if renderer.minimized:
-                        moved_to_bg = True
-                        break
+                            if chunk.get("type") == "content":
+                                final_response_text_parts.append(chunk.get("chunk", ""))
+                    except Exception:
+                        pass
+                    finally:
+                        zp.signal_stream_done()
 
-                    renderer.process_chunk(chunk)
+                final_response_text_parts = []
 
-                    if chunk.get("type") == "content":
-                        text = chunk.get("chunk", "")
-                        final_response_text += text
+                # Run stream consumer + ZenPlus UI concurrently
+                stream_task = asyncio.create_task(_drain_stream())
 
-                        if should_speak and hasattr(self, 'audio_player'):
-                            if '```' in text: stop_for_speech = not stop_for_speech
-                            if not stop_for_speech:
-                                current_sentence += text
-                                if any(current_sentence.rstrip().endswith(p) for p in ['.', '!', '?', ':', '\n\n']):
-                                    clean_text = remove_styles(current_sentence.strip())
-                                    if clean_text:
-                                        get_app("ci.audio.bg.task").run_bg_task_advanced(
-                                            self.audio_player.queue_text, clean_text
-                                        )
-                                    current_sentence = ""
+                def _on_zen_plus_exit():
+                    """Called when Esc at Grid level → deactivate Zen+."""
+                    self.zen_plus_mode = False
+                    renderer.set_zen_plus(None)
+                await zp.start(on_exit=_on_zen_plus_exit)
+
+                # ZenPlus exited (user pressed Esc)
+                if not stream_task.done():
+                    # Stream still running → let it finish in background or cancel
+                    stream_task.cancel()
+                    try:
+                        await stream_task
+                    except asyncio.CancelledError:
+                        pass
+
+                try:
+                    await stream.aclose()
+                except Exception:
+                    pass
+
+            try:
+                    while True:
+                        try:
+                            chunk = await stream.__anext__()
+                        except StopAsyncIteration:
+                            break
+
+                        # F6 minimize check: hand off stream to background task
+                        if renderer.minimized:
+                            moved_to_bg = True
+                            break
+
+                        renderer.process_chunk(chunk)
+
+                        if chunk.get("type") == "content":
+                            text = chunk.get("chunk", "")
+                            final_response_text += text
+
+                            if should_speak and hasattr(self, 'audio_player'):
+                                if '```' in text: stop_for_speech = not stop_for_speech
+                                if not stop_for_speech:
+                                    current_sentence += text
+                                    if any(current_sentence.rstrip().endswith(p) for p in ['.', '!', '?', ':', '\n\n']):
+                                        clean_text = remove_styles(current_sentence.strip())
+                                        if clean_text:
+                                            get_app("ci.audio.bg.task").run_bg_task_advanced(
+                                                self.audio_player.queue_text, clean_text
+                                            )
+                                        current_sentence = ""
 
             except KeyboardInterrupt:
                 # --- Safe Ctrl+C: stop agent, don't exit program ---
@@ -4760,10 +5415,11 @@ class ISAA_Host:
         await self._print_status_dashboard()
 
         # Create prompt session
+        dict_coplet, vfs_cplet = self._build_completer()
         self.prompt_session = PromptSession(
             history=self.history,
-            completer=FuzzyCompleter(
-                NestedCompleter.from_nested_dict(self._build_completer())
+            completer=SmartCompleter(
+                nested_dict=dict_coplet, vfs_completer=vfs_cplet
             ),
             complete_while_typing=True,
             key_bindings=self.key_bindings,
@@ -4773,8 +5429,10 @@ class ISAA_Host:
         while True:
             try:
                 # Update completer
-                self.prompt_session.completer = FuzzyCompleter(
-                    NestedCompleter.from_nested_dict(self._build_completer())
+
+                dict_coplet, vfs_cplet = self._build_completer()
+                self.prompt_session.completer = SmartCompleter(
+                    nested_dict=dict_coplet, vfs_completer=vfs_cplet
                 )
 
                 # Get input
