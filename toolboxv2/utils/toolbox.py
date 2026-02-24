@@ -835,9 +835,9 @@ class App(AppType, metaclass=Singleton):
         function_data = self.functions[modular_id][function_id]
 
         if isinstance(function_data, list):
-            print(f"functions {function_id} : {function_data}")
+            self.logger.info(f"functions {function_id} : {function_data}")
             function_data = self.functions[modular_id][function_data[kwargs.get('i', -1)]]
-            print(f"functions {modular_id} : {function_data}")
+            self.logger.info(f"functions {modular_id} : {function_data}")
         function = function_data.get("func")
         params = function_data.get("params")
 
@@ -1244,7 +1244,7 @@ class App(AppType, metaclass=Singleton):
         when multiple threads try to import interdependent modules simultaneously.
         Only async initialization is done in parallel after all imports complete.
         """
-        print(f"LOADING ALL MODS FROM FOLDER : {working_dir}")
+        self.logger.info(f"LOADING ALL MODS FROM FOLDER : {working_dir}")
         t0 = time.perf_counter()
 
         # Get the list of all modules
@@ -1499,7 +1499,6 @@ class App(AppType, metaclass=Singleton):
                     thread.join(timeout=timeout)
             except TimeoutError as e:
                 self.logger.error(f"Timeout error on exit {thread.name} {str(e)}")
-                print(str(e), f"Timeout {thread.name}")
             except KeyboardInterrupt:
                 print("Unsafe Exit")
                 break
@@ -1563,7 +1562,7 @@ class App(AppType, metaclass=Singleton):
         try:
             self.config_fh.save_file_handler()
         except SystemExit:
-            print("If you are testing this is fine, else ...")
+            self.logger.warning("If you are testing this is fine, else ...")
 
         self._cleanup_threads()
         self._cleanup_event_loop()
@@ -2076,7 +2075,7 @@ class App(AppType, metaclass=Singleton):
                                      data=kwargs, method=method)
         try:
             if not r:
-                print("§ Session server Offline!", self.session.base)
+                self.logger.info(f"§ Session server Offline! {self.session.base}")
                 return Result.default_internal_error(info="Session fetch failed").as_dict()
 
             content_type = r.headers.get('Content-Type', '').lower()
@@ -2085,7 +2084,7 @@ class App(AppType, metaclass=Singleton):
                 try:
                     return r.json()
                 except Exception as e:
-                    print(f"⚠ JSON decode error: {e}")
+                    self.logger.error(f"⚠ JSON decode error: {e}")
                     # Fallback to text if JSON decoding fails
                     text = r.text
             else:
@@ -2103,7 +2102,7 @@ class App(AppType, metaclass=Singleton):
                     import yaml
                     return yaml.safe_load(text)
                 except Exception as e:
-                    print(f"⚠ YAML decode error: {e}")
+                    self.logger.error(f"⚠ YAML decode error: {e}")
 
             # Attempt XML
             if 'xml' in content_type or text.strip().startswith('<?xml'):
@@ -2111,13 +2110,13 @@ class App(AppType, metaclass=Singleton):
                     import xmltodict
                     return xmltodict.parse(text)
                 except Exception as e:
-                    print(f"⚠ XML decode error: {e}")
+                    self.logger.error(f"⚠ XML decode error: {e}")
 
             # Fallback: return plain text
             return Result.default_internal_error(data={'raw_text': text, 'content_type': content_type}).as_dict()
 
         except Exception as e:
-            print("❌ Fatal error during API call:", e)
+            self.logger.critical("❌ Fatal error during API call:", e)
             self.debug_rains(e)
             return Result.default_internal_error(str(e)).as_dict()
 
@@ -2251,6 +2250,9 @@ class App(AppType, metaclass=Singleton):
             return self.load_mod(name, spec=spec)
         return self.functions[name].get(f"{spec}_instance")
 
+    def _print(self, text="", *args, **kwargs):
+        print(text, *args, **kwargs)
+
     def print(self, text="", *args, **kwargs):
         # self.logger.info(f"Output : {text}")
         if 'live' in self.id:
@@ -2258,10 +2260,10 @@ class App(AppType, metaclass=Singleton):
 
         flush = kwargs.pop('flush', True)
         if self.sprint(None):
-            print(Style.CYAN(f"System${self.id}:"), end=" ", flush=flush)
+            self._print(Style.CYAN(f"System${self.id}:"), end=" ", flush=flush)
         if 'color' in kwargs:
             text = Style.style_dic[kwargs.pop('color')] + text + Style.style_dic["END"]
-        print(text, *args, **kwargs, flush=flush)
+        self._print(text, *args, **kwargs, flush=flush)
 
     def sprint(self, text="", show_system=True, *args, **kwargs):
         if text is None:
@@ -2271,12 +2273,12 @@ class App(AppType, metaclass=Singleton):
         flush = kwargs.pop('flush', True)
         # self.logger.info(f"Output : {text}")
         if show_system:
-            print(Style.CYAN(f"System${self.id}:"), end=" ", flush=flush)
+            self._print(Style.CYAN(f"System${self.id}:"), end=" ", flush=flush)
         if isinstance(text, str) and kwargs == {} and text:
             stram_print(text + ' '.join(args))
-            print()
+            self._print()
         else:
-            print(text, *args, **kwargs, flush=flush)
+            self._print(text, *args, **kwargs, flush=flush)
 
     # ----------------------------------------------------------------
     # Decorators for the toolbox
@@ -2324,7 +2326,7 @@ class App(AppType, metaclass=Singleton):
                             reexecute_module_code(mod)
                             reload(mod)
                         except Exception as e:
-                            print(f"Error reloading module {name}: {e}")
+                            self.logger.error(f"Error reloading module {name}: {e}")
                             break
 
                 # Finally, reload the package itself
@@ -2830,7 +2832,7 @@ class App(AppType, metaclass=Singleton):
         with open(filepath, 'w') as file:
             file.write(data)
 
-        print(Style.Bold(Style.BLUE(f"Enums gespeichert in {filepath}")))
+        self.logger.info(Style.Bold(Style.BLUE(f"Enums gespeichert in {filepath}")))
 
 
     # WS logic

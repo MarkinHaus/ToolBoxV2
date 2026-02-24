@@ -5,7 +5,7 @@ Provides:
 - Tool grouping with categories (instead of showing 50 tools, show "Discord Tools available")
 - Situation-aware instructions based on intent + context
 - Runtime learning of patterns and behaviors
-- Live VFS integration (always visible after system_context)
+- Live VFS integration (always visible after system_context.md)
 
 Author: FlowAgent V2
 """
@@ -219,7 +219,7 @@ class RuleSet:
         # VFS Integration
         self._dirty: bool = True  # Needs VFS update
         self._auto_sync = auto_sync_vfs
-        self._vfs_filename = "active_rules"
+        self._vfs_filename = "active_rules.md"
 
         # Suggestion system (for L1: Hybrid approach)
         self._pending_suggestion: dict[str, Any] | None = None

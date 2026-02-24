@@ -24,6 +24,8 @@ from typing import Any
 
 from prompt_toolkit import print_formatted_text, HTML
 
+from toolboxv2.mods.isaa.base.AgentUtils import anything_from_str_to_dict
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -104,8 +106,13 @@ class ZenRendererV2:
         self._in_think = False
         self._think_buf = ""
         self._chunk_count = 0
+        self._zen_plus = None
+        self._chunk_buffer: list = []
 
     # -- public API -----------------------------------------------------------
+
+    def set_zen_plus(self, zp):
+        self._zen_plus = zp
 
     def toggle_minimize(self):
         """Toggle between minimized (one-liner) and expanded view."""
@@ -118,6 +125,10 @@ class ZenRendererV2:
     def process_chunk(self, chunk: dict):
         """Main entry: render one stream chunk. prompt_toolkit safe."""
         self._chunk_count += 1
+        self._chunk_buffer.append(chunk)
+        if self._zen_plus and self._zen_plus.active:
+            self._zen_plus.feed_chunk(chunk)
+            return
         c_type = chunk.get("type", "")
 
         # In minimized mode: only show done/error, skip everything else
@@ -127,6 +138,8 @@ class ZenRendererV2:
         # Agent context header (on agent change)
         self._maybe_print_agent_header(chunk)
 
+        if c_type == "_sub_done":
+            return  # Internal sentinel, skip
         # Dispatch
         if c_type == "reasoning":
             self._on_reasoning(chunk)
@@ -177,7 +190,11 @@ class ZenRendererV2:
                     tool = live.tool.name[:12] if live.tool.name else ""
                     live_info = f" {bar} {phase} {tool}"
                 except Exception:
+                    import traceback
+                    traceback.print_exc()
                     pass
+            else:
+                live_info = "no agent ref!"
 
             self._print(
                 f"  <style fg='{C['dim']}'>{SYM['progress']}</style> "
@@ -249,6 +266,13 @@ class ZenRendererV2:
         iter_n = chunk.get("iter", 0)
         max_n = chunk.get("max_iter", 0)
 
+        # Sub-agent forwarded chunks carry an ID
+        sub_id = chunk.get("_sub_agent_id", "")
+        if sub_id:
+            is_sub = True
+            # Use sub_id as agent discriminator so header shows per sub-agent
+            agent = f"{agent}:{sub_id}" if agent else sub_id
+
         if agent and agent != self._last_agent:
             prefix = SYM["sub"] if is_sub else SYM["agent"]
             color = C["dim"] if is_sub else C["cyan"]
@@ -311,7 +335,7 @@ class ZenRendererV2:
             parts.append(f"<style fg='{C['blue']}'>\u2b21 {_esc(label)}</style>")
 
         if persona_iterations_factor != 1:
-            text = f" [{'+' if persona_iterations_factor >= 1 else '-'}{persona_iterations_factor}% titrations]"
+            text = f" [{'+' if persona_iterations_factor >= 1 else '-'}{persona_iterations_factor}% iterations]"
             parts.append(f"<style fg='{C['amber']}'>\u2b21 {_esc(text)}</style>")
 
         if skills:
@@ -360,6 +384,8 @@ class ZenRendererV2:
                 ad = json.loads(args) if isinstance(args, str) else args
                 thought_text = ad.get("thought", "")
             except Exception:
+                import traceback
+                traceback.print_exc()
                 pass
             if thought_text:
                 summary = _short(thought_text.strip().replace("\n", " "), 70)
@@ -389,10 +415,13 @@ class ZenRendererV2:
                 if not arg_str:
                     arg_str = ad[:15]+ "..." if isinstance(ad, str) else " - ".join(list(ad.keys())[:4])
             except Exception:
+                import traceback
+                traceback.print_exc()
                 pass
 
+        tool_color = C['blue'] if self._last_agent and ":" in self._last_agent else C['cyan']
         self._print(
-            f"  <style fg='{C['cyan']}'>{SYM['tool']} {name:<14}</style>"
+            f"  <style fg='{tool_color}'>{SYM['tool']} {name:<14}</style>"
             f"  <style fg='{C['dim']}'>{_esc(arg_str)}</style>",
             end=""
         )
@@ -413,7 +442,9 @@ class ZenRendererV2:
         meta = ""
 
         try:
-            rd = json.loads(result) if isinstance(result, str) else result
+            rd = anything_from_str_to_dict(result)[0] if isinstance(result, str) else result
+            if not rd:
+                rd = result
             if isinstance(rd, dict):
                 meta = self._extract_tool_meta(name, rd)
                 if not rd.get("success", True):
@@ -425,7 +456,9 @@ class ZenRendererV2:
                 meta = f"{len(rd)} items"
             elif isinstance(rd, str) and len(rd) > 0:
                 meta = f"{len(rd)}ch"
-        except Exception:
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
             # Plain text result
             if isinstance(result, str) and result:
                 rlen = len(result)
@@ -465,12 +498,12 @@ class ZenRendererV2:
         if n in ("vfs_write", "vfs_create", "vfs_append"):
 
             s  = rd.get("size", rd.get("bytes", len(rd.get("content", ""))))
-            size = f"{s}b" if s < 1024 else f"{s / 1024:.1f}kb" if s < 1048576 else f"{s / 1048576:.1f}mb"
 
-            lines = rd.get("lines", 0)
+            lines = rd.get("lines", len(rd.get("content", "")))
             ft = rd.get("file_type", "")
             parts = []
-            if size:
+            if s:
+                size = f"{s}b" if s < 1024 else f"{s / 1024:.1f}kb" if s < 1048576 else f"{s / 1048576:.1f}mb"
                 parts.append(size)
             if lines:
                 parts.append(f"{lines}L")

@@ -1126,13 +1126,13 @@ class Tools(MainTool):
         memory_instance = self.get_memory()
         if hasattr(memory_instance, "save_all_memories"):
             memory_instance.save_all_memories(f"{get_app().data_dir}/Memory/")
-        self.print("Memory saving process initiated")
+            self.print("Memory saving done")
 
     def load_to_mem_sync(self):
         memory_instance = self.get_memory()
         if hasattr(memory_instance, "load_all_memories"):
             memory_instance.load_all_memories(f"{get_app().data_dir}/Memory/")
-        self.print("Memory loading process initiated")
+            self.print("Memory loading done")
 
     def get_agent_builder(
         self,
@@ -1649,6 +1649,8 @@ class Tools(MainTool):
                 )
             return result_dict
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             self.print(f"Error in mini_task_completion_format: {e}")
             return None
 

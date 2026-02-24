@@ -81,6 +81,9 @@ class DreamReport(BaseModel):
 # =============================================================================
 # DREAMER — Core Pipeline
 # =============================================================================
+STOP_WORDS = {"ich", "ein", "eine", "der", "die", "das", "wie", "was", "ist",
+              "und", "oder", "für", "mit", "von", "zu", "the", "a", "an",
+              "is", "to", "for", "and", "of", "in", "on", "how", "what", "can"}
 
 class Dreamer:
     """
@@ -94,6 +97,7 @@ class Dreamer:
     """
 
     def __init__(self, agent: 'FlowAgent'):
+        self._last_good_state = None
         self.agent = agent
         self._budget_used = 0
         self._config: Optional[DreamConfig] = None
@@ -169,6 +173,7 @@ class Dreamer:
         }
 
         pipeline = self._build_pipeline(config)
+        self._last_good_state = state
         state = await pipeline.a_run(state)
 
         self._report.finished_at = datetime.now().isoformat()
@@ -196,7 +201,7 @@ class Dreamer:
 
         # Determine time window
         cutoff = self._get_cutoff(config)
-
+        _log.info(f"[Dreamer] Start Harvested {cutoff} cutoff")
         # List logs
         ls_result = session.vfs_ls(log_dir, recursive=False)
         if not ls_result.get("success"):
@@ -204,14 +209,21 @@ class Dreamer:
             return state
 
         records: list[RunRecord] = []
-        for entry in ls_result.get("entries", []):
+        _log.info(f"[Dreamer] Start Harvested {ls_result.keys()} contents")
+        _log.info(f"[Dreamer] Start Harvested {len(ls_result.get("contents", []))} entries")
+        _log.info(f"[Dreamer] Start Harvested {ls_result.get("contents", [])[0] if len(ls_result.get("contents", [])) else 'none' } entry")
+        for entry in ls_result.get("contents", []):
+            _log.debug(f"[Dreamer] vfs_ls entry: {entry}")
             name = entry.get("name", "")
             if not name.endswith(".md"):
                 continue
 
             # Parse timestamp from filename: YYYYMMDD_HHMMSS_runid.md
             try:
-                ts_str = name[:15]  # "20250223_031500"
+                basename = name.rsplit("/", 1)[-1]  # Pfad-safe
+                if not basename.endswith(".md"):
+                    continue
+                ts_str = basename[:15]
                 file_ts = datetime.strptime(ts_str, "%Y%m%d_%H%M%S")
                 if cutoff and file_ts < cutoff:
                     continue
@@ -250,7 +262,13 @@ class Dreamer:
         # Get embeddings for all queries
         queries = [r.query for r in records]
         try:
-            embeddings = await memory.get_embeddings(queries)
+            BATCH_SIZE = 64
+            all_embeddings = []
+            for i in range(0, len(queries), BATCH_SIZE):
+                batch = queries[i:i + BATCH_SIZE]
+                embs = await memory.get_embeddings(batch)
+                all_embeddings.extend(embs)
+            embeddings = all_embeddings
         except Exception as e:
             _log.warning(f"[Dreamer] Embedding failed, using keyword fallback: {e}")
             state["clusters"] = self._keyword_cluster(records)
@@ -326,7 +344,9 @@ class Dreamer:
                     temperature=0.2,
                     stream=False,
                 )
-                self._budget_used += 500  # estimate
+                prompt_cost = len(prompt) // 4
+                response_cost = len(response) // 4
+                self._budget_used += prompt_cost + response_cost
 
                 analysis = self._parse_analysis(response, len(success_records), len(records))
                 analyses[cid] = analysis
@@ -389,7 +409,7 @@ class Dreamer:
                     if scheduler:
                         scheduler.event_bus.emit("dream_skill_evolved", {
                             "agent": self.agent.amd.name,
-                            "skill_id": skill.id,  # oder new_skill.id
+                            "skill_id": new_skill.id,  # oder new_skill.id
                             "action": "created",  # oder "created" / "split"
                         })
 
@@ -497,59 +517,71 @@ class Dreamer:
     # ─── Skip handler for soft-stop ─────────────────────────────────
 
     async def _phase_skip(self, state: dict) -> dict:
-        """Error fallback: log and pass state through."""
         if isinstance(state, Exception):
             _log.warning(f"[Dreamer] Phase error (skipped): {state}")
             if self._report:
                 self._report.errors.append(str(state))
-            return {}
-        return state if isinstance(state, dict) else {}
+            # Return last good state but FLAG it
+            recovered = self._last_good_state.copy()
+            recovered["_skipped_phase"] = True
+            return recovered
+        self._last_good_state = state
+        return state
 
     # =========================================================================
     # SKILL OPERATIONS
     # =========================================================================
 
     def _evolve_skill(self, skill: Skill, analysis: ClusterAnalysis, records: list[RunRecord]):
-        """Refine an existing skill's instruction with cluster insights."""
-        # Bump version
+        """Refine an existing skill — REPLACE, don't append."""
         version = getattr(skill, '_version', 1)
         skill._version = version + 1
 
-        # Enrich instruction with failure patterns
-        if analysis.failure_patterns:
-            negatives = "\n".join(f"⚠️ {p}" for p in analysis.failure_patterns[:3])
-            skill.instruction += f"\n\nBEKANNTE FALLSTRICKE (v{skill._version}):\n{negatives}"
-
-        # Update instruction if LLM provided a better one
+        # ── REPLACE instruction instead of appending ──
         if analysis.recommended_instruction_update:
+            # Keep only the core instruction, replace with evolved version
             skill.instruction = analysis.recommended_instruction_update
 
-        # Merge triggers
+        # Add failure patterns as a FIXED section (replaced each time)
+        if analysis.failure_patterns:
+            negatives = "\n".join(f"⚠️ {p}" for p in analysis.failure_patterns[:3])
+            # Strip old FALLSTRICKE block if present
+            if "\nBEKANNTE FALLSTRICKE" in skill.instruction:
+                skill.instruction = skill.instruction[:skill.instruction.index("\nBEKANNTE FALLSTRICKE")]
+            skill.instruction += f"\n\nBEKANNTE FALLSTRICKE (v{skill._version}):\n{negatives}\n"
+
+        # ── Triggers: CAP at max 8, prune low-value ones ──
+        MAX_TRIGGERS = 8
         existing = set(t.lower() for t in skill.triggers)
         for t in analysis.suggested_triggers:
             if t.lower() not in existing:
                 skill.triggers.append(t)
                 existing.add(t.lower())
+        if len(skill.triggers) > MAX_TRIGGERS:
+            # Keep first 3 (original) + best from analysis
+            skill.triggers = skill.triggers[:3] + analysis.suggested_triggers[:MAX_TRIGGERS - 3]
 
-        # Merge tools from successful records
-        existing_tools = set(skill.tools_used)
+        # ── Tools: CAP at max 10, only from successful runs ──
+        MAX_TOOLS = 10
+        success_tools = set()
         for r in records:
             if r.success:
-                for t in r.tools_used:
-                    if t not in existing_tools and t not in ("think", "final_answer"):
-                        skill.tools_used.append(t)
-                        existing_tools.add(t)
+                success_tools.update(t for t in r.tools_used if t not in ("think", "final_answer"))
+        # Intersect: keep only tools that appear in recent successes
+        skill.tools_used = [t for t in skill.tools_used if t in success_tools][:MAX_TOOLS]
+        # Add new tools up to cap
+        for t in success_tools:
+            if t not in skill.tools_used and len(skill.tools_used) < MAX_TOOLS:
+                skill.tools_used.append(t)
 
-        # Adjust confidence from cluster success ratio
+        # Confidence: weighted average, not just accumulation
         skill.confidence = min(1.0, skill.confidence * 0.7 + analysis.success_ratio * 0.3)
         skill.last_used = datetime.now()
 
-        # Store negative examples
-        if not hasattr(skill, '_negative_examples'):
-            skill._negative_examples = []
-        skill._negative_examples.extend(analysis.suggested_negative_examples[:5])
+        # Negative examples: REPLACE, not extend
+        skill._negative_examples = analysis.suggested_negative_examples[:5]
 
-        # Evolution history
+        # Evolution history (keep last 10 only)
         if not hasattr(skill, '_evolution_history'):
             skill._evolution_history = []
         skill._evolution_history.append({
@@ -559,6 +591,7 @@ class Dreamer:
             "cluster_size": len(records),
             "success_ratio": analysis.success_ratio,
         })
+        skill._evolution_history = skill._evolution_history[-10:]  # Prune history too
 
     async def _split_skill(self, parent: Skill, analysis: ClusterAnalysis) -> list[str]:
         """Split a bloated skill into focused sub-skills."""
@@ -683,7 +716,7 @@ class Dreamer:
             pass
 
         # Fallback: last 24h
-        return datetime.now() - timedelta(hours=24)
+        return datetime.now() - timedelta(hours=24*3)
 
     def _parse_log(self, content: str, path: str) -> Optional[RunRecord]:
         """Parse a commit_run log file into a RunRecord."""
@@ -706,29 +739,33 @@ class Dreamer:
             record.run_id = parts[2]
             record.timestamp = f"{parts[0]}_{parts[1]}"
 
-        # Determine success: if we have error traces and no tool calls, likely failure
-        record.success = len(record.error_traces) == 0 or len(record.tools_used) > 2
-
+        # Heuristik: Erfolgreich wenn WENIG Errors relativ zu Tools
+        if record.error_traces:
+            error_ratio = len(record.error_traces) / max(len(record.tools_used), 1)
+            record.success = error_ratio < 0.05  # Max 5% Error-Rate
+        else:
+            record.success = True
         return record if record.query else None
 
     def _keyword_cluster(self, records: list[RunRecord]) -> dict[str, list[RunRecord]]:
-        """Fallback clustering by keyword overlap."""
         clusters: dict[str, list[RunRecord]] = {}
         assigned = set()
 
         for i, r in enumerate(records):
             if i in assigned:
                 continue
-            words_i = set(r.query.lower().split())
+            words_i = set(r.query.lower().split()) - STOP_WORDS
             cluster = [r]
             assigned.add(i)
 
             for j in range(i + 1, len(records)):
                 if j in assigned:
                     continue
-                words_j = set(records[j].query.lower().split())
+                words_j = set(records[j].query.lower().split()) - STOP_WORDS
+                # Jaccard similarity statt absoluter overlap
+                union = len(words_i | words_j)
                 overlap = len(words_i & words_j)
-                if overlap >= 2:
+                if union > 0 and overlap / union >= 0.4:  # 40% Jaccard
                     cluster.append(records[j])
                     assigned.add(j)
 

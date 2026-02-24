@@ -40,6 +40,7 @@ from typing import (
 )
 from dataclasses import dataclass, field
 
+import asyncio
 import litellm
 from litellm import CustomLLM
 from litellm.types.utils import (
@@ -79,6 +80,19 @@ except ImportError:
 ZAI_API_KEY = os.getenv("ZAI_API_KEY", "")
 ZAI_BASE_URL = os.getenv("ZAI_BASE_URL", "https://api.z.ai/api/anthropic")
 
+
+import contextlib
+
+@contextlib.contextmanager
+def _suppress_loop_closed():
+    """Suppress 'Event loop is closed' during cleanup on Windows."""
+    try:
+        yield
+    except RuntimeError as e:
+        if "Event loop is closed" not in str(e):
+            raise
+    except Exception:
+        pass  # Best-effort cleanup, never propagate
 
 @dataclass
 class ToolCallAccumulator:
@@ -132,6 +146,7 @@ class ZAIProvider(CustomLLM):
 
         # Initialize Anthropic clients
         self._sync_client: Optional[Anthropic] = None
+        self._sync_client: Optional[Anthropic] = None
         self._async_client: Optional[AsyncAnthropic] = None
 
     def _debug_log(self, msg: str, data: Any = None):
@@ -153,12 +168,32 @@ class ZAIProvider(CustomLLM):
 
     @property
     def async_client(self) -> AsyncAnthropic:
-        """Lazy initialization of async client"""
-        if self._async_client is None:
+        """Lazy initialization of async client — recreates if event loop changed.
+
+        httpx.AsyncClient binds its transport to the loop at creation time.
+        If a sub-agent or background task runs in a different loop context,
+        the old client's SSL transport will crash on cleanup with
+        'Event loop is closed'. Detect this and rebuild.
+        """
+        current_loop_id: Optional[int] = None
+        try:
+            current_loop_id = id(asyncio.get_running_loop())
+        except RuntimeError:
+            pass  # No running loop (sync context) — use cached if exists
+
+        needs_rebuild = (
+            self._async_client is None
+            or (current_loop_id is not None and self._async_client_loop_id != current_loop_id)
+        )
+
+        if needs_rebuild:
+            # Discard old client — do NOT await close(), old loop may be dead
             self._async_client = AsyncAnthropic(
                 api_key=self.api_key,
                 base_url=self.base_url,
             )
+            self._async_client_loop_id = current_loop_id
+
         return self._async_client
 
     # =========================================================================
@@ -1094,7 +1129,7 @@ class ZAIProvider(CustomLLM):
         custom_llm_provider: Optional[str] = None,
         **kwargs
     ) -> AsyncIterator[GenericStreamingChunk]:
-        """Asynchronous streaming completion"""
+        """Asynchronous streaming completion — resilient to event loop closure."""
         actual_model = self._extract_model(model)
 
         # LiteLLM puts tools in different places - extract from all possible locations
@@ -1148,10 +1183,43 @@ class ZAIProvider(CustomLLM):
         # Make streaming request
         stream = await self.async_client.messages.create(**request_kwargs)
 
-        async for event in stream:
-            chunk = self._convert_stream_event_to_chunk(event, state, actual_model)
-            if chunk:
-                yield chunk
+        # ── Resilient stream consumption ──────────────────────────
+        # LiteLLM MidStreamFallback or sub-agent cancellation can
+        # abandon this generator.  When httpx tries to close the
+        # underlying SSL transport it calls loop.call_soon() — but
+        # if the loop is already closing (Windows SelectorEventLoop
+        # race), that raises RuntimeError("Event loop is closed").
+        # We catch it, emit a final chunk from accumulated state,
+        # and exit cleanly so litellm can proceed with its fallback.
+
+        try:
+            async for event in stream:
+                chunk = self._convert_stream_event_to_chunk(event, state, actual_model)
+                if chunk:
+                    yield chunk
+        except (RuntimeError, Exception) as e:
+            err_str = str(e)
+            if "Event loop is closed" in err_str or "different event loop" in err_str:
+                self._debug_log(f"Stream interrupted (httpx cleanup): {err_str[:120]}")
+                # Emit final chunk with whatever we accumulated
+                yield self._build_generic_chunk(
+                    text="",
+                    tool_use=None,
+                    is_finished=True,
+                    finish_reason=state.finish_reason or "stop",
+                    index=0,
+                    usage=self._build_usage_dict(state),
+                )
+            else:
+                raise
+        finally:
+            # Best-effort stream cleanup — never let it raise
+            with _suppress_loop_closed():
+                if hasattr(stream, 'close'):
+                    try:
+                        await stream.close()
+                    except Exception:
+                        pass
 
 
 # =============================================================================

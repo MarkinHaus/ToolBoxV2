@@ -115,9 +115,9 @@ def patch_cli_for_discord(host):
     original_build_completer = host._build_completer
 
     def patched_build_completer():
-        completer = original_build_completer()
+        completer, vfs_c = original_build_completer()
         completer["/discord"] = get_completer_dict()
-        return completer
+        return completer, vfs_c
 
     host._build_completer = patched_build_completer
 

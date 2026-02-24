@@ -751,7 +751,7 @@ class FlowAgentBuilder:
         """
         Add a persona profile.
 
-        Persona information is written to VFS system_context and
+        Persona information is written to VFS system_context.md and
         creates learned patterns in RuleSet.
 
         Args:
@@ -1085,14 +1085,6 @@ class FlowAgentBuilder:
                 await self._apply_persona_to_ruleset(agent)
 
                 # Step 13: Patch FlowAgent - REMOVED
-                # NOTE: Monkey-patching has been eliminated as part of architecture refactoring.
-                # VFS features are now initialized directly in AgentSessionV2.initialize()
-                # and tools are registered in FlowAgent.init_session_tools().
-                # No external patching is required.
-                # - /global/ is automatically mounted on session initialization
-                # - VFS tools operate transparently through mount points
-                # - No special global_* or share_* tools needed
-                iprint("VFS features integrated natively (no patching required)")
                 # Step 12: Checkpoint loding
                 if self.config.checkpoint.enabled:
                     res = await agent.checkpoint_manager.auto_restore()
@@ -1344,17 +1336,17 @@ class FlowAgentBuilder:
                     confidence=0.95,
                 )
 
-        # Update VFS system_context with persona info
+        # Update VFS system_context.md with persona info
         if self.config.active_persona:
             persona_data = self.config.persona_profiles.get(
                 self.config.active_persona, {}
             )
             persona_context = self._build_persona_context(persona_data)
 
-            # Append to system_context
-            if "system_context" in session.vfs.files:
-                current = session.vfs.files["system_context"].content
-                session.vfs.files["system_context"].content = (
+            # Append to system_context.md
+            if "system_context.md" in session.vfs.files:
+                current = session.vfs.files["system_context.md"].content
+                session.vfs.files["system_context.md"].content = (
                     current + "\n" + persona_context
                 )
 

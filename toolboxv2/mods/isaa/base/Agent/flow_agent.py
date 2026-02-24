@@ -12,7 +12,9 @@ Author: FlowAgent V2
 """
 
 import asyncio
+import contextlib
 import copy
+import io
 import json
 import logging
 import os
@@ -993,23 +995,32 @@ class FlowAgent:
         cost = (input_tokens / 1000) * 0.002 + (output_tokens / 1000) * 0.01
         if hasattr(completion_response, "_hidden_params"):
             cost = completion_response._hidden_params.get("response_cost", 0)
-        try:
-            import litellm
 
-            cost = litellm.completion_cost(
-                model=model, completion_response=completion_response
-            )
-        except ImportError:
-            pass
+        try:
+            devnull = open(os.devnull, "w")
         except Exception as e:
+            devnull = io.StringIO()
+            if os.getenv("AGENT_VERBOSE", "false") == "true":
+                print(e, "\nWhile trying to get devnull")
+
+        with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
             try:
                 import litellm
 
                 cost = litellm.completion_cost(
-                    model=model.split("/")[-1], completion_response=completion_response
+                    model=model, completion_response=completion_response
                 )
-            except Exception:
+            except ImportError:
                 pass
+            except Exception as e:
+                try:
+                    import litellm
+
+                    cost = litellm.completion_cost(
+                        model=model.split("/")[-1], completion_response=completion_response
+                    )
+                except Exception:
+                    pass
         return cost or (input_tokens / 1000) * 0.002 + (output_tokens / 1000) * 0.01
 
     @staticmethod
@@ -2779,20 +2790,38 @@ class FlowAgent:
         # 4. Präzises Token Counting mit Overhead
         model = self.amd.fast_llm_model.split("/")[-1]
         try:
-            model_info = litellm.get_model_info(model)
+
+            try:
+                devnull = open(os.devnull, "w")
+            except Exception as e:
+                devnull = io.StringIO()
+                if os.getenv("AGENT_VERBOSE", "false") == "true":
+                    print(e, "\nWhile trying to get devnull")
+
+            with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+                model_info = litellm.get_model_info(model)
             context_limit = model_info.get("max_input_tokens") or model_info.get("max_tokens") or 128000
         except:
             context_limit = 128000
 
         def count(msgs, tools=None):
             # Nutzt die exakte Tokenizer-Logik des Modells inkl. Protokoll-Overhead
+
             try:
-                if tools:
-                    return litellm.token_counter(model=model, messages=msgs, tools=tools)
-                return litellm.token_counter(model=model, messages=msgs)
-            except Exception:
-                # Fallback: Grobe Schätzung
-                return len(str(msgs)) // 3 + len(str(tools or "")) // 3
+                devnull = open(os.devnull, "w")
+            except Exception as e:
+                devnull = io.StringIO()
+                if os.getenv("AGENT_VERBOSE", "false") == "true":
+                    print(e, "\nWhile trying to get devnull")
+
+            with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+                try:
+                    if tools:
+                        return litellm.token_counter(model=model, messages=msgs, tools=tools)
+                    return litellm.token_counter(model=model, messages=msgs)
+                except Exception:
+                    # Fallback: Grobe Schätzung
+                    return len(str(msgs)) // 3 + len(str(tools or "")) // 3
 
         # -- Deep Dive Analyse der System-Komponenten --
         # Wir zerlegen den System-Prompt, um zu sehen, was Platz frisst

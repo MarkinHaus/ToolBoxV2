@@ -347,17 +347,8 @@ class GatewayProvider(CustomLLM):
         custom_llm_provider: Optional[str] = None,
         **kwargs
     ) -> AsyncIterator[GenericStreamingChunk]:
-        """
-        Handle streaming completion requests (async)
-
-        Returns an async iterator that yields GenericStreamingChunk objects.
-        LiteLLM will wrap this in CustomStreamWrapper.
-
-        IMPORTANT: This must be an async generator (use 'yield', not 'return')
-        """
-
         clean_kwargs = self._clean_kwargs(kwargs)
-        clean_kwargs['stream'] = True  # Ensure streaming is enabled
+        clean_kwargs['stream'] = True
 
         actual_model = self._extract_model(model)
         base_url = api_base or f"{self.gateway_url}"
@@ -368,19 +359,44 @@ class GatewayProvider(CustomLLM):
             **clean_kwargs
         }
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            async with client.stream(
-                "POST",
-                f"{base_url}/chat/completions",
-                json=payload,
-                headers=self._get_headers()
-            ) as response:
-                response.raise_for_status()
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                async with client.stream(
+                    "POST",
+                    f"{base_url}/chat/completions",
+                    json=payload,
+                    headers=self._get_headers()
+                ) as response:
+                    response.raise_for_status()
 
-                async for line in response.aiter_lines():
-                    chunk_data = self._parse_sse_line(line)
-                    if chunk_data:
-                        yield self._chunk_to_generic(chunk_data)
+                    async for line in response.aiter_lines():
+                        chunk_data = self._parse_sse_line(line)
+                        if chunk_data:
+                            yield self._chunk_to_generic(chunk_data)
+        except (RuntimeError, OSError) as e:
+            if "Event loop is closed" in str(e) or "different event loop" in str(e):
+                # LiteLLM MidStreamFallback abandoned generator →
+                # httpx SSL cleanup calls loop.call_soon() on closed loop.
+                # Emit terminal chunk so litellm can proceed with fallback.
+                yield GenericStreamingChunk (**{
+                    "text": "",
+                    "is_finished": True,
+                    "finish_reason": "stop",
+                    "index": 0,
+                    "tool_use": None,
+                    "usage": {
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "total_tokens": 0,
+                        # optionale Felder werden nicht gesetzt
+                        # "prompt_tokens_details": None,
+                        # "completion_tokens_details": None,
+                    },
+                    # optional
+                    # "provider_specific_fields": None,
+                })
+            else:
+                raise
 
     # ========== EMBEDDING METHODS ==========
 

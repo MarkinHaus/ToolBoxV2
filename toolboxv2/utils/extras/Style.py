@@ -444,6 +444,23 @@ class Style:
             text = self._Bold + text + self._END
         return text
 
+_ANSI_TO_RICH = {
+    '\33[30m': '[black]',      '\33[31m': '[red]',        '\33[32m': '[green]',
+    '\33[33m': '[yellow]',     '\33[34m': '[blue]',       '\33[35m': '[magenta]',
+    '\33[36m': '[cyan]',       '\33[37m': '[white]',      '\33[1m': '[bold]',
+    '\33[3m': '[italic]',      '\33[4m': '[underline]',   '\33[7m': '[reverse]',
+    '\33[90m': '[bright_black]', '\33[91m': '[bright_red]', '\33[92m': '[bright_green]',
+    '\33[93m': '[bright_yellow]', '\33[94m': '[bright_blue]', '\33[95m': '[bright_magenta]',
+    '\33[96m': '[bright_cyan]', '\33[97m': '[bright_white]',
+    '\33[0m': '[/]',
+}
+
+def ansi_to_rich(text: str) -> str:
+    """Konvertiert ANSI-Escape-Codes zu Rich-Markup."""
+    for ansi, rich in _ANSI_TO_RICH.items():
+        text = text.replace(ansi, rich)
+    return text
+
 def remove_styles(text: str, infos=False):
     in_ = []
     for key, style in Style.style_dic.items():

@@ -621,8 +621,8 @@ class VirtualFileSystemV2:
 
     def _init_system_files(self):
         """Initialize read-only system files"""
-        self.files["/system_context"] = VFSFile(
-            filename="system_context",
+        self.files["/system_context.md"] = VFSFile(
+            filename="system_context.md",
             _content=self._build_system_context(),
             state="open",
             readonly=True,
@@ -639,17 +639,17 @@ Session: {self.session_id}
 
     def update_system_context(self):
         """Refresh system context"""
-        if "/system_context" in self.files:
-            self.files["/system_context"].content = self._build_system_context()
-            self.files["/system_context"].updated_at = datetime.now().isoformat()
+        if "/system_context.md" in self.files:
+            self.files["/system_context.md"].content = self._build_system_context()
+            self.files["/system_context.md"].updated_at = datetime.now().isoformat()
             self._dirty = True
 
     def set_rules_file(self, content: str):
-        """Set the active_rules file content (from RuleSet)"""
-        path = "/active_rules"
+        """Set the active_rules.md file content (from RuleSet)"""
+        path = "/active_rules.md"
         if path not in self.files:
             self.files[path] = VFSFile(
-                filename="active_rules", _content=content, state="open", readonly=True
+                filename="active_rules.md", _content=content, state="open", readonly=True
             )
         else:
             self.files[path].content = content
@@ -762,7 +762,7 @@ Session: {self.session_id}
         f = self.files[vfs_path]
 
         # Allow removal of readonly system files (but protect core system files)
-        protected_files = ["/system_context", "/active_rules"]
+        protected_files = ["/system_context.md", "/active_rules.md"]
         if vfs_path in protected_files:
             return {"success": False, "error": f"Cannot remove protected system file: {vfs_path}"}
 
@@ -1970,13 +1970,13 @@ Session: {self.session_id}
 
         # Order: system_context, active_rules, then others
         ordered = []
-        if "/system_context" in self.files:
-            ordered.append(("/system_context", self.files["/system_context"]))
-        if "/active_rules" in self.files:
-            ordered.append(("/active_rules", self.files["/active_rules"]))
+        if "/system_context.md" in self.files:
+            ordered.append(("/system_context.md", self.files["/system_context.md"]))
+        if "/active_rules.md" in self.files:
+            ordered.append(("/active_rules.md", self.files["/active_rules.md"]))
 
         for path, f in self.files.items():
-            if path not in ("/system_context", "/active_rules"):
+            if path not in ("/system_context.md", "/active_rules.md"):
                 ordered.append((path, f))
 
         for path, f in ordered:

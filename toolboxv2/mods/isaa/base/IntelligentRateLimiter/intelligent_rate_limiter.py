@@ -38,6 +38,23 @@ from toolboxv2 import get_logger, Spinner, get_app
 logger = get_logger()
 
 
+def _ensure_lock(lock: Optional[asyncio.Lock]) -> asyncio.Lock:
+    """Get or create an asyncio.Lock bound to the CURRENT event loop.
+
+    Handles the Python 3.12+ restriction that Locks are bound to
+    the loop they were created in. If a Lock was created in a
+    different loop (e.g., sync __init__ vs async sub-agent task),
+    this creates a new one bound to the current running loop.
+    """
+    if lock is None:
+        return asyncio.Lock()
+    try:
+        lock._get_loop()  # Raises RuntimeError if bound to different loop
+        return lock
+    except RuntimeError:
+        return asyncio.Lock()
+
+
 class QuotaType(Enum):
     """Verschiedene Quota-Typen die Provider verwenden"""
     REQUESTS_PER_MINUTE = "rpm"
@@ -101,7 +118,13 @@ class RateLimitState:
     tokens_day_window: list = field(default_factory=list)
     backoff_until: float = 0.0
     consecutive_failures: int = 0
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    _lock: Optional[asyncio.Lock] = field(default=None, repr=False)
+
+    @property
+    def lock(self) -> asyncio.Lock:
+        """Lazy-create lock bound to CURRENT event loop."""
+        self._lock = _ensure_lock(self._lock)
+        return self._lock
 
 
 @dataclass
@@ -150,8 +173,12 @@ class FallbackState:
     fallback_started: float = 0.0
     reason: Optional[FallbackReason] = None
     original_model: str = ""
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    _lock: Optional[asyncio.Lock] = field(default=None, repr=False)
 
+    @property
+    def lock(self) -> asyncio.Lock:
+        self._lock = _ensure_lock(self._lock)
+        return self._lock
 
 # ===== API KEY MANAGER =====
 
@@ -167,16 +194,16 @@ class APIKeyManager:
     """
 
     def __init__(self, default_mode: KeyRotationMode = KeyRotationMode.BALANCE):
-        # provider -> [APIKeyInfo]
         self._keys: Dict[str, List[APIKeyInfo]] = defaultdict(list)
-        # provider -> current index (für Drain Mode)
         self._current_index: Dict[str, int] = defaultdict(int)
-        # provider -> rotation counter (für Balance Mode)
         self._rotation_counter: Dict[str, int] = defaultdict(int)
-        # Global mode
         self._mode = default_mode
-        # Lock für Thread-Safety
-        self._lock = asyncio.Lock()
+        self.__lock: Optional[asyncio.Lock] = None
+
+    @property
+    def _lock(self) -> asyncio.Lock:
+        self.__lock = _ensure_lock(self.__lock)
+        return self.__lock
 
     @property
     def mode(self) -> KeyRotationMode:
@@ -648,7 +675,7 @@ class IntelligentRateLimiter:
         # Core State
         self.limits: Dict[str, ProviderModelLimits] = {}
         self.states: Dict[str, RateLimitState] = defaultdict(RateLimitState)
-        self._global_lock = asyncio.Lock()
+        self.__global_lock: Optional[asyncio.Lock] = None
 
         # v2 Managers
         mode = KeyRotationMode(key_rotation_mode)
@@ -658,6 +685,16 @@ class IntelligentRateLimiter:
         # Load & Initialize
         self._load_limits()
         self._init_known_limits()
+
+    @property
+    def _global_lock(self) -> asyncio.Lock:
+        if self.__global_lock is None:
+            self.__global_lock = asyncio.Lock()
+        try:
+            self.__global_lock._get_loop()
+        except RuntimeError:
+            self.__global_lock = asyncio.Lock()
+        return self.__global_lock
 
     def _init_known_limits(self):
         """Initialisiere bekannte Default-Limits für gängige Provider"""
@@ -1524,8 +1561,8 @@ class LiteLLMRateLimitHandler:
 
                 # Update model in kwargs if changed by fallback
                 kwargs["model"] = current_model
-                if os.getenv("AGENT_VERBOSE", "false") == "true":
-                    print(f"[Calling] -> {current_model}")
+                # if os.getenv("AGENT_VERBOSE", "false") == "true":
+                #     print(f"[Calling] -> {current_model}")
                 # mute litellm_module
                 try:
                     devnull = open(os.devnull, "w")

@@ -865,13 +865,35 @@ class LogSyncManager:
         finally:
             self._sync_lock.release()
 
-    def ensure_bucket(self):
-        """Create the target bucket if it doesn't exist."""
+    def ensure_bucket(self, silent: bool = True):
+        """Create the target bucket if it doesn't exist.
+
+        Args:
+            silent: If True, fail silently when MinIO is not ready yet.
+                    This prevents delays during first startup before MinIO is started.
+        """
+        if silent:
+            # Quick check: is MinIO reachable at all? If not, skip silently.
+            try:
+                import urllib3
+                # Check if we can reach the endpoint without waiting for retries
+                endpoint = self.minio._endpoint_url
+                http = urllib3.PoolManager(timeout=urllib3.Timeout(connect=1.0, read=1.0), retries=0)
+                try:
+                    http.request("GET", f"{endpoint}/minio/health/live", preload_content=False)
+                except Exception:
+                    # MinIO not ready yet - skip bucket creation
+                    return
+            except Exception:
+                # urllib3 not available or other error - continue with normal flow
+                pass
+
         try:
             if not self.minio.bucket_exists(self.bucket):
                 self.minio.make_bucket(self.bucket)
-        except Exception as e:
-            print(f"LogSyncManager: could not create bucket '{self.bucket}': {e}")
+        except Exception:
+            # Silently fail - bucket will be created on first successful sync
+            pass
 
 
 # ---------------------------------------------------------------------------

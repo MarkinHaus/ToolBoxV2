@@ -19,7 +19,7 @@ class TestVirtualFileSystem(AsyncTestCase):
         self.assertNotIn("temp.txt", self.vfs.files)
 
     def test_06_system_file_readonly(self):
-        res = self.vfs.write("system_context", "hacked")
+        res = self.vfs.write("system_context.md", "hacked")
         self.assertFalse(res['success'])
         self.assertIn("Read-only", res.get('error', ''))
 
@@ -43,13 +43,13 @@ class TestVirtualFileSystem(AsyncTestCase):
         self.vfs.open("active.txt")
         ctx = self.vfs.build_context_string()
         self.assertIn("Important Data", ctx)
-        self.assertIn("system_context", ctx)
+        self.assertIn("system_context.md", ctx)
 
     def test_14_list_files(self):
         self.vfs.create("a.txt", "A")
         self.vfs.create("b.txt", "B")
         lst = self.vfs.list_files()
-        self.assertEqual(len(lst['files']), 3) # a, b, system_context
+        self.assertEqual(len(lst['files']), 3) # a, b, system_context.md
 
     def test_16_load_local_security(self):
         # Should fail if not allowed dir (simulated)

@@ -2585,6 +2585,11 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                     yield enrich({"type": "paused", "run_id": ctx.run_id})
                     return
 
+                # Check cancellation
+                if ctx.status == "cancelled":
+                    yield enrich({"type": "cancelled", "run_id": ctx.run_id})
+                    return
+
                 if self._should_warn_loop(ctx):
                     warning_msg = ctx.loop_detector.get_intervention_message()
                     # Inject into history so LLM sees it

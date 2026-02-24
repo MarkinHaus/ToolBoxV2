@@ -76,6 +76,7 @@ class SubAgentState:
 
     # Async handling
     _task: asyncio.Task | None = field(default=None, repr=False)
+    _chunk_queue: asyncio.Queue = field(default_factory=asyncio.Queue, repr=False)
 
     # NEW: Resume support
     execution_context: Optional['ExecutionContext'] = None  # Preserved context
@@ -147,6 +148,8 @@ class SubAgentManager:
 
         # Completed results (kept for reference)
         self._completed: dict[str, SubAgentResult] = {}
+        # Shared queue for forwarding sub-agent chunks to parent stream
+        self._chunk_queue: asyncio.Queue = asyncio.Queue()
 
     def can_spawn(self) -> bool:
         """Check if spawning is allowed (False if already a sub-agent)"""
@@ -222,11 +225,50 @@ class SubAgentManager:
         )
 
         if wait:
-            # Wait for completion and return result
-            result = await self._wait_single(sub_id, timeout)
+            # Direkt awaiten – kein Task-Overhead, sauberer Lifecycle
+            try:
+                await asyncio.wait_for(
+                    self._run_sub_agent(state),
+                    timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                state.status = SubAgentStatus.TIMEOUT
+                state.error = f"Timeout after {timeout} seconds"
+                state.completed_at = datetime.now()
+            except Exception as e:
+                if state.status == SubAgentStatus.RUNNING:
+                    state.status = SubAgentStatus.FAILED
+                    state.error = str(e)
+                    state.completed_at = datetime.now()
+
+            # Build result directly
+            duration = 0.0
+            if state.started_at and state.completed_at:
+                duration = (state.completed_at - state.started_at).total_seconds()
+
+            result = SubAgentResult(
+                id=sub_id,
+                success=state.status == SubAgentStatus.COMPLETED,
+                status=state.status,
+                result=state.result,
+                error=state.error,
+                output_dir=state.output_dir,
+                files_written=state.files_written,
+                tokens_used=state.tokens_used,
+                duration_seconds=duration,
+                task=state.task,
+                max_iterations_reached=(state.status == SubAgentStatus.MAX_ITERATIONS),
+                resumable=state.resumable,
+                iterations_used=state.iterations_used,
+                execution_context=state.execution_context if state.resumable else None,
+            )
+            self._completed[sub_id] = result
             return result
         else:
-            # Return ID immediately
+            # Async: Task erstellen
+            state._task = asyncio.create_task(
+                self._run_sub_agent(state)
+            )
             return sub_id
 
     async def wait_for(
@@ -419,43 +461,68 @@ class SubAgentManager:
             final_answer_acc = ""
 
             # Consume stream to keep state alive
-            async for chunk in stream_gen(ctx):
-                c_type = chunk.get("type")
+            try:
+                async for chunk in stream_gen(ctx):
+                    c_type = chunk.get("type")
 
-                # Live State Updates for CLI
-                state.iterations_used = ctx.current_iteration
+                    # Live State Updates for CLI
+                    state.iterations_used = ctx.current_iteration
 
-                if c_type == "content":
-                    # Update token count approx (1 token ~= 4 chars)
-                    txt = chunk.get("chunk", "")
-                    state.tokens_used += len(txt) // 4
-                    final_answer_acc += txt
+                    if c_type == "content":
+                        txt = chunk.get("chunk", "")
+                        state.tokens_used += len(txt) // 4
+                        final_answer_acc += txt
 
-                elif c_type == "tool_start":
-                    # CLI checks ctx.tools_used, which is updated by engine internally
-                    pass
+                    elif c_type == "tool_start":
+                        pass
 
-                elif c_type == "final_answer":
-                    final_answer_acc = chunk.get("answer", "")
+                    elif c_type == "final_answer":
+                        final_answer_acc = chunk.get("answer", "")
 
-                elif c_type == "max_iterations":
-                    state.result = chunk.get("answer", "Max iterations reached")
-                    state.status = SubAgentStatus.MAX_ITERATIONS
-                    # Check resumability
-                    if len(ctx.tools_used) > 0:
-                        state.resumable = True
-                        state.execution_context = ctx
-                    else:
-                        state.resumable = False
+                    elif c_type == "max_iterations":
+                        state.result = chunk.get("answer", "Max iterations reached")
+                        state.status = SubAgentStatus.MAX_ITERATIONS
+                        if len(ctx.tools_used) > 0:
+                            state.resumable = True
+                            state.execution_context = ctx
+                        else:
+                            state.resumable = False
 
-                elif c_type == "done":
-                    state.result = chunk.get("final_answer", final_answer_acc)
-                    if chunk.get("success", False):
+                    elif c_type == "done":
+                        state.result = chunk.get("final_answer", final_answer_acc)
+                        if chunk.get("success", False):
+                            state.status = SubAgentStatus.COMPLETED
+                        elif state.status != SubAgentStatus.MAX_ITERATIONS:
+                            state.status = SubAgentStatus.FAILED
+                            state.error = "Execution finished without success flag"
+
+                    # >>> Forward chunk to parent stream <
+                    chunk["_sub_agent_id"] = state.id
+                    chunk["_sub_agent_task"] = state.task[:60]
+                    try:
+                        self._chunk_queue.put_nowait(chunk)
+                    except asyncio.QueueFull:
+                        pass  # Drop chunk if queue full (shouldn't happen)
+
+                # Signal: this sub-agent's stream is done
+                self._chunk_queue.put_nowait({
+                    "type": "_sub_done",
+                    "_sub_agent_id": state.id,
+                })
+            except (RuntimeError, Exception) as e:
+                err_str = str(e)
+                if "Event loop is closed" in err_str:
+                    # Windows httpx cleanup race condition –
+                    # Stream war aktiv, Ergebnis evtl. teilweise da
+                    print(f"[SubAgent {state.id}] Stream cleanup error (Windows httpx): {err_str[:100]}")
+                    if final_answer_acc and state.status == SubAgentStatus.RUNNING:
+                        state.result = final_answer_acc
                         state.status = SubAgentStatus.COMPLETED
-                    elif state.status != SubAgentStatus.MAX_ITERATIONS:
+                    elif state.status == SubAgentStatus.RUNNING:
                         state.status = SubAgentStatus.FAILED
-                        state.error = "Execution finished without success flag"
-
+                        state.error = f"Stream interrupted: {err_str[:200]}"
+                else:
+                    raise  # Andere Fehler normal propagieren
             # Ensure final state consistency
             if state.status == SubAgentStatus.RUNNING:
                 # Fallback if loop ended without explicit done/max_iter

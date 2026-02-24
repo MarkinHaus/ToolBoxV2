@@ -18,7 +18,10 @@ Version: 4.0.0
 import asyncio
 import logging
 import os
+import shutil
 import subprocess
+import threading
+import time as _time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -949,6 +952,108 @@ class SmartCompleter(Completer):
             yield from self._vfs.get_completions(sub_doc, complete_event)
         else:
             yield from self._fuzzy.get_completions(document, complete_event)
+
+# =============================================================================
+# HOTKEY POLLER (active during agent streaming, when prompt_toolkit is idle)
+# =============================================================================
+
+class StreamHotkeyPoller:
+    """
+    Polls for F-key presses while the agent is streaming.
+
+    prompt_toolkit key bindings only fire during prompt_async().
+    This poller uses msvcrt (Windows) / termios (Unix) to read
+    raw key events in a daemon thread and dispatch callbacks.
+    """
+
+    def __init__(self):
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self._callbacks: dict[str, callable] = {}
+
+    def on(self, key: str, callback) -> "StreamHotkeyPoller":
+        """Register a callback for a key. Keys: 'f2','f4','f5','f6'."""
+        self._callbacks[key] = callback
+        return self
+
+    def start(self):
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._poll_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=0.6)
+            self._thread = None
+
+    def _poll_loop(self):
+        if os.name == "nt":
+            self._poll_windows()
+        else:
+            self._poll_unix()
+
+    def _poll_windows(self):
+        import msvcrt
+        # F-key scan codes (second byte after 0x00 or 0xE0 prefix)
+        SCAN_MAP = {
+            b"\x3c": "f2",
+            b"\x3e": "f4",
+            b"\x3f": "f5",
+            b"\x40": "f6",
+        }
+        while self._running:
+            if msvcrt.kbhit():
+                ch = msvcrt.getch()
+                if ch in (b"\x00", b"\xe0"):
+                    scan = msvcrt.getch()
+                    key = SCAN_MAP.get(scan)
+                    if key and key in self._callbacks:
+                        try:
+                            self._callbacks[key]()
+                        except Exception:
+                            pass
+            _time.sleep(0.04)
+
+    def _poll_unix(self):
+        import sys
+        import select as _sel
+        try:
+            import tty, termios
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            tty.setcbreak(fd)
+        except Exception:
+            return  # No terminal available
+
+        # VT100 / xterm F-key escape sequences (after ESC)
+        SEQ_MAP = {
+            "OQ": "f2",   "[12~": "f2",
+            "OS": "f4",   "[14~": "f4",
+            "[15~": "f5",
+            "[17~": "f6",
+        }
+        try:
+            while self._running:
+                if _sel.select([sys.stdin], [], [], 0.04)[0]:
+                    ch = sys.stdin.read(1)
+                    if ch == "\x1b":
+                        seq = ""
+                        while _sel.select([sys.stdin], [], [], 0.05)[0]:
+                            seq += sys.stdin.read(1)
+                        key = SEQ_MAP.get(seq)
+                        if key and key in self._callbacks:
+                            try:
+                                self._callbacks[key]()
+                            except Exception:
+                                pass
+        finally:
+            try:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            except Exception:
+                pass
 
 # =============================================================================
 # ISAA HOST - MAIN CLASS
@@ -2472,6 +2577,34 @@ class ISAA_Host:
             f"\n<style fg='ansiblue'>></style> "
         )
 
+    def _get_keybinding_indicator(self) -> str:
+        """
+        Build compact right-side keybinding hints.
+        Only shows high-value toggles.
+        """
+        items = []
+
+        # F2 – Zen Mode
+        mode = "ZEN+" if self.zen_plus_mode else "ZEN"
+        items.append(
+            f"<style fg='ansimagenta'>F2:{mode}</style>"
+        )
+
+        # F4 – Audio
+        if self._audio_recording:
+            items.append("<style fg='ansired'>F4:REC</style>")
+        else:
+            items.append("<style fg='grey'>F4:AUDIO</style>")
+
+        # F5 – Dashboard
+        items.append("<style fg='ansicyan'>F5:STAT</style>")
+
+        # F6 – Minimize Renderer
+        if hasattr(self, "_active_renderer") and self._active_renderer:
+            items.append("<style fg='ansiyellow'>F6:VIEW</style>")
+        width = shutil.get_terminal_size().columns
+        return "  ".join(items).rjust(width)
+
     async def _print_status_dashboard(self):
         """Print comprehensive status dashboard."""
         c_print()
@@ -2586,7 +2719,11 @@ class ISAA_Host:
         print_box_content("/clear   - Clear screen", "")
         print_box_content("/zenplus - Togged full Screen agent live vier", "")
         print_box_content("/quit, /exit - Exit CLI", "")
-        print_box_content("F6 - Toggle minimize/expand agent output", "")
+        print_box_content("F2  - Switch between ZEN and ZEN+ interaction mode", "")
+        print_box_content("F4  - Start / stop audio recording pipeline", "")
+        print_box_content("F5  - Display status dashboard (VFS, Skills, MCP, Session)", "")
+        print_box_content("F6  - Collapse / expand active agent output view", "")
+        print_box_content("TAB - Activate or confirm command autocompletion", "")
         print_box_content("Ctrl+C - Safe stop agent (continue/fresh/quit)", "")
 
         print_separator()
@@ -5229,6 +5366,32 @@ class ISAA_Host:
                 except Exception:
                     pass
 
+            # --- Hotkey poller: F-keys during streaming ---
+            _loop = asyncio.get_event_loop()
+            _hotkey_poller = StreamHotkeyPoller()
+
+            def _hk_f6():
+                if hasattr(self, '_active_renderer') and self._active_renderer:
+                    self._active_renderer.toggle_minimize()
+
+            def _hk_f2():
+                self.zen_plus_mode = not self.zen_plus_mode
+
+            def _hk_f4():
+                _loop.call_soon_threadsafe(
+                    asyncio.ensure_future,
+                    self._toggle_audio_recording()
+                )
+
+            def _hk_f5():
+                async def _show_status():
+                    await self._print_status_dashboard()
+                _loop.call_soon_threadsafe(asyncio.ensure_future, _show_status())
+
+            _hotkey_poller.on("f6", _hk_f6).on("f2", _hk_f2)
+            _hotkey_poller.on("f4", _hk_f4).on("f5", _hk_f5)
+            _hotkey_poller.start()
+
             try:
                     while True:
                         try:
@@ -5260,6 +5423,7 @@ class ISAA_Host:
                                         current_sentence = ""
 
             except KeyboardInterrupt:
+                _hotkey_poller.stop()
                 # --- Safe Ctrl+C: stop agent, don't exit program ---
                 try:
                     await stream.aclose()
@@ -5314,6 +5478,8 @@ class ISAA_Host:
 
                 self._active_renderer = None
                 return
+
+            _hotkey_poller.stop()
 
             # --- Post-stream handling ---
             if moved_to_bg:
@@ -5408,7 +5574,7 @@ class ISAA_Host:
                 parts.append(f"<style fg='{PTColors.ZEN_GREEN}'>{f}</style>")
             for f in inactive:
                 parts.append(f"<style fg='{PTColors.ZEN_DIM}'>{f}</style>")
-            c_print(HTML(f"<style fg='{PTColors.ZEN_DIM}'>features:</style> {' '.join(parts)}"))
+            c_print(HTML(f"<style fg='{PTColors.ZEN_DIM}'>features:</style> {' '.join(parts)}"+f"<style fg='{PTColors.ZEN_GREEN}'>{self._get_keybinding_indicator()}</style>"))
             c_print()
 
         # Print status

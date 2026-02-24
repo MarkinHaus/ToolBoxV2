@@ -429,7 +429,7 @@ class AISemanticMemory(metaclass=Singleton):
         """Save every memory space into *path* directory (one sub-dir each)."""
         base = Path(path)
         base.mkdir(parents=True, exist_ok=True)
-        for name, store in self.memories.items():
+        for name, store in list(self.memories.items()):
             try:
                 mem_dir = base / name
                 mem_dir.mkdir(parents=True, exist_ok=True)

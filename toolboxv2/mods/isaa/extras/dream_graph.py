@@ -1,803 +1,781 @@
 """
-DreamGraph3D — Live 3D Force-Graph im Terminal für Dreamer/Agent/Memory.
-=========================================================================
+DreamGraphV2 — Dual-Mode Terminal Visualisation for Dreamer & Skills
+====================================================================
 
-Singleton Observer der sich an Dreamer-Pipeline, SubAgentManager,
-MemoryKnowledgeActor und ExecutionEngine hängt. Rendert einen
-force-directed 3D-Graphen mit Z-Sorting und Depth-Fog direkt in
-prompt_toolkit HTML.
+Replaces the 3D force-graph with two readable, purpose-built views:
+
+  MODE 1: Pipeline Tree   — real-time phase progress, cluster → skill mapping
+  MODE 2: Skill Diamond   — skill evolution over time, bloat detection, confidence
+
+Both auto-adapt to terminal size and degrade gracefully on narrow terminals.
+
+Key improvements over V1:
+  - Terminal-size reactive (re-reads on every frame)
+  - 2D Tree: clearly shows WHAT the dreamer does per phase
+  - Diamond: shows skill HEALTH — bloat, confidence trend, trigger count
+  - Edge/Node pruning: max 150 nodes, auto-expire old entries
+  - No monkey-patching: event-based hooks via callbacks
+  - Skills bloat indicator: warns when instruction/triggers/tools exceed limits
 
 Integration:
-    from toolboxv2.mods.isaa.extras.dream_graph import DreamGraph3D
-    graph = DreamGraph3D.instance()
-    graph.attach(engine)          # hooks AgentLiveState
-    graph.attach_dreamer(dreamer) # hooks dream phases
-    renderer.set_graph(graph)     # ZenRendererV2 pane
+    from dream_graph_v2 import DreamGraphV2, hookup_v2
+    graph = hookup_v2(engine, dreamer)
+    # In render loop:
+    graph.print_frame()        # auto-selects best view
+    graph.print_frame("tree")  # force tree view
+    graph.print_frame("diamond")  # force diamond view
 
 Author: FlowAgent V3 — Markin / TU Berlin
 """
 
 import math
-import time
-import threading
-import asyncio
 import os
+import time
+import html as _html
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Any
+from typing import Optional, Any, List
 
 from prompt_toolkit import print_formatted_text, HTML
 
-from toolboxv2.mods.isaa.base.Agent.dreamer import DreamConfig
+# ── Palette ─────────────────────────────────────────────────────────
 
-# ── Re-use ZenRendererV2 palette & symbols ──────────────────────────
 C = {
-    "dim": "#6b7280", "cyan": "#67e8f9", "green": "#4ade80",
-    "red": "#f87171", "amber": "#fbbf24", "white": "#e5e7eb",
-    "bright": "#ffffff", "blue": "#60a5fa", "magenta": "#c084fc",
-    "deep": "#3b3b3b",
+    "dim":     "#6b7280",
+    "cyan":    "#67e8f9",
+    "green":   "#4ade80",
+    "red":     "#f87171",
+    "amber":   "#fbbf24",
+    "white":   "#e5e7eb",
+    "bright":  "#ffffff",
+    "blue":    "#60a5fa",
+    "magenta": "#c084fc",
+    "deep":    "#3b3b3b",
+    "teal":    "#2dd4bf",
+    "rose":    "#fb7185",
+    "lime":    "#a3e635",
 }
 
-# ── Node categories ─────────────────────────────────────────────────
-
-class NK(Enum):
-    """Node Kind — maps to visual symbol + color + Y-bias."""
-    DREAMER  = ("◎", C["amber"],   0.8)   # top layer
-    AGENT    = ("◯", C["cyan"],    0.5)
-    SUB      = ("◈", C["blue"],    0.3)
-    SKILL    = ("◇", C["green"],   0.0)
-    MEMORY   = ("○", C["magenta"], -0.4)
-    CLUSTER  = ("▣", C["dim"],     -0.2)
-    PHASE    = ("▸", C["amber"],    0.6)
-    ERROR    = ("✗", C["red"],     -0.6)
-
-    def __init__(self, sym, color, y_bias):
-        self.sym = sym
-        self.color = color
-        self.y_bias = y_bias
+SYM = {
+    "dream":  "◎", "phase": "▸", "cluster": "▣", "skill": "◇",
+    "agent":  "◯", "sub":   "◈", "mem":     "○", "error": "✗",
+    "ok":     "✓", "warn":  "⚠", "evolve":  "↻", "new":   "★",
+    "split":  "⑃", "merge": "⊕", "publish": "↗",
+    "tree_v": "│", "tree_h": "──", "tree_t": "├", "tree_l": "└",
+    "tree_j": "┬", "diamond": "◆", "hollow": "◇",
+    "bar_f":  "█", "bar_h": "▌", "bar_e": "░",
+    "arrow":  "→", "line":  "─", "active": "●",
+}
 
 
-class ES(Enum):
-    """Edge Semantic."""
-    SPAWNED   = ("spawned",    C["cyan"],  "╌")
-    EVOLVED   = ("evolved",    C["green"], "─")
-    REMEMBERS = ("remembers",  C["magenta"], "┄")
-    PHASE_SEQ = ("phase_seq",  C["dim"],   "─")
-    USES      = ("uses",       C["blue"],  "╌")
-    ERROR_OF  = ("error_of",   C["red"],   "╌")
-    RELATION  = ("relation",   C["magenta"], "═")
-    PUBLISHED = ("published",  C["green"],  "─")
+# ═══════════════════════════════════════════════════════════════════
+# TERMINAL SIZE HELPER
+# ═══════════════════════════════════════════════════════════════════
 
-    def __init__(self, label, color, ch):
+def _term_size() -> tuple[int, int]:
+    """Get terminal cols, rows — re-reads every call."""
+    try:
+        ts = os.get_terminal_size()
+        return ts.columns, ts.lines
+    except (ValueError, OSError):
+        return 110, 30
+
+
+def _clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
+# ═══════════════════════════════════════════════════════════════════
+# DATA STRUCTURES
+# ═══════════════════════════════════════════════════════════════════
+
+class PhaseStatus(Enum):
+    PENDING  = ("pending",  C["dim"])
+    RUNNING  = ("running",  C["amber"])
+    SUCCESS  = ("success",  C["green"])
+    FAILED   = ("failed",   C["red"])
+    SKIPPED  = ("skipped",  C["dim"])
+
+    def __init__(self, label, color):
         self.label_ = label
         self.color = color
-        self.ch = ch
 
-
-# ── Dataclasses ─────────────────────────────────────────────────────
 
 @dataclass
-class N3:
-    """Node with 3D position + metadata."""
+class PhaseNode:
+    """One dreamer pipeline phase."""
+    name: str
+    status: PhaseStatus = PhaseStatus.PENDING
+    started_at: float = 0.0
+    duration: float = 0.0
+    detail: str = ""  # short status text
+    children: list = field(default_factory=list)  # cluster/skill IDs
+
+
+@dataclass
+class ClusterNode:
+    """A run-cluster discovered by the dreamer."""
     id: str
-    kind: NK
-    label: str
-    x: float = 0.0
-    y: float = 0.0
-    z: float = 0.0
-    vx: float = 0.0
-    vy: float = 0.0
-    vz: float = 0.0
-    active: bool = False
-    success: Optional[bool] = None  # None=pending, True=ok, False=fail
-    born: float = field(default_factory=time.time)
-    data: dict = field(default_factory=dict)
+    intent: str
+    record_count: int = 0
+    success_count: int = 0
+    skills_affected: list[str] = field(default_factory=list)  # skill IDs
+
+
+@dataclass
+class SkillSnapshot:
+    """Point-in-time snapshot of a skill's health."""
+    id: str
+    name: str
+    version: int = 1
+    confidence: float = 0.5
+    trigger_count: int = 0
+    tool_count: int = 0
+    instruction_len: int = 0  # chars
+    action: str = ""  # "evolved", "created", "split", "unchanged"
+    timestamp: float = field(default_factory=time.time)
 
     @property
-    def age(self) -> float:
-        return time.time() - self.born
+    def bloat_score(self) -> float:
+        """0.0 = lean, 1.0 = dangerously bloated."""
+        t_bloat = _clamp((self.trigger_count - 5) / 15, 0, 1)  # >20 triggers = max
+        i_bloat = _clamp((self.instruction_len - 500) / 2000, 0, 1)  # >2500 chars = max
+        tool_bloat = _clamp((self.tool_count - 6) / 14, 0, 1)  # >20 tools = max
+        return t_bloat * 0.3 + i_bloat * 0.5 + tool_bloat * 0.2
+
+    @property
+    def health_color(self) -> str:
+        b = self.bloat_score
+        if b < 0.2:
+            return C["green"]
+        elif b < 0.5:
+            return C["amber"]
+        elif b < 0.8:
+            return C["rose"]
+        return C["red"]
 
 
-@dataclass
-class E3:
-    """Directed edge."""
-    src: str
-    dst: str
-    kind: ES
-    weight: float = 1.0
+# ═══════════════════════════════════════════════════════════════════
+# DREAM GRAPH V2
+# ═══════════════════════════════════════════════════════════════════
 
-
-# ── 3D Math (inline, no numpy) ─────────────────────────────────────
-
-def _rot_y(x, y, z, a):
-    """Rotate around Y axis by angle a (radians)."""
-    ca, sa = math.cos(a), math.sin(a)
-    return x * ca + z * sa, y, -x * sa + z * ca
-
-def _rot_x(x, y, z, a):
-    """Rotate around X axis by angle a (radians)."""
-    ca, sa = math.cos(a), math.sin(a)
-    return x, y * ca - z * sa, y * sa + z * ca
-
-def _project(x, y, z, az, el, zoom, cols, rows):
-    """3D → 2D orthographic projection with camera rotation."""
-    rx, ry, rz = _rot_y(x, y, z, az)
-    rx, ry, rz = _rot_x(rx, ry, rz, el)
-    # aspect correction: terminal chars are ~2:1 (h:w)
-    sc = int((rx * zoom + 1) * cols / 2)
-    sr = int((-ry * zoom + 1) * rows / 2)
-    return sc, sr, rz
-
-
-# ── Force Simulation ────────────────────────────────────────────────
-
-def _force_step(nodes: dict[str, N3], edges: list[E3], dt: float = 0.15):
-    """One iteration of Fruchterman-Reingold in 3D, with Y-bias per kind."""
-    nlist = list(nodes.values())
-    n = len(nlist)
-    if n < 2:
-        return
-
-    # Repulsion (all pairs, O(n²) — fine for <200 nodes)
-    k_rep = 0.8
-    for i in range(n):
-        a = nlist[i]
-        for j in range(i + 1, n):
-            b = nlist[j]
-            dx = a.x - b.x
-            dy = a.y - b.y
-            dz = a.z - b.z
-            dist = math.sqrt(dx*dx + dy*dy + dz*dz) + 0.01
-            f = k_rep / (dist * dist)
-            fx, fy, fz = dx * f, dy * f, dz * f
-            a.vx += fx;  a.vy += fy;  a.vz += fz
-            b.vx -= fx;  b.vy -= fy;  b.vz -= fz
-
-    # Attraction (edges only)
-    k_att = 0.12
-    for e in edges:
-        a, b = nodes.get(e.src), nodes.get(e.dst)
-        if not a or not b:
-            continue
-        dx = b.x - a.x
-        dy = b.y - a.y
-        dz = b.z - a.z
-        dist = math.sqrt(dx*dx + dy*dy + dz*dz) + 0.01
-        f = k_att * dist * e.weight
-        fx, fy, fz = dx * f, dy * f, dz * f
-        a.vx += fx;  a.vy += fy;  a.vz += fz
-        b.vx -= fx;  b.vy -= fy;  b.vz -= fz
-
-    # Apply velocities + Y-bias gravity + damping
-    damping = 0.7
-    y_pull = 0.05
-    for nd in nlist:
-        # Y-bias: pull toward kind's preferred layer
-        nd.vy += (nd.kind.y_bias - nd.y) * y_pull
-        # Active nodes push to front (z→+1)
-        if nd.active:
-            nd.vz += (0.6 - nd.z) * 0.08
-        else:
-            nd.vz += (-0.3 - nd.z) * 0.02
-
-        nd.x += nd.vx * dt
-        nd.y += nd.vy * dt
-        nd.z += nd.vz * dt
-        nd.vx *= damping
-        nd.vy *= damping
-        nd.vz *= damping
-        # Clamp to [-1, 1]
-        nd.x = max(-1, min(1, nd.x))
-        nd.y = max(-1, min(1, nd.y))
-        nd.z = max(-1, min(1, nd.z))
-
-
-# ── Singleton 3D Graph ──────────────────────────────────────────────
-
-class DreamGraph3D:
+class DreamGraphV2:
     """
-    Singleton live 3D graph observer.
+    Dual-mode terminal visualisation for the Dreamer system.
 
-    Hooks into:
-      - ExecutionEngine (AgentLiveState phase transitions)
-      - Dreamer (_phase_* callbacks)
-      - SubAgentManager (spawn events)
-      - MemoryKnowledgeActor (add_data_point, add_relation)
+    Mode 1: Pipeline Tree — shows dream phases as a tree with clusters/skills
+    Mode 2: Skill Diamond — shows skill evolution health over time
     """
-    _instance: Optional['DreamGraph3D'] = None
-    _lock = threading.Lock()
+
+    _instance: Optional['DreamGraphV2'] = None
 
     @classmethod
-    def instance(cls) -> 'DreamGraph3D':
+    def instance(cls) -> 'DreamGraphV2':
         if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = cls()
+            cls._instance = cls()
         return cls._instance
 
     @classmethod
     def reset(cls):
-        """Test helper — reset singleton."""
         cls._instance = None
 
     def __init__(self):
-        self.nodes: dict[str, N3] = {}
-        self.edges: list[E3] = []
-        self._edge_set: set[tuple[str, str, str]] = set()  # dedup
-        # Camera
-        self.azimuth = 0.3       # radians
-        self.elevation = -0.25
-        self.zoom = 0.85
-        # Viewport (auto-detected, overridable)
-        self.cols = 100
-        self.rows = 30
-        # State
-        self._frame = 0
-        self._attached_engines: set[int] = set()
-        self._paused = False
-
-    # ── Graph mutation API ──────────────────────────────────────────
-
-    def add_node(self, id_: str, kind: NK, label: str, active: bool = False,
-                 success: Optional[bool] = None, data: dict = None) -> N3:
-        if id_ in self.nodes:
-            nd = self.nodes[id_]
-            nd.active = active
-            if success is not None:
-                nd.success = success
-            if label:
-                nd.label = label
-            return nd
-        # Spawn at random-ish position near kind's Y-bias
-        import random
-        nd = N3(
-            id=id_, kind=kind, label=label[:20], active=active, success=success,
-            x=random.uniform(-0.5, 0.5),
-            y=kind.y_bias + random.uniform(-0.15, 0.15),
-            z=0.5 if active else random.uniform(-0.3, 0.2),
-            data=data or {},
-        )
-        self.nodes[id_] = nd
-        return nd
-
-    def add_edge(self, src: str, dst: str, kind: ES, weight: float = 1.0):
-        key = (src, dst, kind.name)
-        if key in self._edge_set:
-            return
-        self._edge_set.add(key)
-        self.edges.append(E3(src=src, dst=dst, kind=kind, weight=weight))
-
-    def set_active(self, id_: str, active: bool = True):
-        if id_ in self.nodes:
-            self.nodes[id_].active = active
-
-    def set_result(self, id_: str, success: bool):
-        if id_ in self.nodes:
-            self.nodes[id_].success = success
-            self.nodes[id_].active = False
-
-    # ── Attach hooks ────────────────────────────────────────────────
-
-    def attach(self, engine: Any):
-        """Hook into ExecutionEngine's AgentLiveState for phase/tool events."""
-        eid = id(engine)
-        if eid in self._attached_engines:
-            return
-        self._attached_engines.add(eid)
-
-        live = engine.live
-        agent_id = f"agent:{live.agent_name}"
-        self.add_node(agent_id, NK.AGENT, live.agent_name, active=True)
-
-        # Monkey-patch live.enter to emit graph events
-        _orig_enter = live.enter
-        graph = self
-
-        def _patched_enter(phase, msg=""):
-            _orig_enter(phase, msg)
-            phase_id = f"phase:{live.agent_name}:{phase.value}"
-            graph.add_node(phase_id, NK.PHASE, f"{phase.value}", active=True)
-            graph.add_edge(agent_id, phase_id, ES.PHASE_SEQ)
-            # Deactivate previous phases
-            for nd in graph.nodes.values():
-                if nd.kind == NK.PHASE and nd.id != phase_id and nd.id.startswith(f"phase:{live.agent_name}:"):
-                    nd.active = False
-            if phase.value == "done":
-                graph.set_result(agent_id, True)
-
-        live.enter = _patched_enter
-
-        # Hook sub-agent spawning if SubAgentManager available
-        sam = getattr(engine, '_sub_agent_manager', None)
-        if sam and hasattr(sam, 'spawn'):
-            _orig_spawn = sam.spawn
-
-            async def _patched_spawn(*a, **kw):
-                result = await _orig_spawn(*a, **kw)
-                sub_id = f"sub:{result}" if isinstance(result, str) else f"sub:{id(result)}"
-                task = kw.get('task', a[0] if a else '')
-                graph.add_node(sub_id, NK.SUB, str(task)[:18], active=True)
-                graph.add_edge(agent_id, sub_id, ES.SPAWNED)
-                return result
-
-            sam.spawn = _patched_spawn
-
-    def attach_dreamer(self, dreamer: Any):
-        """Hook into Dreamer's phase pipeline for live dream tracking."""
-        dream_id = f"dreamer:{dreamer.agent.amd.name}"
-        self.add_node(dream_id, NK.DREAMER, "Dreamer", active=True)
-        agent_id = f"agent:{dreamer.agent.amd.name}"
-        if agent_id in self.nodes:
-            self.add_edge(agent_id, dream_id, ES.SPAWNED)
-
-        # Wrap each _phase_* method
-        phase_names = [
-            "_phase_harvest", "_phase_cluster", "_phase_analyze",
-            "_phase_reconcile", "_phase_publish", "_phase_memory_sync",
+        # Pipeline tree data
+        self.agent_name: str = ""
+        self.dream_id: str = ""
+        self.phases: dict[str, PhaseNode] = {}
+        self.clusters: dict[str, ClusterNode] = {}
+        self._phase_order: list[str] = [
+            "harvest", "cluster", "analyze", "reconcile", "publish", "memory_sync"
         ]
-        graph = self
-        for pname in phase_names:
-            orig = getattr(dreamer, pname, None)
-            if not orig:
-                continue
-            short = pname.replace("_phase_", "")
+        self._phase_labels: dict[str, str] = {
+            "harvest": "Log Harvest",
+            "cluster": "Clustering",
+            "analyze": "LLM Analysis",
+            "reconcile": "Skill Reconcile",
+            "publish": "Publish",
+            "memory_sync": "Memory Sync",
+        }
 
-            async def _wrap(state, _orig=orig, _short=short):
-                pid = f"dphase:{_short}"
-                graph.add_node(pid, NK.PHASE, _short, active=True)
-                graph.add_edge(dream_id, pid, ES.PHASE_SEQ)
-                try:
-                    result = await _orig(state)
-                    graph.set_result(pid, True)
-                    # Track outputs
-                    report = state.get("report")
-                    if report:
-                        for sid in getattr(report, 'skills_evolved', []):
-                            nid = f"skill:{sid}"
-                            graph.add_node(nid, NK.SKILL, sid[:16], success=True)
-                            graph.add_edge(pid, nid, ES.EVOLVED)
-                        for sid in getattr(report, 'skills_created', []):
-                            nid = f"skill:{sid}"
-                            graph.add_node(nid, NK.SKILL, sid[:16], active=True)
-                            graph.add_edge(pid, nid, ES.EVOLVED)
-                        for err in getattr(report, 'errors', []):
-                            if err not in [n.label for n in graph.nodes.values()]:
-                                eid = f"err:{len(graph.nodes)}"
-                                graph.add_node(eid, NK.ERROR, err[:16], success=False)
-                                graph.add_edge(pid, eid, ES.ERROR_OF)
-                    # Clusters
-                    clusters = state.get("clusters", {})
-                    for cid, records in clusters.items():
-                        if f"cluster:{cid}" not in graph.nodes:
-                            graph.add_node(f"cluster:{cid}", NK.CLUSTER, f"{cid}({len(records)})")
-                            graph.add_edge(pid, f"cluster:{cid}", ES.USES)
-                    return result
-                except Exception as e:
-                    graph.set_result(pid, False)
-                    eid = f"err:{pid}"
-                    graph.add_node(eid, NK.ERROR, str(e)[:16], success=False)
-                    graph.add_edge(pid, eid, ES.ERROR_OF)
-                    raise
+        # Skill health tracking
+        self.skill_history: dict[str, list[SkillSnapshot]] = {}  # skill_id → snapshots
+        self._current_skills: dict[str, SkillSnapshot] = {}  # latest snapshot per skill
 
-            setattr(dreamer, pname, _wrap)
+        # Frame counter
+        self._frame = 0
+        self._mode = "tree"  # "tree" or "diamond"
+        self._active = False
 
-    def attach_memory(self, memory_actor: Any):
-        """Hook MemoryKnowledgeActor for entity/relation tracking."""
-        graph = self
-        mem_root = f"mem:{id(memory_actor)}"
-        self.add_node(mem_root, NK.MEMORY, "Memory", active=True)
+        # Budget tracking
+        self.budget_used: int = 0
+        self.budget_max: int = 5000
 
-        if hasattr(memory_actor, 'add_data_point'):
-            _orig_add = memory_actor.add_data_point
+    # ─── Event API (called by Dreamer hooks) ──────────────────────
 
-            async def _patched_add(*a, **kw):
-                result = await _orig_add(*a, **kw)
-                text = kw.get('text', a[0] if a else '')
-                nid = f"mementry:{len(graph.nodes)}"
-                graph.add_node(nid, NK.MEMORY, str(text)[:14], success=True)
-                graph.add_edge(mem_root, nid, ES.REMEMBERS)
-                return result
+    def on_dream_start(self, agent_name: str, dream_id: str, budget: int = 5000):
+        """Called when dreamer.dream() begins."""
+        self.agent_name = agent_name
+        self.dream_id = dream_id
+        self.budget_max = budget
+        self.budget_used = 0
+        self._active = True
+        # Reset phases
+        self.phases = {
+            name: PhaseNode(name=name) for name in self._phase_order
+        }
+        self.clusters = {}
 
-            memory_actor.add_data_point = _patched_add
+    def on_phase_start(self, phase_name: str):
+        """Called when a phase begins."""
+        short = phase_name.replace("_phase_", "")
+        if short in self.phases:
+            self.phases[short].status = PhaseStatus.RUNNING
+            self.phases[short].started_at = time.time()
 
-        if hasattr(memory_actor, 'add_relation'):
-            _orig_rel = memory_actor.add_relation
+    def on_phase_end(self, phase_name: str, success: bool, detail: str = ""):
+        """Called when a phase finishes."""
+        short = phase_name.replace("_phase_", "")
+        if short in self.phases:
+            ph = self.phases[short]
+            ph.status = PhaseStatus.SUCCESS if success else PhaseStatus.FAILED
+            ph.duration = time.time() - ph.started_at if ph.started_at else 0
+            ph.detail = detail
 
-            async def _patched_rel(*a, **kw):
-                result = await _orig_rel(*a, **kw)
-                src = kw.get('source_id', a[0] if len(a) > 0 else '?')
-                dst = kw.get('target_id', a[1] if len(a) > 1 else '?')
-                # Try to find existing entity nodes or create
-                src_id = f"entity:{src}"
-                dst_id = f"entity:{dst}"
-                graph.add_node(src_id, NK.MEMORY, str(src)[:14])
-                graph.add_node(dst_id, NK.MEMORY, str(dst)[:14])
-                graph.add_edge(src_id, dst_id, ES.RELATION)
-                return result
+    def on_cluster_found(self, cluster_id: str, intent: str, record_count: int, success_count: int):
+        cn = ClusterNode(id=cluster_id, intent=intent,
+                         record_count=record_count, success_count=success_count)
+        self.clusters[cluster_id] = cn
+        # Link to cluster phase
+        if "cluster" in self.phases:
+            self.phases["cluster"].children.append(cluster_id)
 
-            memory_actor.add_relation = _patched_rel
+    def on_skill_event(self, skill_id: str, name: str, action: str,
+                       version: int = 1, confidence: float = 0.5,
+                       trigger_count: int = 0, tool_count: int = 0,
+                       instruction_len: int = 0, cluster_id: str = ""):
+        """Track a skill evolution event."""
+        snap = SkillSnapshot(
+            id=skill_id, name=name, version=version,
+            confidence=confidence, trigger_count=trigger_count,
+            tool_count=tool_count, instruction_len=instruction_len,
+            action=action,
+        )
+        self._current_skills[skill_id] = snap
+        if skill_id not in self.skill_history:
+            self.skill_history[skill_id] = []
+        self.skill_history[skill_id].append(snap)
 
-    # ── Simulation tick ─────────────────────────────────────────────
+        # Link to reconcile phase
+        if "reconcile" in self.phases:
+            if skill_id not in self.phases["reconcile"].children:
+                self.phases["reconcile"].children.append(skill_id)
 
-    def tick(self):
-        """Advance physics one step."""
-        if not self._paused:
-            _force_step(self.nodes, self.edges)
+        # Link to cluster
+        if cluster_id and cluster_id in self.clusters:
+            if skill_id not in self.clusters[cluster_id].skills_affected:
+                self.clusters[cluster_id].skills_affected.append(skill_id)
+
+    def on_budget_update(self, used: int):
+        self.budget_used = used
+
+    def on_dream_end(self):
+        self._active = False
+
+    # ─── Mode switching ───────────────────────────────────────────
+
+    def toggle_mode(self):
+        self._mode = "diamond" if self._mode == "tree" else "tree"
+
+    # ─── Rendering ────────────────────────────────────────────────
+
+    def print_frame(self, mode: str = ""):
+        """Print one frame. Auto-adapts to terminal size."""
+        cols, rows = _term_size()
+        cols = max(40, cols - 2)  # margin
+        rows = max(10, rows - 4)
+
+        m = mode or self._mode
         self._frame += 1
 
-    # ── Camera controls ─────────────────────────────────────────────
+        if m == "diamond" and self._current_skills:
+            html_str = self._render_diamond(cols, rows)
+        else:
+            html_str = self._render_tree(cols, rows)
 
-    def rotate(self, daz: float = 0.0, del_: float = 0.0):
-        self.azimuth += daz
-        self.elevation = max(-1.2, min(1.2, self.elevation + del_))
-
-    def zoom_in(self):
-        self.zoom = min(2.0, self.zoom + 0.1)
-
-    def zoom_out(self):
-        self.zoom = max(0.3, self.zoom - 0.1)
-
-    def toggle_pause(self):
-        self._paused = not self._paused
-
-    # ── Rendering ───────────────────────────────────────────────────
-
-    def render(self, cols: int = 0, rows: int = 0) -> str:
-        """
-        Render graph to prompt_toolkit HTML string.
-        Returns full frame as HTML, compatible with ZenRendererV2._print().
-        """
-        import html as _html
-
-        cols = cols or self.cols
-        rows = rows or self.rows
-        self.tick()
-
-        if not self.nodes:
-            return f"<style fg='{C['dim']}'>  ◎ DreamGraph: no nodes</style>"
-
-        # Character buffer + Z-buffer
-        buf = [[' '] * cols for _ in range(rows)]
-        cbuf = [[C["deep"]] * cols for _ in range(rows)]  # color buffer
-        zbuf = [[float('-inf')] * cols for _ in range(rows)]
-
-        # Project all nodes
-        projected: list[tuple[int, int, float, N3]] = []
-        for nd in self.nodes.values():
-            sc, sr, sz = _project(nd.x, nd.y, nd.z, self.azimuth, self.elevation, self.zoom, cols, rows)
-            if 0 <= sc < cols and 0 <= sr < rows:
-                projected.append((sc, sr, sz, nd))
-
-        # Draw edges first (background layer)
-        for e in self.edges:
-            a, b = self.nodes.get(e.src), self.nodes.get(e.dst)
-            if not a or not b:
-                continue
-            ac, ar, az_ = _project(a.x, a.y, a.z, self.azimuth, self.elevation, self.zoom, cols, rows)
-            bc, br, bz_ = _project(b.x, b.y, b.z, self.azimuth, self.elevation, self.zoom, cols, rows)
-            # Bresenham-lite
-            steps = max(abs(bc - ac), abs(br - ar), 1)
-            ez = (az_ + bz_) / 2
-            for s in range(1, steps):
-                t = s / steps
-                c = int(ac + (bc - ac) * t)
-                r = int(ar + (br - ar) * t)
-                if 0 <= c < cols and 0 <= r < rows and zbuf[r][c] < ez - 0.5:
-                    buf[r][c] = e.kind.ch[0]
-                    cbuf[r][c] = C["deep"] if ez < 0 else C["dim"]
-                    zbuf[r][c] = ez - 0.5  # edges behind nodes
-
-        # Draw nodes (Z-sorted, far to near)
-        projected.sort(key=lambda p: p[2])
-        for sc, sr, sz, nd in projected:
-            if zbuf[sr][sc] > sz:
-                continue  # occluded
-            zbuf[sr][sc] = sz
-
-            # Depth fog: color by Z
-            if sz > 0.3:
-                col = C["bright"] if nd.active else nd.kind.color
-            elif sz > -0.2:
-                col = nd.kind.color
-            elif sz > -0.6:
-                col = C["dim"]
-            else:
-                col = C["deep"]
-
-            # Override for success/failure
-            if nd.success is True:
-                col = C["green"]
-            elif nd.success is False:
-                col = C["red"]
-
-            # Pulse animation for active nodes
-            if nd.active and self._frame % 6 < 3:
-                col = C["bright"]
-
-            buf[sr][sc] = nd.kind.sym
-            cbuf[sr][sc] = col
-
-            # Label (only for near nodes, z > 0)
-            if sz > 0.1 and len(nd.label) > 0:
-                lbl = nd.label[:10]
-                start = sc + 1
-                for k, ch in enumerate(lbl):
-                    c2 = start + k
-                    if 0 <= c2 < cols and zbuf[sr][c2] <= sz:
-                        buf[sr][c2] = ch
-                        cbuf[sr][c2] = C["dim"]
-                        zbuf[sr][c2] = sz
-
-        # Compose HTML — run-length encode colors for efficiency
-        lines = []
-        for r in range(rows):
-            parts = []
-            cur_col = None
-            seg = []
-            for c_ in range(cols):
-                if cbuf[r][c_] != cur_col:
-                    if seg:
-                        parts.append(f"<style fg='{cur_col}'>{_html.escape(''.join(seg))}</style>")
-                    seg = [buf[r][c_]]
-                    cur_col = cbuf[r][c_]
-                else:
-                    seg.append(buf[r][c_])
-            if seg:
-                parts.append(f"<style fg='{cur_col}'>{_html.escape(''.join(seg))}</style>")
-            lines.append("".join(parts))
-
-        # Stats bar
-        n_active = sum(1 for nd in self.nodes.values() if nd.active)
-        n_ok = sum(1 for nd in self.nodes.values() if nd.success is True)
-        n_fail = sum(1 for nd in self.nodes.values() if nd.success is False)
-        n_edges = len(self.edges)
-
-        stats = (
-            f"<style fg='{C['cyan']}'>◎ {len(self.nodes)}nodes</style>"
-            f" <style fg='{C['dim']}'>{n_edges}edges</style>"
-            f" <style fg='{C['green']}'>✓{n_ok}</style>"
-            f" <style fg='{C['red']}'>✗{n_fail}</style>"
-            f" <style fg='{C['bright']}'>●{n_active}active</style>"
-            f" <style fg='{C['dim']}'>{'⏸' if self._paused else '▸'}f{self._frame}"
-            f" az={self.azimuth:.1f} el={self.elevation:.1f}</style>"
-        )
-        lines.append(stats)
-
-        return "\n".join(lines)
-
-    def print_frame(self, cols: int = 0, rows: int = 0):
-        """Print one frame to terminal via prompt_toolkit."""
-        html_str = self.render(cols, rows)
         try:
             print_formatted_text(HTML(html_str))
         except Exception:
             import re
             print(re.sub(r"<[^>]+>", "", html_str))
 
-    # ── Legend ───────────────────────────────────────────────────────
+    # ── MODE 1: Pipeline Tree ─────────────────────────────────────
+
+    def _render_tree(self, cols: int, rows: int) -> str:
+        lines: list[str] = []
+        e = _html.escape
+
+        # Header
+        pulse = SYM["active"] if self._active and self._frame % 4 < 2 else " "
+        budget_pct = int(100 * self.budget_used / max(self.budget_max, 1))
+        budget_bar = self._mini_bar(budget_pct, 10)
+        lines.append(
+            f"<style fg='{C['cyan']}'>{SYM['dream']} Dream</style>"
+            f"  <style fg='{C['dim']}'>{e(self.dream_id)}</style>"
+            f"  <style fg='{C['bright']}'>{pulse}</style>"
+            f"  <style fg='{C['dim']}'>budget {budget_bar} {budget_pct}%</style>"
+        )
+
+        # Phases as tree
+        phase_list = [self.phases[n] for n in self._phase_order if n in self.phases]
+        for i, ph in enumerate(phase_list):
+            is_last_phase = (i == len(phase_list) - 1)
+            connector = SYM["tree_l"] if is_last_phase else SYM["tree_t"]
+
+            # Status symbol
+            if ph.status == PhaseStatus.RUNNING:
+                sym = SYM["active"]
+                col = C["amber"]
+            elif ph.status == PhaseStatus.SUCCESS:
+                sym = SYM["ok"]
+                col = C["green"]
+            elif ph.status == PhaseStatus.FAILED:
+                sym = SYM["error"]
+                col = C["red"]
+            else:
+                sym = " "
+                col = C["dim"]
+
+            label = self._phase_labels.get(ph.name, ph.name)
+            duration_str = f" {ph.duration:.1f}s" if ph.duration > 0 else ""
+            detail_str = f"  {e(ph.detail[:cols-40])}" if ph.detail else ""
+
+            lines.append(
+                f"<style fg='{C['dim']}'>{connector}{SYM['tree_h']}</style>"
+                f"<style fg='{col}'>{sym} {e(label)}</style>"
+                f"<style fg='{C['dim']}'>{duration_str}{detail_str}</style>"
+            )
+
+            # Children: clusters or skills
+            child_prefix = f"<style fg='{C['dim']}'>{'   ' if is_last_phase else SYM['tree_v'] + '  '}</style>"
+
+            if ph.name == "cluster" or ph.name == "analyze":
+                # Show clusters
+                cluster_items = [(cid, self.clusters[cid]) for cid in ph.children if cid in self.clusters]
+                for j, (cid, cn) in enumerate(cluster_items[:rows // 3]):
+                    is_last = (j == len(cluster_items) - 1)
+                    cc = SYM["tree_l"] if is_last else SYM["tree_t"]
+                    ratio = cn.success_count / max(cn.record_count, 1)
+                    ratio_col = C["green"] if ratio > 0.7 else C["amber"] if ratio > 0.4 else C["red"]
+                    intent_short = e(cn.intent[:cols - 50]) if cn.intent else cid
+
+                    lines.append(
+                        f"{child_prefix}"
+                        f"<style fg='{C['dim']}'>{cc}{SYM['tree_h']}</style>"
+                        f"<style fg='{C['dim']}'>{SYM['cluster']} {intent_short}</style>"
+                        f"  <style fg='{ratio_col}'>{cn.success_count}/{cn.record_count}</style>"
+                    )
+
+                    # Show affected skills under cluster
+                    for k, sid in enumerate(cn.skills_affected[:3]):
+                        sk = self._current_skills.get(sid)
+                        if not sk:
+                            continue
+                        sk_prefix = f"{child_prefix}<style fg='{C['dim']}'>{'   ' if is_last else SYM['tree_v'] + '  '}</style>"
+                        action_sym = {"evolved": SYM["evolve"], "created": SYM["new"],
+                                      "split": SYM["split"]}.get(sk.action, " ")
+                        lines.append(
+                            f"{sk_prefix}"
+                            f"<style fg='{sk.health_color}'>{action_sym} {SYM['skill']} {e(sk.name[:25])}</style>"
+                            f"<style fg='{C['dim']}'> v{sk.version} c={sk.confidence:.2f}</style>"
+                            f"<style fg='{sk.health_color}'> bloat={sk.bloat_score:.0%}</style>"
+                        )
+
+            elif ph.name == "reconcile":
+                # Show skills directly
+                skill_items = [(sid, self._current_skills[sid])
+                               for sid in ph.children if sid in self._current_skills]
+                for j, (sid, sk) in enumerate(skill_items[:rows // 3]):
+                    is_last = (j == len(skill_items) - 1)
+                    cc = SYM["tree_l"] if is_last else SYM["tree_t"]
+                    action_sym = {"evolved": SYM["evolve"], "created": SYM["new"],
+                                  "split": SYM["split"], "merged": SYM["merge"],
+                                  "published": SYM["publish"]}.get(sk.action, " ")
+
+                    bloat_warn = ""
+                    if sk.bloat_score > 0.5:
+                        bloat_warn = f" <style fg='{C['red']}'>{SYM['warn']} BLOAT</style>"
+
+                    lines.append(
+                        f"{child_prefix}"
+                        f"<style fg='{C['dim']}'>{cc}{SYM['tree_h']}</style>"
+                        f"<style fg='{sk.health_color}'>{action_sym} {SYM['skill']} {e(sk.name[:20])}</style>"
+                        f"<style fg='{C['dim']}'>"
+                        f" v{sk.version} c={sk.confidence:.2f}"
+                        f" t={sk.trigger_count} tools={sk.tool_count}"
+                        f" inst={sk.instruction_len}ch"
+                        f"</style>{bloat_warn}"
+                    )
+
+        # Truncate if too tall
+        if len(lines) > rows:
+            lines = lines[:rows - 1]
+            lines.append(f"<style fg='{C['dim']}'>  ... ({len(self.phases)} phases, "
+                         f"{len(self.clusters)} clusters, "
+                         f"{len(self._current_skills)} skills)</style>")
+
+        return "\n".join(lines)
+
+    # ── MODE 2: Skill Diamond ─────────────────────────────────────
+
+    def _render_diamond(self, cols: int, rows: int) -> str:
+        """
+        Diamond view: each skill is a row with sparkline history.
+
+        Layout per skill:
+          ◇ skill_name     v3  ◆────◆──◇──◆  c=0.72  bloat=23%  [████░░] triggers:5 tools:4
+
+        The diamond chain shows confidence over versions:
+          ◆ = high confidence (>0.7)
+          ◇ = medium (0.4-0.7)
+          ✗ = low (<0.4)
+        """
+        lines: list[str] = []
+        e = _html.escape
+
+        # Header
+        lines.append(
+            f"<style fg='{C['teal']}'>{SYM['diamond']} Skill Evolution Diamond</style>"
+            f"  <style fg='{C['dim']}'>{len(self._current_skills)} skills tracked</style>"
+        )
+
+        # Column widths adapt to terminal
+        name_w = _clamp(cols // 5, 10, 25)
+        spark_w = _clamp(cols // 4, 8, 20)
+
+        # Sort: most bloated first (problems on top)
+        sorted_skills = sorted(
+            self._current_skills.values(),
+            key=lambda s: (-s.bloat_score, -s.version)
+        )
+
+        for sk in sorted_skills[:rows - 3]:
+            history = self.skill_history.get(sk.id, [sk])
+
+            # Sparkline: confidence over versions
+            spark = self._confidence_sparkline(history, spark_w)
+
+            # Bloat bar
+            bloat_pct = int(sk.bloat_score * 100)
+            bloat_bar = self._mini_bar(bloat_pct, 6)
+
+            # Action badge
+            action_sym = {"evolved": SYM["evolve"], "created": SYM["new"],
+                          "split": SYM["split"]}.get(sk.action, " ")
+
+            name_str = e(sk.name[:name_w].ljust(name_w))
+
+            lines.append(
+                f"<style fg='{sk.health_color}'>{action_sym}{SYM['skill']}</style> "
+                f"<style fg='{C['white']}'>{name_str}</style>"
+                f"<style fg='{C['dim']}'>v{sk.version:<3}</style>"
+                f" {spark} "
+                f"<style fg='{C['dim']}'>c=</style>"
+                f"<style fg='{self._confidence_color(sk.confidence)}'>{sk.confidence:.2f}</style>"
+                f"  <style fg='{sk.health_color}'>bloat {bloat_bar} {bloat_pct}%</style>"
+                f"  <style fg='{C['dim']}'>t:{sk.trigger_count} tools:{sk.tool_count}</style>"
+            )
+
+            # Bloat detail line if critical
+            if sk.bloat_score > 0.6:
+                parts = []
+                if sk.trigger_count > 10:
+                    parts.append(f"triggers:{sk.trigger_count}>10")
+                if sk.instruction_len > 1500:
+                    parts.append(f"instruction:{sk.instruction_len}ch>1500")
+                if sk.tool_count > 10:
+                    parts.append(f"tools:{sk.tool_count}>10")
+                if parts:
+                    lines.append(
+                        f"<style fg='{C['red']}'>  {SYM['warn']} {e(', '.join(parts))}</style>"
+                    )
+
+        if not sorted_skills:
+            lines.append(f"<style fg='{C['dim']}'>  No skills tracked yet.</style>")
+
+        # Footer
+        lines.append(
+            f"\n<style fg='{C['dim']}'>"
+            f"{SYM['diamond']}=conf≥0.7  {SYM['hollow']}=0.4-0.7  {SYM['error']}=&lt;0.4  "
+            f"bloat: {SYM['bar_f']}=triggers {SYM['bar_h']}=instruction {SYM['bar_e']}=tools"
+            f"</style>"
+        )
+
+        return "\n".join(lines)
+
+    # ── Helpers ───────────────────────────────────────────────────
+
+    def _confidence_sparkline(self, history: list[SkillSnapshot], width: int) -> str:
+        """Render confidence history as diamond chain."""
+        # Sample evenly if history > width
+        if len(history) > width:
+            step = len(history) / width
+            sampled = [history[int(i * step)] for i in range(width)]
+        else:
+            sampled = history
+
+        parts = []
+        for snap in sampled:
+            if snap.confidence >= 0.7:
+                parts.append(f"<style fg='{C['green']}'>{SYM['diamond']}</style>")
+            elif snap.confidence >= 0.4:
+                parts.append(f"<style fg='{C['amber']}'>{SYM['hollow']}</style>")
+            else:
+                parts.append(f"<style fg='{C['red']}'>{SYM['error']}</style>")
+
+            # Connecting line
+            if snap != sampled[-1]:
+                parts.append(f"<style fg='{C['dim']}'>{SYM['line']}</style>")
+
+        # Pad if short
+        rendered_len = len(sampled) * 2 - 1
+        if rendered_len < width:
+            padding = " " * (width - rendered_len)
+            parts.append(f"<style fg='{C['deep']}'>{padding}</style>")
+
+        return "".join(parts)
 
     @staticmethod
-    def print_legend():
-        parts = []
-        for nk in NK:
-            parts.append(f"<style fg='{nk.color}'>{nk.sym} {nk.name.lower()}</style>")
-        legend = "  ".join(parts)
-        edge_parts = []
-        for es in ES:
-            edge_parts.append(f"<style fg='{es.color}'>{es.ch}{es.label_}</style>")
-        edges_legend = "  ".join(edge_parts)
+    def _confidence_color(c: float) -> str:
+        if c >= 0.7:
+            return C["green"]
+        elif c >= 0.4:
+            return C["amber"]
+        return C["red"]
+
+    @staticmethod
+    def _mini_bar(pct: int, width: int) -> str:
+        """Compact percentage bar."""
+        pct = _clamp(pct, 0, 100)
+        filled = int(width * pct / 100)
+        if pct < 30:
+            col = C["green"]
+        elif pct < 60:
+            col = C["amber"]
+        else:
+            col = C["red"]
+        bar = SYM["bar_f"] * filled + SYM["bar_e"] * (width - filled)
+        return f"<style fg='{col}'>{bar}</style>"
+
+    # ─── Legend ───────────────────────────────────────────────────
+
+    def print_legend(self):
+        parts = [
+            f"<style fg='{C['amber']}'>{SYM['dream']} dream</style>",
+            f"<style fg='{C['green']}'>{SYM['ok']} ok</style>",
+            f"<style fg='{C['red']}'>{SYM['error']} fail</style>",
+            f"<style fg='{C['dim']}'>{SYM['cluster']} cluster</style>",
+            f"<style fg='{C['green']}'>{SYM['skill']} skill</style>",
+            f"<style fg='{C['amber']}'>{SYM['evolve']} evolve</style>",
+            f"<style fg='{C['teal']}'>{SYM['new']} new</style>",
+            f"<style fg='{C['rose']}'>{SYM['warn']} bloat</style>",
+        ]
         controls = (
             f"<style fg='{C['dim']}'>"
-            "q/e:rotate  w/s:tilt  +/-:zoom  Space:pause  Tab:focus  g:toggle"
+            "Tab:mode  g:toggle"
             "</style>"
         )
         try:
-            print_formatted_text(HTML(f"  {legend}\n  {edges_legend}\n  {controls}"))
+            print_formatted_text(HTML(f"  {'  '.join(parts)}\n  {controls}"))
         except Exception:
             pass
 
 
-# ── ZenRendererV2 Integration Mixin ─────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════
+# DREAMER HOOKS — Event-based, no monkey-patching
+# ═══════════════════════════════════════════════════════════════════
 
-class GraphPaneMixin:
+def _wrap_dreamer_phase(dreamer, phase_name: str, graph: DreamGraphV2):
+    """Wrap a single dreamer phase to emit graph events."""
+    orig = getattr(dreamer, phase_name)
+    short = phase_name.replace("_phase_", "")
+
+    async def wrapper(state):
+        graph.on_phase_start(phase_name)
+        try:
+            result = await orig(state)
+
+            # Extract phase-specific data for graph
+            detail = ""
+            report = state.get("report")
+
+            if short == "harvest":
+                detail = f"{report.logs_scanned} logs" if report else ""
+
+            elif short == "cluster":
+                clusters = state.get("clusters", {})
+                for cid, records in clusters.items():
+                    success_n = sum(1 for r in records if r.success)
+                    intent = records[0].query[:40] if records else cid
+                    graph.on_cluster_found(cid, intent, len(records), success_n)
+                detail = f"{len(clusters)} clusters"
+
+            elif short == "analyze":
+                analyses = state.get("analyses", {})
+                for cid, analysis in analyses.items():
+                    # Update cluster intents with LLM-refined version
+                    if cid in graph.clusters and analysis.dominant_intent:
+                        graph.clusters[cid].intent = analysis.dominant_intent
+                detail = f"{len(analyses)} analyzed"
+
+            elif short == "reconcile":
+                if report:
+                    sm = dreamer.agent.session_manager.skills_manager
+                    # Track all affected skills
+                    for sid in (report.skills_evolved + report.skills_created + report.skills_split):
+                        skill = sm.skills.get(sid)
+                        if skill:
+                            graph.on_skill_event(
+                                skill_id=sid,
+                                name=getattr(skill, 'name', sid),
+                                action=("evolved" if sid in report.skills_evolved
+                                        else "created" if sid in report.skills_created
+                                        else "split"),
+                                version=getattr(skill, '_version', 1),
+                                confidence=getattr(skill, 'confidence', 0.5),
+                                trigger_count=len(getattr(skill, 'triggers', [])),
+                                tool_count=len(getattr(skill, 'tools_used', [])),
+                                instruction_len=len(getattr(skill, 'instruction', '')),
+                            )
+                    parts = []
+                    if report.skills_evolved:
+                        parts.append(f"{len(report.skills_evolved)} evolved")
+                    if report.skills_created:
+                        parts.append(f"{len(report.skills_created)} new")
+                    if report.skills_split:
+                        parts.append(f"{len(report.skills_split)} split")
+                    detail = ", ".join(parts) if parts else "no changes"
+
+            elif short == "publish":
+                if report and report.skills_published:
+                    detail = f"{len(report.skills_published)} published"
+
+            elif short == "memory_sync":
+                if report:
+                    detail = f"{report.memory_entries_added} entries"
+
+            graph.on_phase_end(phase_name, success=True, detail=detail)
+            graph.on_budget_update(dreamer._budget_used)
+            return result
+
+        except Exception as e:
+            graph.on_phase_end(phase_name, success=False, detail=str(e)[:40])
+            raise
+
+    setattr(dreamer, phase_name, wrapper)
+
+
+def hookup_v2(engine=None, dreamer=None) -> DreamGraphV2:
     """
-    Drop-in mixin for ZenRendererV2 to add 3D graph pane.
+    Wire DreamGraphV2 to engine and/or dreamer.
 
-    Usage:
-        class MyRenderer(GraphPaneMixin, ZenRendererV2):
-            pass
-        renderer = MyRenderer(engine)
-        renderer.set_graph(DreamGraph3D.instance())
+    Returns the singleton graph instance.
     """
-    _graph: Optional[DreamGraph3D] = None
-    _graph_visible: bool = False
+    graph = DreamGraphV2.instance()
 
-    def set_graph(self, graph: DreamGraph3D):
-        self._graph = graph
-
-    def toggle_graph(self):
-        self._graph_visible = not self._graph_visible
-        if self._graph_visible and self._graph:
-            self._graph.print_legend()
-
-    def render_graph_pane(self, cols: int = 100, rows: int = 24):
-        """Render 3D graph pane if visible. Call from your render loop."""
-        if not self._graph_visible or not self._graph:
-            return
-        self._graph.print_frame(cols, rows)
-
-    def handle_graph_key(self, key: str):
-        """Handle keyboard input for graph camera. Returns True if consumed."""
-        if not self._graph:
-            return False
-        km = {
-            'q': lambda: self._graph.rotate(daz=-0.2),
-            'e': lambda: self._graph.rotate(daz=0.2),
-            'w': lambda: self._graph.rotate(del_=0.15),
-            's': lambda: self._graph.rotate(del_=-0.15),
-            '+': self._graph.zoom_in,
-            '-': self._graph.zoom_out,
-            ' ': self._graph.toggle_pause,
-            'g': self.toggle_graph,
-        }
-        if key in km:
-            km[key]()
-            return True
-        return False
-
-
-# ── Convenience: one-call hookup ────────────────────────────────────
-
-def hookup_dream_graph(engine=None, dreamer=None, memory_actor=None) -> DreamGraph3D:
-    """
-    One-liner to wire everything up:
-
-        graph = hookup_dream_graph(engine, dreamer, memory_actor)
-
-    Returns the singleton DreamGraph3D instance.
-    """
-    g = DreamGraph3D.instance()
-    if engine:
-        g.attach(engine)
     if dreamer:
-        g.attach_dreamer(dreamer)
-    if memory_actor:
-        g.attach_memory(memory_actor)
-    return g
+        agent_name = dreamer.agent.amd.name
+        # Wrap dream() to emit start/end
+        orig_dream = dreamer.dream
+
+        async def wrapped_dream(config):
+            graph.on_dream_start(
+                agent_name=agent_name,
+                dream_id=f"dream_{id(config)}",
+                budget=config.max_budget,
+            )
+            try:
+                result = await orig_dream(config)
+                return result
+            finally:
+                graph.on_dream_end()
+
+        dreamer.dream = wrapped_dream
+
+        # Wrap each phase
+        for pname in [
+            "_phase_harvest", "_phase_cluster", "_phase_analyze",
+            "_phase_reconcile", "_phase_publish", "_phase_memory_sync",
+        ]:
+            if hasattr(dreamer, pname):
+                _wrap_dreamer_phase(dreamer, pname, graph)
+
+    return graph
 
 
+# ═══════════════════════════════════════════════════════════════════
+# LIVE RENDER LOOP
+# ═══════════════════════════════════════════════════════════════════
 
-
-# ── Live Render Loop ────────────────────────────────────────────────
-
-async def _render_loop(graph: DreamGraph3D, interval: float = 0.25):
-    """Background task: rendert den Graphen ~4 FPS bis kein active Node mehr da."""
-    cols = int(os.get_terminal_size().columns) if hasattr(os, 'get_terminal_size') else 110
-    rows = min(28, int(os.get_terminal_size().lines) - 4) if hasattr(os, 'get_terminal_size') else 24
-
-    # Warte bis es Nodes gibt
-    while not graph.nodes:
-        await asyncio.sleep(0.1)
-
-    graph.print_legend()
-
-    while any(n.active for n in graph.nodes.values()):
-        graph.print_frame(cols, rows)
-        await asyncio.sleep(interval)
-
-    # Finaler Frame
-    graph.print_frame(cols, rows)
-
-
-# ── Hauptfunktion ───────────────────────────────────────────────────
-
-async def dream_with_viz(
+async def dream_with_viz_v2(
     isaa_tools,
     agent_name: str = "default",
-    config: Optional[DreamConfig] = None,
+    config=None,
     show_graph: bool = True,
 ):
     """
-    Startet a_dream() mit live 3D-Graph Visualisierung.
+    Run dreamer with live V2 visualization.
 
-    Args:
-        isaa_tools: Die ISAA Tools-Instanz (self in Tools)
-        agent_name: Name des Agents
-        config: DreamConfig oder None für defaults
-        show_graph: 3D Graph anzeigen (False = nur dream ohne viz)
-
-    Returns:
-        DreamReport
-
-    Usage in Tools:
-        report = await dream_with_viz(self, "myagent", DreamConfig(max_budget=3000))
+    Usage:
+        report = await dream_with_viz_v2(self, "myagent", DreamConfig(max_budget=3000))
     """
+    import asyncio
+    from toolboxv2.mods.isaa.base.Agent.dreamer import Dreamer, DreamConfig
+
     config = config or DreamConfig()
     agent = await isaa_tools.get_agent(agent_name)
 
     if not show_graph:
         return await agent.a_dream(config)
 
-    # ── Graph singleton holen + hooks setzen ──
+    graph = hookup_v2(dreamer=getattr(agent, '_dreamer', None) or Dreamer(agent))
 
-    graph = DreamGraph3D.instance()
+    # Snapshot existing skills BEFORE dream for delta tracking
+    sm = agent.session_manager.skills_manager
+    for sid, skill in sm.skills.items():
+        graph.on_skill_event(
+            skill_id=sid,
+            name=getattr(skill, 'name', sid),
+            action="unchanged",
+            version=getattr(skill, '_version', 1),
+            confidence=getattr(skill, 'confidence', 0.5),
+            trigger_count=len(getattr(skill, 'triggers', [])),
+            tool_count=len(getattr(skill, 'tools_used', [])),
+            instruction_len=len(getattr(skill, 'instruction', '')),
+        )
 
-    # Root-Node für den Agent
-    graph.add_node(f"agent:{agent_name}", NK.AGENT, agent_name, active=True)
+    async def render_loop():
+        graph.print_legend()
+        while graph._active:
+            graph.print_frame()
+            await asyncio.sleep(0.3)
+        graph.print_frame()  # final
 
-    # Dreamer hook — erzeugt den Dreamer falls nötig
-    if not hasattr(agent, '_dreamer'):
-        from toolboxv2.mods.isaa.base.Agent.dreamer import Dreamer
-        agent._dreamer = Dreamer(agent)
-    graph.attach_dreamer(agent._dreamer)
-
-    # Engine hook — falls schon eine engine existiert
-    engine = getattr(agent, '_current_engine', None)
-    if engine:
-        graph.attach(engine)
-
-    # Memory hook — über session_manager
-    try:
-        memory = agent.session_manager._get_memory()
-        if memory and hasattr(memory, 'add_data_point'):
-            graph.attach_memory(memory)
-    except Exception:
-        pass
-
-    # ── Parallel: Dream + Render Loop ──
-
-    render_task = asyncio.create_task(_render_loop(graph))
-
+    render_task = asyncio.create_task(render_loop())
+    report = None
     try:
         report = await agent._dreamer.dream(config)
     finally:
-        # Alle Nodes deaktivieren → render_loop stoppt
-        for nd in graph.nodes.values():
-            nd.active = False
-        await asyncio.sleep(0.3)  # letzter Frame
+        graph._active = False
+        await asyncio.sleep(0.4)
         render_task.cancel()
         try:
             await render_task
         except asyncio.CancelledError:
             pass
 
-    # ── Zusammenfassung ──
-    _print_report(report, graph)
+    # Print diamond view as summary
+    if report and graph._current_skills:
+        print()
+        graph.print_frame("diamond")
+
     return report
-
-
-def _print_report(report, graph: DreamGraph3D):
-    """Kompakte Zusammenfassung nach dem Dream."""
-    from prompt_toolkit import print_formatted_text, HTML
-    C = {"cyan": "#67e8f9", "green": "#4ade80", "red": "#f87171",
-         "dim": "#6b7280", "amber": "#fbbf24", "bright": "#ffffff"}
-
-    n_ok = sum(1 for n in graph.nodes.values() if n.success is True)
-    n_fail = sum(1 for n in graph.nodes.values() if n.success is False)
-
-    lines = [
-        f"\n<style fg='{C['cyan']}'>◎ Dream Complete: {report.dream_id}</style>",
-        f"<style fg='{C['dim']}'>  Logs gescannt:  {report.logs_scanned}</style>",
-        f"<style fg='{C['dim']}'>  Cluster:        {report.clusters_found}</style>",
-        f"<style fg='{C['green']}'>  Skills evolved: {', '.join(report.skills_evolved) or '—'}</style>",
-        f"<style fg='{C['green']}'>  Skills created: {', '.join(report.skills_created) or '—'}</style>",
-        f"<style fg='{C['amber']}'>  Skills split:   {', '.join(report.skills_split) or '—'}</style>",
-        f"<style fg='{C['cyan']}'>  Published:      {', '.join(report.skills_published) or '—'}</style>",
-        f"<style fg='{C['dim']}'>  Memory entries:  {report.memory_entries_added}</style>",
-        f"<style fg='{C['dim']}'>  Budget used:     {report.budget_used}</style>",
-        f"<style fg='{C['bright']}'>  Graph: {len(graph.nodes)} nodes, {len(graph.edges)} edges</style>",
-        f"<style fg='{C['green']}'>  ✓ {n_ok} ok</style>"
-        f"  <style fg='{C['red']}'>✗ {n_fail} errors</style>",
-    ]
-    if report.errors:
-        lines.append(f"<style fg='{C['red']}'>  Errors:</style>")
-        for e in report.errors[:5]:
-            lines.append(f"<style fg='{C['red']}'>    ✗ {e[:60]}</style>")
-
-    try:
-        for l in lines:
-            print_formatted_text(HTML(l))
-    except Exception:
-        import re
-        for l in lines:
-            print(re.sub(r'<[^>]+>', '', l))
