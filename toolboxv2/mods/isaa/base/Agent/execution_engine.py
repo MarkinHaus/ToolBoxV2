@@ -22,6 +22,7 @@ import json
 import logging
 import time
 import uuid
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
@@ -335,6 +336,15 @@ WIEDERHOLE NICHT die gleiche Aktion. Sei ehrlich wenn du nicht weiterkommst."""
 
 
 @dataclass
+class ContextBudgetConfig:
+    """Konfiguration für dynamisches Context-Budget-Management."""
+    max_context_ratio: float = 0.85       # Wie viel % des Model-Kontexts genutzt werden dürfen (0.7 - 0.95)
+    immediate_offload_ratio: float = 0.7  # Ab diesem Anteil am Gesamt-Kontext → sofort offloaden (Szenario C)
+    displacement_threshold: float = 0.4   # Max Größe für Displacement-Strategie (Szenario B)
+    safety_margin_tokens: int = 500       # Reserve
+    heavy_hitter_min_tokens: int = 1000    # Min Größe für Offload-Kandidaten
+
+@dataclass
 class ToolSlot:
     """Represents a dynamically loaded tool slot with relevance tracking"""
 
@@ -343,6 +353,198 @@ class ToolSlot:
     category: str = "unknown"
     loaded_at: datetime = field(default_factory=datetime.now)
 
+# =========================================================================
+# PERSONA ROUTING
+# =========================================================================
+
+@dataclass
+class PersonaProfile:
+    """Runtime persona applied to an execution."""
+    name: str = "default"
+    prompt_modifier: str = ""           # injected into system prompt
+    model_preference: str = "fast"      # "fast" | "complex"
+    temperature: float | None = None    # None = use model default
+    max_iterations_factor: float = 1.0  # multiplied with base max_iterations
+    verification_level: str = "basic"   # "none" | "basic" | "strict"
+    iteration_budget_factor: float = 1.0
+    source: str = "default"             # "default" | "matched" | "dreamer"
+
+    def apply_max_iterations(self, base: int) -> int:
+        return int(base * self.max_iterations_factor)
+
+
+# Built-in personas — task-type → profile
+_BUILTIN_PERSONAS: dict[str, PersonaProfile] = {
+    "debugger": PersonaProfile(
+        name="methodical_debugger",
+        prompt_modifier=(
+            "\nPERSONA: Methodical Debugger\n"
+            "- Reproduce the error FIRST, then hypothesize\n"
+            "- Check logs/stacktraces before guessing\n"
+            "- Verify the fix by running the code again\n"
+            "- One change at a time, test after each"
+        ),
+        model_preference="complex",
+        temperature=0.1,
+        max_iterations_factor=1.4,
+        verification_level="strict",
+    ),
+    "creative": PersonaProfile(
+        name="creative_writer",
+        prompt_modifier=(
+            "\nPERSONA: Creative Writer\n"
+            "- Prioritize originality and style over structure\n"
+            "- Explore multiple angles before committing\n"
+            "- Use metaphors and vivid language"
+        ),
+        model_preference="complex",
+        temperature=0.8,
+        max_iterations_factor=0.6,
+        verification_level="none",
+    ),
+    "devops": PersonaProfile(
+        name="devops_operator",
+        prompt_modifier=(
+            "\nPERSONA: DevOps Operator\n"
+            "- ALWAYS verify state before AND after changes\n"
+            "- Use dry-run/preview when available\n"
+            "- Rollback plan for every destructive operation\n"
+            "- Log every action with timestamps"
+        ),
+        model_preference="fast",
+        temperature=0.1,
+        max_iterations_factor=1.2,
+        verification_level="strict",
+    ),
+    "research": PersonaProfile(
+        name="research_explorer",
+        prompt_modifier=(
+            "\nPERSONA: Research Explorer\n"
+            "- Breadth first: survey multiple sources before deep-diving\n"
+            "- Cite sources and note confidence levels\n"
+            "- Distinguish facts from speculation\n"
+            "- Summarize findings incrementally"
+        ),
+        model_preference="complex",
+        temperature=0.4,
+        max_iterations_factor=1.3,
+        verification_level="basic",
+    ),
+    "data": PersonaProfile(
+        name="data_analyst",
+        prompt_modifier=(
+            "\nPERSONA: Data Analyst\n"
+            "- Start with data shape/schema before analysis\n"
+            "- Validate assumptions with sample queries\n"
+            "- Present numbers with context (%, deltas, trends)\n"
+            "- Visualize when possible"
+        ),
+        model_preference="fast",
+        temperature=0.2,
+        max_iterations_factor=1.0,
+        verification_level="basic",
+    ),
+}
+
+# Keyword → persona name mapping for fast classification
+_PERSONA_KEYWORDS: dict[str, list[str]] = {
+    "debugger": ["debug", "fix", "error", "bug", "traceback", "exception", "stacktrace",
+                 "crash", "broken", "fehler", "reparier", "fixen"],
+    "creative": ["schreib", "write", "story", "gedicht", "poem", "blog", "creative",
+                 "text", "artikel", "essay", "draft"],
+    "devops":   ["deploy", "docker", "kubernetes", "nginx", "server", "container",
+                 "pipeline", "ci/cd", "ssh", "systemctl", "service"],
+    "research": ["research", "recherch", "find out", "herausfinden", "compare",
+                 "vergleich", "analyze", "analys", "investigate", "untersu"],
+    "data":     ["csv", "dataframe", "pandas", "sql", "chart", "graph", "statistik",
+                 "statistics", "tabelle", "xlsx", "daten", "dataset"],
+}
+
+
+class PersonaRouter:
+    """Selects the best persona based on query, matched skills, and dreamer insights."""
+
+    def __init__(self, custom_personas: dict[str, PersonaProfile] | None = None):
+        self.personas = dict(_BUILTIN_PERSONAS)
+        if custom_personas:
+            self.personas.update(custom_personas)
+
+    def route(
+        self,
+        query: str,
+        matched_skills: list | None = None,
+        dreamer_insights: dict | None = None,
+    ) -> PersonaProfile:
+        """
+        Classify task and return matching persona.
+
+        Priority:
+        1. Dreamer insights (if available and confident)
+        2. Skill-based classification
+        3. Keyword-based classification
+        4. Default persona
+        """
+        query_lower = query.lower()
+
+        # 1. Dreamer insights (from persona._dream_insights)
+        if dreamer_insights:
+            best_key, best_ratio = None, 0.0
+            for intent_key, insight in dreamer_insights.items():
+                ratio = insight.get("success_ratio", 0)
+                if ratio > best_ratio and ratio > 0.6:
+                    # Check if this intent matches our query
+                    if any(w in query_lower for w in intent_key.lower().split()[:2]):
+                        best_key = intent_key
+                        best_ratio = ratio
+            if best_key:
+                # Map intent to persona via keyword overlap
+                persona = self._match_intent_to_persona(best_key)
+                if persona:
+                    persona.source = "dreamer"
+                    return persona
+
+        # 2. Skill-based: use skill tool_groups / names as hints
+        if matched_skills:
+            for skill in matched_skills:
+                name_lower = skill.name.lower()
+                for persona_key, keywords in _PERSONA_KEYWORDS.items():
+                    if any(kw in name_lower for kw in keywords):
+                        p = PersonaProfile(**{
+                            k: getattr(self.personas[persona_key], k)
+                            for k in PersonaProfile.__dataclass_fields__
+                        })
+                        p.source = "matched"
+                        return p
+
+        # 3. Keyword classification
+        scores: dict[str, int] = {}
+        for persona_key, keywords in _PERSONA_KEYWORDS.items():
+            score = sum(1 for kw in keywords if kw in query_lower)
+            if score > 0:
+                scores[persona_key] = score
+
+        if scores:
+            best = max(scores, key=scores.get)
+            if scores[best] >= 1:
+                p = PersonaProfile(**{
+                    k: getattr(self.personas[best], k)
+                    for k in PersonaProfile.__dataclass_fields__
+                })
+                p.source = "matched"
+                return p
+
+        # 4. Default
+        return PersonaProfile()
+
+    def _match_intent_to_persona(self, intent_key: str) -> PersonaProfile | None:
+        intent_lower = intent_key.lower()
+        for persona_key, keywords in _PERSONA_KEYWORDS.items():
+            if any(kw in intent_lower for kw in keywords[:3]):
+                return PersonaProfile(**{
+                    k: getattr(self.personas[persona_key], k)
+                    for k in PersonaProfile.__dataclass_fields__
+                })
+        return None
 
 # =============================================================================
 # EXECUTION CONTEXT
@@ -380,7 +582,12 @@ class ExecutionContext:
     tools_used: List[str] = field(default_factory=list)
     current_iteration: int = 0
     matched_skills: List[Skill] = field(default_factory=list)
+    active_persona: PersonaProfile = field(default_factory=PersonaProfile)
     loop_warning_given: bool = False
+
+    # Context Budget
+    context_config: ContextBudgetConfig = field(default_factory=ContextBudgetConfig)
+    offload_hashes: Dict[str, str] = field(default_factory=dict)  # content_hash -> vfs_path
 
     def get_dynamic_tool_names(self) -> List[str]:
         """Get names of currently loaded dynamic tools"""
@@ -447,6 +654,11 @@ class ExecutionContext:
                 }
                 for t in self.dynamic_tools
             ],
+            "offload_hashes": self.offload_hashes,
+            "context_config": {
+                "max_context_ratio": self.context_config.max_context_ratio,
+                "immediate_offload_ratio": self.context_config.immediate_offload_ratio,
+            },
             "max_dynamic_tools": self.max_dynamic_tools,
             "tool_relevance_cache": self.tool_relevance_cache,
             "working_history": self.working_history,
@@ -472,6 +684,9 @@ class ExecutionContext:
             )
             for t in data.get("dynamic_tools", [])
         ]
+        ctx.offload_hashes = data.get("offload_hashes", {})
+        if "context_config" in data:
+            ctx.context_config = ContextBudgetConfig(**data["context_config"])
         ctx.max_dynamic_tools = data.get("max_dynamic_tools", 5)
         ctx.tool_relevance_cache = data.get("tool_relevance_cache", {})
         ctx.working_history = data.get("working_history", [])
@@ -498,98 +713,108 @@ class HistoryCompressor:
     @staticmethod
     def compress_to_summary(working_history: List[dict], run_id: str) -> Optional[dict]:
         """
-        Compress working history to a single summary message.
-
-        Returns system message with action summary (goes BEFORE final_answer).
+        Semantic Ledger: Komprimiert History nach Kategorien der Veränderung.
+        Trennt Erkenntnisse (Read), Veränderungen (Write), Fehler (Error).
         """
         if not working_history:
             return None
 
-        files_created = []
-        files_read = []
-        files_modified = []
+        # Kategorisierte Sammlung
+        reads = []  # Erkenntnisse (Read-Only)
+        writes = []  # State Changes (Write/Create/Edit)
+        errors = []  # Fehler & Blocker
+        findings = []  # Aus think-Blöcken extrahierte Erkenntnisse
         tools_used = set()
-        errors = []
-        thoughts = []
-        searches = []
 
-        for msg in working_history:
+        for i, msg in enumerate(working_history):
             role = msg.get("role", "")
 
-            # Track tool calls from assistant messages
             if role == "assistant":
+                # Think-Ergebnisse aus dem nächsten tool-result extrahieren
                 tool_calls = msg.get("tool_calls", [])
                 for tc in tool_calls:
                     if hasattr(tc, "function"):
-                        tools_used.add(tc.function.name)
+                        name = tc.function.name
+                        tools_used.add(name)
+                        if name == "think":
+                            try:
+                                args = json.loads(tc.function.arguments)
+                                thought = args.get("thought", "")[:200]
+                                if thought:
+                                    findings.append(thought)
+                            except:
+                                pass
                     elif isinstance(tc, dict) and "function" in tc:
-                        tools_used.add(tc["function"].get("name", ""))
+                        name = tc["function"].get("name", "")
+                        tools_used.add(name)
+                        if name == "think":
+                            try:
+                                args = json.loads(tc["function"].get("arguments", "{}"))
+                                thought = args.get("thought", "")[:200]
+                                if thought:
+                                    findings.append(thought)
+                            except:
+                                pass
 
-            # Analyze tool results
             elif role == "tool":
-                tool_name = msg.get("name", "")
+                name = msg.get("name", "")
                 content = msg.get("content", "")
-                tools_used.add(tool_name)
-
-                # Categorize by tool type
-                tool_lower = tool_name.lower()
+                tools_used.add(name)
                 content_lower = content.lower()
+                name_lower = name.lower()
 
-                if "error" in content_lower or "failed" in content_lower:
-                    errors.append(f"{tool_name}: {content[:800]}")
-                elif "write" in tool_lower or "create" in tool_lower:
-                    files_created.append(tool_name)
-                elif "read" in tool_lower:
-                    files_read.append(tool_name)
-                elif (
-                    "modify" in tool_lower
-                    or "edit" in tool_lower
-                    or "update" in tool_lower
-                ):
-                    files_modified.append(tool_name)
-                elif "search" in tool_lower or "query" in tool_lower:
-                    result_count = content.count("\n") + 1 if content else 0
-                    searches.append(f"{tool_name} ({result_count} results)")
-                elif tool_name == "think":
-                    # Extract thought preview
-                    thought_preview = content[:160] if content else ""
-                    thoughts.append(thought_preview)
+                # Fehler-Erkennung
+                if "error" in content_lower or "failed" in content_lower or "traceback" in content_lower:
+                    errors.append(f"{name}: {content[:120]}")
+                # Write-Ops
+                elif any(kw in name_lower for kw in ("write", "create", "edit", "append", "delete", "mv")):
+                    # Behalte den Pfad/Status, nicht den Inhalt
+                    first_line = content.split("\n")[0][:100] if content else "ok"
+                    writes.append(f"{name} → {first_line}")
+                # Read-Ops (inkl. offloaded)
+                elif any(
+                    kw in name_lower for kw in ("read", "list", "navigate", "search", "query", "view", "open", "grep")):
+                    if "[DATA OFFLOADED" in content:
+                        reads.append(f"{name}: [offloaded]")
+                    else:
+                        size = len(content)
+                        reads.append(f"{name} ({size} chars)")
+                elif name == "think":
+                    pass  # Schon oben verarbeitet
+                else:
+                    reads.append(f"{name}")
 
-        # Build summary
-        lines = ["ABGESCHLOSSENE AKTIONEN:"]
+        # Build Semantic Ledger
+        lines = [f"📋 SEMANTIC LEDGER [Run {run_id}]:"]
 
-        if files_created:
-            lines.append(f"• Erstellt: {len(files_created)} Datei(en)")
-        if files_modified:
-            lines.append(f"• Bearbeitet: {len(files_modified)} Datei(en)")
-        if files_read:
-            lines.append(f"• Gelesen: {len(files_read)} Datei(en)")
-        if searches:
-            lines.append(f"• Suchen: {len(searches)}x")
-        if thoughts:
-            lines.append(f"• Überlegungen: {len(thoughts)}x")
+        if findings:
+            lines.append(f"\n🔍 KEY FINDINGS ({len(findings)}):")
+            for f in findings[-3:]:  # Letzte 3 Erkenntnisse
+                lines.append(f"  • {f}")
+
+        if writes:
+            lines.append(f"\n✏️ STATE CHANGES ({len(writes)}):")
+            for w in writes:
+                lines.append(f"  • {w}")
+
+        if reads:
+            lines.append(f"\n📖 INFORMATION GATHERED: {len(reads)} operations")
+            # Nur zusammenfassen, nicht jeden einzelnen auflisten
+            unique_tools = list(set(r.split("(")[0].split(":")[0].strip() for r in reads))
+            lines.append(f"  Tools: {', '.join(unique_tools[:5])}")
+
         if errors:
-            lines.append(f"• ⚠️ Fehler: {len(errors)}")
-            for err in errors[:2]:  # Max 2 errors
-                lines.append(f"  - {err[:60]}...")
+            lines.append(f"\n⚠️ BLOCKERS ({len(errors)}):")
+            for e in errors[:3]:
+                lines.append(f"  • {e}")
 
-        # Tool summary
-        meaningful_tools = tools_used - {
-            "think",
-            "final_answer",
-            "list_tools",
-            "load_tools",
-            "shift_focus",
-        }
-        if meaningful_tools:
-            lines.append(f"• Tools genutzt: {', '.join(list(meaningful_tools)[:5])}")
-
-        lines.append(f"• Gesamt Tool-Calls: {len(tools_used)}")
+        meaningful = tools_used - {"think", "final_answer", "list_tools", "load_tools", "shift_focus"}
+        lines.append(f"\n🔧 Total: {len(tools_used)} tool calls, {len(meaningful)} unique tools")
 
         return {
             "role": "system",
             "content": "\n".join(lines),
-            "metadata": {"type": "action_summary", "run_id": run_id},
+            "metadata": {"type": "semantic_ledger", "run_id": run_id},
         }
 
     @staticmethod
@@ -597,53 +822,114 @@ class HistoryCompressor:
         working_history: List[dict], keep_last_n: int = 3
     ) -> Tuple[Optional[dict], List[dict]]:
         """
-        Partially compress working history, keeping last N messages.
-        Used when loading new tools mid-run to prevent context overflow.
-
-        Returns: (summary_message, remaining_messages)
+        Relevance Filter: Priorisierte Verdichtung der History.
+        P1 (Kritisch): User Messages, final_answer, shift_focus, Errors → BEHALTEN
+        P2 (Wichtig): think, write (nur Pfad), exec (nur Status) → 1 ZEILE
+        P3 (Flüchtig): read content, list output, cat → LÖSCHEN/POINTER
         """
-        if len(working_history) <= keep_last_n + 1:  # +1 for system prompt
+        if len(working_history) <= keep_last_n + 1:
             return None, working_history
 
-        # Find where to split (keep system prompt + last N)
         system_msg = (
             working_history[0] if working_history[0].get("role") == "system" else None
         )
 
         if system_msg:
-            to_compress = working_history[1:-keep_last_n]
-            to_keep = [system_msg] + working_history[-keep_last_n:]
+            to_process = working_history[1:-keep_last_n]
+            to_keep = working_history[-keep_last_n:]
         else:
-            to_compress = working_history[:-keep_last_n]
+            to_process = working_history[:-keep_last_n]
             to_keep = working_history[-keep_last_n:]
 
-        # Simple summary for partial compression
-        tool_names = []
-        for msg in to_compress:
-            if msg.get("role") == "tool":
-                tool_names.append(msg.get("name", "unknown"))
+        compressed_msgs = []
+        stats = {"kept": 0, "summarized": 0, "dropped": 0}
 
-        if not tool_names:
-            return None, working_history
+        for msg in to_process:
+            role = msg.get("role", "")
+            name = msg.get("name", "")
+            content = msg.get("content", "") or ""
+            name_lower = name.lower()
 
-        # Deduplicate while keeping order
-        seen = set()
-        unique_tools = []
-        for t in tool_names:
-            if t not in seen:
-                seen.add(t)
-                unique_tools.append(t)
+            # P1: BEHALTEN (User, Errors, shift_focus)
+            if role == "user":
+                compressed_msgs.append(msg)
+                stats["kept"] += 1
+
+            elif role == "system" and "error" in content.lower():
+                compressed_msgs.append(msg)
+                stats["kept"] += 1
+
+            elif role == "assistant":
+                # Behalte assistant messages aber kürze content
+                new_msg = {"role": "assistant"}
+                if "tool_calls" in msg:
+                    new_msg["tool_calls"] = msg["tool_calls"]
+                    # Content kürzen
+                    new_msg["content"] = (content[:80] + "...") if len(content) > 80 else content
+                else:
+                    new_msg["content"] = (content[:160] + "...") if len(content) > 160 else content
+                compressed_msgs.append(new_msg)
+                stats["summarized"] += 1
+
+            elif role == "tool":
+                # P2: ZUSAMMENFASSEN (think, write, exec)
+                if name == "think":
+                    compressed_msgs.append({
+                        "role": "tool", "tool_call_id": msg.get("tool_call_id", ""),
+                        "name": name,
+                        "content": f"Think: {content[:100]}..." if len(content) > 100 else content,
+                    })
+                    stats["summarized"] += 1
+
+                elif any(kw in name_lower for kw in ("write", "create", "edit", "exec", "shell", "run")):
+                    first_line = content.split("\n")[0][:80]
+                    compressed_msgs.append({
+                        "role": "tool", "tool_call_id": msg.get("tool_call_id", ""),
+                        "name": name,
+                        "content": first_line,
+                    })
+                    stats["summarized"] += 1
+
+                elif name in ("shift_focus", "final_answer"):
+                    compressed_msgs.append(msg)
+                    stats["kept"] += 1
+
+                # P3: LÖSCHEN (read, list, navigate, search outputs)
+                elif any(
+                    kw in name_lower for kw in ("read", "list", "navigate", "search", "query", "view", "open", "cat")):
+                    compressed_msgs.append({
+                        "role": "tool", "tool_call_id": msg.get("tool_call_id", ""),
+                        "name": name,
+                        "content": f"[Viewed: {name}]",
+                    })
+                    stats["dropped"] += 1
+
+                else:
+                    # Unbekanntes Tool: Zusammenfassen
+                    compressed_msgs.append({
+                        "role": "tool", "tool_call_id": msg.get("tool_call_id", ""),
+                        "name": name,
+                        "content": content[:80] if content else "ok",
+                    })
+                    stats["summarized"] += 1
+            else:
+                # system messages etc. → behalten wenn kurz
+                if len(content) < 200:
+                    compressed_msgs.append(msg)
+                stats["summarized"] += 1
 
         summary = {
             "role": "system",
-            "content": f"FRÜHERE AKTIONEN: {', '.join(unique_tools[:5])}{'...' if len(unique_tools) > 5 else ''} ({len(tool_names)} calls)",
+            "content": (
+                f"[CONTEXT COMPRESSED: {stats['kept']} kept, "
+                f"{stats['summarized']} summarized, {stats['dropped']} dropped]"
+            ),
         }
 
-        # Insert summary after system prompt
         if system_msg:
-            return summary, [system_msg, summary] + to_keep[1:]
+            return summary, [system_msg, summary] + compressed_msgs + to_keep
         else:
-            return summary, [summary] + to_keep
+            return summary, [summary] + compressed_msgs + to_keep
 
 
 # =============================================================================
@@ -722,7 +1008,7 @@ class ExecutionEngine(SubAgentResumeExtension):
             )
             # Store back on agent
             agent.session_manager.skills_manager = self.skills_manager
-
+        self._persona_router = PersonaRouter()
         # Add parallel_subtasks skill if not present
         if "parallel_subtasks" not in self.skills_manager.skills:
             from toolboxv2.mods.isaa.base.Agent.skills import Skill
@@ -836,12 +1122,21 @@ BEISPIELE:
             str: Final response
             tuple[str, ExecutionContext]: If get_ctx=True
         """
+        # ── Dream intercept ──
+        if query == "__dream__":
+            from toolboxv2.mods.isaa.base.Agent.dreamer import DreamConfig
+            cfg = DreamConfig()  # or parse from job.trigger.extra
+            report = await self.agent.a_dream(cfg)
+            return report.model_dump_json() if get_ctx else str(report)
         session = await self.agent.session_manager.get_or_create(session_id)
 
         # Use existing context or create new one
         is_resume = ctx is not None
         if ctx is None:
             ctx = ExecutionContext()
+
+        if hasattr(self.agent, 'amd') and hasattr(self.agent.amd, 'context_config'):
+            ctx.context_config = self.agent.amd.context_config
 
         # Track active execution
         self._active_executions[ctx.run_id] = ctx
@@ -881,6 +1176,23 @@ BEISPIELE:
             # 3. Preload relevant tools from matched skills
             self._preload_skill_tools(ctx, query)
 
+            # 3b. Route persona based on query + skills + dreamer insights
+            dreamer_insights = getattr(
+                      getattr(self.agent.amd, 'persona', None), '_dream_insights', None)
+            ctx.active_persona = self._persona_router.route(
+                      query, ctx.matched_skills, dreamer_insights)
+
+            # Apply persona overrides
+
+            if ctx.active_persona.name != "default":
+                max_iterations = ctx.active_persona.apply_max_iterations(max_iterations)
+                self.live.log(
+                    f"Persona: {ctx.active_persona.name} "
+                    f"(model={ctx.active_persona.model_preference}, "
+                    f"temp={ctx.active_persona.temperature}, "
+                    f"max_iter={max_iterations})"
+                )
+
             # 4. Build initial messages
             system_prompt = self._build_system_prompt(ctx, session)
 
@@ -903,6 +1215,7 @@ BEISPIELE:
         self.live.t_start = time.time()
         self.live.skills = [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
         self.live.tools_loaded = ctx.get_dynamic_tool_names() if ctx.dynamic_tools else []
+        self.live.persona = ctx.active_persona.name
         self.live.enter(AgentPhase.INIT, f"{action} [{agent_type}] {ctx.run_id}: {query[:80]}")
 
         final_response = None
@@ -933,14 +1246,19 @@ BEISPIELE:
 
             # LLM Call
             try:
+                llm_kwargs = {
+                    "model_preference": ctx.active_persona.model_preference,
+                    "stream": False,
+                    "get_response_message": True,
+                    "with_context": False,
+                    }
+                if ctx.active_persona.temperature is not None:
+                    llm_kwargs["temperature"] = ctx.active_persona.temperature
                 response = await self.agent.a_run_llm_completion(
                     messages=messages,
                     tools=current_tools,
                     tool_choice="auto",
-                    model_preference="fast",
-                    stream=False,
-                    get_response_message=True,
-                    with_context=False,  # We built context manually
+                    **llm_kwargs,
                 )
             except Exception as e:
                 self.live.error = str(e)
@@ -1103,6 +1421,7 @@ BEISPIELE:
             self.live.thought = thought  # visible to renderer
             # Record in AutoFocus
             ctx.auto_focus.record(f_name, f_args, thought[:200])
+            ctx.current_iteration -= 1
 
         elif f_name == "final_answer":
             answer = f_args.get("answer", "")
@@ -1115,11 +1434,13 @@ BEISPIELE:
         elif f_name == "list_tools":
             result = self._tool_list_tools(f_args.get("category"))
             ctx.auto_focus.record(f_name, f_args, result[:200])
+            ctx.current_iteration -= 1
 
         elif f_name == "load_tools":
             tools_input = f_args.get("tools") or f_args.get("names")
             result = await self._tool_load_tools(ctx, tools_input)
             ctx.auto_focus.record(f_name, f_args, result[:200])
+            ctx.current_iteration -= 1
 
         elif f_name == "shift_focus":
             result = await self._tool_shift_focus(
@@ -1127,6 +1448,7 @@ BEISPIELE:
                 f_args.get("summary_of_achievements", ""),
                 f_args.get("next_objective", ""),
             )
+            ctx.current_iteration -= 5
 
         # === SUB-AGENT TOOLS ===
         elif f_name == "spawn_sub_agent":
@@ -1250,6 +1572,9 @@ BEISPIELE:
             is_vfs = f_name in VFS_TOOL_NAMES
             is_loaded = f_name in ctx.get_dynamic_tool_names()
 
+            if is_vfs:
+                ctx.current_iteration -= 1
+
             if is_vfs or is_loaded:
                 try:
                     result = await self.agent.arun_function(f_name, **f_args)
@@ -1268,16 +1593,211 @@ BEISPIELE:
 
         # Add tool result to working history (if not final_answer)
         if not is_final:
-            ctx.working_history.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": f_id,
-                    "name": f_name,
-                    "content": str(result),  # Truncate long outputs
-                }
+            # Context Budget Management: Szenario A/B/C
+            managed_msg = self._manage_context_budget(
+                ctx, f_name, str(result), f_id
             )
+            ctx.working_history.append(managed_msg)
 
         return result, is_final
+
+    # =========================================================================
+    # CONTEXT BUDGET MANAGEMENT
+    # =========================================================================
+
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        """Schnelle Token-Schätzung (~4 chars/token)."""
+        if not text:
+            return 0
+        return len(text) // 4
+
+    def _get_max_context_tokens(self) -> int:
+        """Hole max context window des aktuellen Models."""
+        try:
+            import litellm
+            model = getattr(self.agent, 'amd', None)
+            if model and hasattr(model, 'model_name'):
+                info = litellm.get_model_info(model.model_name)
+                return info.get("max_input_tokens", 128000)
+        except Exception:
+            pass
+        return 128000  # Fallback
+
+    def _calculate_context_load(self, ctx: ExecutionContext) -> int:
+        """Berechne aktuelle Context-Größe in Tokens."""
+        total = 0
+        for msg in ctx.working_history:
+            content = msg.get("content", "") or ""
+            total += self._estimate_tokens(content)
+            # Tool calls in assistant messages
+            for tc in msg.get("tool_calls", []):
+                if isinstance(tc, dict):
+                    total += self._estimate_tokens(tc.get("function", {}).get("arguments", ""))
+                elif hasattr(tc, "function"):
+                    total += self._estimate_tokens(tc.function.arguments or "")
+        return total
+
+    def _content_hash(self, content: str) -> str:
+        """Erzeuge Hash für Dedup."""
+        return hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+    def _manage_context_budget(
+        self, ctx: ExecutionContext, tool_name: str, raw_result: str, tool_call_id: str
+    ) -> dict:
+        """
+        Zentrale Budget-Verwaltung. Gibt die finale tool-message zurück
+        die in working_history eingefügt werden soll.
+
+        Implementiert Szenario A/B/C aus der Dynamic Displacement Strategy.
+        """
+        session = self._current_session
+        cfg = ctx.context_config
+        max_tokens = self._get_max_context_tokens()
+        budget_limit = int(max_tokens * cfg.max_context_ratio)
+
+        new_result_tokens = self._estimate_tokens(raw_result)
+        current_load = self._calculate_context_load(ctx)
+        remaining = budget_limit - current_load - cfg.safety_margin_tokens
+
+        # --- Hash-Dedup Check ---
+        content_hash = self._content_hash(raw_result)
+        if content_hash in ctx.offload_hashes:
+            existing_path = ctx.offload_hashes[content_hash]
+            return {
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "name": tool_name,
+                "content": f"[DUPLICATE: Tool result already offloaded to {existing_path}. Use vfs_read to access if needed.]",
+            }
+
+        # --- Szenario C: Sofort-Offload (Result > immediate_offload_ratio des Gesamtkontexts) ---
+        if new_result_tokens > int(max_tokens * cfg.immediate_offload_ratio):
+            return self._offload_immediate(ctx, session, tool_name, raw_result, tool_call_id, content_hash)
+
+        # --- Szenario A: Happy Path (passt rein) ---
+        if new_result_tokens <= remaining:
+            return {
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "name": tool_name,
+                "content": raw_result,
+            }
+
+        # --- Szenario B: Displacement (zu groß, aber < displacement_threshold) ---
+        if new_result_tokens < int(max_tokens * cfg.displacement_threshold):
+            freed = self._retroactive_offload(ctx, session, new_result_tokens - remaining)
+            new_remaining = remaining + freed
+            if new_result_tokens <= new_remaining:
+                return {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                    "content": raw_result,
+                }
+
+        # Fallback: Konnte nicht genug Platz schaffen → Offload wie Szenario C
+        return self._offload_immediate(ctx, session, tool_name, raw_result, tool_call_id, content_hash)
+
+    def _offload_immediate(
+        self, ctx: ExecutionContext, session, tool_name: str,
+        raw_result: str, tool_call_id: str, content_hash: str
+    ) -> dict:
+        """Szenario C: Sofort ins VFS schreiben, nur Pointer + Preview in History."""
+        path = f"/.memory/overflow/{ctx.run_id}_{ctx.current_iteration}_{tool_name}.txt"
+        try:
+            session.vfs.mkdir("/.memory/overflow", parents=True)
+            session.vfs.write(path, raw_result)
+        except Exception as e:
+            # Fallback: Truncate wenn VFS fehlschlägt
+            truncated = raw_result[:2000] + f"\n\n... [TRUNCATED, {len(raw_result)} chars total, VFS write failed: {e}]"
+            return {
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "name": tool_name,
+                "content": truncated,
+            }
+
+        ctx.offload_hashes[content_hash] = path
+
+        # Head + Tail Preview
+        lines = raw_result.split("\n")
+        head = "\n".join(lines[:5])
+        tail = "\n".join(lines[-3:]) if len(lines) > 8 else ""
+        preview = head
+        if tail:
+            preview += f"\n...\n{tail}"
+
+        pointer_msg = (
+            f"[DATA OFFLOADED to {path}]\n"
+            f"Output too large ({self._estimate_tokens(raw_result)} tokens). Saved to VFS.\n"
+            f"Preview:\n{preview}\n\n"
+            f"Use `vfs_read` on '{path}' to access full content, or use grep to search specific sections."
+        )
+        return {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "name": tool_name,
+            "content": pointer_msg,
+        }
+
+    def _retroactive_offload(
+        self, ctx: ExecutionContext, session, tokens_needed: int
+    ) -> int:
+        """
+        Szenario B: Alte Tool-Outputs aus working_history ins VFS verschieben.
+        Gibt die Anzahl freigegebener Tokens zurück.
+        Mit Hash-Dedup: Prüft ob Content bereits offloaded wurde.
+        """
+        cfg = ctx.context_config
+        freed = 0
+
+        # Sammle Kandidaten: (index, token_count, tool_name)
+        candidates = []
+        for i, msg in enumerate(ctx.working_history):
+            if msg.get("role") != "tool":
+                continue
+            content = msg.get("content", "")
+            tokens = self._estimate_tokens(content)
+            if tokens >= cfg.heavy_hitter_min_tokens:
+                # Skip bereits offloadete Pointer
+                if "[DATA OFFLOADED" in content or "[DUPLICATE:" in content:
+                    continue
+                candidates.append((i, tokens, msg.get("name", "unknown"), content))
+
+        # Sortiere nach Größe (größte zuerst)
+        candidates.sort(key=lambda x: x[1], reverse=True)
+
+        for idx, tokens, name, content in candidates:
+            if freed >= tokens_needed:
+                break
+
+            content_hash = self._content_hash(content)
+
+            # Hash-Dedup: Bereits offloaded?
+            if content_hash in ctx.offload_hashes:
+                existing_path = ctx.offload_hashes[content_hash]
+                ctx.working_history[idx]["content"] = (
+                    f"[DATA OFFLOADED: Previous output from '{name}' already at {existing_path}]"
+                )
+                freed += tokens
+                continue
+
+            # Neu offloaden
+            step = ctx.working_history[idx].get("tool_call_id", str(idx))
+            path = f"/.memory/archive/{ctx.run_id}_{step}_{name}.txt"
+            try:
+                session.vfs.mkdir("/.memory/archive", parents=True)
+                session.vfs.write(path, content)
+                ctx.offload_hashes[content_hash] = path
+                ctx.working_history[idx]["content"] = (
+                    f"[DATA OFFLOADED: Output from '{name}' moved to {path} to free context space.]"
+                )
+                freed += tokens
+            except Exception:
+                continue  # Skip bei Fehler, nächsten Kandidaten versuchen
+
+        return freed
 
     # =========================================================================
     # TOOL MANAGEMENT
@@ -1656,6 +2176,18 @@ BEISPIELE:
                 ctx.matched_skills
             )
             prompt_parts.append(skill_section)
+       # Add persona modifier if active
+
+        if ctx.active_persona.prompt_modifier:
+            prompt_parts.append(ctx.active_persona.prompt_modifier)
+
+        # Add verification directive based on persona
+
+        if ctx.active_persona.verification_level == "strict":
+            prompt_parts.append(
+                       "\n⚠️ VERIFICATION REQUIRED: After EVERY state-changing action, "
+            "verify the result with a read/list/status tool before proceeding."
+            )
 
         return "\n".join(prompt_parts)
 
@@ -1737,7 +2269,8 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                         name = fn.get("name", "") if isinstance(fn, dict) else fn.name
                         full_log.append(f"`Tool Call: {name}`")
                 full_log.append(content)
-
+            if ctx.active_persona.name != "default":
+                full_log.append(f"Persona: {ctx.active_persona.name} (source: {ctx.active_persona.source})")
             session.vfs.write(log_file, "\n".join(full_log))
         except Exception as e:
             self.live.log(f"Failed to write execution log: {e}", logging.WARNING)
@@ -1796,6 +2329,15 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         await session.add_message({"role": "assistant", "content": final_response})
 
         self.live.log(f"Run {ctx.run_id} archived to {log_file}")
+
+        # ── Notify idle tracker ──
+        try:
+            from toolboxv2 import get_app
+            sched = get_app().get_mod("isaa").job_scheduler
+            if hasattr(sched, '_agent_idle_eval'):
+                sched._agent_idle_eval.record_activity(self.agent.amd.name)
+        except Exception:
+            pass
 
     # =========================================================================
     # STATISTICS
@@ -1972,6 +2514,22 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
             self._calculate_tool_relevance(ctx, query)
             self._preload_skill_tools(ctx, query)
 
+            dreamer_insights = getattr(
+                getattr(self.agent.amd, 'persona', None), '_dream_insights', None)
+            ctx.active_persona = self._persona_router.route(
+                query, ctx.matched_skills, dreamer_insights)
+
+            # Apply persona overrides
+
+            if ctx.active_persona.name != "default":
+                max_iterations = ctx.active_persona.apply_max_iterations(max_iterations)
+                self.live.log(
+                    f"Persona: {ctx.active_persona.name} "
+                    f"(model={ctx.active_persona.model_preference}, "
+                    f"temp={ctx.active_persona.temperature}, "
+                    f"max_iter={max_iterations})"
+                )
+
             system_prompt = self._build_system_prompt(ctx, session)
             history_depth = 2 if self.is_sub_agent else 6
             permanent_history = session.get_history_for_llm(last_n=history_depth)
@@ -1988,6 +2546,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         self.live.t_start = time.time()
         self.live.skills = [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
         self.live.tools_loaded = ctx.get_dynamic_tool_names() if ctx.dynamic_tools else []
+        self.live.persona = ctx.active_persona.name
         self.live.enter(AgentPhase.INIT, f"{'Resume' if is_resume else 'Start'} stream [{ctx.run_id}]")
 
         async def stream_generator(ctx: ExecutionContext):
@@ -2055,12 +2614,17 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                 )
 
                 while continuation_count < MAX_CONTINUATIONS:
+                    stream_kwargs = {"stream": True, "true_stream": True}
+                    if model:
+                        stream_kwargs["model"] = model
+                    else:
+                        stream_kwargs["model_preference"] = ctx.active_persona.model_preference
+                    if ctx.active_persona.temperature is not None:
+                        stream_kwargs["temperature"] = ctx.active_persona.temperature
                     stream_response = await self.agent.a_run_llm_completion(
                         messages=current_messages,
                         tools=current_tools,
-                        stream=True,
-                        true_stream=True,
-                        model=model,
+                        **stream_kwargs,
                     )
 
                     if asyncio.iscoroutine(stream_response):
