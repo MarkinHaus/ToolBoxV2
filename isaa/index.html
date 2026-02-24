@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.2">
     
     
       
@@ -3047,6 +3047,814 @@
 </tbody>
 </table>
 <p>This documentation provides comprehensive guidance for using the ISAA Chain system to create sophisticated AI agent workflows with powerful orchestration capabilities.</p>
+<h1 id="isaa-job-system-dokumentation">ISAA Job System — Dokumentation<a class="headerlink" href="#isaa-job-system-dokumentation" title="Permanent link">&para;</a></h1>
+<h2 id="ubersicht">Übersicht<a class="headerlink" href="#ubersicht" title="Permanent link">&para;</a></h2>
+<p>Das ISAA Job System ermöglicht persistente, geplante Agent-Tasks die CLI-Neustarts überleben und sich über OS-Scheduler (Windows schtasks, Linux crontab, macOS LaunchAgent) automatisch reaktivieren können.</p>
+<p><strong>Kernkomponenten:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Komponente</th>
+<th>Aufgabe</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>JobDefinition</code></td>
+<td>Datenhaltung: was, wann, welcher Agent</td>
+</tr>
+<tr>
+<td><code>TriggerConfig</code></td>
+<td>Wann soll der Job feuern</td>
+</tr>
+<tr>
+<td><code>TriggerRegistry</code></td>
+<td>Plugin-System für eigene Trigger-Typen</td>
+</tr>
+<tr>
+<td><code>JobScheduler</code></td>
+<td>Async Tick-Loop, evaluiert Trigger, feuert Jobs</td>
+</tr>
+<tr>
+<td><code>JobEventBus</code></td>
+<td>Ermöglicht Job-Chaining (A fertig → B startet)</td>
+</tr>
+<tr>
+<td><code>headless_runner</code></td>
+<td>Entry-Point für OS-Scheduler wenn CLI nicht läuft</td>
+</tr>
+<tr>
+<td><code>os_scheduler</code></td>
+<td>Registriert/entfernt OS-Level Scheduled Tasks</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Persistenz:</strong> Alle Jobs werden als JSON-Datei gespeichert (<code>jobs.json</code>). Jede Änderung (add/remove/pause/status-update) schreibt sofort auf Disk.</p>
+<hr />
+<h2 id="setup">Setup<a class="headerlink" href="#setup" title="Permanent link">&para;</a></h2>
+<h3 id="1-scheduler-initialisieren">1. Scheduler initialisieren<a class="headerlink" href="#1-scheduler-initialisieren" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.isaa.extras.jobs</span><span class="w"> </span><span class="kn">import</span> <span class="n">JobScheduler</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fire_callback</span><span class="p">(</span><span class="n">job</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Wird aufgerufen wenn ein Job feuert.&quot;&quot;&quot;</span>
+    <span class="n">agent</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="n">job</span><span class="o">.</span><span class="n">agent_name</span><span class="p">)</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">agent</span><span class="o">.</span><span class="n">a_run</span><span class="p">(</span><span class="n">job</span><span class="o">.</span><span class="n">query</span><span class="p">,</span> <span class="n">session_id</span><span class="o">=</span><span class="n">job</span><span class="o">.</span><span class="n">session_id</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">result</span>
+
+<span class="n">scheduler</span> <span class="o">=</span> <span class="n">JobScheduler</span><span class="p">(</span>
+    <span class="n">jobs_file</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="s2">&quot;data/jobs.json&quot;</span><span class="p">),</span>
+    <span class="n">fire_callback</span><span class="o">=</span><span class="n">fire_callback</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Scheduler starten (startet den async Tick-Loop)</span>
+<span class="k">await</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+
+<span class="c1"># Beim Beenden</span>
+<span class="k">await</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">stop</span><span class="p">()</span>
+</code></pre></div>
+<p>Der Scheduler tickt jede Sekunde und prüft alle aktiven Jobs gegen ihre Trigger-Evaluatoren. Jobs die gerade laufen (<code>_firing</code> Set) werden übersprungen.</p>
+<h3 id="2-os-auto-wake-installieren-optional">2. OS Auto-Wake installieren (optional)<a class="headerlink" href="#2-os-auto-wake-installieren-optional" title="Permanent link">&para;</a></h3>
+<p>Damit Jobs auch feuern wenn die CLI nicht läuft:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.isaa.extras.jobs.os_scheduler</span><span class="w"> </span><span class="kn">import</span> <span class="n">install_autowake</span><span class="p">,</span> <span class="n">remove_autowake</span><span class="p">,</span> <span class="n">autowake_status</span>
+
+<span class="c1"># Installieren (plattformabhängig)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">install_autowake</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s2">&quot;data/jobs.json&quot;</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+<span class="c1"># → &quot;Auto-wake installed (Windows schtasks, every 15min + on boot)&quot;</span>
+<span class="c1"># → &quot;Auto-wake installed (crontab, every 15min + @reboot)&quot;</span>
+<span class="c1"># → &quot;Auto-wake installed (LaunchAgent, every 15min + RunAtLoad)&quot;</span>
+
+<span class="c1"># Status prüfen</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">autowake_status</span><span class="p">())</span>
+
+<span class="c1"># Entfernen</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">remove_autowake</span><span class="p">())</span>
+</code></pre></div>
+<p><strong>Was passiert:</strong> Das OS ruft alle 15 Minuten den <code>headless_runner</code> auf. Dieser lädt die <code>jobs.json</code>, prüft welche Jobs fällig sind, initialisiert eine minimale ISAA-Instanz, führt die fälligen Jobs aus, und beendet sich.</p>
+<h3 id="3-dependencies">3. Dependencies<a class="headerlink" href="#3-dependencies" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>Dependency</th>
+<th>Pflicht?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Cron-Trigger</td>
+<td><code>pip install croniter</code></td>
+<td>Nur für <code>on_cron</code></td>
+</tr>
+<tr>
+<td>File-Watching</td>
+<td><code>pip install watchdog</code></td>
+<td>Nur für <code>on_file_changed</code></td>
+</tr>
+<tr>
+<td>System-Idle (Linux)</td>
+<td><code>xprintidle</code> Binary</td>
+<td>Nur für <code>on_system_idle</code> auf Linux</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="jobs-erstellen">Jobs erstellen<a class="headerlink" href="#jobs-erstellen" title="Permanent link">&para;</a></h2>
+<h3 id="grundstruktur">Grundstruktur<a class="headerlink" href="#grundstruktur" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.isaa.extras.jobs</span><span class="w"> </span><span class="kn">import</span> <span class="n">JobDefinition</span><span class="p">,</span> <span class="n">TriggerConfig</span>
+
+<span class="n">job</span> <span class="o">=</span> <span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="n">JobDefinition</span><span class="o">.</span><span class="n">generate_id</span><span class="p">(),</span>    <span class="c1"># &quot;job_a3f8c1d2&quot;</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;daily-backup&quot;</span><span class="p">,</span>                    <span class="c1"># Anzeigename</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;main_agent&quot;</span><span class="p">,</span>                <span class="c1"># Welcher FlowAgent</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Erstelle ein Backup aller Datenbanken&quot;</span><span class="p">,</span> <span class="c1"># Agent-Query</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span>
+        <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_cron&quot;</span><span class="p">,</span>
+        <span class="n">cron_expression</span><span class="o">=</span><span class="s2">&quot;0 2 * * *&quot;</span><span class="p">,</span>        <span class="c1"># Jeden Tag um 02:00</span>
+    <span class="p">),</span>
+    <span class="n">session_id</span><span class="o">=</span><span class="s2">&quot;default&quot;</span><span class="p">,</span>                   <span class="c1"># Agent-Session</span>
+    <span class="n">timeout_seconds</span><span class="o">=</span><span class="mi">300</span><span class="p">,</span>                    <span class="c1"># Max. Laufzeit</span>
+    <span class="n">max_retries</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>                          <span class="c1"># Wiederholungen bei Fehler</span>
+<span class="p">)</span>
+
+<span class="n">job_id</span> <span class="o">=</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">job</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="crud-operationen">CRUD-Operationen<a class="headerlink" href="#crud-operationen" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Erstellen</span>
+<span class="n">job_id</span> <span class="o">=</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">job</span><span class="p">)</span>
+
+<span class="c1"># Abfragen</span>
+<span class="n">job</span> <span class="o">=</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">get_job</span><span class="p">(</span><span class="n">job_id</span><span class="p">)</span>
+<span class="n">all_jobs</span> <span class="o">=</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">list_jobs</span><span class="p">()</span>
+<span class="n">found</span> <span class="o">=</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">find_jobs_by_name</span><span class="p">(</span><span class="s2">&quot;backup&quot;</span><span class="p">)</span>
+
+<span class="c1"># Pausieren / Fortsetzen</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">pause_job</span><span class="p">(</span><span class="n">job_id</span><span class="p">)</span>   <span class="c1"># status → &quot;paused&quot;</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">resume_job</span><span class="p">(</span><span class="n">job_id</span><span class="p">)</span>  <span class="c1"># status → &quot;active&quot;</span>
+
+<span class="c1"># Löschen</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">remove_job</span><span class="p">(</span><span class="n">job_id</span><span class="p">)</span>
+
+<span class="c1"># Stats</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">scheduler</span><span class="o">.</span><span class="n">active_count</span><span class="p">)</span>  <span class="c1"># Anzahl aktiver Jobs</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">scheduler</span><span class="o">.</span><span class="n">total_count</span><span class="p">)</span>   <span class="c1"># Gesamtzahl</span>
+</code></pre></div>
+<h3 id="job-status-lifecycle">Job-Status Lifecycle<a class="headerlink" href="#job-status-lifecycle" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>active → (trigger feuert) → running → completed/failed/timeout
+active → pause_job()      → paused  → resume_job() → active
+active → (on_time fired)  → expired
+active → remove_job()     → gelöscht
+</code></pre></div>
+<hr />
+<h2 id="trigger-typen">Trigger-Typen<a class="headerlink" href="#trigger-typen" title="Permanent link">&para;</a></h2>
+<h3 id="zeitbasiert">Zeitbasiert<a class="headerlink" href="#zeitbasiert" title="Permanent link">&para;</a></h3>
+<h4 id="on_time-einmalig-zu-einem-zeitpunkt"><code>on_time</code> — Einmalig zu einem Zeitpunkt<a class="headerlink" href="#on_time-einmalig-zu-einem-zeitpunkt" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><span class="n">TriggerConfig</span><span class="p">(</span>
+    <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_time&quot;</span><span class="p">,</span>
+    <span class="n">at_datetime</span><span class="o">=</span><span class="s2">&quot;2025-06-15T14:30:00+02:00&quot;</span><span class="p">,</span>  <span class="c1"># ISO 8601</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Job wird nach dem Feuern automatisch auf <code>status="expired"</code> gesetzt.</p>
+<h4 id="on_interval-alle-n-sekunden"><code>on_interval</code> — Alle N Sekunden<a class="headerlink" href="#on_interval-alle-n-sekunden" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><span class="n">TriggerConfig</span><span class="p">(</span>
+    <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_interval&quot;</span><span class="p">,</span>
+    <span class="n">interval_seconds</span><span class="o">=</span><span class="mi">300</span><span class="p">,</span>  <span class="c1"># Alle 5 Minuten</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Zählt ab dem letzten Feuern. Erster Lauf sofort nach Scheduler-Start wenn noch nie gelaufen.</p>
+<h4 id="on_cron-cron-schedule"><code>on_cron</code> — Cron-Schedule<a class="headerlink" href="#on_cron-cron-schedule" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><span class="n">TriggerConfig</span><span class="p">(</span>
+    <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_cron&quot;</span><span class="p">,</span>
+    <span class="n">cron_expression</span><span class="o">=</span><span class="s2">&quot;0 3 * * *&quot;</span><span class="p">,</span>  <span class="c1"># Täglich um 03:00</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><strong>Benötigt <code>croniter</code>:</strong> <code>pip install croniter</code></p>
+<p>Cron-Format: <code>minute hour day month weekday</code></p>
+<table>
+<thead>
+<tr>
+<th>Expression</th>
+<th>Bedeutung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0 3 * * *</code></td>
+<td>Täglich 03:00</td>
+</tr>
+<tr>
+<td><code>*/15 * * * *</code></td>
+<td>Alle 15 Minuten</td>
+</tr>
+<tr>
+<td><code>0 2 * * 0</code></td>
+<td>Sonntags 02:00</td>
+</tr>
+<tr>
+<td><code>0 9 1 * *</code></td>
+<td>Erster des Monats, 09:00</td>
+</tr>
+<tr>
+<td><code>30 8 * * 1-5</code></td>
+<td>Mo-Fr 08:30</td>
+</tr>
+</tbody>
+</table>
+<h3 id="system-events">System-Events<a class="headerlink" href="#system-events" title="Permanent link">&para;</a></h3>
+<h4 id="on_cli_start-on_cli_exit-cli-lifecycle"><code>on_cli_start</code> / <code>on_cli_exit</code> — CLI Lifecycle<a class="headerlink" href="#on_cli_start-on_cli_exit-cli-lifecycle" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><span class="n">TriggerConfig</span><span class="p">(</span><span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_cli_start&quot;</span><span class="p">)</span>
+<span class="n">TriggerConfig</span><span class="p">(</span><span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_cli_exit&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Wird ausgelöst über:
+<div class="highlight"><pre><span></span><code><span class="k">await</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">fire_lifecycle</span><span class="p">(</span><span class="s2">&quot;on_cli_start&quot;</span><span class="p">)</span>  <span class="c1"># beim Start</span>
+<span class="k">await</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">fire_lifecycle</span><span class="p">(</span><span class="s2">&quot;on_cli_exit&quot;</span><span class="p">)</span>    <span class="c1"># beim Beenden</span>
+</code></pre></div></p>
+<h4 id="on_system_boot-nach-systemstart"><code>on_system_boot</code> — Nach Systemstart<a class="headerlink" href="#on_system_boot-nach-systemstart" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><span class="n">TriggerConfig</span><span class="p">(</span><span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_system_boot&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Funktioniert nur in Kombination mit <code>install_autowake()</code>. Der OS-Scheduler ruft den <code>headless_runner</code> beim Systemstart auf, der diese Jobs erkennt und feuert.</p>
+<h4 id="on_system_idle-system-leerlauf"><code>on_system_idle</code> — System-Leerlauf<a class="headerlink" href="#on_system_idle-system-leerlauf" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><span class="n">TriggerConfig</span><span class="p">(</span>
+    <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_system_idle&quot;</span><span class="p">,</span>
+    <span class="n">idle_seconds</span><span class="o">=</span><span class="mi">600</span><span class="p">,</span>  <span class="c1"># Nach 10 Min Leerlauf</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Prüft alle 60 Sekunden die System-Idle-Time (plattformabhängig: <code>GetLastInputInfo</code> auf Windows, <code>ioreg</code> auf macOS, <code>xprintidle</code> auf Linux).</p>
+<h4 id="on_system_shutdown-vor-dem-herunterfahren"><code>on_system_shutdown</code> — Vor dem Herunterfahren<a class="headerlink" href="#on_system_shutdown-vor-dem-herunterfahren" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><span class="n">TriggerConfig</span><span class="p">(</span><span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_system_shutdown&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Registriert sich via <code>atexit</code> und <code>SIGTERM</code>/<code>SIGINT</code> Handler. Nützlich für Cleanup-Tasks.</p>
+<h4 id="on_network_available-netzwerk-wird-verfugbar"><code>on_network_available</code> — Netzwerk wird verfügbar<a class="headerlink" href="#on_network_available-netzwerk-wird-verfugbar" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><span class="n">TriggerConfig</span><span class="p">(</span><span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_network_available&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Prüft alle 30 Sekunden Konnektivität zu <code>8.8.8.8:53</code>. Feuert nur beim Übergang offline → online (nicht bei jedem Check).</p>
+<h3 id="datei-basiert">Datei-basiert<a class="headerlink" href="#datei-basiert" title="Permanent link">&para;</a></h3>
+<h4 id="on_file_changed-dateianderungen"><code>on_file_changed</code> — Dateiänderungen<a class="headerlink" href="#on_file_changed-dateianderungen" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><span class="n">TriggerConfig</span><span class="p">(</span>
+    <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_file_changed&quot;</span><span class="p">,</span>
+    <span class="n">watch_path</span><span class="o">=</span><span class="s2">&quot;/srv/data/configs&quot;</span><span class="p">,</span>          <span class="c1"># Verzeichnis oder Datei</span>
+    <span class="n">watch_patterns</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;*.yaml&quot;</span><span class="p">,</span> <span class="s2">&quot;*.json&quot;</span><span class="p">],</span>     <span class="c1"># Optional: Glob-Filter</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><strong>Benötigt <code>watchdog</code>:</strong> <code>pip install watchdog</code></p>
+<p>Nutzt <code>watchdog.Observer</code> mit 2-Sekunden Debouncing. Überwacht rekursiv.</p>
+<h3 id="job-chaining">Job-Chaining<a class="headerlink" href="#job-chaining" title="Permanent link">&para;</a></h3>
+<h4 id="on_job_completed-on_job_failed-on_job_timeout"><code>on_job_completed</code> / <code>on_job_failed</code> / <code>on_job_timeout</code><a class="headerlink" href="#on_job_completed-on_job_failed-on_job_timeout" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><span class="c1"># Job B startet wenn Job A erfolgreich war</span>
+<span class="n">job_a_id</span> <span class="o">=</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="s2">&quot;job_backup&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;backup&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;agent&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Backup erstellen&quot;</span><span class="p">,</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span><span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_cron&quot;</span><span class="p">,</span> <span class="n">cron_expression</span><span class="o">=</span><span class="s2">&quot;0 2 * * *&quot;</span><span class="p">),</span>
+<span class="p">))</span>
+
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="n">JobDefinition</span><span class="o">.</span><span class="n">generate_id</span><span class="p">(),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;verify-backup&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;agent&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Prüfe ob das letzte Backup vollständig ist&quot;</span><span class="p">,</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span>
+        <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_job_completed&quot;</span><span class="p">,</span>
+        <span class="n">watch_job_id</span><span class="o">=</span><span class="s2">&quot;job_backup&quot;</span><span class="p">,</span>           <span class="c1"># Reagiert auf diesen Job</span>
+    <span class="p">),</span>
+<span class="p">))</span>
+
+<span class="c1"># Error-Handler: Bei Backup-Fehler Notification senden</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="n">JobDefinition</span><span class="o">.</span><span class="n">generate_id</span><span class="p">(),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;backup-alert&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;agent&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Sende eine Warnung: Backup fehlgeschlagen&quot;</span><span class="p">,</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span>
+        <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_job_failed&quot;</span><span class="p">,</span>
+        <span class="n">watch_job_id</span><span class="o">=</span><span class="s2">&quot;job_backup&quot;</span><span class="p">,</span>
+    <span class="p">),</span>
+<span class="p">))</span>
+</code></pre></div>
+<p>Die Verkettung läuft über den <code>JobEventBus</code>: wenn <code>_fire_job</code> einen Job abschließt, emittiert er <code>job_completed</code>/<code>job_failed</code>/<code>job_timeout</code>, was den <code>OnJobEventEvaluator</code> für wartende Jobs benachrichtigt.</p>
+<hr />
+<h2 id="webhooks">Webhooks<a class="headerlink" href="#webhooks" title="Permanent link">&para;</a></h2>
+<h3 id="konzept">Konzept<a class="headerlink" href="#konzept" title="Permanent link">&para;</a></h3>
+<p>Webhook-Jobs warten auf einen externen HTTP-Trigger. Der Scheduler selbst startet keinen HTTP-Server — die Integration erfolgt über die bestehende Web-Infrastruktur (FastAPI/Flask/Nginx Worker).</p>
+<h3 id="job-mit-webhook-trigger-erstellen">Job mit Webhook-Trigger erstellen<a class="headerlink" href="#job-mit-webhook-trigger-erstellen" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="s2">&quot;job_deploy_hook&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;deploy-on-push&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;devops_agent&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Pull latest changes, run tests, deploy to staging&quot;</span><span class="p">,</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span>
+        <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_webhook_received&quot;</span><span class="p">,</span>
+        <span class="n">webhook_path</span><span class="o">=</span><span class="s2">&quot;/hooks/deploy&quot;</span><span class="p">,</span>        <span class="c1"># Für Routing-Referenz</span>
+    <span class="p">),</span>
+    <span class="n">timeout_seconds</span><span class="o">=</span><span class="mi">600</span><span class="p">,</span>
+<span class="p">))</span>
+</code></pre></div>
+<h3 id="webhook-endpoint-einrichten">Webhook-Endpoint einrichten<a class="headerlink" href="#webhook-endpoint-einrichten" title="Permanent link">&para;</a></h3>
+<p>Der Webhook muss von deiner Web-Anwendung aufgerufen werden. Beispiel mit FastAPI:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span><span class="p">,</span> <span class="n">Request</span>
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">()</span>
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/hooks/</span><span class="si">{hook_name}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">webhook_handler</span><span class="p">(</span><span class="n">hook_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">request</span><span class="p">:</span> <span class="n">Request</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Empfängt Webhooks und triggert den passenden Job.&quot;&quot;&quot;</span>
+
+    <span class="c1"># Finde Job anhand des webhook_path</span>
+    <span class="n">matching</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="n">j</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">list_jobs</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">j</span><span class="o">.</span><span class="n">trigger</span><span class="o">.</span><span class="n">trigger_type</span> <span class="o">==</span> <span class="s2">&quot;on_webhook_received&quot;</span>
+        <span class="ow">and</span> <span class="n">j</span><span class="o">.</span><span class="n">trigger</span><span class="o">.</span><span class="n">webhook_path</span> <span class="o">==</span> <span class="sa">f</span><span class="s2">&quot;/hooks/</span><span class="si">{</span><span class="n">hook_name</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="ow">and</span> <span class="n">j</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">&quot;active&quot;</span>
+    <span class="p">]</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">matching</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="s2">&quot;No matching job found&quot;</span><span class="p">},</span> <span class="mi">404</span>
+
+    <span class="c1"># Trigger den Job</span>
+    <span class="k">for</span> <span class="n">job</span> <span class="ow">in</span> <span class="n">matching</span><span class="p">:</span>
+        <span class="n">scheduler</span><span class="o">.</span><span class="n">trigger_webhook</span><span class="p">(</span><span class="n">job</span><span class="o">.</span><span class="n">job_id</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;triggered&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">j</span><span class="o">.</span><span class="n">job_id</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">matching</span><span class="p">]}</span>
+</code></pre></div>
+<h3 id="webhook-mit-payload-daten">Webhook mit Payload-Daten<a class="headerlink" href="#webhook-mit-payload-daten" title="Permanent link">&para;</a></h3>
+<p>Wenn der Webhook Daten mitliefert die in die Query einfließen sollen:</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/hooks/github&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">github_webhook</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">Request</span><span class="p">):</span>
+    <span class="n">payload</span> <span class="o">=</span> <span class="k">await</span> <span class="n">request</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+
+    <span class="c1"># Finde den Webhook-Job</span>
+    <span class="n">jobs</span> <span class="o">=</span> <span class="p">[</span><span class="n">j</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">list_jobs</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">j</span><span class="o">.</span><span class="n">trigger</span><span class="o">.</span><span class="n">webhook_path</span> <span class="o">==</span> <span class="s2">&quot;/hooks/github&quot;</span><span class="p">]</span>
+
+    <span class="k">for</span> <span class="n">job</span> <span class="ow">in</span> <span class="n">jobs</span><span class="p">:</span>
+        <span class="c1"># Query dynamisch anpassen (optional)</span>
+        <span class="n">branch</span> <span class="o">=</span> <span class="n">payload</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;ref&quot;</span><span class="p">,</span> <span class="s2">&quot;unknown&quot;</span><span class="p">)</span>
+        <span class="n">job</span><span class="o">.</span><span class="n">query</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;GitHub Push auf </span><span class="si">{</span><span class="n">branch</span><span class="si">}</span><span class="s2">: Deploy und Tests ausführen&quot;</span>
+
+        <span class="n">scheduler</span><span class="o">.</span><span class="n">trigger_webhook</span><span class="p">(</span><span class="n">job</span><span class="o">.</span><span class="n">job_id</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;triggered&quot;</span><span class="p">}</span>
+</code></pre></div>
+<h3 id="webhook-mit-toolboxv2-nginx-worker">Webhook mit ToolBoxV2 Nginx-Worker<a class="headerlink" href="#webhook-mit-toolboxv2-nginx-worker" title="Permanent link">&para;</a></h3>
+<p>Integration mit dem bestehenden Nginx + Python Worker Setup:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># In deinem Worker-Handler</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">handle_webhook</span><span class="p">(</span><span class="n">request_data</span><span class="p">:</span> <span class="nb">dict</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Wird vom Nginx-Worker aufgerufen.&quot;&quot;&quot;</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_app</span>
+
+    <span class="n">isaa</span> <span class="o">=</span> <span class="n">get_app</span><span class="p">()</span><span class="o">.</span><span class="n">get_mod</span><span class="p">(</span><span class="s2">&quot;isaa&quot;</span><span class="p">)</span>
+    <span class="n">scheduler</span> <span class="o">=</span> <span class="n">isaa</span><span class="o">.</span><span class="n">job_scheduler</span>
+
+    <span class="n">job_id</span> <span class="o">=</span> <span class="n">request_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;job_id&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">job_id</span><span class="p">:</span>
+        <span class="n">scheduler</span><span class="o">.</span><span class="n">trigger_webhook</span><span class="p">(</span><span class="n">job_id</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;ok&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+
+    <span class="c1"># Oder nach webhook_path matchen</span>
+    <span class="n">path</span> <span class="o">=</span> <span class="n">request_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;path&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">job</span> <span class="ow">in</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">list_jobs</span><span class="p">():</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">job</span><span class="o">.</span><span class="n">trigger</span><span class="o">.</span><span class="n">trigger_type</span> <span class="o">==</span> <span class="s2">&quot;on_webhook_received&quot;</span>
+            <span class="ow">and</span> <span class="n">job</span><span class="o">.</span><span class="n">trigger</span><span class="o">.</span><span class="n">webhook_path</span> <span class="o">==</span> <span class="n">path</span><span class="p">):</span>
+            <span class="n">scheduler</span><span class="o">.</span><span class="n">trigger_webhook</span><span class="p">(</span><span class="n">job</span><span class="o">.</span><span class="n">job_id</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;ok&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+</code></pre></div>
+<h3 id="webhook-absichern">Webhook absichern<a class="headerlink" href="#webhook-absichern" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">hmac</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+
+<span class="n">WEBHOOK_SECRET</span> <span class="o">=</span> <span class="s2">&quot;dein-geheimer-key&quot;</span>
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/hooks/</span><span class="si">{hook_name}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">secured_webhook</span><span class="p">(</span><span class="n">hook_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">request</span><span class="p">:</span> <span class="n">Request</span><span class="p">):</span>
+    <span class="n">body</span> <span class="o">=</span> <span class="k">await</span> <span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="p">()</span>
+
+    <span class="c1"># Signatur prüfen (GitHub-Style)</span>
+    <span class="n">signature</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;X-Hub-Signature-256&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+    <span class="n">expected</span> <span class="o">=</span> <span class="s2">&quot;sha256=&quot;</span> <span class="o">+</span> <span class="n">hmac</span><span class="o">.</span><span class="n">new</span><span class="p">(</span>
+        <span class="n">WEBHOOK_SECRET</span><span class="o">.</span><span class="n">encode</span><span class="p">(),</span> <span class="n">body</span><span class="p">,</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span>
+    <span class="p">)</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">hmac</span><span class="o">.</span><span class="n">compare_digest</span><span class="p">(</span><span class="n">signature</span><span class="p">,</span> <span class="n">expected</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="s2">&quot;Invalid signature&quot;</span><span class="p">},</span> <span class="mi">403</span>
+
+    <span class="c1"># ... Job triggern ...</span>
+</code></pre></div>
+<hr />
+<h2 id="dream-trigger-async-meta-learning">Dream-Trigger (Async Meta-Learning)<a class="headerlink" href="#dream-trigger-async-meta-learning" title="Permanent link">&para;</a></h2>
+<p>Spezielle Trigger für die Integration mit dem Dreamer-System:</p>
+<h3 id="on_agent_idle-auto-dream-bei-leerlauf"><code>on_agent_idle</code> — Auto-Dream bei Leerlauf<a class="headerlink" href="#on_agent_idle-auto-dream-bei-leerlauf" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Agent träumt automatisch nach 10 Minuten ohne Runs</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="n">JobDefinition</span><span class="o">.</span><span class="n">generate_id</span><span class="p">(),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;auto-dream&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;main_agent&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;__dream__&quot;</span><span class="p">,</span>                     <span class="c1"># Magic Query → Dreamer</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span>
+        <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_agent_idle&quot;</span><span class="p">,</span>
+        <span class="n">agent_idle_seconds</span><span class="o">=</span><span class="mi">600</span><span class="p">,</span>            <span class="c1"># 10 Min Leerlauf</span>
+    <span class="p">),</span>
+    <span class="n">timeout_seconds</span><span class="o">=</span><span class="mi">600</span><span class="p">,</span>
+<span class="p">))</span>
+</code></pre></div>
+<p>Der <code>OnAgentIdleEvaluator</code> wird von <code>ExecutionEngine._commit_run()</code> bei jedem abgeschlossenen Run zurückgesetzt. Erst wenn keine Runs mehr kommen, zählt der Timer hoch.</p>
+<h3 id="on_dream_start-on_dream_end-dream-lifecycle"><code>on_dream_start</code> / <code>on_dream_end</code> — Dream Lifecycle<a class="headerlink" href="#on_dream_start-on_dream_end-dream-lifecycle" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Logging-Job: Notification wenn Dream startet</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="n">JobDefinition</span><span class="o">.</span><span class="n">generate_id</span><span class="p">(),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;dream-started-notify&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;notification_agent&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Sende Slack-Nachricht: Dream-Zyklus gestartet&quot;</span><span class="p">,</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span><span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_dream_start&quot;</span><span class="p">),</span>
+<span class="p">))</span>
+
+<span class="c1"># Post-Processing: Skill-Export nach Dream-Ende</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="n">JobDefinition</span><span class="o">.</span><span class="n">generate_id</span><span class="p">(),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;post-dream-export&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;main_agent&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Exportiere alle neuen Skills im Anthropic-Format nach /srv/skills/&quot;</span><span class="p">,</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span><span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_dream_end&quot;</span><span class="p">),</span>
+<span class="p">))</span>
+</code></pre></div>
+<h3 id="on_dream_budget_hit-budget-erschopft"><code>on_dream_budget_hit</code> — Budget erschöpft<a class="headerlink" href="#on_dream_budget_hit-budget-erschopft" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Re-Schedule mit höherem Budget</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="n">JobDefinition</span><span class="o">.</span><span class="n">generate_id</span><span class="p">(),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;dream-budget-retry&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;main_agent&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;__dream__&quot;</span><span class="p">,</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span>
+        <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_dream_budget_hit&quot;</span><span class="p">,</span>
+        <span class="n">extra</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;dream_config&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;max_budget&quot;</span><span class="p">:</span> <span class="mi">10000</span><span class="p">}},</span>  <span class="c1"># Höheres Budget</span>
+    <span class="p">),</span>
+<span class="p">))</span>
+</code></pre></div>
+<h3 id="on_dream_skill_evolved-skill-wurde-verandert"><code>on_dream_skill_evolved</code> — Skill wurde verändert<a class="headerlink" href="#on_dream_skill_evolved-skill-wurde-verandert" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Publiziere evolved Skills ans Team</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="n">JobDefinition</span><span class="o">.</span><span class="n">generate_id</span><span class="p">(),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;publish-evolved-skills&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;main_agent&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Publiziere die neuesten Skill-Updates an alle gebundenen Agents&quot;</span><span class="p">,</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span><span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_dream_skill_evolved&quot;</span><span class="p">),</span>
+<span class="p">))</span>
+</code></pre></div>
+<h3 id="convenience-dream-job-schnell-setup">Convenience: Dream-Job Schnell-Setup<a class="headerlink" href="#convenience-dream-job-schnell-setup" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Nightly Dream um 03:00</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_dream_job</span><span class="p">(</span><span class="s2">&quot;main_agent&quot;</span><span class="p">)</span>
+
+<span class="c1"># Dream nach 10 Min Leerlauf</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_dream_job</span><span class="p">(</span>
+    <span class="s2">&quot;main_agent&quot;</span><span class="p">,</span>
+    <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_agent_idle&quot;</span><span class="p">,</span>
+    <span class="n">agent_idle_seconds</span><span class="o">=</span><span class="mi">600</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Dream nach jedem erfolgreichen Job</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_dream_job</span><span class="p">(</span>
+    <span class="s2">&quot;main_agent&quot;</span><span class="p">,</span>
+    <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_job_completed&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;post-job-dream&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Dream mit Custom-Config</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_dream_job</span><span class="p">(</span>
+    <span class="s2">&quot;main_agent&quot;</span><span class="p">,</span>
+    <span class="n">dream_config</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;max_budget&quot;</span><span class="p">:</span> <span class="mi">5000</span><span class="p">,</span>
+        <span class="s2">&quot;do_skill_split&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="s2">&quot;do_persona_evolve&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="s2">&quot;hard_stop&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="p">},</span>
+<span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="custom-trigger-erstellen">Custom Trigger erstellen<a class="headerlink" href="#custom-trigger-erstellen" title="Permanent link">&para;</a></h2>
+<p>Das <code>TriggerRegistry</code> Plugin-System erlaubt eigene Trigger:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.isaa.extras.jobs</span><span class="w"> </span><span class="kn">import</span> <span class="n">TriggerEvaluator</span><span class="p">,</span> <span class="n">JobDefinition</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">OnDiskSpaceLowEvaluator</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Feuert wenn Festplattenspeicher unter Threshold fällt.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_last_check</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">setup</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">job</span><span class="p">,</span> <span class="n">scheduler</span><span class="p">):</span>
+        <span class="k">pass</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">evaluate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">job</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">time</span><span class="o">,</span><span class="w"> </span><span class="nn">shutil</span>
+        <span class="n">now</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">now</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">_last_check</span> <span class="o">&lt;</span> <span class="mi">120</span><span class="p">:</span>  <span class="c1"># Alle 2 Min prüfen</span>
+            <span class="k">return</span> <span class="kc">False</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_last_check</span> <span class="o">=</span> <span class="n">now</span>
+
+        <span class="n">threshold_gb</span> <span class="o">=</span> <span class="p">(</span><span class="n">job</span><span class="o">.</span><span class="n">trigger</span><span class="o">.</span><span class="n">extra</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;threshold_gb&quot;</span><span class="p">,</span> <span class="mi">10</span><span class="p">)</span>
+        <span class="n">usage</span> <span class="o">=</span> <span class="n">shutil</span><span class="o">.</span><span class="n">disk_usage</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="p">)</span>
+        <span class="n">free_gb</span> <span class="o">=</span> <span class="n">usage</span><span class="o">.</span><span class="n">free</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1024</span> <span class="o">**</span> <span class="mi">3</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">free_gb</span> <span class="o">&lt;</span> <span class="n">threshold_gb</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">teardown</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">job</span><span class="p">):</span>
+        <span class="k">pass</span>
+
+<span class="c1"># Registrieren</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">trigger_registry</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="s2">&quot;on_disk_space_low&quot;</span><span class="p">,</span> <span class="n">OnDiskSpaceLowEvaluator</span><span class="p">())</span>
+
+<span class="c1"># Verwenden</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="n">JobDefinition</span><span class="o">.</span><span class="n">generate_id</span><span class="p">(),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;disk-cleanup&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;ops_agent&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Lösche alte Logs und temporäre Dateien, Speicherplatz ist knapp&quot;</span><span class="p">,</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span>
+        <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_disk_space_low&quot;</span><span class="p">,</span>
+        <span class="n">extra</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;threshold_gb&quot;</span><span class="p">:</span> <span class="mi">5</span><span class="p">},</span>
+    <span class="p">),</span>
+<span class="p">))</span>
+</code></pre></div>
+<h3 id="triggerevaluator-interface">TriggerEvaluator Interface<a class="headerlink" href="#triggerevaluator-interface" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TriggerEvaluator</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">setup</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">job</span><span class="p">:</span> <span class="n">JobDefinition</span><span class="p">,</span> <span class="n">scheduler</span><span class="p">:</span> <span class="n">JobScheduler</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Einmalig bei Job-Erstellung oder Scheduler-Start.&quot;&quot;&quot;</span>
+        <span class="o">...</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">evaluate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">job</span><span class="p">:</span> <span class="n">JobDefinition</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Jede Sekunde aufgerufen. True = Job soll feuern.&quot;&quot;&quot;</span>
+        <span class="o">...</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">teardown</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">job</span><span class="p">:</span> <span class="n">JobDefinition</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Bei Job-Löschung oder Scheduler-Stop.&quot;&quot;&quot;</span>
+        <span class="o">...</span>
+</code></pre></div>
+<p><strong>Wichtig:</strong> <code>evaluate()</code> wird im Tick-Loop aufgerufen (jede Sekunde). Teure Operationen immer throttlen (eigener <code>_last_check</code> Timestamp).</p>
+<hr />
+<h2 id="eventbus-job-events-abonnieren">EventBus — Job-Events abonnieren<a class="headerlink" href="#eventbus-job-events-abonnieren" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="c1"># Eigenen Listener registrieren</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">on_any_job_done</span><span class="p">(</span><span class="n">event</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="nb">dict</span><span class="p">):</span>
+    <span class="n">job_id</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;job_id&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Job </span><span class="si">{</span><span class="n">job_id</span><span class="si">}</span><span class="s2"> → </span><span class="si">{</span><span class="n">event</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">scheduler</span><span class="o">.</span><span class="n">event_bus</span><span class="o">.</span><span class="n">on</span><span class="p">(</span><span class="s2">&quot;job_completed&quot;</span><span class="p">,</span> <span class="n">on_any_job_done</span><span class="p">)</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">event_bus</span><span class="o">.</span><span class="n">on</span><span class="p">(</span><span class="s2">&quot;job_failed&quot;</span><span class="p">,</span> <span class="n">on_any_job_done</span><span class="p">)</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">event_bus</span><span class="o">.</span><span class="n">on</span><span class="p">(</span><span class="s2">&quot;job_timeout&quot;</span><span class="p">,</span> <span class="n">on_any_job_done</span><span class="p">)</span>
+
+<span class="c1"># Dream-Events</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">event_bus</span><span class="o">.</span><span class="n">on</span><span class="p">(</span><span class="s2">&quot;dream_start&quot;</span><span class="p">,</span> <span class="k">lambda</span> <span class="n">e</span><span class="p">,</span> <span class="n">d</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Dream started: </span><span class="si">{</span><span class="n">d</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">))</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">event_bus</span><span class="o">.</span><span class="n">on</span><span class="p">(</span><span class="s2">&quot;dream_end&quot;</span><span class="p">,</span> <span class="k">lambda</span> <span class="n">e</span><span class="p">,</span> <span class="n">d</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Dream finished: </span><span class="si">{</span><span class="n">d</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">))</span>
+
+<span class="c1"># Listener entfernen</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">event_bus</span><span class="o">.</span><span class="n">off</span><span class="p">(</span><span class="s2">&quot;job_completed&quot;</span><span class="p">,</span> <span class="n">on_any_job_done</span><span class="p">)</span>
+</code></pre></div>
+<p>Verfügbare Events:</p>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>Data</th>
+<th>Wann</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>job_completed</code></td>
+<td><code>{job_id, result}</code></td>
+<td>Job erfolgreich abgeschlossen</td>
+</tr>
+<tr>
+<td><code>job_failed</code></td>
+<td><code>{job_id, error}</code></td>
+<td>Job mit Exception beendet</td>
+</tr>
+<tr>
+<td><code>job_timeout</code></td>
+<td><code>{job_id}</code></td>
+<td>Job hat <code>timeout_seconds</code> überschritten</td>
+</tr>
+<tr>
+<td><code>dream_start</code></td>
+<td><code>{agent, config}</code></td>
+<td>Dreamer-Zyklus startet</td>
+</tr>
+<tr>
+<td><code>dream_end</code></td>
+<td><code>{agent, report}</code></td>
+<td>Dreamer-Zyklus beendet</td>
+</tr>
+<tr>
+<td><code>dream_budget_hit</code></td>
+<td><code>{agent, budget_used, clusters_remaining}</code></td>
+<td>Token-Budget erschöpft</td>
+</tr>
+<tr>
+<td><code>dream_skill_evolved</code></td>
+<td><code>{agent, skill_id, action}</code></td>
+<td>Skill evolved/created/split</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="headless-runner">Headless Runner<a class="headerlink" href="#headless-runner" title="Permanent link">&para;</a></h2>
+<p>Der <code>headless_runner</code> ist der Entry-Point für den OS-Scheduler. Er läuft ohne interaktive CLI.</p>
+<h3 id="manuell-aufrufen">Manuell aufrufen<a class="headerlink" href="#manuell-aufrufen" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>toolboxv2.mods.isaa.extras.jobs.headless_runner<span class="w"> </span>--jobs-file<span class="w"> </span>data/jobs.json
+</code></pre></div>
+<h3 id="was-er-tut">Was er tut<a class="headerlink" href="#was-er-tut" title="Permanent link">&para;</a></h3>
+<ol>
+<li><code>jobs.json</code> laden</li>
+<li>Für jeden aktiven Job prüfen ob der Trigger fällig ist (vereinfachte Evaluierung ohne vollen Scheduler)</li>
+<li>Fällige Jobs: minimale ISAA-Instanz starten, Agent laden, Query ausführen</li>
+<li>Ergebnisse in <code>jobs.json</code> zurückschreiben (<code>last_run_at</code>, <code>run_count</code>, <code>last_result</code>)</li>
+<li>Beenden</li>
+</ol>
+<h3 id="dream-jobs-im-headless-mode">Dream-Jobs im Headless Mode<a class="headerlink" href="#dream-jobs-im-headless-mode" title="Permanent link">&para;</a></h3>
+<p>Jobs mit <code>query="__dream__"</code> werden erkannt und statt <code>agent.a_run()</code> wird <code>agent.a_dream()</code> aufgerufen. Die <code>DreamConfig</code> kann über <code>trigger.extra.dream_config</code> übergeben werden.</p>
+<h3 id="unterstutzte-trigger-im-headless-mode">Unterstützte Trigger im Headless Mode<a class="headerlink" href="#unterstutzte-trigger-im-headless-mode" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Trigger</th>
+<th>Headless?</th>
+<th>Anmerkung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>on_time</code></td>
+<td>✅</td>
+<td>Einmalig, wird <code>expired</code> gesetzt</td>
+</tr>
+<tr>
+<td><code>on_interval</code></td>
+<td>✅</td>
+<td>Basiert auf <code>last_run_at</code></td>
+</tr>
+<tr>
+<td><code>on_cron</code></td>
+<td>✅</td>
+<td>Benötigt <code>croniter</code></td>
+</tr>
+<tr>
+<td><code>on_system_boot</code></td>
+<td>✅</td>
+<td>Feuert immer (Headless = nach Boot)</td>
+</tr>
+<tr>
+<td><code>on_cli_start</code></td>
+<td>❌</td>
+<td>Nur interaktive CLI</td>
+</tr>
+<tr>
+<td>Alle anderen</td>
+<td>❌</td>
+<td>Benötigen laufenden Scheduler</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="praxis-rezepte">Praxis-Rezepte<a class="headerlink" href="#praxis-rezepte" title="Permanent link">&para;</a></h2>
+<h3 id="nightly-backup-verify-dream">Nightly Backup + Verify + Dream<a class="headerlink" href="#nightly-backup-verify-dream" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># 1. Backup um 02:00</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="s2">&quot;nightly_backup&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;nightly-backup&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;ops&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Backup aller Datenbanken nach /srv/backups/&quot;</span><span class="p">,</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span><span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_cron&quot;</span><span class="p">,</span> <span class="n">cron_expression</span><span class="o">=</span><span class="s2">&quot;0 2 * * *&quot;</span><span class="p">),</span>
+    <span class="n">timeout_seconds</span><span class="o">=</span><span class="mi">600</span><span class="p">,</span>
+<span class="p">))</span>
+
+<span class="c1"># 2. Verify nach erfolgreichem Backup</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="n">JobDefinition</span><span class="o">.</span><span class="n">generate_id</span><span class="p">(),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;verify-backup&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;ops&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Prüfe Integrität des letzten Backups, melde Fehler&quot;</span><span class="p">,</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span>
+        <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_job_completed&quot;</span><span class="p">,</span>
+        <span class="n">watch_job_id</span><span class="o">=</span><span class="s2">&quot;nightly_backup&quot;</span><span class="p">,</span>
+    <span class="p">),</span>
+<span class="p">))</span>
+
+<span class="c1"># 3. Dream um 03:00 (nach Backup-Cycle)</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_dream_job</span><span class="p">(</span><span class="s2">&quot;ops&quot;</span><span class="p">,</span> <span class="n">cron_expression</span><span class="o">=</span><span class="s2">&quot;0 3 * * *&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="github-deploy-pipeline">GitHub Deploy Pipeline<a class="headerlink" href="#github-deploy-pipeline" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Webhook-Job</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="s2">&quot;github_deploy&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;deploy-on-push&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;devops&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Pull, test, deploy to staging&quot;</span><span class="p">,</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span>
+        <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_webhook_received&quot;</span><span class="p">,</span>
+        <span class="n">webhook_path</span><span class="o">=</span><span class="s2">&quot;/hooks/github-push&quot;</span><span class="p">,</span>
+    <span class="p">),</span>
+    <span class="n">timeout_seconds</span><span class="o">=</span><span class="mi">900</span><span class="p">,</span>
+<span class="p">))</span>
+
+<span class="c1"># Notification bei Fehler</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="n">JobDefinition</span><span class="o">.</span><span class="n">generate_id</span><span class="p">(),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;deploy-failed-alert&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;notification&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Deploy fehlgeschlagen — sende Discord-Alert&quot;</span><span class="p">,</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span>
+        <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_job_failed&quot;</span><span class="p">,</span>
+        <span class="n">watch_job_id</span><span class="o">=</span><span class="s2">&quot;github_deploy&quot;</span><span class="p">,</span>
+    <span class="p">),</span>
+<span class="p">))</span>
+</code></pre></div>
+<h3 id="config-hot-reload">Config Hot-Reload<a class="headerlink" href="#config-hot-reload" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="n">JobDefinition</span><span class="o">.</span><span class="n">generate_id</span><span class="p">(),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;config-reload&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;main&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Lade Konfiguration neu und validiere alle Einstellungen&quot;</span><span class="p">,</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span>
+        <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_file_changed&quot;</span><span class="p">,</span>
+        <span class="n">watch_path</span><span class="o">=</span><span class="s2">&quot;/srv/config&quot;</span><span class="p">,</span>
+        <span class="n">watch_patterns</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;*.yaml&quot;</span><span class="p">,</span> <span class="s2">&quot;*.toml&quot;</span><span class="p">],</span>
+    <span class="p">),</span>
+<span class="p">))</span>
+</code></pre></div>
+<h3 id="resilient-job-mit-fallback-kette">Resilient Job mit Fallback-Kette<a class="headerlink" href="#resilient-job-mit-fallback-kette" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Primär: API-Sync</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="s2">&quot;api_sync&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;api-sync&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;sync_agent&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Synchronisiere Daten von der externen API&quot;</span><span class="p">,</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span><span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_interval&quot;</span><span class="p">,</span> <span class="n">interval_seconds</span><span class="o">=</span><span class="mi">3600</span><span class="p">),</span>
+    <span class="n">timeout_seconds</span><span class="o">=</span><span class="mi">120</span><span class="p">,</span>
+<span class="p">))</span>
+
+<span class="c1"># Fallback: Bei Timeout → Retry nach 5 Min</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="n">JobDefinition</span><span class="o">.</span><span class="n">generate_id</span><span class="p">(),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;api-sync-retry&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;sync_agent&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Retry: Synchronisiere Daten (vorheriger Versuch timeout)&quot;</span><span class="p">,</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span>
+        <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_job_timeout&quot;</span><span class="p">,</span>
+        <span class="n">watch_job_id</span><span class="o">=</span><span class="s2">&quot;api_sync&quot;</span><span class="p">,</span>
+    <span class="p">),</span>
+<span class="p">))</span>
+
+<span class="c1"># Fallback: Bei Fehler → Offline-Cache nutzen</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">JobDefinition</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="o">=</span><span class="n">JobDefinition</span><span class="o">.</span><span class="n">generate_id</span><span class="p">(),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;api-sync-fallback&quot;</span><span class="p">,</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;sync_agent&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;API nicht erreichbar — nutze lokalen Cache und melde Status&quot;</span><span class="p">,</span>
+    <span class="n">trigger</span><span class="o">=</span><span class="n">TriggerConfig</span><span class="p">(</span>
+        <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_job_failed&quot;</span><span class="p">,</span>
+        <span class="n">watch_job_id</span><span class="o">=</span><span class="s2">&quot;api_sync&quot;</span><span class="p">,</span>
+    <span class="p">),</span>
+<span class="p">))</span>
+</code></pre></div>
+<hr />
+<h2 id="agent-tool-integration">Agent-Tool Integration<a class="headerlink" href="#agent-tool-integration" title="Permanent link">&para;</a></h2>
+<p>Wenn der Agent selbst Jobs erstellen soll (via <code>createJob</code> Tool im FlowAgent):</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Innerhalb der ExecutionEngine registrierte Tools:</span>
+<span class="n">createJob</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;weekly-report&quot;</span><span class="p">,</span>
+    <span class="n">trigger_type</span><span class="o">=</span><span class="s2">&quot;on_cron&quot;</span><span class="p">,</span>
+    <span class="n">cron_expression</span><span class="o">=</span><span class="s2">&quot;0 9 * * 1&quot;</span><span class="p">,</span>        <span class="c1"># Montags 09:00</span>
+    <span class="n">agent_name</span><span class="o">=</span><span class="s2">&quot;self&quot;</span><span class="p">,</span>                    <span class="c1"># Eigener Agent</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Erstelle Wochenreport und sende per Email&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">listJobs</span><span class="p">()</span>     <span class="c1"># Zeigt alle registrierten Jobs</span>
+<span class="n">deleteJob</span><span class="p">(</span><span class="n">job_id</span><span class="o">=</span><span class="s2">&quot;job_abc123&quot;</span><span class="p">)</span>
+
+<span class="c1"># WICHTIG: Immer nach createJob() ein listJobs() ausführen</span>
+<span class="c1"># um zu verifizieren dass der Job korrekt erstellt wurde.</span>
+</code></pre></div>
+<hr />
+<h2 id="debugging-monitoring">Debugging &amp; Monitoring<a class="headerlink" href="#debugging-monitoring" title="Permanent link">&para;</a></h2>
+<h3 id="logging">Logging<a class="headerlink" href="#logging" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;toolboxv2.mods.isaa.extras.jobs.job_manager&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="job-status-inspizieren">Job-Status inspizieren<a class="headerlink" href="#job-status-inspizieren" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="k">for</span> <span class="n">job</span> <span class="ow">in</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">list_jobs</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">job</span><span class="o">.</span><span class="n">name</span><span class="si">:</span><span class="s2">30s</span><span class="si">}</span><span class="s2"> | </span><span class="si">{</span><span class="n">job</span><span class="o">.</span><span class="n">status</span><span class="si">:</span><span class="s2">8s</span><span class="si">}</span><span class="s2"> | &quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;runs=</span><span class="si">{</span><span class="n">job</span><span class="o">.</span><span class="n">run_count</span><span class="si">}</span><span class="s2"> fails=</span><span class="si">{</span><span class="n">job</span><span class="o">.</span><span class="n">fail_count</span><span class="si">}</span><span class="s2"> | &quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;last=</span><span class="si">{</span><span class="n">job</span><span class="o">.</span><span class="n">last_result</span><span class="w"> </span><span class="ow">or</span><span class="w"> </span><span class="s1">&#39;never&#39;</span><span class="si">}</span><span class="s2"> | &quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;trigger=</span><span class="si">{</span><span class="n">job</span><span class="o">.</span><span class="n">trigger</span><span class="o">.</span><span class="n">trigger_type</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="p">)</span>
+</code></pre></div>
+<h3 id="registrierte-trigger-typen-auflisten">Registrierte Trigger-Typen auflisten<a class="headerlink" href="#registrierte-trigger-typen-auflisten" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="nb">print</span><span class="p">(</span><span class="n">scheduler</span><span class="o">.</span><span class="n">trigger_registry</span><span class="o">.</span><span class="n">available_types</span><span class="p">())</span>
+<span class="c1"># [&#39;on_time&#39;, &#39;on_interval&#39;, &#39;on_cron&#39;, &#39;on_cli_start&#39;, ...]</span>
+</code></pre></div>
+<h3 id="jobs-datei-manuell-inspizieren">Jobs-Datei manuell inspizieren<a class="headerlink" href="#jobs-datei-manuell-inspizieren" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>cat<span class="w"> </span>data/jobs.json<span class="w"> </span><span class="p">|</span><span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>json.tool
+</code></pre></div>
 
 
 
