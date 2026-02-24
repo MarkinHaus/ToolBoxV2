@@ -1669,6 +1669,7 @@ class SkillsManager:
 
             if similar_skill:
                 # MERGE into existing skill instead of creating duplicate
+                old_confidence = similar_skill.confidence
                 similar_skill.record_usage(True)  # +0.1 confidence
                 similar_skill.merge_with(Skill(
                     id="temp",
@@ -1681,6 +1682,29 @@ class SkillsManager:
 
                 _log.debug(f"[SkillsManager] Merged into existing skill: {similar_skill.name} "
                       f"(confidence: {similar_skill.confidence:.2f}, active: {similar_skill.is_active()})")
+
+                # Audit-Log: Skill Merged
+                try:
+                    from toolboxv2 import get_app
+                    app = get_app("CloudM.Isaa.Export")
+                    if app and hasattr(app, 'audit_logger'):
+                        app.audit_logger.log_action(
+                            user_id="system",
+                            action="agent.skill.merged",
+                            resource=f"/agent/skills/{similar_skill.id}",
+                            status="SUCCESS",
+                            details={
+                                "skill_id": similar_skill.id,
+                                "name": similar_skill.name,
+                                "confidence_before": old_confidence,
+                                "confidence_after": similar_skill.confidence,
+                                "triggers_added": triggers,
+                                "tools_used": tools_used,
+                            }
+                        )
+                except Exception:
+                    pass
+
                 return similar_skill
 
             # No similar skill - create new
@@ -1698,6 +1722,29 @@ class SkillsManager:
             self.skills[skill.id] = skill
             self._skill_embeddings_dirty = True
             _log.debug(f"[SkillsManager] Learned new skill: {skill.name} (confidence: {skill.confidence})")
+
+            # Audit-Log: Skill Learned
+            try:
+                from toolboxv2 import get_app
+                app = get_app("CloudM.Isaa.Export")
+                if app and hasattr(app, 'audit_logger'):
+                    app.audit_logger.log_action(
+                        user_id="system",
+                        action="agent.skill.learned",
+                        resource=f"/agent/skills/{skill.id}",
+                        status="SUCCESS",
+                        details={
+                            "skill_id": skill.id,
+                            "name": skill.name,
+                            "triggers": triggers,
+                            "confidence": skill.confidence,
+                            "tools_used": tools_used,
+                            "source": "learned",
+                        }
+                    )
+            except Exception:
+                pass
+
             return skill
 
         except Exception as e:

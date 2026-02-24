@@ -1,7 +1,6 @@
 from .AdminDashboard import Name as AdminDashboard
 from .email_services import Name as EmailServicesName
 from .extras import Name as ExtrasName
-from .hud_test import Name as HudGames
 from .LogInSystem import Name as LoginSystemName, open_web_login_web
 from .mini import *
 from .ModManager import Name as ModManagerName
@@ -13,6 +12,7 @@ from .UI.widget import get_widget
 from .UserAccountManager import Name as UserAccountManagerName
 from .UserDashboard import Name as UserDashboardName
 from .UserInstances import UserInstances
+from .FolderSync import Name as FolderSyncName
 
 tools = Tools
 Name = "CloudM"

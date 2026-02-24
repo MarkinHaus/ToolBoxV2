@@ -848,16 +848,71 @@ class ToolManager:
         self._total_calls += 1
 
         # Execute
-        if asyncio.iscoroutinefunction(entry.function):
-            result = await entry.function(**kwargs)
-        else:
-            result = entry.function(**kwargs)
+        import time
+        start_time = time.time()
 
-        # Handle coroutine result
-        if asyncio.iscoroutine(result):
-            result = await result
+        try:
+            if asyncio.iscoroutinefunction(entry.function):
+                result = await entry.function(**kwargs)
+            else:
+                result = entry.function(**kwargs)
 
-        return result
+            # Handle coroutine result
+            if asyncio.iscoroutine(result):
+                result = await result
+
+            execution_time = time.time() - start_time
+
+            # Audit-Log: Tool Executed Success
+            try:
+                from toolboxv2 import get_app
+                app = get_app("CloudM.Isaa.Export")
+                if app and hasattr(app, 'audit_logger'):
+                    app.audit_logger.log_action(
+                        user_id="system",
+                        action="agent.tool.executed",
+                        resource=f"/agent/tools/{name}",
+                        status="SUCCESS",
+                        details={
+                            "tool_name": name,
+                            "tool_source": entry.source,
+                            "args_count": len(kwargs),
+                            "execution_time_ms": round(execution_time * 1000, 2),
+                            "call_count": entry.call_count,
+                        }
+                    )
+            except Exception:
+                pass
+
+            return result
+
+        except Exception as e:
+            execution_time = time.time() - start_time
+            error_msg = str(e)
+            if len(error_msg) > 400:
+                error_msg = error_msg[:200] + " [...] " + error_msg[-200:]
+
+            # Audit-Log: Tool Executed Error
+            try:
+                from toolboxv2 import get_app
+                app = get_app("CloudM.Isaa.Export")
+                if app and hasattr(app, 'audit_logger'):
+                    app.audit_logger.log_action(
+                        user_id="system",
+                        action="agent.tool.error",
+                        resource=f"/agent/tools/{name}",
+                        status="FAILURE",
+                        details={
+                            "tool_name": name,
+                            "tool_source": entry.source,
+                            "error_type": type(e).__name__,
+                            "error_message": error_msg,
+                            "execution_time_ms": round(execution_time * 1000, 2),
+                        }
+                    )
+            except Exception:
+                pass
+            raise
 
     # =========================================================================
     # RULESET INTEGRATION

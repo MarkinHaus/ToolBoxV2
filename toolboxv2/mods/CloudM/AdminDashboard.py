@@ -2300,6 +2300,14 @@ async def update_user_admin(app: App, request: RequestData, data: dict=None, **k
             )
             if save_result.is_error():
                 return Result.default_internal_error(info="Failed to save user: " + str(save_result.info))
+            try:
+                admin_uid = getattr(admin_user, 'user_id', None) or getattr(admin_user, 'uid', None) or getattr(admin_user, 'clerk_user_id', None)
+                app.audit_logger.log_action(
+                    user_id=admin_uid, action="user.update.admin",
+                    resource=f"/admin/users/{uid_to_update}/update", status="SUCCESS",
+                    details={"updated_user": uid_to_update, "updated_by": admin_uid}
+                )
+            except Exception: pass
             return Result.ok(info="User updated successfully.")
     except Exception as e:
         app.print("Error updating Custom Auth user, trying Clerk: " + str(e), "DEBUG")
@@ -2326,6 +2334,14 @@ async def update_user_admin(app: App, request: RequestData, data: dict=None, **k
             )
             if save_result.is_error():
                 return Result.default_internal_error(info="Failed to save Clerk user: " + str(save_result.info))
+            try:
+                admin_uid = getattr(admin_user, 'user_id', None) or getattr(admin_user, 'uid', None) or getattr(admin_user, 'clerk_user_id', None)
+                app.audit_logger.log_action(
+                    user_id=admin_uid, action="user.update.admin",
+                    resource=f"/admin/users/{uid_to_update}/update", status="SUCCESS",
+                    details={"updated_user": uid_to_update, "updated_by": admin_uid}
+                )
+            except Exception: pass
             return Result.ok(info="User updated successfully.")
     except Exception as e:
         app.print("Error updating Clerk user, trying legacy: " + str(e), "DEBUG")
@@ -2355,6 +2371,14 @@ async def update_user_admin(app: App, request: RequestData, data: dict=None, **k
     save_result = db_helper_save_user(app, asdict(user_to_update))
     if save_result.is_error():
         return Result.default_internal_error(info="Failed to save user: " + str(save_result.info))
+    try:
+        admin_uid = getattr(admin_user, 'user_id', None) or getattr(admin_user, 'uid', None) or getattr(admin_user, 'clerk_user_id', None)
+        app.audit_logger.log_action(
+            user_id=admin_uid, action="user.update.admin",
+            resource=f"/admin/users/{uid_to_update}/update", status="SUCCESS",
+            details={"updated_user": uid_to_update, "updated_by": admin_uid}
+        )
+    except Exception: pass
     return Result.ok(info="User updated successfully.")
 
 
@@ -2462,6 +2486,14 @@ async def delete_user_admin(app: App, request: RequestData, data: dict=None, uid
         app.print("Error deleting legacy user: " + str(e), "DEBUG")
 
     if deleted:
+        try:
+            admin_uid = getattr(admin_user, 'user_id', None) or getattr(admin_user, 'uid', None) or getattr(admin_user, 'clerk_user_id', None)
+            app.audit_logger.log_action(
+                user_id=admin_uid, action="user.delete.admin",
+                resource=f"/admin/users/{uid_to_delete}/delete", status="SUCCESS",
+                details={"deleted_user": uid_to_delete, "deleted_by": admin_uid}
+            )
+        except Exception: pass
         return Result.ok(info="User deleted successfully.")
     else:
         return Result.default_user_error(info="User with UID " + str(uid_to_delete) + " not found.")
@@ -2481,6 +2513,14 @@ async def reload_module_admin(app: App, request: RequestData, data: dict=None, m
             else:
                 app.remove_mod(module_name)
                 app.save_load(module_name)
+            try:
+                admin_uid = getattr(admin_user, 'user_id', None) or getattr(admin_user, 'uid', None) or getattr(admin_user, 'clerk_user_id', None)
+                app.audit_logger.log_action(
+                    user_id=admin_uid, action="admin.module.reload",
+                    resource=f"/admin/modules/{module_name}", status="SUCCESS",
+                    details={"module": module_name}
+                )
+            except Exception: pass
             return Result.ok(info="Module " + str(module_name) + " reload process completed.")
         else:
             return Result.default_user_error(info="Module " + str(module_name) + " not found.")

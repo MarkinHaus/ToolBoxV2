@@ -20,6 +20,7 @@ Author: FlowAgent V3
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 import hashlib
@@ -366,7 +367,6 @@ class PersonaProfile:
     temperature: float | None = None    # None = use model default
     max_iterations_factor: float = 1.0  # multiplied with base max_iterations
     verification_level: str = "basic"   # "none" | "basic" | "strict"
-    iteration_budget_factor: float = 1.0
     source: str = "default"             # "default" | "matched" | "dreamer"
 
     def apply_max_iterations(self, base: int) -> int:
@@ -567,7 +567,7 @@ class ExecutionContext:
 
     # Tool Management (dynamic tools, separate from static)
     dynamic_tools: List[ToolSlot] = field(default_factory=list)
-    max_dynamic_tools: int = 5
+    max_dynamic_tools: int = os.getenv("MAX_DYNAMIC_TOOLS", 5)
     tool_relevance_cache: Dict[str, float] = field(default_factory=dict)
     tool_category_cache: Dict[str, Set[str]] = field(default_factory=dict)
 
@@ -1572,9 +1572,6 @@ BEISPIELE:
             is_vfs = f_name in VFS_TOOL_NAMES
             is_loaded = f_name in ctx.get_dynamic_tool_names()
 
-            if is_vfs:
-                ctx.current_iteration -= 1
-
             if is_vfs or is_loaded:
                 try:
                     result = await self.agent.arun_function(f_name, **f_args)
@@ -2567,6 +2564,15 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                 chunk["iter"] = ctx.current_iteration
                 chunk["max_iter"] = max_iterations
                 chunk["is_sub"] = is_sub
+                # Token budget info
+                chunk["tokens_used"] = self._calculate_context_load(ctx)
+                chunk["tokens_max"] = self._get_max_context_tokens()
+                # Skills & Persona
+                chunk["skills"] = [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
+                chunk["persona"] = ctx.active_persona.name if ctx.active_persona else "default"
+                chunk["persona_source"] = ctx.active_persona.source if ctx.active_persona else "default"
+                chunk["persona_model"] = ctx.active_persona.model_preference if ctx.active_persona else "fast"
+                chunk["persona_iterations_factor"] = ctx.active_persona.max_iterations_factor
                 return chunk
 
             while ctx.current_iteration < max_iterations:

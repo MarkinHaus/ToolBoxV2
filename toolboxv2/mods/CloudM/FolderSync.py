@@ -32,7 +32,7 @@ try:
     from toolboxv2 import App, RequestData, Result, get_app, get_logger
     from toolboxv2.utils.security.cryp import Code
     # Wir nutzen den MinIO Manager aus dem Context
-    from .minio_manager import MinIOManager, MinIOConfig
+    from toolboxv2.utils.extras.db.minio_manager import MinIOManager, MinIOConfig
 except ImportError:
     # Stubs für Standalone-Test
     class App:

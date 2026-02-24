@@ -1989,6 +1989,7 @@ class ModernMenuManager:
             name="MODULE OPERATIONS",
             icon="📦",
             items=[
+                MenuItem("0", "🚀 Start Dev Runner", self._start_dev_runner, icon="▶️"),
                 MenuItem("1", "List all modules", self._list_modules, icon="📋"),
                 MenuItem("2", "Install/Update module", self._install_module, icon="📥"),
                 MenuItem("3", "Uninstall module", self._uninstall_module, icon="🗑️"),
@@ -2044,6 +2045,56 @@ class ModernMenuManager:
         self.add_category(registry_ops)
 
     # =================== Action Handlers ===================
+    async def _start_dev_runner(self):
+        """Start a module in Dev Runner mode."""
+        # 1. Modul auswählen
+        mods = self.app_instance.get_all_mods()
+        if not mods:
+            await show_message("No Modules", "No modules found.", "warning")
+            return
+
+        choices = [(mod, mod) for mod in mods]
+        module_name = await show_choice(
+            "Select Module",
+            "Choose module to launch in Dev Mode:",
+            choices
+        )
+
+        if not module_name:
+            return
+
+        # 2. Port abfragen
+        port = await show_input("Port", "Select Port:", "5000")
+        if not port: port = "5000"
+
+        # 3. Bestätigen & Starten
+        if not await show_confirm(
+            "Launch Dev Runner",
+            f"Starting '{module_name}' on port {port}.\n\n"
+            "This will take over the current process.\n"
+            "Stop with Ctrl+C.\n\nLaunch?"
+        ):
+            return
+
+        # Clear screen for clean runner output
+        print('\033[2J\033[H')
+        print(f"🚀 Launching Dev Runner for {module_name}...")
+
+        # Sys Argv Hack für Dev Runner argparse
+        import sys
+        sys.argv = ["dev_runner.py", module_name, "--port", port]
+
+        try:
+            from toolboxv2.utils.extras.dev_runner import main as dev_run
+            # Da Dev Runner uvicorn startet, blockiert dieser Aufruf
+            dev_run()
+        except ImportError:
+            await show_message("Error", "Could not import dev_runner. Please ensure toolboxv2 is up to date.", "error")
+        except Exception as e:
+            await show_message("Error", f"Dev Runner crashed: {e}", "error")
+
+        # Wenn Dev Runner beendet wird, kehren wir hierher zurück (falls nicht sys.exit aufgerufen wurde)
+        input("\nPress Enter to return to menu...")
 
     async def _list_modules(self):
         """List all modules."""
@@ -4298,6 +4349,36 @@ def list_module_templates(app: Optional[App] = None) -> Result:
 
 @export(mod_name=Name, name="mods")
 async def main(app, command="", module_name="", **kwargs):
+    import sys
+
+    # Liste der reservierten Befehle
+    KNOWN_COMMANDS = [
+        "list", "manager", "build", "install",
+        "gen-configs", "gen-config", "create", "templates", "help"
+    ]
+
+    # LOGIK: Wenn ein Command da ist, aber kein bekannter Befehl -> Start als Modul im Dev Runner
+    if command and command not in KNOWN_COMMANDS:
+        print(f"🚀 Starting Dev Runner for module: \033[1m{command}\033[0m")
+
+        # sys.argv manipulieren, damit der argparse im dev_runner das Modul als Argument sieht
+        # Wir simulieren den Aufruf: python dev_runner.py <ModulName>
+        sys.argv = ["dev_runner.py", command, f'--port {kwargs.get("port", "8080")}']
+
+        # Dev Runner starten
+        try:
+            from toolboxv2.utils.extras.dev_runner import main as dev_run
+            dev_run()
+        except ImportError:
+            # Fallback falls Import Pfad anders aufgelöst werden muss
+            try:
+                # Versuch über direkten Modul-Import
+                import importlib
+                dev_runner = importlib.import_module("toolboxv2.utils.extras.dev_runner")
+                dev_runner.main()
+            except Exception as e:
+                app.print(f"❌ Could not start Dev Runner: {e}")
+        return
 
     if command:
         if command == "list":
@@ -4309,14 +4390,21 @@ async def main(app, command="", module_name="", **kwargs):
         elif command == "manager":
             await interactive_manager(app)
 
+        elif command == "build":
+            target = module_name
+            if not target and len(sys.argv) > 2: target = sys.argv[2]
+            if target:
+                await make_installer(app, target, upload=False)
+            else:
+                print("Usage: tb mods build <module_name>")
 
-        elif command == "build" and module_name:
-            module_name = module_name
-            await make_installer(app, module_name, upload=False)
-
-        elif command == "install" and module_name:
-            module_name = module_name
-            await installer(app, module_name)
+        elif command == "install":
+            target = module_name
+            if not target and len(sys.argv) > 2: target = sys.argv[2]
+            if target:
+                await installer(app, target)
+            else:
+                print("Usage: tb mods install <module_name>")
 
         elif command == "gen-configs":
             # Generate configs for all modules
@@ -4332,65 +4420,66 @@ async def main(app, command="", module_name="", **kwargs):
                 overwrite=overwrite_mode
             )
 
-        elif command == "gen-config" and module_name:
-            # Generate config for specific module
-            force_mode = "--force" in kwargs
+        elif command == "gen-config":
+            target = module_name
+            if not target and len(sys.argv) > 2: target = sys.argv[2]
 
-            await generate_single_module_config(
+            if target:
+                force_mode = "--force" in kwargs
+                await generate_single_module_config(
+                    app=app,
+                    module_name=target,
+                    force=force_mode
+                )
+            else:
+                print("Usage: tb mods gen-config <module_name>")
+
+        elif command == "create":
+            # Ermittle Modulnamen (Prio: Argument -> sys.argv)
+            target_name = module_name
+            if not target_name and len(sys.argv) > 2 and not sys.argv[2].startswith("--"):
+                target_name = sys.argv[2]
+
+            if not target_name:
+                print("Usage: tb mods create <module_name> [options]")
+                print("\nOptions:")
+                print("  --type=<type>          Module type (default: basic)")
+                print("  --desc=<description>   Module description")
+                print("  --version=<version>    Initial version (default: 0.0.1)")
+                print("  --location=<path>      Where to create (default: ./mods)")
+                print("  --author=<author>      Module author")
+                print("  --external             Create external to toolbox")
+                print("  --no-config            Don't create tbConfig.yaml")
+                print("\nAvailable types:")
+                result = list_module_templates(app)
+                for t in result.get()['templates']:
+                    print(f"  - {t['name']:<20} {t['description']}")
+                sys.exit(1)
+
+            from toolboxv2 import init_cwd, tb_root_dir
+            # Parse options
+            options = {
+                "module_type": kwargs.get("type", "basic"),
+                "description": kwargs.get("desc", ""),
+                "version": kwargs.get("version", "0.0.1"),
+                "location": kwargs.get("location", "./mods" if str(init_cwd) in str(tb_root_dir) else str(init_cwd)),
+                "author": kwargs.get("author", ""),
+                "external": kwargs.get("--external", False),
+                "create_config": not kwargs.get("--no-config", False)
+            }
+
+            result = await create_module_from_blueprint(
                 app=app,
-                module_name=module_name,
-                force=force_mode
+                module_name=target_name,
+                **options
             )
 
-            if command == "create":
-                if len(sys.argv) < 3:
-                    print("Usage: python CloudM.py create <module_name> [options]")
-                    print("\nOptions:")
-                    print("  --type=<type>          Module type (default: basic)")
-                    print("  --desc=<description>   Module description")
-                    print("  --version=<version>    Initial version (default: 0.0.1)")
-                    print("  --location=<path>      Where to create (default: ./mods)")
-                    print("  --author=<author>      Module author")
-                    print("  --external             Create external to toolbox")
-                    print("  --no-config            Don't create tbConfig.yaml")
-                    print("\nAvailable types:")
-                    result = list_module_templates(app)
-                    for t in result.get('templates'):
-                        print(f"  - {t['name']:<20} {t['description']}")
-                    sys.exit(1)
-
-                module_name = sys.argv[2]
-
-                # Parse options
-                options = {
-                    **kwargs,
-                    "module_type": "basic",
-                    "description": "",
-                    "version": "0.0.1",
-                    "location": "./mods",
-                    "author": "",
-                    "external": False,
-                    "create_config": True
-                }
-
-                for arg in kwargs:
-                    if arg == "--external":
-                        options["external"] = True
-                    elif arg == "--no-config":
-                        options["create_config"] = False
-
-                result = await create_module_from_blueprint(
-                    app=app,
-                    module_name=module_name,
-                    **options
-                )
-
-                print(result)
+            print(result)
 
         elif command == "templates":
             # List available templates
             result = list_module_templates(app)
-            templates = result.get('templates')
+            templates = result.get()['templates']
 
             print("\n📦 Available Module Templates:")
             print("=" * 80)
@@ -4403,19 +4492,17 @@ async def main(app, command="", module_name="", **kwargs):
 
         else:
             print("Usage:")
-            print("  tb -c CloudM mods list              - List all modules")
-            print("  tb -c CloudM mods manager           - Interactive manager")
-            print("  tb -c CloudM mods build <module>    - Build module installer")
-            print("  tb -c CloudM mods install <module>  - Install module")
+            print("  tb mods <Module>          - 🚀 Start Dev Runner for a Module")
+            print("  tb mods list              - List all modules")
+            print("  tb mods manager           - Interactive manager")
+            print("  tb mods build <module>    - Build module installer")
+            print("  tb mods install <module>  - Install module")
             print("\n  Config Generation:")
-            print("  tb -c CloudM mods gen-configs --kwargs         - Generate configs for all modules")
-            print("                   [--force=true]                     - Overwrite without asking")
-            print("                   [--non-interactive=true]           - Don't ask for confirmation")
-            print("                   [--no-backup=true]                 - Don't create backups")
-            print("  tb -c CloudM mods gen-config <module> --kwargs [--force=true] - Generate config for specific module")
+            print("  tb mods gen-configs --kwargs         - Generate configs for all modules")
+            print("  tb mods gen-config <module> --kwargs - Generate config for specific module")
             print("\n  Module Creation:")
-            print("  tb -c CloudM mods create <module_name> --kwargs [options] - Create new module from template")
-            print("  tb -c CloudM mods templates                      - List available templates")
+            print("  tb mods create <module_name> --kwargs [options] - Create new module from template")
+            print("  tb mods templates                      - List available templates")
 
     else:
         # Run interactive manager by default

@@ -348,7 +348,7 @@ async def cmd_list_ssh(args):
     return 0
 
 
-def main():
+async def main():
     parser = argparse.ArgumentParser(
         prog="container-manager",
         description="ContainerManager CLI - Manage Docker containers"
@@ -451,11 +451,11 @@ def main():
 
     cmd_func = commands.get(args.command)
     if cmd_func:
-        return asyncio.run(cmd_func(args))
+        return await cmd_func(args)
 
     parser.print_help()
     return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(asyncio.run(main()))

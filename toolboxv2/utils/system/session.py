@@ -19,6 +19,10 @@ from toolboxv2.utils.singelton_class import Singleton
 from toolboxv2.utils.system.getting_and_closing_app import get_app, get_logger
 from toolboxv2.utils.system.types import Result
 
+# NEU: Blob Storage & Security Imports
+from toolboxv2.utils.extras.blobs import BlobStorage, BlobFile, StorageMode
+from toolboxv2.utils.security.cryp import Code
+
 
 class RequestSession:
     """Wrapper for request session data"""
@@ -41,9 +45,8 @@ class RequestSession:
 
 class Session(metaclass=Singleton):
     """
-    Session manager for ToolBox V2 with Custom Auth (CloudM.Auth).
-    Handles JWT tokens and API communication.
-    Token storage: local JSON file in user config dir (CLI has no DB access).
+    Session manager for ToolBox V2.
+    Uses Encrypted BlobStorage for persistent CLI sessions.
     """
 
     def __init__(self, username=None, base=None):
@@ -55,12 +58,16 @@ class Session(metaclass=Singleton):
         self.access_token: Optional[str] = None
         self.refresh_token: Optional[str] = None
 
-        # Set base URL
+        # Determine Base URL (Priority: Arg > Env > Default)
         if base is None:
             base = os.environ.get("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app")
-        if base is not None and base.endswith("/api/"):
+
+        if base and base.endswith("/api/"):
             base = base.replace("api/", "")
-        self.base = base.rstrip('/')
+        self.base = base.rstrip('/') if base else None
+
+        # Initialize Storage Provider
+        self._storage = self._init_storage()
 
     @property
     def session(self):
@@ -87,78 +94,129 @@ class Session(metaclass=Singleton):
             self._session = ClientSession()
             self._event_loop = current_loop
 
-    # =================== Token Storage (local JSON file) ===================
+    # =================== Secure Storage (BlobFile) ===================
 
-    def _get_token_dir(self) -> Path:
-        """Get directory for CLI session storage."""
-        config_dir = Path(os.environ.get("TB_DATA_DIR", ".")) / ".data" / "cli_sessions"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        return config_dir
+    def _init_storage(self) -> BlobStorage:
+        """Initialize BlobStorage for CLI sessions."""
+        # Use TB_DATA_DIR or fallback to relative .data
+        data_dir = os.environ.get("TB_DATA_DIR", None)
+        if not data_dir:
+            # Fallback logic identical to App setup
+            data_dir = str(Path(__file__).parent.parent.parent.parent / ".data")
 
-    def _get_token_path(self) -> Path:
-        """Get file path for session token."""
+        storage_path = Path(data_dir) / "cli_sessions"
+        return BlobStorage(
+            mode=StorageMode.OFFLINE,
+            storage_directory=str(storage_path)
+        )
+
+    def _get_blob_name(self) -> str:
+        """Determines the blob name (filename)."""
+        # Default to 'default' if no username, allows basic session persistence without login
         safe_name = self.username or "default"
-        # Simple safe filename (no crypto dependency needed)
+        # Sanitize filename
         safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in safe_name)[:32]
-        return self._get_token_dir() / f"{safe_name}_session.json"
+        return f"{safe_name}_session.json"
+
+    def _get_encryption_key(self) -> str:
+        """
+        Returns the Device Key (DK) for encryption.
+        This binds the session file to the current hardware.
+        """
+        try:
+            return Code.DK()()
+        except Exception as e:
+            get_logger().warning(f"Could not generate Device Key, falling back to weak key: {e}")
+            return "fallback-weak-key-cli"
 
     def _save_session_token(self, access_token: str, refresh_token: str = "", user_id: str = None):
-        """Save session tokens to local JSON file."""
+        """Save session tokens to encrypted BlobFile."""
         try:
-            path = self._get_token_path()
             session_data = {
                 "access_token": access_token,
                 "refresh_token": refresh_token,
                 "user_id": user_id or self.user_id or "",
                 "username": self.username or "",
+                "base_url": self.base,  # Persist the URL used for this token
+                "updated_at": str(asyncio.get_event_loop().time())
             }
-            path.write_text(json.dumps(session_data, indent=2))
+            key = self._get_encryption_key()
+            blob_name = self._get_blob_name()
+            with BlobFile(blob_name, mode="w", key=key, storage=self._storage) as blob:
+                blob.write_json(session_data)
             self.access_token = access_token
             self.refresh_token = refresh_token
             self.user_id = user_id
             return True
         except Exception as e:
-            get_logger().error(f"Failed to save session token: {e}")
+            get_logger().error(f"Failed to save secure session token: {e}")
             return False
 
     def _load_session_token(self) -> Optional[dict]:
-        """Load session tokens from local JSON file."""
+        """Load session tokens from encrypted BlobFile."""
         try:
-            path = self._get_token_path()
-            if not path.exists():
+            blob_name = self._get_blob_name()
+
+            # Check existence via storage listing to avoid empty file errors
+            blobs = self._storage.list_blobs(prefix=blob_name.split('_')[0])
+            if not blobs:
                 return None
-            session_data = json.loads(path.read_text())
+
+            # Use the first matching blob
+            blob_name = blobs[0]['blob_id']
+
+            key = self._get_encryption_key()
+
+            with BlobFile(blob_name, mode="r", key=key, storage=self._storage) as blob:
+                session_data = blob.read_json()
+
+            if not session_data:
+                return None
+
             self.access_token = session_data.get("access_token")
             self.refresh_token = session_data.get("refresh_token")
             self.user_id = session_data.get("user_id")
+
+            # Restore username and base URL if missing in current instance
+            if not self.username:
+                self.username = session_data.get("username")
+
+            # Critical: Restore the base URL this token belongs to if not explicitly overridden
+            saved_base = session_data.get("base_url")
+            if saved_base and "TOOLBOXV2_REMOTE_BASE" not in os.environ:
+                self.base = saved_base
+
             return session_data
         except Exception as e:
-            get_logger().debug(f"No session token found: {e}")
+            get_logger().debug(f"No valid session token found or decryption failed: {e}")
         return None
 
     def _clear_session_token(self):
-        """Clear session token file."""
+        """Delete the session BlobFile."""
         try:
-            path = self._get_token_path()
-            if path.exists():
-                path.unlink()
+            blob_name = self._get_blob_name()
+            # Try to find and delete the blob
+            blobs = self._storage.list_blobs(prefix=blob_name.split('_')[0])
+            if blobs:
+                self._storage.delete_blob(blobs[0]['blob_id'])
+
             self.access_token = None
             self.refresh_token = None
             self.user_id = None
             return True
-        except:
+        except Exception as e:
+            get_logger().error(f"Error clearing session: {e}")
             return False
 
     # =================== Authentication ===================
 
     async def login(self, verbose=False) -> bool:
         """
-        Login using stored JWT access token.
-        Returns True if session is valid.
+        Login using stored JWT access token (Auto-Login).
         """
         self._ensure_session()
 
-        # Try to load existing session
+        # 1. Load Persistence
         session_data = self._load_session_token()
 
         if not session_data or not session_data.get("access_token"):
@@ -169,40 +227,49 @@ class Session(metaclass=Singleton):
         token = session_data.get("access_token")
 
         try:
-            # Verify session with backend
-            async with self.session.request(
-                "POST",
-                url=f"{self.base}/api/CloudM.Auth/validate_session",
-                json={"token": token}
-            ) as response:
+            # 2. Validate Session with Backend
+            # If base is localhost/empty, we might be offline or local-only.
+            if not self.base:
+                get_logger().warning("No remote base URL configured for session.")
+                return False
+
+            url = f"{self.base}/api/CloudM.Auth/validate_session"
+
+            async with self.session.request("POST", url=url, json={"token": token}) as response:
                 if response.status == 200:
                     result = await response.json()
                     if result.get("result", {}).get("authenticated"):
-                        get_logger().info("Session validated successfully")
+                        if verbose:
+                            print(f"✅ Session restored for {self.username} @ {self.base}")
                         self.valid = True
-                        self.username = session_data.get("username") or result.get("result", {}).get("username")
+                        # Update username from server truth
+                        self.username = result.get("result", {}).get("username", self.username)
                         return True
 
-                # Try token refresh
+                # 3. Try Refresh
                 refresh = session_data.get("refresh_token")
                 if refresh:
-                    refreshed = await self._try_refresh(refresh)
-                    if refreshed:
+                    if verbose:
+                        print("🔄 Access token expired, refreshing...")
+                    if await self._try_refresh(refresh):
+                        if verbose:
+                            print("✅ Session refreshed.")
                         return True
 
-                # Session invalid
-                get_logger().warning("Session validation failed")
+                # 4. Fail
+                get_logger().warning("Session validation failed (Invalid Token).")
                 self._clear_session_token()
                 self.valid = False
                 return False
 
-        except ClientConnectorError as e:
+        except ClientConnectorError:
             if verbose:
-                print(f"Server not reachable: {e}")
+                print(f"⚠️  Server {self.base} unreachable. Working offline.")
+            # In offline mode, we might trust the token temporarily if we just want to load local flow
             return False
         except Exception as e:
             if verbose:
-                print(f"Connection error: {e}")
+                print(f"❌ Connection error: {e}")
             return False
 
     async def _try_refresh(self, refresh_token: str) -> bool:

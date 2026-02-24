@@ -201,50 +201,50 @@
 }
 
 
-/* --- LIGHT THEME (Gray Light Mode) --- */
+/* --- LIGHT THEME (Water Machine - Blaugrün/Cyan) --- */
 [data-theme="light"] {
   color-scheme: light;
 
-  /* Backgrounds - Gray Light statt reinem Weiß */
-  --bg-base: #f0f2f5;
-  --bg-surface: rgba(255, 255, 255, 0.9);
-  --bg-elevated: rgba(255, 255, 255, 0.95);
-  --bg-sunken: rgba(0, 0, 0, 0.04);
+  /* Backgrounds - Water Machine Blaugrün/Cyan */
+  --bg-base: #d8e8ec;
+  --bg-surface: rgba(220, 235, 242, 0.85);
+  --bg-elevated: rgba(230, 242, 248, 0.92);
+  --bg-sunken: rgba(0, 0, 0, 0.05);
 
-  /* Text Colors - Dunkler für Light Mode */
-  --text-main: rgba(30, 30, 35, 0.85);
-  --text-label: rgba(30, 30, 35, 0.45);
-  --text-muted: rgba(30, 30, 35, 0.35);
+  /* Text Colors - Dunkel für Light Mode */
+  --text-main: #0a1a1f;
+  --text-label: #4a5a60;
+  --text-muted: #7a8a90;
 
-  /* Glass Tokens (Light) */
-  --glass-bg: rgba(255, 255, 255, 0.7);
-  --glass-border: rgba(0, 0, 0, 0.08);
+  /* Glass Tokens (Light - Cyan-Wasser) */
+  --glass-bg: rgba(215, 235, 245, 0.7);
+  --glass-border: rgba(100, 150, 170, 0.15);
 
   /* Elevation (Light) */
-  --highlight-inset: inset 0 1px 0 rgba(255, 255, 255, 0.7);
-  --shadow-micro: 0 2px 6px rgba(0, 0, 0, 0.08);
+  --highlight-inset: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  --shadow-micro: 0 2px 8px rgba(50, 100, 120, 0.15);
 
   /* Borders */
-  --border-subtle: rgba(0, 0, 0, 0.08);
-  --border-active: color-mix(in srgb, var(--primary) 40%, transparent);
+  --border-subtle: rgba(100, 150, 170, 0.2);
+  --border-active: var(--primary);
 
   /* Surface Colors (via color-mix - light mode) */
-  --surface-badge: color-mix(in srgb, var(--primary) 12%, transparent);
-  --surface-hover: color-mix(in srgb, var(--primary) 6%, transparent);
-  --surface-active: color-mix(in srgb, var(--primary) 15%, transparent);
+  --surface-badge: color-mix(in srgb, var(--primary) 12%, #d0e5f0);
+  --surface-hover: color-mix(in srgb, var(--primary) 8%, #d8e8ec);
+  --surface-active: color-mix(in srgb, var(--primary) 18%, #c0dce8);
 
   /* Input Fields */
-  --input-bg: rgba(255, 255, 255, 0.8);
-  --input-border: rgba(0, 0, 0, 0.12);
+  --input-bg: rgba(255, 255, 255, 0.85);
+  --input-border: rgba(100, 150, 170, 0.25);
 
   /* Scrollbar */
-  --scrollbar-track: rgba(0, 0, 0, 0.06);
-  --scrollbar-thumb: rgba(0, 0, 0, 0.2);
-  --scrollbar-hover: rgba(0, 0, 0, 0.35);
+  --scrollbar-track: rgba(100, 150, 170, 0.1);
+  --scrollbar-thumb: rgba(100, 150, 170, 0.3);
+  --scrollbar-hover: rgba(80, 130, 160, 0.5);
 
-  /* 3D Background (Light) */
-  --theme-bg-sun: #ffffff;
-  --theme-bg-light: #537FE7;
+  /* 3D Background (Light - Water Machine) */
+  --theme-bg-sun: #d0f0ff;
+  --theme-bg-light: #40a0c0;
 }
 
 
@@ -535,6 +535,121 @@ button:disabled,
   opacity: 0.4;
   cursor: not-allowed;
   transform: none !important;
+}
+
+
+/* ==========================================================================
+   7.5 RADIO BUTTONS & CHECKBOXES
+   ========================================================================== */
+
+/* Radio Buttons */
+input[type="radio"],
+input[type="checkbox"] {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin: 0;
+  background: var(--input-bg);
+  border: 2px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-default);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Radio Button - Round */
+input[type="radio"] {
+  border-radius: var(--radius-full);
+}
+
+/* Radio Button - Checked State (Dark Mode) */
+[data-theme="dark"] input[type="radio"]:checked {
+  background: var(--primary);
+  border-color: var(--primary);
+  box-shadow:
+    0 0 0 3px var(--surface-badge),
+    inset 0 0 0 2px var(--bg-base);
+}
+
+/* Radio Button - Checked State (Light Mode) */
+[data-theme="light"] input[type="radio"]:checked {
+  background: var(--primary);
+  border-color: var(--primary);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--primary) 25%, transparent),
+    inset 0 0 0 3px #fff;
+}
+
+/* Checkbox - Checked State */
+[data-theme="dark"] input[type="checkbox"]:checked {
+  background: var(--primary);
+  border-color: var(--primary);
+  background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.5 4.5L6 11L3.5 8.5' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
+  background-size: 12px;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+[data-theme="light"] input[type="checkbox"]:checked {
+  background: var(--primary);
+  border-color: var(--primary);
+  background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.5 4.5L6 11L3.5 8.5' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
+  background-size: 12px;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* Radio/Checkbox Hover */
+input[type="radio"]:hover,
+input[type="checkbox"]:hover {
+  border-color: var(--border-active);
+}
+
+/* Radio/Checkbox Focus */
+input[type="radio"]:focus-visible,
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+
+/* ==========================================================================
+   7.6 TAB NAVIGATION
+   ========================================================================== */
+
+.tab-nav {
+  display: flex;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 var(--space-2);
+}
+
+.tab-item {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-default);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  margin-bottom: -1px;
+}
+
+.tab-item:hover {
+  color: var(--text-main);
+  background: var(--surface-hover);
+}
+
+.tab-item.is-active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  background: var(--surface-active);
 }
 
 

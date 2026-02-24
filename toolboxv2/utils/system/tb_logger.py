@@ -1022,7 +1022,8 @@ def setup_logging(
     # Console handler
     if interminal:
         console_handler = logging.StreamHandler()
-        console_handler.setFormatter(json_formatter)
+        log_format = '%(asctime)s - %(name)s - %(levelname)s - %(filename)s - %(funcName)s:%(lineno)d - %(message)s'
+        console_handler.setFormatter(logging.Formatter(log_format))
         console_handler.setLevel(level)
         logger.addHandler(console_handler)
 
@@ -1127,7 +1128,6 @@ def enable_live_observability(
     handler.setLevel(level)
     logger.addHandler(handler)
     _obs_handler = handler
-
     return handler
 
 
@@ -1145,7 +1145,9 @@ def disable_live_observability():
     try:
         logger.removeHandler(_obs_handler)
         _obs_handler.close()
-    except Exception:
+    except Exception as e:
+        print(e)
+        logger.error(f"Error disable_live_observability {e}")
         pass
     _obs_handler = None
 

@@ -20,6 +20,7 @@ Author: FlowAgent V3
 """
 
 import asyncio
+import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -45,9 +46,9 @@ class SubAgentStatus(Enum):
 @dataclass
 class SubAgentConfig:
     """Configuration for sub-agent execution"""
-    max_tokens: int = 5000  # Token budget for this sub-agent
-    max_iterations: int = 10  # Max execution iterations
-    timeout_seconds: int = 300  # Timeout in seconds
+    max_tokens: int = os.getenv("SUB_AGENT_MAX_TOKENS", 16000)  # Token budget for this sub-agent
+    max_iterations: int = os.getenv("SUB_AGENT_MAX_ITERATIONS", 15)  # Max execution iterations
+    timeout_seconds: int = os.getenv("SUB_AGENT_MAX_TIMEOUT", 300)  # Timeout in seconds
 
     # Inherited from parent (set at spawn time)
     model_preference: str = "fast"

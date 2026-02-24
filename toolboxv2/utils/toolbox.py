@@ -254,12 +254,14 @@ class App(AppType, metaclass=Singleton):
 
         loader = ManifestLoader(self.start_dir)
         if not loader.exists():
+            self.print("No manifest found run tb manifest init")
             return
 
         try:
             manifest = loader.load()
             self.manifest = manifest
-        except Exception:
+        except Exception as e:
+            self.debug_rains(e)
             return
 
         obs = manifest.observability
@@ -297,17 +299,17 @@ class App(AppType, metaclass=Singleton):
         if obs.sync.enabled:
             try:
                 from toolboxv2.utils.system.tb_logger import LogSyncManager
-                from minio import Minio
+                from toolboxv2.utils.extras.db.minio_helper import create_minio_client
 
                 if obs.sync.target == "minio":
-                    mc = Minio(
+                    mc = create_minio_client(
                         manifest.database.minio.endpoint,
                         access_key=manifest.database.minio.access_key,
                         secret_key=manifest.database.minio.secret_key,
                         secure=manifest.database.minio.use_ssl,
                     )
                 else:
-                    mc = Minio(
+                    mc = create_minio_client(
                         obs.sync.remote_endpoint,
                         access_key=obs.sync.remote_access_key,
                         secret_key=obs.sync.remote_secret_key,
@@ -339,6 +341,8 @@ class App(AppType, metaclass=Singleton):
                 self.logger.debug("minio package not installed, sync disabled")
             except Exception as e:
                 self.logger.debug(f"Sync setup failed: {e}")
+                import traceback
+                traceback.print_exc()
 
         # ── Log Cleanup ──
         if obs.cleanup.enabled:
@@ -1537,14 +1541,20 @@ class App(AppType, metaclass=Singleton):
         try:
             from toolboxv2.utils.system.tb_logger import disable_live_observability
             disable_live_observability()  # flushes remaining batch + closes worker
-        except Exception:
+        except Exception as e:
+            self.debug_rains(e)
+            import traceback
+            traceback.print_exc()
             pass
 
         if self._obs_sync_manager:
             try:
                 self._obs_sync_manager.stop_auto_sync()
                 self._obs_sync_manager.sync_all()  # final push
-            except Exception:
+            except Exception as e:
+                self.debug_rains(e)
+                import traceback
+                traceback.print_exc()
                 pass
         self.alive = False
         self.called_exit = True, time.time()
@@ -1568,9 +1578,6 @@ class App(AppType, metaclass=Singleton):
         try:
             if hasattr(self, 'session') and self.session is not None:
                 await self.session.cleanup()
-                print("Session closed")
-            else:
-                print("No session To close")
         except Exception as e:
             self.logger.debug(f"Session cleanup error (ignored): {e}")
 

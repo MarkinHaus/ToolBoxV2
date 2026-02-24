@@ -43,6 +43,15 @@ async def get_user_dashboard_main_page(app: App, request: RequestData):
 /* ============================================================
    User Dashboard Styles (nutzen TBJS v2 Variablen)
    ============================================================ */
+:root {
+    --text-xs: 0.75rem !important;
+    --text-sm: 0.875rem !important;
+    --text-base: 1rem !important;
+    --text-lg: 1.125rem !important;
+    --text-xl: 1.25rem !important;
+    --text-2xl: 1.5rem !important;
+    --text-3xl: 1.875rem !important;
+}
 
 /* Override main-content constraints for dashboard */
 .content-wrapper:has(.dashboard) {
@@ -2471,7 +2480,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                         '<div class="setting-label">' + TB.utils.escapeHtml(provider.toUpperCase()) + '</div>' +
                         '<div class="setting-description">Verknüpft</div>' +
                     '</div>' +
-                    '<button class="tb-btn tb-btn-danger tb-btn-sm" onclick="unlinkOAuth(\'' + TB.utils.escapeHtml(provider) + '\')">' +
+                    '<button class="tb-btn tb-btn-danger tb-btn-sm" onclick="unlinkOAuth(' + TB.utils.escapeHtml(provider) + ')">' +
                         '<span class="material-symbols-outlined">link_off</span>Entfernen</button>' +
                     '</div>';
             });
@@ -2480,9 +2489,9 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
         }
 
         html += '<div class="quick-actions mt-4">' +
-            '<button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="linkOAuth(\'discord\')">' +
+            '<button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="linkOAuth(\\'discord\\')">' +
                 '<span class="material-symbols-outlined">add</span>Discord hinzufügen</button>' +
-            '<button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="linkOAuth(\'google\')">' +
+            '<button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="linkOAuth(\\'google\\')">' +
                 '<span class="material-symbols-outlined">add</span>Google hinzufügen</button>' +
         '</div></div>';
 
@@ -2497,7 +2506,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                         '<div class="setting-label">' + TB.utils.escapeHtml(passkey.name || 'Passkey #' + (index + 1)) + '</div>' +
                         '<div class="setting-description">Hinzugefügt: ' + new Date(passkey.created_at * 1000).toLocaleString() + '</div>' +
                     '</div>' +
-                    '<button class="tb-btn tb-btn-danger tb-btn-sm" onclick="deletePasskey(\'' + TB.utils.escapeHtml(passkey.credential_id) + '\')">' +
+                    '<button class="tb-btn tb-btn-danger tb-btn-sm" onclick="deletePasskey(' + TB.utils.escapeHtml(passkey.credential_id) + ')">' +
                         '<span class="material-symbols-outlined">delete</span>Entfernen</button>' +
                     '</div>';
             });

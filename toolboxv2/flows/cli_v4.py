@@ -29,6 +29,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from toolboxv2.mods.isaa.extras.dream_graph import dream_with_viz
+
 # Suppress noisy loggers
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 logging.getLogger("litellm").setLevel(logging.WARNING)
@@ -43,7 +45,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
 
 # ToolBoxV2 Imports
-from toolboxv2 import get_app, remove_styles
+from toolboxv2 import get_app, remove_styles, get_logger
 
 # ISAA Agent Imports
 from toolboxv2.mods.isaa.base.Agent.builder import (
@@ -64,6 +66,9 @@ from toolboxv2.mods.isaa.extras.jobs import JobDefinition, TriggerConfig, JobSch
 from toolboxv2.mods.isaa.module import Tools as IsaaTool
 
 import html
+from pathlib import Path
+from toolboxv2.utils.extras.mkdocs import DocsSystem
+from toolboxv2 import init_cwd, tb_root_dir
 import json
 import sys
 from prompt_toolkit import print_formatted_text, HTML
@@ -494,6 +499,122 @@ def load_execute(fm):
 
     fm.add_feature("chain", activation_f=enable, deactivation_f=disable)
 
+def load_docs_feature(fm):
+    """
+    Documentation Feature - Integrates mkdocs-based docs system.
+
+    When active in toolboxv2 directory: Uses tb_root_dir.parent/docs as doc dir.
+    When active in another directory: Prompts user to select docs directory.
+    """
+    docs_system = [None]  # Mutable container for the docs system instance
+    docs_tools = [None]   # Mutable container for the tool list
+
+    def enable(agent):
+        """Enable documentation system and add tools to agent."""
+        try:
+            # Determine docs directory based on current working directory
+            current_dir = init_cwd
+            project_root = tb_root_dir
+
+            # Check if we're in toolboxv2 or its parent
+            if current_dir == project_root or current_dir == project_root.parent or project_root in current_dir.parents:
+                docs_dir = project_root.parent / "docs"
+                c_print(f"<style fg='ansicyan'>📚 Auto-detected docs dir:</style> <style fg='ansigreen'>{docs_dir}</style>")
+            else:
+                # Prompt user for docs directory
+                docs_input = input("Enter documentation directory path: ")
+                docs_dir = Path(docs_input).expanduser().resolve()
+
+            if not docs_dir.exists():
+                c_print(f"<style fg='ansired'>⚠️ Docs directory not found: {docs_dir}</style>")
+                c_print("<style fg='ansiyellow'>Creating minimal docs structure...</style>")
+                docs_dir.mkdir(parents=True, exist_ok=True)
+
+            # Create docs system instance
+            system = DocsSystem(
+                project_root=project_root,
+                docs_root=docs_dir,
+                include_dirs=["toolboxv2", "flows", "mods", "utils", "docs"]
+            )
+
+            # Initialize (load existing index or build new one)
+            import asyncio
+            loop = asyncio.get_event_loop()
+            result = loop.run_until_complete(system.initialize())
+            c_print(f"<style fg='ansigreen'>✓ Docs initialized:</style> {result['sections']} sections, {result['elements']} elements")
+
+            docs_system[0] = system
+
+            # Prepare tool list with proper descriptions
+            tools = [
+                {
+                    "tool_func": system.read,
+                    "name": "docs_reader",
+                    "description": "Durchsucht die Dokumentation nach relevanten Abschnitten basierend auf einer Suchanfrage. Nützlich um schnell Informationen aus der Dokumentation zu finden ohne manuell zu suchen. Gibt strukturierte Ergebnisse mit Relevanz-Scores zurück.",
+                    "category": ["docs", "read", "search"],
+                    "flags": {}
+                },
+                {
+                    "tool_func": system.write,
+                    "name": "docs_writer",
+                    "description": "Schreibt neue Dokumentations-Dateien oder aktualisiert existierende. Unterstützt Markdown-Formatierung und speichert im docs-Verzeichnis. Erstellt automatisch die nötige Verzeichnisstruktur wenn nötig. Ideal um Ergebnisse und Erkenntnisse zu dokumentieren.",
+                    "category": ["docs", "write"],
+                    "flags": {}
+                },
+                {
+                    "tool_func": system.lookup_code,
+                    "name": "docs_lookup",
+                    "description": "Sucht nach Code-Elementen (Klassen, Funktionen, Module, etc.) im gesamten Codebase. Gibt Definitionen, Signaturen und Docstrings zurück. Nützlich um Implementierungsdetails schnell zu verstehen ohne durch Dateien navigieren zu müssen.",
+                    "category": ["docs", "code", "search"],
+                    "flags": {}
+                },
+                {
+                    "tool_func": system.sync,
+                    "name": "docs_sync",
+                    "description": "Synchronisiert Änderungen aus der VFS zurück zum Dateisystem. Stellt sicher dass Änderungen persistent gespeichert werden. Sollte regelmäßig aufgerufen werden nachdem Änderungen vorgenommen wurden.",
+                    "category": ["docs", "sync"],
+                    "flags": {}
+                },
+                {
+                    "tool_func": system.initialize,
+                    "name": "docs_init",
+                    "description": "Baut den Dokumentations-Index neu auf. Nützlich wenn neue Dateien hinzugefügt wurden oder der Index veraltet ist. Indiziert Markdown-, Python- und JavaScript/TypeScript-Dateien aus den konfigurierten include_dirs.",
+                    "category": ["docs", "index"],
+                    "flags": {}
+                },
+                {
+                    "tool_func": system.get_task_context,
+                    "name": "get_task_context",
+                    "description": "Generiert Kontext-Informationen für Aufgaben wie relevante Dateien, Klassen und Dokumentation basierend auf einer Aufgabenbeschreibung. Hilft dem Agent die Aufgabe besser zu verstehen und die richtigen Ressourcen zu finden.",
+                    "category": ["docs", "context"],
+                    "flags": {}
+                }
+            ]
+
+            docs_tools[0] = tools
+            agent.add_tools(tools)
+
+            print_status("Documentation feature enabled.", "success")
+
+        except Exception as e:
+            c_print(f"<style fg='ansired'>✗ Failed to enable docs: {e}</style>")
+            import traceback
+            traceback.print_exc()
+
+    def disable(agent):
+        """Disable documentation system."""
+        try:
+            if docs_tools[0]:
+                agent.remove_tools(docs_tools[0])
+            docs_system[0] = None
+            docs_tools[0] = None
+            print_status("Documentation feature disabled.", "success")
+        except Exception as e:
+            c_print(f"<style fg='ansired'>✗ Failed to disable docs: {e}</style>")
+
+    fm.add_feature("docs", activation_f=enable, deactivation_f=disable)
+
+
 ALL_FEATURES = {
     "desktop_auto": load_desktop_auto_feature,
     "mini_web_auto": load_web_auto_feature,
@@ -506,167 +627,6 @@ ALL_FEATURES = {
 # =============================================================================
 # ISAA HOST - MAIN CLASS
 # =============================================================================
-
-class ZenRenderer:
-    """
-    Renders agent execution in 'Zen Mode': Minimalist, structured, vertical flow.
-    """
-
-    def __init__(self):
-        self.last_agent = None
-        self.last_phase = None
-        self.in_think_block = False
-        self.think_buffer = ""
-
-    def _print_status_bar(self, chunk: dict):
-        """Prints a single line status update (simulated via print for now)"""
-        # In a full TUI this would be a fixed bar. Here we print context headers on change.
-        agent = chunk.get("agent", "unknown")
-        iter_num = chunk.get("iter", 0)
-        max_iter = chunk.get("max_iter", 0)
-        is_sub = chunk.get("is_sub", False)
-
-        # Only print header if agent context changed
-        if agent != self.last_agent:
-            prefix = "◈" if is_sub else "◯"
-            color = PTColors.ZEN_DIM if is_sub else PTColors.ZEN_CYAN
-
-            c_print(HTML(
-                f"\n<style fg='{color}'>{prefix} {agent}</style>  <style fg='{PTColors.ZEN_DIM}'>∙  iter {iter_num}/{max_iter}</style>"))
-            self.last_agent = agent
-
-    def process_chunk(self, chunk: dict):
-        c_type = chunk.get("type")
-        self._print_status_bar(chunk)
-
-        # --- THINKING (◎) ---
-        if c_type == "reasoning":
-            text = chunk.get("chunk", "")
-            self.think_buffer += text
-            # Minimalist: Don't show thinking char-by-char, wait for block end or show simple dot
-            # For CLI responsiveness, we might show a dim dot per chunk, or nothing.
-            # Zen Concept: "Ultra-kompakt" -> We collect and summarize, or just show indicator.
-            if not self.in_think_block:
-                print_formatted_text(HTML(f"  <style fg='{PTColors.ZEN_DIM}'>◎ thinking...</style>"), end="\r")
-                self.in_think_block = True
-
-        # --- CONTENT (White) ---
-        elif c_type == "content":
-            if self.in_think_block:
-                # Close thinking block visually
-                c_print(
-                    HTML(f"  <style fg='{PTColors.ZEN_DIM}'>◎ thought recorded</style>          "))  # Overwrite line
-                self.in_think_block = False
-                self.think_buffer = ""
-
-            text = chunk.get("chunk", "")
-            # Plain white text for content
-            print_formatted_text(HTML(f"<style fg='{PTColors.WHITE}'>{esc(text)}</style>"), end="")
-
-        # --- TOOL START (◇) ---
-        elif c_type == "tool_start":
-            if self.in_think_block:
-                c_print(HTML(f"  <style fg='{PTColors.ZEN_DIM}'>◎ thought recorded</style>          "))
-                self.in_think_block = False
-
-            name = chunk.get("name", "unknown")
-            args = chunk.get("args", "")
-
-            # Format args compactly
-            arg_str = ""
-            if args:
-                try:
-                    args_dict = json.loads(args) if isinstance(args, str) else args
-                    # Extract key params for display
-                    if "path" in args_dict:
-                        arg_str = args_dict["path"]
-                    elif "query" in args_dict:
-                        arg_str = args_dict["query"]
-                    elif "thought" in args_dict:
-                        arg_str = "..."
-                    else:
-                        arg_str = "..."  # Keep it clean
-                except:
-                    pass
-
-            # Print the tool line (pending status)
-            c_print(HTML(
-                f"  <style fg='{PTColors.ZEN_CYAN}'>◇ {name:<12}</style>  <style fg='{PTColors.ZEN_DIM}'>{esc(arg_str)}</style>"),
-                    end="")
-
-        # --- TOOL RESULT (✓/✗) ---
-        elif c_type == "tool_result":
-            # Complete the previous line
-            result = chunk.get("result", "")
-            name = chunk.get("name", "")
-            if name == "final_answer":
-                return
-            # Parse result for metadata (size, success)
-            meta = ""
-            status_icon = "✓"
-            status_color = PTColors.ZEN_GREEN
-
-            try:
-                res_data = json.loads(result)
-                if isinstance(res_data, dict):
-                    if not res_data.get("success", True):
-                        status_icon = "✗"
-                        status_color = PTColors.ZEN_RED
-                        if "error" in res_data:
-                            meta = res_data["error"][:40]
-
-                    # File size
-                    if "size" in res_data:
-                        size = res_data["size"]
-                        if size < 1024:
-                            meta = f"{size}b"
-                        else:
-                            meta = f"{size / 1024:.1f}kb"
-
-                    # Content length
-                    elif "content" in res_data:
-                        meta = f"{len(res_data['content'])} chars"
-
-            except:
-                pass
-
-            # Print result on same line if possible, or next line indented
-            # Since we are in streaming mode, we might have printed newlines.
-            # Ideally we use \r but other output might interfere.
-            # Safe approach: Just print the status and meta.
-
-            c_print(HTML(
-                f"  <style fg='{PTColors.ZEN_DIM}'>{meta}</style>  <style fg='{status_color}'>{status_icon}</style>"))
-
-        # --- SUB-AGENT SPAWN (◈) ---
-        # Note: 'spawn_sub_agent' is a tool, so it's handled by tool_start/result above mostly.
-        # But if we had explicit events:
-
-        # --- DONE (●) ---
-        elif c_type == "done":
-            success = chunk.get("success", True)
-            color = PTColors.ZEN_GREEN if success else PTColors.ZEN_RED
-            icon = "●"
-            iter_count = chunk.get("iter", 0)
-
-            c_print(HTML(
-                f"\n  <style fg='{color}'>{icon} complete</style>  <style fg='{PTColors.ZEN_DIM}'>∙ {iter_count} iter</style>\n"))
-        elif c_type == "final_answer":
-            if self.in_think_block:
-                c_print(HTML(f"  <style fg='{PTColors.ZEN_DIM}'>◎ thought recorded</style>          "))
-                self.in_think_block = False
-
-            answer = chunk.get("answer", "")
-            # Print answer clearly in white (Zen style: text is content)
-            c_print(HTML(f"\n<style fg='{PTColors.WHITE}'>{esc(answer)}</style>\n"))
-        # --- WARNING/ERROR ---
-        elif c_type == "warning":
-            msg = chunk.get("message", "")
-            c_print(HTML(f"  <style fg='{PTColors.ZEN_AMBER}'>⚠ {esc(msg)}</style>"))
-
-        elif c_type == "error":
-            msg = chunk.get("error", "")
-            c_print(HTML(f"  <style fg='{PTColors.ZEN_RED}'>❌ {esc(msg)}</style>"))
 
 class ISAA_Host:
     """
@@ -1267,6 +1227,7 @@ class ISAA_Host:
             watch_patterns: list[str] | None = None,
             webhook_path: str | None = None,
             idle_seconds: int | None = None,
+            agent_idle_seconds: int | None = None,
             # Allow additional trigger parameters via **kwargs
             **extra_trigger_kwargs
         ) -> str:
@@ -1297,7 +1258,8 @@ class ISAA_Host:
                 query: The prompt/query to send to the agent
                 trigger_type: Trigger type (on_time, on_interval, on_cron, on_cli_start,
                                on_cli_exit, on_job_completed, on_job_failed, on_file_changed,
-                               on_network_available, on_system_idle, on_webhook_received, etc.)
+                               on_network_available, on_system_idle, on_webhook_received, on_agent_idle, on_dream_start, on_dream_end,
+                               on_dream_budget_hit, on_dream_skill_evolved, etc.)
                 trigger_config: Optional trigger parameters dict - overrides direct params
                 timeout_seconds: Max execution time in seconds (default 300)
                 session_id: Session ID for the agent (default 'default')
@@ -1358,6 +1320,8 @@ class ISAA_Host:
                     trigger_params["webhook_path"] = webhook_path
                 if idle_seconds is not None:
                     trigger_params["idle_seconds"] = idle_seconds
+                if agent_idle_seconds is not None:
+                    trigger_params["agent_idle_seconds"] = agent_idle_seconds
 
                 # Add extra kwargs (for extensibility)
                 trigger_params.update(extra_trigger_kwargs)
@@ -1375,7 +1339,7 @@ class ISAA_Host:
                         setattr(tc, k, v)
                     else:
                         # Warn about unknown parameters but don't fail
-                        _log.warning(f"Unknown trigger parameter: {k}={v}")
+                        c_print(f"Unknown trigger parameter: {k}={v}")
 
                 # Create job definition
                 job = JobDefinition(
@@ -1406,7 +1370,7 @@ class ISAA_Host:
                 import traceback
                 error_details = traceback.format_exc()
 
-                _log.error(f"Failed to create job '{name}': {e}\n{error_details}")
+                get_logger().error(f"Failed to create job '{name}': {e}\n{error_details}")
 
                 return (
                     f"✗ Failed to create job '{name}'\n"
@@ -1454,6 +1418,65 @@ class ISAA_Host:
                 if j.last_result:
                     lines.append(f"    Last: {j.last_result} at {j.last_run_at}")
             return "\n".join(lines)
+
+        async def cli_create_dream_job(
+            agent_name: str = "self",
+            trigger_type: str = "on_cron",
+            cron_expression: str = "0 3 * * *",
+            agent_idle_seconds: int | None = None,
+            max_budget: int = 3000,
+            do_skill_split: bool = True,
+            do_skill_evolve: bool = True,
+            do_persona_evolve: bool = True,
+            do_create_new: bool = True,
+            hard_stop: bool = False,
+        ) -> str:
+            """
+            Create a dream job (async meta-learning cycle).
+
+            Args:
+                agent_name: Agent to dream (default: self)
+                trigger_type: on_cron (default), on_agent_idle, on_job_completed, etc.
+                cron_expression: Cron schedule (default: nightly 03:00)
+                agent_idle_seconds: Idle threshold for on_agent_idle trigger
+                max_budget: Max tokens for LLM calls during dream
+                do_skill_split: Split bloated skills into sub-skills
+                do_skill_evolve: Refine instructions from failure patterns
+                do_persona_evolve: Adjust persona profiles
+                do_create_new: Allow creation of new skills/personas
+                hard_stop: Abort on first error (False = skip & continue)
+
+            Examples:
+                createDreamJob()                                          # Nightly at 03:00
+                createDreamJob(trigger_type="on_agent_idle", agent_idle_seconds=600)  # After 10min idle
+                createDreamJob(trigger_type="on_job_completed")           # After every successful job
+            """
+            dream_config = {
+                "max_budget": max_budget,
+                "do_skill_split": do_skill_split,
+                "do_skill_evolve": do_skill_evolve,
+                "do_persona_evolve": do_persona_evolve,
+                "do_create_new": do_create_new,
+                "hard_stop": hard_stop,
+            }
+
+            return await cli_create_job(
+                name=f"dream-{agent_name}",
+                agent_name=agent_name,
+                query="__dream__",
+                trigger_type=trigger_type,
+                cron_expression=cron_expression if trigger_type == "on_cron" else None,
+                agent_idle_seconds=agent_idle_seconds if trigger_type == "on_agent_idle" else None,
+                trigger_config={"extra": {"dream_config": dream_config}},
+                timeout_seconds=600,
+            )
+
+        builder.add_tool(
+            cli_create_dream_job,
+            "createDreamJob",
+            "Create a dream job (async meta-learning) with configurable triggers",
+            category=["job_management"],
+        )
 
         builder.add_tool(
             cli_create_job,
@@ -1991,6 +2014,7 @@ class ISAA_Host:
                 "fire": {j.job_id: None for j in (self.job_scheduler.list_jobs() if self.job_scheduler else [])},
                 "detail": {j.job_id: None for j in (self.job_scheduler.list_jobs() if self.job_scheduler else [])},
                 "autowake": {"install": None, "remove": None, "status": None},
+                "dream": {"create": None,"status": None, "live": None},
             },
             "/vfs": {
                 "mount": path_compl, # /vfs mount <local_path> [vfs_path] [--readonly] [--no-sync]
@@ -2240,6 +2264,10 @@ class ISAA_Host:
         print_box_content("/job fire <id>           - Manually fire a job now", "")
         print_box_content("/job detail <id>         - Show job details", "")
         print_box_content("/job autowake <cmd>      - Manage OS auto-wake (install/remove/status)", "")
+        print_status("Dreamer Job", "info")
+        print_box_content("/job dream create [agent]    - Create nightly dream job (default: self, 03:00)", "")
+        print_box_content("/job dream status            - Show all configured dream jobs", "")
+        print_box_content("/job dream live              - Run dream process now with visualization", "")
 
         print_separator()
 
@@ -3036,6 +3064,33 @@ class ISAA_Host:
 
         elif action == "autowake":
             await self._job_autowake(args[1:])
+
+        elif action == "dream":
+            sub = args[1] if len(args) > 1 else "status"
+            if sub == "create":
+                agent_name = args[2] if len(args) > 2 else "self"
+                if not hasattr(self, '_current_agent') or not self._current_agent:
+                    print_status("No active agent", "error")
+                    return
+                from toolboxv2.mods.isaa.base.Agent.dreamer import DreamConfig, a_dream
+                agent = self._current_agent
+                if not hasattr(agent, 'a_dream'):
+                    agent.a_dream = a_dream.__get__(agent, type(agent))
+                self.job_scheduler.add_dream_job(agent_name)
+                print_status(f"Dream job created for {agent_name} (nightly 03:00)", "success")
+            elif sub == "status":
+                dream_jobs = [j for j in self.job_scheduler.list_jobs() if j.query == "__dream__"]
+                if not dream_jobs:
+                    print_status("No dream jobs configured", "info")
+                else:
+                    for j in dream_jobs:
+                        print_status(
+                            f"{j.job_id} | {j.name} | {j.trigger.trigger_type} | "
+                            f"{j.status} | runs:{j.run_count}",
+                            "info"
+                        )
+            elif sub == "live":
+                await dream_with_viz(self.isaa_tools, self.active_agent_name)
 
         else:
             print_status(f"Unknown job action: {action}. Use: list, add, remove, pause, resume, fire, detail, autowake", "error")

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import time
 import uuid
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
@@ -11,6 +12,19 @@ from pydantic import BaseModel, Field
 
 from toolboxv2.mods.isaa.base.Agent.docker_vfs import DockerConfig
 
+
+@dataclass
+class DreamConfig:
+    """Configuration for a dream cycle."""
+    max_budget: int = os.getenv("DREAMER_BUDGET", 160000)                   # max tokens for LLM calls
+    max_history_time: Optional[float] = None # hours back to scan (None = since last dream)
+    do_skill_split: bool = True              # split bloated skills into focused sub-skills
+    do_skill_evolve: bool = True             # refine instructions from failure patterns
+    do_persona_evolve: bool = True           # adjust persona profiles from success correlations
+    do_create_new: bool = True               # allow genesis of new skills/personas
+    hard_stop: bool = False                  # True = abort on first error, False = skip & continue
+    publish_threshold: float = 0.8           # min confidence to publish to skill marketplace
+    publish_min_version: int = 3             # min version to publish
 
 class CheckpointConfig(BaseModel):
     """Checkpoint configuration"""
@@ -710,6 +724,15 @@ class AgentCheckpoint:
         }
 
 @dataclass
+class ContextBudgetConfig:
+    """Konfiguration für dynamisches Context-Budget-Management."""
+    max_context_ratio: float = 0.85       # Wie viel % des Model-Kontexts genutzt werden dürfen (0.7 - 0.95)
+    immediate_offload_ratio: float = 0.7  # Ab diesem Anteil am Gesamt-Kontext → sofort offloaden (Szenario C)
+    displacement_threshold: float = 0.4   # Max Größe für Displacement-Strategie (Szenario B)
+    safety_margin_tokens: int = 500       # Reserve
+    heavy_hitter_min_tokens: int = 1000    # Min Größe für Offload-Kandidaten
+
+@dataclass
 class PersonaConfig:
     name: str
     style: str = "professional"
@@ -806,6 +829,7 @@ You are Isaa (via simplecore.app), a self-correcting, autonomous software. You v
     enable_lsp: bool = True
     enable_docker: bool = True
     docker_config: DockerConfig | None = None
+    context_config: ContextBudgetConfig = field(default_factory=ContextBudgetConfig)
 
     def get_system_message(self) -> str:
         """Get system message with persona integration"""

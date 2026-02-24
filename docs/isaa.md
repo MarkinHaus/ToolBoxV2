@@ -911,3 +911,848 @@ async def optimized_chain():
 | `CF(Model) - "field[n]"` | Auto-parallel extraction | `CF(Tasks) - "tasks[n]"` |
 
 This documentation provides comprehensive guidance for using the ISAA Chain system to create sophisticated AI agent workflows with powerful orchestration capabilities.
+
+
+# ISAA Job System — Dokumentation
+
+## Übersicht
+
+Das ISAA Job System ermöglicht persistente, geplante Agent-Tasks die CLI-Neustarts überleben und sich über OS-Scheduler (Windows schtasks, Linux crontab, macOS LaunchAgent) automatisch reaktivieren können.
+
+**Kernkomponenten:**
+
+| Komponente | Aufgabe |
+|---|---|
+| `JobDefinition` | Datenhaltung: was, wann, welcher Agent |
+| `TriggerConfig` | Wann soll der Job feuern |
+| `TriggerRegistry` | Plugin-System für eigene Trigger-Typen |
+| `JobScheduler` | Async Tick-Loop, evaluiert Trigger, feuert Jobs |
+| `JobEventBus` | Ermöglicht Job-Chaining (A fertig → B startet) |
+| `headless_runner` | Entry-Point für OS-Scheduler wenn CLI nicht läuft |
+| `os_scheduler` | Registriert/entfernt OS-Level Scheduled Tasks |
+
+**Persistenz:** Alle Jobs werden als JSON-Datei gespeichert (`jobs.json`). Jede Änderung (add/remove/pause/status-update) schreibt sofort auf Disk.
+
+---
+
+## Setup
+
+### 1. Scheduler initialisieren
+
+```python
+from pathlib import Path
+from toolboxv2.mods.isaa.extras.jobs import JobScheduler
+
+async def fire_callback(job):
+    """Wird aufgerufen wenn ein Job feuert."""
+    agent = await isaa.get_agent(job.agent_name)
+    result = await agent.a_run(job.query, session_id=job.session_id)
+    return result
+
+scheduler = JobScheduler(
+    jobs_file=Path("data/jobs.json"),
+    fire_callback=fire_callback,
+)
+
+# Scheduler starten (startet den async Tick-Loop)
+await scheduler.start()
+
+# Beim Beenden
+await scheduler.stop()
+```
+
+Der Scheduler tickt jede Sekunde und prüft alle aktiven Jobs gegen ihre Trigger-Evaluatoren. Jobs die gerade laufen (`_firing` Set) werden übersprungen.
+
+### 2. OS Auto-Wake installieren (optional)
+
+Damit Jobs auch feuern wenn die CLI nicht läuft:
+
+```python
+from toolboxv2.mods.isaa.extras.jobs.os_scheduler import install_autowake, remove_autowake, autowake_status
+
+# Installieren (plattformabhängig)
+result = install_autowake(Path("data/jobs.json"))
+print(result)
+# → "Auto-wake installed (Windows schtasks, every 15min + on boot)"
+# → "Auto-wake installed (crontab, every 15min + @reboot)"
+# → "Auto-wake installed (LaunchAgent, every 15min + RunAtLoad)"
+
+# Status prüfen
+print(autowake_status())
+
+# Entfernen
+print(remove_autowake())
+```
+
+**Was passiert:** Das OS ruft alle 15 Minuten den `headless_runner` auf. Dieser lädt die `jobs.json`, prüft welche Jobs fällig sind, initialisiert eine minimale ISAA-Instanz, führt die fälligen Jobs aus, und beendet sich.
+
+### 3. Dependencies
+
+| Feature | Dependency | Pflicht? |
+|---|---|---|
+| Cron-Trigger | `pip install croniter` | Nur für `on_cron` |
+| File-Watching | `pip install watchdog` | Nur für `on_file_changed` |
+| System-Idle (Linux) | `xprintidle` Binary | Nur für `on_system_idle` auf Linux |
+
+---
+
+## Jobs erstellen
+
+### Grundstruktur
+
+```python
+from toolboxv2.mods.isaa.extras.jobs import JobDefinition, TriggerConfig
+
+job = JobDefinition(
+    job_id=JobDefinition.generate_id(),    # "job_a3f8c1d2"
+    name="daily-backup",                    # Anzeigename
+    agent_name="main_agent",                # Welcher FlowAgent
+    query="Erstelle ein Backup aller Datenbanken", # Agent-Query
+    trigger=TriggerConfig(
+        trigger_type="on_cron",
+        cron_expression="0 2 * * *",        # Jeden Tag um 02:00
+    ),
+    session_id="default",                   # Agent-Session
+    timeout_seconds=300,                    # Max. Laufzeit
+    max_retries=0,                          # Wiederholungen bei Fehler
+)
+
+job_id = scheduler.add_job(job)
+```
+
+### CRUD-Operationen
+
+```python
+# Erstellen
+job_id = scheduler.add_job(job)
+
+# Abfragen
+job = scheduler.get_job(job_id)
+all_jobs = scheduler.list_jobs()
+found = scheduler.find_jobs_by_name("backup")
+
+# Pausieren / Fortsetzen
+scheduler.pause_job(job_id)   # status → "paused"
+scheduler.resume_job(job_id)  # status → "active"
+
+# Löschen
+scheduler.remove_job(job_id)
+
+# Stats
+print(scheduler.active_count)  # Anzahl aktiver Jobs
+print(scheduler.total_count)   # Gesamtzahl
+```
+
+### Job-Status Lifecycle
+
+```
+active → (trigger feuert) → running → completed/failed/timeout
+active → pause_job()      → paused  → resume_job() → active
+active → (on_time fired)  → expired
+active → remove_job()     → gelöscht
+```
+
+---
+
+## Trigger-Typen
+
+### Zeitbasiert
+
+#### `on_time` — Einmalig zu einem Zeitpunkt
+
+```python
+TriggerConfig(
+    trigger_type="on_time",
+    at_datetime="2025-06-15T14:30:00+02:00",  # ISO 8601
+)
+```
+
+Job wird nach dem Feuern automatisch auf `status="expired"` gesetzt.
+
+#### `on_interval` — Alle N Sekunden
+
+```python
+TriggerConfig(
+    trigger_type="on_interval",
+    interval_seconds=300,  # Alle 5 Minuten
+)
+```
+
+Zählt ab dem letzten Feuern. Erster Lauf sofort nach Scheduler-Start wenn noch nie gelaufen.
+
+#### `on_cron` — Cron-Schedule
+
+```python
+TriggerConfig(
+    trigger_type="on_cron",
+    cron_expression="0 3 * * *",  # Täglich um 03:00
+)
+```
+
+**Benötigt `croniter`:** `pip install croniter`
+
+Cron-Format: `minute hour day month weekday`
+
+| Expression | Bedeutung |
+|---|---|
+| `0 3 * * *` | Täglich 03:00 |
+| `*/15 * * * *` | Alle 15 Minuten |
+| `0 2 * * 0` | Sonntags 02:00 |
+| `0 9 1 * *` | Erster des Monats, 09:00 |
+| `30 8 * * 1-5` | Mo-Fr 08:30 |
+
+### System-Events
+
+#### `on_cli_start` / `on_cli_exit` — CLI Lifecycle
+
+```python
+TriggerConfig(trigger_type="on_cli_start")
+TriggerConfig(trigger_type="on_cli_exit")
+```
+
+Wird ausgelöst über:
+```python
+await scheduler.fire_lifecycle("on_cli_start")  # beim Start
+await scheduler.fire_lifecycle("on_cli_exit")    # beim Beenden
+```
+
+#### `on_system_boot` — Nach Systemstart
+
+```python
+TriggerConfig(trigger_type="on_system_boot")
+```
+
+Funktioniert nur in Kombination mit `install_autowake()`. Der OS-Scheduler ruft den `headless_runner` beim Systemstart auf, der diese Jobs erkennt und feuert.
+
+#### `on_system_idle` — System-Leerlauf
+
+```python
+TriggerConfig(
+    trigger_type="on_system_idle",
+    idle_seconds=600,  # Nach 10 Min Leerlauf
+)
+```
+
+Prüft alle 60 Sekunden die System-Idle-Time (plattformabhängig: `GetLastInputInfo` auf Windows, `ioreg` auf macOS, `xprintidle` auf Linux).
+
+#### `on_system_shutdown` — Vor dem Herunterfahren
+
+```python
+TriggerConfig(trigger_type="on_system_shutdown")
+```
+
+Registriert sich via `atexit` und `SIGTERM`/`SIGINT` Handler. Nützlich für Cleanup-Tasks.
+
+#### `on_network_available` — Netzwerk wird verfügbar
+
+```python
+TriggerConfig(trigger_type="on_network_available")
+```
+
+Prüft alle 30 Sekunden Konnektivität zu `8.8.8.8:53`. Feuert nur beim Übergang offline → online (nicht bei jedem Check).
+
+### Datei-basiert
+
+#### `on_file_changed` — Dateiänderungen
+
+```python
+TriggerConfig(
+    trigger_type="on_file_changed",
+    watch_path="/srv/data/configs",          # Verzeichnis oder Datei
+    watch_patterns=["*.yaml", "*.json"],     # Optional: Glob-Filter
+)
+```
+
+**Benötigt `watchdog`:** `pip install watchdog`
+
+Nutzt `watchdog.Observer` mit 2-Sekunden Debouncing. Überwacht rekursiv.
+
+### Job-Chaining
+
+#### `on_job_completed` / `on_job_failed` / `on_job_timeout`
+
+```python
+# Job B startet wenn Job A erfolgreich war
+job_a_id = scheduler.add_job(JobDefinition(
+    job_id="job_backup",
+    name="backup",
+    agent_name="agent",
+    query="Backup erstellen",
+    trigger=TriggerConfig(trigger_type="on_cron", cron_expression="0 2 * * *"),
+))
+
+scheduler.add_job(JobDefinition(
+    job_id=JobDefinition.generate_id(),
+    name="verify-backup",
+    agent_name="agent",
+    query="Prüfe ob das letzte Backup vollständig ist",
+    trigger=TriggerConfig(
+        trigger_type="on_job_completed",
+        watch_job_id="job_backup",           # Reagiert auf diesen Job
+    ),
+))
+
+# Error-Handler: Bei Backup-Fehler Notification senden
+scheduler.add_job(JobDefinition(
+    job_id=JobDefinition.generate_id(),
+    name="backup-alert",
+    agent_name="agent",
+    query="Sende eine Warnung: Backup fehlgeschlagen",
+    trigger=TriggerConfig(
+        trigger_type="on_job_failed",
+        watch_job_id="job_backup",
+    ),
+))
+```
+
+Die Verkettung läuft über den `JobEventBus`: wenn `_fire_job` einen Job abschließt, emittiert er `job_completed`/`job_failed`/`job_timeout`, was den `OnJobEventEvaluator` für wartende Jobs benachrichtigt.
+
+---
+
+## Webhooks
+
+### Konzept
+
+Webhook-Jobs warten auf einen externen HTTP-Trigger. Der Scheduler selbst startet keinen HTTP-Server — die Integration erfolgt über die bestehende Web-Infrastruktur (FastAPI/Flask/Nginx Worker).
+
+### Job mit Webhook-Trigger erstellen
+
+```python
+scheduler.add_job(JobDefinition(
+    job_id="job_deploy_hook",
+    name="deploy-on-push",
+    agent_name="devops_agent",
+    query="Pull latest changes, run tests, deploy to staging",
+    trigger=TriggerConfig(
+        trigger_type="on_webhook_received",
+        webhook_path="/hooks/deploy",        # Für Routing-Referenz
+    ),
+    timeout_seconds=600,
+))
+```
+
+### Webhook-Endpoint einrichten
+
+Der Webhook muss von deiner Web-Anwendung aufgerufen werden. Beispiel mit FastAPI:
+
+```python
+from fastapi import FastAPI, Request
+
+app = FastAPI()
+
+@app.post("/hooks/{hook_name}")
+async def webhook_handler(hook_name: str, request: Request):
+    """Empfängt Webhooks und triggert den passenden Job."""
+
+    # Finde Job anhand des webhook_path
+    matching = [
+        j for j in scheduler.list_jobs()
+        if j.trigger.trigger_type == "on_webhook_received"
+        and j.trigger.webhook_path == f"/hooks/{hook_name}"
+        and j.status == "active"
+    ]
+
+    if not matching:
+        return {"error": "No matching job found"}, 404
+
+    # Trigger den Job
+    for job in matching:
+        scheduler.trigger_webhook(job.job_id)
+
+    return {"triggered": [j.job_id for j in matching]}
+```
+
+### Webhook mit Payload-Daten
+
+Wenn der Webhook Daten mitliefert die in die Query einfließen sollen:
+
+```python
+@app.post("/hooks/github")
+async def github_webhook(request: Request):
+    payload = await request.json()
+
+    # Finde den Webhook-Job
+    jobs = [j for j in scheduler.list_jobs()
+            if j.trigger.webhook_path == "/hooks/github"]
+
+    for job in jobs:
+        # Query dynamisch anpassen (optional)
+        branch = payload.get("ref", "unknown")
+        job.query = f"GitHub Push auf {branch}: Deploy und Tests ausführen"
+
+        scheduler.trigger_webhook(job.job_id)
+
+    return {"status": "triggered"}
+```
+
+### Webhook mit ToolBoxV2 Nginx-Worker
+
+Integration mit dem bestehenden Nginx + Python Worker Setup:
+
+```python
+# In deinem Worker-Handler
+async def handle_webhook(request_data: dict):
+    """Wird vom Nginx-Worker aufgerufen."""
+    from toolboxv2 import get_app
+
+    isaa = get_app().get_mod("isaa")
+    scheduler = isaa.job_scheduler
+
+    job_id = request_data.get("job_id")
+    if job_id:
+        scheduler.trigger_webhook(job_id)
+        return {"ok": True}
+
+    # Oder nach webhook_path matchen
+    path = request_data.get("path", "")
+    for job in scheduler.list_jobs():
+        if (job.trigger.trigger_type == "on_webhook_received"
+            and job.trigger.webhook_path == path):
+            scheduler.trigger_webhook(job.job_id)
+
+    return {"ok": True}
+```
+
+### Webhook absichern
+
+```python
+import hmac
+import hashlib
+
+WEBHOOK_SECRET = "dein-geheimer-key"
+
+@app.post("/hooks/{hook_name}")
+async def secured_webhook(hook_name: str, request: Request):
+    body = await request.body()
+
+    # Signatur prüfen (GitHub-Style)
+    signature = request.headers.get("X-Hub-Signature-256", "")
+    expected = "sha256=" + hmac.new(
+        WEBHOOK_SECRET.encode(), body, hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(signature, expected):
+        return {"error": "Invalid signature"}, 403
+
+    # ... Job triggern ...
+```
+
+---
+
+## Dream-Trigger (Async Meta-Learning)
+
+Spezielle Trigger für die Integration mit dem Dreamer-System:
+
+### `on_agent_idle` — Auto-Dream bei Leerlauf
+
+```python
+# Agent träumt automatisch nach 10 Minuten ohne Runs
+scheduler.add_job(JobDefinition(
+    job_id=JobDefinition.generate_id(),
+    name="auto-dream",
+    agent_name="main_agent",
+    query="__dream__",                     # Magic Query → Dreamer
+    trigger=TriggerConfig(
+        trigger_type="on_agent_idle",
+        agent_idle_seconds=600,            # 10 Min Leerlauf
+    ),
+    timeout_seconds=600,
+))
+```
+
+Der `OnAgentIdleEvaluator` wird von `ExecutionEngine._commit_run()` bei jedem abgeschlossenen Run zurückgesetzt. Erst wenn keine Runs mehr kommen, zählt der Timer hoch.
+
+### `on_dream_start` / `on_dream_end` — Dream Lifecycle
+
+```python
+# Logging-Job: Notification wenn Dream startet
+scheduler.add_job(JobDefinition(
+    job_id=JobDefinition.generate_id(),
+    name="dream-started-notify",
+    agent_name="notification_agent",
+    query="Sende Slack-Nachricht: Dream-Zyklus gestartet",
+    trigger=TriggerConfig(trigger_type="on_dream_start"),
+))
+
+# Post-Processing: Skill-Export nach Dream-Ende
+scheduler.add_job(JobDefinition(
+    job_id=JobDefinition.generate_id(),
+    name="post-dream-export",
+    agent_name="main_agent",
+    query="Exportiere alle neuen Skills im Anthropic-Format nach /srv/skills/",
+    trigger=TriggerConfig(trigger_type="on_dream_end"),
+))
+```
+
+### `on_dream_budget_hit` — Budget erschöpft
+
+```python
+# Re-Schedule mit höherem Budget
+scheduler.add_job(JobDefinition(
+    job_id=JobDefinition.generate_id(),
+    name="dream-budget-retry",
+    agent_name="main_agent",
+    query="__dream__",
+    trigger=TriggerConfig(
+        trigger_type="on_dream_budget_hit",
+        extra={"dream_config": {"max_budget": 10000}},  # Höheres Budget
+    ),
+))
+```
+
+### `on_dream_skill_evolved` — Skill wurde verändert
+
+```python
+# Publiziere evolved Skills ans Team
+scheduler.add_job(JobDefinition(
+    job_id=JobDefinition.generate_id(),
+    name="publish-evolved-skills",
+    agent_name="main_agent",
+    query="Publiziere die neuesten Skill-Updates an alle gebundenen Agents",
+    trigger=TriggerConfig(trigger_type="on_dream_skill_evolved"),
+))
+```
+
+### Convenience: Dream-Job Schnell-Setup
+
+```python
+# Nightly Dream um 03:00
+scheduler.add_dream_job("main_agent")
+
+# Dream nach 10 Min Leerlauf
+scheduler.add_dream_job(
+    "main_agent",
+    trigger_type="on_agent_idle",
+    agent_idle_seconds=600,
+)
+
+# Dream nach jedem erfolgreichen Job
+scheduler.add_dream_job(
+    "main_agent",
+    trigger_type="on_job_completed",
+    name="post-job-dream",
+)
+
+# Dream mit Custom-Config
+scheduler.add_dream_job(
+    "main_agent",
+    dream_config={
+        "max_budget": 5000,
+        "do_skill_split": True,
+        "do_persona_evolve": True,
+        "hard_stop": False,
+    },
+)
+```
+
+---
+
+## Custom Trigger erstellen
+
+Das `TriggerRegistry` Plugin-System erlaubt eigene Trigger:
+
+```python
+from toolboxv2.mods.isaa.extras.jobs import TriggerEvaluator, JobDefinition
+
+class OnDiskSpaceLowEvaluator:
+    """Feuert wenn Festplattenspeicher unter Threshold fällt."""
+
+    def __init__(self):
+        self._last_check = 0.0
+
+    async def setup(self, job, scheduler):
+        pass
+
+    async def evaluate(self, job) -> bool:
+        import time, shutil
+        now = time.time()
+        if now - self._last_check < 120:  # Alle 2 Min prüfen
+            return False
+        self._last_check = now
+
+        threshold_gb = (job.trigger.extra or {}).get("threshold_gb", 10)
+        usage = shutil.disk_usage("/")
+        free_gb = usage.free / (1024 ** 3)
+        return free_gb < threshold_gb
+
+    async def teardown(self, job):
+        pass
+
+# Registrieren
+scheduler.trigger_registry.register("on_disk_space_low", OnDiskSpaceLowEvaluator())
+
+# Verwenden
+scheduler.add_job(JobDefinition(
+    job_id=JobDefinition.generate_id(),
+    name="disk-cleanup",
+    agent_name="ops_agent",
+    query="Lösche alte Logs und temporäre Dateien, Speicherplatz ist knapp",
+    trigger=TriggerConfig(
+        trigger_type="on_disk_space_low",
+        extra={"threshold_gb": 5},
+    ),
+))
+```
+
+### TriggerEvaluator Interface
+
+```python
+class TriggerEvaluator(Protocol):
+    async def setup(self, job: JobDefinition, scheduler: JobScheduler) -> None:
+        """Einmalig bei Job-Erstellung oder Scheduler-Start."""
+        ...
+
+    async def evaluate(self, job: JobDefinition) -> bool:
+        """Jede Sekunde aufgerufen. True = Job soll feuern."""
+        ...
+
+    async def teardown(self, job: JobDefinition) -> None:
+        """Bei Job-Löschung oder Scheduler-Stop."""
+        ...
+```
+
+**Wichtig:** `evaluate()` wird im Tick-Loop aufgerufen (jede Sekunde). Teure Operationen immer throttlen (eigener `_last_check` Timestamp).
+
+---
+
+## EventBus — Job-Events abonnieren
+
+```python
+# Eigenen Listener registrieren
+def on_any_job_done(event: str, data: dict):
+    job_id = data.get("job_id")
+    print(f"Job {job_id} → {event}")
+
+scheduler.event_bus.on("job_completed", on_any_job_done)
+scheduler.event_bus.on("job_failed", on_any_job_done)
+scheduler.event_bus.on("job_timeout", on_any_job_done)
+
+# Dream-Events
+scheduler.event_bus.on("dream_start", lambda e, d: print(f"Dream started: {d}"))
+scheduler.event_bus.on("dream_end", lambda e, d: print(f"Dream finished: {d}"))
+
+# Listener entfernen
+scheduler.event_bus.off("job_completed", on_any_job_done)
+```
+
+Verfügbare Events:
+
+| Event | Data | Wann |
+|---|---|---|
+| `job_completed` | `{job_id, result}` | Job erfolgreich abgeschlossen |
+| `job_failed` | `{job_id, error}` | Job mit Exception beendet |
+| `job_timeout` | `{job_id}` | Job hat `timeout_seconds` überschritten |
+| `dream_start` | `{agent, config}` | Dreamer-Zyklus startet |
+| `dream_end` | `{agent, report}` | Dreamer-Zyklus beendet |
+| `dream_budget_hit` | `{agent, budget_used, clusters_remaining}` | Token-Budget erschöpft |
+| `dream_skill_evolved` | `{agent, skill_id, action}` | Skill evolved/created/split |
+
+---
+
+## Headless Runner
+
+Der `headless_runner` ist der Entry-Point für den OS-Scheduler. Er läuft ohne interaktive CLI.
+
+### Manuell aufrufen
+
+```bash
+python -m toolboxv2.mods.isaa.extras.jobs.headless_runner --jobs-file data/jobs.json
+```
+
+### Was er tut
+
+1. `jobs.json` laden
+2. Für jeden aktiven Job prüfen ob der Trigger fällig ist (vereinfachte Evaluierung ohne vollen Scheduler)
+3. Fällige Jobs: minimale ISAA-Instanz starten, Agent laden, Query ausführen
+4. Ergebnisse in `jobs.json` zurückschreiben (`last_run_at`, `run_count`, `last_result`)
+5. Beenden
+
+### Dream-Jobs im Headless Mode
+
+Jobs mit `query="__dream__"` werden erkannt und statt `agent.a_run()` wird `agent.a_dream()` aufgerufen. Die `DreamConfig` kann über `trigger.extra.dream_config` übergeben werden.
+
+### Unterstützte Trigger im Headless Mode
+
+| Trigger | Headless? | Anmerkung |
+|---|---|---|
+| `on_time` | ✅ | Einmalig, wird `expired` gesetzt |
+| `on_interval` | ✅ | Basiert auf `last_run_at` |
+| `on_cron` | ✅ | Benötigt `croniter` |
+| `on_system_boot` | ✅ | Feuert immer (Headless = nach Boot) |
+| `on_cli_start` | ❌ | Nur interaktive CLI |
+| Alle anderen | ❌ | Benötigen laufenden Scheduler |
+
+---
+
+## Praxis-Rezepte
+
+### Nightly Backup + Verify + Dream
+
+```python
+# 1. Backup um 02:00
+scheduler.add_job(JobDefinition(
+    job_id="nightly_backup",
+    name="nightly-backup",
+    agent_name="ops",
+    query="Backup aller Datenbanken nach /srv/backups/",
+    trigger=TriggerConfig(trigger_type="on_cron", cron_expression="0 2 * * *"),
+    timeout_seconds=600,
+))
+
+# 2. Verify nach erfolgreichem Backup
+scheduler.add_job(JobDefinition(
+    job_id=JobDefinition.generate_id(),
+    name="verify-backup",
+    agent_name="ops",
+    query="Prüfe Integrität des letzten Backups, melde Fehler",
+    trigger=TriggerConfig(
+        trigger_type="on_job_completed",
+        watch_job_id="nightly_backup",
+    ),
+))
+
+# 3. Dream um 03:00 (nach Backup-Cycle)
+scheduler.add_dream_job("ops", cron_expression="0 3 * * *")
+```
+
+### GitHub Deploy Pipeline
+
+```python
+# Webhook-Job
+scheduler.add_job(JobDefinition(
+    job_id="github_deploy",
+    name="deploy-on-push",
+    agent_name="devops",
+    query="Pull, test, deploy to staging",
+    trigger=TriggerConfig(
+        trigger_type="on_webhook_received",
+        webhook_path="/hooks/github-push",
+    ),
+    timeout_seconds=900,
+))
+
+# Notification bei Fehler
+scheduler.add_job(JobDefinition(
+    job_id=JobDefinition.generate_id(),
+    name="deploy-failed-alert",
+    agent_name="notification",
+    query="Deploy fehlgeschlagen — sende Discord-Alert",
+    trigger=TriggerConfig(
+        trigger_type="on_job_failed",
+        watch_job_id="github_deploy",
+    ),
+))
+```
+
+### Config Hot-Reload
+
+```python
+scheduler.add_job(JobDefinition(
+    job_id=JobDefinition.generate_id(),
+    name="config-reload",
+    agent_name="main",
+    query="Lade Konfiguration neu und validiere alle Einstellungen",
+    trigger=TriggerConfig(
+        trigger_type="on_file_changed",
+        watch_path="/srv/config",
+        watch_patterns=["*.yaml", "*.toml"],
+    ),
+))
+```
+
+### Resilient Job mit Fallback-Kette
+
+```python
+# Primär: API-Sync
+scheduler.add_job(JobDefinition(
+    job_id="api_sync",
+    name="api-sync",
+    agent_name="sync_agent",
+    query="Synchronisiere Daten von der externen API",
+    trigger=TriggerConfig(trigger_type="on_interval", interval_seconds=3600),
+    timeout_seconds=120,
+))
+
+# Fallback: Bei Timeout → Retry nach 5 Min
+scheduler.add_job(JobDefinition(
+    job_id=JobDefinition.generate_id(),
+    name="api-sync-retry",
+    agent_name="sync_agent",
+    query="Retry: Synchronisiere Daten (vorheriger Versuch timeout)",
+    trigger=TriggerConfig(
+        trigger_type="on_job_timeout",
+        watch_job_id="api_sync",
+    ),
+))
+
+# Fallback: Bei Fehler → Offline-Cache nutzen
+scheduler.add_job(JobDefinition(
+    job_id=JobDefinition.generate_id(),
+    name="api-sync-fallback",
+    agent_name="sync_agent",
+    query="API nicht erreichbar — nutze lokalen Cache und melde Status",
+    trigger=TriggerConfig(
+        trigger_type="on_job_failed",
+        watch_job_id="api_sync",
+    ),
+))
+```
+
+---
+
+## Agent-Tool Integration
+
+Wenn der Agent selbst Jobs erstellen soll (via `createJob` Tool im FlowAgent):
+
+```python
+# Innerhalb der ExecutionEngine registrierte Tools:
+createJob(
+    name="weekly-report",
+    trigger_type="on_cron",
+    cron_expression="0 9 * * 1",        # Montags 09:00
+    agent_name="self",                    # Eigener Agent
+    query="Erstelle Wochenreport und sende per Email",
+)
+
+listJobs()     # Zeigt alle registrierten Jobs
+deleteJob(job_id="job_abc123")
+
+# WICHTIG: Immer nach createJob() ein listJobs() ausführen
+# um zu verifizieren dass der Job korrekt erstellt wurde.
+```
+
+---
+
+## Debugging & Monitoring
+
+### Logging
+
+```python
+import logging
+logging.getLogger("toolboxv2.mods.isaa.extras.jobs.job_manager").setLevel(logging.DEBUG)
+```
+
+### Job-Status inspizieren
+
+```python
+for job in scheduler.list_jobs():
+    print(
+        f"{job.name:30s} | {job.status:8s} | "
+        f"runs={job.run_count} fails={job.fail_count} | "
+        f"last={job.last_result or 'never'} | "
+        f"trigger={job.trigger.trigger_type}"
+    )
+```
+
+### Registrierte Trigger-Typen auflisten
+
+```python
+print(scheduler.trigger_registry.available_types())
+# ['on_time', 'on_interval', 'on_cron', 'on_cli_start', ...]
+```
+
+### Jobs-Datei manuell inspizieren
+
+```bash
+cat data/jobs.json | python -m json.tool
+```

@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import pickle
+import re
 import sqlite3
 import threading
 import time
@@ -355,7 +356,7 @@ class HybridMemoryStore:
         space = space or self.space
         entry_cache = {}  # entry_id -> loaded entry dict (avoid duplicate loads)
         ranked_lists = []  # list of (mode_name, [entry_id, ...]) for RRF
-
+        query_text = query_text.replace("\\", "/").replace('"', '').replace("'", "")
         # Helper: check if entry passes filters
         def _passes_filters(entry: Dict) -> bool:
             if not entry or not entry["is_active"] or entry["space"] != space:
@@ -391,8 +392,16 @@ class HybridMemoryStore:
 
         # ── 2. BM25 via FTS5 ──
         if "bm25" in search_modes:
-            safe_query = self._fts_escape(query_text)
-            if safe_query:  # only query if we have valid tokens
+            safe_query = self._fts_escape(re.sub(r'[\\/"\'(){}\[\]^~*:!]', ' ', query_text).strip())
+            _fts5_unsafe = re.compile(r'[\\/.:"\'(){}\[\]^~*!@#$&|<>=,;]')
+            safe_query_text = _fts5_unsafe.sub(' ', query_text).strip()  # oder wie die Variable heißt
+            safe_query_text = ' '.join(safe_query_text.split())  # doppelte Spaces entfernen
+            if not safe_query_text:
+                bm25_results = []
+                print("No query text")
+                from toolboxv2 import get_logger
+                get_logger().error(f"No query text bm25_results len og query {len(query_text)} len save query {len(safe_query_text)}")
+            else:
                 bm25_results = self._exec(
                     """
                     SELECT entry_id, rank
@@ -506,6 +515,22 @@ class HybridMemoryStore:
                 meta=new_meta,
                 ttl=old_entry["ttl"],
             )
+
+            # Prüfen ob add() einen existierenden Eintrag zurückgegeben hat
+            if new_id != entry_id:  # Nicht der alte Eintrag selbst
+                existing_entry = self._load_entry(new_id)
+                if existing_entry and existing_entry.get("supersedes") is None and existing_entry.get("version",
+                                                                                                      1) == 1:
+                    # Nur updaten wenn es wirklich unser neuer Eintrag ist, nicht ein Fremd-Eintrag
+                    # Sicherste Lösung: content_hash erneut prüfen
+                    new_hash = hashlib.sha256(new_content.encode()).hexdigest()
+                    if existing_entry["content_hash"] == new_hash and existing_entry["created_at"] == existing_entry[
+                        "updated_at"]:
+                        with self._tx() as conn:
+                            conn.execute(
+                                "UPDATE entries SET supersedes = ?, version = ? WHERE id = ?",
+                                (entry_id, old_entry["version"] + 1, new_id),
+                            )
 
             # Set supersedes relationship and version
             with self._tx() as conn:
@@ -1145,44 +1170,61 @@ class HybridMemoryStore:
     # ════════════════════ Lifecycle Management ════════════════════
 
     def invalidate_by_source(self, source: str) -> int:
-        """
-        Invalidate all entries from a source (e.g., updated file)
-
-        Optimized for changing code - bulk invalidation
-
-        Args:
-            source: Source path/URL
-
-        Returns:
-            Number of entries invalidated
-        """
-        with self._tx() as conn:
-            cursor = conn.execute(
-                "UPDATE entries SET is_active = 0 WHERE meta_source = ? AND space = ?",
+        with self._lock:
+            # IDs sammeln bevor wir deaktivieren
+            rows = self._exec(
+                "SELECT id FROM entries WHERE meta_source = ? AND space = ? AND is_active = 1",
                 (source, self.space),
-            )
-            return cursor.rowcount
+            ).fetchall()
+            ids = [row[0] for row in rows]
+
+            if not ids:
+                return 0
+
+            with self._tx() as conn:
+                placeholders = ",".join("?" * len(ids))
+                conn.execute(
+                    f"UPDATE entries SET is_active = 0 WHERE id IN ({placeholders})", ids
+                )
+                conn.execute(
+                    f"DELETE FROM concept_index WHERE entry_id IN ({placeholders})", ids
+                )
+
+            # FAISS-Maps aufräumen
+            for eid in ids:
+                if eid in self._id_map:
+                    fidx = self._id_map.pop(eid)
+                    self._idx_map.pop(fidx, None)
+
+        return len(ids)
 
     def cleanup_expired(self, rebuild_threshold: int = 100) -> int:
-        """
-        Remove expired entries (TTL-based)
-
-        Args:
-            rebuild_threshold: If more entries than this are deleted, rebuild FAISS index
-
-        Returns:
-            Number of entries removed
-        """
         now = time.time()
 
-        with self._tx() as conn:
-            cursor = conn.execute(
-                "DELETE FROM entries WHERE ttl IS NOT NULL AND created_at + ttl < ?",
-                (now,),
-            )
-            deleted_count = cursor.rowcount
+        with self._lock:
+            with self._tx() as conn:
+                # Erst IDs sammeln, dann aus allen Indizes löschen
+                expired_rows = conn.execute(
+                    "SELECT id FROM entries WHERE ttl IS NOT NULL AND created_at + ttl < ?",
+                    (now,),
+                ).fetchall()
+                expired_ids = [row[0] for row in expired_rows]
 
-        # Rebuild FAISS index if many entries were deleted to compact the index
+                if not expired_ids:
+                    return 0
+
+                placeholders = ",".join("?" * len(expired_ids))
+                conn.execute(f"DELETE FROM entries_fts WHERE entry_id IN ({placeholders})", expired_ids)
+                conn.execute(f"DELETE FROM concept_index WHERE entry_id IN ({placeholders})", expired_ids)
+                conn.execute(f"DELETE FROM entries WHERE id IN ({placeholders})", expired_ids)
+
+            # FAISS-Maps aufräumen
+            for eid in expired_ids:
+                if eid in self._id_map:
+                    fidx = self._id_map.pop(eid)
+                    self._idx_map.pop(fidx, None)
+
+        deleted_count = len(expired_ids)
         if deleted_count >= rebuild_threshold:
             self.rebuild_faiss_index()
 
@@ -1326,10 +1368,13 @@ class HybridMemoryStore:
     def _fts_escape(self, query: str) -> str:
         """Escape FTS5 special characters"""
         # Remove or escape special FTS5 characters (Fix #4: added apostrophe)
-        special_chars = ["*", "^", "-", '"', "(", ")", "{", "}", "[", "]", "'"]
+        special_chars = ["*", "^", "-", '"', "(", ")", "{", "}", "[", "]", "'", ":", "~", "+"]
         for char in special_chars:
             query = query.replace(char, " ")
-        return query.strip()
+        # FTS5-Keywords neutralisieren
+        tokens = query.split()
+        tokens = [t for t in tokens if t.upper() not in ("AND", "OR", "NOT", "NEAR")]
+        return " ".join(tokens).strip()
 
     def _rrf_fuse(
         self,

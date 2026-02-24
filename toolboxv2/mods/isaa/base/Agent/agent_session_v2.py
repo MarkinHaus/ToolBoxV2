@@ -171,6 +171,28 @@ class AgentSessionV2:
         self._initialized = False
         self._closed = False
 
+        # Audit-Log: Session Created
+        try:
+            from toolboxv2 import get_app
+            app = get_app("CloudM.Isaa.Export")
+            if app and hasattr(app, 'audit_logger'):
+                # Get user_id from metadata if available
+                user_id = self.metadata.get('user_id', 'anonymous') if self.metadata else 'anonymous'
+                app.audit_logger.log_action(
+                    user_id=user_id,
+                    action="agent.session.create",
+                    resource=f"/agent/sessions/{self.session_id}",
+                    status="SUCCESS",
+                    details={
+                        "agent_name": self.agent_name,
+                        "session_id": self.session_id,
+                        "enable_lsp": enable_lsp,
+                        "enable_docker": enable_docker,
+                    }
+                )
+        except Exception:
+            pass
+
     async def initialize(self):
         """
         Async initialization - must be called after __init__.
@@ -480,6 +502,25 @@ class AgentSessionV2:
         # Save ChatSession
         if self._chat_session:
             self._chat_session.on_exit()
+
+        # Audit-Log: Session Closed
+        try:
+            from toolboxv2 import get_app
+            app = get_app("CloudM.Isaa.Export")
+            if app and hasattr(app, 'audit_logger'):
+                user_id = self.metadata.get('user_id', 'anonymous') if self.metadata else 'anonymous'
+                app.audit_logger.log_action(
+                    user_id=user_id,
+                    action="agent.session.close",
+                    resource=f"/agent/sessions/{self.session_id}",
+                    status="SUCCESS",
+                    details={
+                        "agent_name": self.agent_name,
+                        "session_id": self.session_id,
+                    }
+                )
+        except Exception:
+            pass
 
         self._closed = True
 

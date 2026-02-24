@@ -33,7 +33,7 @@ import hashlib
 import contextlib
 import io
 
-from toolboxv2 import get_logger, Spinner
+from toolboxv2 import get_logger, Spinner, get_app
 
 logger = get_logger()
 
@@ -544,6 +544,23 @@ class ModelFallbackManager:
 
             fallback = config.fallback_models[state.current_fallback_index]
             logger.info(f"Fallback triggered: {model} -> {fallback} (reason: {reason.value})")
+
+            # NEU: Audit-Log Fallback
+            try:
+                get_app("audit-isaa").audit_logger.log_action(
+                    user_id="system",
+                    action="llm.model.fallback.used",
+                    resource=f"/llm/fallback/{model}",
+                    status="SUCCESS",
+                    details={
+                        "original_model": model,
+                        "fallback_model": fallback,
+                        "reason": reason.value,
+                        "duration": duration,
+                    }
+                )
+            except Exception:
+                pass
 
             return fallback
 
@@ -1473,6 +1490,24 @@ class LiteLLMRateLimitHandler:
             try:
                 # Acquire rate limit slot and get active model/key
                 if self.enable_rate_limiting:
+                    wait_time = self.rate_limiter.wait_time
+
+                    # NEU: Audit-Log Rate Limit Wait
+                    try:
+                        if wait_time > 0:
+                            get_app("audit-isaa").audit_logger.log_action(
+                                user_id="system",
+                                action="llm.rate_limit.wait",
+                                resource=f"/llm/rate_limit/{current_model.split('/')[0] if '/' in current_model else 'default'}",
+                                details={
+                                    "model": current_model,
+                                    "wait_time": wait_time,
+                                    "estimated_tokens": estimated_tokens,
+                                }
+                            )
+                    except Exception:
+                        pass
+
                     with Spinner(message=f"Rate limiter: {self.rate_limiter.wait_time}", symbols=[
                         "[-]","[\\]","[|]","[/]"
                     ]):

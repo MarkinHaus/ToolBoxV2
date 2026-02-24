@@ -14,6 +14,7 @@ Redirects to /web/scripts/login.html (Discord/Google/Passkey UI)
 """
 
 import json
+import pickle
 import time
 from typing import Optional
 
@@ -271,151 +272,243 @@ async def _complete_login(app: App, result: Result, email: str = None) -> Result
         return Result.default_internal_error("Bad auth response")
 
     username = data.get("username", "")
-    user_id = data.get("user_id", "")
-    access_token = data.get("access_token", "")
-    refresh_token = data.get("refresh_token", "")
-    provider = data.get("provider", "")
-
-    # Save session to DB
     session_data = {
         "username": username,
         "email": email or data.get("email", ""),
-        "user_id": user_id,
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "provider": provider,
+        "user_id": data.get("user_id", ""),
+        "access_token": data.get("access_token", ""),
+        "refresh_token": data.get("refresh_token", ""),
+        "provider": data.get("provider", ""),
         "authenticated_at": time.time(),
     }
     await _save_cli_token(app, username, session_data)
 
-    # Update app session
-    if hasattr(app, 'session') and app.session:
-        app.session.username = username
-        app.session.valid = True
+    # FIX: Korrekte SessionData-Attribute setzen
+    _apply_session_to_app(app, session_data)
 
     print()
     print_box_header("Login Successful", "+")
     print_box_content(f"Welcome, {username}!", "success")
-    print_box_content(f"Provider: {provider}", "info")
+    print_box_content(f"Provider: {data.get('provider', '')}", "info")
     print_box_content("Your CLI session has been established", "info")
     print_box_footer()
 
     return Result.ok(info="Login successful", data=session_data)
 
 
+
+def _apply_session_to_app(app: App, session_data: dict):
+    """Setzt app.session korrekt (user_name/validated, nicht username/valid)."""
+    s = getattr(app, 'session', None)
+    if s is None:
+        return
+
+    username = session_data.get("username", "")
+    user_id = session_data.get("user_id", "")
+
+    # SessionData-Attribute (session.py korrekt)
+    for attr, val in [
+        ("user_name", username), ("validated", True), ("anonymous", False),
+        ("user_id", user_id), ("provider_user_id", user_id),
+    ]:
+        if hasattr(s, attr):
+            setattr(s, attr, val)
+
+    if hasattr(s, 'level'):
+        try:
+            from toolboxv2.utils.workers.session import AccessLevel
+            s.level = AccessLevel.LOGGED_IN
+        except ImportError:
+            s.level = 1
+
+    # Legacy-Attribute
+    if hasattr(s, 'username'):
+        s.username = username
+    if hasattr(s, 'valid'):
+        s.valid = True
+
+    if hasattr(s, 'mark_dirty'):
+        s.mark_dirty()
+
+
+def _invalidate_app_session(app: App):
+    """Invalidiert app.session korrekt."""
+    s = getattr(app, 'session', None)
+    if s is None:
+        return
+    for attr, val in [
+        ("validated", False), ("anonymous", True), ("user_name", "anonymous"),
+        ("user_id", ""), ("valid", False), ("username", None),
+    ]:
+        if hasattr(s, attr):
+            setattr(s, attr, val)
+    if hasattr(s, 'level'):
+        s.level = 0
+
+
+
+async def auto_login_from_blob(app) -> bool:
+    """
+    Auto-Login aus BlobFile. Ersetzt log_in() in main().
+
+    Usage:
+        from toolboxv2.mods.CloudM.LogInSystem import auto_login_from_blob
+        tb_app.run_bg_task_advanced(auto_login_from_blob, tb_app)
+    """
+    try:
+        result = _find_cli_session(app)
+        if result:
+            _apply_session_to_app(app, result["session_data"])
+            app.print(f"🔓 Logged in as: {result['username']}")
+            return True
+        return False
+    except Exception as e:
+        if hasattr(app, 'logger'):
+            app.logger.debug(f"Auto-login failed: {e}")
+        return False
+
 # =================== Session Check ===================
 
-async def _check_existing_session(app: App, username: str = None) -> Optional[dict]:
-    """Check for existing valid CLI session via BlobFile."""
+def _find_cli_session(app: App = None, username: str = None) -> Optional[dict]:
+    """
+    Findet gespeicherte CLI-Session aus dem BlobFile-Speicher.
+    Liest den Blob "cli_sessions" direkt und iteriert seine Keys.
+
+    Returns:
+        dict {"username": str, "session_data": dict} oder None
+    """
+    from toolboxv2.utils.extras.blobs import BlobFile
+    from toolboxv2.utils.security.cryp import Code
+
+    storage = _get_blob_storage()
+
+    # Blob "cli_sessions" direkt lesen (raw pickle dict)
+    raw = storage.read_blob("cli_sessions", decrypt=False)
+    if raw is None:
+        return None
+
+    # Entschlüsseln auf Blob-Ebene (Device-Key, ohne custom key)
     try:
-        from toolboxv2.utils.extras.blobs import BlobFile
-        from toolboxv2.utils.security.cryp import Code
-
-        if not username:
-            # Try to find any CLI session
-            storage = _get_blob_storage()
-            blobs = storage.list_blobs(prefix="cli_sessions/")
-            if not blobs:
-                return None
-            username = blobs[0]['blob_id'].replace('cli_sessions/', '')
-
-        key = Code.DK()()
-        with BlobFile(f"cli_sessions/{username}/session.json", mode="r", key=key, storage=_get_blob_storage()) as blob:
-            token_data = blob.read_json()
-
-        if token_data and token_data.get("access_token"):
-            # Validate token is still valid
-            result = await app.a_run_any(
-                (AUTH_MODULE, "validate_session"),
-                token=token_data["access_token"],
-                get_results=True,
-            )
-            if not result.is_error():
-                return token_data
+        raw = storage.crypto.decrypt(raw)
     except Exception:
-        pass
+        pass  # Vielleicht schon entschlüsselt
+
+    try:
+        blob_content = pickle.loads(raw)
+    except Exception:
+        return None
+
+    if not isinstance(blob_content, dict) or not blob_content:
+        return None
+
+    # Username-Discovery: entweder spezifisch oder erster gefundener
+    if username:
+        usernames = [username] if username in blob_content else []
+    else:
+        usernames = list(blob_content.keys())
+
+    for uname in usernames:
+        user_folder = blob_content.get(uname, {})
+        if not isinstance(user_folder, dict):
+            continue
+
+        file_data = user_folder.get("session.json")
+        if file_data is None:
+            continue
+
+        # Entschlüsseln mit Device-Key (BlobFile custom key)
+        try:
+            key = Code.DK()()
+            decrypted = storage.crypto.decrypt(file_data, key)
+            import json
+            session_data = json.loads(decrypted.decode())
+            if session_data and session_data.get("access_token"):
+                return {"username": uname, "session_data": session_data}
+        except Exception:
+            continue
+
     return None
 
+
+async def _check_existing_session(app: App, username: str = None) -> Optional[dict]:
+    """Check for existing valid CLI session. Ersetzt die alte Version."""
+    try:
+        result = _find_cli_session(app, username)
+        if not result:
+            return None
+
+        session_data = result["session_data"]
+
+        # Token beim Auth-Server validieren
+        validate = await app.a_run_any(
+            (AUTH_MODULE, "validate_session"),
+            token=session_data["access_token"],
+            get_results=True,
+        )
+        if not validate.is_error():
+            return session_data
+
+    except Exception:
+        pass
 
 # =================== Logout ===================
 
 @export(mod_name=Name, version=version)
 async def cli_logout(app: App = None):
-    """Logout from CLI session via BlobFile."""
+    """Logout — BlobFile-korrekt."""
     if app is None:
         app = get_app("CloudM.cli_logout")
 
     print_box_header("Logout", "~")
 
-    # Get username from BlobFile session
-    from toolboxv2.utils.extras.blobs import BlobFile
-    from toolboxv2.utils.security.cryp import Code
+    result = _find_cli_session(app)
 
-    username = None
-    storage = _get_blob_storage()
-    blobs = storage.list_blobs(prefix="cli_sessions/")
-
-    if blobs:
-        username = blobs[0]['blob_id'].replace('cli_sessions/', '')
-
-    if username:
+    if result:
+        username = result["username"]
+        sd = result["session_data"]
         print_status(f"Logging out {username}...", "progress")
 
-        # Load token to blacklist it
-        key = Code.DK()()
-        with BlobFile(f"cli_sessions/{username}/session.json", mode="r", key=key, storage=_get_blob_storage()) as blob:
-            token_data = blob.read_json()
-
-        if token_data and token_data.get("access_token"):
+        # Token blacklisten
+        if sd.get("access_token"):
             try:
                 await app.a_run_any(
                     (AUTH_MODULE, "logout"),
-                    token=token_data["access_token"],
+                    token=sd["access_token"],
                     get_results=False,
                 )
             except Exception:
                 pass
 
+        # Session aus Blob entfernen (leeres write überschreibt)
         await _clear_cli_token(app, username)
 
-    # Clear app session
-    if hasattr(app, 'session') and app.session:
-        app.session.valid = False
-        app.session.username = None
+    # App-Session invalidieren
+    _invalidate_app_session(app)
 
     print_status("Logged out successfully", "success")
     print_box_footer()
-
     return Result.ok("Logout successful")
+
 
 
 # =================== Session Status ===================
 
 @export(mod_name=Name, version=version)
 async def cli_status(app: App = None):
-    """Show current CLI session status via BlobFile."""
+    """Show current CLI session status — BlobFile-korrekt."""
     if app is None:
         app = get_app("CloudM.cli_status")
 
     print_box_header("Session Status", "i")
 
-    # Check for CLI session via BlobFile
     try:
-        from toolboxv2.utils.extras.blobs import BlobFile
-        from toolboxv2.utils.security.cryp import Code
+        result = _find_cli_session(app)
 
-        storage = _get_blob_storage()
-        blobs = storage.list_blobs(prefix="cli_sessions/")
-
-        if blobs:
-            username = blobs[0]['blob_id'].replace('cli_sessions/', '')
-
-            key = Code.DK()()
-            with BlobFile(f"cli_sessions/{username}/session.json", mode="r", key=key, storage=_get_blob_storage()) as blob:
-                token_data = blob.read_json()
-
-            provider = token_data.get("provider", "unknown")
-            auth_time = token_data.get("authenticated_at", 0)
+        if result:
+            sd = result["session_data"]
+            username = result["username"]
+            provider = sd.get("provider", "unknown")
+            auth_time = sd.get("authenticated_at", 0)
 
             print_box_content(f"+ Authenticated as: {username}", "success")
 
@@ -432,7 +525,7 @@ async def cli_status(app: App = None):
             print_box_content("Run 'tb login' to authenticate", "info")
     except Exception as e:
         print_box_content("X Not authenticated", "warning")
-        print_box_content(f"Error checking session: {e}", "info")
+        print_box_content(f"Error: {e}", "info")
 
     print_box_footer()
     return Result.ok()

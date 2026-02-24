@@ -243,7 +243,7 @@ class ZenRendererV2:
     # -- internal rendering ---------------------------------------------------
 
     def _maybe_print_agent_header(self, chunk: dict):
-        """Print agent context header on agent change, progress bar on iter change."""
+        """Print agent context header on agent change, progress bar + token bar on iter change."""
         agent = chunk.get("agent", "")
         is_sub = chunk.get("is_sub", False)
         iter_n = chunk.get("iter", 0)
@@ -257,18 +257,71 @@ class ZenRendererV2:
                 f"\n<style fg='{color}'>{prefix} {_esc(agent)}</style>"
                 f"  <style fg='{C['dim']}'>{bar} {iter_n}/{max_n}</style>"
             )
+            self._print_token_bar(chunk)
+            self._maybe_print_persona_skills(chunk)
             self._last_agent = agent
             self._last_iter = iter_n
             if DEBUG:
                 self.print_debug_panel()
 
         elif iter_n > self._last_iter:
-            # Iteration changed: show compact progress update
             bar = _bar(iter_n, max_n, 12)
             self._print(
                 f"  <style fg='{C['dim']}'>{bar} {iter_n}/{max_n}</style>"
             )
+            self._print_token_bar(chunk)
             self._last_iter = iter_n
+
+    def _print_token_bar(self, chunk: dict):
+        """Show working memory token usage bar after iteration line."""
+        tokens_used = chunk.get("tokens_used", 0)
+        tokens_max = chunk.get("tokens_max", 0)
+        if tokens_max <= 0:
+            return
+        pct = min(100, int(100 * tokens_used / tokens_max))
+        bar_w = 18
+        filled = int(bar_w * tokens_used / tokens_max)
+        bar_str = "\u2591" * filled + " " * (bar_w - filled)
+        # Color: dim < 50%, amber 50-80%, red > 80%
+        if pct < 50:
+            col = C["dim"]
+        elif pct < 80:
+            col = C["amber"]
+        else:
+            col = C["red"]
+        self._print(
+            f"  <style fg='{col}'>Tokens: {tokens_used} [{bar_str}] / {tokens_max} ~ {pct}%</style>"
+        )
+
+    def _maybe_print_persona_skills(self, chunk: dict):
+        """Show active persona and matched skills on agent header."""
+        persona = chunk.get("persona", "default")
+        persona_src = chunk.get("persona_source", "")
+        persona_model = chunk.get("persona_model", "")
+        persona_iterations_factor = chunk.get("persona_iterations_factor", 1)
+        skills = chunk.get("skills", [])
+
+        parts = []
+        if persona and persona != "default":
+            label = f"{persona}"
+            if persona_src and persona_src != "default":
+                label += f"\u00b7{persona_src}"
+            if persona_model:
+                label += f" [{persona_model}]"
+            parts.append(f"<style fg='{C['blue']}'>\u2b21 {_esc(label)}</style>")
+
+        if persona_iterations_factor != 1:
+            text = f" [{'+' if persona_iterations_factor >= 1 else '-'}{persona_iterations_factor}% titrations]"
+            parts.append(f"<style fg='{C['amber']}'>\u2b21 {_esc(text)}</style>")
+
+        if skills:
+            sk_str = ", ".join(skills[:3])
+            if len(skills) > 3:
+                sk_str += f" +{len(skills) - 3}"
+            parts.append(f"<style fg='{C['dim']}'>\u2699 {_esc(sk_str)}</style>")
+
+        if parts:
+            self._print("  " + "  ".join(parts))
 
     def _on_reasoning(self, chunk: dict):
         if not self._in_think:
@@ -330,10 +383,9 @@ class ZenRendererV2:
         if args:
             try:
                 ad = json.loads(args) if isinstance(args, str) else args
-                for k in ("path", "query", "command", "url", "filename", "task", "timeout", "tools", "category"):
+                for k in ("path", "query", "command", "url", "filename", "task", "timeout", "tools", "category", "pattern"):
                     if k in ad:
-                        arg_str = _short(str(ad[k]), 40)
-                        break
+                        arg_str += _short(str(ad[k]), 40)
                 if not arg_str:
                     arg_str = ad[:15]+ "..." if isinstance(ad, str) else " - ".join(list(ad.keys())[:4])
             except Exception:
@@ -350,7 +402,7 @@ class ZenRendererV2:
         if name == "final_answer":
             return
 
-        # think tool: just close the line with ✓
+        # think tool: just close the line
         if name == "think":
             self._print(f"  <style fg='{C['green']}'>{SYM['ok']}</style>")
             return
@@ -361,29 +413,554 @@ class ZenRendererV2:
         meta = ""
 
         try:
-            rd = json.loads(result)
+            rd = json.loads(result) if isinstance(result, str) else result
             if isinstance(rd, dict):
+                meta = self._extract_tool_meta(name, rd)
                 if not rd.get("success", True):
                     icon = SYM["fail"]
                     color = C["red"]
-                    meta = _short(rd.get("error", ""), 30)
-                elif "content" in rd:
-                    meta = f"{len(rd['content'])}ch"
-                elif "size" in rd:
-                    s = rd["size"]
-                    meta = f"{s}b" if s < 1024 else f"{s / 1024:.1f}kb"
-                for k in rd:
-                    if k in ( "info", ):
-                        meta += _short(str(rd[k]), 40)
-                else:
-                    meta =  " - ".join(list(rd.keys())[:4])
+                    if not meta:
+                        meta = _short(rd.get("error", "failed"), 40)
+            elif isinstance(rd, list):
+                meta = f"{len(rd)} items"
+            elif isinstance(rd, str) and len(rd) > 0:
+                meta = f"{len(rd)}ch"
         except Exception:
-            pass
+            # Plain text result
+            if isinstance(result, str) and result:
+                rlen = len(result)
+                size = f" {rlen}b" if rlen < 1024 else f"{rlen / 1024:.1f}kb" if rlen < 1048576 else f"{rlen / 1048576:.1f}mb"
+                meta = _short(result.strip().replace("\n", " "), 25) + size
+
 
         self._print(
             f"  <style fg='{C['dim']}'>{_esc(meta)}</style>"
             f"  <style fg='{color}'>{icon}</style>"
         )
+
+    @staticmethod
+    def _extract_tool_meta(name: str, rd: dict) -> str:
+        """Extract compact, meaningful info from known tool result dicts."""
+        n = name.lower()
+
+        # --- Failure case (universal) ---
+        if not rd.get("success", True):
+            return _short(rd.get("error", "failed"), 40)
+
+        # --- VFS file read ---
+        if n in ("vfs_read", "vfs_open", "vfs_view"):
+            content = rd.get("content", "")
+            lines = rd.get("lines", rd.get("total_lines", 0))
+            ft = rd.get("file_type", "")
+            parts = []
+            if lines:
+                parts.append(f"{lines}L")
+            elif content:
+                parts.append(f"{len(content)}ch")
+            if ft:
+                parts.append(ft)
+            return " ".join(parts) if parts else ""
+
+        # --- VFS write/create ---
+        if n in ("vfs_write", "vfs_create", "vfs_append"):
+
+            s  = rd.get("size", rd.get("bytes", len(rd.get("content", ""))))
+            size = f"{s}b" if s < 1024 else f"{s / 1024:.1f}kb" if s < 1048576 else f"{s / 1048576:.1f}mb"
+
+            lines = rd.get("lines", 0)
+            ft = rd.get("file_type", "")
+            parts = []
+            if size:
+                parts.append(size)
+            if lines:
+                parts.append(f"{lines}L")
+            if ft:
+                parts.append(ft)
+            return " ".join(parts) if parts else "ok"
+
+        # --- VFS edit ---
+        if n == "vfs_edit":
+            return f"lines {rd.get('line_start', '?')}-{rd.get('line_end', '?')}"
+
+        # --- VFS list ---
+        if n == "vfs_list":
+            contents = rd.get("contents", rd.get("entries", []))
+            if isinstance(contents, list):
+                dirs = sum(1 for c in contents if isinstance(c, dict) and c.get("type") == "dir")
+                files = len(contents) - dirs
+                return f"{files}f {dirs}d"
+            return ""
+
+        # --- VFS delete/mkdir/rmdir/mv ---
+        if n in ("vfs_delete", "vfs_mkdir", "vfs_rmdir", "vfs_mv"):
+            return "ok"
+
+        # --- VFS info ---
+        if n == "vfs_info":
+            size = rd.get("size", 0)
+            ft = rd.get("file_type", rd.get("type", ""))
+            lines = rd.get("lines", 0)
+            parts = []
+            if ft:
+                parts.append(ft)
+            if lines:
+                parts.append(f"{lines}L")
+            if size:
+                parts.append(f"{size}b" if size < 1024 else f"{size / 1024:.1f}kb")
+            return " ".join(parts) if parts else ""
+
+        # --- VFS grep ---
+        if n == "vfs_grep":
+            matches = rd.get("matches", rd.get("count", ""))
+            return f"{matches} matches" if matches else ""
+
+        # --- VFS mount ---
+        if n == "vfs_mount":
+            indexed = rd.get("files_indexed", 0)
+            mp = rd.get("mount_point", "")
+            return f"{indexed} files \u2192 {_short(mp, 20)}" if indexed else _short(mp, 30)
+
+        # --- VFS execute ---
+        if n == "vfs_execute":
+            rc = rd.get("return_code", rd.get("exit_code", "?"))
+            stdout = rd.get("stdout", "")
+            stderr = rd.get("stderr", "")
+            out_lines = len(stdout.splitlines()) if stdout else 0
+            err_lines = len(stderr.splitlines()) if stderr else 0
+            parts = [f"rc={rc}"]
+            if out_lines:
+                parts.append(f"out:{out_lines}L")
+            if err_lines:
+                parts.append(f"err:{err_lines}L")
+            return " ".join(parts)
+
+        # --- Docker run ---
+        if n == "docker_run":
+            rc = rd.get("exit_code", rd.get("return_code", "?"))
+            dur = rd.get("duration", "")
+            parts = [f"exec={rc}"]
+            if dur:
+                parts.append(f"{dur:.1f}s" if isinstance(dur, float) else f"{dur}s")
+            return " ".join(parts)
+
+        # --- Docker status ---
+        if n == "docker_status":
+            running = rd.get("is_running", False)
+            return "running" if running else "stopped"
+
+        # --- fs_copy_to_vfs / fs_copy_from_vfs ---
+        if n in ("fs_copy_to_vfs", "fs_copy_from_vfs", "fs_copy_dir_from_vfs"):
+            size = rd.get("size", 0)
+            vp = rd.get("vfs_path", rd.get("saved_path", ""))
+            parts = []
+            if size:
+                parts.append(f"{size}b" if size < 1024 else f"{size / 1024:.1f}kb")
+            if vp:
+                parts.append(_short(vp, 25))
+            return " ".join(parts) if parts else "ok"
+
+        # --- VFS diagnostics ---
+        if n == "vfs_diagnostics":
+            errs = rd.get("errors", rd.get("error_count", 0))
+            warns = rd.get("warnings", rd.get("warning_count", 0))
+            hints = rd.get("hints", rd.get("hint_count", 0))
+            return f"Er:{errs} Warn:{warns} Hits:{hints}"
+
+        # --- list_tools ---
+        if n == "list_tools":
+            tools = rd.get("tools", rd.get("available", []))
+            if isinstance(tools, list):
+                return f"{len(tools)} tools"
+            return ""
+
+        # --- load_tools ---
+        if n == "load_tools":
+            loaded = rd.get("loaded", rd.get("tools", []))
+            if isinstance(loaded, list):
+                return ", ".join(loaded[:3]) + (f" +{len(loaded)-3}" if len(loaded) > 3 else "")
+            return ""
+
+        # --- history ---
+        if n == "history":
+            return ""
+
+        # --- Sharing tools ---
+        if "share" in n:
+            sid = rd.get("id", rd.get("share_id", ""))
+            return _short(str(sid), 20) if sid else "ok"
+
+        # --- Discovery: list_tools ---
+        if n == "list_tools":
+            tools = rd.get("tools", rd.get("available", []))
+            if isinstance(tools, list):
+                return f"{len(tools)} tools"
+            if isinstance(rd, str):
+                return f"{rd.count(chr(10)) + 1} entries"
+            return ""
+
+        # --- Discovery: load_tools ---
+        if n == "load_tools":
+            loaded = rd.get("loaded", rd.get("tools", []))
+            if isinstance(loaded, list):
+                return ", ".join(loaded[:3]) + (f" +{len(loaded) - 3}" if len(loaded) > 3 else "")
+            return _short(str(rd), 40) if isinstance(rd, str) else ""
+
+        # --- Discovery: shift_focus ---
+        if n == "shift_focus":
+            nxt = rd.get("next_objective", "")
+            return f"→ {_short(nxt, 40)}" if nxt else "ok"
+
+        # --- Sub-Agent: spawn_sub_agent ---
+        if n == "spawn_sub_agent":
+            sid = rd.get("id", rd.get("sub_agent_id", ""))
+            status = rd.get("status", "")
+            out = rd.get("output_dir", "")
+            if sid:
+                return f"{_short(sid, 12)} {status}" if status else _short(sid, 20)
+            return _short(out, 25) if out else ""
+
+        # --- Sub-Agent: wait_for ---
+        if n == "wait_for":
+            results = rd.get("results", {})
+            if isinstance(results, dict):
+                ok = sum(1 for r in results.values() if isinstance(r, dict) and r.get("success"))
+                fail = len(results) - ok
+                return f"{ok}✓ {fail}✗" if fail else f"{ok}✓"
+            return ""
+
+        # --- Sub-Agent: resume_sub_agent ---
+        if n == "resume_sub_agent":
+            sid = rd.get("sub_agent_id", rd.get("id", ""))
+            status = rd.get("status", "")
+            parts = []
+            if sid:
+                parts.append(_short(sid, 12))
+            if status:
+                parts.append(status)
+            return " ".join(parts) if parts else ""
+
+
+        # =================================================================
+        # DOCKER TOOLS
+        # =================================================================
+
+        if n == "docker_run":
+            rc = rd.get("exit_code", rd.get("return_code", "?"))
+            dur = rd.get("duration", "")
+            parts = [f"rc={rc}"]
+            if dur:
+                parts.append(f"{dur:.1f}s" if isinstance(dur, (float, int)) else f"{dur}s")
+            return " ".join(parts)
+
+        if n == "docker_start_app":
+            url = rd.get("url", "")
+            port = rd.get("host_port", "")
+            return f"{url}" if url else (f":{port}" if port else "started")
+
+        if n in ("docker_stop_app",):
+            return "stopped"
+
+        if n == "docker_logs":
+            logs = rd.get("logs", "")
+            return f"{len(logs.splitlines())}L" if logs else "empty"
+
+        if n == "docker_status":
+            running = rd.get("is_running", False)
+            return "running" if running else "stopped"
+
+        # =================================================================
+        # CHAIN TOOLS (chain_tools.py)
+        # =================================================================
+
+        if n == "create_validate_chain":
+            cid = rd.get("id", rd.get("chain_id", ""))
+            valid = rd.get("is_valid", rd.get("valid", None))
+            steps = rd.get("step_count", rd.get("steps", ""))
+            parts = []
+            if cid:
+                parts.append(_short(cid, 12))
+            if valid is not None:
+                parts.append("VALID" if valid else "INVALID")
+            if steps:
+                parts.append(f"{steps} steps")
+            return " ".join(parts) if parts else ""
+
+        if n == "run_chain":
+            elapsed = rd.get("elapsed", rd.get("duration", ""))
+            run_n = rd.get("run_count", rd.get("run", ""))
+            parts = []
+            if elapsed:
+                parts.append(f"{elapsed:.1f}s" if isinstance(elapsed, (float, int)) else f"{elapsed}s")
+            if run_n:
+                parts.append(f"#{run_n}")
+            return " ".join(parts) if parts else ""
+
+        if n == "list_auto_get_fitting":
+            count = rd.get("count", rd.get("total", ""))
+            matched = rd.get("matched", rd.get("best", ""))
+            if count:
+                return f"{count} chains" + (f" best: {_short(str(matched), 15)}" if matched else "")
+            return ""
+
+        # =================================================================
+        # GOOGLE CALENDAR TOOLS
+        # =================================================================
+
+        if n in ("calendar_login", "calendar_auth_callback"):
+            return rd.get("status", "ok")
+
+        if n == "calendar_auth_url":
+            return "auth URL ready"
+
+        if n == "calendar_list_events":
+            events = rd.get("events", [])
+            if isinstance(events, list):
+                return f"{len(events)} events"
+            return ""
+
+        if n == "calendar_get_event":
+            summary = rd.get("summary", rd.get("title", ""))
+            start = rd.get("start", "")
+            return _short(f"{summary} {start}", 40) if summary else ""
+
+        if n == "calendar_create_event":
+            summary = rd.get("summary", "")
+            return _short(summary, 25) if summary else "created"
+
+        if n == "calendar_update_event":
+            return "updated"
+
+        if n == "calendar_delete_event":
+            return "deleted"
+
+        if n == "calendar_find_free_slots":
+            slots = rd.get("slots", rd.get("free_slots", []))
+            if isinstance(slots, list):
+                return f"{len(slots)} slots"
+            return ""
+
+        if n == "tasks_list_tasklists":
+            lists = rd.get("tasklists", rd.get("lists", []))
+            if isinstance(lists, list):
+                return f"{len(lists)} lists"
+            return ""
+
+        if n == "tasks_list":
+            tasks = rd.get("tasks", [])
+            if isinstance(tasks, list):
+                return f"{len(tasks)} tasks"
+            return ""
+
+        if n == "tasks_create":
+            title = rd.get("title", "")
+            return _short(title, 30) if title else "created"
+
+        if n in ("tasks_complete", "tasks_update", "tasks_delete"):
+            return "ok"
+
+        # =================================================================
+        # GOOGLE GMAIL TOOLS
+        # =================================================================
+
+        if n == "gmail_login":
+            return rd.get("status", "ok")
+
+        if n == "gmail_list":
+            msgs = rd.get("messages", rd.get("emails", []))
+            if isinstance(msgs, list):
+                return f"{len(msgs)} emails"
+            return ""
+
+        if n == "gmail_read":
+            subj = rd.get("subject", rd.get("Subject", ""))
+            frm = rd.get("from", rd.get("From", ""))
+            parts = []
+            if subj:
+                parts.append(_short(subj, 25))
+            if frm:
+                parts.append(_short(frm, 20))
+            return " ".join(parts) if parts else ""
+
+        if n == "gmail_send":
+            to = rd.get("to", "")
+            return f"\u2192 {_short(to, 25)}" if to else "sent"
+
+        if n == "gmail_send_with_attachment":
+            to = rd.get("to", "")
+            att = rd.get("attachment", rd.get("filename", ""))
+            parts = []
+            if to:
+                parts.append(f"\u2192 {_short(to, 20)}")
+            if att:
+                parts.append(f"\U0001f4ce {_short(att, 15)}")
+            return " ".join(parts) if parts else "sent"
+
+        if n == "gmail_search":
+            results = rd.get("messages", rd.get("results", []))
+            if isinstance(results, list):
+                return f"{len(results)} found"
+            return ""
+
+        if n in ("gmail_mark_read", "gmail_mark_unread", "gmail_archive",
+                  "gmail_trash", "gmail_modify_labels"):
+            return "ok"
+
+        if n == "gmail_reply":
+            return "replied"
+
+        # =================================================================
+        # WEB BROWSER TOOLS (tooklit.py)
+        # =================================================================
+
+        if n == "tool_browser_start":
+            headless = rd.get("headless", None)
+            return f"headless={headless}" if headless is not None else "started"
+
+        if n == "tool_browser_stop":
+            return "stopped"
+
+        if n == "tool_browser_status":
+            running = rd.get("running", rd.get("is_running", False))
+            url = rd.get("current_url", "")
+            parts = ["running" if running else "stopped"]
+            if url:
+                parts.append(_short(url, 30))
+            return " ".join(parts)
+
+        if n == "tool_browser_set_headless":
+            return f"headless={rd.get('headless', '?')}"
+
+        if n in ("tool_web_search", "tool_search_site"):
+            results = rd.get("results", [])
+            if isinstance(results, list):
+                return f"{len(results)} results"
+            return ""
+
+        if n == "tool_search_files":
+            results = rd.get("results", [])
+            if isinstance(results, list):
+                return f"{len(results)} files"
+            return ""
+
+        if n == "tool_goto":
+            title = rd.get("title", "")
+            url = rd.get("url", rd.get("current_url", ""))
+            return _short(title, 30) if title else _short(url, 35)
+
+        if n in ("tool_back", "tool_refresh"):
+            url = rd.get("url", rd.get("current_url", ""))
+            return _short(url, 35) if url else "ok"
+
+        if n == "tool_current_url":
+            return _short(rd.get("url", rd.get("current_url", "")), 40)
+
+        if n == "tool_click":
+            return "clicked"
+
+        if n == "tool_type":
+            text = rd.get("text", rd.get("typed", ""))
+            return f'"{_short(text, 25)}"' if text else "typed"
+
+        if n in ("tool_select", "tool_scroll", "tool_scroll_to_bottom",
+                  "tool_wait", "tool_hover"):
+            return "ok"
+
+        if n == "tool_extract":
+            text = rd.get("text", rd.get("content", ""))
+            links = rd.get("links", [])
+            parts = []
+            if text:
+                parts.append(f"{len(text)}ch")
+            if isinstance(links, list) and links:
+                parts.append(f"{len(links)} links")
+            return " ".join(parts) if parts else ""
+
+        if n == "tool_extract_text":
+            text = rd.get("text", rd.get("content", ""))
+            return f"{len(text)}ch" if text else ""
+
+        if n == "tool_extract_html":
+            html = rd.get("html", rd.get("content", ""))
+            return f"{len(html)}ch HTML" if html else ""
+
+        if n == "tool_extract_links":
+            links = rd.get("links", [])
+            return f"{len(links)} links" if isinstance(links, list) else ""
+
+        if n == "tool_extract_attribute":
+            val = rd.get("value", rd.get("result", ""))
+            return _short(str(val), 30) if val else ""
+
+        if n == "tool_scrape_url":
+            title = rd.get("title", "")
+            content = rd.get("content", rd.get("text", ""))
+            parts = []
+            if title:
+                parts.append(_short(title, 25))
+            if content:
+                parts.append(f"{len(content)}ch")
+            return " ".join(parts) if parts else ""
+
+        if n in ("tool_session_save", "tool_session_load"):
+            return _short(rd.get("name", ""), 20) or "ok"
+
+        # =================================================================
+        # DESKTOP AUTOMATION TOOLS (destop_auto.py)
+        # =================================================================
+
+        if n == "scout_interface":
+            apps = rd.get("open_applications", [])
+            active = rd.get("active_application", {})
+            active_name = active.get("name", "") if isinstance(active, dict) else ""
+            interact = (rd.get("possible_actions", {}) or {}).get("interact", [])
+            parts = []
+            if isinstance(apps, list):
+                parts.append(f"{len(apps)} apps")
+            if active_name:
+                parts.append(f"active: {_short(active_name, 15)}")
+            if isinstance(interact, list) and interact:
+                parts.append(f"{len(interact)} actions")
+            return " ".join(parts) if parts else ""
+
+        if n == "execute_action":
+            status = rd.get("status", "")
+            result = rd.get("result", rd.get("message", ""))
+            if status == "success":
+                return _short(str(result), 35) if result else "ok"
+            return _short(str(result), 35) if result else status
+
+        # =================================================================
+        # SITUATION / BEHAVIOR TOOLS
+        # =================================================================
+
+        if n == "set_agent_situation":
+            return _short(rd.get("intent", ""), 35) or "ok"
+
+        if n == "check_permissions":
+            allowed = rd.get("allowed", None)
+            rule = rd.get("rule", "")
+            if allowed is not None:
+                icon = "\u2713" if allowed else "\u2717"
+                return f"{icon} {_short(rule, 25)}" if rule else icon
+            return ""
+
+        if n == "history":
+            return ""
+
+        # --- Generic fallback: show keys ---
+        if "message" in rd:
+            return _short(str(rd["message"]), 45)
+        if "info" in rd:
+            return _short(str(rd["info"]), 45)
+        if "content" in rd:
+            s = len(rd["content"])
+            return f"{s}b" if s < 1024 else f"{s / 1024:.1f}kb" if s < 1048576 else f"{s / 1048576:.1f}mb"
+        if "size" in rd:
+            s = rd["size"]
+            return f"{s}b" if s < 1024 else f"{s / 1024:.1f}kb" if s < 1048576 else f"{s / 1048576:.1f}mb"
+        if "result" in rd:
+            return _short(str(rd["result"]), 45)
+        return ""
 
     def _on_final_answer(self, chunk: dict):
         self._close_think()

@@ -74,11 +74,10 @@ def path_matches(actual: str, expected: str) -> bool:
 
 
 async def run_accuracy_test():
-    project_root = Path(__file__).parent.parent.parent
-    docs_root = project_root / "toolboxv2" / "docs"
-
+    from toolboxv2 import tb_root_dir
+    docs_root = tb_root_dir.parent / "docs"
     system = DocsSystem(
-        project_root=project_root,
+        project_root=tb_root_dir.parent,
         docs_root=docs_root,
         include_dirs=["toolboxv2"],
     )

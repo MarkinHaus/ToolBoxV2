@@ -1774,7 +1774,12 @@ class HTTPWorker:
         await self._event_manager.start()
 
         from toolboxv2.utils.workers.ws_bridge import install_ws_bridge
-        install_ws_bridge(self._app, self._event_manager, self.worker_id)
+        ws_bridge = install_ws_bridge(self._app, self._event_manager, self.worker_id)
+
+        # NotificationSystem mit WebSocket Bridge verbinden
+        from toolboxv2.utils.extras.notification import setup_web_notifications
+        setup_web_notifications(ws_bridge)
+        logger.info("[HTTP] NotificationSystem linked to WebSocket Bridge")
 
         self._ws_handler = WebSocketMessageHandler(
             self._app, self._event_manager, self._access_controller

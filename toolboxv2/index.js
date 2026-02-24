@@ -5,7 +5,7 @@ import TB from 'tbjs/src/index.js';
 import 'tbjs/dist/tbjs.css';
 // import  '../toolboxv2/tbjs/dist/tbjs.js'; # for production fix THree errro
 import  '../toolboxv2/tbjs/dist/tbjs.css';
-import {NavMenu} from "tbjs/src/ui/index.js"; // Stellt sicher, dass das CSS von tbjs geladen wird
+import {NavMenu} from "tbjs/src/ui/index.js";
 
 // Optional: Importiere das Haupt-CSS deiner Anwendung, wenn es separat existiert
 // import './styles/main.css';
@@ -101,6 +101,11 @@ async function initializeApp() {
     if (TB.ui.theme.getBackgroundConfig().type === '3d') {
         TB.graphics.init('#threeDScene', { /* graphics options */ });
     }
+    const notificationManager = TB.getNotificationManager();
+    notificationManager.init();
+
+    // Optional: Auf TB-Objekt exposen
+    window.TB.notifications = notificationManager;
 
     // Fehlerbehandlung für die Initialisierung (optional, aber gut für Robustheit)
     // Dies hängt davon ab, ob TB.init Fehler wirft oder ein Fehler-Event auslöst

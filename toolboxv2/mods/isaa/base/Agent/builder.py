@@ -137,6 +137,14 @@ class RateLimiterConfig(BaseModel):
     max_retries: int = 3
     wait_if_all_exhausted: bool = True
 
+class ContextBudgetConfig(BaseModel):
+    """Konfiguration für dynamisches Context-Budget-Management."""
+    max_context_ratio: float = 0.85       # Wie viel % des Model-Kontexts genutzt werden dürfen (0.7 - 0.95)
+    immediate_offload_ratio: float = 0.7  # Ab diesem Anteil am Gesamt-Kontext → sofort offloaden (Szenario C)
+    displacement_threshold: float = 0.4   # Max Größe für Displacement-Strategie (Szenario B)
+    safety_margin_tokens: int = 500       # Reserve
+    heavy_hitter_min_tokens: int = 1000    # Min Größe für Offload-Kandidaten
+
 
 class AgentConfig(BaseModel):
     """Complete agent configuration for loading/saving"""
@@ -182,6 +190,8 @@ class AgentConfig(BaseModel):
 
     # Rule config path
     rule_config_path: Optional[str] = None
+
+    context_config: ContextBudgetConfig = Field(default_factory=ContextBudgetConfig)
 
 
 # =============================================================================
@@ -455,6 +465,27 @@ class FlowAgentBuilder:
         limits["is_free_tier"] = is_free_tier
 
         self.config.rate_limiter.custom_limits[model] = limits
+        return self
+
+    def set_context_max_context_ratio(self,max_context_ratio: float = 0.85):
+        """set context max_context_ratio """
+        self.config.context_config.max_context_ratio = max_context_ratio
+        return self
+    def set_context_immediate_offload_ratio(self,immediate_offload_ratio: float = 0.7):
+        """set context immediate_offload_ratio """
+        self.config.context_config.immediate_offload_ratio = immediate_offload_ratio
+        return self
+    def set_context_displacement_threshold(self,displacement_threshold: float = 0.4):
+        """set context displacement_threshold """
+        self.config.context_config.displacement_threshold = displacement_threshold
+        return self
+    def set_context_safety_margin_tokens(self,safety_margin_tokens: int = 500):
+        """set context safety_margin_tokens """
+        self.config.context_config.safety_margin_tokens = safety_margin_tokens
+        return self
+    def set_context_heavy_hitter_min_tokens(self,heavy_hitter_min_tokens: int = 1000):
+        """set context heavy_hitter_min_tokens """
+        self.config.context_config.heavy_hitter_min_tokens = heavy_hitter_min_tokens
         return self
 
     def load_rate_limiter_config(self, config_path: str) -> "FlowAgentBuilder":
@@ -851,6 +882,8 @@ class FlowAgentBuilder:
             response_format="with-bullet-points",
             text_length="table-conversation",
         ).set_active_persona("executive")
+
+
 
     # =========================================================================
     # RULE CONFIG
@@ -1269,6 +1302,8 @@ class FlowAgentBuilder:
                 return "No content returned"
 
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 raise RuntimeError(f"Error executing {tool_name}: {str(e)}")
 
         # Set metadata

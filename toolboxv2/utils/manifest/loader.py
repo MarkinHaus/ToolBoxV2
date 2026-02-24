@@ -96,6 +96,10 @@ class ManifestLoader:
         """Get the manifest file path."""
         if self._manifest_path:
             return self._manifest_path
+        if (self.base_dir / self.DEFAULT_FILENAME).exists():
+            return self.base_dir / self.DEFAULT_FILENAME
+        if (self.base_dir / ".config.yaml").exists():
+            return self.base_dir / ".config.yaml"
         return self.base_dir / self.DEFAULT_FILENAME
 
     @property
@@ -136,10 +140,11 @@ class ManifestLoader:
         with open(manifest_file, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
 
-        if resolve_env:
-            data = resolve_env_vars(data)
-
         self._manifest = TBManifest.model_validate(data)
+        if resolve_env:
+            resolved_data = resolve_env_vars(self._manifest.model_dump())
+            self._manifest = TBManifest.model_validate(resolved_data)
+
         return self._manifest
 
     def load_or_create_default(self, resolve_env: bool = True) -> TBManifest:

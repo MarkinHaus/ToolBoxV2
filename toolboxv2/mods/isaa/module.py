@@ -40,6 +40,8 @@ from toolboxv2.mods.isaa.base.MemoryKnowledgeActor import MemoryKnowledgeActor
 from toolboxv2.utils.extras.Style import print_prompt
 from toolboxv2.utils.system import FileCache
 from toolboxv2.utils.toolbox import stram_print
+from pathlib import Path
+from toolboxv2.mods.isaa.extras.jobs import JobScheduler, JobDefinition, TriggerConfig
 
 from .base.Agent.builder import AgentConfig, FlowAgentBuilder
 
@@ -315,6 +317,10 @@ class Tools(MainTool):
 
         self.default_setter = None
         self.initialized = False
+        self.job_scheduler = JobScheduler(
+            jobs_file=Path(self.app.appdata) / "isaa" / "jobs.json",
+            fire_callback=self._fire_job_callback,
+        )
 
         self.file_handler = FileHandler(
             f"isaa{extra_path.replace('/', '-')}.config", app.id if app else __name__
@@ -403,6 +409,19 @@ class Tools(MainTool):
             Path(f"{get_app('isaa-initIsaa').data_dir}/Memory/").mkdir(
                 parents=True, exist_ok=True
             )
+
+    async def _fire_job_callback(self, job: JobDefinition):
+        """Callback wenn ein Job feuert."""
+        if job.query == "__dream__":
+            from toolboxv2.mods.isaa.base.Agent.dreamer import DreamConfig
+            agent = await self.get_agent(job.agent_name)
+            dream_cfg = DreamConfig()
+            if job.trigger.extra and "dream_config" in job.trigger.extra:
+                dream_cfg = DreamConfig(**job.trigger.extra["dream_config"])
+            return await agent.a_dream(dream_cfg)
+
+        agent = await self.get_agent(job.agent_name)
+        return await agent.a_run(job.query, session_id=job.session_id)
 
     # =========================================================================
     # CHAIN SUPPORT - Helper Methods

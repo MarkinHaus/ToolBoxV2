@@ -21,7 +21,8 @@ if sys.platform == "win32":
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding='utf-8')
 # =================================
-from toolboxv2 import get_logger
+from toolboxv2 import get_logger, Spinner
+
 logger = get_logger()
 
 # --- Optional Imports ---
@@ -75,10 +76,10 @@ def _count_tokens(messages: List[dict], model: str) -> int:
 
 
 class TokenTracker:
-    def __init__(self, model: str, agent=None):
+    def __init__(self, model: str, agent=None, limit=0.7):
         self.model, self.agent = model, agent
         self.limit = _ctx_limit(model)
-        self.threshold = int(self.limit * 0.70)
+        self.threshold = int(self.limit * limit)
         self.total_tokens = self.compressions_done = 0
 
     def needs_compression(self, messages: List[dict]) -> bool:
@@ -87,6 +88,8 @@ class TokenTracker:
 
     async def compress(self, messages: List[dict]) -> List[dict]:
         if len(messages) <= 6: return messages
+
+        messages = messages.copy()
 
         system_msg, task_msg = messages[0], messages[1]
         recent_history = messages[-4:]
@@ -223,7 +226,7 @@ async def smart_read_file(
         if b'\x00' in (_bf.read(512) or b''): return f"Binary: {path}. Use bash+xxd."
 
     content = await asyncio.to_thread(target.read_text, encoding="utf-8", errors="replace")
-    lines = content.splitlines()
+    lines = text_to_block(content)
     total = len(lines)
 
     if start is not None or end is not None:
@@ -294,6 +297,7 @@ class GitWorktree:
 
     def __init__(self, root: str):
         self.origin_root = Path(root).resolve()  # Resolve to absolute path
+        self.state_file = self.origin_root / ".coder_worktree.json"
         self._is_git, self._git_root = self._detect_git()
         if self._git_root:
             self._git_root = self._git_root.resolve()
@@ -347,13 +351,16 @@ class GitWorktree:
                         full_path = self._git_root / f
                         # Only include files that are within or equal to origin_root
                         try:
-                            full_path.resolve()
-                            origin_resolved = self.origin_root.resolve()
-                            # Check if full_path is within origin_root
-                            if full_path == origin_resolved or str(full_path).startswith(str(origin_resolved)):
-                                if full_path.is_file():
-                                    # Return path relative to origin_root for proper copying
-                                    result.append(full_path)
+                            origin_str = str(self.origin_root.resolve()) + os.sep  # einmal vor dem Loop
+                            result = []
+                            for f in stdout.splitlines():
+                                if not f.strip():
+                                    continue
+                                full_path = (self._git_root / f).resolve()
+                                fp_str = str(full_path)
+                                if fp_str.startswith(origin_str) or fp_str == origin_str.rstrip(os.sep):
+                                    result.append(
+                                        full_path)  # is_file() check weglassen — git ls-files listet nur files
                         except (OSError, ValueError):
                             pass
                     return result
@@ -375,13 +382,40 @@ class GitWorktree:
                 logger.warning("git ls-files failed, falling back to filtered rglob")
             except UnicodeDecodeError:
                 logger.warning("git ls-files output had encoding issues, using fallback")
-        return [f for f in root.rglob("*")
-                if not f.is_dir() and not (self.SCAN_EXCLUDES & set(f.parts))]
+        return self._list_tracked_files_walk(root)
+    def _list_tracked_files_walk(self, root: Path) -> List[Path]:
+        """os.walk mit Pruning — betritt excluded dirs gar nicht erst."""
+        result = []
+        for dirpath, dirnames, filenames in os.walk(root):
+            # In-place pruning: excluded dirs werden nie betreten
+            dirnames[:] = [d for d in dirnames if d not in self.SCAN_EXCLUDES and not d.endswith(".egg-info")]
+            for fname in filenames:
+                result.append(Path(dirpath) / fname)
+        return result
 
     def setup(self):
         if self.path and self.path.exists(): return
         import time
         self._last_sync_time = time.time()
+
+        # 1. VERSUCH: Bestehenden Worktree wiederherstellen
+        if self.state_file.exists():
+            try:
+                saved_data = json.loads(self.state_file.read_text())
+                saved_path = Path(saved_data.get("worktree_path", ""))
+                if saved_path.exists():
+                    self.path = saved_path
+                    self._wt_root = saved_path
+                    self._is_subfolder_mode = saved_data.get("subfolder_mode", False)
+                    # Falls es kein echter Git-Worktree Ordner mehr ist, aber der Pfad existiert:
+                    if not (self.path / ".git").exists():
+                        self._is_git = False  # Fallback auf Copy-Mode erzwingen wenn .git fehlt
+
+                    logger.info(f"[SETUP] Resumed existing worktree: {self.path}")
+                    # Sync wird automatisch in execute() durch sync_from_origin getriggert
+                    return
+            except Exception as e:
+                logger.warning(f"[SETUP] Failed to resume worktree: {e}")
 
         # === FIX: Prüfe ob origin_root == git_root (genau das Repo-Root) ===
         # Wenn origin_root ein Subfolder ist, IMMER gefilterte Kopie nutzen
@@ -437,7 +471,7 @@ class GitWorktree:
             # IMMER gefilterte Kopie - nur den spezifischen Projektordner
             self._wt_root = Path(tempfile.mkdtemp(prefix="coder_cp_"))
             self.path = self._wt_root
-            self._copy_filtered(self.origin_root, self.path)
+            count = self._copy_filtered(self.origin_root, self.path)
 
             # FIX: Merke dass wir im "subfolder mode" sind für apply_back
             self._is_subfolder_mode = True
@@ -446,8 +480,16 @@ class GitWorktree:
 
             logger.info(f"[SETUP] filtered copy = {self.path}")
             logger.info(f"[SETUP] origin        = {self.origin_root}")
-            logger.info(f"[SETUP] file count    = {len(list(self.path.rglob('*')))}")
-
+            logger.info(f"[SETUP] file count    = {count}")
+        # 3. SPEICHERN: Location festhalten
+        try:
+            self.state_file.write_text(json.dumps({
+                "worktree_path": str(self.path.resolve()),
+                "subfolder_mode": self._is_subfolder_mode,
+                "branch": self._branch
+            }))
+        except Exception as e:
+            logger.warning(f"Could not save worktree state: {e}")
     def _copy_filtered(self, src_root: Path, dst_root: Path):
         files = self._list_tracked_files(src_root)
         for f in files:
@@ -467,6 +509,7 @@ class GitWorktree:
             dst = dst_root / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(f, dst)
+        return len(files)
 
     # ===================================================================
     # FIX 1: commit() — Error checking + auto-config + return status
@@ -600,11 +643,7 @@ class GitWorktree:
                                  kwargs={"ignore_errors": True}, daemon=True).start()
             except OSError:
                 # Rename fehlgeschlagen (cross-device etc.) → tracked files einzeln
-                for f in self._list_tracked_files(self._wt_root):
-                    try:
-                        f.unlink()
-                    except OSError:
-                        pass
+                shutil.rmtree(self._wt_root, ignore_errors=True)
         self.path = None
         self._wt_root = None
 
@@ -632,12 +671,12 @@ class GitWorktree:
                     shutil.copy2(src, dst)
                 elif dst.exists():
                     dst.unlink()
-            wt_files = set(str(f.relative_to(self.path)) for f in self._list_tracked_files(self.path))
-            origin_files = set(str(f.relative_to(self.origin_root)) for f in self._list_tracked_files(self.origin_root))
-            for new_file in (wt_files - origin_files):
-                target = self.path / new_file
-                if target.exists():
-                    target.unlink()
+            origin_files = {str(f.relative_to(self.origin_root)) for f in self._list_tracked_files(self.origin_root)}
+            # Lösche nur wt-Dateien die nicht in origin existieren — iteriere worktree direkt:
+            for f in self._list_tracked_files_walk(self.path):
+                rel = str(f.relative_to(self.path))
+                if rel not in origin_files and f.exists():
+                    f.unlink()
 
     async def apply_files(self, files: list[str]) -> list[str]:
         if not self.path: return []
@@ -704,9 +743,17 @@ class GitWorktree:
             except (FileNotFoundError, subprocess.TimeoutExpired):
                 src_files = []
         else:
-            src_files = [f for f in self._list_tracked_files(self.origin_root)
-                         if str(f.relative_to(self.origin_root)) not in agent_changed
-                         and f.stat().st_mtime > self._last_sync_time]
+            agent_changed_set = set(agent_changed)  # set statt list für O(1) lookup
+            src_files = []
+            for f in self._list_tracked_files(self.origin_root):
+                rel = str(f.relative_to(self.origin_root))
+                if rel in agent_changed_set:
+                    continue
+                try:
+                    if f.stat().st_mtime > self._last_sync_time:
+                        src_files.append(f)
+                except OSError:
+                    continue
 
         self._last_sync_time = now
 
@@ -728,7 +775,32 @@ class GitWorktree:
                 synced.append(rel)
         return synced
 
-
+def text_to_block(text: str, max_chars: int = 300) -> list[str]:
+    result = []
+    for line in text.splitlines():
+        words = line.split()
+        if not words:
+            result.append("")
+            continue
+        current_line = ""
+        for word in words:
+            # Wort selbst zu lang → hart aufteilen
+            while len(word) > max_chars:
+                if current_line:
+                    result.append(current_line)
+                    current_line = ""
+                result.append(word[:max_chars])
+                word = word[max_chars:]
+            if not word:
+                continue
+            if current_line and len(current_line) + 1 + len(word) > max_chars:
+                result.append(current_line)
+                current_line = word
+            else:
+                current_line = f"{current_line} {word}" if current_line else word
+        if current_line:
+            result.append(current_line)
+    return result
 # --- Core Agent ---
 
 class CoderAgent:
@@ -774,11 +846,11 @@ class CoderAgent:
         self.stream_callback = self.config.get("stream_callback", self._default_stream_handler)
         self.debug_mode = (
             os.getenv("CODER_DEBUG", "false").lower() == "true" or
-            os.getenv("AGENT_VERBOSE", "false").lower() == "true"
+            os.getenv("AGENT_VERBOSE", "false").lower() == "true" or self.config.get("debug", False)
         )
 
         self.memory = ExecutionMemory(project_root)
-        self.tracker = TokenTracker(self.model, agent)
+        self.tracker = TokenTracker(self.model, agent, limit=self.config.get("compression_limit", 0.7))
         self.worktree = GitWorktree(project_root)
 
         self.state = {
@@ -870,7 +942,8 @@ class CoderAgent:
                 pass
 
     async def execute(self, task: str) -> CoderResult:
-        self.worktree.setup()
+        with Spinner(f"Setup Worktree for agent : {self.agent.amd.name}", symbols="b"):
+            self.worktree.setup()
 
         synced = await self.worktree.sync_from_origin(
             sync_enabled=self.sync_enabled, sync_interval=0)
@@ -946,9 +1019,23 @@ class CoderAgent:
         # FIX: Sammle alle Edits über alle Iterationen (für incomplete block recovery)
         accumulated_edits: List[EditBlock] = []
 
+        def show(i="LOOP", msg=None):
+            limit = self.tracker.limit
+            total = _count_tokens(msg or messages, self.model)
+            width = 18
+            ratio = min(max(total / limit, 0), 1)
+            filled = int(width * ratio)
+
+            bar = "█" * filled + "░" * (width - filled)
+
+            percent = int(ratio * 100)
+            self._log(f"{i}",
+                      f"{iteration + 1}/{self.max_iters:} | Tokens: {total} [{bar}] / {self.tracker.limit} ~ {percent}% ",
+                      "cyan")
+
         while iteration <= self.max_iters:
             iteration += 1
-            self._log("LOOP", f"Iteration {iteration + 1}/{self.max_iters:} | Tokens: {self.tracker.total_tokens}", "cyan")
+            show()
 
             if _transient_status_idx is not None and _transient_status_idx < len(messages):
                 messages.pop(_transient_status_idx)
@@ -977,6 +1064,9 @@ class CoderAgent:
             if self.tracker.needs_compression(messages):
                 self._log("MEMORY", "Compressing context...", "yellow")
                 messages[:] = await self.tracker.compress(messages)
+                show("COMPRESSION")
+
+
 
             self._log("LLM", "Waiting for response...", "grey")
 
@@ -1049,9 +1139,37 @@ class CoderAgent:
                 resp = await self.agent.a_run_llm_completion(
                     messages=messages, tools=tools, stream=False, get_response_message=True, model=self.model)
                 content = resp.content or ""
+                # Hier behalten wir die originalen Objekte (falls litellm Objekte liefert)
+                # oder Dicts, je nachdem was litellm zurückgibt.
+                # Wir konvertieren NICHT hier inplace, damit wir später flexibel bleiben.
                 tool_calls = resp.tool_calls or []
 
-            messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
+            # ==================================================================================
+            # FIX A: Message History (MUSS JSON-Serializable sein)
+            # Wir erstellen eine saubere Kopie nur für messages.append, egal was tool_calls enthält
+            # ==================================================================================
+            history_tool_calls = []
+            for tc in tool_calls:
+                if isinstance(tc, dict):
+                    history_tool_calls.append(tc)
+                elif hasattr(tc, "model_dump"):  # Pydantic v2
+                    history_tool_calls.append(tc.model_dump())
+                elif hasattr(tc, "dict"):  # Pydantic v1
+                    history_tool_calls.append(tc.dict())
+                else:
+                    # Objekt (z.B. SimpleNamespace aus Streaming) -> Manuell Dict bauen
+                    fn = getattr(tc, "function", None)
+                    history_tool_calls.append({
+                        "id": getattr(tc, "id", ""),
+                        "type": getattr(tc, "type", "function"),
+                        "function": {
+                            "name": getattr(fn, "name", "") if fn else "",
+                            "arguments": getattr(fn, "arguments", "") if fn else ""
+                        }
+                    })
+
+            messages.append({"role": "assistant", "content": content, "tool_calls": history_tool_calls})
+            # ==================================================================================
 
             if thought_match := re.search(r"<thought>(.*?)</thought>", content, re.DOTALL):
                 current_thought = thought_match.group(1).strip()
@@ -1067,33 +1185,51 @@ class CoderAgent:
             if tool_calls:
                 for tc in tool_calls:
                     try:
-                        args_data = json.loads(tc.function.arguments)
-                        sig = f"{tc.function.name}:{json.dumps(args_data, sort_keys=True)}"
+                        # ==================================================================================
+                        # FIX B: Universeller Zugriff (Funktioniert mit Dicts UND Objekten)
+                        # ==================================================================================
+                        if isinstance(tc, dict):
+                            tc_id = tc.get("id")
+                            tc_fn_name = tc.get("function", {}).get("name")
+                            tc_fn_args = tc.get("function", {}).get("arguments")
+                        else:
+                            tc_id = getattr(tc, "id", "")
+                            fn_obj = getattr(tc, "function", None)
+                            tc_fn_name = getattr(fn_obj, "name", "")
+                            tc_fn_args = getattr(fn_obj, "arguments", "")
+                        # ==================================================================================
 
-                        self._log("TOOL CALL", f"{tc.function.name}({json.dumps(args_data, indent=None)})", "green")
+                        args_data = json.loads(tc_fn_args)
+                        sig = f"{tc_fn_name}:{json.dumps(args_data, sort_keys=True)}"
 
+                        self._log("TOOL CALL", f"{tc_fn_name}({json.dumps(args_data, indent=None)})", "green")
                         if sig in recent_actions:
                             res = f"FEHLER: Loop erkannt! '{sig}' wurde bereits ausgeführt."
                             logger.warning(f"Loop blocked: {sig}")
                             self._log("LOOP-GUARD", f"Blocked repetition: {sig}", "red")
                         else:
                             recent_actions.append(sig)
-                            if tc.function.name == "read_file":
+                            if tc_fn_name == "read_file":
                                 self.state["current_file"] = args_data.get("path")
                             if len(recent_actions) > 8: recent_actions.pop(0)
-
-                            res = await self._dispatch(tc.function.name, args_data, messages)
+                            res = await self._dispatch(tc_fn_name, args_data, messages)
+                            if len(text_to_block(str(res))) > 2000:
+                                show("TOOL-CONTEXT", msg=[{"role":"system", "content":str(res)}])
 
                         display_res = res if len(res) < 500 else (
-                                res[:200] + f"\n... [+{len(res) - 200} chars] ...\n" + res[-200:])
+                            res[:200] + f"\n... [+{len(res) - 200} chars] ...\n" + res[-200:])
                         self._log("TOOL RESULT", display_res, "grey")
 
-                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": res})
+                        messages.append({"role": "tool", "tool_call_id": tc_id, "content": res})
                     except Exception as e:
                         err_msg = f"Fehler: {e}"
+                        # Fallback für ID im Fehlerfall
+                        err_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", "unknown")
                         self._log("TOOL ERROR", err_msg, "red")
-                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
+                        messages.append({"role": "tool", "tool_call_id": err_id, "content": err_msg})
                 continue
+            else:
+                messages.append([{"role": "system", "content":"if you ar done with the task or need information's. write the final msg and [DONE] to exit!"}])
 
             # ===========================================================
             # FIX 2: Finalizing — mit incomplete block handling
@@ -1126,6 +1262,7 @@ class CoderAgent:
                     # Vollständige Blöcke auch anwenden
                     accumulated_edits.extend(blocks)
                 # Loop weiterlaufen lassen damit Agent vervollständigen kann
+
                 continue
 
             if blocks:
@@ -1136,7 +1273,8 @@ class CoderAgent:
             if "[DONE]" in content:
                 if accumulated_edits:
                     # Agent sagt DONE, hat aber vorher incomplete blocks produziert
-                    self._log("DONE", f"Agent done. {len(accumulated_edits)} blocks from earlier iterations included.", "green")
+                    self._log("DONE", f"Agent done. {len(accumulated_edits)} blocks from earlier iterations included.",
+                              "green")
                     return accumulated_edits, thought
                 self._log("DONE", "Agent marked task as complete.", "green")
                 return [], thought
@@ -1321,14 +1459,153 @@ class CoderAgent:
             return await smart_read_file(
                 args["path"], args.get("start_line"), args.get("end_line"),
                 self.worktree.path, self.agent, messages, self.model, args.get("query", ""))
-        if name == "bash": return await self._run_bash(args["command"])
-        if name == "grep": return await self._run_grep(args["pattern"])
+        if name == "bash": return await self._smart_bash(args["command"], messages)
+        if name == "grep": return await self._smart_grep(args["pattern"], messages)
         if name == "memory_recall":
             if self.agent and hasattr(self.agent, "arun_function"):
                 return await self.agent.arun_function("memory_recall", query=args["query"],
                                                       search_type=args.get("search_type", "auto"))
             return "Fehler: Memory-System nicht verfügbar."
         return f"Unknown tool: {name}"
+
+    async def _smart_bash(self, cmd: str, messages: list) -> str:
+        """
+        Smart Bash Execution:
+        1. Führt Befehl aus (via _run_bash).
+        2. Guard: Schneidet massive Outputs (>1600 Zeilen) hart ab.
+        3. Rank: Lässt mittlere Outputs (800-1600 Zeilen) vom Agenten filtern.
+        """
+        # 1. Execute Raw
+        raw_output = await self._run_bash(cmd)
+
+        # Wenn Fehler oder leer, direkt zurück
+        if not raw_output.strip() or "ERROR: Timeout" in raw_output:
+            return raw_output
+
+        lines = text_to_block(raw_output)
+        total = len(lines)
+
+        # Wenn Fehler oder leer, direkt zurück
+        if not raw_output.strip() or "ERROR: Timeout" in raw_output and total < 401:
+            return raw_output
+
+        # 2. Guarding: Hard Limit (Context Explosion Prevention)
+        # Bash outputs können riesig sein (cat file, build logs).
+        # > 16000 Zeilen ist für den LLM-Kontext meist Gift.
+        if total > 4000:
+            head = "\n".join(lines[:1500])
+            tail = "\n".join(lines[-1500:])
+            return (f"⚠️ **GUARD:** Output too large ({total} lines).\n"
+                    f"Showing first 1500 and last 1500 lines only.\n"
+                    f"-> Use 'grep' or redirect output if you need specific parts.\n\n"
+                    f"{head}\n\n... [{total - 300} lines omitted] ...\n\n{tail}")
+
+        # 3. Auto-Ranking: Medium Size (400 - 1600 Zeilen)
+        # Hier nutzen wir die "Reader Logic": Der Agent destilliert das Wichtige.
+        # Wir machen das nur, wenn ein Agent verfügbar ist.
+        if total > 6000 and self.agent:
+            self._log("BASH-RANK", f"Auto-ranking {total} lines of output...", "yellow")
+            try:
+                ranking_prompt = (
+                    f"You are a shell output filter. The user ran: '{cmd}'.\n"
+                    f"Here is the raw output ({total} lines). Extract ONLY:\n"
+                    f"1. Errors and Warnings\n"
+                    f"2. Success confirmations\n"
+                    f"3. Specific info requested by the command (e.g. file lists, test results)\n"
+                    f"Discard progress bars, boilerplate, and noise.\n"
+                    f"Return the filtered output verbatim."
+                )
+
+                # Context Cap für den Ranking-Input
+
+                head = "\n".join(lines[:4000])
+                tail = "\n".join(lines[-4000:])
+                input_blob =  f"{head}\n\n... [{total - 8000} lines omitted] ...\n\n{tail}"
+
+                filtered = await self.agent.a_run_llm_completion(
+                    messages=[
+                        {"role": "system", "content": ranking_prompt},
+                        {"role": "system", "content": f"History Context: fist msg:\n {messages[0].get('content')}\n\n last msg: {messages[-1].get('content')}"if messages else "No history"},
+                        {"role": "user", "content": input_blob}
+                    ],
+                    stream=False
+                )
+                if filtered:
+                    return f"### BASH OUTPUT (Auto-Ranked from {total} lines):\n{filtered}"
+            except Exception as e:
+                self._log("BASH-FAIL", f"Ranking failed: {e}", "red")
+                # Fallback: Einfach raw zurückgeben, wenn Ranking crasht
+
+        # 4. Small Output (< 40 Zeilen): Passthrough
+        return raw_output
+
+    async def _smart_grep(self, pattern: str, messages: list) -> str:
+        """
+        Smart Grep mit Guarding & Auto-Ranking (ähnlich wie smart_read_file).
+        Verhindert Context-Explosion bei zu vielen Treffern.
+        """
+        quoted = shlex.quote(pattern) if platform.system() != "Windows" else pattern
+
+        # 1. Raw Command Execution
+        if shutil.which("rg"):
+            cmd = f"rg -n {quoted} ."
+        elif self.worktree._is_git:
+            cmd = f"git grep -n {quoted}"
+        elif platform.system() == "Windows":
+            cmd = f'findstr /S /N /C:"{pattern}" *'
+        else:
+            cmd = f"grep -rn {quoted} ."
+
+        raw_output = await self._run_bash(cmd)
+        lines = text_to_block(raw_output)
+
+        total = len(lines)
+
+        # 3. Guarding: Hard Limit (Context Explosion Prevention)
+        # Wenn > 300 Zeilen, schneide hart ab. LLM Ranking lohnt sich hier nicht (zu teuer).
+        if total > 2000:
+            head = "\n".join(lines[:500])
+            tail = "\n".join(lines[-500:])
+            return (f"⚠️ **GUARD:** Too many matches ({total} lines). "
+                    f"Showing first 100 and last 100.\n"
+                    f"-> Please REFINE your pattern (e.g. include file extensions)!\n\n"
+                    f"{head}\n\n... [{total - 1000} lines omitted] ...\n\n{tail}")
+
+        # 4. Auto-Ranking: Medium Size (30 - 300 Zeilen)
+        # Hier lassen wir den Agenten die relevanten Treffer filtern ("Reader Logic")
+        if total > 4000 and self.agent:
+            self._log("GREP-RANK", f"Auto-ranking {total} matches...", "yellow")
+            try:
+                # Wir geben dem Agenten die Treffer und bitten um Filterung basierend auf dem Verlauf
+                ranking_prompt = (
+                    f"You are a grep filter. The user searched for '{pattern}'.\n"
+                    f"Here are {total} raw matches. Retain ONLY the lines relevant to the current task/plan.\n"
+                    f"Remove noise, tests (if not requested), or unrelated files.\n"
+                    f"Output format: just the filtered lines."
+                )
+
+                head = "\n".join(lines[:1500])
+                tail = "\n".join(lines[-1500:])
+                # Wir nehmen max 4000 chars für den Ranking-Input um Context zu sparen
+                input_blob = f"{head}\n\n... [{total - 3000} lines omitted] ...\n\n{tail}"
+
+                filtered = await self.agent.a_run_llm_completion(
+                    messages=[
+                        {"role": "system", "content": ranking_prompt},
+                        {"role": "system",
+                         "content": f"History Context: fist msg:\n {messages[0].get('content')}\n\n last msg: {messages[-1].get('content')}" if messages else "No history"},
+                        {"role": "user", "content": input_blob}
+                    ],
+                    stream=False
+                )
+                if filtered:
+                    return f"### GREP RESULT (Auto-Ranked from {total} matches):\n{filtered}"
+            except Exception as e:
+                self._log("GREP-FAIL", f"Ranking failed: {e}", "red")
+                # Fallback auf Standard-Truncation falls Ranking crasht
+
+        # 5. Standard Output (Small Size < 30)
+        return raw_output
 
     async def _run_bash(self, cmd: str) -> str:
         shell, flag = detect_shell()
@@ -1354,6 +1631,7 @@ class CoderAgent:
         result_output = (out + err).decode(errors="replace").strip()
         if not result_output:
             return "Command executed (no output)."
+
         return result_output
 
     async def _run_grep(self, pattern: str) -> str:

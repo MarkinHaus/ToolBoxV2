@@ -1362,12 +1362,10 @@ async def main(App=TbApp, do_exit=True):
     info_folder = abspath + "\\.info\\pids\\"
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
 
-    async def log_in(app):
-        res = await app.session.login()
-        app.print(f"Logged in as: {app.session.username}") if res else None
-        return res
-
-    tb_app.run_bg_task_advanced(log_in, tb_app)
+    # =================== FIX: Manifest-Aware Auto-Login ===================
+    from toolboxv2.mods.CloudM.LogInSystem import auto_login_from_blob
+    tb_app.run_bg_task_advanced(auto_login_from_blob, tb_app)
+    # ======================================================================
 
     if args.install:
         report = await tb_app.a_run_any(
@@ -1407,7 +1405,6 @@ async def main(App=TbApp, do_exit=True):
     ):
         if args.save_function_enums_in_file:
             tb_app.save_registry_as_enums("utils\\system", "all_functions_enums.py")
-            tb_app.alive = False
             await tb_app.a_exit()
             return 0
         if args.get_version:
@@ -1431,7 +1428,6 @@ async def main(App=TbApp, do_exit=True):
                         v = "unknown"
                     print(f"{mod_name:^35}:{v:^10}")
             print("\n")
-            tb_app.alive = False
             await tb_app.a_exit()
             return 0
 
@@ -1443,7 +1439,6 @@ async def main(App=TbApp, do_exit=True):
 
     if args.profiler:
         profile_execute_all_functions(tb_app)
-        tb_app.alive = False
         await tb_app.a_exit()
         return 0
 
@@ -1703,72 +1698,45 @@ def runner_setup():
         __import__("toolboxv2.utils.clis.tauri_cli", fromlist=["main"]).main()
 
     async def status_helper():
+        """Fixed status: nutzt _find_cli_session statt kaputtes list_blobs."""
+        import sys
         print("🔍 ToolBoxV2 System Status")
         print("═" * 40)
 
-        # Check login status via BlobFile (encrypted CLI sessions)
         try:
-            from toolboxv2 import get_app, tb_root_dir
-            from toolboxv2.utils.extras.blobs import BlobStorage, BlobFile
-            from toolboxv2.utils.extras.blobs import StorageMode
-            from toolboxv2.utils.security.cryp import Code
-
+            from toolboxv2.mods.CloudM.LogInSystem import _find_cli_session, cli_status
             app = get_app("status_check")
+            result = _find_cli_session(app)
 
-            # Use unified storage directory
-            from pathlib import Path
-            storage_dir = tb_root_dir / ".data" / "cli_sessions"
-            storage = BlobStorage(
-                mode=StorageMode.OFFLINE,
-                storage_directory=str(storage_dir)
-            )
-
-            # Check for CLI sessions in BlobStorage
-            blobs = storage.list_blobs(prefix="cli_sessions/")
-
-            if blobs:
-                # Found at least one CLI session
-                blob_meta = blobs[0]
-                username = blob_meta['blob_id'].replace('cli_sessions/', '')
-
-                # Load session data via BlobFile (encrypted)
-                key = Code.DK()()
-                with BlobFile(f"cli_sessions/{username}/session.json", mode="r", key=key, storage=storage) as blob:
-                    session_data = blob.read_json()
-
-                provider = session_data.get("provider", "unknown")
-                auth_time = session_data.get("authenticated_at", 0)
-
+            if result:
+                sd = result["session_data"]
+                username = result["username"]
+                auth_time = sd.get("authenticated_at", 0)
+                time_str = "Unknown"
                 if auth_time:
-                    import time
                     elapsed = time.time() - auth_time
-                    hours = int(elapsed // 3600)
-                    minutes = int((elapsed % 3600) // 60)
-                    time_str = f"{hours}h {minutes}m ago"
-                else:
-                    time_str = "Unknown"
+                    h, m = int(elapsed // 3600), int((elapsed % 3600) // 60)
+                    time_str = f"{h}h {m}m ago"
 
                 print(f"🔐 Authentication: ✅ Logged in as {username}")
-                print(f"   Provider: {provider}")
+                print(f"   Provider: {sd.get('provider', 'unknown')}")
                 print(f"   Session: {time_str}")
             else:
                 print("🔐 Authentication: ❌ Not logged in")
 
+            await cli_status(app)
+
             from toolboxv2.mods.CloudM.mini import get_service_status
-
-            str1 = get_service_status(app.info_dir.replace(app.id, ""))
-
-            print(str1)
+            print(get_service_status(app.info_dir.replace(app.id, "")))
 
         except Exception as e:
             print(f"🔐 Authentication: ❌ Status check failed: {e}")
 
         print()
-
-        # Existing status checks
         sys.argv = ["db", "status"]
         await cli_db_runner()
         print()
+        from toolboxv2.utils.clis.cli_printing import Style
         print(Style.GREY("─" * 25))
         sys.argv = ["workers", "status"]
         cli_worker_manager()
@@ -1859,41 +1827,94 @@ def runner_setup():
     run_c = run_flow_from_file_or_load_all_flows_and_mods_from_dir
 
     async def mods_manager():
-        app = get_app("CloudM.ModManager")
-        await app.a_run_any("CloudM", "mods")
+        import argparse
+        import sys
 
+        # App laden
+        app = get_app("CloudM.ModManager")
+
+        # Parser konfigurieren
+        parser = argparse.ArgumentParser(
+            prog="tb mods",
+            description="Manage ToolBox modules or start Dev Runner",
+        )
+
+        # 1. Das erste Argument: Entweder ein Befehl (list, create...) ODER ein Modulname
+        parser.add_argument(
+            "command",
+            nargs="?",
+            default="",
+            help="Command (list, create, manager...) OR Module Name for Dev Runner"
+        )
+
+        # 2. Das zweite Argument: Ziel-Modul (nur nötig für build, install, create)
+        parser.add_argument(
+            "module_name",
+            nargs="?",
+            default="",
+            help="Target module name (for build, install, create)"
+        )
+
+        # 3. Flags für 'create' und 'gen-configs'
+        # Wir fügen hier alle möglichen Flags hinzu, damit sie in **kwargs landen
+        parser.add_argument("--type", help="Module type (for create)", default=None)
+        parser.add_argument("--desc", help="Description", default=None)
+        parser.add_argument("--version", help="Version", default=None)
+        parser.add_argument("--location", help="Custom path", default=None)
+        parser.add_argument("--author", help="Author name", default=None)
+
+        # Boolean Flags (store_true)
+        parser.add_argument("--external", action="store_true", help="Create external module")
+        parser.add_argument("--no-config", action="store_true", help="Skip tbConfig creation")
+        parser.add_argument("--force", action="store_true", help="Force overwrite")
+        parser.add_argument("--non-interactive", action="store_true", help="Skip confirmations")
+        parser.add_argument("--no-backup", action="store_true", help="Skip backups")
+
+        parser.add_argument(
+            "-p",
+            "--port",
+            type=int,
+            metavar="PORT",
+            default=8080,
+            help="Interface port number (default: 8080)",
+        )
+
+        # Argumente parsen
+        args = parser.parse_args()
+
+        # Wir bauen die kwargs zusammen.
+        # Wichtig: Wir filtern 'command' und 'module_name' heraus, da diese positionsabhängig übergeben werden.
+        # Wir filtern None-Werte heraus, damit Defaults der Zielfunktion greifen.
+        clean_kwargs = {
+            k: v for k, v in vars(args).items()
+            if k not in ["command", "module_name"] and v is not None and v is not False
+        }
+
+        # Boolean Flags müssen explizit übergeben werden, wenn sie True sind
+        for flag in ["external", "no_config", "force", "non_interactive", "no_backup"]:
+            if getattr(args, flag, False):
+                # argparse macht aus "no-config" -> "no_config", wir müssen das mappen wenn nötig
+                # In main() prüfst du "if '--external' in kwargs", daher müssen wir den Key anpassen
+                # oder die Logik in main() auf kwargs.get('external') ändern.
+                # Um kompatibel zu deiner main() Logik ("--flag" in kwargs) zu bleiben:
+                key_name = "--" + flag.replace("_", "-")
+                clean_kwargs[key_name] = True
+
+        # Ausführung an CloudM -> mods übergeben
+        await app.a_run_any(
+            "CloudM",
+            "mods",
+            command=args.command,
+            module_name=args.module_name,
+            **clean_kwargs
+        )
     async def registry():
         app = get_app("CloudM.RegistryServer")
         await app.a_run_any("CloudM.RegistryServer", "start")
 
-    def _run_docksh():
-        import sys
-
-        from toolboxv2.Docksh import docksh
-        argvs = sys.argv[1:]
-        if len(argvs) == 0:
-            print("tb docksh x  - quick reconnect")
-        elif 'x' in argvs:
-            docksh.cmd_connect([])
-
-        if not argvs:
-            docksh.cmd_connect([])
-        elif argvs[0] == "setup":
-            docksh.cmd_setup()
-        elif argvs[0] == "connect":
-            docksh.cmd_connect(argvs[1:])
-        else:
-            try:
-                from docksh_srv import main as Docksh_srv
-
-                Docksh_srv(docksh.docs)
-            except ModuleNotFoundError:
-                from pathlib import Path
-                path = str(Path(__file__).parent.parent)+"/docksh_srv.py"
-                if os.path.exists(path):
-                    os.system(f"{sys.executable} {path} {' '.join(argvs)}")
-                else:
-                    print(f"{path=} not found")
+    async def _run_docksh():
+        from toolboxv2.mods.ContainerManager.cli import main as d_cli
+        await d_cli()
 
 
     runner = {

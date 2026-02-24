@@ -323,7 +323,7 @@ async def start_ui(port=8123, host="localhost", **_):
 
     # Run Streamlit
     try:
-        subprocess.run(cmd, cwd=str(app_dir))
+        subprocess.run(cmd)
     except KeyboardInterrupt:
         print("\n👋 Shutting down...")
 

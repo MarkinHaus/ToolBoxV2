@@ -59,6 +59,7 @@ class AgentLiveState:
     status_msg: str = ""        # one-liner: "Loading tools...", "LLM Error: ..."
     skills: list = field(default_factory=list)   # matched skill names
     tools_loaded: list = field(default_factory=list)  # currently loaded tool names
+    persona: str = ""
 
     # -- convenience ----------------------------------------------------------
     def reset(self):
@@ -69,6 +70,7 @@ class AgentLiveState:
         self.error = ""
         self.thought = ""
         self.status_msg = ""
+        self.persona = ""
         self.t_start = 0.0
 
     @property

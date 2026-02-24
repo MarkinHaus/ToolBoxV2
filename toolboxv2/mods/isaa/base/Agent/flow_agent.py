@@ -22,15 +22,18 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Coroutine, Generator, Union
+from typing import Any, AsyncGenerator, Callable, Coroutine, Generator, Union, Optional
 
 import yaml
+from litellm import max_tokens
 from pydantic import BaseModel, ValidationError
 
-from toolboxv2 import Style, get_logger
+from toolboxv2 import Style, get_logger, get_app
 from toolboxv2.mods.isaa.base.Agent.chain import Chain, ConditionalChain
+from toolboxv2.mods.isaa.base.Agent.dreamer import Dreamer
 from toolboxv2.mods.isaa.base.Agent.types import (
     AgentModelData,
+    DreamConfig,
     NodeStatus,
     PersonaConfig,
     ProgressEvent,
@@ -348,6 +351,7 @@ class FlowAgent:
         stream: bool = True,
         **kwargs,
     ):
+        self._vison = {"fast":None, "coplex":None}
         self.amd = amd
         self.verbose = verbose
         self.stream = stream
@@ -501,6 +505,54 @@ class FlowAgent:
                 processed_messages.append(msg)
         return processed_messages
 
+    async def save_supports_vision(self, messages:list|None=None,model_preference="fast"):
+        if hasattr(self, "_vison"):
+            self._vison[model_preference] = self._vison.get(model_preference)
+            if isinstance(self._vison[model_preference], bool):
+                return self._vison[model_preference]
+        model = self.amd.fast_llm_model if model_preference == "fast" else self.amd.complex_llm_model
+        provider = model.split('/')[-2]
+        try:
+            from litellm import supports_vision
+            self._vison[model_preference] = supports_vision(model)
+            return self._vison[model_preference]
+        except:
+            try:
+                from litellm import supports_vision
+                self._vison[model_preference] = supports_vision(model, provider)
+                return self._vison[model_preference]
+            except:
+                has_media = False
+                if not messages:
+                    return False
+                for msg in messages:
+                    if not isinstance(msg.get("content"), str):
+                        continue
+
+                    content = msg["content"]
+
+                    if not content:
+                        continue
+
+                    # Check if content contains media tags
+                    if "[media:" in content:
+                        has_media = True
+                        break
+                if not has_media:
+                    return False
+
+                processed_messages = self._process_media_in_messages(messages.copy())
+                try:
+                    response = await self.llm_handler.completion_with_rate_limiting(
+                        litellm, model=model, messages=processed_messages, max_tokens=1)
+                    self._vison[model_preference] = True
+                    return self._vison[model_preference]
+                except:
+                    self._vison[model_preference] = False
+                    return self._vison[model_preference]
+
+
+
     async def a_run_llm_completion(
         self,
         messages: list[dict],
@@ -529,7 +581,10 @@ class FlowAgent:
         use_stream = stream if stream is not None else self.stream
 
         # NEU: Verarbeite Media in Messages
-        processed_messages = self._process_media_in_messages(messages.copy())
+        if await self.save_supports_vision(messages, model_preference):
+            processed_messages = self._process_media_in_messages(messages.copy())
+        else:
+            processed_messages = messages.copy()
 
         # NEU: Entferne bereits bekannte problematische Typen
         if _removed_types:
@@ -587,6 +642,34 @@ class FlowAgent:
                 llm_kwargs["messages"] = [
                     {"role": "system", "content": f"{system_msg}"}
                 ] + llm_kwargs["messages"]
+
+        # NEU: Prompt Hash für Audit-Log
+        import hashlib
+        import json
+        import time
+        def safe_serializer(obj):
+            # If OpenAI tool call object
+            if hasattr(obj, "model_dump"):
+                return obj.model_dump()
+
+            # Fallback: convert object to dict if possible
+            if hasattr(obj, "__dict__"):
+                return obj.__dict__
+
+            # Final fallback
+            return str(obj)
+        prompt_content = json.dumps(llm_kwargs["messages"], sort_keys=True, default=safe_serializer)
+        prompt_hash = hashlib.sha256(prompt_content.encode()).hexdigest()[:16]
+        start_time = time.time()
+
+        # Get user_id from session if available
+        user_id = "anonymous"
+        if session_id:
+            session = self.session_manager.get(session_id)
+            if session and hasattr(session, 'user_id'):
+                user_id = session.user_id
+            else:
+                user_id = session.session_id
 
         try:
             from litellm.types.utils import ChatCompletionMessageToolCall, Function, Message
@@ -779,6 +862,52 @@ class FlowAgent:
                     **kwargs,
                 )
 
+            # NEU: Audit-Log Success (mit echten Kosten aus der Response)
+            try:
+                execution_time = time.time() - start_time
+
+                # Echte Kosten und Token aus der Response holen
+                input_tokens = 0
+                output_tokens = 0
+                cost = 0
+
+                if accumulated_usage:
+                    if hasattr(accumulated_usage, "prompt_tokens"):
+                        input_tokens = accumulated_usage.prompt_tokens or 0
+                        output_tokens = accumulated_usage.completion_tokens or 0
+                    elif hasattr(accumulated_usage, "_asdict"):
+                        # Dict-Form probieren
+                        usage_dict = accumulated_usage._asdict() if hasattr(accumulated_usage, "_asdict") else {}
+                        input_tokens = usage_dict.get("prompt_tokens", 0)
+                        output_tokens = usage_dict.get("completion_tokens", 0)
+
+                # Prüfe auf LiteLLM _hidden_params für echte Kosten
+                if "result_to_return" in locals() and result_to_return and hasattr(result_to_return, "_hidden_params"):
+                    hidden_params = getattr(result_to_return, "_hidden_params", None) or {}
+                    if hidden_params:
+                        input_tokens = hidden_params.get("prompt_tokens", input_tokens)
+                        output_tokens = hidden_params.get("completion_tokens", output_tokens)
+                        cost = hidden_params.get("llm_cost", 0) or 0
+
+                get_app("audit-isaa").audit_logger.log_action(
+                    user_id=user_id,
+                    action="llm.call.success",
+                    resource=f"/llm/{model}",
+                    status="SUCCESS",
+                    details={
+                        "model": model,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cost": cost,
+                        "duration": round(execution_time, 2),
+                        "prompt_hash": prompt_hash,
+                        "continuation_count": continuation_count,
+                        "session_id": session_id or "none",
+                    }
+                )
+            except Exception:
+                pass  # Audit-Errors dürfen nicht crashen
+
             return result_to_return
 
         except Exception as e:
@@ -821,6 +950,36 @@ class FlowAgent:
             # =====================================================================
 
             logger.error(f"LLM call failed: {e}")
+
+            # NEU: Audit-Log Error (vollständige Fehlermeldung)
+            try:
+                execution_time = time.time() - start_time
+                error_msg = str(e)
+
+                # Erste 200 + letzte 200 Zeichen für vollständiges Bild
+                if len(error_msg) > 400:
+                    error_msg_truncated = error_msg[:200] + " [...] " + error_msg[-200:]
+                else:
+                    error_msg_truncated = error_msg
+
+                get_app("audit-isaa").audit_logger.log_action(
+                    user_id=user_id,
+                    action="llm.call.error",
+                    resource=f"/llm/{model}",
+                    status="FAILURE",
+                    details={
+                        "model": model,
+                        "error_type": type(e).__name__,
+                        "error_message": error_msg_truncated,
+                        "error_length": len(error_msg),
+                        "duration": round(execution_time, 2),
+                        "prompt_hash": prompt_hash,
+                        "session_id": session_id or "none",
+                    }
+                )
+            except Exception:
+                pass  # Audit-Errors dürfen nicht crashen
+
             raise
 
     @staticmethod
@@ -1104,7 +1263,7 @@ class FlowAgent:
         session_id: str = "default",
         execution_id: str | None = None,
         human_online: bool = False,
-        max_iterations: int = 25,
+        max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS",30),
         get_ctx: bool = False,
         **kwargs,
     ) -> str | tuple[str, Any]:
@@ -1211,7 +1370,7 @@ class FlowAgent:
         engine = self._get_execution_engine()
         return engine.list_executions()
 
-    async def resume_execution(self, execution_id: str, max_iterations: int = 15) -> str:
+    async def resume_execution(self, execution_id: str, max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30)) -> str:
         """
         Resume a paused execution.
 
@@ -1366,6 +1525,30 @@ class FlowAgent:
                 status = "✅" if chunk.get("success") else "⚠️"
                 yield f"\n{status} Fertig\n"
 
+
+
+
+    # =========================================================================
+    # Dreaming
+    # =========================================================================
+
+    async def a_dream(self, config: Optional[DreamConfig] = None) -> 'DreamReport':
+        """
+        FlowAgent.a_dream() — run an async meta-learning cycle.
+
+        Usage:
+            report = await agent.a_dream(DreamConfig(max_budget=5000))
+            report = await agent.a_dream()  # defaults
+        """
+
+        if config is None:
+            config = DreamConfig()
+
+        if not hasattr(self, '_dreamer'):
+            self._dreamer = Dreamer(self)
+
+        return await self._dreamer.dream(config)
+
     # =========================================================================
     # audio processing
     # =========================================================================
@@ -1467,6 +1650,24 @@ class FlowAgent:
         **kwargs,
     ):
         """Register a tool."""
+        # Audit-Log: Tool Added to Agent
+        try:
+            tool_name = name or (tool_func.__name__ if hasattr(tool_func, '__name__') else "unknown")
+            get_app("audit-isaa").audit_logger.log_action(
+                user_id="system",
+                action="agent.tool_added",
+                resource=f"/agent/agents/{self.amd.name}/tools",
+                status="SUCCESS",
+                details={
+                    "agent_name": self.amd.name,
+                    "tool_name": tool_name,
+                    "category": category if isinstance(category, list) else [category] if category else [],
+                    "flags": flags or {},
+                }
+            )
+        except Exception:
+            pass
+
         self.tool_manager.register(
             func=tool_func,
             name=name,

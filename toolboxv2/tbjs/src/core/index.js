@@ -15,6 +15,7 @@ import ws from './ws.js';
 import * as utils from './utils.js';
 import sw from './sw.js';
 import user from './user.js';
+import {getNotificationManager} from './notifications.js';
 import {ToolBoxError,
 ToolBoxInterfaces,
 ToolBoxResult,
@@ -36,6 +37,7 @@ export {
     ws,
     sw,
     user,
+    getNotificationManager,
     ToolBoxError,
     ToolBoxInterfaces,
     ToolBoxResult,
