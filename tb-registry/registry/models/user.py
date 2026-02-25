@@ -24,7 +24,7 @@ class Publisher:
 
     Attributes:
         id: Unique publisher ID.
-        clerk_user_id: Associated Clerk user ID.
+        cloudm_user_id: Associated CloudM.Auth user ID. (was: clerk_user_id)
         name: Publisher display name.
         slug: URL-friendly slug.
         email: Contact email.
@@ -43,7 +43,7 @@ class Publisher:
     """
 
     id: str
-    clerk_user_id: str
+    cloudm_user_id: str  # Changed from clerk_user_id
     name: str
     slug: str
     email: str
@@ -60,13 +60,25 @@ class Publisher:
     total_downloads: int = 0
     created_at: datetime = field(default_factory=datetime.utcnow)
 
+    # TEMPORARY: Keep for migration compatibility
+    clerk_user_id: Optional[str] = None
+
+    @property
+    def user_id(self) -> str:
+        """Alias for cloudm_user_id for backward compatibility.
+
+        Returns:
+            The cloudm_user_id as the publisher's user ID.
+        """
+        return self.cloudm_user_id
+
 
 @dataclass
 class User:
     """User information.
 
     Attributes:
-        clerk_user_id: Clerk user ID.
+        cloudm_user_id: CloudM.Auth user ID. (was: clerk_user_id)
         email: User email.
         username: Username.
         publisher_id: Associated publisher ID.
@@ -75,13 +87,25 @@ class User:
         created_at: Creation timestamp.
     """
 
-    clerk_user_id: str
+    cloudm_user_id: str  # Changed from clerk_user_id
     email: str
     username: str
     publisher_id: Optional[str] = None
     is_admin: bool = False
     last_login: Optional[datetime] = None
     created_at: datetime = field(default_factory=datetime.utcnow)
+
+    # TEMPORARY: Keep clerk_user_id for migration
+    clerk_user_id: Optional[str] = None
+
+    @property
+    def id(self) -> str:
+        """Alias for cloudm_user_id for backward compatibility.
+
+        Returns:
+            The cloudm_user_id as the user's ID.
+        """
+        return self.cloudm_user_id
 
 
 # Pydantic Models for API
@@ -163,14 +187,14 @@ class UserSummary(BaseModel):
     """Summary model for user information.
 
     Attributes:
-        clerk_user_id: Clerk user ID.
+        cloudm_user_id: CloudM.Auth user ID. (was: clerk_user_id)
         email: User email.
         username: Username.
         is_admin: Whether user is admin.
         publisher_id: Associated publisher ID.
     """
 
-    clerk_user_id: str
+    cloudm_user_id: str  # Changed from clerk_user_id
     email: str
     username: str
     is_admin: bool

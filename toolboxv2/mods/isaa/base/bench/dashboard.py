@@ -75,24 +75,29 @@ class Dashboard:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{title}</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <style>
         :root {{
-            --bg: #0d1117;
-            --surface: #161b22;
-            --border: #30363d;
-            --text: #e6edf3;
-            --text-muted: #8b949e;
-            --accent: #58a6ff;
-            --success: #3fb950;
-            --warning: #d29922;
-            --danger: #f85149;
-            --purple: #a371f7;
+            --bg: #08080d;
+            --surface: rgba(255,255,255,0.015);
+            --surface-hover: rgba(99,102,241,0.06);
+            --border: rgba(255,255,255,0.04);
+            --border-active: rgba(99,102,241,0.2);
+            --text: #e2e2e8;
+            --text-muted: rgba(255,255,255,0.45);
+            --text-faint: rgba(255,255,255,0.25);
+            --accent: #6366f1;
+            --accent-light: #a5b4fc;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --purple: #a5b4fc;
         }}
 
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
             background: var(--bg);
             color: var(--text);
             line-height: 1.6;
@@ -103,70 +108,94 @@ class Dashboard:
         .container {{ max-width: 1400px; margin: 0 auto; }}
 
         header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            display: grid;
+            grid-template-columns: 1fr auto;
+            align-items: end;
             margin-bottom: 30px;
             padding-bottom: 20px;
             border-bottom: 1px solid var(--border);
         }}
 
-        h1 {{ font-size: 1.8rem; font-weight: 600; }}
-        h2 {{ font-size: 1.3rem; font-weight: 600; margin-bottom: 15px; color: var(--text-muted); }}
-        h3 {{ font-size: 1rem; font-weight: 500; margin-bottom: 10px; }}
+        .header-label {{
+            font-size: 9px;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: var(--text-faint);
+            margin-bottom: 4px;
+        }}
 
-        .timestamp {{ color: var(--text-muted); font-size: 0.85rem; }}
+        h1 {{ font-size: 22px; font-weight: 300; color: var(--text); }}
+        h2 {{
+            font-size: 9px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--text-faint);
+            margin-bottom: 15px;
+        }}
+        h3 {{ font-size: 11px; font-weight: 500; margin-bottom: 10px; color: var(--text-muted); letter-spacing: 1px; text-transform: uppercase; }}
+
+        .timestamp {{ color: var(--text-faint); font-size: 9px; font-family: 'IBM Plex Mono', monospace; letter-spacing: 1px; }}
 
         /* Filters */
         .filters {{
             background: var(--surface);
             border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 15px 20px;
+            border-radius: 6px;
+            padding: 12px 16px;
             margin-bottom: 25px;
-            display: flex;
-            gap: 20px;
-            flex-wrap: wrap;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
             align-items: center;
         }}
 
         .filter-group {{
-            display: flex;
+            display: grid;
+            grid-template-columns: auto 1fr;
             align-items: center;
-            gap: 10px;
+            gap: 8px;
         }}
 
         .filter-group label {{
-            color: var(--text-muted);
-            font-size: 0.85rem;
+            color: var(--text-faint);
+            font-size: 9px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
         }}
 
         select, input[type="text"] {{
             background: var(--bg);
             border: 1px solid var(--border);
             color: var(--text);
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-size: 0.9rem;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-family: 'IBM Plex Mono', monospace;
+            transition: all 0.15s;
         }}
 
         select:focus, input:focus {{
             outline: none;
-            border-color: var(--accent);
+            border-color: var(--border-active);
+            background: var(--surface-hover);
         }}
 
         .checkbox-group {{
             display: flex;
-            gap: 15px;
+            gap: 12px;
             flex-wrap: wrap;
         }}
 
         .checkbox-group label {{
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 5px;
             cursor: pointer;
-            font-size: 0.85rem;
+            font-size: 9px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: var(--text-faint);
         }}
 
         input[type="checkbox"] {{
@@ -177,8 +206,8 @@ class Dashboard:
         .grid {{
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-bottom: 25px;
+            gap: 16px;
+            margin-bottom: 20px;
         }}
 
         @media (max-width: 900px) {{
@@ -188,15 +217,20 @@ class Dashboard:
         .card {{
             background: var(--surface);
             border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 20px;
+            border-radius: 6px;
+            padding: 16px;
+            transition: all 0.15s;
+        }}
+
+        .card:hover {{
+            border-color: var(--border-active);
         }}
 
         .card.full-width {{
             grid-column: 1 / -1;
         }}
 
-        /* Leaderboard Table */
+        /* Leaderboard — CSS Grid table */
         .leaderboard {{
             width: 100%;
             border-collapse: collapse;
@@ -204,163 +238,210 @@ class Dashboard:
 
         .leaderboard th {{
             text-align: left;
-            padding: 12px 15px;
-            border-bottom: 2px solid var(--border);
-            color: var(--text-muted);
+            padding: 10px 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            color: var(--text-faint);
             font-weight: 500;
-            font-size: 0.85rem;
+            font-size: 9px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 2px;
             cursor: pointer;
             user-select: none;
+            transition: color 0.15s;
         }}
 
         .leaderboard th:hover {{
-            color: var(--accent);
+            color: var(--accent-light);
         }}
 
         .leaderboard th.sorted-asc::after {{ content: ' ↑'; color: var(--accent); }}
         .leaderboard th.sorted-desc::after {{ content: ' ↓'; color: var(--accent); }}
 
         .leaderboard td {{
-            padding: 12px 15px;
+            padding: 10px 12px;
             border-bottom: 1px solid var(--border);
+            font-size: 11px;
+        }}
+
+        .leaderboard tr {{
+            transition: all 0.15s;
         }}
 
         .leaderboard tr:hover {{
-            background: rgba(88, 166, 255, 0.05);
+            background: var(--surface-hover);
         }}
 
         .leaderboard tr.selected {{
-            background: rgba(88, 166, 255, 0.1);
+            background: var(--surface-hover);
+            border-left: 2px solid var(--accent);
         }}
 
         .rank {{
-            font-weight: 700;
-            width: 40px;
+            font-weight: 600;
+            font-family: 'IBM Plex Mono', monospace;
+            width: 32px;
+            font-size: 11px;
         }}
 
-        .rank.gold {{ color: #ffd700; }}
-        .rank.silver {{ color: #c0c0c0; }}
+        .rank.gold {{ color: var(--warning); }}
+        .rank.silver {{ color: var(--text-muted); }}
         .rank.bronze {{ color: #cd7f32; }}
 
         .model-name {{
-            font-weight: 600;
-            color: var(--accent);
+            font-weight: 500;
+            color: var(--accent-light);
+            font-size: 12px;
         }}
 
         .score {{
-            font-family: 'SF Mono', Monaco, monospace;
-            font-weight: 600;
+            font-family: 'IBM Plex Mono', monospace;
+            font-weight: 500;
+            font-size: 12px;
         }}
 
         .score.high {{ color: var(--success); }}
         .score.medium {{ color: var(--warning); }}
         .score.low {{ color: var(--danger); }}
 
-        /* Score Bar */
+        /* Score Bar — 5 small rectangles */
         .score-bar {{
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 8px;
+        }}
+
+        .score-blocks {{
+            display: flex;
+            gap: 2px;
+        }}
+
+        .score-block {{
+            width: 14px;
+            height: 6px;
+            border-radius: 1px;
+            background: rgba(255,255,255,0.06);
+        }}
+
+        .score-block.filled {{
+            background: var(--success);
+            opacity: 0.8;
+        }}
+
+        .score-block.filled.medium {{
+            background: var(--warning);
+        }}
+
+        .score-block.filled.low {{
+            background: var(--danger);
         }}
 
         .bar-container {{
             flex: 1;
-            height: 8px;
-            background: var(--bg);
-            border-radius: 4px;
+            height: 4px;
+            background: rgba(255,255,255,0.04);
+            border-radius: 2px;
             overflow: hidden;
         }}
 
         .bar {{
             height: 100%;
-            border-radius: 4px;
-            transition: width 0.3s ease;
+            border-radius: 2px;
+            transition: width 0.15s;
         }}
 
-        .bar.high {{ background: var(--success); }}
-        .bar.medium {{ background: var(--warning); }}
-        .bar.low {{ background: var(--danger); }}
+        .bar.high {{ background: var(--success); opacity: 0.7; }}
+        .bar.medium {{ background: var(--warning); opacity: 0.7; }}
+        .bar.low {{ background: var(--danger); opacity: 0.7; }}
 
         /* Dimension Scores */
         .dimension-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 12px;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 8px;
         }}
 
         .dim-item {{
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px 12px;
-            background: var(--bg);
-            border-radius: 6px;
+            padding: 8px 10px;
+            background: rgba(255,255,255,0.02);
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            transition: all 0.15s;
+        }}
+
+        .dim-item:hover {{
+            border-color: var(--border-active);
         }}
 
         .dim-name {{
-            font-size: 0.85rem;
-            color: var(--text-muted);
-            text-transform: capitalize;
+            font-size: 9px;
+            color: var(--text-faint);
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }}
 
         .dim-score {{
-            font-family: 'SF Mono', Monaco, monospace;
-            font-weight: 600;
+            font-family: 'IBM Plex Mono', monospace;
+            font-weight: 500;
+            font-size: 12px;
         }}
 
-        /* Flags */
+        /* Flags — Badge style */
         .flags-list {{
             display: flex;
             flex-wrap: wrap;
-            gap: 8px;
+            gap: 6px;
         }}
 
         .flag {{
-            padding: 4px 10px;
-            border-radius: 12px;
-            font-size: 0.75rem;
-            font-weight: 500;
+            display: inline-block;
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-size: 9px;
+            font-weight: 600;
             position: relative;
             cursor: help;
+            letter-spacing: 0.5px;
+            transition: all 0.15s;
         }}
 
         .flag.critical {{
-            background: rgba(248, 81, 73, 0.2);
+            background: rgba(239, 68, 68, 0.09);
             color: var(--danger);
-            border: 1px solid var(--danger);
+            border: 1px solid rgba(239, 68, 68, 0.19);
         }}
 
         .flag.warning {{
-            background: rgba(210, 153, 34, 0.2);
+            background: rgba(245, 158, 11, 0.09);
             color: var(--warning);
-            border: 1px solid var(--warning);
+            border: 1px solid rgba(245, 158, 11, 0.19);
         }}
 
         .flag.info {{
-            background: rgba(88, 166, 255, 0.2);
+            background: rgba(99, 102, 241, 0.09);
             color: var(--accent);
-            border: 1px solid var(--accent);
+            border: 1px solid rgba(99, 102, 241, 0.19);
         }}
 
         /* Tooltip styles */
         .flag-tooltip {{
             position: absolute;
-            bottom: calc(100% + 10px);
+            bottom: calc(100% + 8px);
             left: 50%;
             transform: translateX(-50%);
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 12px 15px;
-            min-width: 280px;
-            max-width: 350px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+            background: #12121a;
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 6px;
+            padding: 10px 14px;
+            min-width: 260px;
+            max-width: 320px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.5);
             z-index: 1000;
             opacity: 0;
             visibility: hidden;
-            transition: opacity 0.2s, visibility 0.2s;
+            transition: opacity 0.15s, visibility 0.15s;
             pointer-events: none;
         }}
 
@@ -370,8 +451,8 @@ class Dashboard:
             top: 100%;
             left: 50%;
             transform: translateX(-50%);
-            border: 8px solid transparent;
-            border-top-color: var(--border);
+            border: 6px solid transparent;
+            border-top-color: rgba(255,255,255,0.06);
         }}
 
         .flag:hover .flag-tooltip {{
@@ -383,15 +464,16 @@ class Dashboard:
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 8px;
-            padding-bottom: 8px;
+            margin-bottom: 6px;
+            padding-bottom: 6px;
             border-bottom: 1px solid var(--border);
         }}
 
         .tooltip-severity {{
-            font-size: 0.7rem;
+            font-size: 8px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 2px;
+            font-weight: 600;
         }}
 
         .tooltip-severity.critical {{ color: var(--danger); }}
@@ -399,47 +481,49 @@ class Dashboard:
         .tooltip-severity.info {{ color: var(--accent); }}
 
         .tooltip-impact {{
-            font-weight: 700;
-            font-size: 0.9rem;
+            font-weight: 600;
+            font-size: 11px;
+            font-family: 'IBM Plex Mono', monospace;
         }}
 
         .tooltip-impact.negative {{ color: var(--danger); }}
-        .tooltip-impact.neutral {{ color: var(--text-muted); }}
+        .tooltip-impact.neutral {{ color: var(--text-faint); }}
         .tooltip-impact.positive {{ color: var(--success); }}
 
         .tooltip-description {{
-            font-size: 0.85rem;
+            font-size: 11px;
             color: var(--text);
-            margin-bottom: 8px;
+            margin-bottom: 6px;
         }}
 
         .tooltip-implications {{
-            font-size: 0.8rem;
+            font-size: 10px;
             color: var(--text-muted);
             line-height: 1.5;
         }}
 
         .tooltip-examples {{
-            margin-top: 8px;
-            padding-top: 8px;
+            margin-top: 6px;
+            padding-top: 6px;
             border-top: 1px solid var(--border);
-            font-size: 0.75rem;
-            color: var(--text-muted);
+            font-size: 9px;
+            color: var(--text-faint);
         }}
 
         .tooltip-examples ul {{
-            margin: 4px 0 0 0;
-            padding-left: 16px;
+            margin: 3px 0 0 0;
+            padding-left: 14px;
         }}
 
         .tooltip-examples li {{
-            margin: 2px 0;
+            margin: 1px 0;
         }}
 
         /* Persona */
         .persona-container {{
-            display: flex;
-            gap: 30px;
+            display: grid;
+            grid-template-columns: 250px 1fr;
+            gap: 24px;
             align-items: center;
         }}
 
@@ -455,8 +539,9 @@ class Dashboard:
         .persona-item {{
             display: flex;
             justify-content: space-between;
-            padding: 8px 0;
+            padding: 6px 0;
             border-bottom: 1px solid var(--border);
+            font-size: 11px;
         }}
 
         .persona-item:last-child {{
@@ -466,14 +551,14 @@ class Dashboard:
         /* Comparison Chart */
         .chart-container {{
             position: relative;
-            height: 300px;
+            height: 280px;
         }}
 
         /* Details Panel */
         .details-panel {{
             display: none;
-            margin-top: 20px;
-            padding-top: 20px;
+            margin-top: 16px;
+            padding-top: 16px;
             border-top: 1px solid var(--border);
         }}
 
@@ -484,37 +569,115 @@ class Dashboard:
         /* No data */
         .no-data {{
             text-align: center;
-            padding: 40px;
-            color: var(--text-muted);
+            padding: 32px;
+            color: var(--text-faint);
+            font-size: 11px;
         }}
 
         /* Toggle */
         .toggle-btn {{
-            background: var(--bg);
+            background: rgba(255,255,255,0.02);
             border: 1px solid var(--border);
-            color: var(--text);
-            padding: 6px 12px;
-            border-radius: 6px;
+            color: var(--text-muted);
+            padding: 4px 10px;
+            border-radius: 4px;
             cursor: pointer;
-            font-size: 0.85rem;
+            font-size: 9px;
+            font-family: 'IBM Plex Mono', monospace;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            transition: all 0.15s;
         }}
 
         .toggle-btn:hover {{
-            border-color: var(--accent);
+            border-color: var(--border-active);
+            background: var(--surface-hover);
         }}
 
         .toggle-btn.active {{
-            background: var(--accent);
-            border-color: var(--accent);
-            color: var(--bg);
+            background: rgba(99, 102, 241, 0.12);
+            border-color: var(--border-active);
+            color: var(--accent-light);
         }}
+
+        /* Dimension hover tooltip */
+        .dim-cell {{
+            position: relative;
+            cursor: default;
+        }}
+
+        #dimTooltip {{
+            position: fixed;
+            z-index: 9999;
+            background: #0e0e15;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 6px;
+            padding: 10px 14px;
+            min-width: 220px;
+            max-width: 300px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.12s;
+            font-family: 'IBM Plex Sans', sans-serif;
+        }}
+
+        #dimTooltip.visible {{
+            opacity: 1;
+        }}
+
+        .dtt-header {{
+            font-size: 9px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: rgba(255,255,255,0.25);
+            margin-bottom: 6px;
+            padding-bottom: 5px;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+        }}
+
+        .dtt-score {{
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 16px;
+            font-weight: 300;
+            margin-bottom: 8px;
+        }}
+
+        .dtt-row {{
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 6px;
+            padding: 2px 0;
+            font-size: 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.02);
+        }}
+
+        .dtt-probe {{
+            color: rgba(255,255,255,0.55);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+
+        .dtt-val {{
+            font-family: 'IBM Plex Mono', monospace;
+            font-weight: 500;
+            text-align: right;
+        }}
+
+        .dtt-val.pos {{ color: #10b981; }}
+        .dtt-val.neg {{ color: #ef4444; }}
+        .dtt-val.zero {{ color: rgba(255,255,255,0.2); }}
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🔬 {title}</h1>
-            <span class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}</span>
+            <div>
+                <div class="header-label">model evaluation</div>
+                <h1>{title}</h1>
+            </div>
+            <span class="timestamp">{datetime.now().strftime("%Y-%m-%d %H:%M")}</span>
         </header>
 
         <!-- Filters -->
@@ -560,7 +723,7 @@ class Dashboard:
 
         <!-- Leaderboard -->
         <div class="card full-width">
-            <h2>🏆 Leaderboard</h2>
+            <h2>LEADERBOARD</h2>
             <table class="leaderboard" id="leaderboard">
                 <thead>
                     <tr>
@@ -583,7 +746,7 @@ class Dashboard:
         <div class="grid">
             <!-- Comparison Chart -->
             <div class="card">
-                <h2>📊 Dimension Comparison</h2>
+                <h2>DIMENSION COMPARISON</h2>
                 <div class="chart-container">
                     <canvas id="comparisonChart"></canvas>
                 </div>
@@ -591,7 +754,7 @@ class Dashboard:
 
             <!-- Persona Radar -->
             <div class="card">
-                <h2>🎭 Persona Profiles</h2>
+                <h2>PERSONA PROFILES</h2>
                 <div class="chart-container">
                     <canvas id="personaChart"></canvas>
                 </div>
@@ -600,7 +763,7 @@ class Dashboard:
 
         <!-- Flag Summary -->
         <div class="card full-width">
-            <h2>🚩 Flag Analysis</h2>
+            <h2>FLAG ANALYSIS</h2>
             <div id="flagSummary">
                 {Dashboard._gen_flag_summary(data)}
             </div>
@@ -608,7 +771,7 @@ class Dashboard:
 
         <!-- Cost Overview -->
         <div class="card full-width">
-            <h2>💰 Cost Overview</h2>
+            <h2>COST OVERVIEW</h2>
             <div id="costOverview">
                 {Dashboard._gen_cost_overview(data)}
             </div>
@@ -616,7 +779,7 @@ class Dashboard:
 
         <!-- Probe Details -->
         <div class="card full-width">
-            <h2>🔍 Probe Details (I/O)</h2>
+            <h2>PROBE DETAILS</h2>
             <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 15px;">
                 <span style="color: var(--success);">✅ Positiv (Score ≥1)</span> |
                 <span style="color: var(--warning);">⚠️ Neutral (0 ≤ Score < 1)</span> |
@@ -629,7 +792,7 @@ class Dashboard:
 
         <!-- Selected Model Details -->
         <div class="card full-width" id="detailsCard" style="display: none;">
-            <h2>📋 Model Details: <span id="detailsModelName"></span></h2>
+            <h2>MODEL DETAILS: <span id="detailsModelName" style="color: var(--accent-light);"></span></h2>
 
             <!-- Cost & Performance Section -->
             <div style="margin-top: 15px;">
@@ -653,6 +816,8 @@ class Dashboard:
             </div>
         </div>
     </div>
+
+    <div id="dimTooltip"></div>
 
     <script>
         // Data
@@ -729,6 +894,69 @@ class Dashboard:
         // Flag classification
         const criticalFlags = ['hallucination', 'injection_vulnerable'];
         const warningFlags = ['overconfident', 'passive', 'instruction_drift', 'blindly_obeys'];
+
+        // ── Dimension hover tooltip ──
+        const dimTooltipEl = document.getElementById('dimTooltip');
+
+        function showDimTooltip(event, modelName, dimName) {{
+            const model = reportData.find(d => d.model === modelName);
+            if (!model) return;
+
+            const probes = model.probe_details || [];
+            const dimScore = (model.dimensions || {{}})[dimName] || 0;
+            const cls = getScoreClass(dimScore);
+            const clsColor = cls === 'high' ? '#10b981' : cls === 'medium' ? '#f59e0b' : '#ef4444';
+
+            // Collect all probes that have a score for this dimension
+            const relevant = [];
+            probes.forEach(p => {{
+                const scores = p.scores || {{}};
+                if (scores[dimName] !== undefined) {{
+                    relevant.push({{ probe: p.probe_id, val: scores[dimName] }});
+                }}
+            }});
+
+            // Sort: biggest positive first, then negatives
+            relevant.sort((a, b) => b.val - a.val);
+
+            let rowsHtml = '';
+            if (relevant.length === 0) {{
+                rowsHtml = '<div style="color: rgba(255,255,255,0.2); font-size: 10px; padding: 4px 0;">keine Probes</div>';
+            }} else {{
+                relevant.forEach(r => {{
+                    const valClass = r.val > 0 ? 'pos' : r.val < 0 ? 'neg' : 'zero';
+                    const sign = r.val > 0 ? '+' : '';
+                    rowsHtml += `<div class="dtt-row"><span class="dtt-probe">${{r.probe}}</span><span class="dtt-val ${{valClass}}">${{sign}}${{r.val.toFixed(1)}}</span></div>`;
+                }});
+            }}
+
+            dimTooltipEl.innerHTML = `
+                <div class="dtt-header">${{dimName}}</div>
+                <div class="dtt-score" style="color: ${{clsColor}}">${{dimScore.toFixed(0)}}%</div>
+                ${{rowsHtml}}
+            `;
+
+            // Position at cursor
+            const x = event.clientX + 12;
+            const y = event.clientY + 12;
+            // Keep on screen
+            const rect = dimTooltipEl.getBoundingClientRect();
+            dimTooltipEl.style.left = Math.min(x, window.innerWidth - 320) + 'px';
+            dimTooltipEl.style.top = Math.min(y, window.innerHeight - 300) + 'px';
+            dimTooltipEl.classList.add('visible');
+        }}
+
+        function hideDimTooltip() {{
+            dimTooltipEl.classList.remove('visible');
+        }}
+
+        function moveDimTooltip(event) {{
+            if (!dimTooltipEl.classList.contains('visible')) return;
+            const x = event.clientX + 12;
+            const y = event.clientY + 12;
+            dimTooltipEl.style.left = Math.min(x, window.innerWidth - 320) + 'px';
+            dimTooltipEl.style.top = Math.min(y, window.innerHeight - 300) + 'px';
+        }}
 
         function getFlagClass(flag) {{
             if (criticalFlags.includes(flag)) return 'critical';
@@ -876,7 +1104,7 @@ class Dashboard:
                 let dimCells = dimensions.map(dim => {{
                     const score = (d.dimensions || {{}})[dim] || 0;
                     const cls = getScoreClass(score);
-                    return `<td><span class="score ${{cls}}">${{score.toFixed(0)}}</span></td>`;
+                    return `<td class="dim-cell" data-model="${{d.model}}" data-dim="${{dim}}" onmouseenter="showDimTooltip(event, '${{d.model}}', '${{dim}}')" onmousemove="moveDimTooltip(event)" onmouseleave="hideDimTooltip()"><span class="score ${{cls}}">${{score.toFixed(0)}}</span></td>`;
                 }}).join('');
 
                 // Flag count with severity indicator and tooltip preview
@@ -978,17 +1206,17 @@ class Dashboard:
                         y: {{
                             beginAtZero: true,
                             max: 100,
-                            grid: {{ color: '#30363d' }},
-                            ticks: {{ color: '#8b949e' }}
+                            grid: {{ color: 'rgba(255,255,255,0.04)' }},
+                            ticks: {{ color: 'rgba(255,255,255,0.25)', font: {{ family: 'IBM Plex Mono', size: 9 }} }}
                         }},
                         x: {{
                             grid: {{ display: false }},
-                            ticks: {{ color: '#8b949e' }}
+                            ticks: {{ color: 'rgba(255,255,255,0.25)', font: {{ family: 'IBM Plex Mono', size: 9 }} }}
                         }}
                     }},
                     plugins: {{
                         legend: {{
-                            labels: {{ color: '#e6edf3' }}
+                            labels: {{ color: '#e2e2e8', font: {{ family: 'IBM Plex Sans', size: 10 }} }}
                         }}
                     }}
                 }}
@@ -1009,15 +1237,15 @@ class Dashboard:
                         r: {{
                             beginAtZero: true,
                             max: 1,
-                            grid: {{ color: '#30363d' }},
-                            angleLines: {{ color: '#30363d' }},
-                            pointLabels: {{ color: '#e6edf3' }},
+                            grid: {{ color: 'rgba(255,255,255,0.04)' }},
+                            angleLines: {{ color: 'rgba(255,255,255,0.04)' }},
+                            pointLabels: {{ color: '#e2e2e8', font: {{ family: 'IBM Plex Sans', size: 10 }} }},
                             ticks: {{ display: false }}
                         }}
                     }},
                     plugins: {{
                         legend: {{
-                            labels: {{ color: '#e6edf3' }}
+                            labels: {{ color: '#e2e2e8', font: {{ family: 'IBM Plex Sans', size: 10 }} }}
                         }}
                     }}
                 }}
@@ -1026,12 +1254,12 @@ class Dashboard:
 
         function updateCharts(data) {{
             const colors = [
-                'rgba(88, 166, 255, 0.8)',
-                'rgba(63, 185, 80, 0.8)',
-                'rgba(210, 153, 34, 0.8)',
-                'rgba(163, 113, 247, 0.8)',
-                'rgba(248, 81, 73, 0.8)',
-                'rgba(121, 192, 255, 0.8)'
+                'rgba(99, 102, 241, 0.8)',
+                'rgba(16, 185, 129, 0.8)',
+                'rgba(245, 158, 11, 0.8)',
+                'rgba(165, 180, 252, 0.8)',
+                'rgba(239, 68, 68, 0.8)',
+                'rgba(99, 102, 241, 0.5)'
             ];
 
             // Update comparison chart

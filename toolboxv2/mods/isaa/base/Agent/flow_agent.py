@@ -353,6 +353,7 @@ class FlowAgent:
         stream: bool = True,
         **kwargs,
     ):
+        self._dreamer = None
         self._vison = {"fast":None, "coplex":None}
         self.amd = amd
         self.verbose = verbose
@@ -1805,6 +1806,8 @@ class FlowAgent:
 
         def vfs_write(path: str, content: str) -> dict:
             """
+            Dont use carless use vfs_edit wit line_start: int, line_end: int, new_content: str
+            only use for full files
             Write/overwrite file content in VFS.
 
             Args:
@@ -2507,9 +2510,10 @@ class FlowAgent:
         # =========================================================================
         vfs_tools = [
             {"tool_func": vfs_list, "name": "vfs_list", "category": ["vfs", "read"]},
-            {"tool_func": vfs_read, "name": "vfs_read", "category": ["vfs", "read"]},
+            {"tool_func": vfs_open, "name": "vfs_read", "category": ["vfs", "read"]},
             {"tool_func": vfs_create, "name": "vfs_create", "category": ["vfs", "write"]},
-            {"tool_func": vfs_write, "name": "vfs_write", "category": ["vfs", "write"]},
+            {"tool_func": vfs_edit, "name": "vfs_write", "category": ["vfs", "write"]},
+            {"tool_func": vfs_write, "name": "vfs_write_full", "category": ["vfs", "write"]},
             {"tool_func": vfs_edit, "name": "vfs_edit", "category": ["vfs", "write"]},
             {"tool_func": vfs_append, "name": "vfs_append", "category": ["vfs", "write"]},
             {"tool_func": vfs_delete, "name": "vfs_delete", "category": ["vfs", "write"]},
@@ -2524,7 +2528,7 @@ class FlowAgent:
                 # VFS File Operations
                 # VFS Open/Close
                 {
-                    "tool_func": vfs_open,
+                    "tool_func": vfs_read,
                     "name": "vfs_open",
                     "category": ["vfs", "context"],
                 },

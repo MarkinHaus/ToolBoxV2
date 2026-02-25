@@ -4,6 +4,7 @@ Production-ready module management system with multi-platform support
 Version: 0.1.0
 """
 
+import fnmatch
 import os
 import shutil
 import subprocess
@@ -25,6 +26,13 @@ from toolboxv2.utils.extras.reqbuilder import generate_requirements
 from toolboxv2.utils.system.state_system import find_highest_zip_version
 from toolboxv2.utils.system.state_system import get_state_from_app
 from toolboxv2.utils.system.types import RequestData, Result, ToolBoxInterfaces
+from toolboxv2.utils.zip_security import extract_zip_securely, ZipSecurityError
+from toolboxv2.utils.rollback_manager import RollbackManager
+from toolboxv2.utils.install_validator import (
+    validate_installation,
+    ValidationResult,
+    ValidationError as ValidatorError,
+)
 
 # =================== Module Configuration ===================
 Name = 'CloudM'
@@ -539,8 +547,16 @@ def unpack_and_move_module(zip_path: str, base_path: str = './mods',
             temp_dir = Path(temp_dir)
 
             with Spinner(f"Extracting {zip_path.name}"):
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(temp_dir)
+                # Use secure extraction with path traversal protection
+                try:
+                    extract_zip_securely(
+                        zip_path=zip_path,
+                        dest_dir=temp_dir,
+                        max_size_bytes=500 * 1024 * 1024,  # 500MB limit for mods
+                        max_compression_ratio=50,  # Stricter ratio for mods
+                    )
+                except ZipSecurityError as e:
+                    raise Exception(f"Security check failed: {e}")
 
             # Load configuration to check for platform-specific installation
             config_path = temp_dir / module_name / "tbConfig.yaml"
@@ -583,19 +599,45 @@ def unpack_and_move_module(zip_path: str, base_path: str = './mods',
                         # Install all files
                         shutil.copytree(source_module, module_path, dirs_exist_ok=True)
 
-            # Handle additional files in root
+            # Handle additional files in root (SANDBOXED)
             with Spinner("Installing additional files"):
+                # Define allowed additional file patterns (security: whitelist approach)
+                ALLOWED_ADDITIONAL_PATTERNS = [
+                    "requirements*.txt",
+                    "README*",
+                    "LICENSE*",
+                    "CHANGELOG*",
+                    "pyproject.toml",
+                    "setup.py",
+                ]
+
                 for item in temp_dir.iterdir():
                     if item.name == module_name or item.name.endswith('.yaml'):
                         continue
 
-                    target = Path('./') / item.name
+                    # Check against allowed patterns (security: pattern matching)
+                    allowed = any(
+                        fnmatch.fnmatch(item.name, pattern)
+                        for pattern in ALLOWED_ADDITIONAL_PATTERNS
+                    )
+
+                    if not allowed:
+                        print(f"  Skipping disallowed additional file: {item.name}")
+                        continue
+
+                    # Copy to sandboxed location instead of root (security: sandboxing)
+                    target = Path('./mods_sto/additional') / item.name
+
                     if item.is_dir():
+                        target.mkdir(parents=True, exist_ok=True)
                         if target.exists():
                             shutil.rmtree(target)
                         shutil.copytree(item, target, dirs_exist_ok=True)
                     else:
+                        target.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(item, target)
+
+                    print(f"  Installed additional file: {item.name} -> {target}")
 
             print(f"✓ Successfully installed/updated module: {module_name}")
             return module_name
@@ -1379,9 +1421,37 @@ async def install_from_registry(
         download_dir.mkdir(parents=True, exist_ok=True)
 
         # Download with or without dependencies
+        resolution_result = None
         if no_deps:
             downloaded = [await client.download(package_name, version, download_dir)]
         else:
+            # Resolve dependencies first to get constraints
+            resolution_result = await client.resolve([f"{package_name}=={version}"])
+
+            if not resolution_result.success:
+                conflicts = "\n".join(resolution_result.conflicts)
+                return Result.default_user_error(
+                    f"Dependency resolution failed:\n{conflicts}"
+                )
+
+            # Check compatibility with installed packages
+            app.print("🔍 Checking compatibility with installed packages...")
+            for pkg_name, pkg in resolution_result.resolved.items():
+                if lock_manager.is_installed(pkg_name):
+                    installed_ver = lock_manager.get_installed_version(pkg_name)
+                    if installed_ver != pkg.version:
+                        # Check if upgrade would break other packages
+                        conflicts = lock_manager.check_upgrade_conflicts(
+                            pkg_name, installed_ver, pkg.version
+                        )
+                        if conflicts:
+                            conflict_msg = (
+                                f"Cannot upgrade {pkg_name} from {installed_ver} to {pkg.version}:\n"
+                                + "\n".join(conflicts)
+                            )
+                            app.print(f"❌ {conflict_msg}")
+                            return Result.default_user_error(conflict_msg)
+
             downloaded = await client.download_with_dependencies(
                 package_name, version, download_dir
             )
@@ -1400,17 +1470,54 @@ async def install_from_registry(
                 )
 
             if result:
-                # Get version detail for checksum
+                # Validate installation
+                app.print(f"🔍 Validating {module_name}...")
+                install_path = Path(app.start_dir) / "mods" / module_name
+                validation_result = validate_installation(
+                    package_name=module_name,
+                    install_path=install_path,
+                    mods_dir=Path(app.start_dir) / "mods",
+                    lock_manager=lock_manager,
+                )
+
+                if not validation_result.is_valid:
+                    error_msg = f"Package {module_name} failed validation"
+                    if validation_result.errors:
+                        error_msg += ":\n" + "\n".join([f"  - {e}" for e in validation_result.errors])
+                    app.print(f"❌ {error_msg}")
+                    return Result.default_user_error(error_msg)
+
+                if validation_result.warnings:
+                    for warning in validation_result.warnings:
+                        app.print(f"⚠ {warning}")
+                app.print(f"✓ {module_name} validated")
+
+                # Get version detail for checksum and dependencies
                 version_detail = await client.get_version(module_name, version)
                 checksum = version_detail.checksum_sha256 if version_detail else ""
 
-                # Update lock file
+                # Build dependency list with constraints
+                dependencies_with_constraints = []
+                if resolution_result and module_name in resolution_result.resolved:
+                    resolved_pkg = resolution_result.resolved[module_name]
+                    for dep_name, dep_data in resolved_pkg.dependencies.items():
+                        # Get version and spec from resolved dependency
+                        dep_version = dep_data.get("version", "")
+                        dep_version_spec = dep_data.get("version_spec", f"=={dep_version}")
+                        dependencies_with_constraints.append({
+                            "name": dep_name,
+                            "version_spec": dep_version_spec,
+                            "installed_version": dep_version,
+                            "optional": dep_data.get("optional", False),
+                        })
+
+                # Update lock file with constraints
                 lock_manager.add_package(
                     name=module_name,
                     version=version,
                     checksum=checksum,
                     source=f"{client.registry_url}/packages/{module_name}",
-                    dependencies=[],
+                    dependencies=dependencies_with_constraints,
                 )
                 installed.append(module_name)
 
@@ -1529,12 +1636,16 @@ async def update_from_registry(
     """
     Update package(s) from the registry.
 
+    This function now includes automatic backup and rollback functionality.
+    Before each update, a backup is created. If the update fails,
+    the package is automatically rolled back to the previous version.
+
     Args:
         app: Application instance
         package_name: Specific package to update (None = all)
 
     Returns:
-        Result with update status
+        Result with update status, including rollback information
     """
     if app is None:
         app = get_app(f"{Name}.registry_update")
@@ -1542,6 +1653,10 @@ async def update_from_registry(
     try:
         client = get_registry_client(app)
         lock_manager = get_lock_manager(app)
+
+        # Initialize rollback manager
+        backup_root = Path(app.start_dir) / "mods_sto" / "backups"
+        rollback_mgr = RollbackManager(backup_root)
 
         # Get packages to check
         if package_name:
@@ -1554,6 +1669,7 @@ async def update_from_registry(
         updates_available = []
         updated = []
         failed = []
+        rolled_back = []
 
         for name, current_version in packages_to_check.items():
             try:
@@ -1573,32 +1689,168 @@ async def update_from_registry(
                 "checked": len(packages_to_check),
             })
 
-        # Perform updates
+        # Perform updates with rollback support
         for update in updates_available:
+            pkg_name = update["name"]
+            current_version = update["current"]
+            latest_version = update["latest"]
+            current_path = Path(app.start_dir) / "mods" / pkg_name
+
+            # Check for compatibility conflicts before updating
+            app.print(f"🔍 Checking compatibility for {pkg_name} {current_version} → {latest_version}...")
+            conflicts = lock_manager.check_upgrade_conflicts(pkg_name, current_version, latest_version)
+            if conflicts:
+                conflict_msg = (
+                    f"Cannot update {pkg_name} from {current_version} to {latest_version}:\n"
+                    + "\n".join(conflicts)
+                )
+                app.print(f"❌ {conflict_msg}")
+                failed.append({"name": pkg_name, "error": "Compatibility conflict"})
+                continue
+
+            backup_metadata = None
+
             try:
+                # Step 1: Create backup before update
+                app.print(f"📦 Creating backup of {pkg_name}@{current_version}...")
+                try:
+                    # Get package info for backup
+                    pkg_info = lock_manager.get_package_info(pkg_name)
+
+                    backup_metadata = rollback_mgr.create_backup(
+                        package_name=pkg_name,
+                        version=current_version,
+                        source_path=current_path,
+                        dependencies=pkg_info.get("dependencies", []) if pkg_info else [],
+                        config=pkg_info if pkg_info else {},
+                    )
+                    app.print(f"✓ Backup created: {backup_metadata.backup_id}")
+                except Exception as backup_err:
+                    app.print(f"⚠ Backup creation failed: {backup_err}")
+                    app.print(f"⚠ Skipping update for {pkg_name} - backup is required")
+                    failed.append({
+                        "name": pkg_name,
+                        "error": f"Backup failed: {backup_err}",
+                    })
+                    continue  # Skip update if backup fails
+
+                # Step 2: Attempt update
+                app.print(f"⬆️  Updating {pkg_name} from {current_version} to {latest_version}...")
                 result = await install_from_registry(
                     app,
-                    update["name"],
-                    update["latest"],
+                    pkg_name,
+                    latest_version,
                     no_deps=True,
                 )
-                if result.is_ok():
-                    updated.append(update)
-                else:
-                    failed.append({"name": update["name"], "error": str(result)})
+
+                if not result.is_ok():
+                    raise Exception(f"Installation failed: {result.get_error()}")
+
+                # Step 3: Validate new installation with full validator
+                try:
+                    app.print(f"🔍 Validating installation of {pkg_name}...")
+
+                    mods_dir = Path(app.start_dir) / "mods"
+                    validation_result = validate_installation(
+                        package_name=pkg_name,
+                        install_path=current_path,
+                        mods_dir=mods_dir,
+                        lock_manager=lock_manager,
+                    )
+
+                    if not validation_result.is_valid:
+                        # Validation failed - collect all errors
+                        error_details = []
+                        if validation_result.errors:
+                            error_details.append("Errors:")
+                            error_details.extend([f"  - {e}" for e in validation_result.errors])
+                        if validation_result.warnings:
+                            error_details.append("Warnings:")
+                            error_details.extend([f"  - {w}" for w in validation_result.warnings])
+
+                        error_msg = "\n".join(error_details)
+                        app.print(f"❌ Installation validation failed:\n{error_msg}")
+
+                        raise InstallationError(
+                            f"Package {pkg_name} failed validation:\n{error_msg}"
+                        )
+                    else:
+                        app.print(f"✓ Installation validated successfully")
+                        if validation_result.warnings:
+                            for warning in validation_result.warnings:
+                                app.print(f"⚠ {warning}")
+
+                except Exception as validation_err:
+                    app.print(f"⚠ Validation failed: {validation_err}")
+                    raise InstallationError(f"Installation validation failed: {validation_err}")
+
+                # Update successful
+                updated.append(update)
+                app.print(f"✓ Successfully updated {pkg_name} to {latest_version}")
+
             except Exception as e:
-                failed.append({"name": update["name"], "error": str(e)})
+                error_msg = str(e)
+                app.print(f"❌ Update failed for {pkg_name}: {error_msg}")
+
+                # Step 4: Rollback if update failed and backup exists
+                if backup_metadata:
+                    app.print(f"🔄 Rolling back {pkg_name} to {current_version}...")
+                    try:
+                        rollback_success = rollback_mgr.restore_backup(
+                            backup_id=backup_metadata.backup_id,
+                            target_path=current_path,
+                            verify_checksum=True,
+                        )
+
+                        if rollback_success:
+                            app.print(f"✓ Rollback successful for {pkg_name}")
+                            rolled_back.append({
+                                "name": pkg_name,
+                                "restored_to": current_version,
+                            })
+                        else:
+                            app.print(f"❌ ROLLBACK FAILED for {pkg_name} - MANUAL INTERVENTION REQUIRED")
+                            failed.append({
+                                "name": pkg_name,
+                                "error": f"{error_msg} (ROLLBACK FAILED)",
+                            })
+                    except Exception as rollback_err:
+                        app.print(f"❌ Rollback error for {pkg_name}: {rollback_err}")
+                        app.print(f"❌ MANUAL INTERVENTION REQUIRED for {pkg_name}")
+                        failed.append({
+                            "name": pkg_name,
+                            "error": f"{error_msg} (Rollback failed: {rollback_err})",
+                        })
+                else:
+                    failed.append({"name": pkg_name, "error": error_msg})
+
+        # Optional: Cleanup old backups (keep last 10 per package)
+        try:
+            cleanup_count = rollback_mgr.cleanup_old_backups(
+                max_age_days=30,
+                keep_per_package=10,
+            )
+            if cleanup_count > 0:
+                app.print(f"🧹 Cleaned up {cleanup_count} old backups")
+        except Exception as cleanup_err:
+            app.print(f"⚠ Backup cleanup failed (non-critical): {cleanup_err}")
 
         return Result.ok({
             "message": f"Updated {len(updated)} package(s)",
             "updated": updated,
             "failed": failed,
+            "rolled_back": rolled_back,
         })
 
     except RegistryConnectionError as e:
         return Result.default_internal_error(f"Registry connection failed: {e}")
     except Exception as e:
         return Result.default_internal_error(f"Update failed: {e}")
+
+
+class InstallationError(Exception):
+    """Exception raised when package installation fails validation."""
+    pass
 
 
 @export(mod_name=Name, name="registry_info", api=True, api_methods=["GET"])

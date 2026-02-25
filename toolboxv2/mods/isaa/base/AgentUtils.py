@@ -191,9 +191,7 @@ def parse_json_with_auto_detection(json_data):
         Tries to parse a value as JSON. If the parsing fails, the original value is returned.
         """
         try:
-            # print("parse_json_with_auto_detection:", type(value), value)
             parsed_value = json.loads(value)
-            # print("parsed_value:", type(parsed_value), parsed_value)
             # If the parsed value is a string, it might be a JSON string, so we try to parse it again
             if isinstance(parsed_value, str):
                 return eval(parsed_value)
@@ -238,7 +236,6 @@ def extract_json_objects(text: str, matches_only=False):
     for match in matches:
         try:
             x = json.loads(match)
-            print("Found", x)
             json_objects.append(x)
         except json.JSONDecodeError:
             # Wenn die JSON-Dekodierung fehlschlägt, versuchen Sie, das JSON-Objekt zu reparieren
@@ -248,7 +245,6 @@ def extract_json_objects(text: str, matches_only=False):
                     y = json.loads(fixed_match)
                     json_objects.append(y)
                 except json.JSONDecodeError as e:
-                    print(e)
                     try:
                         y = json.loads(fixed_match.replace("\n", "#New-Line#"))
                         for k in y:
@@ -260,7 +256,6 @@ def extract_json_objects(text: str, matches_only=False):
                                         y[k][k1] = y[k][k1].replace("#New-Line#", "\n")
                         json_objects.append(y)
                     except json.JSONDecodeError as e:
-                        print(e)
                         pass
     return json_objects
 
@@ -312,7 +307,6 @@ def fix_json(json_str, current_index=0, max_index=10):
         return json.loads(json_str)  # Wenn der JSON-String bereits gültig ist, gib ihn unverändert zurück
     except json.JSONDecodeError as e:
         error_message = str(e)
-        # print("Error message:", error_message)
 
         # Handle specific error cases
         if "Expecting property name enclosed in double quotes" in error_message:
@@ -349,7 +343,6 @@ def fix_json(json_str, current_index=0, max_index=10):
             # Entferne Daten nach dem JSON-String
             line_i = int(error_message[error_message.rfind('line') + 4:error_message.rfind('column')].strip())
             colom_i = int(error_message[error_message.rfind('char') + 4:-1].strip())
-            # print(line_i, colom_i)
             index = 1
             new_json_str = ""
             for line in json_str.split('\n'):
@@ -444,7 +437,6 @@ class ModeController(LLMMode):
         add_list = []
 
         for index, shot in enumerate(self.shots):
-            print(f"Input : {shot[0]} -> llm output : {shot[1]}")
             user_evalution = input("Rank from 0 to 10: -1 to exit\n:")
             if user_evalution == '-1':
                 break
@@ -528,7 +520,6 @@ class ControllerManager:
         controllers = {}
 
         if filename is None and json_data is None:
-            print("No data provided for ControllerManager")
             return cls(controllers=controllers)
 
         if filename is not None and json_data is not None:

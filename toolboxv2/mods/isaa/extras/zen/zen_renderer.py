@@ -85,6 +85,27 @@ def _short(s: str, n: int = 40) -> str:
 # ZenRendererV2
 # ===========================================================================
 
+def _fmt_elapsed(secs: float) -> str:
+    s = int(secs)
+
+    weeks, s = divmod(s, 604800)   # 7 * 24 * 3600
+    days, s = divmod(s, 86400)
+
+    if weeks > 0:
+        return f"{weeks}w{days}d"
+
+    hours, s = divmod(s, 3600)
+
+    if days > 0:
+        return f"{days}d{hours:02d}h"
+
+    minutes, seconds = divmod(s, 60)
+
+    if hours > 0:
+        return f"{hours}h{minutes:02d}m"
+    if minutes > 0:
+        return f"{minutes}m{seconds:02d}s"
+    return f"{seconds}s"
 
 class ZenRendererV2:
     """
@@ -108,6 +129,8 @@ class ZenRendererV2:
         self._chunk_count = 0
         self._zen_plus = None
         self._chunk_buffer: list = []
+
+        self._print("🌌 Zen System")
 
     # -- public API -----------------------------------------------------------
 
@@ -228,6 +251,32 @@ class ZenRendererV2:
             parts.append(f"<style fg='{C['dim']}'>{SYM['think']}{_esc(thought[:40])}</style>")
 
         self._print("  ".join(parts))
+
+    def print_final_summary(self, pane=None):
+        """Druckt eine saubere Zusammenfassung nach dem Lauf (kein Datenmüll)."""
+        self._print(f"\n<style fg='{C['cyan']}'>{'━' * 60}</style>")
+        self._print(f"<style fg='{C['bright']} bold'>SESSION SUMMARY</style>")
+
+        if pane:
+            # Dateien auflisten
+            if pane.files_touched:
+                self._print(f"\n<style fg='{C['amber']}'>Modified Files:</style>")
+                for f in sorted(pane.files_touched):
+                    self._print(f"  <style fg='{C['green']}'>✓</style> <style fg='{C['white']}'>{f}</style>")
+
+            # Statistiken
+            dur = _fmt_elapsed(time.time() - pane.started_at)
+            self._print(
+                f"\n<style fg='{C['dim']}'>Duration: {dur} | Iterations: {pane.iteration} | Tools: {len(pane.tool_history)}</style>")
+
+            # Finale Antwort (falls vorhanden) hervorheben
+            final = pane.content_lines[-10:]  # Letzte Zeilen
+            ans = "\n".join([line for line in final if line.strip()]).strip()
+            if ans:
+                self._print(f"\n<style fg='{C['cyan']}'>Final Answer:</style>")
+                self._print(f"<style fg='{C['bright']}'>{_esc(ans)}</style>")
+
+        self._print(f"<style fg='{C['cyan']}'>{'━' * 60}</style>\n")
 
     # -- Debug mode -----------------------------------------------------------
 

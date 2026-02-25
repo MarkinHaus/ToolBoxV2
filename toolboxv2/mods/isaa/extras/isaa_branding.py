@@ -1,26 +1,35 @@
 """
-ISAA Branding & Flow Matrix Animation
-======================================
+ISAA Branding & Flow Matrix Animation (prompt_toolkit-safe)
+============================================================
 
-Animated startup header with non-blocking idle animation.
-The flow lines (│ ╎ ┃ ▼) become a live Matrix Rain that runs
-as an async context manager during prompt input.
+All animation runs through prompt_toolkit's native rendering:
+  FormattedTextControl → (style, text) tuples → Application(refresh_interval)
+
+No raw ANSI escapes. No sys.stdout cursor hacks.
+Safe alongside PromptSession, completers, key bindings.
 
 Usage:
-    anim = FlowMatrixAnimation()
+    from isaa_branding import FlowMatrixAnimation, print_isaa_header
 
-    # Startup: rain → logo reveal
+    anim = FlowMatrixAnimation(state='online')
+
+    # Startup: animated rain for 2.5s
     await anim.play_startup(duration=2.5)
 
-    # Print branded header (static, flow area reserved)
-    total = print_isaa_header(...)
+    # Static branded header
+    print_isaa_header(host_id=..., state='online', ...)
 
-    # Tell animation how far up the flow area is
-    anim.set_cursor_offset(total)
+    # Animated prompt (replaces session.prompt_async)
+    result = await anim.prompt_async(
+        message="ISAA › ",
+        completer=my_completer,
+        key_bindings=my_kb,
+    )
 
-    # Non-blocking idle animation during prompt
-    async with anim:
-        result = await session.prompt_async("ISAA › ")
+    # Switch to audio recording mode (changes animation)
+    anim.set_mode('audio')
+    result = await anim.prompt_async(message="🎙 › ")
+    anim.set_mode('idle')
 """
 
 import asyncio
@@ -28,19 +37,24 @@ import html
 import platform
 import random
 import shutil
-import sys
-import time
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
-from prompt_toolkit import print_formatted_text
-from prompt_toolkit.formatted_text import HTML
-
+from prompt_toolkit import Application, print_formatted_text
+from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.completion import Completer
+from prompt_toolkit.formatted_text import HTML, FormattedText
+from prompt_toolkit.history import History
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+from prompt_toolkit.layout import Layout, HSplit, Window
+from prompt_toolkit.layout.controls import FormattedTextControl, BufferControl
+from prompt_toolkit.layout.processors import BeforeInput
 
 try:
     import psutil
 except ImportError:
     psutil = None
+
 
 import random
 from datetime import datetime
@@ -250,21 +264,9 @@ class StateColors:
     LOAD_RED     = '#fb7185'
     LOAD_ORANGE  = '#fb923c'
     LOAD_BORDER  = '#ef4444'
-
-# ANSI RGB escape codes for raw terminal writes (animation engine)
-_ANSI = {
-    'L1':     '\033[38;2;14;42;53m',
-    'L2':     '\033[38;2;21;94;117m',
-    'L3':     '\033[38;2;34;211;238m',
-    'L4':     '\033[38;2;103;232;249m',
-    'L5':     '\033[38;2;165;243;252m',
-    'WHITE':  '\033[38;2;236;254;255m',
-    'DIM':    '\033[38;2;30;60;75m',
-    'RESET':  '\033[0m',
-    'GOLD':   '\033[38;2;250;204;21m',
-    'VIOLET': '\033[38;2;167;139;250m',
-    'ORANGE': '\033[38;2;251;146;60m',
-}
+    AUDIO_GREEN  = '#4ade80'
+    AUDIO_DIM    = '#166534'
+    AUDIO_PULSE  = '#86efac'
 
 
 def _esc(text: Any) -> str:
@@ -272,16 +274,26 @@ def _esc(text: Any) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MATRIX RAIN ENGINE
+# MATRIX RAIN ENGINE — renders to (style, text) tuples
 # ═══════════════════════════════════════════════════════════════════════════════
 
-MATRIX_CHARS = "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉ0123456789"
-FLOW_CHARS   = "│╎┃║╏┊┋▏▎▍▌▐░"
-MIXED_CHARS  = MATRIX_CHARS + FLOW_CHARS * 3  # Flow-heavy mix
+# Character sets per mode
+CHARS_IDLE  = "│╎┃║╏┊┋▏▎▍▌▐░" * 3 + "ｱｲｳｴｵｶｷｸｹｺ0123456789"
+CHARS_AUDIO = "▁▂▃▄▅▆▇█░▒▓│║┃" + "∿∾≋~" * 2
+
+# Color palettes per mode (index 0=off, 1=dim..4=bright)
+PALETTE_IDLE = ['', f'fg:{GradientCyan.L1_DEEP}', f'fg:{GradientCyan.L2_DARK}',
+                f'fg:{GradientCyan.L3_MID}', f'fg:{GradientCyan.L5_GLOW}']
+PALETTE_AUDIO = ['', f'fg:{StateColors.AUDIO_DIM}', f'fg:{StateColors.AUDIO_GREEN}',
+                 f'fg:{StateColors.AUDIO_PULSE}', f'fg:{StateColors.AUDIO_GREEN} bold']
+PALETTE_DREAM = ['', f'fg:{StateColors.DREAM_DIM}', f'fg:#7c3aed',
+                 f'fg:{StateColors.DREAM_VIOLET}', f'fg:#c4b5fd']
+PALETTE_LOAD  = ['', f'fg:{GradientCyan.L1_DEEP}', f'fg:{GradientCyan.L2_DARK}',
+                 f'fg:{GradientCyan.L3_MID}', f'fg:{StateColors.LOAD_ORANGE} bold']
 
 
 class _Stream:
-    __slots__ = ('pos', 'length', 'speed', 'active')
+    __slots__ = ('pos', 'length', 'speed')
 
     def __init__(self, height: int):
         self.reset(height)
@@ -290,7 +302,6 @@ class _Stream:
         self.pos = random.randint(-height * 2, -1)
         self.length = random.randint(2, max(3, height - 1))
         self.speed = random.choice([1, 1, 1, 2])
-        self.active = True
 
     def tick(self, height: int):
         self.pos += self.speed
@@ -299,71 +310,117 @@ class _Stream:
 
 
 class MatrixRainEngine:
-    """Efficient Matrix Rain renderer with mixed Flow + Katakana characters."""
+    """
+    Renders matrix rain as prompt_toolkit (style, text) tuples.
+    Supports mode switching for idle / audio / dreaming / high_load.
+    """
 
     def __init__(self, height: int = 4, width: int = 72):
         self.h = height
         self.w = width
-        self.streams: list[_Stream] = [_Stream(height) for _ in range(width)]
-        self.grid: list[list[str]] = [[' '] * width for _ in range(height)]
-        self.brightness: list[list[int]] = [[0] * width for _ in range(height)]
-        self._color_map = ['', _ANSI['L1'], _ANSI['L2'], _ANSI['L3'], _ANSI['L5']]
+        self.streams = [_Stream(height) for _ in range(width)]
+        self.grid = [[' '] * width for _ in range(height)]
+        self.brightness = [[0] * width for _ in range(height)]
+
+        # Active mode config
+        self._chars = CHARS_IDLE
+        self._palette = PALETTE_IDLE
+        self._mode = 'idle'
+
+        # Audio-specific state
+        self._audio_phase = 0.0
+
+    def set_mode(self, mode: str):
+        """Switch animation mode: 'idle', 'audio', 'dreaming', 'high_load'."""
+        self._mode = mode
+        if mode == 'audio':
+            self._chars = CHARS_AUDIO
+            self._palette = PALETTE_AUDIO
+        elif mode == 'dreaming':
+            self._chars = CHARS_IDLE
+            self._palette = PALETTE_DREAM
+        elif mode == 'high_load':
+            self._chars = CHARS_IDLE
+            self._palette = PALETTE_LOAD
+        else:
+            self._chars = CHARS_IDLE
+            self._palette = PALETTE_IDLE
 
     def tick(self):
+        if self._mode == 'audio':
+            self._tick_audio()
+        else:
+            self._tick_rain()
+
+    def _tick_rain(self):
+        """Standard matrix rain tick."""
         for col, stream in enumerate(self.streams):
             stream.tick(self.h)
             for row in range(self.h):
                 dist = stream.pos - row
                 if 0 <= dist < stream.length:
-                    if dist == 0:    self.brightness[row][col] = 4
-                    elif dist == 1:  self.brightness[row][col] = 3
-                    elif dist < 4:   self.brightness[row][col] = 2
-                    else:            self.brightness[row][col] = 1
-
-                    if random.random() < 0.2:
-                        self.grid[row][col] = random.choice(MIXED_CHARS)
-                    elif self.grid[row][col] == ' ':
-                        self.grid[row][col] = random.choice(MIXED_CHARS)
+                    b = 4 if dist == 0 else (3 if dist == 1 else (2 if dist < 4 else 1))
+                    self.brightness[row][col] = b
+                    if random.random() < 0.2 or self.grid[row][col] == ' ':
+                        self.grid[row][col] = random.choice(self._chars)
                 else:
                     if self.brightness[row][col] > 0:
                         self.brightness[row][col] -= 1
                     if self.brightness[row][col] == 0:
                         self.grid[row][col] = ' '
 
-    def render_ansi(self, indent: int = 4) -> str:
-        """Render frame as ANSI string (no cursor movement)."""
-        lines = []
+    def _tick_audio(self):
+        """Audio waveform tick — pulsing columns that react to 'sound'."""
+        import math
+        self._audio_phase += 0.3
+        for col in range(self.w):
+            # Simulate audio waveform with overlapping sine waves
+            wave = (
+                math.sin(self._audio_phase + col * 0.15) * 0.4
+                + math.sin(self._audio_phase * 1.7 + col * 0.08) * 0.3
+                + random.uniform(-0.15, 0.15)  # noise
+            )
+            # Map wave amplitude to which rows are lit
+            center = (self.h - 1) / 2
+            amplitude = abs(wave) * self.h * 0.8
+
+            for row in range(self.h):
+                dist_from_center = abs(row - center)
+                if dist_from_center < amplitude:
+                    # Brightness based on distance from center
+                    b = 4 if dist_from_center < amplitude * 0.3 else (
+                        3 if dist_from_center < amplitude * 0.6 else 2)
+                    self.brightness[row][col] = b
+                    if random.random() < 0.25 or self.grid[row][col] == ' ':
+                        self.grid[row][col] = random.choice(self._chars)
+                else:
+                    if self.brightness[row][col] > 0:
+                        self.brightness[row][col] -= 1
+                    if self.brightness[row][col] == 0:
+                        self.grid[row][col] = ' '
+
+    def render_tuples(self, indent: int = 4) -> list[tuple[str, str]]:
+        """Render current frame as prompt_toolkit (style, text) tuples."""
+        frags: list[tuple[str, str]] = []
         pad = ' ' * indent
-        reset = _ANSI['RESET']
+
         for row in range(self.h):
-            parts = [pad]
-            prev_c = ''
+            frags.append(('', pad))
             for col in range(self.w):
                 b = self.brightness[row][col]
                 ch = self.grid[row][col]
                 if b > 0 and ch != ' ':
-                    c = self._color_map[b]
-                    if c != prev_c:
-                        parts.append(c)
-                        prev_c = c
-                    parts.append(ch)
+                    frags.append((self._palette[b], ch))
                 else:
-                    if prev_c:
-                        parts.append(reset)
-                        prev_c = ''
-                    parts.append(' ')
-            if prev_c:
-                parts.append(reset)
-            lines.append(''.join(parts))
-        return '\n'.join(lines)
+                    frags.append(('', ' '))
+            if row < self.h - 1:
+                frags.append(('', '\n'))
 
-    def render_overwrite(self, indent: int = 4) -> str:
-        """Render with cursor-up prefix for in-place overwrite."""
-        return f"\033[{self.h}A{self.render_ansi(indent)}\n"
+        return frags
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# FLOW MATRIX ANIMATION — Async Context Manager
+# FLOW MATRIX ANIMATION — prompt_toolkit native
 # ═══════════════════════════════════════════════════════════════════════════════
 
 FLOW_HEIGHT = 4
@@ -371,110 +428,153 @@ FLOW_HEIGHT = 4
 
 class FlowMatrixAnimation:
     """
-    Non-blocking Matrix Flow animation as async context manager.
+    prompt_toolkit-safe Matrix Flow animation.
+    All rendering via FormattedTextControl → Application(refresh_interval).
 
-    The animation overwrites the flow area (first 4 lines of header)
-    using ANSI cursor save/restore — safe alongside prompt_toolkit.
-
-    Usage:
-        anim = FlowMatrixAnimation()
-        await anim.play_startup()           # blocking 2.5s rain
-        total = print_isaa_header(...)      # static header
-        anim.set_cursor_offset(total)       # where flow area is
-
-        async with anim:                    # non-blocking idle
-            result = await session.prompt_async(...)
+    Modes:
+      'idle'      — Matrix rain with flow chars (│╎┃ + ｱｲｳ), cyan gradient
+      'audio'     — Waveform bars (▁▂▃▄▅▆▇█), green pulsing
+      'dreaming'  — Slow rain, violet palette
+      'high_load' — Fast rain, orange-tipped
     """
 
     def __init__(self, height: int = FLOW_HEIGHT, width: int = 72,
                  fps: float = 8, state: str = 'online'):
         self.engine = MatrixRainEngine(height=height, width=width)
         self.fps = fps
-        self.state = state
-        self._task: Optional[asyncio.Task] = None
-        self._running = False
-        self._offset: int = 0
+        self._refresh = max(0.05, 1.0 / fps)
 
-        # State-specific color palettes
-        if state == 'dreaming':
-            self.engine._color_map = [
-                '', _ANSI['DIM'], '\033[38;2;76;29;149m',
-                _ANSI['VIOLET'], '\033[38;2;196;181;253m',
-            ]
-        elif state == 'high_load':
-            self.engine._color_map[4] = _ANSI['ORANGE']
+        # Map host state → animation mode
+        mode_map = {'online': 'idle', 'initializing': 'idle',
+                    'dreaming': 'dreaming', 'high_load': 'high_load',
+                    'error': 'high_load', 'audio': 'audio'}
+        self.engine.set_mode(mode_map.get(state, 'idle'))
 
-    def set_cursor_offset(self, total_header_lines: int):
-        """Set how many lines from cursor bottom to top of flow area."""
-        self._offset = total_header_lines
+    def set_mode(self, mode: str):
+        """Switch animation: 'idle', 'audio', 'dreaming', 'high_load'."""
+        if mode == "stream":
+            self.fps += 2
+        if mode == "idle":
+            self.fps += 2
+        self.engine.set_mode(mode)
 
-    # ── Startup (blocking) ─────────────────────────────────────────────────
+    def _get_flow_text(self) -> list[tuple[str, str]]:
+        """Callback for FormattedTextControl — one tick + render."""
+        self.engine.tick()
+        return self.engine.render_tuples()
 
-    async def play_startup(self, duration: float = 2.5, fps: int = 12):
-        """Blocking startup rain. Call BEFORE print_isaa_header()."""
-        h = self.engine.h
-        for _ in range(h):
-            sys.stdout.write('\n')
-        sys.stdout.flush()
+    # ── Startup Animation (blocking) ──────────────────────────────────────
 
-        start = time.time()
-        while time.time() - start < duration:
-            self.engine.tick()
-            sys.stdout.write(self.engine.render_overwrite())
-            sys.stdout.flush()
-            await asyncio.sleep(1.0 / fps)
+    async def play_startup(self, duration: float = 2.5):
+        """
+        Show Matrix Rain for `duration` seconds, then return.
+        Uses a temporary Application — fully prompt_toolkit-safe.
+        """
+        control = FormattedTextControl(self._get_flow_text)
+        window = Window(content=control, height=self.engine.h, dont_extend_height=True)
+        layout = Layout(Window(content=control, height=self.engine.h))
 
-        # Clear canvas
-        sys.stdout.write(f"\033[{h}A")
-        for _ in range(h):
-            sys.stdout.write(' ' * (self.engine.w + 8) + '\n')
-        sys.stdout.write(f"\033[{h}A")
-        sys.stdout.flush()
+        app: Application = Application(
+            layout=layout,
+            refresh_interval=self._refresh,
+        )
 
-    # ── Idle (non-blocking context manager) ────────────────────────────────
+        async def _auto_exit():
+            await asyncio.sleep(duration)
+            app.exit()
 
-    async def _loop(self):
-        interval = 1.0 / self.fps
-        while self._running:
-            try:
-                self.engine.tick()
-                frame = self.engine.render_ansi()
-                if self._offset > 0:
-                    sys.stdout.write(
-                        f"\033[s"                # save cursor position
-                        f"\033[{self._offset}A"  # jump up to flow area
-                        f"\r"                    # start of line
-                        f"{frame}"               # draw FLOW_HEIGHT lines
-                        f"\033[u"                # restore cursor position
-                    )
-                    sys.stdout.flush()
-                await asyncio.sleep(interval)
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                await asyncio.sleep(1.0)
+        task = asyncio.create_task(_auto_exit())
+        try:
+            await app.run_async()
+        finally:
+            task.cancel()
 
-    async def __aenter__(self):
-        self._running = True
-        self._task = asyncio.create_task(self._loop())
-        return self
+    # ── Animated Prompt (non-blocking animation during input) ─────────────
 
-    async def __aexit__(self, *exc):
-        self._running = False
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
-        return False
+    async def prompt_async(
+        self,
+        message: str = "ISAA › ",
+        *,
+        completer: Optional[Completer] = None,
+        history: Optional[History] = None,
+        key_bindings: Optional[KeyBindings] = None,
+        is_password: bool = False,
+        prompt_style: str = f'fg:{GradientCyan.L4_BRIGHT}',
+        extra_key_bindings: Optional[KeyBindings] = None,
+        on_text_changed: Optional[Callable] = None,
+    ) -> str:
+        """
+        Animated prompt — replaces PromptSession.prompt_async().
+        Flow animation runs above the input line via Application layout.
 
-    def stop(self):
-        """Sync stop for signal handlers."""
-        self._running = False
-        if self._task:
-            self._task.cancel()
+        Returns the user's input string.
+        """
+        # ── Flow animation window ──
+        flow_control = FormattedTextControl(self._get_flow_text)
+        flow_window = Window(
+            content=flow_control,
+            height=self.engine.h,
+            dont_extend_height=True,
+        )
+
+        # ── Separator ──
+        sep_control = FormattedTextControl(
+            lambda: [(f'fg:{GradientCyan.L2_DARK}', '─' * self.engine.w)]
+        )
+        sep_window = Window(content=sep_control, height=1, dont_extend_height=True)
+
+        # ── Input buffer ──
+        buffer = Buffer(
+            completer=completer,
+            history=history,
+            name='isaa_input',
+            on_text_changed=lambda buf: on_text_changed(buf) if on_text_changed else None,
+        )
+        input_control = BufferControl(
+            buffer=buffer,
+            input_processors=[BeforeInput(lambda: [(prompt_style, message)])],
+        )
+        input_window = Window(content=input_control, height=1, dont_extend_height=True)
+
+        # ── Key bindings ──
+        base_kb = KeyBindings()
+
+        @base_kb.add('enter')
+        def _accept(event):
+            event.app.exit(result=buffer.text)
+
+        @base_kb.add('c-c')
+        def _abort(event):
+            event.app.exit(result='')
+
+        @base_kb.add('c-d')
+        def _eof(event):
+            if not buffer.text:
+                event.app.exit(result='exit')
+
+        all_kb = [base_kb]
+        if key_bindings:
+            all_kb.append(key_bindings)
+        if extra_key_bindings:
+            all_kb.append(extra_key_bindings)
+
+        merged_kb = merge_key_bindings(all_kb) if len(all_kb) > 1 else base_kb
+
+        # ── Layout ──
+        layout = Layout(
+            HSplit([flow_window, sep_window, input_window]),
+            focused_element=input_window,
+        )
+
+        # ── Application ──
+        app: Application[str] = Application(
+            layout=layout,
+            key_bindings=merged_kb,
+            refresh_interval=self._refresh,
+            mouse_support=False,
+        )
+
+        return await app.run_async()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -482,7 +582,7 @@ class FlowMatrixAnimation:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _get_system_metrics() -> dict:
-    metrics = {
+    m = {
         'os': platform.system(), 'arch': platform.machine(),
         'python': platform.python_version(),
         'cpu_percent': '?', 'mem_used_gb': '?',
@@ -491,18 +591,18 @@ def _get_system_metrics() -> dict:
     }
     if psutil:
         try:
-            metrics['cpu_percent'] = f"{psutil.cpu_percent(interval=0.1):.0f}"
+            m['cpu_percent'] = f"{psutil.cpu_percent(interval=0.1):.0f}"
             mem = psutil.virtual_memory()
-            metrics['mem_used_gb'] = f"{mem.used / (1024**3):.1f}"
-            metrics['mem_total_gb'] = f"{mem.total / (1024**3):.1f}"
-            metrics['mem_percent'] = f"{mem.percent:.0f}"
+            m['mem_used_gb'] = f"{mem.used / (1024**3):.1f}"
+            m['mem_total_gb'] = f"{mem.total / (1024**3):.1f}"
+            m['mem_percent'] = f"{mem.percent:.0f}"
         except Exception:
             pass
-    return metrics
+    return m
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# HEADER RENDERING
+# STATIC HEADER
 # ═══════════════════════════════════════════════════════════════════════════════
 
 LOGO_LINES = [
@@ -515,16 +615,17 @@ LOGO_LINES = [
 ]
 
 
-def _state_badge(state: str) -> str:
+def _state_badge(state: str) -> (str, int):
     badges = {
-        'online':       ("⚡ ONLINE",       GradientCyan.L4_BRIGHT),
-        'initializing': ("◐ INITIALIZING",  StateColors.INIT_PULSE),
-        'dreaming':     ("☾ DREAMING",      StateColors.DREAM_VIOLET),
-        'high_load':    ("▲ HIGH LOAD",     StateColors.LOAD_RED),
-        'error':        ("✗ ERROR",         StateColors.LOAD_RED),
+        'online':       ("⚡ ONLINE",       GradientCyan.L4_BRIGHT, 1+len("⚡ ONLINE")),
+        'initializing': ("◐ INITIALIZING",  StateColors.INIT_PULSE, len("◐ INITIALIZING")),
+        'dreaming':     ("☾ DREAMING",      StateColors.DREAM_VIOLET, 1+len("☾ DREAMING")),
+        'high_load':    ("▲ HIGH LOAD",     StateColors.LOAD_RED, 1+len("▲ HIGH LOAD")),
+        'error':        ("✗ ERROR",         StateColors.LOAD_RED, 1+len("✗ ERROR")),
+        'audio':        ("🎙 RECORDING",    StateColors.AUDIO_GREEN, len("🎙 RECORDING")),
     }
-    text, color = badges.get(state, badges['online'])
-    return f"<style fg='{color}' font-weight='bold'>{text}</style>"
+    text, color, text_len = badges.get(state, badges['online'])
+    return f"<style fg='{color}' font-weight='bold'>{text}</style>", text_len
 
 
 def _build_status_bar(host_id, uptime, version, state='online', agent_count=0, task_count=0):
@@ -537,6 +638,7 @@ def _build_status_bar(host_id, uptime, version, state='online', agent_count=0, t
     if state == 'high_load':      sc = StateColors.LOAD_ORANGE
     elif state == 'dreaming':     sc = StateColors.DREAM_VIOLET
     elif state == 'initializing': sc = StateColors.INIT_DIM
+    elif state == 'audio':        sc = StateColors.AUDIO_GREEN
 
     sep = f"<style fg='{sc}'> │ </style>"
     d, b = GradientCyan.L3_MID, GradientCyan.WHITE
@@ -580,12 +682,10 @@ def print_isaa_header(
     agent_count: int = 0,
     task_count: int = 0,
     show_system_bar: bool = True,
+    show_flows: bool = True,
     subtitle: str = "Intelligent Semantic Agent Architecture",
-) -> int:
-    """
-    Print branded ISAA header. First FLOW_HEIGHT lines = animation zone.
-    Returns total lines printed (pass to anim.set_cursor_offset()).
-    """
+):
+    """Print static branded ISAA header."""
     if uptime is None:
         uptime = timedelta(seconds=0)
     if state == 'online' and task_count > 3:
@@ -604,63 +704,51 @@ def print_isaa_header(
         border_c = StateColors.LOAD_ORANGE
     elif state == 'error':
         logo_c, border_c = StateColors.LOAD_RED, StateColors.LOAD_RED
+    elif state == 'audio':
+        logo_c, border_c = StateColors.AUDIO_GREEN, StateColors.AUDIO_DIM
+        fc = (StateColors.AUDIO_DIM, StateColors.AUDIO_GREEN)
 
-    n = 0  # line counter
-
-    # ── Flow zone (FLOW_HEIGHT lines) — overwritten by animation ──
-    flow_pats = [
-        "│  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │",
-        "╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎",
-        "┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃",
-        "▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼",
-    ]
-    for i, pat in enumerate(flow_pats[:FLOW_HEIGHT]):
-        c = fc[0] if i < 2 else fc[1]
-        print_formatted_text(HTML(f"<style fg='{c}'>    {_esc(pat)}</style>"))
-        n += 1
+    # ── Static flow lines (placeholder — animation replaces these) ──
+    if show_flows:
+        pats = [
+            "│  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │",
+            "╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎  │  ╎",
+            "┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃  ┃",
+            "▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼",
+        ]
+        for i, p in enumerate(pats[:FLOW_HEIGHT]):
+            c = fc[0] if i < 2 else fc[1]
+            print_formatted_text(HTML(f"<style fg='{c}'>    {_esc(p)}</style>"))
 
     # ── Box ──
     bw = 72
     print_formatted_text(HTML(f"   <style fg='{border_c}'>╔{'═' * bw}╗</style>"))
-    n += 1
-
     for ll in LOGO_LINES:
         pad = bw - len(ll) - 1
         r = f"<style fg='{logo_c}' font-weight='bold'>{_esc(ll)}</style>"
         print_formatted_text(HTML(
             f"   <style fg='{border_c}'>║</style> {r}{' ' * max(0, pad)}<style fg='{border_c}'>║</style>"
         ))
-        n += 1
 
-    badge = _state_badge(state)
+    badge, offset = _state_badge(state)
 
     if subtitle == "time-random":
         subtitle = get_greeting('en')
     if subtitle == "zeit-random":
         subtitle = get_greeting('de')
     sub = _esc(subtitle[:42])
-    sp = bw - len(subtitle[:42]) - 12
+    sp = bw - len(subtitle[:42]) - (18 - (14 - offset))
     print_formatted_text(HTML(
         f"   <style fg='{border_c}'>║</style>  <style fg='{GradientCyan.L3_MID}'>{sub}</style>"
         f"{' ' * max(2, sp)}{badge}  <style fg='{border_c}'>║</style>"
     ))
-    n += 1
-
     print_formatted_text(HTML(f"   <style fg='{border_c}'>╚{'═' * bw}╝</style>"))
-    n += 1
 
     # ── Status ──
     print_formatted_text(HTML(f"    {_build_status_bar(host_id, uptime, version, state, agent_count, task_count)}"))
-    n += 1
-
     if show_system_bar:
         print_formatted_text(HTML(f"    {_build_system_bar()}"))
-        n += 1
-
     print_formatted_text(HTML(""))
-    n += 1
-
-    return n
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -735,43 +823,36 @@ async def print_status_dashboard_v2(host: 'ISAA_Host') -> int:
     agents = host.isaa_tools.config.get("agents-name-list", [])
 
     state = 'online'
-    if not host._self_agent_initialized:
-        state = 'initializing'
-    elif len(running) > 3:
-        state = 'high_load'
+    if not host._self_agent_initialized:   state = 'initializing'
+    elif len(running) > 3:                 state = 'high_load'
     elif host.job_scheduler:
         for j in host.job_scheduler._jobs.values():
             if 'dream' in j.name.lower() and j.status == 'active':
-                state = 'dreaming'
-                break
+                state = 'dreaming'; break
 
-    n = print_isaa_header(
+    print_isaa_header(
         host_id=host.host_id,
         uptime=datetime.now() - host.started_at,
-        version=host.version,
-        state=state,
-        agent_count=len(agents),
-        task_count=len(running),
+        version=host.version, state=state,
+        agent_count=len(agents), task_count=len(running),
     )
 
     if agents:
-        print_brand_section("Agents", "🤖"); n += 2
+        print_brand_section("Agents", "🤖")
         mnl = max(len(x) for x in agents)
         ws = [mnl, 8, 22, 5]
-        print_table_header([("Name",mnl),("Status",8),("Persona",22),("Tasks",5)], ws); n += 2
+        print_table_header([("Name",mnl),("Status",8),("Persona",22),("Tasks",5)], ws)
         for name in agents[:10]:
             info = host.agent_registry.get(name, AgentInfo(name=name))
-            ik = f"agent-instance-{name}"
-            st = "Active" if ik in host.isaa_tools.config else "Idle"
+            st = "Active" if f"agent-instance-{name}" in host.isaa_tools.config else "Idle"
             bg = sum(1 for t in host.background_tasks.values() if t.agent_name == name and t.status == "running")
             p = info.persona[:20]+".." if len(info.persona)>22 else info.persona
             print_table_row([name, st, p, str(bg)], ws,
                 ["cyan" if info.is_self_agent else "white", "green" if st=="Active" else "grey", "grey", "yellow"])
-            n += 1
 
     if running:
-        print_brand_section("Running Tasks", "⟳"); n += 2
-        print_table_header([("Agent",14),("Progress",22),("Phase",10),("Focus",18)], [14,22,10,18]); n += 2
+        print_brand_section("Running Tasks", "⟳")
+        print_table_header([("Agent",14),("Progress",22),("Phase",10),("Focus",18)], [14,22,10,18])
         for t in running:
             ph, bar, fo = "-", "", "-"
             try:
@@ -787,17 +868,16 @@ async def print_status_dashboard_v2(host: 'ISAA_Host') -> int:
             except Exception:
                 bar = f"{'─'*16} {(datetime.now()-t.started_at).total_seconds():.0f}s"
             print_table_row([t.agent_name[:14], bar, ph, fo], [14,22,10,18], ["cyan","green","white","grey"])
-            n += 1
 
     if host.job_scheduler and host.job_scheduler.total_count > 0:
-        print_brand_kv_row([("Jobs", f"{host.job_scheduler.active_count}/{host.job_scheduler.total_count}")]); n += 1
+        print_brand_kv_row([("Jobs", f"{host.job_scheduler.active_count}/{host.job_scheduler.total_count}")])
     if host.feature_manager:
         en = [f for f in host.feature_manager.features if host.feature_manager.features[f].get("is_enabled", False)]
         if en:
-            print_brand_kv_row([("Features", ", ".join(en[:5]) + (f" +{len(en)-5}" if len(en)>5 else ""))]); n += 1
+            print_brand_kv_row([("Features", ", ".join(en[:5]) + (f" +{len(en)-5}" if len(en)>5 else ""))])
 
-    print_brand_separator('dots'); c_print(); n += 2
-    return n
+    print_brand_separator('dots')
+    c_print()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -805,56 +885,39 @@ async def print_status_dashboard_v2(host: 'ISAA_Host') -> int:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 async def demo():
-    from prompt_toolkit import PromptSession
-
     print_formatted_text(HTML(
         f"\n<style fg='{GradientCyan.L4_BRIGHT}' font-weight='bold'>"
-        f"  ══ ISAA BRANDING + ANIMATION DEMO ══</style>\n"
+        f"  ══ ISAA FLOW MATRIX ANIMATION ══</style>\n"
     ))
 
-    anim = FlowMatrixAnimation(height=FLOW_HEIGHT, width=72, fps=8)
+    anim = FlowMatrixAnimation(fps=8, state='online')
 
-    # 1. Startup rain
-    await anim.play_startup(duration=2.5, fps=12)
+    # 1. Startup rain (2.5s)
+    print_formatted_text(HTML(f"<style fg='{GradientCyan.L2_DARK}'>  ┌ Startup Animation...</style>"))
+    await anim.play_startup(duration=2.5)
 
     # 2. Static header
-    total = print_isaa_header(
-        host_id="7e9d3c64",
-        uptime=timedelta(hours=2, minutes=15),
-        version="4.0.0",
-        state="online",
-        agent_count=3,
-        task_count=1,
+    print_isaa_header(
+        host_id="7e9d3c64", uptime=timedelta(hours=2, minutes=15),
+        version="4.0.0", state="online", agent_count=3, task_count=1,
     )
 
-    # 3. Non-blocking animation during prompt
-    print_formatted_text(HTML(
-        f"<style fg='{GradientCyan.L3_MID}'>"
-        f"  Flow lines above are now live. Type + Enter to stop.</style>\n"
-    ))
+    # 3. Animated prompt (idle mode)
+    print_formatted_text(HTML(f"<style fg='{GradientCyan.L3_MID}'>  Flow lines animate above. Type + Enter.</style>\n"))
+    result = await anim.prompt_async(message="ISAA › ")
+    print_formatted_text(HTML(f"<style fg='{GradientCyan.L4_BRIGHT}'>  ✓ Input: {_esc(result)}</style>\n"))
 
-    anim.set_cursor_offset(total + 3)  # +3 for info text + blank + prompt
+    # 4. Switch to audio mode
+    print_formatted_text(HTML(f"<style fg='{StateColors.AUDIO_GREEN}'>  ┌ Audio Recording Mode...</style>"))
+    anim.set_mode('audio')
+    result = await anim.prompt_async(message="🎙 › ", prompt_style=f'fg:{StateColors.AUDIO_GREEN}')
+    print_formatted_text(HTML(f"<style fg='{StateColors.AUDIO_GREEN}'>  ✓ Audio Input: {_esc(result)}</style>\n"))
 
-    session = PromptSession()
-    async with anim:
-        result = await session.prompt_async(
-            HTML(f"<style fg='{GradientCyan.L4_BRIGHT}'>ISAA › </style>"),
-        )
-
-    print_formatted_text(HTML(
-        f"\n<style fg='{GradientCyan.L4_BRIGHT}'>✓ Animation stopped. Input: {_esc(result)}</style>\n"
-    ))
-
-    # Show other states
-    for st in ['dreaming', 'high_load']:
-        print_formatted_text(HTML(f"\n<style fg='{GradientCyan.L2_DARK}'>  ── State: {st} ──</style>"))
-        sa = FlowMatrixAnimation(height=FLOW_HEIGHT, width=72, state=st)
-        await sa.play_startup(duration=1.5, fps=10)
-        print_isaa_header(
-            host_id="7e9d3c64", uptime=timedelta(hours=14), version="4.0.0",
-            state=st, agent_count=5, task_count=5 if st == 'high_load' else 1,
-            subtitle="Dream Consolidation Active" if st == 'dreaming' else "Intelligent Semantic Agent Architecture",
-        )
+    # 5. Dreaming mode
+    print_formatted_text(HTML(f"<style fg='{StateColors.DREAM_VIOLET}'>  ┌ Dreaming Mode...</style>"))
+    anim.set_mode('dreaming')
+    result = await anim.prompt_async(message="☾ › ", prompt_style=f'fg:{StateColors.DREAM_VIOLET}')
+    print_formatted_text(HTML(f"<style fg='{StateColors.DREAM_VIOLET}'>  ✓ Dream: {_esc(result)}</style>"))
 
 
 if __name__ == "__main__":

@@ -81,6 +81,27 @@ def _bar(cur: int, total: int, w: int = 15) -> str:
     f = int(w * min(cur, total) / total)
     return SYM["bar_fill"] * f + SYM["bar_empty"] * (w - f)
 
+def _fmt_elapsed(secs: float) -> str:
+    s = int(secs)
+
+    weeks, s = divmod(s, 604800)   # 7 * 24 * 3600
+    days, s = divmod(s, 86400)
+
+    if weeks > 0:
+        return f"{weeks}w{days}d"
+
+    hours, s = divmod(s, 3600)
+
+    if days > 0:
+        return f"{days}d{hours:02d}h"
+
+    minutes, seconds = divmod(s, 60)
+
+    if hours > 0:
+        return f"{hours}h{minutes:02d}m"
+    if minutes > 0:
+        return f"{minutes}m{seconds:02d}s"
+    return f"{seconds}s"
 
 class ViewMode(Enum):
     GRID = "grid"
@@ -252,10 +273,11 @@ class MiniGraph3D:
         self._current: Optional[str] = None   # latest active node (agent's head)
         self._detail_node: Optional[str] = None  # Enter-opened node (None=closed)
         # Physics params
-        self._repulsion = 0.8
+        self._repulsion = 0.4
         self._attraction = 0.15
-        self._damping = 0.92
-        self._center_pull = 0.01
+        self._damping = 0.88
+        self._center_pull = 0.035
+        self._last_interact = time.time()
 
     def add_node(self, id: str, label: str, kind: str = "agent",
                  is_sub: bool = False, sub_color_idx: int = 0):
@@ -288,11 +310,13 @@ class MiniGraph3D:
         if 0 <= idx < len(keys):
             self._selected = keys[idx]
             self._detail_node = None
+            self._last_interact = time.time()
 
     def select_by_id(self, nid: str):
         if nid in self.nodes:
             self._selected = nid
             self._detail_node = None
+            self._last_interact = time.time()
 
     @property
     def selected_node(self) -> Optional[GNode]:
@@ -330,9 +354,11 @@ class MiniGraph3D:
         if targets:
             self._selected = targets[0]
             self._detail_node = None
+            self._last_interact = time.time()
 
     def toggle_detail(self):
         """Enter: open/close detail for selected node."""
+        self._last_interact = time.time()
         if self._detail_node:
             self._detail_node = None
         elif self._selected:
@@ -386,13 +412,19 @@ class MiniGraph3D:
             nd.y += nd.vy
             nd.z += nd.vz
             # Clamp
-            nd.x = max(-2, min(2, nd.x))
-            nd.y = max(-2, min(2, nd.y))
-            nd.z = max(-1.5, min(1.5, nd.z))
+            nd.x = max(-1.2, min(1.2, nd.x))
+            nd.y = max(-1.2, min(1.2, nd.y))
+            nd.z = max(-1.0, min(1.0, nd.z))
 
         # Auto-rotate
         self.azimuth += 0.015
         self._frame += 1
+
+        # Auto-reset selection to newest after 5s inactivity
+        if (self._current and self._selected != self._current and
+                time.time() - self._last_interact > 60.0):
+            self._selected = self._current
+            self._detail_node = None
 
     def render(self, cols: int, rows: int) -> list[tuple[str, str]]:
         """Render to FormattedText tuples."""
@@ -400,6 +432,9 @@ class MiniGraph3D:
 
         if not self.nodes:
             return [("fg:#6b7280", "  ◎ graph: no nodes\n")]
+
+        # Reserve rows for stats/detail/help below graph
+        rows = max(4, rows - 2 - (8 if self._detail_node else 0))
 
         # Character + color buffer
         buf = [[' '] * cols for _ in range(rows)]
@@ -460,6 +495,9 @@ class MiniGraph3D:
         for sc, sr, sz, nd in projected:
             if zbuf[sr][sc] > sz:
                 continue
+            # Skip ghost nodes (no label)
+            if not nd.label.strip():
+                continue
             zbuf[sr][sc] = sz
 
             is_current = nd.id == self._current
@@ -510,6 +548,9 @@ class MiniGraph3D:
                 max_lbl = max(max_lbl, 30)  # selected always gets more
             if sz > -0.2:
                 lbl = nd.label[:max_lbl]
+                # Clamp label to screen bounds
+                max_chars = max(0, cols - sc - 2)
+                lbl = lbl[:max_chars]
                 lbl_col = C["white"] if is_sel else (C["cyan"] if is_connected else C["dim"])
                 for k, ch in enumerate(lbl):
                     c2 = sc + 1 + k
@@ -653,10 +694,11 @@ class GlobalGraph:
         self.azimuth = 0.0
         self.elevation = 0.25
         self.zoom = 1.1
-        self._damping = 0.9
-        self._repulsion = 1.0
+        self._damping = 0.86
+        self._repulsion = 0.5
         self._attraction = 0.12
-        self._center_pull = 0.015
+        self._center_pull = 0.04
+        self._last_interact = time.time()
 
     def rebuild(self, panes: Dict[str, "AgentPane"]):
         """Rebuild from all AgentPanes. Called periodically."""
@@ -801,11 +843,13 @@ class GlobalGraph:
         if 0 <= idx < len(keys):
             self._selected = keys[idx]
             self._detail_node = None
+            self._last_interact = time.time()
 
     def select_by_id(self, nid: str):
         if nid in self.nodes:
             self._selected = nid
             self._detail_node = None
+            self._last_interact = time.time()
 
     @property
     def selected_node(self) -> Optional[GlobalNode]:
@@ -840,8 +884,10 @@ class GlobalGraph:
         if targets:
             self._selected = targets[0]
             self._detail_node = None
+            self._last_interact = time.time()
 
     def toggle_detail(self):
+        self._last_interact = time.time()
         if self._detail_node:
             self._detail_node = None
         elif self._selected:
@@ -877,12 +923,19 @@ class GlobalGraph:
             nd.vz -= nd.z * self._center_pull
             nd.vx *= self._damping; nd.vy *= self._damping; nd.vz *= self._damping
             nd.x += nd.vx; nd.y += nd.vy; nd.z += nd.vz
-            nd.x = max(-2.5, min(2.5, nd.x))
-            nd.y = max(-2.5, min(2.5, nd.y))
-            nd.z = max(-1.5, min(1.5, nd.z))
+            nd.x = max(-1.5, min(1.5, nd.x))
+            nd.y = max(-1.5, min(1.5, nd.y))
+            nd.z = max(-1.0, min(1.0, nd.z))
 
         self.azimuth += 0.012
         self._frame += 1
+
+        # Auto-reset to newest after 5s inactivity
+        newest = [nid for nid, nd in self.nodes.items() if nd.newest]
+        if (newest and self._selected not in newest and
+                time.time() - self._last_interact > 60.0):
+            self._selected = newest[-1]
+            self._detail_node = None
 
     def render(self, cols: int, rows: int) -> list[tuple[str, str]]:
         """Render global graph to FormattedText."""
@@ -890,6 +943,9 @@ class GlobalGraph:
 
         if not self.nodes:
             return [("fg:#6b7280", "  ◎ global graph: no agents\n")]
+
+        # Reserve rows for legend/detail/help below graph
+        rows = max(4, rows - 2 - (8 if self._detail_node else 0))
 
         buf = [[' '] * cols for _ in range(rows)]
         color_buf = [[C["deep"]] * cols for _ in range(rows)]
@@ -942,6 +998,9 @@ class GlobalGraph:
         for sc, sr, sz, nd in projected:
             if zbuf[sr][sc] > sz:
                 continue
+            # Skip ghost nodes (no label)
+            if not nd.label.strip():
+                continue
             zbuf[sr][sc] = sz
 
             is_sel = nd.id == self._selected
@@ -974,6 +1033,9 @@ class GlobalGraph:
             max_lbl = 20 if nd.kind == "agent_hub" else (25 if is_sel else 14)
             if sz > -0.2:
                 lbl = nd.label[:max_lbl]
+                # Clamp label to screen bounds
+                max_chars = max(0, cols - sc - 2)
+                lbl = lbl[:max_chars]
                 lbl_col = C["white"] if is_sel else (C["cyan"] if is_conn else C["dim"])
                 for k, ch in enumerate(lbl):
                     c2 = sc + 1 + k
@@ -1107,6 +1169,7 @@ class AgentPane:
         self.thoughts: list[str] = []       # complete, no truncation
         self.iterations: Dict[int, IterationInfo] = {}
         self._last_tool_event: Optional[ToolEvent] = None
+        self.files_touched = set()
 
         # Sub-agents
         self.sub_agents: Dict[str, int] = {}  # name → color index
@@ -1118,6 +1181,10 @@ class AgentPane:
         # Navigation
         self.scroll_offset = 0
         self.selected_item = 0
+
+        self.started_at: float = time.time()
+        self.collapsed = False
+        self._last_chunk_count = 0
 
     def _get_iteration(self, n: int) -> IterationInfo:
         if n not in self.iterations:
@@ -1132,6 +1199,8 @@ class AgentPane:
 
     def ingest(self, chunk: dict):
         self._chunks_seen += 1
+        if self.collapsed and self._chunks_seen > self._last_chunk_count:
+            self.collapsed = False
         self.name = chunk.get("agent", "") or self.name
         self.iteration = chunk.get("iter", self.iteration)
         self.max_iter = chunk.get("max_iter", self.max_iter)
@@ -1222,9 +1291,14 @@ class AgentPane:
                 self._last_tool_event.result_parsed = result_parsed
                 self._last_tool_event.success = success
                 self._last_tool_event.elapsed = time.time() - self._last_tool_event.started
+                if any(x in self.last_tool for x in ("vfs_write", "vfs_edit", "vfs_create", "vfs_save", "vfs_patch")):
+                    p = (self._last_tool_event.args_parsed or {}).get("path") or (self._last_tool_event.args_parsed or {}).get("vfs_path")
+                    if p: self.files_touched.add(str(p))
             # Update graph
             nid = f"tool_{len(self.tool_history)}"
             self.graph.update_status(nid, "done" if success else "failed")
+            self.graph.update_status(nid, "done" if success else "failed")
+
 
         elif t == "done":
             self.phase = "done" if chunk.get("success", True) else "failed"
@@ -1251,6 +1325,14 @@ class AgentPane:
 
     def render_compact(self, w: int, h: int) -> list[tuple[str, str]]:
         out: list[tuple[str, str]] = []
+        out: list[tuple[str, str]] = []
+        if self.collapsed:
+            phase_col = STATUS_COLOR.get(self.phase, C["dim"])
+            out.append(("fg:#6b7280", f" ▸ {_short(self.name, w // 3)}"))
+            out.append((f"fg:{phase_col}", f" {self.phase} "))
+            out.append(("fg:#6b7280", f"it:{self.iteration}/{self.max_iter} "))
+            out.append(("fg:#6b7280", f"[collapsed]\n"))
+            return out
         bar = _bar(self.iteration, self.max_iter, min(12, w // 6))
         out.append(("fg:#67e8f9 bold", f" {SYM['agent']} {_short(self.name, w // 3)}"))
         out.append(("fg:#6b7280", f" {bar} {self.iteration}/{self.max_iter}"))
@@ -1261,6 +1343,8 @@ class AgentPane:
         # Sub-agent indicator
         if self.sub_agents:
             out.append(("fg:#f472b6", f" ✦{len(self.sub_agents)}"))
+            elapsed = time.time() - self.started_at
+            out.append(("fg:#6b7280", f" {_fmt_elapsed(elapsed)}"))
         out.append(("", "\n"))
 
         content_h = max(1, h - 4)
@@ -1300,6 +1384,8 @@ class AgentPane:
             out.append((f"fg:{tc}", f"  tok:{pct}%"))
         if self.sub_agents:
             out.append(("fg:#f472b6", f"  ✦{len(self.sub_agents)} sub-agents"))
+            elapsed = time.time() - self.started_at
+            out.append(("fg:#6b7280", f"  ⏱{_fmt_elapsed(elapsed)}"))
         out.append(("", "\n"))
 
         meta = []
@@ -1398,7 +1484,7 @@ class AgentPane:
             prefix = SYM["select"] if is_sel else " "
             icon = SYM["ok"] if ev.success else SYM["fail"]
             col = C["green"] if ev.success else C["red"]
-            elapsed = f" {ev.elapsed:.2f}s" if ev.elapsed > 0 else ""
+            elapsed = f" {_fmt_elapsed(ev.elapsed)}" if ev.elapsed > 0 else ""
             sub_tag = f" ✦{_short(ev.sub_agent, 8)}" if ev.is_sub else ""
 
             sel_style = "fg:#67e8f9 bold" if is_sel else "fg:#6b7280"
@@ -1652,6 +1738,7 @@ class ZenPlus:
         # Global cross-agent graph
         self._global_graph = GlobalGraph()
         self._global_rebuild_counter = 0
+        self._dismissed: set[str] = set()
 
     @property
     def active(self) -> bool:
@@ -1724,6 +1811,14 @@ class ZenPlus:
         if self._app:
             self._app.exit()
 
+    async def reopen(self, on_exit: Optional[Callable] = None):
+        """Reopen the TUI after q/Esc exit. Preserves all pane state."""
+        if self._running:
+            return
+        self._stream_done = False
+        self._exit_to_bg = False
+        await self.start(on_exit=on_exit)
+
     def clear_panes(self):
         self._panes.clear()
         self._jobs.clear()
@@ -1734,6 +1829,7 @@ class ZenPlus:
         self._grid_index = 0
         self._global_graph = GlobalGraph()
         self._global_rebuild_counter = 0
+        self._dismissed.clear()
         while not self._queue.empty():
             try:
                 self._queue.get_nowait()
@@ -1748,7 +1844,7 @@ class ZenPlus:
         return self._panes[name]
 
     def _ordered_names(self) -> list[str]:
-        return list(self._panes.keys())
+        return [n for n in self._panes.keys() if n not in self._dismissed]
 
     def _focused_pane(self) -> Optional[AgentPane]:
         return self._panes.get(self._focus)
@@ -1759,6 +1855,8 @@ class ZenPlus:
                 chunk = await asyncio.wait_for(self._queue.get(), timeout=0.25)
                 agent = chunk.get("agent", "") or "default"
                 pane = self._get_pane(agent)
+                if agent in self._dismissed and chunk.get("type") not in ("done", "error"):
+                    self._dismissed.discard(agent)
                 pane.ingest(chunk)
                 self._global_rebuild_counter += 1
                 # Rebuild global graph every 4 chunks or on tool events
@@ -1799,7 +1897,7 @@ class ZenPlus:
             ("fg:#374151", "│ "),
         ]
         hints = {
-            ViewMode.GRID: "Tab/↑↓←→=select  Enter=focus  G=global graph  Esc=exit",
+            ViewMode.GRID:  "Tab/↑↓←→=select  Enter=focus  G=global  c=dismiss  C=dismiss done  Esc=exit",
             ViewMode.FOCUS: "↑↓=scroll  g=graph  t=tools  i=iterations  h=thoughts  Esc=grid",
             ViewMode.DETAIL: (f"↑↓=select  ←→=edges  Enter=detail/jump  Esc=back  [{self._detail_type}]"
                               if self._detail_type in ("graph", "global") else
@@ -1815,6 +1913,12 @@ class ZenPlus:
         size = self._app.output.get_size() if self._app else None
         w = size.columns if size else 100
         h = (size.rows if size else 24) - 2 - max(1, self._jobs_height)
+
+        all_idle = self._stream_done and all(p.phase in ("done", "failed", "error") for p in self._panes.values())
+
+        if all_idle and self._view == ViewMode.GRID:
+            return FormattedText([("bg:#000000 fg:#6b7280",
+                                   f"\n\n\n{' ' * (w // 2 - 10)}RUN COMPLETED\n{' ' * (w // 2 - 14)}Press Esc to see summary")])
 
         if self._view == ViewMode.GRID:
             return FormattedText(self._render_grid(w, h))
@@ -1854,6 +1958,13 @@ class ZenPlus:
         cols = 1 if n == 1 else (2 if n <= 4 else min(3, n))
         rows = math.ceil(n / cols)
         pane_w = max(20, (w - cols + 1) // cols)
+        n_expanded = sum(1 for name in names if not self._panes[name].collapsed)
+        n_collapsed = n - n_expanded
+        collapsed_h = 1
+        if n_expanded > 0:
+            expanded_h = max(6, (h - n_collapsed * collapsed_h - rows + 1) // max(1, math.ceil(n_expanded / cols)))
+        else:
+            expanded_h = max(6, (h - rows + 1) // rows)
         pane_h = max(6, (h - rows + 1) // rows)
 
         for row in range(min(rows, math.ceil(n / cols))):
@@ -1866,7 +1977,8 @@ class ZenPlus:
                 name = names[idx]
                 pane = self._panes[name]
                 is_sel = idx == self._grid_index
-                ft = pane.render_compact(pane_w - 2, pane_h - 1)
+                cur_pane_h = 1 if pane.collapsed else pane_h
+                ft = pane.render_compact(pane_w - 2, cur_pane_h - 1)
 
                 lines: list[list[tuple[str, str]]] = [[]]
                 for style, text in ft:
@@ -1877,7 +1989,7 @@ class ZenPlus:
                             lines.append([(style, p)])
                     else:
                         lines[-1].append((style, text))
-                while len(lines) < pane_h:
+                while len(lines) < cur_pane_h:
                     lines.append([])
                 lines = lines[:pane_h]
 
@@ -1887,7 +1999,9 @@ class ZenPlus:
                     bordered.append([(f"fg:{border_col}", SYM["vline"])] + lp)
                 row_panes.append(bordered)
 
-            for li in range(pane_h):
+            max_pane_h = max(1 if self._panes[names[row * cols + c]].collapsed else pane_h
+                             for c in range(cols) if row * cols + c < n) if n > 0 else pane_h
+            for li in range(max_pane_h):
                 for ci, pl in enumerate(row_panes):
                     if li < len(pl):
                         out.extend(pl[li])
@@ -1910,7 +2024,7 @@ class ZenPlus:
             kind_sym = {"job": SYM["job"], "bg": SYM["bg"],
                         "delegate": SYM["task"]}.get(job.kind, SYM["job"])
             elapsed = time.time() - job.started_at
-            elapsed_s = f"{elapsed:.0f}s" if elapsed < 3600 else f"{elapsed / 60:.0f}m"
+            elapsed_s = f"{_fmt_elapsed(elapsed)}"
             out.append(("fg:#374151", "│ "))
             out.append((f"fg:{col}", f"{kind_sym}{_short(job.agent_name, 10)} "))
             out.append(("fg:#6b7280", f"{_short(job.query, 18)} "))
@@ -1930,10 +2044,15 @@ class ZenPlus:
                 parts.append(("fg:#67e8f9", f" [{_short(name, 12)}] "))
             else:
                 parts.append((f"fg:{phase_col}", f"  {_short(name, 12)} "))
+            elapsed = time.time() - pane.started_at
+            parts.append(("fg:#6b7280", f"{_fmt_elapsed(elapsed)} "))
         running = sum(1 for j in self._jobs.values() if j.status == "running")
         if running:
             parts.append(("fg:#374151", "│"))
             parts.append(("fg:#a78bfa", f" {SYM['job']}{running} "))
+        if self._dismissed:
+            parts.append(("fg:#374151", "│"))
+            parts.append(("fg:#6b7280", f" ×{len(self._dismissed)} hidden "))
         if not parts:
             parts.append(("fg:#6b7280", " no agents"))
         return parts
@@ -1965,7 +2084,8 @@ class ZenPlus:
                 zp._view = ViewMode.GRID
             else:
                 zp._exit_to_bg = True
-                event.app.exit()
+                if 'y' in input("EXIT ? (y/N)").lower():
+                    event.app.exit()
 
         @kb.add("tab")
         def _next(event):
@@ -2145,8 +2265,37 @@ class ZenPlus:
                     pane.selected_item = len(pane.thoughts) - 1
                     zp._view = ViewMode.DETAIL
 
+        @kb.add("c")
+        def _dismiss(event):
+            if zp._view == ViewMode.GRID:
+                names = zp._ordered_names()
+                if 0 <= zp._grid_index < len(names):
+                    name = names[zp._grid_index]
+                    zp._dismissed.add(name)
+                    # Fix grid index
+                    new_names = zp._ordered_names()
+                    if new_names:
+                        zp._grid_index = min(zp._grid_index, len(new_names) - 1)
+                    else:
+                        zp._grid_index = 0
+
+        @kb.add("C")
+        def _dismiss_all_done(event):
+            if zp._view == ViewMode.GRID:
+                for name, pane in zp._panes.items():
+                    if pane.phase in ("done", "failed", "error"):
+                        zp._dismissed.add(name)
+                new_names = zp._ordered_names()
+                if new_names:
+                    zp._grid_index = min(zp._grid_index, len(new_names) - 1)
+                else:
+                    zp._grid_index = 0
+
         @kb.add("q")
         def _quit(event):
-            event.app.exit()
+            if 'y' in input("EXIT ? (y/N)").lower():
+                event.app.exit()
 
         return kb
+
+

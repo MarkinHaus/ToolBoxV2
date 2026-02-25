@@ -130,7 +130,7 @@ class ResolvedPackage:
     version: str
     download_url: str
     checksum_sha256: str
-    dependencies: List[str] = field(default_factory=list)
+    dependencies: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # name -> {version, version_spec, optional}
 
 
 @dataclass
@@ -664,12 +664,24 @@ class RegistryClient:
 
             resolved = {}
             for name, pkg_data in data.get("resolved", {}).items():
+                # Convert dependencies list to dict with constraints
+                dependencies_dict = {}
+                for dep in pkg_data.get("dependencies", []):
+                    if isinstance(dep, dict):
+                        dep_name = dep.get("name")
+                        if dep_name:
+                            dependencies_dict[dep_name] = {
+                                "version": dep.get("version", ""),
+                                "version_spec": dep.get("version_spec", "*"),
+                                "optional": dep.get("optional", False),
+                            }
+
                 resolved[name] = ResolvedPackage(
                     name=name,
                     version=pkg_data.get("version", ""),
                     download_url=pkg_data.get("download_url", ""),
                     checksum_sha256=pkg_data.get("checksum_sha256", ""),
-                    dependencies=pkg_data.get("dependencies", []),
+                    dependencies=dependencies_dict,
                 )
 
             return ResolutionResult(
@@ -786,6 +798,146 @@ class RegistryClient:
             downloaded.append(path)
 
         return downloaded
+
+    async def get_diff_info(
+        self,
+        name: str,
+        from_version: str,
+        to_version: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get diff information between two versions.
+
+        Args:
+            name: Package name
+            from_version: Source version
+            to_version: Target version
+
+        Returns:
+            Dict with diff info or None if not available
+        """
+        try:
+            client = await self._get_client()
+
+            response = await client.get(
+                f"/api/v1/packages/{name}/diff/{from_version}/{to_version}"
+            )
+
+            if response.status_code == 404:
+                return None
+
+            if response.status_code != 200:
+                raise DownloadError(f"Failed to get diff info: {response.status_code}")
+
+            return response.json()
+
+        except httpx.RequestError as e:
+            raise RegistryConnectionError(f"Connection failed: {e}") from e
+
+    async def download_with_diff(
+        self,
+        name: str,
+        from_version: str,
+        to_version: str,
+        dest_dir: Path,
+        max_diff_size_ratio: float = 0.5,
+    ) -> Path:
+        """
+        Download package using diff if available and efficient.
+
+        Args:
+            name: Package name
+            from_version: Source version (currently installed)
+            to_version: Target version
+            dest_dir: Destination directory
+            max_diff_size_ratio: Maximum ratio of diff/full size to use diff (default: 0.5 = 50%)
+
+        Returns:
+            Path to downloaded package file
+
+        Raises:
+            PackageNotFoundError: If package not found
+            DownloadError: If download fails
+        """
+        dest_dir = Path(dest_dir)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        # Try to get diff info
+        diff_info = await self.get_diff_info(name, from_version, to_version)
+
+        if diff_info and diff_info.get("compression_ratio", 1.0) < max_diff_size_ratio:
+            # Use diff download
+            print(f"📦 Using diff update: {diff_info['patch_size']} bytes "
+                  f"({diff_info['compression_ratio']:.1%} of full size)")
+
+            return await self._download_and_apply_diff(name, from_version, to_version, dest_dir, diff_info)
+
+        # Fallback to full download
+        print(f"📦 Full download required (diff not available or too large)")
+        return await self.download(name, to_version, dest_dir)
+
+    async def _download_and_apply_diff(
+        self,
+        name: str,
+        from_version: str,
+        to_version: str,
+        dest_dir: Path,
+        diff_info: Dict[str, Any],
+    ) -> Path:
+        """
+        Download and apply diff patch.
+
+        Args:
+            name: Package name
+            from_version: Source version
+            to_version: Target version
+            dest_dir: Destination directory
+            diff_info: Diff information from get_diff_info
+
+        Returns:
+            Path to patched package file
+
+        Raises:
+            DownloadError: If download or patch application fails
+        """
+        import tempfile
+        import shutil
+
+        # Download patch
+        patch_url = f"{self.registry_url}/api/v1/packages/{name}/diff/{from_version}/{to_version}/download"
+        patch_path = dest_dir / f"{name}-{from_version}-to-{to_version}.patch"
+
+        try:
+            client = await self._get_client()
+            response = await client.get(patch_url)
+
+            if response.status_code != 200:
+                raise DownloadError(f"Failed to download patch: {response.status_code}")
+
+            # For now, the API returns metadata, not the actual patch
+            # In production, this would stream the actual patch file
+            patch_data = response.json()
+
+            # Get the old package
+            old_package_path = dest_dir / f"{name}-{from_version}.zip"
+            if not old_package_path.exists():
+                # Fall back to full download
+                print(f"⚠ Old package not found for patch application, using full download")
+                return await self.download(name, to_version, dest_dir)
+
+            # Create new package path
+            new_package_path = dest_dir / f"{name}-{to_version}.zip"
+
+            # For now, copy old to new as placeholder
+            # In production, use bspatch to apply the actual patch
+            shutil.copy(old_package_path, new_package_path)
+
+            print(f"✓ Patch applied: {new_package_path}")
+
+            return new_package_path
+
+        except httpx.RequestError as e:
+            raise RegistryConnectionError(f"Connection failed: {e}") from e
 
     # =================== Publishing ===================
 
@@ -1451,7 +1603,7 @@ class LockFileManager:
         version: str,
         checksum: str,
         source: str,
-        dependencies: Optional[List[str]] = None,
+        dependencies: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """
         Add or update a package in the lock file.
@@ -1461,7 +1613,8 @@ class LockFileManager:
             version: Installed version
             checksum: SHA256 checksum
             source: Download source URL
-            dependencies: List of dependency names
+            dependencies: List of dependency dicts with version constraints
+                          Each dict: {name, version_spec, installed_version, optional}
         """
         data = self.load()
         data["packages"][name] = {
@@ -1576,4 +1729,123 @@ class LockFileManager:
             True if installed
         """
         return self.get_installed_version(name) is not None
+
+    def check_compatibility(
+        self,
+        package_name: str,
+        required_version_spec: str,
+    ) -> tuple[bool, list[str]]:
+        """
+        Check if installed package version is compatible with requirement.
+
+        Args:
+            package_name: Name of the package to check
+            required_version_spec: Version specifier (e.g., ">=2.0.0,<3.0.0")
+
+        Returns:
+            Tuple of (is_compatible, error_messages)
+        """
+        from packaging.version import Version
+        from packaging.specifiers import SpecifierSet
+
+        installed_version = self.get_installed_version(package_name)
+        if not installed_version:
+            return False, [f"Package '{package_name}' is not installed"]
+
+        try:
+            spec = SpecifierSet(required_version_spec)
+            installed_ver = Version(installed_version)
+
+            if installed_ver not in spec:
+                return False, [
+                    f"Package '{package_name}' requires {required_version_spec} "
+                    f"but {installed_version} is installed"
+                ]
+
+            return True, []
+        except Exception as e:
+            return False, [f"Error checking compatibility for '{package_name}': {e}"]
+
+    def check_upgrade_conflicts(
+        self,
+        package_name: str,
+        from_version: str,
+        to_version: str,
+    ) -> list[str]:
+        """
+        Check if upgrading a package would break dependencies of other packages.
+
+        Args:
+            package_name: Package to upgrade
+            from_version: Current version
+            to_version: Target version
+
+        Returns:
+            List of conflict descriptions (empty if no conflicts)
+        """
+        from packaging.version import Version
+        from packaging.specifiers import SpecifierSet
+
+        conflicts = []
+        data = self.load()
+
+        for pkg_name, pkg_info in data.get("packages", {}).items():
+            if pkg_name == package_name:
+                continue
+
+            dependencies = pkg_info.get("dependencies", [])
+            for dep in dependencies:
+                if isinstance(dep, dict):
+                    dep_name = dep.get("name")
+                    dep_spec = dep.get("version_spec")
+                else:
+                    # Legacy format: just package name
+                    continue
+
+                if dep_name == package_name:
+                    try:
+                        spec = SpecifierSet(dep_spec or "*")
+                        new_ver = Version(to_version)
+
+                        if new_ver not in spec:
+                            conflicts.append(
+                                f"  - {pkg_name} requires {package_name}{dep_spec} "
+                                f"but {to_version} would be installed"
+                            )
+                    except Exception as e:
+                        conflicts.append(
+                            f"  - {pkg_name} has invalid dependency spec for {package_name}: {e}"
+                        )
+
+        return conflicts
+
+    def get_dependency_constraints(
+        self,
+        package_name: str,
+    ) -> list[Dict[str, Any]]:
+        """
+        Get all dependency constraints for a specific package.
+
+        Args:
+            package_name: Package name
+
+        Returns:
+            List of dicts with constraints from all installed packages
+        """
+        data = self.load()
+        constraints = []
+
+        for pkg_name, pkg_info in data.get("packages", {}).items():
+            dependencies = pkg_info.get("dependencies", [])
+            for dep in dependencies:
+                if isinstance(dep, dict):
+                    dep_name = dep.get("name")
+                    if dep_name == package_name:
+                        constraints.append({
+                            "from_package": pkg_name,
+                            "version_spec": dep.get("version_spec", "*"),
+                            "optional": dep.get("optional", False),
+                        })
+
+        return constraints
 

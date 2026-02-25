@@ -1,13 +1,14 @@
 """FastAPI dependencies for dependency injection."""
 
 import logging
+import time
 from functools import lru_cache
 from typing import Optional
 
-import httpx
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from registry.auth.cloudm_client import CloudMAuthClient, TokenPayload
 from registry.config import Settings, get_settings
 from registry.db.repositories.artifact_repo import ArtifactRepository
 from registry.db.repositories.package_repo import PackageRepository
@@ -18,16 +19,6 @@ from registry.services.artifact_service import ArtifactService
 from registry.services.package_service import PackageService
 from registry.services.verification import VerificationService
 from registry.storage.manager import StorageManager
-
-# Clerk SDK imports for JWT verification
-try:
-    from clerk_backend_api import Clerk
-    from clerk_backend_api.security import authenticate_request
-    from clerk_backend_api.security.types import AuthenticateRequestOptions, AuthStatus
-
-    CLERK_SDK_AVAILABLE = True
-except ImportError:
-    CLERK_SDK_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 security = HTTPBearer(auto_error=False)
@@ -45,16 +36,16 @@ async def get_db(request: Request):
     return request.state.db
 
 
-async def get_storage(request: Request) -> StorageManager:
+async def get_storage(request: Request) -> Optional[StorageManager]:
     """Get storage manager from request state.
 
     Args:
         request: FastAPI request.
 
     Returns:
-        Storage manager.
+        Storage manager or None (e.g., in test mode without storage).
     """
-    return request.state.storage
+    return getattr(request.state, "storage", None)
 
 
 async def get_user_repo(db=Depends(get_db)) -> UserRepository:
@@ -96,14 +87,14 @@ async def get_artifact_repo(db=Depends(get_db)) -> ArtifactRepository:
 async def get_package_service(
     repo: PackageRepository = Depends(get_package_repo),
     user_repo: UserRepository = Depends(get_user_repo),
-    storage: StorageManager = Depends(get_storage),
+    storage: Optional[StorageManager] = Depends(get_storage),
 ) -> PackageService:
     """Get package service.
 
     Args:
         repo: Package repository.
         user_repo: User repository.
-        storage: Storage manager.
+        storage: Storage manager (optional, for test mode).
 
     Returns:
         Package service.
@@ -114,14 +105,14 @@ async def get_package_service(
 async def get_artifact_service(
     repo: ArtifactRepository = Depends(get_artifact_repo),
     user_repo: UserRepository = Depends(get_user_repo),
-    storage: StorageManager = Depends(get_storage),
+    storage: Optional[StorageManager] = Depends(get_storage),
 ) -> ArtifactService:
     """Get artifact service.
 
     Args:
         repo: Artifact repository.
         user_repo: User repository.
-        storage: Storage manager.
+        storage: Storage manager (optional, for test mode).
 
     Returns:
         Artifact service.
@@ -157,120 +148,102 @@ async def get_dependency_resolver(
     return DependencyResolver(repo)
 
 
-@lru_cache(maxsize=1)
-def _get_clerk_client(secret_key: str) -> "Clerk":
-    """Get cached Clerk client instance.
+async def get_diff_generator(
+    repo: PackageRepository = Depends(get_package_repo),
+    storage: Optional[StorageManager] = Depends(get_storage),
+) -> "registry.diff.DiffGenerator":
+    """Get diff generator for creating package diffs.
 
     Args:
-        secret_key: Clerk secret key.
+        repo: Package repository.
+        storage: Optional storage manager for patch files.
 
     Returns:
-        Clerk client instance.
+        Diff generator instance.
     """
-    return Clerk(bearer_auth=secret_key)
+    from registry.diff import DiffGenerator
+
+    return DiffGenerator(repo, storage)
 
 
-# Authorized parties for JWT verification (origins that can use the API)
-AUTHORIZED_PARTIES = [
-    "https://simplecore.app",
-    "https://registry.simplecore.app",
-    "https://tauri.localhost",
-    "http://tauri.localhost",
-    "tauri://localhost",
-    "http://localhost:8080",
-    "http://localhost:3000",
-    "http://localhost:4025",
-    "http://127.0.0.1:8080",
-]
+@lru_cache(maxsize=1)
+def _get_cloudm_client(jwt_secret: str) -> CloudMAuthClient:
+    """Get cached CloudM.Auth client instance.
+
+    Args:
+        jwt_secret: JWT secret for validation.
+
+    Returns:
+        CloudM.Auth client instance.
+    """
+    return CloudMAuthClient(jwt_secret=jwt_secret)
 
 
-async def verify_clerk_token(
+async def verify_cloudm_token(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     settings: Settings = Depends(get_settings),
-) -> Optional[dict]:
-    """Verify Clerk JWT token using Clerk SDK.
+) -> Optional[TokenPayload]:
+    """Verify CloudM.Auth JWT token.
 
-    This function verifies JWT tokens issued by Clerk for CLI/API authentication.
-    The JWT must be generated using the 'cli' template with audience 'tb-registry'.
+    This function verifies JWT tokens issued by CloudM.Auth module.
+    Tokens are signed with HS256 algorithm using shared secret.
 
     Args:
         credentials: HTTP authorization credentials (Bearer token).
-        settings: Application settings containing Clerk secret key.
+        settings: Application settings containing JWT secret.
 
     Returns:
-        Decoded token claims (payload) if valid, None if no token provided.
+        TokenPayload if valid, None if no token provided.
 
     Raises:
-        HTTPException: If Clerk is not configured or token verification fails.
+        HTTPException: If token verification fails and not in debug mode.
     """
     if not credentials:
         return None
 
     token = credentials.credentials
 
-    # Check if Clerk is configured
-    if not settings.clerk_secret_key:
-        logger.warning("Clerk secret key not configured")
+    # Check if JWT secret is configured
+    if not settings.cloudm_jwt_secret:
+        logger.warning("CloudM JWT secret not configured")
         if settings.debug:
             # In debug mode, return mock data for development
             logger.warning("Debug mode: returning mock user data")
-            return {
-                "sub": "user_debug",
-                "email": "debug@example.com",
-            }
+            return TokenPayload(
+                user_id="user_debug",
+                username="debug_user",
+                email="debug@example.com",
+                level=1,
+                provider="debug",
+                exp=int(time.time()) + 3600,
+            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Authentication service not configured",
         )
 
-    # Check if Clerk SDK is available
-    if not CLERK_SDK_AVAILABLE:
-        logger.error("Clerk SDK not installed. Install with: pip install clerk-backend-api")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Authentication service unavailable",
-        )
-
     try:
-        # Create httpx.Request for authenticate_request
-        # The Clerk SDK expects an httpx.Request object
-        fake_request = httpx.Request(
-            method="GET",
-            url="http://localhost/verify",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        # Get CloudM.Auth client (cached)
+        client = _get_cloudm_client(settings.cloudm_jwt_secret)
 
-        # Get Clerk client (cached)
-        clerk = _get_clerk_client(settings.clerk_secret_key)
-
-        # Authenticate the request using Clerk SDK
-        # This verifies the JWT signature using JWKS and validates claims
-        request_state = clerk.authenticate_request(
-            fake_request,
-            AuthenticateRequestOptions(
-                authorized_parties=AUTHORIZED_PARTIES,
-                # audience="tb-registry",  # Uncomment when JWT template has audience set
-            ),
-        )
-
-        if request_state.status == AuthStatus.SIGNED_IN:
-            payload = request_state.payload or {}
-            logger.debug(f"Token verified for user: {payload.get('sub')}")
+        # Validate token
+        payload = client.validate_token(token)
+        if payload:
+            logger.debug(f"Token verified for user: {payload.user_id}")
             return payload
         else:
             # Token verification failed
-            reason = getattr(request_state, "reason", "Unknown reason")
-            logger.warning(f"Token verification failed: {reason}")
+            logger.warning("Token verification failed")
             return None
 
     except Exception as e:
-        logger.error(f"Error verifying Clerk token: {e}")
+        logger.error(f"Error validating CloudM.Auth token: {e}")
         # Don't expose internal errors to client
         return None
 
 
 async def get_current_user(
-    token_data: Optional[dict] = Depends(verify_clerk_token),
+    token_data: Optional[TokenPayload] = Depends(verify_cloudm_token),
     user_repo: UserRepository = Depends(get_user_repo),
 ) -> User:
     """Get current authenticated user.
@@ -292,21 +265,20 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    clerk_user_id = token_data.get("sub")
-    if not clerk_user_id:
+    cloudm_user_id = token_data.user_id  # Changed from token_data.get("sub")
+    if not cloudm_user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
         )
 
-    user = await user_repo.get_by_clerk_id(clerk_user_id)
+    user = await user_repo.get_by_cloudm_id(cloudm_user_id)
     if not user:
         # Create user on first login
         user = User(
-            id="",
-            clerk_user_id=clerk_user_id,
-            email=token_data.get("email", ""),
-            username=token_data.get("username"),
+            cloudm_user_id=cloudm_user_id,  # Changed
+            email=token_data.email,
+            username=token_data.username,
         )
         user = await user_repo.create(user)
 
@@ -314,7 +286,7 @@ async def get_current_user(
 
 
 async def get_optional_user(
-    token_data: Optional[dict] = Depends(verify_clerk_token),
+    token_data: Optional[TokenPayload] = Depends(verify_cloudm_token),
     user_repo: UserRepository = Depends(get_user_repo),
 ) -> Optional[User]:
     """Get current user if authenticated.
@@ -329,11 +301,11 @@ async def get_optional_user(
     if not token_data:
         return None
 
-    clerk_user_id = token_data.get("sub")
-    if not clerk_user_id:
+    cloudm_user_id = token_data.user_id
+    if not cloudm_user_id:
         return None
 
-    return await user_repo.get_by_clerk_id(clerk_user_id)
+    return await user_repo.get_by_cloudm_id(cloudm_user_id)
 
 
 async def require_admin(

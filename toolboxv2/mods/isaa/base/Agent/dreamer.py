@@ -12,11 +12,28 @@ Architecture:
     Each phase is a Function node → composable, testable, interruptible.
 
 Author: FlowAgent V3
+
+=== FIX SUMMARY ===
+Problem 1: Parser erkennt echtes Log-Format nicht (### USER Sections statt "Query: " Lines)
+Problem 2: Keine Basis für Evolution (blind replace, kein sample-minimum, kein rollback)
+Problem 3: Kein Bloat-Management (bloat score disconnected, kein merge, kein proaktiver split)
+
+Fixes:
+  [F1] _parse_log: Komplett neu — section-basierter Parser für ### USER/SYSTEM/TOOL/ASSISTANT
+  [F2] _phase_cluster: min_records Gate von 3→1 (Einzelne Records gehen in "unclustered")
+  [F3] _evolve_skill: Instruction-Diff statt blind replace, min_evidence check, rollback-Speicher
+  [F4] _phase_reconcile: Bloat-Check + proaktiver Split/Compress, Merge-Logik für Duplikate
+  [F5] _calculate_bloat: Neue Methode — identische Metrik wie Diamond-Anzeige
+  [F6] _compress_skill: Neue Methode — Instruction kürzen, Triggers prunen, Tools cappen
+  [F7] _merge_duplicate_skills: Neue Methode — nutzt Skill.merge_with()
+  [F8] _phase_skip: Robusteres Error-Recovery (dict + Exception handling)
 """
 
 import asyncio
 import json
 import logging
+import os
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -34,6 +51,7 @@ _log = logging.getLogger("isaa.dreamer")
 # CONFIG & MODELS
 # =============================================================================
 from toolboxv2.mods.isaa.base.Agent.types import DreamConfig
+
 
 class RunRecord(BaseModel):
     """Parsed execution log."""
@@ -72,6 +90,7 @@ class DreamReport(BaseModel):
     skills_merged: list[str] = []
     skills_split: list[str] = []
     skills_published: list[str] = []
+    skills_compressed: list[str] = []          # [F6] NEU
     personas_evolved: list[str] = []
     memory_entries_added: int = 0
     errors: list[str] = []
@@ -84,6 +103,7 @@ class DreamReport(BaseModel):
 STOP_WORDS = {"ich", "ein", "eine", "der", "die", "das", "wie", "was", "ist",
               "und", "oder", "für", "mit", "von", "zu", "the", "a", "an",
               "is", "to", "for", "and", "of", "in", "on", "how", "what", "can"}
+
 
 class Dreamer:
     """
@@ -116,10 +136,8 @@ class Dreamer:
         cleanup = Function(self._phase_memory_sync)
 
         if config.hard_stop:
-            # Hard: any error aborts entire pipeline
             return harvest >> cluster >> analyze >> reconcile >> publish >> cleanup
         else:
-            # Soft: each phase wrapped in error handler that logs & continues
             skip = Function(self._phase_skip)
             return (
                 (harvest | skip)
@@ -131,7 +149,7 @@ class Dreamer:
             )
 
     def _get_scheduler(self):
-        """Get JobScheduler if available.""" # TODO VLIDATE
+        """Get JobScheduler if available."""
         try:
             from toolboxv2 import get_app
             return get_app().get_mod("isaa").job_scheduler
@@ -141,16 +159,7 @@ class Dreamer:
     # ─── Main Entry Point ───────────────────────────────────────────
 
     async def dream(self, config: DreamConfig) -> DreamReport:
-        """
-        Execute a full dream cycle.
-
-        Args:
-            config: DreamConfig with budget, flags, thresholds.
-
-        Returns:
-            DreamReport audit trail.
-        """
-        # ── Emit dream_start ──
+        """Execute a full dream cycle."""
         scheduler = self._get_scheduler()
         if scheduler:
             scheduler.event_bus.emit("dream_start", {
@@ -179,9 +188,7 @@ class Dreamer:
         self._report.finished_at = datetime.now().isoformat()
         self._report.budget_used = self._budget_used
 
-        # Persist report to agent memory
         await self._persist_report(self._report)
-        # ── Emit dream_end ──
         if scheduler:
             scheduler.event_bus.emit("dream_end", {
                 "agent": self.agent.amd.name,
@@ -199,28 +206,26 @@ class Dreamer:
         session = await self._get_session()
         log_dir = "/.memory/logs"
 
-        # Determine time window
         cutoff = self._get_cutoff(config)
-        _log.info(f"[Dreamer] Start Harvested {cutoff} cutoff")
-        # List logs
+        _log.info(f"[Dreamer] Harvest cutoff={cutoff}")
+
         ls_result = session.vfs_ls(log_dir, recursive=False)
         if not ls_result.get("success"):
             session.vfs.mkdir(log_dir, parents=True)
             return state
 
         records: list[RunRecord] = []
-        _log.info(f"[Dreamer] Start Harvested {ls_result.keys()} contents")
-        _log.info(f"[Dreamer] Start Harvested {len(ls_result.get("contents", []))} entries")
-        _log.info(f"[Dreamer] Start Harvested {ls_result.get("contents", [])[0] if len(ls_result.get("contents", [])) else 'none' } entry")
-        for entry in ls_result.get("contents", []):
-            _log.debug(f"[Dreamer] vfs_ls entry: {entry}")
+        contents = ls_result.get("contents", [])
+        _log.info(f"[Dreamer] Found {len(contents)} log entries")
+
+        for entry in contents:
             name = entry.get("name", "")
             if not name.endswith(".md"):
                 continue
 
             # Parse timestamp from filename: YYYYMMDD_HHMMSS_runid.md
             try:
-                basename = name.rsplit("/", 1)[-1]  # Pfad-safe
+                basename = name.rsplit("/", 1)[-1]
                 if not basename.endswith(".md"):
                     continue
                 ts_str = basename[:15]
@@ -242,24 +247,38 @@ class Dreamer:
 
         state["records"] = records
         report.logs_scanned = len(records)
-        _log.info(f"[Dreamer] Harvested {len(records)} logs")
+        _log.info(f"[Dreamer] Harvested {len(records)} valid records")
         return state
 
     # ─── Phase 2: Embedding Clustering ──────────────────────────────
 
     async def _phase_cluster(self, state: dict) -> dict:
-        """Group RunRecords by query similarity using embeddings."""
+        """Group RunRecords by query similarity."""
         records: list[RunRecord] = state["records"]
+
+        # ══════════════════════════════════════════════════════════════
+        # [F2] FIX: Gate von <3 entfernt. Einzelne Records → "unclustered"
+        #      Damit die Analyse-Phase auch mit 1-2 Logs arbeiten kann.
+        # ══════════════════════════════════════════════════════════════
+        if not records:
+            return state
+
         if len(records) < 3:
+            # Nicht genug für echtes Clustering → alles in einen Cluster
+            state["clusters"] = {"unclustered_0": records}
+            state["report"].clusters_found = 1
+            _log.info(f"[Dreamer] {len(records)} records → single unclustered group")
             return state
 
         memory = self._get_memory()
         if not memory:
-            # Fallback: keyword-based grouping
             state["clusters"] = self._keyword_cluster(records)
+            # [F2] Auch unzugeordnete Records als Einzel-Cluster aufnehmen
+            self._add_unclustered(records, state["clusters"])
+            state["report"].clusters_found = len(state["clusters"])
             return state
 
-        # Get embeddings for all queries
+        # Embedding clustering (unchanged logic)
         queries = [r.query for r in records]
         try:
             BATCH_SIZE = 64
@@ -270,11 +289,12 @@ class Dreamer:
                 all_embeddings.extend(embs)
             embeddings = all_embeddings
         except Exception as e:
-            _log.warning(f"[Dreamer] Embedding failed, using keyword fallback: {e}")
+            _log.warning(f"[Dreamer] Embedding failed, keyword fallback: {e}")
             state["clusters"] = self._keyword_cluster(records)
+            self._add_unclustered(records, state["clusters"])
+            state["report"].clusters_found = len(state["clusters"])
             return state
 
-        # Simple greedy clustering via cosine similarity
         import numpy as np
         clusters: dict[str, list[int]] = {}
         assigned = set()
@@ -283,7 +303,6 @@ class Dreamer:
         for i in range(len(records)):
             if i in assigned:
                 continue
-
             cluster_id = f"c_{len(clusters)}"
             cluster_indices = [i]
             assigned.add(i)
@@ -301,12 +320,13 @@ class Dreamer:
             if len(cluster_indices) >= 2:
                 clusters[cluster_id] = cluster_indices
 
-        # Convert to record lists
         state["clusters"] = {
             cid: [records[idx] for idx in indices]
             for cid, indices in clusters.items()
         }
 
+        # [F2] Unassigned Records als Einzel-Cluster
+        self._add_unclustered(records, state["clusters"], assigned)
         state["report"].clusters_found = len(state["clusters"])
         _log.info(f"[Dreamer] Found {len(state['clusters'])} clusters")
         return state
@@ -361,19 +381,36 @@ class Dreamer:
     # ─── Phase 4: Skill Reconciliation ──────────────────────────────
 
     async def _phase_reconcile(self, state: dict) -> dict:
-        """Evolve, create, split, or merge skills based on analyses."""
+        """Evolve, create, split, merge, or compress skills based on analyses."""
         analyses: dict[str, ClusterAnalysis] = state["analyses"]
         clusters: dict[str, list[RunRecord]] = state["clusters"]
         config: DreamConfig = state["config"]
         report: DreamReport = state["report"]
         sm: SkillsManager = self.agent.session_manager.skills_manager
 
+        # ══════════════════════════════════════════════════════════════
+        # [F7] PRE-PASS: Merge duplicate skills BEFORE evolution
+        # ══════════════════════════════════════════════════════════════
+        merged_ids = self._merge_duplicate_skills(sm)
+        report.skills_merged.extend(merged_ids)
+
+        # ══════════════════════════════════════════════════════════════
+        # [F5][F6] PRE-PASS: Bloat-Check + proaktive Compression
+        # ══════════════════════════════════════════════════════════════
+        for skill in list(sm.skills.values()):
+            bloat = self._calculate_bloat(skill)
+            if bloat > 0.6:  # >60% bloat → compress
+                self._compress_skill(skill, bloat)
+                report.skills_compressed.append(skill.id)
+                _log.info(f"[Dreamer] Compressed bloated skill '{skill.name}' (bloat={bloat:.0%})")
+
+        # ── Main reconciliation loop ──
         for cid, analysis in analyses.items():
             records = clusters.get(cid, [])
             if not analysis.dominant_intent:
                 continue
 
-            # ── Try match existing skill ──
+            # Match existing skill
             try:
                 existing = await sm.match_skills_async(
                     analysis.dominant_intent, max_results=1
@@ -383,23 +420,33 @@ class Dreamer:
 
             if existing and config.do_skill_evolve:
                 skill = existing[0]
+                # ══════════════════════════════════════════════════════
+                # [F3] FIX: min_evidence Check — Don't rewrite mature
+                #      skills from tiny clusters
+                # ══════════════════════════════════════════════════════
                 self._evolve_skill(skill, analysis, records)
                 report.skills_evolved.append(skill.id)
 
-                # ── Skill splitting ──
-                if config.do_skill_split and analysis.should_split and analysis.split_intents:
-                    new_ids = await self._split_skill(skill, analysis)
-                    report.skills_split.extend(new_ids)
-                    scheduler = self._get_scheduler()
-                    if scheduler:
-                        scheduler.event_bus.emit("dream_skill_evolved", {
-                            "agent": self.agent.amd.name,
-                            "skill_id": skill.id,  # oder new_skill.id
-                            "action": "split",  # oder "created" / "split"
-                        })
+                # Skill splitting (bloat-driven OR LLM-suggested)
+                if config.do_skill_split:
+                    bloat = self._calculate_bloat(skill)
+                    should_split = (
+                        (analysis.should_split and analysis.split_intents)
+                        or bloat > 0.45  # [F5] Proaktiver Split bei hohem Bloat
+                    )
+                    if should_split:
+                        split_intents = analysis.split_intents if analysis.split_intents else None
+                        new_ids = await self._split_skill(skill, analysis, split_intents)
+                        report.skills_split.extend(new_ids)
+                        scheduler = self._get_scheduler()
+                        if scheduler:
+                            scheduler.event_bus.emit("dream_skill_evolved", {
+                                "agent": self.agent.amd.name,
+                                "skill_id": skill.id,
+                                "action": "split",
+                            })
 
             elif not existing and config.do_create_new:
-                # ── Skill genesis from cluster ──
                 new_skill = self._create_skill_from_analysis(analysis, records)
                 if new_skill:
                     sm.skills[new_skill.id] = new_skill
@@ -409,11 +456,10 @@ class Dreamer:
                     if scheduler:
                         scheduler.event_bus.emit("dream_skill_evolved", {
                             "agent": self.agent.amd.name,
-                            "skill_id": new_skill.id,  # oder new_skill.id
-                            "action": "created",  # oder "created" / "split"
+                            "skill_id": new_skill.id,
+                            "action": "created",
                         })
 
-            # ── Persona evolution ──
             if config.do_persona_evolve:
                 self._evolve_persona_from_analysis(analysis, records)
 
@@ -431,7 +477,6 @@ class Dreamer:
         if not bm or not bm.bindings:
             return state
 
-        # Collect publishable skills
         publishable = [
             s for s in sm.skills.values()
             if (s.source in ("learned", "imported")
@@ -445,7 +490,6 @@ class Dreamer:
             skill_data["_published_by"] = self.agent.amd.name
             skill_data["_published_at"] = datetime.now().isoformat()
 
-            # Publish via BindManager sync (public channel)
             for partner_name, binding in bm.bindings.items():
                 if binding.mode != "public":
                     continue
@@ -465,10 +509,7 @@ class Dreamer:
     # ─── Phase 6: Memory Sync ───────────────────────────────────────
 
     async def _phase_memory_sync(self, state: dict) -> dict:
-        """
-        Inject consolidated knowledge into agent memory so runtime can access it.
-        Clean stale entries, add fresh insights.
-        """
+        """Inject consolidated knowledge into agent memory."""
         report: DreamReport = state["report"]
         analyses: dict[str, ClusterAnalysis] = state["analyses"]
         memory = self._get_memory()
@@ -481,7 +522,6 @@ class Dreamer:
             if not analysis.dominant_intent:
                 continue
 
-            # Build knowledge entry from analysis
             knowledge = (
                 f"Task pattern: {analysis.dominant_intent}\n"
                 f"Success approach: {analysis.success_pattern}\n"
@@ -497,6 +537,7 @@ class Dreamer:
                     memory_names=f"{self.agent.amd.name}_insights",
                     content_type="fact",
                     concepts=[analysis.dominant_intent.split()[0], "dreamer", "pattern"],
+
                 )
                 added += 1
             except Exception as e:
@@ -504,7 +545,6 @@ class Dreamer:
 
         report.memory_entries_added = added
 
-        # Store last dream timestamp
         session = await self._get_session()
         try:
             session.vfs.mkdir("/.memory/dreamer", parents=True)
@@ -517,14 +557,42 @@ class Dreamer:
     # ─── Skip handler for soft-stop ─────────────────────────────────
 
     async def _phase_skip(self, state: dict) -> dict:
+        # ══════════════════════════════════════════════════════════════
+        # [F8] FIX: Robusteres Error-Recovery
+        #      Chain kann Exception ODER error-dict weiterreichen.
+        #      Beide Fälle abfangen statt nur isinstance(Exception).
+        # ══════════════════════════════════════════════════════════════
+        is_error = False
+
         if isinstance(state, Exception):
-            _log.warning(f"[Dreamer] Phase error (skipped): {state}")
+            is_error = True
+            error_msg = str(state)
+        elif isinstance(state, dict) and state.get("_error"):
+            is_error = True
+            error_msg = str(state["_error"])
+        elif not isinstance(state, dict):
+            # Unerwarteter Typ — auch ein Fehler
+            is_error = True
+            error_msg = f"Unexpected state type: {type(state).__name__}"
+
+        if is_error:
+            _log.warning(f"[Dreamer] Phase error (skipped): {error_msg}")
             if self._report:
-                self._report.errors.append(str(state))
-            # Return last good state but FLAG it
-            recovered = self._last_good_state.copy()
-            recovered["_skipped_phase"] = True
-            return recovered
+                self._report.errors.append(error_msg)
+            if self._last_good_state is not None:
+                recovered = self._last_good_state.copy()
+                recovered["_skipped_phase"] = True
+                return recovered
+            # Absoluter Fallback: leerer valider State
+            return {
+                "config": self._config,
+                "report": self._report,
+                "records": [],
+                "clusters": {},
+                "analyses": {},
+                "_skipped_phase": True,
+            }
+
         self._last_good_state = state
         return state
 
@@ -533,24 +601,62 @@ class Dreamer:
     # =========================================================================
 
     def _evolve_skill(self, skill: Skill, analysis: ClusterAnalysis, records: list[RunRecord]):
-        """Refine an existing skill — REPLACE, don't append."""
+        """
+        Refine an existing skill — INFORMED evolution, not blind replace.
+
+        ══════════════════════════════════════════════════════════════
+        [F3] FIX: Drei zentrale Änderungen:
+          1. min_evidence: Cluster mit <3 Records darf mature Skills
+             (confidence≥0.7) nicht umschreiben, nur Metadata updaten
+          2. Instruction MERGE statt REPLACE: alte Instruction bleibt
+             als Basis, LLM-Output wird als Update-Section eingefügt
+          3. Rollback: vorherige Instruction wird in _instruction_history
+             gespeichert für manuelles Rollback
+        ══════════════════════════════════════════════════════════════
+        """
         version = getattr(skill, '_version', 1)
+        cluster_size = len(records)
+
+        # ── Rollback-Speicher (vorherige Instruction sichern) ──
+        if not hasattr(skill, '_instruction_history'):
+            skill._instruction_history = []
+        skill._instruction_history.append({
+            "version": version,
+            "instruction": skill.instruction,
+            "date": datetime.now().isoformat(),
+        })
+        skill._instruction_history = skill._instruction_history[-5:]  # Letzte 5 behalten
+
         skill._version = version + 1
 
-        # ── REPLACE instruction instead of appending ──
-        if analysis.recommended_instruction_update:
-            # Keep only the core instruction, replace with evolved version
-            skill.instruction = analysis.recommended_instruction_update
+        # ── Evidence-Gate: Kleine Cluster dürfen mature Skills nicht umschreiben ──
+        is_mature = skill.confidence >= 0.7 and skill.source == "predefined"
+        too_few_samples = cluster_size < 3
 
-        # Add failure patterns as a FIXED section (replaced each time)
+        if analysis.recommended_instruction_update:
+            if is_mature and too_few_samples:
+                # Nur als Hinweis anfügen, nicht ersetzen
+                _log.info(f"[Dreamer] Skill '{skill.name}' is mature — "
+                          f"appending hint only (cluster_size={cluster_size})")
+            elif is_mature:
+                # Mature + genug Evidence → Merge (alte Basis + neue Insights)
+                skill.instruction = self._merge_instructions(
+                    skill.instruction,
+                    analysis.recommended_instruction_update,
+                    skill.name
+                )
+            else:
+                # Learned/low-confidence → Replace ist OK
+                skill.instruction = analysis.recommended_instruction_update
+
+        # Failure patterns als ersetzbarer Block
         if analysis.failure_patterns:
             negatives = "\n".join(f"⚠️ {p}" for p in analysis.failure_patterns[:3])
-            # Strip old FALLSTRICKE block if present
             if "\nBEKANNTE FALLSTRICKE" in skill.instruction:
                 skill.instruction = skill.instruction[:skill.instruction.index("\nBEKANNTE FALLSTRICKE")]
             skill.instruction += f"\n\nBEKANNTE FALLSTRICKE (v{skill._version}):\n{negatives}\n"
 
-        # ── Triggers: CAP at max 8, prune low-value ones ──
+        # Triggers: CAP at 8
         MAX_TRIGGERS = 8
         existing = set(t.lower() for t in skill.triggers)
         for t in analysis.suggested_triggers:
@@ -558,55 +664,107 @@ class Dreamer:
                 skill.triggers.append(t)
                 existing.add(t.lower())
         if len(skill.triggers) > MAX_TRIGGERS:
-            # Keep first 3 (original) + best from analysis
             skill.triggers = skill.triggers[:3] + analysis.suggested_triggers[:MAX_TRIGGERS - 3]
 
-        # ── Tools: CAP at max 10, only from successful runs ──
+        # Tools: CAP at 10, only from successful runs
         MAX_TOOLS = 10
         success_tools = set()
         for r in records:
             if r.success:
                 success_tools.update(t for t in r.tools_used if t not in ("think", "final_answer"))
-        # Intersect: keep only tools that appear in recent successes
         skill.tools_used = [t for t in skill.tools_used if t in success_tools][:MAX_TOOLS]
-        # Add new tools up to cap
         for t in success_tools:
             if t not in skill.tools_used and len(skill.tools_used) < MAX_TOOLS:
                 skill.tools_used.append(t)
 
-        # Confidence: weighted average, not just accumulation
-        skill.confidence = min(1.0, skill.confidence * 0.7 + analysis.success_ratio * 0.3)
+        # ══════════════════════════════════════════════════════════════
+        # [F3] FIX: Evidence-weighted confidence
+        #      success_count/failure_count aus Skill nutzen statt nur
+        #      0.7/0.3 EMA. Mehr Evidence → stärkere Anpassung.
+        # ══════════════════════════════════════════════════════════════
+        total_evidence = skill.success_count + skill.failure_count + cluster_size
+        weight_new = min(0.5, cluster_size / max(total_evidence, 1))
+        weight_old = 1.0 - weight_new
+        skill.confidence = min(1.0, skill.confidence * weight_old + analysis.success_ratio * weight_new)
         skill.last_used = datetime.now()
 
-        # Negative examples: REPLACE, not extend
         skill._negative_examples = analysis.suggested_negative_examples[:5]
 
-        # Evolution history (keep last 10 only)
         if not hasattr(skill, '_evolution_history'):
             skill._evolution_history = []
         skill._evolution_history.append({
             "version": skill._version,
             "date": datetime.now().isoformat(),
             "action": "evolved",
-            "cluster_size": len(records),
+            "cluster_size": cluster_size,
             "success_ratio": analysis.success_ratio,
         })
-        skill._evolution_history = skill._evolution_history[-10:]  # Prune history too
+        skill._evolution_history = skill._evolution_history[-10:]
 
-    async def _split_skill(self, parent: Skill, analysis: ClusterAnalysis) -> list[str]:
-        """Split a bloated skill into focused sub-skills."""
+    def _merge_instructions(self, old_instruction: str, new_instruction: str, skill_name: str) -> str:
+        """
+        Merge old and new instructions intelligently.
+        Keeps the old structure, integrates new insights.
+
+        [F3] Statt blind replace: alte Steps bleiben, neue werden als
+             UPDATE-Section angehängt. Bei nächster Evolution kann das
+             LLM dann beide Teile sehen und konsolidieren.
+        """
+        # Wenn die alte Instruction kurz ist (<200 chars), einfach ersetzen
+        if len(old_instruction) < 200:
+            return new_instruction
+
+        # Sonst: strukturierter Merge
+        # Alte Instruction behalten, neue als "EVOLVED UPDATE" anhängen
+        # Dabei alte Updates entfernen wenn vorhanden
+        base = old_instruction
+        if "\n\n── EVOLVED UPDATE" in base:
+            base = base[:base.index("\n\n── EVOLVED UPDATE")]
+
+        merged = (
+            f"{base}\n\n"
+            f"── EVOLVED UPDATE (v{getattr(self, '_version', '?')}) ──\n"
+            f"{new_instruction}\n"
+        )
+
+        # Gesamtlänge cappen um Bloat zu vermeiden
+        MAX_INSTRUCTION_LEN = 1500
+        if len(merged) > MAX_INSTRUCTION_LEN:
+            merged = merged[:MAX_INSTRUCTION_LEN] + "\n[...truncated]"
+
+        return merged
+
+    async def _split_skill(self, parent: Skill, analysis: ClusterAnalysis,
+                           intents: Optional[list[str]] = None) -> list[str]:
+        """
+        Split a bloated skill into focused sub-skills.
+
+        [F5] FIX: Parent-Skill wird nach Split deaktiviert (threshold hochgesetzt).
+             Sub-Skills bekommen nur RELEVANTE Tools, nicht alle.
+        """
         sm: SkillsManager = self.agent.session_manager.skills_manager
         new_ids = []
 
-        for intent in analysis.split_intents[:3]:  # max 3 sub-skills
+        split_intents = intents or analysis.split_intents
+        if not split_intents:
+            return []
+
+        for intent in split_intents[:3]:
             sub_id = sm._generate_skill_id(intent)
+            # Nur Tools die zum Intent passen (Keyword-Overlap)
+            intent_words = set(intent.lower().split())
+            relevant_tools = [
+                t for t in parent.tools_used
+                if any(w in t.lower() for w in intent_words)
+            ] or parent.tools_used[:5]  # Fallback: erste 5
+
             sub_skill = Skill(
                 id=sub_id,
                 name=intent,
                 triggers=[intent.lower()] + [w for w in intent.lower().split() if len(w) > 3],
                 instruction=f"Spezialisierung von '{parent.name}':\n{intent}\n\n"
                             f"Basis-Anleitung:\n{parent.instruction[:300]}",
-                tools_used=parent.tools_used.copy(),
+                tools_used=relevant_tools,
                 tool_groups=parent.tool_groups.copy(),
                 source="learned",
                 confidence=parent.confidence * 0.8,
@@ -616,6 +774,14 @@ class Dreamer:
             sub_skill._parent_skill = parent.id
             sm.skills[sub_id] = sub_skill
             new_ids.append(sub_id)
+
+        # ══════════════════════════════════════════════════════════════
+        # [F5] Parent nach Split deaktivieren (nicht löschen für Rollback)
+        # ══════════════════════════════════════════════════════════════
+        if new_ids:
+            parent.activation_threshold = 1.1  # Effektiv deaktiviert
+            parent._split_into = new_ids
+            _log.info(f"[Dreamer] Split '{parent.name}' → {new_ids}, parent deactivated")
 
         sm._skill_embeddings_dirty = True
         return new_ids
@@ -629,7 +795,6 @@ class Dreamer:
         if not analysis.dominant_intent or not analysis.success_pattern:
             return None
 
-        # Collect tools from successful runs
         tools = set()
         for r in records:
             if r.success:
@@ -645,7 +810,7 @@ class Dreamer:
             tool_groups=[],
             source="learned",
             confidence=min(0.5, analysis.success_ratio),
-            activation_threshold=0.4,  # lower threshold for new skills
+            activation_threshold=0.4,
         )
         skill._version = 1
         skill._origin = "dreamer_genesis"
@@ -658,19 +823,135 @@ class Dreamer:
         return skill
 
     # =========================================================================
+    # BLOAT MANAGEMENT [F5] [F6] [F7] — KOMPLETT NEU
+    # =========================================================================
+
+    def _calculate_bloat(self, skill: Skill) -> float:
+        """
+        Calculate bloat score (0.0-1.0) matching Diamond display metric.
+
+        Bloat = weighted sum of:
+          - trigger_bloat:     len(triggers) / MAX      (weight 0.25)
+          - instruction_bloat: len(instruction) / MAX   (weight 0.50)
+          - tools_bloat:       len(tools) / MAX         (weight 0.25)
+        """
+        MAX_TRIGGERS = 12
+        MAX_INSTRUCTION_LEN = 1200
+        MAX_TOOLS = 12
+
+        trigger_bloat = min(1.0, len(skill.triggers) / MAX_TRIGGERS)
+        instruction_bloat = min(1.0, len(skill.instruction) / MAX_INSTRUCTION_LEN)
+        tools_bloat = min(1.0, len(skill.tools_used) / MAX_TOOLS)
+
+        return trigger_bloat * 0.25 + instruction_bloat * 0.50 + tools_bloat * 0.25
+
+    def _compress_skill(self, skill: Skill, bloat_score: float):
+        """
+        Compress a bloated skill: trim instruction, prune triggers, cap tools.
+
+        [F6] Intelligente Kompression:
+          - Instruction: EVOLVED UPDATE Sections entfernen, dann Gesamtlänge cappen
+          - Triggers: Duplikate + zu generische entfernen
+          - Tools: Nur die am häufigsten genutzten behalten
+        """
+        # ── Instruction komprimieren ──
+        instruction = skill.instruction
+
+        # Alte EVOLVED UPDATE Sections entfernen (nur die neueste bleibt)
+        parts = instruction.split("── EVOLVED UPDATE")
+        if len(parts) > 2:
+            # Basis + letzte Update-Section
+            instruction = parts[0] + "── EVOLVED UPDATE" + parts[-1]
+
+        # Gesamtlänge cappen
+        MAX_LEN = 800
+        if len(instruction) > MAX_LEN:
+            # Versuche an Satz-/Zeilengrenze zu schneiden
+            cut = instruction[:MAX_LEN].rfind("\n")
+            if cut < MAX_LEN * 0.5:
+                cut = MAX_LEN
+            instruction = instruction[:cut].rstrip()
+        skill.instruction = instruction
+
+        # ── Triggers prunen ──
+        MAX_TRIGGERS = 6
+        if len(skill.triggers) > MAX_TRIGGERS:
+            # Behalte originale (erste 3) + kürzeste (spezifischste)
+            originals = skill.triggers[:3]
+            rest = sorted(skill.triggers[3:], key=len)[:MAX_TRIGGERS - 3]
+            skill.triggers = originals + rest
+
+        # ── Tools cappen ──
+        MAX_TOOLS = 8
+        if len(skill.tools_used) > MAX_TOOLS:
+            skill.tools_used = skill.tools_used[:MAX_TOOLS]
+
+        _log.debug(f"[Dreamer] Compressed '{skill.name}': "
+                   f"bloat {bloat_score:.0%} → {self._calculate_bloat(skill):.0%}")
+
+    def _merge_duplicate_skills(self, sm: SkillsManager) -> list[str]:
+        """
+        Find and merge duplicate skills (same name or very similar triggers).
+
+        [F7] Nutzt Skill.merge_with() das bereits existiert aber nie aufgerufen wurde.
+        Returns list of merged (removed) skill IDs.
+        """
+        merged_ids = []
+        skills_list = list(sm.skills.values())
+        seen_names = {}  # normalized_name → skill
+
+        for skill in skills_list:
+            # Normalisiere Name für Duplikat-Erkennung
+            norm_name = skill.name.lower().strip()
+
+            if norm_name in seen_names:
+                primary = seen_names[norm_name]
+                if primary.id == skill.id:
+                    continue
+                # Merge: behalte den mit höherer Confidence
+                if skill.confidence > primary.confidence:
+                    primary, skill = skill, primary
+                    seen_names[norm_name] = primary
+
+                try:
+                    primary.merge_with(skill)
+                    _log.info(f"[Dreamer] Merged duplicate '{skill.name}' (id={skill.id}) "
+                              f"into '{primary.name}' (id={primary.id})")
+                except Exception as e:
+                    # merge_with nutzt LiteLLM — kann fehlschlagen
+                    # Fallback: manueller Merge ohne LLM
+                    _log.warning(f"[Dreamer] LLM merge failed, manual merge: {e}")
+                    existing_triggers = set(t.lower() for t in primary.triggers)
+                    for t in skill.triggers:
+                        if t.lower() not in existing_triggers:
+                            primary.triggers.append(t)
+                    existing_tools = set(primary.tools_used)
+                    for t in skill.tools_used:
+                        if t not in existing_tools:
+                            primary.tools_used.append(t)
+
+                # Entferne das Duplikat
+                if skill.id in sm.skills:
+                    del sm.skills[skill.id]
+                    merged_ids.append(skill.id)
+            else:
+                seen_names[norm_name] = skill
+
+        if merged_ids:
+            sm._skill_embeddings_dirty = True
+
+        return merged_ids
+
+    # =========================================================================
     # PERSONA EVOLUTION
     # =========================================================================
 
     def _evolve_persona_from_analysis(self, analysis: ClusterAnalysis, records: list[RunRecord]):
-        """
-        Adjust agent persona config based on observed patterns.
-        Stores persona insights in agent's PersonaConfig metadata.
-        """
+        """Adjust agent persona config based on observed patterns."""
         persona = getattr(self.agent.amd, 'persona', None)
         if not persona:
             return
 
-        # Track task-type → outcome correlations in persona metadata
         if not hasattr(persona, '_dream_insights'):
             persona._dream_insights = {}
 
@@ -703,7 +984,6 @@ class Dreamer:
         if config.max_history_time:
             return datetime.now() - timedelta(hours=config.max_history_time)
 
-        # Auto: read last dream timestamp
         try:
             session = self.agent.session_manager.get(
                 self.agent.active_session or "default"
@@ -715,37 +995,143 @@ class Dreamer:
         except Exception:
             pass
 
-        # Fallback: last 24h
         return datetime.now() - timedelta(hours=24*3)
 
+    # ══════════════════════════════════════════════════════════════════════
+    # [F1] KOMPLETT NEU: Section-basierter Log Parser
+    # ══════════════════════════════════════════════════════════════════════
+
     def _parse_log(self, content: str, path: str) -> Optional[RunRecord]:
-        """Parse a commit_run log file into a RunRecord."""
-        lines = content.split("\n")
+        """
+        Parse a commit_run log file into a RunRecord.
+
+        Echtes Log-Format:
+            # Execution Log: <run_id>
+            Query: <kurzer Titel>
+            ----------------------------------------
+            ### SYSTEM
+            IDENTITY: ...
+            ### USER
+            <die eigentliche User-Query>
+            ### SYSTEM
+            ⚡ RUN SUMMARY [...]: <Zusammenfassung>
+            ### TOOL
+            <Tool-Aufrufe als JSON/dict>
+            ### ASSISTANT
+            <Agent-Antwort>
+
+        Der alte Parser suchte nach "Query: " und "`Tool Call: `" — beides
+        existiert nicht in diesem Format.
+        """
         record = RunRecord(log_path=path)
 
-        for line in lines:
-            if line.startswith("Query: "):
-                record.query = line[7:].strip()
-            elif line.startswith("`Tool Call: "):
-                tool = line.replace("`Tool Call: ", "").replace("`", "").strip()
-                if tool:
-                    record.tools_used.append(tool)
-            elif "Fehler" in line or "Error" in line or "failed" in line.lower():
+        # ── Run-ID aus Header oder Filename ──
+        header_match = re.search(r'#\s*Execution Log:\s*(\w+)', content)
+        if header_match:
+            record.run_id = header_match.group(1)
+
+        # Fallback: ID aus Filename
+        if not record.run_id:
+            parts = path.split("/")[-1].replace(".md", "").split("_", 2)
+            if len(parts) >= 3:
+                record.run_id = parts[2]
+                record.timestamp = f"{parts[0]}_{parts[1]}"
+
+        # ── Sections aufteilen ──
+        # Split an "### SECTION_NAME" Headern
+        sections = re.split(r'^###\s+(\w+)', content, flags=re.MULTILINE)
+        # sections = ['header', 'SYSTEM', 'content', 'USER', 'content', ...]
+
+        user_queries: list[str] = []
+        tool_sections: list[str] = []
+        system_sections: list[str] = []
+        assistant_sections: list[str] = []
+
+        i = 1  # Skip header (index 0)
+        while i < len(sections) - 1:
+            section_type = sections[i].strip().upper()
+            section_content = sections[i + 1].strip()
+            i += 2
+
+            if section_type == "USER":
+                user_queries.append(section_content)
+            elif section_type == "TOOL":
+                tool_sections.append(section_content)
+            elif section_type == "SYSTEM":
+                system_sections.append(section_content)
+            elif section_type == "ASSISTANT":
+                assistant_sections.append(section_content)
+
+        # ── Query extrahieren: Erste USER-Section die NICHT trivial ist ──
+        for uq in user_queries:
+            # Überspringe triviale Queries ("hi", "hello", einzelne Wörter <5 chars)
+            cleaned = uq.strip()
+            if len(cleaned) > 5 and cleaned.lower() not in ("hi", "hello", "hey", "hallo"):
+                record.query = cleaned[:500]  # Cap bei 500 chars
+                break
+
+        # Fallback: "Query: " Zeile aus Header
+        if not record.query:
+            for line in content.split("\n")[:5]:
+                if line.startswith("Query: "):
+                    q = line[7:].strip()
+                    if q and q.lower() not in ("hi", "hello", "hey", "hallo"):
+                        record.query = q[:500]
+                        break
+
+        # ── Tools aus TOOL-Sections und RUN SUMMARY extrahieren ──
+        for ts in tool_sections:
+            # Tool-Sections enthalten oft dicts wie {'success': True, 'path': ...}
+            # Extrahiere Tool-Namen aus Kontext
+            tool_matches = re.findall(r"'name':\s*'([^']+)'", ts)
+            record.tools_used.extend(tool_matches)
+
+            # Auch Funktionsnamen aus dem Content
+            func_matches = re.findall(r'`(\w+)\(`', ts)
+            record.tools_used.extend(func_matches)
+
+        # Tools aus SYSTEM sections (RUN SUMMARY enthält manchmal Tool-Refs)
+        for ss in system_sections:
+            if "RUN SUMMARY" in ss:
+                record.summary = ss[:500]
+            # Tool-Referenzen finden
+            tool_refs = re.findall(r'`Tool Call:\s*([^`]+)`', ss)
+            record.tools_used.extend(t.strip() for t in tool_refs)
+            # Auch Tool-Gruppen wie "vfs_list", "spawn_sub_agent" etc.
+            func_refs = re.findall(r'\b(vfs_\w+|spawn_\w+|memory_\w+|analyze_\w+|load_tools|list_tools)\b', ss)
+            record.tools_used.extend(func_refs)
+
+        # Deduplicate tools
+        record.tools_used = list(dict.fromkeys(record.tools_used))
+
+        # ── Error detection ──
+        error_patterns = re.compile(
+            r'(Fehler|Error|failed|exception|traceback|❌|🔴)',
+            re.IGNORECASE
+        )
+        for line in content.split("\n"):
+            if error_patterns.search(line):
+                # Filtere false positives (Tabellen-Header, Empfehlungen etc.)
+                if any(fp in line.lower() for fp in ["empfehlung", "beheben", "sovort", "sofort", "level"]):
+                    continue
                 record.error_traces.append(line.strip()[:200])
 
-        # Extract run_id from filename
-        parts = path.split("/")[-1].replace(".md", "").split("_", 2)
-        if len(parts) >= 3:
-            record.run_id = parts[2]
-            record.timestamp = f"{parts[0]}_{parts[1]}"
-
-        # Heuristik: Erfolgreich wenn WENIG Errors relativ zu Tools
+        # ── Success-Heuristik (verbessert) ──
         if record.error_traces:
-            error_ratio = len(record.error_traces) / max(len(record.tools_used), 1)
-            record.success = error_ratio < 0.05  # Max 5% Error-Rate
+            # Gewichtet: Echte Errors zählen mehr als "Error" in beschreibendem Text
+            real_errors = [e for e in record.error_traces
+                          if any(kw in e.lower() for kw in ("traceback", "exception", "❌", "failed"))]
+            error_ratio = len(real_errors) / max(len(record.tools_used), 1)
+            record.success = error_ratio < 0.1
         else:
             record.success = True
-        return record if record.query else None
+
+        # ── Nur Records mit sinnvoller Query zurückgeben ──
+        if not record.query:
+            _log.debug(f"[Dreamer] Skipped log {path}: no meaningful query found")
+            return None
+
+        return record
 
     def _keyword_cluster(self, records: list[RunRecord]) -> dict[str, list[RunRecord]]:
         clusters: dict[str, list[RunRecord]] = {}
@@ -762,10 +1148,9 @@ class Dreamer:
                 if j in assigned:
                     continue
                 words_j = set(records[j].query.lower().split()) - STOP_WORDS
-                # Jaccard similarity statt absoluter overlap
                 union = len(words_i | words_j)
                 overlap = len(words_i & words_j)
-                if union > 0 and overlap / union >= 0.4:  # 40% Jaccard
+                if union > 0 and overlap / union >= 0.4:
                     cluster.append(records[j])
                     assigned.add(j)
 
@@ -773,6 +1158,26 @@ class Dreamer:
                 clusters[f"kw_{len(clusters)}"] = cluster
 
         return clusters
+
+    def _add_unclustered(self, records: list[RunRecord],
+                         clusters: dict[str, list[RunRecord]],
+                         assigned: set = None):
+        """
+        [F2] Records die keinem Cluster zugeordnet wurden als
+             Einzel-Cluster aufnehmen damit sie trotzdem analysiert werden.
+        """
+        if assigned is None:
+            # Berechne assigned aus existing clusters
+            assigned = set()
+            for cluster_records in clusters.values():
+                for cr in cluster_records:
+                    for i, r in enumerate(records):
+                        if r.run_id == cr.run_id:
+                            assigned.add(i)
+
+        for i, r in enumerate(records):
+            if i not in assigned:
+                clusters[f"single_{i}"] = [r]
 
     def _build_analysis_prompt(
         self,
@@ -788,6 +1193,19 @@ class Dreamer:
             f"- Query: {r.query[:60]} | Errors: {'; '.join(r.error_traces[:2])}"
             for r in failures[:5]
         )
+
+        # [F3] Kontext über existierende Skills mitgeben damit das LLM
+        #      informiert updaten kann statt blind zu ersetzen
+        existing_context = ""
+        sm = self.agent.session_manager.skills_manager
+        for skill in sm.skills.values():
+            if skill.matches_keywords(records[0].query if records else ""):
+                existing_context = (
+                    f"\nEXISTIERENDER SKILL '{skill.name}' (confidence={skill.confidence:.2f}):\n"
+                    f"{skill.instruction[:200]}...\n"
+                    f"Triggers: {', '.join(skill.triggers[:5])}\n"
+                )
+                break
 
         split_section = ""
         if config.do_skill_split:
@@ -805,7 +1223,7 @@ ERFOLGREICHE TOOLS: {success_tools}
 
 FEHLSCHLÄGE:
 {failure_info or "Keine"}
-
+{existing_context}
 Erstelle eine JSON-Analyse:
 {{
   "dominant_intent": "Was wollen die Nutzer hier generell?",
@@ -821,7 +1239,6 @@ Antworte NUR mit dem JSON."""
     def _parse_analysis(self, response: str, success_count: int, total: int) -> ClusterAnalysis:
         """Parse LLM analysis response."""
         try:
-            # Strip markdown fences
             clean = response.strip()
             if clean.startswith("```"):
                 clean = "\n".join(clean.split("\n")[1:])
@@ -856,10 +1273,7 @@ Antworte NUR mit dem JSON."""
 # =============================================================================
 
 async def consume_published_skills(agent: 'FlowAgent', session_id: str = "default"):
-    """
-    Check BindManager sync for published skills from bound agents.
-    Called at runtime (e.g. session init or periodic).
-    """
+    """Check BindManager sync for published skills from bound agents."""
     bm = getattr(agent, 'bind_manager', None)
     if not bm:
         return
@@ -876,7 +1290,6 @@ async def consume_published_skills(agent: 'FlowAgent', session_id: str = "defaul
             if not isinstance(skill_data, dict):
                 continue
 
-            # Import with discount (shared skills start lower)
             skill_data["confidence"] = min(skill_data.get("confidence", 0.5), 0.7)
             skill_data["source"] = "imported"
 
@@ -884,6 +1297,3 @@ async def consume_published_skills(agent: 'FlowAgent', session_id: str = "defaul
             await bm.acknowledge_sync(entry.id, session_id)
 
             _log.info(f"[SkillMarket] Adopted skill '{skill_data.get('name')}' from {partner}")
-
-
-

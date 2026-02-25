@@ -2793,9 +2793,10 @@ class AgentAdapter:
 
 class AgentAdapterSt:
     """Adapter for FlowAgent integration with cost tracking"""
-    def __init__(self, agent):
+    def __init__(self, agent, zen_callback):
         self.agent = agent
         self.bench = Benchmark()
+        self.zen_callback = zen_callback
 
     async def benchmark(self, model_id: str, mode: str = "standard", seed: int = None) -> Report:
         async def fn(p: str):
@@ -2804,8 +2805,12 @@ class AgentAdapterSt:
             start_tokens_in = self.agent.total_tokens_in
             start_tokens_out = self.agent.total_tokens_out
             r = ""
-            async for chunk in self.agent.a_stream_verbose(query=p,wait_for_hard=True, session_id="benchmark"):
-                r += str(chunk) if not type(chunk) == str else chunk
+            async for chunk in self.agent.a_stream(query=p,wait_for_hard=True, session_id="benchmark"):
+                if self.zen_callback:
+                    self.zen_callback(chunk)
+
+                if chunk.get("type") in ["done", "final_answer"]:
+                    r = chunk.get("final_answer", chunk.get("answer"))
             cost_info = {
                 "total_cost": self.agent.total_cost_accumulated - start_cost,
                 "tokens_in": self.agent.total_tokens_in - start_tokens_in,

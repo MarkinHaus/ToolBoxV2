@@ -74,7 +74,7 @@ class Database:
         -- Publishers table
         CREATE TABLE IF NOT EXISTS publishers (
             id TEXT PRIMARY KEY,
-            clerk_user_id TEXT UNIQUE NOT NULL,
+            cloudm_user_id TEXT UNIQUE NOT NULL,
             name TEXT NOT NULL,
             slug TEXT UNIQUE NOT NULL,
             email TEXT NOT NULL,
@@ -94,7 +94,7 @@ class Database:
 
         -- Users table
         CREATE TABLE IF NOT EXISTS users (
-            clerk_user_id TEXT PRIMARY KEY,
+            cloudm_user_id TEXT PRIMARY KEY,
             email TEXT NOT NULL,
             username TEXT NOT NULL,
             publisher_id TEXT REFERENCES publishers(id),

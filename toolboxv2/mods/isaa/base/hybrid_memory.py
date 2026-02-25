@@ -229,6 +229,8 @@ class HybridMemoryStore:
 
         Optimized for raw, changing data - immediately queryable
         """
+        if meta is not None and ttl is None:
+            ttl = meta.get("ttl")
         # Compute hash for deduplication
         content_hash = hashlib.sha256(content.encode()).hexdigest()
 

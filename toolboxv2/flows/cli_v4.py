@@ -29,7 +29,6 @@ from typing import Any
 
 from prompt_toolkit.document import Document
 
-from toolboxv2.mods.isaa.extras.dream_graph import dream_with_viz_v2
 from toolboxv2.mods.isaa.extras.zen.zen_plus import ZenPlus
 
 # Suppress noisy loggers
@@ -69,6 +68,11 @@ from toolboxv2 import init_cwd, tb_root_dir
 import json
 from prompt_toolkit import print_formatted_text, HTML
 from toolboxv2.mods.isaa.CodingAgent.coder import CoderAgent
+import sys
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 # =================== Helpers & Setup ===================
 MODEL_MAPPING = {
@@ -1076,6 +1080,24 @@ class ISAA_Host:
 
     def __init__(self, app_instance: Any = None):
         """Initialize the ISAA Host system."""
+
+        from toolboxv2.mods.isaa.extras.isaa_branding import FlowMatrixAnimation, print_isaa_header
+
+        self.anim = FlowMatrixAnimation(state='initializing', fps=3)
+
+        self.host_id = str(uuid.uuid4())[:8]
+        print_isaa_header(
+            host_id=self.host_id,
+            uptime=None,
+            version=VERSION,
+            state='initializing',
+            agent_count=-1,
+            task_count=-1,
+            show_system_bar=False,
+            subtitle='time-random',
+        )
+        # Startup: animated rain for 2.5s
+        # app_instance.run_bg_task_advanced(self.anim.play_startup,duration=1.5)
         self.zen_plus_mode = False
         self.app = app_instance or get_app("isaa-host")
         def _(*args, **k):
@@ -1090,7 +1112,6 @@ class ISAA_Host:
         self.isaa_tools: 'IsaaTools' = self.app.get_mod("isaa")
 
         # Host state
-        self.host_id = str(uuid.uuid4())[:8]
         self.started_at = datetime.now()
 
         # Global Rate Limiter Config (shared across all agents)
@@ -1160,6 +1181,7 @@ class ISAA_Host:
         self.feature_manager = SimpleFeatureManager()
         for feature in ALL_FEATURES.values():
             feature(self.feature_manager)
+
 
     # =========================================================================
     # RATE LIMITER CONFIG MANAGEMENT
@@ -1264,6 +1286,7 @@ class ISAA_Host:
         def _(event):
             """Toggle audio recording with F4."""
             asyncio.create_task(self._toggle_audio_recording())
+            self.anim.set_mode('audio' if self._audio_recording else 'dreaming')
 
         @kb.add("f5")
         def _(event):
@@ -1297,21 +1320,52 @@ class ISAA_Host:
         @kb.add("tab")
         def handle_tab(event):
             buf = event.app.current_buffer
+
             if buf.complete_state:
-                # Completion offen: aktuelle oder erste akzeptieren
-                if buf.complete_state.current_completion is None:
-                    buf.complete_state.go_to_index(0)
-                buf.apply_completion(buf.complete_state.current_completion)
-                # Directory → nächste Ebene
-                if buf.text.rstrip().endswith("/"):
-                    buf.start_completion()
-                    if buf.complete_state:
-                        buf.complete_state.go_to_index(0)
+                completions = list(buf.complete_state.completions)
+
+                if len(completions) == 1:
+                    # Eindeutig → sofort akzeptieren
+                    buf.apply_completion(completions[0])
+                    # Directory drill-down
+                    if buf.text.rstrip().endswith("/"):
+                        buf.start_completion()
+                else:
+                    # Mehrere → common prefix einfügen oder cyclen
+                    common = _common_prefix([c.text for c in completions])
+                    current_partial = buf.document.get_word_before_cursor()
+
+                    if common and len(common) > len(current_partial):
+                        # Gemeinsamen Prefix einfügen (ohne Menü zu schließen)
+                        buf.insert_text(common[len(current_partial):])
+                    else:
+                        # Kein weiterer Prefix → nächste Option selecten
+                        buf.complete_next()
             else:
-                # Completion starten + erste vorauswählen
                 buf.start_completion()
                 if buf.complete_state:
-                    buf.complete_state.go_to_index(0)
+                    completions = list(buf.complete_state.completions)
+                    if len(completions) == 1:
+                        buf.apply_completion(completions[0])
+                        if buf.text.rstrip().endswith("/"):
+                            buf.start_completion()
+
+        @kb.add("s-tab")
+        def handle_shift_tab(event):
+            buf = event.app.current_buffer
+            if buf.complete_state:
+                buf.complete_previous()
+
+        def _common_prefix(strings: list[str]) -> str:
+            if not strings:
+                return ""
+            prefix = strings[0]
+            for s in strings[1:]:
+                while not s.startswith(prefix):
+                    prefix = prefix[:-1]
+                    if not prefix:
+                        return ""
+            return prefix
 
         return kb
 
@@ -2379,6 +2433,8 @@ class ISAA_Host:
         is_vfs = False
         model_options: dict = {}
         current_skills: dict = {}
+        tool_names: dict = {}
+        tool_cats: dict = {}
         checkpoint_structure: dict = {
                     "save": {a: None for a in agents},
                     "load": {a: None for a in agents},
@@ -2395,15 +2451,19 @@ class ISAA_Host:
                 engine = agent._get_execution_engine()
                 if hasattr(engine, 'skills_manager'):
                     current_skills = {s_id: None for s_id in engine.skills_manager.skills.keys()}
-            model_options = {m: None for m in MODEL_MAPPING.keys()}
 
-            # Tools-Optionen
-            tools_flag = {
-                "true": None,
-                "false": None,
-                "t": None,
-                "f": None,
-            }
+                if hasattr(agent, "tool_manager"):
+                    for t_obj in agent.tool_manager.get_all():
+                        tool_names[t_obj.name] = None
+                        cats = t_obj.category if isinstance(t_obj.category, list) else ["uncategorized"]
+                        for c in cats: tool_cats[c] = None
+
+                    if hasattr(agent, "_disabled_tools"):
+                        for t_name, t_obj in agent._disabled_tools.items():
+                            tool_names[t_name] = None
+                            cats = t_obj.category if isinstance(t_obj.category, list) else ["uncategorized"]
+                            for c in cats: tool_cats[c] = None
+            model_options = {m: None for m in MODEL_MAPPING.keys()}
 
             # Agent-Unterstruktur für save/load
             checkpoint_structure = {}
@@ -2426,15 +2486,37 @@ class ISAA_Host:
 
         path_compl = PathCompleter(expanduser=True)
 
+        d = {
+            "/agent": None, "/audio": None, "/coder": None, "/job": None,
+            "/mcp": None, "/session": None, "/skill": None, "/task": None,
+            "/tools": None, "/vfs": None, "/zenplus": None, "/feature": None
+        }
 
+        # Die spezifischen Hilfe-Kategorien
+        help_sub_commands = {
+            "all": None,  # Komplette Referenz
+            "min": None,  # Nur das Wichtigste
+            "guide": None,  # Nutzungstipps & Prompts
+            "discord": None,  # Discord Extension Guide
+            **{cmd.lstrip("/"): None for cmd in d.keys()}  # Erlaubt /help agent etc.
+        }
 
         return {
-            "/help": None,
+            "/help": help_sub_commands,
             "/quit": None,
             "/exit": None,
             "/clear": None,
             "/status": None,
             "/vfs": {"init":None},
+            "/tools": {
+                "list": tool_cats,
+                "all": None,  # Neu
+                "info": tool_names,  # Neu
+                "enable": {**tool_names, **tool_cats}, # Beides in einer Liste
+                "disable": {**tool_names, **tool_cats},
+                "enable-all": None,
+                "disable-all": None,
+            },
             "/audio": {
                 "on": None,
                 "off": None,
@@ -2597,7 +2679,7 @@ class ISAA_Host:
             items.append("<style fg='grey'>F4:AUDIO</style>")
 
         # F5 – Dashboard
-        items.append("<style fg='ansicyan'>F5:STAT</style>")
+        items.append("<style fg='ansicyan'>F5:INFOS</style>")
 
         # F6 – Minimize Renderer
         if hasattr(self, "_active_renderer") and self._active_renderer:
@@ -2607,6 +2689,9 @@ class ISAA_Host:
 
     async def _print_status_dashboard(self):
         """Print comprehensive status dashboard."""
+        if True:
+            from toolboxv2.mods.isaa.extras.isaa_branding import print_status_dashboard_v2
+            return await print_status_dashboard_v2(self)
         c_print()
         print_box_header(f"{CLI_NAME} v{VERSION}", "🤖")
 
@@ -2709,80 +2794,150 @@ class ISAA_Host:
 
         c_print()
 
-    def _print_help(self):
+    def _print_help(self, args):
+        """Haupthandler für Hilfe-Ausgaben."""
+        sub = args[0].lower() if args else "min"
+
+        if sub == "all":
+            self._print_help_all(args)
+        elif sub == "guide":
+            self._print_help_guide()
+        elif sub == "discord":
+            self._print_help_discord()
+        elif sub == "min":
+            self._print_help_min()
+        else:
+            # Suche nach spezifischer Hilfe für einen Befehl (z.B. /help vfs)
+            print_status(f"Detail-Hilfe für {sub} folgt (Nutze /help all für alles)", "info")
+            self._print_help_min()
+
+    def _print_help_min(self):
+        """Kompakte Hilfe für den schnellen Überblick."""
+        print_box_header("ISAA Quick Help", "🚀")
+        print_box_content("Basics:", "bold")
+        print_box_content("/status          - Dashboard (F5)", "")
+        print_box_content("/agent switch    - Agent wechseln", "")
+        print_box_content("/tools list      - Tools verwalten", "")
+        print_box_content("F4               - Voice Recording Start/Stop", "")
+        print_box_content("! <cmd>          - Shell Befehl direkt ausführen", "")
+        print_separator()
+        print_box_content("Erweiterte Hilfe:", "info")
+        print_box_content("/help all        - Alle Befehle (Referenz)", "")
+        print_box_content("/help guide      - Beispiele & Start-Prompts", "")
+        print_box_content("/help discord    - Discord Integration Guide", "")
+        print_box_footer()
+
+    def _print_help_guide(self):
+        """Guide mit konkreten Beispielen und Prompts."""
+        print_box_header("ISAA Usage Guide", "💡")
+        print_status("Beispiel-Szenarien:", "info")
+
+        print_box_content("1. Coding Projekt starten:", "bold")
+        print_box_content("   > /vfs mount ./my_project /src", "")
+        print_box_content("   > /coder start /src", "")
+        print_box_content("   Prompt: 'Analysiere die main.py und füge Logging hinzu.'", "")
+
+        print_box_content("2. Web Recherche:", "bold")
+        print_box_content("   > /feature enable full_web_auto", "")
+        print_box_content("   Prompt: 'Suche nach den neuesten KI-News und fasse sie zusammen.'", "")
+
+        print_box_content("3. Langzeit-Tasks (Jobs):", "bold")
+        print_box_content("   > /job add (Interaktiver Modus)", "")
+        print_box_content("   Prompt: 'Prüfe jede Stunde ob der Server online ist.'", "")
+
+        print_separator()
+        print_status("Tipp: Nutze #audio am Ende einer Nachricht für Sprachausgabe!", "success")
+        print_box_footer()
+
+    def _print_help_discord(self):
+        """Spezifische Hilfe für die Discord Extension."""
+        print_box_header("Discord Integration Guide", "💬")
+        print_box_content("Setup:", "bold")
+        print_box_content("/discord connect <token>    - Bot starten", "")
+        print_box_content("/discord status             - Connection prüfen", "")
+        print_separator()
+        print_box_content("Voice & Interaction:", "bold")
+        print_box_content("/discord voice channels     - Channels auflisten", "")
+        print_box_content("/discord voice join <id>    - In Voice Channel gehen", "")
+        print_box_content("/discord send <addr> <msg>  - Nachricht an User/Channel", "")
+        print_box_content("Hinweis: Der Bot reagiert in Discord auf @Mentions", "info")
+        print_box_footer()
+
+
+    def _print_help_all(self, args):
         """Print help information."""
         print_box_header("ISAA Host Commands", "❓")
 
         print_status("Navigation", "info")
-        print_box_content("/help   - Show this help", "")
-        print_box_content("/status - Show status dashboard (or F5)", "")
-        print_box_content("/clear   - Clear screen", "")
-        print_box_content("/zenplus - Togged full Screen agent live vier", "")
+        print_box_content("/help                                        - Show this help", "")
+        print_box_content("/status                                      - Show status dashboard (or F5)", "")
+        print_box_content("/clear                                       - Clear screen", "")
+        print_box_content("/zenplus                                     - Togged full Screen agent live vier", "")
         print_box_content("/quit, /exit - Exit CLI", "")
-        print_box_content("F2  - Switch between ZEN and ZEN+ interaction mode", "")
-        print_box_content("F4  - Start / stop audio recording pipeline", "")
-        print_box_content("F5  - Display status dashboard (VFS, Skills, MCP, Session)", "")
-        print_box_content("F6  - Collapse / expand active agent output view", "")
-        print_box_content("TAB - Activate or confirm command autocompletion", "")
-        print_box_content("Ctrl+C - Safe stop agent (continue/fresh/quit)", "")
+        print_box_content("F2                                           - Switch between ZEN and ZEN+ interaction mode", "")
+        print_box_content("F4                                           - Start / stop audio recording pipeline", "")
+        print_box_content("F5                                           - Display status dashboard (VFS, Skills, MCP, Session)", "")
+        print_box_content("F6                                           - Collapse / expand active agent output view", "")
+        print_box_content("TAB                                          - Activate or confirm command autocompletion", "")
+        print_box_content("Ctrl+C                                       - Safe stop agent (continue/fresh/quit)", "")
 
         print_separator()
 
         print_status("Agent Management", "info")
-        print_box_content("/agent list - List all agents", "")
-        print_box_content("/agent switch <name> - Switch active agent", "")
-        print_box_content("/agent spawn <name> <persona> - Create new agent", "")
-        print_box_content("/agent stop <name> - Stop agent tasks", "")
-        print_box_content("/agent model <fast|complex> <name> - Change LLM model on the fly", "")
-        print_box_content("/agent checkpoint <save|load> [name]   - Manage state persistence", "")
-        print_box_content("/agent checkpoint help        - list information's about addition args like path", "")
-        print_box_content("/agent load-all               - Initialize all agents from disk", "")
-        print_box_content("/agent save-all               - Save checkpoints for all active agents", "")
-        print_box_content("/agent stats [name]           - Show token usage and cost metrics", "")
-        print_box_content("/agent delete <name>          - Remove agent and its data", "")
-        print_box_content("/agent config <name>          - View raw JSON configuration", "")
+        print_box_content("/agent list                                  - List all agents", "")
+        print_box_content("/agent switch <name>                         - Switch active agent", "")
+        print_box_content("/agent spawn <name> <persona>                - Create new agent", "")
+        print_box_content("/agent stop <name>                           - Stop agent tasks", "")
+        print_box_content("/agent model <fast|complex> <name>           - Change LLM model on the fly", "")
+        print_box_content("/agent checkpoint <save|load> [name]         - Manage state persistence", "")
+        print_box_content("/agent checkpoint help                       - list information's about addition args like path", "")
+        print_box_content("/agent load-all                              - Initialize all agents from disk", "")
+        print_box_content("/agent save-all                              - Save checkpoints for all active agents", "")
+        print_box_content("/agent stats [name]                          - Show token usage and cost metrics", "")
+        print_box_content("/agent delete <name>                         - Remove agent and its data", "")
+        print_box_content("/agent config <name>                         - View raw JSON configuration", "")
 
         print_separator()
 
         print_status("Session Management", "info")
-        print_box_content("/session list - List sessions", "")
-        print_box_content("/session switch <id> - Switch session", "")
-        print_box_content("/session new - Create new session", "")
-        print_box_content("/session show [n]       - Show last n messages (default 10)", "")
-        print_box_content("/session clear          - Clear current session history", "")
+        print_box_content("/session list                                 - List sessions", "")
+        print_box_content("/session switch <id>                          - Switch session", "")
+        print_box_content("/session new                                  - Create new session", "")
+        print_box_content("/session show [n]                             - Show last n messages (default 10)", "")
+        print_box_content("/session clear                                - Clear current session history", "")
 
         print_separator()
 
         print_status("MCP Management (Live)", "info")
-        print_box_content("/mcp list                    - Zeige aktive MCP Verbindungen", "")
-        print_box_content("/mcp add <n> <cmd> [args]    - Server hinzufügen & Tools laden", "")
-        print_box_content("/mcp remove <name>           - Server trennen & Tools löschen", "")
-        print_box_content("/mcp reload                  - Alle MCP Tools neu indizieren", "")
+        print_box_content("/mcp list                                    - Zeige aktive MCP Verbindungen", "")
+        print_box_content("/mcp add <n> <cmd> [args]                    - Server hinzufügen & Tools laden", "")
+        print_box_content("/mcp remove <name>                           - Server trennen & Tools löschen", "")
+        print_box_content("/mcp reload                                  - Alle MCP Tools neu indizieren", "")
 
         print_separator()
 
         print_status("Task Management", "info")
-        print_box_content("/task                    - Show all background tasks", "")
-        print_box_content("/task view [id]          - Live view of task (auto-selects if 1)", "")
-        print_box_content("/task cancel <id>        - Cancel a running task", "")
-        print_box_content("/task clean              - Remove finished tasks", "")
-        print_box_content("F6 during execution      - Move agent to background", "")
+        print_box_content("/task                                        - Show all background tasks", "")
+        print_box_content("/task view [id]                              - Live view of task (auto-selects if 1)", "")
+        print_box_content("/task cancel <id>                            - Cancel a running task", "")
+        print_box_content("/task clean                                  - Remove finished tasks", "")
+        print_box_content("F6 during execution                          - Move agent to background", "")
 
         print_separator()
 
         print_status("Job Scheduler", "info")
-        print_box_content("/job list                - List all scheduled jobs", "")
-        print_box_content("/job add                 - Add a new job (interactive)", "")
-        print_box_content("/job remove <id>         - Remove a job", "")
-        print_box_content("/job pause <id>          - Pause a job", "")
-        print_box_content("/job resume <id>         - Resume a paused job", "")
-        print_box_content("/job fire <id>           - Manually fire a job now", "")
-        print_box_content("/job detail <id>         - Show job details", "")
-        print_box_content("/job autowake <cmd>      - Manage OS auto-wake (install/remove/status)", "")
+        print_box_content("/job list                                    - List all scheduled jobs", "")
+        print_box_content("/job add                                     - Add a new job (interactive)", "")
+        print_box_content("/job remove <id>                             - Remove a job", "")
+        print_box_content("/job pause <id>                              - Pause a job", "")
+        print_box_content("/job resume <id>                             - Resume a paused job", "")
+        print_box_content("/job fire <id>                               - Manually fire a job now", "")
+        print_box_content("/job detail <id>                             - Show job details", "")
+        print_box_content("/job autowake <cmd>                          - Manage OS auto-wake (install/remove/status)", "")
         print_status("Dreamer Job", "info")
-        print_box_content("/job dream create [agent]    - Create nightly dream job (default: self, 03:00)", "")
-        print_box_content("/job dream status            - Show all configured dream jobs", "")
-        print_box_content("/job dream live              - Run dream process now with visualization", "")
+        print_box_content("/job dream create [agent]                    - Create nightly dream job (default: self, 03:00)", "")
+        print_box_content("/job dream status                            - Show all configured dream jobs", "")
+        print_box_content("/job dream live                              - Run dream process now with visualization", "")
 
         print_separator()
 
@@ -2792,58 +2947,68 @@ class ISAA_Host:
         print_box_content("/context stats - Show context stats", "")
         print_separator()
         print_status("History Management", "info")
-        print_box_content("/history show [n]       - Show last n messages (default 10)", "")
-        print_box_content("/history clear          - Clear current session history", "")
+        print_box_content("/history show [n]                            - Show last n messages (default 10)", "")
+        print_box_content("/history clear                               - Clear current session history", "")
         print_separator()
         print_status("VFS Management", "info")
-        print_box_content("/vfs                         - Show VFS tree", "")
-        print_box_content("/vfs <path>                  - Show file content or dir listing", "")
-        print_box_content("/vfs mount <path> [vfs_path] - Mount local folder", "")
-        print_box_content("/vfs unmount <vfs_path>      - Unmount folder", "")
-        print_box_content("/vfs sync [path]             - Sync file/dir to disk", "")
-        print_box_content("/vfs save <vfs_path> <local> - Save file/dir to local path", "")
-        print_box_content("/vfs refresh <mount>         - Re-scan mount for changes", "")
-        print_box_content("/vfs pull <path>             - Reload file/dir from disk", "")
-        print_box_content("/vfs mounts                  - List active mounts", "")
-        print_box_content("/vfs dirty                   - Show modified files", "")
-        print_box_content("/vfs rm/remove               - Remove Folder or File", "")
+        print_box_content("/vfs                                         - Show VFS tree", "")
+        print_box_content("/vfs <path>                                  - Show file content or dir listing", "")
+        print_box_content("/vfs mount <path> [vfs_path]                 - Mount local folder", "")
+        print_box_content("/vfs unmount <vfs_path>                      - Unmount folder", "")
+        print_box_content("/vfs sync [path]                             - Sync file/dir to disk", "")
+        print_box_content("/vfs save <vfs_path> <local>                 - Save file/dir to local path", "")
+        print_box_content("/vfs refresh <mount>                         - Re-scan mount for changes", "")
+        print_box_content("/vfs pull <path>                             - Reload file/dir from disk", "")
+        print_box_content("/vfs mounts                                  - List active mounts", "")
+        print_box_content("/vfs dirty                                   - Show modified files", "")
+        print_box_content("/vfs rm/remove                               - Remove Folder or File", "")
         print_separator()
         print_status("System Files (Read-Only)", "info")
-        print_box_content("/vfs sys-add <local> [path]  - Add file as read-only system file", "")
-        print_box_content("/vfs sys-remove <vfs_path>    - Remove a system file", "")
-        print_box_content("/vfs sys-refresh <vfs_path>  - Reload system file from disk", "")
-        print_box_content("/vfs sys-list                 - List all system files", "")
+        print_box_content("/vfs sys-add <local> [path]                  - Add file as read-only system file", "")
+        print_box_content("/vfs sys-remove <vfs_path>                   - Remove a system file", "")
+        print_box_content("/vfs sys-refresh <vfs_path>                  - Reload system file from disk", "")
+        print_box_content("/vfs sys-list                                - List all system files", "")
         print_separator()
         print_status("Mount Options", "info")
-        print_box_content("  --readonly                 - No write operations", "")
-        print_box_content("  --no-sync                  - Manual sync only", "")
+        print_box_content("  --readonly                                 - No write operations", "")
+        print_box_content("  --no-sync                                  - Manual sync only", "")
         print_separator()
         print_status("Skill Management", "info")
-        print_box_content("/skill list             - List skills of active agent", "")
-        print_box_content("/skill list --inactive  - List inactive skills ", "")
-        print_box_content("/skill show <id>        - Show details/instruction", "")
-        print_box_content("/skill edit <id>        - Edit skill instruction", "")
-        print_box_content("/skill delete <id>      - Delete a skill", "")
+        print_box_content("/skill list                                  - List skills of active agent", "")
+        print_box_content("/skill list --inactive                       - List inactive skills ", "")
+        print_box_content("/skill show <id>                             - Show details/instruction", "")
+        print_box_content("/skill edit <id>                             - Edit skill instruction", "")
+        print_box_content("/skill delete <id>                           - Delete a skill", "")
         print_box_content("/skill merge <keep_id> <remove_id>", "")
-        print_box_content("/skill boost <skill_id> 0.3  - Delete a skill", "")
-        print_box_content("/skill import <path>         - import skills from directory/skill file", "")
-        print_box_content("/skill export <id> <path>    - id=all Extprt skill or all skills", "")
+        print_box_content("/skill boost <skill_id> 0.3                  - Delete a skill", "")
+        print_box_content("/skill import <path>                         - import skills from directory/skill file", "")
+        print_box_content("/skill export <id> <path>                    - id=all Extprt skill or all skills", "")
         print_separator()
 
+        print_status("Tool Management", "info")
+        print_box_content("/tools list [cat]                            - List all tools (optional by category)", "")
+        print_box_content("/tools all                                   - List all tools (optional by category)", "")
+        print_box_content("/tools info                                  - List all tools (optional by category)", "")
+        print_box_content("/tools enable <name/cat>                     - Enable a specific tool", "")
+        print_box_content("/tools disable <name/cat>                    - Disable a specific tool", "")
+        print_box_content("/tools enable-all                            - Enable all disabled tools", "")
+        print_box_content("/tools disable-all                           - Disable all non-system tools", "")
+
+        print_separator()
         print_status("Additional Features", "info")
-        print_box_content("/feature list                     - List all features", "")
-        print_box_content("/feature disable <feature>        - Disable a feature", "")
-        print_box_content("/feature enable <feature>         - Enable a feature", "")
-        print_box_content("/feature enable desktop           - Enable Desktop Automation", "")
-        print_box_content("/feature enable web <headless>    - Enable Desktop Web Automation", "")
+        print_box_content("/feature list                                - List all features", "")
+        print_box_content("/feature disable <feature>                   - Disable a feature", "")
+        print_box_content("/feature enable <feature>                    - Enable a feature", "")
+        print_box_content("/feature enable desktop                      - Enable Desktop Automation", "")
+        print_box_content("/feature enable web <headless>               - Enable Desktop Web Automation", "")
         print_separator()
 
         print_status("Audio Settings", "info")
-        print_box_content("/audio on       - Enable verbose audio", "")
-        print_box_content("/audio off      - Disable verbose audio", "")
-        print_box_content("/audio voice <v>- Set voice", "")
-        print_box_content("/audio backend <b> - Set backend (groq/piper/elevenlabs)", "")
-        print_box_content("/audio stop     - Stop current playback", "")
+        print_box_content("/audio on                                    - Enable verbose audio", "")
+        print_box_content("/audio off                                   - Disable verbose audio", "")
+        print_box_content("/audio voice <v>                             - Set voice", "")
+        print_box_content("/audio backend <b>                           - Set backend (groq/piper/elevenlabs)", "")
+        print_box_content("/audio stop                                  - Stop current playback", "")
         print_box_content("", "")
         print_box_content("Tip: Add #audio to any message for one-time audio response", "info")
         print_separator()
@@ -2869,7 +3034,7 @@ class ISAA_Host:
             await self._print_status_dashboard()
 
         elif cmd == "/help":
-            self._print_help()
+            self._print_help(args)
 
         elif cmd == "/status":
             await self._print_status_dashboard()
@@ -2888,6 +3053,9 @@ class ISAA_Host:
 
         elif cmd == "/mcp":
             await self._cmd_mcp(args)
+
+        elif cmd == "/tools":
+            await self._cmd_tools(args)
 
         elif cmd == "/vfs":
             await self._cmd_vfs(args)
@@ -3733,9 +3901,18 @@ class ISAA_Host:
                             "info"
                         )
             elif sub == "live":
-                agent: FlowAgent= await self.isaa_tools.get_agent(self.active_agent_name)
-                agent.active_session = self.active_session_id
-                await dream_with_viz_v2(self.isaa_tools, self.active_agent_name)
+                if self.zen_plus_mode:
+                    from toolboxv2.mods.isaa.extras.zen.dream_zen_adapter import patch_zen_dream, dream_with_viz_v2, unpatch_zen_dream
+                    og = {}
+                    og = patch_zen_dream(og)
+                    report = await dream_with_viz_v2(self.isaa_tools, self.active_agent_name)
+                    unpatch_zen_dream(og)
+                else:
+
+                    from toolboxv2.mods.isaa.extras.dream_graph import dream_with_viz_v2
+                    agent: FlowAgent= await self.isaa_tools.get_agent(self.active_agent_name)
+                    agent.active_session = self.active_session_id
+                    await dream_with_viz_v2(self.isaa_tools, self.active_agent_name)
 
         else:
             print_status(f"Unknown job action: {action}. Use: list, add, remove, pause, resume, fire, detail, autowake", "error")
@@ -5192,6 +5369,224 @@ class ISAA_Host:
         else:
             print_status(f"Unknown feature action: {action}", "error")
 
+    async def _cmd_tools(self, args: list[str]):
+        """Intelligentes Tool-Management: Erkennt automatisch Namen oder Kategorien."""
+        if not args:
+            print_status("Usage: /tools <list|all|info|enable|disable|enable-all|disable-all> [name/category]", "warning")
+            return
+
+        action = args[0].lower()
+
+        # Helper zum Laden des Agenten
+        try:
+            agent = await self.isaa_tools.get_agent(self.active_agent_name)
+        except:
+            return print_status(f"Agent '{self.active_agent_name}' nicht erreichbar.", "error")
+
+        if not hasattr(agent, "tool_manager"): return
+        if not hasattr(agent, "_disabled_tools"): agent._disabled_tools = {}
+
+        tm = agent.tool_manager
+        disabled_map = agent._disabled_tools
+        sys_cats = ["sys", "system", "core", "base", "agent_management", "task_management"]
+
+        # Interne Helper
+        def get_all_cats():
+            cats = set(tm._category_index.keys())
+            for t in disabled_map.values():
+                for c in (t.category if isinstance(t.category, list) else []): cats.add(str(c).lower())
+            return cats
+
+        def get_tool_cats(t_obj):
+            return [str(c).lower() for c in t_obj.category] if isinstance(t_obj.category, list) else ["uncategorized"]
+
+        async def perform_action(t_name, mode):
+            """Führt die eigentliche Verschiebung durch."""
+            if mode == "enable":
+                if t_name in disabled_map:
+                    entry = disabled_map.pop(t_name)
+                    tm._registry[t_name] = entry
+                    tm._update_indexes(entry)
+                    if tm._rule_set: tm._sync_tool_to_ruleset(entry)
+                    return True, t_name
+            else:  # disable
+                entry = tm.get(t_name)
+                if entry:
+                    # System-Schutz
+                    if any(c in sys_cats for c in get_tool_cats(entry)):
+                        return False, f"{t_name} (System-Schutz)"
+                    disabled_map[t_name] = entry
+                    tm.unregister(t_name)
+                    return True, t_name
+            return False, None
+
+        # --- LOGIK ---
+
+        C = {
+                "dim": "#6b7280", "cyan": "#67e8f9", "green": "#4ade80",
+                "red": "#f87171", "amber": "#fbbf24", "white": "#e5e7eb",
+                "bright": "#ffffff", "blue": "#60a5fa", "purple": "#a78bfa",
+                "deep": "#374151", "pink": "#f472b6", "teal": "#2dd4bf",
+                "orange": "#fb923c",
+            }
+
+        if action == "info":
+            if len(args) < 2: return print_status("Usage: /tools info <tool_name>", "warning")
+            t_name = args[1]
+            t_obj = tm.get(t_name) or disabled_map.get(t_name)
+
+            if not t_obj: return print_status(f"Tool '{t_name}' nicht gefunden.", "error")
+
+            print_box_header(f"Tool Info: {t_obj.name}", "ℹ")
+            status = "ENABLED" if tm.exists(t_obj.name) else "DISABLED"
+            col = C["green"] if status == "ENABLED" else C["dim"]
+
+            print_box_content(f"Status: {status} | Source: {t_obj.source} | Server: {t_obj.server_name or 'N/A'}",
+                              "info")
+
+            # Flags kompakt
+            f_list = [f"<style fg='{C['cyan']}'>{k}</style>" for k, v in t_obj.flags.items() if v]
+            print_box_content(f"Flags: {' '.join(f_list) if f_list else 'none'}", "info")
+
+            print_separator()
+            print_status("Description:", "info")
+            print_box_content(t_obj.description, "")
+
+            print_status("Arguments Schema:", "configure")
+            print_code_block(t_obj.args_schema, "python")
+
+            if t_obj.metadata:
+                print_status("Metadata:", "data")
+                print_code_block(json.dumps(t_obj.metadata, indent=2), "json")
+            print_box_footer()
+
+            # --- NEU: ALL (Super-Kompakt Tabelle für 500+ Tools) ---
+        elif action == "all":
+            print_box_header(f"All Tools Registry ({self.active_agent_name})", "🗃")
+
+            # Wir nutzen schmale Spalten für maximale Dichte
+            # Spalten: Index, Name (gekürzt), Quelle, Flags (R/W/D)
+            widths = [4, 32, 4, 6]
+            print_table_header([("#", 4), ("Tool Name", 32), ("Src", 4), ("Flags", 6)], widths)
+
+            all_tools = []
+            for t in tm.get_all(): all_tools.append((t, True))
+            for n, t in disabled_map.items(): all_tools.append((t, False))
+            all_tools.sort(key=lambda x: x[0].name)
+
+
+            for i, (t, enabled) in enumerate(all_tools, 1):
+                # Kompakte Flags: R=Read, W=Write, D=Dangerous
+                f = ""
+                if t.flags.get('read'): f += "R"
+                if t.flags.get('write'): f += "W"
+                if t.flags.get('dangerous'): f += "D"
+
+                name_col = C["bright"] if enabled else C["dim"]
+                src_map = {"local": "LCL", "mcp": "MCP", "a2a": "A2A"}
+                src_code = src_map.get(t.source, "???")
+
+                # Tabellenzeile drucken
+                print_table_row(
+                    [str(i).zfill(3), t.name[:31], src_code, f],
+                    widths,
+                    ["grey", name_col, "cyan", "amber"]
+                )
+
+                # Alle 50 Zeilen ein kleiner Separator zur Orientierung bei Massen
+                if i % 50 == 0:
+                    print_formatted_text(HTML(f"<style fg='{C['dim']}'>{'─' * 50}</style>"))
+
+            print_box_footer()
+            print_status(f"Total: {len(all_tools)} tools listed ({len(tm.get_all())} active).", "success")
+
+        elif action == "list":
+            # (Bleibt ähnlich wie vorher, zeigt aber alle Kategorien)
+            cat_filter = args[1].lower() if len(args) > 1 else None
+            print_box_header(f"Tools Overview: {self.active_agent_name}", "🔧")
+            print_table_header([("Name", 35), ("Status", 10), ("Category", 25)], [35, 10, 25])
+
+            all_entries = []
+            for t in tm.get_all(): all_entries.append((t.name, "enabled", "green", get_tool_cats(t)))
+            for n, t in disabled_map.items(): all_entries.append((n, "disabled", "grey", get_tool_cats(t)))
+
+            for name, stat, col, cats in sorted(all_entries):
+                if cat_filter and cat_filter not in cats: continue
+                print_table_row([name[:33], stat, ", ".join(cats)[:23]], [35, 10, 25], ["cyan", col, "grey"])
+            print_box_footer()
+
+        elif action in ["enable", "disable"]:
+            if len(args) < 2: return print_status(
+                f"Geben Sie einen Namen oder eine Kategorie an: /tools {action} <...>", "warning")
+
+            target = args[1].lower()
+            affected = []
+            errors = []
+
+            # 1. Identifikation
+            is_tool = tm.exists(target) or target in disabled_map
+            is_cat = target in get_all_cats()
+
+            # 2. Konfliktlösung
+            final_mode = None  # "tool" or "category"
+            if is_tool and is_cat:
+                print_status(f"'{target}' ist sowohl ein Tool-Name als auch eine Kategorie.", "warning")
+                choice = await self.prompt_session.prompt_async(HTML(
+                    f"Möchten Sie das <style fg='cyan'>[t]</style>ool oder die ganze <style fg='yellow'>[k]</style>ategorie {action}? (t/k): "))
+                final_mode = "category" if choice.strip().lower() in ["k", "c", "cat"] else "tool"
+            elif is_tool:
+                final_mode = "tool"
+            elif is_cat:
+                final_mode = "category"
+            else:
+                return print_status(f"'{target}' wurde weder als Tool noch als Kategorie gefunden.", "error")
+
+            # 3. Ausführung
+            if final_mode == "tool":
+                success, name = await perform_action(target, action)
+                if success:
+                    affected.append(name)
+                elif name:
+                    errors.append(name)
+            else:
+                # Kategorie-Modus: Alle Tools der Kategorie finden
+                source_list = tm.get_all() if action == "disable" else disabled_map.values()
+                # Wir müssen Namen sammeln, da die Liste sich beim Loop ändert
+                targets = [t.name for t in source_list if target in get_tool_cats(t)]
+
+                print_status(f"Verarbeite Kategorie '{target}' ({len(targets)} Tools)...", "progress")
+                for t_name in targets:
+                    success, name = await perform_action(t_name, action)
+                    if success:
+                        affected.append(name)
+                    elif name:
+                        errors.append(name)
+
+            # 4. Bericht
+            if affected:
+                print_box_header(f"Erfolgreich {action}d", "✅")
+                # Hint anzeigen
+                hint = "Einzelnes Tool" if final_mode == "tool" else f"Kategorie: {target}"
+                print_box_content(f"Typ: {hint}", "info")
+                print_separator()
+                for name in affected:
+                    print_box_content(name, "success")
+                print_box_footer()
+
+            if errors:
+                print_status(f"Fehlgeschlagen/Übersprungen: {', '.join(errors)}", "warning")
+
+        elif action == "disable-all":
+            # Schützt system-relevante Tools
+            targets = [t.name for t in tm.get_all() if not any(c in sys_cats for c in get_tool_cats(t))]
+            for t_name in targets: await perform_action(t_name, "disable")
+            print_status(f"Alle Nicht-System-Tools ({len(targets)}) wurden deaktiviert.", "success")
+
+        elif action == "enable-all":
+            count = len(disabled_map)
+            targets = list(disabled_map.keys())
+            for t_name in targets: await perform_action(t_name, "enable")
+            print_status(f"Alle Tools ({count}) wurden reaktiviert.", "success")
 
     async def _cmd_context(self, args: list[str]):
         """Handle /context commands."""
@@ -5301,6 +5696,23 @@ class ISAA_Host:
             self._active_renderer = renderer
             c_print()  # Spacing
 
+            # Hotkey Poller initialisieren
+            loop = asyncio.get_event_loop()
+            hotkey_poller = StreamHotkeyPoller()
+
+            # Callbacks für Hotkeys während des Streams
+            def toggle_zen_plus():
+                self.zen_plus_mode = not self.zen_plus_mode
+                # Wir können Zen+ nicht mitten im Stream-Loop starten,
+                # wenn dieser synchron läuft. Wir setzen nur den Flag.
+
+            def toggle_min():
+                if self._active_renderer:
+                    self._active_renderer.toggle_minimize()
+
+            hotkey_poller.on("f2", toggle_zen_plus).on("f6", toggle_min)
+            hotkey_poller.start()
+
             # State for final processing
             final_response_text = ""
             current_sentence = ""
@@ -5308,14 +5720,13 @@ class ISAA_Host:
             moved_to_bg = False
 
             # Manual stream iteration so we can hand off the generator on minimize
+            self.anim.set_mode('stream')
             stream = agent.a_stream(
                 query=user_input,
                 session_id=self.active_session_id,
             )
 
             if self.zen_plus_mode:
-                from toolboxv2.mods.isaa.extras.zen.zen_plus import ZenPlus  # adjust import path
-
                 zp = ZenPlus.get()
                 zp.clear_panes()
                 renderer.set_zen_plus(zp)
@@ -5475,11 +5886,12 @@ class ISAA_Host:
 
                 except (KeyboardInterrupt, EOFError):
                     pass
-
+            finally:
+                hotkey_poller.stop()
+                if self.zen_plus_mode:
+                    pane = ZenPlus.get()._panes.get(self.active_agent_name)
+                    renderer.print_final_summary(pane)
                 self._active_renderer = None
-                return
-
-            _hotkey_poller.stop()
 
             # --- Post-stream handling ---
             if moved_to_bg:
@@ -5491,10 +5903,13 @@ class ISAA_Host:
             # Normal completion - close the generator
             try:
                 await stream.aclose()
+                pane = ZenPlus.get()._panes.get(self.active_agent_name)
+                if pane:
+                    renderer.print_final_summary(pane)
+                self._active_renderer = None
             except Exception:
                 pass
 
-            self._active_renderer = None
             c_print()
 
             # Post-Processing: Visualize JSON
@@ -5525,7 +5940,9 @@ class ISAA_Host:
         except Exception as e:
             print_status(f"System Error: {e}", "error")
             import traceback
-            traceback.print_exc()
+            c_print(traceback.format_list())
+        finally:
+            self.anim.set_mode('ideal')
 
     async def _handle_shell(self, command: str):
         """Handle shell command (! prefix)."""
@@ -5551,11 +5968,13 @@ class ISAA_Host:
     async def run(self):
         """Main CLI execution loop."""
         # Print banner
+
+        # Switch to audio recording mode (changes animation)
+
         c_print()
         c_print(HTML(f"<style fg='{PTColors.ZEN_CYAN}'>{CLI_NAME}</style> <style fg='{PTColors.ZEN_DIM}'>v{VERSION}</style>"))
         c_print(HTML(f"<style fg='{PTColors.ZEN_DIM}'>/help  F4 voice  F5 status  F6 minimize  Ctrl+C safe stop</style>"))
         c_print()
-
         # Initialize Self Agent
         await self._init_self_agent()
 
@@ -5578,7 +5997,7 @@ class ISAA_Host:
             c_print()
 
         # Print status
-        await self._print_status_dashboard()
+        total = await self._print_status_dashboard()
 
         # Create prompt session
         dict_coplet, vfs_cplet = self._build_completer()
@@ -5632,7 +6051,6 @@ class ISAA_Host:
             except Exception as e:
                 print_status(f"Unexpected Error: {e}", "error")
                 import traceback
-
                 traceback.print_exc()
 
         # Cleanup

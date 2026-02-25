@@ -1132,7 +1132,6 @@ class Tools(MainTool):
         memory_instance = self.get_memory()
         if hasattr(memory_instance, "load_all_memories"):
             memory_instance.load_all_memories(f"{get_app().data_dir}/Memory/")
-            self.print("Memory loading done")
 
     def get_agent_builder(
         self,
@@ -1523,7 +1522,8 @@ class Tools(MainTool):
             data_dict = (request.request.body if request else None) or form_data or data
             mini_task = mini_task or data_dict.get("mini_task")
             user_task = user_task or data_dict.get("user_task")
-            mode = mode or data_dict.get("mode")
+            print(data_dict)
+            mode = None# mode or data_dict.get("mode")
             max_tokens_override = max_tokens_override or data_dict.get(
                 "max_tokens_override"
             )

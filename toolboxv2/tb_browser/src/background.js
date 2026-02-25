@@ -475,7 +475,7 @@ class ToolBoxBackground {
 
     async triggerPasswordAutofill(tab) {
         try {
-            const response = await this.makeAPICall('/api/call/PasswordManager/get_password_for_autofill', 'POST', {
+            const response = await this.makeAPICall('/api/PasswordManager/get_password_for_autofill', 'POST', {
                 url: tab.url
             });
 

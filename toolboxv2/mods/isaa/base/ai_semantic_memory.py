@@ -195,6 +195,7 @@ class AISemanticMemory(metaclass=Singleton):
         data: str | list[str] | bytes | dict,
         metadata: dict | None = None,
         direct: bool = False,
+        **kwargs
     ) -> bool:
         """
         Add data to a memory space.
@@ -207,6 +208,9 @@ class AISemanticMemory(metaclass=Singleton):
         sanitized = self._sanitize_name(memory_name)
         store = self._get_or_create_store(sanitized)
 
+        if metadata is None:
+            metadata = {}
+        metadata = {**metadata, **kwargs}
         # ── Process input ──
         texts: list[str] = []
         if isinstance(data, bytes):

@@ -9,7 +9,7 @@ class ToolBoxPopup {
         this.recognition = null;
         this.chatHistory = [];
         this.synthesis = null;
-        this.apiBase = 'http://localhost:8080';
+        this.apiBase = 'http://localhost:8001';
         this.isConnected = false;
         this.currentAudio = null;
         this.currentlyPlayingButton = null;
@@ -249,13 +249,13 @@ applySettings() {
     // Update apiBase based on backend selection
     switch (this.settings.backend) {
         case 'local':
-            this.apiBase = 'http://localhost:8080';
+            this.apiBase = 'http://localhost:8001';
             break;
         case 'remote':
             this.apiBase = 'https://simplecore.app';
             break;
         case 'custom':
-            this.apiBase = this.settings.customBackendUrl || 'http://localhost:8080';
+            this.apiBase = this.settings.customBackendUrl || 'http://localhost:8001';
             break;
     }
 
@@ -333,7 +333,10 @@ async checkAuthStatus() {
     }
 
     try {
-        const response = await this.makeAPICall('/IsValidSession', 'GET', null);
+        const response = await this.makeAPICall('/validateSession', 'POST', {
+            Username: this.settings.username,
+            Jwt_claim: this.settings.jwt
+        });
 
         // Check multiple possible response formats
         const isValid = response.result?.data_info === 'Valid Session' ||
@@ -1041,7 +1044,7 @@ updateAuthUI() {
 
         try {
             // Just check if the server is reachable
-            const response = await fetch(this.apiBase+'/api/CloudM/Version');
+const response = await fetch(this.apiBase+'/api/CloudM/openVersion');
             this.isConnected = response.ok;
             indicator?.classList.remove('connecting', 'error');
             indicator?.classList.add('connected');

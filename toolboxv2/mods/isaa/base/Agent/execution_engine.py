@@ -2662,6 +2662,9 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                                 else None
                             )
 
+                            if not delta:
+                                continue
+
                             if (
                                 hasattr(chunk.choices[0], "finish_reason")
                                 and chunk.choices[0].finish_reason

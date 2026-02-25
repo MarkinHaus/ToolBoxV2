@@ -233,11 +233,22 @@ async def upload_version(
     changelog: str = Form(""),
     toolbox_version: Optional[str] = Form(None),
     python_version: Optional[str] = Form(None),
-    file: UploadFile = File(...),
+    upload_type: str = Form("full"),  # "full" or "diff"
+    from_version: Optional[str] = Form(None),  # Required for diff uploads
+    patch: Optional[UploadFile] = File(None),  # Patch file for diff uploads
+    file: UploadFile = File(None),  # Full package file
     user: User = Depends(get_current_user),
     service: PackageService = Depends(get_package_service),
 ) -> PackageVersion:
-    """Upload a new version.
+    """Upload a new version with optional diff support.
+
+    Supports two upload modes:
+    - full: Upload complete package file (default)
+    - diff: Upload only patch file, server reconstructs full package
+
+    For diff uploads:
+    - from_version: Source version to diff from
+    - patch: Patch file (bsdiff format)
 
     Args:
         name: Package name.
@@ -245,7 +256,10 @@ async def upload_version(
         changelog: Version changelog.
         toolbox_version: Required ToolBox version.
         python_version: Required Python version.
-        file: Package file.
+        upload_type: "full" or "diff"
+        from_version: Source version (required for diff)
+        patch: Patch file (required for diff)
+        file: Full package file (required for full)
         user: Current authenticated user.
         service: Package service.
 
@@ -259,6 +273,73 @@ async def upload_version(
         )
 
     try:
+        if upload_type == "diff":
+            # Diff upload - validate parameters
+            if not from_version:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="from_version required for diff uploads",
+                )
+            if not patch:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="patch file required for diff uploads",
+                )
+
+            # Apply patch to reconstruct full package
+            from toolboxv2.utils.extras.bsdiff_wrapper import apply_patch_auto
+            import tempfile
+            from pathlib import Path
+
+            # Get old version package
+            old_version = await service.get_version(name, from_version)
+
+            # Download old package to temp file
+            async with service.storage.get(old_version.storage_locations[0].path) as old_file:
+                old_temp = Path(tempfile.mktemp(suffix=".zip"))
+                with open(old_temp, "wb") as f:
+                    f.write(await old_file.read())
+
+            # Save patch to temp file
+            patch_temp = Path(tempfile.mktemp(suffix=".patch"))
+            with open(patch_temp, "wb") as f:
+                f.write(await patch.read())
+
+            # Apply patch to create new package
+            new_temp = Path(tempfile.mktemp(suffix=".zip"))
+            apply_patch_auto(old_temp, patch_temp, new_temp)
+
+            # Create UploadFile from reconstructed package
+            from fastapi import UploadFile as FastUploadFile
+            from io import BytesIO
+
+            with open(new_temp, "rb") as f:
+                content = f.read()
+
+            # Create a mock UploadFile
+            class MockUploadFile:
+                def __init__(self, filename, content):
+                    self.filename = filename
+                    self.content = content
+                    self.file = BytesIO(content)
+
+                async def read(self):
+                    return self.content
+
+                async def seek(self, pos):
+                    self.file.seek(pos)
+
+                async def close(self):
+                    self.file.close()
+
+            file = MockUploadFile(f"{name}-{version}.zip", content)
+
+            # Cleanup temp files
+            old_temp.unlink()
+            patch_temp.unlink()
+            new_temp.unlink()
+
+        # Upload (either full or reconstructed)
         return await service.upload_version(
             name=name,
             version=version,
@@ -268,6 +349,7 @@ async def upload_version(
             toolbox_version=toolbox_version,
             python_version=python_version,
         )
+
     except PackageNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -282,6 +364,11 @@ async def upload_version(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Upload failed: {str(e)}",
         )
 
 

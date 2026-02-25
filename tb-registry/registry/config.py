@@ -90,14 +90,24 @@ class Settings(BaseSettings):
         description="Use HTTPS for mirror MinIO",
     )
 
-    # Clerk Authentication
+    # Clerk Authentication (DEPRECATED - will be removed after migration)
     clerk_secret_key: str = Field(
         default="",
-        description="Clerk secret key for authentication",
+        description="Clerk secret key for authentication (DEPRECATED)",
     )
     clerk_publishable_key: str = Field(
         default="",
-        description="Clerk publishable key",
+        description="Clerk publishable key (DEPRECATED)",
+    )
+
+    # CloudM.Auth Configuration (NEW)
+    cloudm_jwt_secret: str = Field(
+        default="",
+        description="Shared secret for CloudM.Auth JWT validation",
+    )
+    cloudm_auth_url: Optional[str] = Field(
+        default=None,
+        description="URL to CloudM.Auth service (fallback validation)",
     )
 
     # CORS Configuration

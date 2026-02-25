@@ -1934,7 +1934,9 @@ def runner_setup():
         "logout": logout,
         "flow": run_c,
         "mods": mods_manager,
-        "registry": registry,
+        "registry": lambda: __import__(
+            "toolboxv2.utils.clis.cli_registry", fromlist=["registry"]
+        ).registry(),
         "run": cli_tbx_main,
         "user": user_manager_main,
         "default": interactive_user_dashboard,

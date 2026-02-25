@@ -762,6 +762,10 @@ async def dream_with_viz_v2(
 
     render_task = asyncio.create_task(render_loop())
     report = None
+    if not hasattr(agent, '_dreamer'):
+        agent._dreamer = Dreamer(agent)
+    if agent._dreamer is None or not agent._dreamer:
+        agent._dreamer = Dreamer(agent)
     try:
         report = await agent._dreamer.dream(config)
     finally:

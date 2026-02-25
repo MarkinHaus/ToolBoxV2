@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from registry.api.routes import (
     artifacts,
     auth,
+    diff,
     health,
     packages,
     publishers,
@@ -67,6 +68,13 @@ def create_router() -> APIRouter:
         resolve.router,
         prefix="/resolve",
         tags=["resolve"],
+    )
+
+    # Diff routes
+    router.include_router(
+        diff.router,
+        prefix="/api/v1",
+        tags=["diff"],
     )
 
     return router

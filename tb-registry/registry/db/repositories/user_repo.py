@@ -37,14 +37,14 @@ class UserRepository:
         """
         query = """
         INSERT INTO users (
-            clerk_user_id, email, username, publisher_id,
+            cloudm_user_id, email, username, publisher_id,
             is_admin, last_login, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """
         await self.db.execute(
             query,
             (
-                user.clerk_user_id,
+                user.cloudm_user_id,
                 user.email,
                 user.username,
                 user.publisher_id,
@@ -54,11 +54,46 @@ class UserRepository:
             ),
         )
         await self.db.commit()
-        logger.info(f"Created user: {user.clerk_user_id}")
+        logger.info(f"Created user: {user.cloudm_user_id}")
         return user
 
+    # Alias for backward compatibility during migration
+    async def create(self, user: User) -> User:
+        """Alias for create_user for backward compatibility."""
+        return await self.create_user(user)
+
+    async def get_by_cloudm_id(self, cloudm_user_id: str) -> Optional[User]:
+        """Get a user by CloudM.Auth user ID.
+
+        Args:
+            cloudm_user_id: CloudM.Auth user ID.
+
+        Returns:
+            User or None if not found.
+        """
+        row = await self.db.fetch_one(
+            "SELECT * FROM users WHERE cloudm_user_id = ?",
+            (cloudm_user_id,),
+        )
+
+        if not row:
+            return None
+
+        return User(
+            cloudm_user_id=row["cloudm_user_id"],
+            email=row["email"],
+            username=row["username"],
+            publisher_id=row["publisher_id"],
+            is_admin=bool(row["is_admin"]),
+            last_login=datetime.fromisoformat(row["last_login"]) if row["last_login"] else None,
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
     async def get_by_clerk_id(self, clerk_user_id: str) -> Optional[User]:
-        """Get a user by Clerk ID.
+        """Get a user by Clerk user ID.
+
+        DEPRECATED: Use get_by_cloudm_id instead.
+        Kept for migration compatibility.
 
         Args:
             clerk_user_id: Clerk user ID.
@@ -75,7 +110,7 @@ class UserRepository:
             return None
 
         return User(
-            clerk_user_id=row["clerk_user_id"],
+            cloudm_user_id=row.get("cloudm_user_id") or row["clerk_user_id"],
             email=row["email"],
             username=row["username"],
             publisher_id=row["publisher_id"],
@@ -110,7 +145,7 @@ class UserRepository:
 
         query = """
         INSERT INTO publishers (
-            id, clerk_user_id, name, slug, email, website, github,
+            id, cloudm_user_id, name, slug, email, website, github,
             status, can_publish_public, can_publish_artifacts,
             max_package_size_mb, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -119,7 +154,7 @@ class UserRepository:
             query,
             (
                 publisher.id,
-                publisher.clerk_user_id,
+                publisher.cloudm_user_id,
                 publisher.name,
                 publisher.slug,
                 publisher.email,
@@ -136,8 +171,8 @@ class UserRepository:
 
         # Link user to publisher
         await self.db.execute(
-            "UPDATE users SET publisher_id = ? WHERE clerk_user_id = ?",
-            (publisher.id, publisher.clerk_user_id),
+            "UPDATE users SET publisher_id = ? WHERE cloudm_user_id = ?",
+            (publisher.id, publisher.cloudm_user_id),
         )
         await self.db.commit()
 
@@ -174,7 +209,7 @@ class UserRepository:
         """
         return Publisher(
             id=row["id"],
-            clerk_user_id=row["clerk_user_id"],
+            cloudm_user_id=row.get("cloudm_user_id") or row["clerk_user_id"],
             name=row["name"],
             slug=row["slug"],
             email=row["email"],
