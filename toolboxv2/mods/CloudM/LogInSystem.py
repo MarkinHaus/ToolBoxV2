@@ -279,6 +279,7 @@ async def _complete_login(app: App, result: Result, email: str = None) -> Result
         "access_token": data.get("access_token", ""),
         "refresh_token": data.get("refresh_token", ""),
         "provider": data.get("provider", ""),
+        "level": data.get("level", 1),
         "authenticated_at": time.time(),
     }
     await _save_cli_token(app, username, session_data)
@@ -360,6 +361,7 @@ async def auto_login_from_blob(app) -> bool:
         if result:
             _apply_session_to_app(app, result["session_data"])
             app.print(f"🔓 Logged in as: {result['username']}")
+            app.set_username(result['username'])
             return True
         return False
     except Exception as e:
