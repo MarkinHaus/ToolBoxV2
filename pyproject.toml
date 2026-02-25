@@ -129,6 +129,8 @@ dev = [
     "toolboxv2[all]",
     "pytest>=9.0.2",
     "ruff>=0.8.0",
+    "pytest",
+    "pytest-asyncio",
 ]
 
 isaa = [
@@ -177,6 +179,7 @@ isaa = { workspace = true }
 members = [
     "llm-gateway",
 ]
+
 
 [tool.deptry]
 exclude = ["toolboxv2/.data/*", "venv", "python_en", ".data/*", ".data"]
@@ -278,4 +281,5 @@ asyncio_mode = "auto"
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
 ]

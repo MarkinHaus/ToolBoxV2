@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from toolboxv2.mods.isaa.base.Agent.chain_tools import (
+from toolboxv2.mods.isaa.base.chain.chain_tools import (
     ChainBuilder,
     ChainContextWrapper,
     CoderContextWrapper,

@@ -7,6 +7,7 @@ import logging
 import multiprocessing as mp
 import os
 import pstats
+import threading
 import time
 import traceback
 from collections.abc import AsyncGenerator, Callable
@@ -18,8 +19,10 @@ from types import ModuleType
 from typing import Any, TypeVar, Dict, Coroutine
 
 import psutil
+import requests
 from pydantic import BaseModel
 
+from toolboxv2.utils.manifest import TBManifest
 from toolboxv2.utils.system.tb_logger import AuditLogger
 from ..extras import generate_test_cases
 from ..extras.blobs import BlobStorage
@@ -1758,6 +1761,8 @@ class AppType:
     globals: dict[str, Any] = {"root": dict, }
     locals: dict[str, Any] = {"user": {'app': "self"}, }
 
+    manifest: TBManifest
+
     local_test: bool = False
     start_dir: str
     data_dir: str
@@ -1828,6 +1833,12 @@ class AppType:
     websocket_handlers: dict[str, dict[str, Callable]] = {}
     _rust_ws_bridge: Any = None
 
+    ip: str | None
+    location: str | None
+    ping: int | None
+    _ping_task: Callable
+    _ping_interval: int | None
+
 
     def __init__(self, prefix=None, args=None):
         self.args_sto = args
@@ -1861,6 +1872,136 @@ class AppType:
         except (AttributeError, OSError):
             self._initial_network_sent = 0
             self._initial_network_recv = 0
+
+        # State
+        self.ip: Optional[str] = None
+        self.location: Optional[dict] = None
+        self.ping: Optional[int] = None
+        self.ping_record: List[int] = []
+
+        self._ping_interval = 0
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._base_url = None
+
+    async def _determine_base_url(self) -> str:
+        """Prüft, ob der lokale Server erreichbar ist, sonst Remote."""
+        local_url = f"http://{os.getenv('TOOLBOXV2_BASE')}:5000"
+        try:
+            # Kurzer Timeout für den Check
+            response = await self.session.fetch(f"{local_url}/api/ping", timeout=0.5)
+            if response.status_code == 200:
+                return local_url
+        except:
+            pass
+        local_url = f"http://{os.getenv('TOOLBOXV2_BASE')}:8001"
+        try:
+            # Kurzer Timeout für den Check
+            response = await self.session.fetch(f"{local_url}/api/ping", timeout=0.5)
+            if response.status_code == 200:
+                return local_url
+        except:
+            pass
+        local_url = f"http://{os.getenv('TOOLBOXV2_BASE')}:{os.getenv('TOOLBOXV2_BASE_PORT')}"
+        try:
+            # Kurzer Timeout für den Check
+            response = await self.session.fetch(f"{local_url}/api/ping", timeout=0.5)
+            if response.status_code == 200:
+                return local_url
+        except:
+            pass
+        return os.getenv('TOOLBOXV2_REMOTE_BASE')
+
+    async def _fetch_ip_and_location(self):
+        """Holt IP und Geo-Daten vom eigenen Server (minimiert externe API Aufrufe)."""
+        done = False
+        if self._base_url is None:
+            self._base_url = await self._determine_base_url()
+        response = "No Internet"
+        try:
+            # Kombinierter Call an deine interne API
+            response = await self.session.fetch(f"{self._base_url}/api/geo", timeout=3).json()
+            with self._lock:
+                self.ip = response.get("ip")
+                self.location = response
+            done = 'error' not in response
+        except Exception as e:
+            pass
+        if done:
+            return
+        try:
+            response = await self.session.fetch("https://api64.ipify.org?format=json").json()
+            self.ip = response["ip"]
+            response = await self.session.fetch(f"https://ipapi.co/{response["ip"]}/json/").json()
+            self.location = response
+        except Exception as e:
+
+            self.print("ERROR getting loc rem", e)
+            pass
+
+    async def _measure_ping(self, timeout=2.):
+        """Führt 5 Round-Trips zur API/ping aus und mittelt das Ergebnis."""
+        pings = []
+
+        if self._base_url is None:
+            self._base_url = await self._determine_base_url()
+        for _ in range(5):
+            try:
+                start = time.perf_counter()
+                resp = await self.session.fetch(f"{self._base_url}/api/ping", timeout=timeout)
+                end = time.perf_counter()
+                if resp.status_code == 200:
+                    pings.append(int((end - start) * 1000))
+                    timeout = pings[-1]*2
+            except Exception as e:
+                try:
+                    start = time.perf_counter()
+                    resp = await self.session.fetch(f"https://google.com", timeout=timeout)
+                    end = time.perf_counter()
+                    if resp.status_code == 200:
+                        pings.append(int((end - start) * 1000))
+                        timeout = pings[-1] * 2
+                except:
+                    continue
+
+
+        if pings:
+            avg_ping = sum(pings) // len(pings)
+            with self._lock:
+                self.ping = avg_ping
+                self.ping_record.insert(0, avg_ping)
+                self.ping_record = self.ping_record[:10]  # Nur die letzten 10
+
+    async def _initialize_network(self):
+        """Logik für initialen Start und Thread-Management."""
+        # Immer einmal IP und Location holen
+        await self._fetch_ip_and_location()
+
+        if self._ping_interval == 0:
+            # shnelles ping holen
+            await self._measure_ping(timeout=1)
+            return
+
+        if self._ping_interval == -1:
+            # Genau einmal Ping messen und dann nie wieder
+            await self._measure_ping()
+            return
+
+        if self._ping_interval > 0:
+            # Thread für regelmäßiges Update starten
+            await self._measure_ping()  # Erstes Mal sofort
+            self.run_bg_task_advanced(self._ping_worker)
+
+        self.print(
+                   (f"\n  {'IP':<8} -> {self.ip}" if self.ip else "") +
+                   (f"\n  {'PING':<8} -> {self.ping}" if self.ping else "") +
+                   (f"\n  {'LOC':<8} -> {self.location.get('city')}" if self.location and self.location.get('city') else ""))
+
+    async def _ping_worker(self):
+        """Hintergrund-Thread für regelmäßige Pings."""
+        while not self._stop_event.is_set():
+            time.sleep(self._ping_interval)
+            await self._measure_ping()
 
     def _update_metric_tracking(self, metric_name: str, value: float):
         """Aktualisiert Min/Max/Avg für eine Metrik"""

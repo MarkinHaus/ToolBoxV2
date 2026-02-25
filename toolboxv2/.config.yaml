@@ -67,6 +67,26 @@ ws_worker:
   compression: true
   instance_prefix: "ws"
 
+database:
+  mode: CB  # LC | LR | RR | CB
+
+  local:
+    path: ".data/MiniDictDB.json"
+
+  redis:
+    url: "${DB_CONNECTION_URI:redis://localhost:6379}"
+    username: "${DB_USERNAME:}"
+    password: "${DB_PASSWORD:}"
+    db_index: 0
+    max_connections: 10
+
+  minio:
+    endpoint: "${MINIO_ENDPOINT:localhost:9000}"
+    access_key: "${MINIO_ACCESS_KEY:minioadmin}"
+    secret_key: "${MINIO_SECRET_KEY:minioadmin}"
+    bucket: user-data-enc
+    use_ssl: false
+
 # Nginx Configuration
 nginx:
   enabled: true
@@ -122,7 +142,7 @@ toolbox:
 observability:
   # Sync logs to MinIO (backup / long-term storage)
   sync:
-    enabled: false
+    enabled: true
     target: minio            # minio = use database.minio | remote_minio = separate server
     # remote_endpoint: "${MINIO_REMOTE_ENDPOINT:}"
     # remote_access_key: "${MINIO_REMOTE_ACCESS_KEY:}"
@@ -143,7 +163,7 @@ observability:
 
   # Automatic log cleanup
   cleanup:
-    enabled: false
+    enabled: true
     max_age_days: 30
     max_size_mb: 500
     keep_levels:

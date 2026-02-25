@@ -16,7 +16,7 @@ from aiohttp import ClientConnectorError, ClientError
 from requests import Response
 
 from toolboxv2.utils.singelton_class import Singleton
-from toolboxv2.utils.system.getting_and_closing_app import get_app, get_logger
+from toolboxv2.utils.system.getting_and_closing_app import get_logger
 from toolboxv2.utils.system.types import Result
 
 # NEU: Blob Storage & Security Imports

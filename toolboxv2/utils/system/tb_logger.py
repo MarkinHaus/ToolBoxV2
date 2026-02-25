@@ -865,7 +865,7 @@ class LogSyncManager:
         finally:
             self._sync_lock.release()
 
-    def ensure_bucket(self, silent: bool = True):
+    def ensure_bucket(self, silent: bool = True, ping=0):
         """Create the target bucket if it doesn't exist.
 
         Args:
@@ -877,14 +877,15 @@ class LogSyncManager:
             try:
                 import urllib3
                 # Check if we can reach the endpoint without waiting for retries
-                endpoint = self.minio._endpoint_url
-                http = urllib3.PoolManager(timeout=urllib3.Timeout(connect=1.0, read=1.0), retries=0)
+                endpoint = self.minio._base_url
+
+                http = urllib3.PoolManager(timeout=urllib3.Timeout(connect=1.0, read=1.0) if not ping else urllib3.Timeout(connect=ping*3, read=ping*1.2), retries=0)
                 try:
-                    http.request("GET", f"{endpoint}/minio/health/live", preload_content=False)
-                except Exception:
+                    res=http.request("GET", f"{endpoint}/minio/health/live", preload_content=False)
+                except Exception as e:
                     # MinIO not ready yet - skip bucket creation
                     return
-            except Exception:
+            except Exception as e:
                 # urllib3 not available or other error - continue with normal flow
                 pass
 

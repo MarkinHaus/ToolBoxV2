@@ -6097,4 +6097,59 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    import sys
+
+
+    async def main_cli():
+        parser = argparse.ArgumentParser(description="ISAA iCLI Single Run Mode")
+        parser.add_argument("query", nargs="?", help="Die Anfrage an den Agenten")
+        parser.add_argument("--agent", default="self", help="Name des Agenten")
+        parser.add_argument("--session", default="direct_run", help="Session ID")
+        parser.add_argument("--remember", default="direct_run", help="Save Execution history unther Session ID")
+        parser.add_argument("--feature", action="append", help="Feature aktivieren (z.B. coder, desktop_auto)")
+        parser.add_argument("--mcp", action="append", help="MCP Server Config als JSON String")
+        parser.add_argument("--model", help="Modell-Override (z.B. gemini-3-flash)")
+
+        args = parser.parse_args()
+        app = get_app("isaa-host")
+        host = ISAA_Host(app)
+
+        # Wenn kein Query da ist -> Starte normalen interaktiven Host
+        if not args.query:
+            await host.run()
+            return
+
+        # --- Single Run Logik ---
+        await host._init_self_agent()
+        agent = await host.isaa_tools.get_agent(args.agent)
+
+        # Features aktivieren
+        if args.feature:
+            host.feature_manager.set_agent(agent)
+            for feat in args.feature:
+                host.feature_manager.enable(feat)
+
+        # Modell-Override
+        if args.model and args.model in MODEL_MAPPING:
+            agent.amd.complex_llm_model = MODEL_MAPPING[args.model]
+
+        # MCP Server dynamisch hinzufügen
+        if args.mcp:
+            for mcp_json in args.mcp:
+                import json
+                m_cfg = json.loads(mcp_json)
+                await host._tool_mcp_connect(m_cfg['name'], m_cfg['command'], m_cfg.get('args', []), args.agent)
+
+        # Ausführung
+        print(f"[*] Agent {args.agent} denkt nach...")
+        result = await agent.a_run(args.query, session_id=args.session)
+
+        if not args.remember:
+            agent.clear_session_history(args.session)
+        await app.a_exit()
+        print(f"\n[RESULT]:\n{result}")
+
+
+
+    asyncio.run(main_cli())

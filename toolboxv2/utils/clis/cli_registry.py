@@ -22,14 +22,11 @@ from toolboxv2.utils.extras.registry_client import (
     RegistryAuthError,
     PackageNotFoundError,
     PublishPermissionError,
-    UserInfo,
-    PackageSummary,
-    PackageDetail,
 )
 
 # Import DiffUploader
-from toolboxv2.utils.extras.diff_uploader import DiffUploader
-from toolboxv2.utils.extras.upload_cache import UploadCache
+from toolboxv2.utils.extras.install.diff_uploader import DiffUploader
+from toolboxv2.utils.extras.install.upload_cache import UploadCache
 
 
 def get_app(name: str):
@@ -109,6 +106,7 @@ async def registry_status(args):
         return 1
 
     data = result.get()
+    print(data)
     if data:
         print_status(f"Status: {data.get('status', 'unknown')}", "success")
         print_status(f"PID: {data.get('pid', 'N/A')}", "info")

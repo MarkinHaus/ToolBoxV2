@@ -425,7 +425,7 @@ class MinIOInstance:
             env["MINIO_ROOT_USER"] = self.config.access_key
             env["MINIO_ROOT_PASSWORD"] = self.config.secret_key
 
-            print("Starting MinIO with user:", self.config.access_key, self.config.secret_key)
+            print("Starting MinIO with user:", self.config.access_key, self.config.secret_key if self.config.secret_key in ["SecureCloudPass", "minioadmin"] else f"{self.config.secret_key[:5]}...")
             # Open log file
             log_path = Path(self.config.log_file)
             log_path.parent.mkdir(parents=True, exist_ok=True)

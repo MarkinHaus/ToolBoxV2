@@ -1,5 +1,3 @@
-#from .kernel import Kernel, __all__ as kernel_all
-
 try:
 
     from .module import Tools, version

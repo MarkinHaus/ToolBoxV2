@@ -56,6 +56,7 @@ class App(AppType, metaclass=Singleton):
             self.logger_prefix = self.REFIX = "test"
         super().__init__(prefix, args)
         self._web_context = None
+        self.loop = None
         t0 = time.perf_counter()
         abspath = os.path.abspath(__file__)
         self.system_flag = system()  # Linux: Linux Mac: Darwin Windows: Windows
@@ -147,33 +148,21 @@ class App(AppType, metaclass=Singleton):
         with open(pid_file, "w", encoding="utf8") as f:
             f.write(app_pid)
 
-        # Initialize the log database (encrypted, offline-first)
-        self.log_db = create_mobile_db(
-            path=f"{self.data_dir}/system_logs.db",
-            max_size_mb=200,
-        )
-        # Register globally so setup_logging() picks it up automatically
-        set_log_db(self.log_db, node_id=node())
-
-        # Now call set_logger (same signature as before)
-        logger_info_str, self.logger, self.logging_filename = self.set_logger(args.debug, self.logger_prefix)
-
-        # Audit logger for business/compliance events
-        self.audit_logger = AuditLogger(self.logger, db=self.log_db, node_id=node())
-        # ── Observability (from manifest) ─────────────────────────────
-        self._obs_adapter = None
-        self._obs_sync_manager = None
         self.manifest = None
+        from toolboxv2.utils.manifest.loader import ManifestLoader
+
+        loader = ManifestLoader(self.start_dir)
+        if not loader.exists():
+            self.print("No manifest found run tb manifest init")
+            return
+
         try:
-            self._setup_observability()
+            manifest = loader.load()
+            self.manifest = manifest
         except Exception as e:
-            self.logger.debug(f"Observability setup skipped: {e}")
+            self.debug_rains(e)
 
-        self.logger.info("Logger initialized", extra={"event": "SYSTEM_STARTUP"})
 
-        self.print("Logger " + logger_info_str)
-        self.print("================================")
-        self.logger.info("Logger initialized")
         get_logger().info(Style.GREEN("Starting Application instance"))
         if args.init and args.init is not None and self.start_dir not in sys.path:
             sys.path.append(self.start_dir)
@@ -211,6 +200,32 @@ class App(AppType, metaclass=Singleton):
         if self.config_fh.get_file_handler("provider::") is None:
             self.config_fh.add_to_save_file_handler("provider::", "http://localhost:" + str(
                 self.args_sto.port) if os.environ.get("HOSTNAME","localhost") == "localhost" else "https://simplecore.app")
+
+        # Initialize the log database (encrypted, offline-first)
+        self.log_db = create_mobile_db(
+            path=f"{self.data_dir}/system_logs.db",
+            max_size_mb=200,
+        )
+        # Register globally so setup_logging() picks it up automatically
+        set_log_db(self.log_db, node_id=node())
+
+        # Now call set_logger (same signature as before)
+        logger_info_str, self.logger, self.logging_filename = self.set_logger(args.debug, self.logger_prefix)
+
+
+        from .system.session import Session
+        self.session: Session = Session(self.get_username())
+
+        self._ping_interval = self.manifest.app.ping_interval
+
+        #self._initialize_network() #+ 3.2s   7.4 s start up time Total
+
+        # Audit logger for business/compliance events
+        self.audit_logger = AuditLogger(self.logger, db=self.log_db, node_id=node())
+
+        self.logger.info("Logger initialized", extra={"event": "SYSTEM_STARTUP"})
+        self.print("================================")
+        self.logger.info("Logger initialized")
         self.functions = {}
         self.modules = {}
 
@@ -219,52 +234,88 @@ class App(AppType, metaclass=Singleton):
         self.alive = True
         self.called_exit = False, time.time()
 
-        self.print(f"Infos:\n  {'Name':<8} -> {node()}\n  {'ID':<8} -> {self.id}\n  {'Version':<8} -> {self.version}\n  {'PID':<8} -> {os.getpid()}\n")
+        self.print(f"Infos:\n  {'Name':<8} -> {node()}"
+                   f"\n  {'ID':<8} -> {self.id}"
+                   f"\n  {'Version':<8} -> {self.version}"
+                   f"\n  {'PID':<8} -> {os.getpid()}"
+                   )
 
-        self.logger.info(
-            Style.GREEN(
-                f"Finish init up in {time.perf_counter() - t0:.2f}s"
-            )
-        )
 
         self.args_sto = args
-        self.loop = None
-
 
         if args.debug:
             from toolboxv2.utils.extras.live_debugger import install as install_live_debugger
             install_live_debugger(loop=self.loop_gard())
 
-        from .system.session import Session
-        self.session: Session = Session(self.get_username())
-        self.logger.info(f"Session created for {self.session.username}")
+
+        # ── Observability (from manifest) ─────────────────────────────
+        self._obs_adapter = None
+        self._obs_sync_manager = None
+
         if len(sys.argv) > 2 and sys.argv[1] == "db":
             return
+        from .clis.db_cli_manager import status as min_io_db_status, start as min_io_db_start, all_modes as min_io_db_all_modes
         from .extras.blobs import create_server_storage, create_desktop_storage, create_offline_storage
-        # TODO detect db status and (auto start)
+
+        if self.manifest.database.mode.value == "CB":
+            modes = min_io_db_all_modes()
+            for name, mode in modes:
+                if min_io_db_status(mode):
+                    break
+            else:
+                if len(modes) == 0:
+                    self.print("No minio db conferred run tb db -h")
+                elif len(modes) == 1:
+                    min_io_db_start(modes[0][0])
+                    self.print(f"starting db name={modes[0][0]} of mode={modes[0][1]}")
+                else:
+                    try:
+                        self.print(f"Starting default node {self.manifest.database.minio.default_name}")
+                        min_io_db_start(self.manifest.database.minio.default_name)
+                    except Exception as e:
+                        self.debug_rains(e)
+
         self.root_blob_storage = create_server_storage() if os.getenv("IS_OFFLINE_DB", "false")!="true" else create_offline_storage()
         self.desktop_blob_storage = create_desktop_storage() if os.getenv("IS_OFFLINE_DB", "false")!="true" else create_offline_storage()
         self.mkdocs = add_to_app(self)
         # self._start_event_loop()
-
-    def _setup_observability(self):
-        """Configure observability from manifest (dashboard + sync + cleanup)."""
-        from toolboxv2.utils.manifest.loader import ManifestLoader
-        from toolboxv2.utils.system.tb_logger import enable_live_observability, get_logger
-
-        loader = ManifestLoader(self.start_dir)
-        if not loader.exists():
-            self.print("No manifest found run tb manifest init")
-            return
-
         try:
-            manifest = loader.load()
-            self.manifest = manifest
+            self._setup_observability(self.manifest.observability.slow_on_init)
         except Exception as e:
-            self.debug_rains(e)
+            self.logger.debug(f"Observability setup skipped: {e}")
+
+
+        self.print(
+            Style.GREEN(
+                f"Finish init up in {time.perf_counter() - t0:.2f}s"
+            )
+        )
+
+    async def observability_health_check_and_anabel(self):
+
+        obs = self.manifest.observability
+        if not obs.dashboard.enabled or not obs.dashboard.password:
             return
 
-        obs = manifest.observability
+        from toolboxv2.utils.system.tb_logger import enable_live_observability, get_logger
+        if await self._obs_adapter.health_check():
+            enable_live_observability(
+                self._obs_adapter,
+                system_stream=obs.dashboard.system_stream,
+                audit_stream=obs.dashboard.audit_stream,
+                flush_interval=obs.dashboard.flush_interval,
+            )
+            self.logger.info("Live observability connected",
+                             extra={"endpoint": obs.dashboard.endpoint})
+        else:
+            self.logger.debug(f"OpenObserve not reachable at {obs.dashboard.endpoint}")
+            self._obs_adapter = None
+
+    def _setup_observability(self, do_slow=False):
+        """Configure observability from manifest (dashboard + sync + cleanup)."""
+        from toolboxv2.utils.system.tb_logger import enable_live_observability
+
+        obs = self.manifest.observability
 
         # ── Live Dashboard ──
         if obs.dashboard.enabled and obs.dashboard.password:
@@ -280,18 +331,21 @@ class App(AppType, metaclass=Singleton):
                     verify_ssl=obs.dashboard.verify_ssl,
                 )
 
-                if self._obs_adapter.health_check():
-                    enable_live_observability(
-                        self._obs_adapter,
-                        system_stream=obs.dashboard.system_stream,
-                        audit_stream=obs.dashboard.audit_stream,
-                        flush_interval=obs.dashboard.flush_interval,
-                    )
-                    self.logger.info("Live observability connected",
-                                     extra={"endpoint": obs.dashboard.endpoint})
-                else:
-                    self.logger.debug(f"OpenObserve not reachable at {obs.dashboard.endpoint}")
-                    self._obs_adapter = None
+                if do_slow:
+                    if self._obs_adapter.health_check():
+                        enable_live_observability(
+                            self._obs_adapter,
+                            system_stream=obs.dashboard.system_stream,
+                            audit_stream=obs.dashboard.audit_stream,
+                            flush_interval=obs.dashboard.flush_interval,
+                        )
+                        self.logger.info("Live observability connected",
+                                         extra={"endpoint": obs.dashboard.endpoint})
+                    else:
+                        self.logger.debug(f"OpenObserve not reachable at {obs.dashboard.endpoint}")
+                        self._obs_adapter = None
+
+
             except Exception as e:
                 self.logger.debug(f"Dashboard setup failed: {e}")
 
@@ -303,10 +357,10 @@ class App(AppType, metaclass=Singleton):
 
                 if obs.sync.target == "minio":
                     mc = create_minio_client(
-                        manifest.database.minio.endpoint,
-                        access_key=manifest.database.minio.access_key,
-                        secret_key=manifest.database.minio.secret_key,
-                        secure=manifest.database.minio.use_ssl,
+                        self.manifest.database.minio.endpoint,
+                        access_key=self.manifest.database.minio.access_key,
+                        secret_key=self.manifest.database.minio.secret_key,
+                        secure=self.manifest.database.minio.use_ssl,
                     )
                 else:
                     mc = create_minio_client(
@@ -1527,6 +1581,7 @@ class App(AppType, metaclass=Singleton):
         if not self.alive:
             return
 
+        self._stop_event.set()
         if self.args_sto.debug:
             self.hide_console()
 

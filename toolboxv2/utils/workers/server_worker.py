@@ -33,6 +33,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Set
 from urllib.parse import parse_qs, unquote
 
+import requests
+
 # Multipart parsing - Standard library für file uploads
 try:
     from multipart import parse_form_data, is_form_request, MultipartPart
@@ -1649,6 +1651,11 @@ class AsyncGenToSyncIter:
             raise StopIteration
 
 
+def get_location(ip_address):
+    response = requests.get(f"https://ipapi.co/{ip_address}/json/").json()
+    return response
+
+
 class HTTPWorker:
     """HTTP Worker with raw WSGI application and auth endpoints."""
 
@@ -1930,6 +1937,12 @@ class HTTPWorker:
                 status, headers, body = self._handle_health()
             elif request.path == "/metrics":
                 status, headers, body = self._handle_metrics()
+            elif request.path == "/api/ip":
+                status, headers, body = self._handle_ip_request(request)
+            elif request.path == "/api/ping":
+                status, headers, body = self._handle_ping_request()
+            elif request.path == "/api/geo":
+                status, headers, body = self._handle_geo_request(request)
             elif request.path == "/api/client-logs":
                 status, headers, body = self._handle_client_logs(request)
             else:
@@ -2070,6 +2083,50 @@ class HTTPWorker:
             metrics["zmq"] = self._event_manager.get_metrics()
 
         return json_response(metrics)
+
+    def _handle_ip_request(self, request: ParsedRequest) -> Tuple:
+        """API für /api/ip"""
+        return json_response({"ip": request.client_ip})
+
+    def _handle_ping_request(self) -> Tuple:
+        """API für /api/ping (Antwortet sofort für Latenzmessung)"""
+        return json_response({"status": "pong", "timestamp": time.time()})
+
+    def _handle_geo_request(self, request: ParsedRequest) -> Tuple:
+        """API für /api/geo - Ersetzt deine alte get_location() Logik."""
+        ip = request.client_ip
+        geo_data = get_location(ip)
+        if 'city' not in geo_data:
+            geo_data = self._get_geo_locally(ip=ip)
+
+        # Rückgabe als Dictionary wie gewünscht
+        return json_response({
+            "ip": ip,
+            **geo_data
+        })
+
+    def _get_geo_locally(self, ip: str) -> dict:
+        """Sucht die Location lokal in der MMDB Datei ohne externe API."""
+        # Pfad aus config oder default
+        db_path = getattr(self.config, "geoip_db_path", "data/GeoLite2-City.mmdb")
+
+        default_data = {"city": "Unknown", "region": "Unknown", "country": "Unknown"}
+
+        if ip in ["127.0.0.1", "localhost", "::1"] or ip.startswith("192.168."):
+            return {"city": "Local", "region": "LAN", "country": "Internal"}
+
+        try:
+            import geoip2.database
+            with geoip2.database.Reader(db_path) as reader:
+                response = reader.city(ip)
+                return {
+                    "city": response.city.name or "Unknown",
+                    "region": response.subdivisions.most_specific.name or "Unknown",
+                    "country": response.country.name or "Unknown"
+                }
+        except Exception as e:
+            logger.debug(f"Local GeoIP failed (check if .mmdb exists): {e}")
+            return default_data
 
     def _handle_client_logs(self, request: ParsedRequest) -> Tuple:
         """POST /api/client-logs — ingest browser logs into the server logging pipeline.

@@ -8,15 +8,15 @@ import pprint
 import textwrap
 import time
 from functools import wraps
+from pathlib import Path
 from platform import node, system
 from typing import List, Tuple
 
 from dotenv import load_dotenv
 
-from toolboxv2 import tb_root_dir
+from toolboxv2 import tb_root_dir, profile_code
 from toolboxv2.utils.system.feature_manager import FeatureManager
 
-# from sqlalchemy.testing.suite.test_reflection.metadata
 from toolboxv2.flows import flows_dict as flows_dict_func
 from toolboxv2.setup_helper import run_command
 from toolboxv2.tests.a_util import async_test
@@ -1120,24 +1120,30 @@ def edit_logs():
         edit_log_files(name=name, date=date, level=level, n=0)
 
 
-def run_tests(test_path):
-    # Konstruiere den Befehl für den Unittest-Testaufruf
-    command = [sys.executable, "-m", "unittest", "discover", "-s", test_path]
+def run_tests(test_path, args=None, cwd=None, venv=None):
+    if args is None:
+        args = []
 
-    # Führe den Befehl mit subprocess aus
+    # Eigene venv nutzen wenn angegeben
+    if venv:
+        scripts_dir = "Scripts" if os.name == "nt" else "bin"
+        python = str(Path(venv) / scripts_dir / Path(sys.executable).name)
+    else:
+        python = sys.executable
+
+    command = [python, "-m", "pytest", test_path, "--import-mode=importlib"] + args
+
     try:
-        result = subprocess.run(command, check=True, encoding="cp850")
-        # Überprüfe den Rückgabewert des Prozesses und gib entsprechend True oder False zurück
-        if result.returncode != 0:
-            return False
+        result = subprocess.run(
+            command,
+            check=True,
+            encoding="cp850",
+            cwd=cwd  # ins Subprojekt wechseln
+        )
+        return result.returncode == 0
     except subprocess.CalledProcessError as e:
         get_app().logger.error(f"Fehler beim Ausführen der Unittests: {e}")
         return False
-    except Exception as e:
-        get_app().logger.error(f"Fehler beim Ausführen der Unittests:{e}")
-        return False
-
-    return True
 
     # try:
     #     from . import tb_root_dir
@@ -1180,16 +1186,20 @@ async def setup_app(ov_name=None, App=TbApp):
         os.remove(app_data_folder)
 
     if args.test:
-        test_path = os.path.dirname(os.path.abspath(__file__))
-        if system() == "Windows":
-            test_path = test_path + "\\tests"
-        else:
-            test_path = test_path + "/tests"
-        get_app().logger.info(f"Testing in {test_path}")
-        if not run_tests(test_path):
-            get_app().logger.error("Error in tests")
-            exit(1)
-        exit(0)
+        get_app().logger.info(f"Testing in {tb_root_dir}")
+        args_ = [w for w in args.kwargs[0].values()]
+        if args.name == "test":
+            args_.append('-x')
+
+        exit(0
+             if
+             all([
+                run_tests('tests', args = args_, cwd=tb_root_dir),
+                run_tests("tests", args = args_,cwd=tb_root_dir.parent/"tb-registry",
+                            venv=tb_root_dir.parent/"tb-registry"/".venv")
+            ])
+            else 1
+        )
 
     abspath = os.path.dirname(os.path.abspath(__file__))
     info_folder = abspath + "\\.info\\pids\\"
@@ -1406,7 +1416,7 @@ async def main(App=TbApp, do_exit=True):
         if args.save_function_enums_in_file:
             tb_app.save_registry_as_enums("utils\\system", "all_functions_enums.py")
             await tb_app.a_exit()
-            return 0
+            return tb_app
         if args.get_version:
             print(
                 f"\n{' Version ':-^45}\n\n{Style.Bold(Style.CYAN(Style.ITALIC('RE'))) + Style.ITALIC('Simple') + 'ToolBox':<35}:{__version__:^10}\n"
@@ -1429,7 +1439,7 @@ async def main(App=TbApp, do_exit=True):
                     print(f"{mod_name:^35}:{v:^10}")
             print("\n")
             await tb_app.a_exit()
-            return 0
+            return tb_app
 
     if _hook[0]:
         if asyncio.iscoroutinefunction(_hook[0]):
@@ -1440,7 +1450,7 @@ async def main(App=TbApp, do_exit=True):
     if args.profiler:
         profile_execute_all_functions(tb_app)
         await tb_app.a_exit()
-        return 0
+        return tb_app
 
     if (
         not args.kill
@@ -1480,7 +1490,7 @@ async def main(App=TbApp, do_exit=True):
 
         if "docker" not in flows_dict:
             print("No docker")
-            return 1
+            return tb_app
 
         flows_dict["docker"](tb_app, args)
 
@@ -1539,10 +1549,10 @@ async def main(App=TbApp, do_exit=True):
 
     if do_exit and not tb_app.called_exit[0]:
         await tb_app.a_exit()
-        return 0
+        return tb_app
     # print(
     #    f"\n\nPython-loc: {init_args[0]}\nCli-loc: {init_args[1]}\nargs: {tb_app.pretty_print(init_args[2:])}")
-    return 0
+    return tb_app
 
 
 def install_ipython():
@@ -1965,7 +1975,7 @@ def runner_setup():
 
     return runner
 
-
+@profile_code(sort_by="cumulative")
 def main_runner():
     # The fuck is uv not PyO3 compatible
     sys.excepthook = sys.__excepthook__
@@ -2057,10 +2067,15 @@ def main_runner():
                 if runner_name is None:
                     runner_name = "default"
 
-                await main(TbApp, runner_name == "default")
+                app = await main(TbApp, runner_name == "default")
 
                 # Wenn Runner angegeben
-                if runner_name:
+                if app.alive and runner_name:
+
+                    if not app.manifest.observability.slow_on_init:
+                        app.run_bg_task_advanced(app.observability_health_check_and_anabel)
+
+                    app.run_bg_task_advanced(app._initialize_network)
                     # Setze sys.argv für Runner
                     sys.argv = [sys.argv[0]] + runner_args
 
@@ -2070,6 +2085,9 @@ def main_runner():
                             await res
                     except KeyboardInterrupt:
                         sys.exit(0)
+                elif runner_name and not app.alive and runner_name != "default":
+                    raise ValueError(f"FIX DAS SOFORT WENN RUNNER {runner_name} muss {app.alive=} == TRUE sein")
+
 
             loop.run_until_complete(main_helper(runner_name))
         except KeyboardInterrupt:

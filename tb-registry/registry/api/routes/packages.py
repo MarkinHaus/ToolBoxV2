@@ -287,7 +287,7 @@ async def upload_version(
                 )
 
             # Apply patch to reconstruct full package
-            from toolboxv2.utils.extras.bsdiff_wrapper import apply_patch_auto
+            from toolboxv2.utils.extras.install.bsdiff_wrapper import apply_patch_auto
             import tempfile
             from pathlib import Path
 

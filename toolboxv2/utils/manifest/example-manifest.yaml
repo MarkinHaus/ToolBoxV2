@@ -83,7 +83,7 @@ database:
     endpoint: "${MINIO_ENDPOINT:localhost:9000}"
     access_key: "${MINIO_ACCESS_KEY:minioadmin}"
     secret_key: "${MINIO_SECRET_KEY:minioadmin}"
-    bucket: toolbox-data
+    bucket: user-data-enc
     use_ssl: false
 
 # =============================================================================

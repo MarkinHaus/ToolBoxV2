@@ -10,7 +10,7 @@ import time
 import unittest
 from unittest.mock import MagicMock
 
-from zen_plus import (
+from toolboxv2.mods.isaa.extras.zen.zen_plus import (
     # Utilities
     _short, _bar, _detect_lang, syntax_highlight,
     _hl_json, _hl_markdown, _hl_generic,

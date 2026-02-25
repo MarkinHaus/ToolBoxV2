@@ -16,7 +16,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import yaml
 from packaging import version as pv
 from packaging.version import Version
 from tqdm import tqdm
@@ -26,12 +25,10 @@ from toolboxv2.utils.extras.reqbuilder import generate_requirements
 from toolboxv2.utils.system.state_system import find_highest_zip_version
 from toolboxv2.utils.system.state_system import get_state_from_app
 from toolboxv2.utils.system.types import RequestData, Result, ToolBoxInterfaces
-from toolboxv2.utils.zip_security import extract_zip_securely, ZipSecurityError
-from toolboxv2.utils.rollback_manager import RollbackManager
-from toolboxv2.utils.install_validator import (
+from toolboxv2.utils.extras.install.zip_security import extract_zip_securely, ZipSecurityError
+from toolboxv2.utils.extras.install.rollback_manager import RollbackManager
+from toolboxv2.utils.extras.install.install_validator import (
     validate_installation,
-    ValidationResult,
-    ValidationError as ValidatorError,
 )
 
 # =================== Module Configuration ===================
@@ -48,8 +45,9 @@ class Platform(Enum):
     CLIENT = "client"
     DESKTOP = "desktop"
     MOBILE = "mobile"
+    WEB = "web"  # Web/Browser platform
     COMMON = "common"  # Files needed on all platforms
-    ALL = "all"
+    ALL = "all"  # All platforms
 
 
 class ModuleType(Enum):
@@ -81,6 +79,7 @@ TB_CONFIG_SCHEMA_V2 = {
         "client": {"files": list, "required": bool},
         "desktop": {"files": list, "required": bool},
         "mobile": {"files": list, "required": bool},
+        "web": {"files": list, "required": bool},
         "common": {"files": list, "required": bool}
     },
     "metadata": dict
@@ -457,6 +456,13 @@ def create_and_pack_module(path: str, module_name: str = '', version: str = '-.-
             # Copy module directory
             shutil.copytree(module_path, temp_dir / module_path.name, dirs_exist_ok=True)
 
+            # Auto-include test files if they exist
+            test_mod_dir = Path("./tests/test_mods") / f"test_{module_name}"
+            if test_mod_dir.exists():
+                test_target = temp_dir / "tests" / f"test_{module_name}"
+                shutil.copytree(test_mod_dir, test_target, dirs_exist_ok=True)
+                print(f"  ✓ Added test files from: {test_mod_dir}")
+
         else:
             # Single file module - create single config
             config_data = create_tb_config_single(
@@ -638,6 +644,21 @@ def unpack_and_move_module(zip_path: str, base_path: str = './mods',
                         shutil.copy2(item, target)
 
                     print(f"  Installed additional file: {item.name} -> {target}")
+
+            # Handle test files in tests/ directory
+            test_source = temp_dir / "tests"
+            if test_source.exists():
+                with Spinner("Installing test files"):
+                    test_target = Path("./tests")
+                    test_target.mkdir(parents=True, exist_ok=True)
+
+                    for test_dir in test_source.iterdir():
+                        if test_dir.is_dir():
+                            target = test_target / test_dir.name
+                            if target.exists():
+                                shutil.rmtree(target)
+                            shutil.copytree(test_dir, target)
+                            print(f"  ✓ Installed test directory: {test_dir.name}")
 
             print(f"✓ Successfully installed/updated module: {module_name}")
             return module_name
@@ -1117,7 +1138,7 @@ async def installer(app: Optional[App], module_name: str,
 
     # Redirect to registry_install
     app.print("📦 Using TB Registry for installation...")
-    result = await install_from_registry(app, module_name)
+    result = await install_from_registry(app, module_name, target_platform=platform)
 
     # Rebuild state if requested and installation was successful
     if not result.is_error() and build_state:
@@ -1248,7 +1269,6 @@ async def build_all_mods(app: Optional[App], base: str = "mods",
 from toolboxv2.utils.extras.registry_client import (
     RegistryClient,
     LockFileManager,
-    RegistryError,
     RegistryConnectionError,
     RegistryAuthError,
     PackageNotFoundError,
@@ -1382,6 +1402,7 @@ async def install_from_registry(
     package_name: str,
     version: Optional[str] = None,
     no_deps: bool = False,
+    target_platform: Optional[Platform] = None,
 ) -> Result:
     """
     Install a package from the registry.
@@ -1391,6 +1412,7 @@ async def install_from_registry(
         package_name: Name of package to install
         version: Specific version (default: latest)
         no_deps: Skip dependency installation
+        target_platform: Optional platform filter for installation
 
     Returns:
         Result with installation status
@@ -1467,6 +1489,7 @@ async def install_from_registry(
                     str(zip_path),
                     f"{app.start_dir}/mods",
                     module_name,
+                    target_platform=target_platform,
                 )
 
             if result:
@@ -1632,6 +1655,7 @@ async def publish_to_registry(
 async def update_from_registry(
     app: App,
     package_name: Optional[str] = None,
+    target_platform: Optional[Platform] = None,
 ) -> Result:
     """
     Update package(s) from the registry.
@@ -1643,6 +1667,7 @@ async def update_from_registry(
     Args:
         app: Application instance
         package_name: Specific package to update (None = all)
+        target_platform: Optional platform filter for installation
 
     Returns:
         Result with update status, including rollback information
@@ -1741,6 +1766,7 @@ async def update_from_registry(
                     pkg_name,
                     latest_version,
                     no_deps=True,
+                    target_platform=target_platform,
                 )
 
                 if not result.is_ok():
@@ -3077,6 +3103,148 @@ class ModernMenuManager:
         lines.append("└" + "─" * 60)
 
         await show_message(f"ℹ️ Package: {package_name}", '\n'.join(lines), "info")
+
+
+# =================== CLI Parser ===================
+
+@export(mod_name=Name, name="mods_manager")
+async def mods_manager():
+    """
+    Main CLI entry point for 'tb mods' command.
+
+    Uses argparse for robust argument parsing with platform support.
+    """
+    import argparse
+    import sys
+
+    # Get app
+    app = get_app(f"{Name}.mods_manager")
+
+    # Parser konfigurieren
+    parser = argparse.ArgumentParser(
+        prog="tb mods",
+        description="Manage ToolBox modules - Install, update, build, or start Dev Runner",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  tb mods list                           List all modules
+  tb mods install MyModule               Install module (auto-detect platform from name)
+  tb mods install MyModule --platforms=web Install with explicit platform
+  tb mods install MyModule --platforms=all Install all platform files
+  tb mods update MyModule                Update module from registry
+  tb mods build MyModule                 Build module package
+  tb mods create MyModule                Create new module
+  tb mods manager                         Interactive module manager
+
+Platform Auto-Detection:
+  MyModule_Server  → Auto-detects "server"
+  MyModule_Web     → Auto-detects "web"
+  MyModule_Desktop  → Auto-detects "desktop"
+
+Platform Options:
+  server, client, desktop, mobile, web, common, all
+  Multiple platforms: --platforms=server,web (uses first)
+        """
+    )
+
+    # 1. Das erste Argument: Entweder ein Befehl (list, create...) ODER ein Modulname
+    parser.add_argument(
+        "command",
+        nargs="?",
+        default="",
+        help="Command (list, create, manager...) OR Module Name for Dev Runner"
+    )
+
+    # 2. Das zweite Argument: Ziel-Modul (nur nötig für build, install, create, update)
+    parser.add_argument(
+        "module_name",
+        nargs="?",
+        default="",
+        help="Target module name (for build, install, create, update)"
+    )
+
+    # 3. Platform filter option
+    parser.add_argument(
+        "-p", "--platforms",
+        metavar="PLATFORM",
+        default=None,
+        help="""Platform filter for installation
+                          Options: server, client, desktop, mobile, web, common, all
+                          Multiple platforms: server,web (uses first)
+                          Omit for auto-detection from module name (default)"""
+    )
+
+    # 4. Flags für 'create' und 'gen-configs'
+    parser.add_argument("--type", help="Module type (for create)", default=None)
+    parser.add_argument("--desc", help="Description", default=None)
+    parser.add_argument("--version", help="Version", default=None)
+    parser.add_argument("--location", help="Custom path", default=None)
+    parser.add_argument("--author", help="Author name", default=None)
+
+    # Boolean Flags (store_true)
+    parser.add_argument("--external", action="store_true", help="Create external module")
+    parser.add_argument("--no-config", action="store_true", help="Skip tbConfig creation")
+    parser.add_argument("--force", action="store_true", help="Force overwrite")
+    parser.add_argument("--non-interactive", action="store_true", help="Skip confirmations")
+    parser.add_argument("--no-backup", action="store_true", help="Skip backups")
+
+    parser.add_argument(
+        "--port",
+        type=int,
+        metavar="PORT",
+        default=8080,
+        help="Interface port number (default: 8080) for Dev Runner"
+    )
+
+    # Argumente parsen
+    args = parser.parse_args()
+
+    # Plattform-Filter vorbereiten
+    platform_kwargs = {}
+    if args.platforms:
+        # Parse platform value (all, server,web, etc.)
+        platform_str = args.platforms.strip().lower()
+
+        if platform_str == "all":
+            # None = keine Filter (alle Dateien installieren)
+            platform_kwargs["platform"] = None
+        elif "," in platform_str:
+            # Multi-Platform - verwende erste (für zukünftige Erweiterung)
+            platforms = [p.strip() for p in platform_str.split(",")]
+            print(f"ℹ️  Multiple platforms requested: {', '.join(platforms)}")
+            print(f"ℹ️  Currently using first platform: {platforms[0]}")
+            platform_kwargs["platform"] = Platform(platforms[0])
+        else:
+            # Explizite Platform
+            platform_kwargs["platform"] = Platform(platform_str)
+    else:
+        # Kein --platforms Parameter: Auto-Detection basierend auf Modulnamen
+        # Wird in main() Funktion gehandelt
+        pass
+
+    # Wir bauen die kwargs zusammen.
+    # Wichtig: Wir filtern 'command' und 'module_name' heraus, da diese positionsabhängig übergeben werden.
+    # Wir filtern None-Werte heraus, damit Defaults der Zielfunktion greifen.
+    clean_kwargs = {
+        k: v for k, v in vars(args).items()
+        if k not in ["command", "module_name", "platforms"] and v is not None and v is not False
+    }
+
+    # Boolean Flags müssen explizit übergeben werden, wenn sie True sind
+    for flag in ["external", "no_config", "force", "non_interactive", "no_backup"]:
+        if getattr(args, flag, False):
+            # Für Kompatibilität mit main() Logik ("--flag" in kwargs)
+            key_name = "--" + flag.replace("_", "-")
+            clean_kwargs[key_name] = True
+
+    # Ausführung an CloudM -> mods übergeben
+    await app.a_run_any(
+        "CloudM",
+        "mods",
+        command=args.command,
+        module_name=args.module_name,
+        **clean_kwargs
+    )
 
 
 # =================== Main Export ===================
@@ -4599,13 +4767,208 @@ def list_module_templates(app: Optional[App] = None) -> Result:
     return Result.ok(data={"templates": templates, "count": len(templates)})
 
 
+def parse_platforms_from_args(argv: list, module_name: str = None) -> Optional[Platform]:
+    """
+    Parse --platforms argument from command line args.
+
+    Supports:
+    - --platforms=server : explicit platform (singular)
+    - --platforms=server,web : multiple platforms
+    - --platforms=all : all platforms
+    - --platforms server : explicit platform (long form)
+    - No --platforms argument : auto-detect from manifest features ✨
+
+    Auto-detection recognizes:
+    - Suffixes: MyModule_Server, MyModuleWeb, MyModule_Web, etc.
+    - Prefixes: Server_MyModule, Web_MyModule, etc.
+
+    Args:
+        argv: sys.argv list
+        module_name: Optional module name for auto-detection
+
+    Returns:
+        Platform enum (single) or None for auto-detection
+    """
+    platform_value = None
+    platform_arg_index = -1
+
+    # Parse --platforms argument (plural!)
+    for i, arg in enumerate(argv):
+        if arg.startswith("--platforms="):
+            platform_value = arg.split("=", 1)[1]
+            platform_arg_index = i
+            break
+        elif arg == "--platforms":
+            if i + 1 < len(argv):
+                next_arg = argv[i + 1]
+                if next_arg.startswith("--") or next_arg.endswith(".py") or "/" in next_arg or "\\" in next_arg:
+                    # Next arg is another option or a file path -> auto-detect
+                    platform_value = ""
+                    platform_arg_index = i
+                else:
+                    platform_value = next_arg
+                    platform_arg_index = i
+            break
+
+
+    # If no --platforms argument, try auto-detection ✨
+    if platform_value is None:
+        if module_name:
+            detected = detect_platform_from_name(module_name)
+            if detected:
+                print(f"🔍 Auto-detected platform: {detected.value} (from module name '{module_name}')")
+                return detected
+
+
+    # If --platforms= without value, try auto-detection
+    if platform_value == "":
+        if module_name:
+            detected = detect_platform_from_name(module_name)
+            if detected:
+                print(f"🔍 Auto-detected platform: {detected.value} (from module name '{module_name}')")
+                return detected
+
+
+    try:
+        from toolboxv2 import get_app
+        active_f= get_app("platform_detaction").manifest.features.get_active_features()
+        active_set = {f.lower() for f in active_f}
+
+        all_matches = [
+            platform
+            for platform in Platform
+            if platform.value in active_set
+        ]
+
+        if all_matches:
+            return Platform(all_matches[0])
+    except:
+        pass
+
+
+    # Try to parse the platform value
+    platform_str = platform_value.strip().lower()
+
+    # Handle empty string (should not reach here due to above check)
+    if not platform_str:
+        if module_name:
+            detected = detect_platform_from_name(module_name)
+            if detected:
+                print(f"🔍 Auto-detected platform: {detected.value} (from module name '{module_name}')")
+                return detected
+        return None
+
+    # Handle "all" - returns None (no filter, install all files)
+    if platform_str == "all":
+        print("ℹ️  Installing all platform files (no filter)")
+        return None
+
+    # Handle comma-separated list - use first platform for now
+    # TODO: Future support for multi-platform installation
+    if "," in platform_str:
+        platforms = [p.strip() for p in platform_str.split(",")]
+        print(f"ℹ️  Multiple platforms requested: {', '.join(platforms)}")
+        print(f"ℹ️  Using first platform: {platforms[0]}")
+        platform_str = platforms[0]
+
+    # Parse explicit platform value
+    try:
+        return Platform(platform_str)
+    except ValueError:
+        print(f"❌ Invalid platform: {platform_value}")
+        print(f"   Valid platforms: server, client, desktop, mobile, web, common, all")
+        print(f"   Or use comma-separated: --platforms=server,web")
+        print(f"   Or omit --platforms for auto-detection from module name")
+        import sys
+        sys.exit(1)
+
+
+def detect_platform_from_name(module_name: str) -> Optional[Platform]:
+    """
+    Auto-detect platform from module name using naming conventions.
+
+    Recognized patterns:
+    - Suffixes: MyModule_Server, MyModuleWeb, MyModule_Web, MyModule_ServerImpl
+    - Prefixes: Server_MyModule, Web_MyModule, ServerImpl_MyModule
+
+    Args:
+        module_name: Module name to analyze
+
+    Returns:
+        Detected Platform or None
+    """
+    if not module_name:
+        return None
+
+    name_lower = module_name.lower()
+
+    # Platform suffix patterns (variations)
+    # Order matters - check longer, more specific patterns first
+    suffix_patterns = [
+        (':serverimpl', Platform.SERVER),
+        (':clientimpl', Platform.CLIENT),
+        (':desktopimpl', Platform.DESKTOP),
+        (':mobileimpl', Platform.MOBILE),
+        (':webimpl', Platform.WEB),
+        (':server', Platform.SERVER),
+        (':client', Platform.CLIENT),
+        (':desktop', Platform.DESKTOP),
+        (':mobile', Platform.MOBILE),
+        (':web', Platform.WEB),
+        (':common', Platform.COMMON),
+        # CamelCase variations (without underscore)
+        ('serverimpl', Platform.SERVER),
+        ('clientimpl', Platform.CLIENT),
+        ('desktopimpl', Platform.DESKTOP),
+        ('mobileimpl', Platform.MOBILE),
+        ('webimpl', Platform.WEB),
+        ('server', Platform.SERVER),
+        ('client', Platform.CLIENT),
+        ('desktop', Platform.DESKTOP),
+        ('mobile', Platform.MOBILE),
+        ('web', Platform.WEB),
+        ('common', Platform.COMMON),
+    ]
+
+    # Platform prefix patterns
+    prefix_patterns = [
+        ('serverimpl:', Platform.SERVER),
+        ('clientimpl:', Platform.CLIENT),
+        ('desktopimpl:', Platform.DESKTOP),
+        ('mobileimpl:', Platform.MOBILE),
+        ('webimpl:', Platform.WEB),
+        ('server:', Platform.SERVER),
+        ('client:', Platform.CLIENT),
+        ('desktop:', Platform.DESKTOP),
+        ('mobile:', Platform.MOBILE),
+        ('web:', Platform.WEB),
+        ('common:', Platform.COMMON),
+    ]
+
+    # Check for suffixes (e.g., MyModule_Server, MyModuleServer)
+    for suffix, platform in suffix_patterns:
+        if name_lower.endswith(suffix):
+            # Make sure it's a distinct ending
+            # Avoid false positives like "server_admin" when we want "xxx_server"
+            if len(name_lower) > len(suffix):
+                return platform
+
+    # Check for prefixes (e.g., Server_MyModule, Web_MyModule)
+    for prefix, platform in prefix_patterns:
+        if name_lower.startswith(prefix):
+            return platform
+
+    # No platform detected
+    return None
+
+
 @export(mod_name=Name, name="mods")
 async def main(app, command="", module_name="", **kwargs):
     import sys
 
     # Liste der reservierten Befehle
     KNOWN_COMMANDS = [
-        "list", "manager", "build", "install",
+        "list", "manager", "build", "install", "update",
         "gen-configs", "gen-config", "create", "templates", "help"
     ]
 
@@ -4653,10 +5016,45 @@ async def main(app, command="", module_name="", **kwargs):
         elif command == "install":
             target = module_name
             if not target and len(sys.argv) > 2: target = sys.argv[2]
-            if target:
-                await installer(app, target)
+
+            # Check if platform is provided by argparse parser (kwargs)
+            # Otherwise use auto-detection from module name
+            if "platform" in kwargs:
+                platform = kwargs["platform"]
+                if platform is not None:
+                    print(f"ℹ️  Using platform: {platform.value}")
             else:
-                print("Usage: tb mods install <module_name>")
+                # Parse --platforms argument (with auto-detection)
+                platform = parse_platforms_from_args(sys.argv, module_name=target)
+
+            if target:
+                await installer(app, target, platform=platform)
+            else:
+                print("Usage: tb mods install <module_name> [--platforms=<server|client|desktop|mobile|web|all>]")
+                print("       Omit --platforms for auto-detection from module name")
+
+        elif command == "update":
+            # Update module(s) from registry with optional platform filter
+            target = module_name
+            if not target and len(sys.argv) > 2:
+                arg = sys.argv[2]
+                if not arg.startswith("--"):
+                    target = arg
+
+            # Check if platform is provided by argparse parser (kwargs)
+            # Otherwise use auto-detection from module name
+            if "platform" in kwargs:
+                platform = kwargs["platform"]
+                if platform is not None:
+                    print(f"ℹ️  Using platform: {platform.value}")
+            else:
+                # Parse --platforms argument (with auto-detection)
+                platform = parse_platforms_from_args(sys.argv, module_name=target)
+
+            if target:
+                await update_from_registry(app, target, target_platform=platform)
+            else:
+                await update_from_registry(app, target_platform=platform)
 
         elif command == "gen-configs":
             # Generate configs for all modules

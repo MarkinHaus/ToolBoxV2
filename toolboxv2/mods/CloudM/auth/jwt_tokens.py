@@ -14,10 +14,12 @@ from .models import UserData
 from .state import _is_blacklisted
 
 
-def _generate_access_token(user_id: str, username: str, level: int, provider: str = "") -> str:
+def _generate_access_token(user_id: str, username: str, level: int, provider: str = "", email: str = "") -> str:
     payload = {
         "sub": user_id,
+        "user_id": user_id,  # alias for cloudm_client compatibility
         "username": username,
+        "email": email,
         "level": level,
         "provider": provider,
         "type": "access",
@@ -42,7 +44,10 @@ def _generate_refresh_token(user_id: str) -> str:
 def _generate_tokens(user: UserData, provider: str = "") -> dict:
     """Generate access + refresh token pair."""
     return {
-        "access_token": _generate_access_token(user.user_id, user.username, user.level, provider),
+        "access_token": _generate_access_token(
+            user.user_id, user.username, user.level, provider,
+            email=getattr(user, "email", ""),
+        ),
         "refresh_token": _generate_refresh_token(user.user_id),
         "expires_in": ACCESS_TOKEN_EXPIRY,
         "token_type": "Bearer",

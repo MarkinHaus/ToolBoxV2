@@ -1037,6 +1037,60 @@ WantedBy=multi-user.target
             version = self.installer.get_version()
             print_status(f"Version: {version or 'unknown'}", "info")
 
+    def is_one_online(self, db_type: str) -> bool:
+        """
+        Prüft, ob mindestens eine Datenbank des Typs 'db_type' online ist.
+        Checkt sowohl lokale Instanzen als auch Remote-Endpoints.
+        """
+        for name, config in self.configs.items():
+            if config.mode != db_type:
+                continue
+
+            # --- Fall 1: Mobile (SQLite) ---
+            if db_type == "mobile":
+                db_path = Path(config.data_dir) / "data.db"
+                if db_path.exists():
+                    return True  # Wenn Datei da, gilt sie als "online"
+
+            # --- Fall 2: Lokale Instanz checken (Server/Desktop) ---
+            instance = self._get_instance(name)
+            if instance and instance.get_status() == MinIOStatus.RUNNING:
+                return True
+
+            # --- Fall 3: Remote/Cloud Check (Falls lokaler Server aus, aber Cloud-Backup da) ---
+            # Wir versuchen den Cloud-Endpoint oder den konfigurierten Host zu pingen
+            target_url = None
+            if config.cloud_endpoint:
+                target_url = config.cloud_endpoint
+            elif config.host and config.port:
+                # Baue URL aus Host und Port (lokal/lan)
+                protocol = "http"  # Default
+                target_url = f"{protocol}://{config.host}:{config.port}/minio/health/live"
+
+            if target_url:
+                try:
+                    # Kurzer Timeout, damit das CLI nicht hängen bleibt
+                    import requests
+                    response = requests.get(target_url, timeout=0.8)
+                    if response.status_code == 200:
+                        return True
+                except:
+                    pass
+
+        return False
+
+def all_modes():
+    modes = []
+    for name, config in MinIOCLIManager().configs.items():
+        modes.append((name, config.mode))
+    return modes
+
+def status(name="server"):
+    return MinIOCLIManager().is_one_online(name)
+
+def start(name="server"):
+    return MinIOCLIManager().cmd_start(name)
+
 
 # =================== CLI Entry Point ===================
 
@@ -1054,7 +1108,7 @@ async def cli_db_runner():
 ║                                                                            ║
 ║  Installation:                                                             ║
 ║    $ tb db install                    # Install MinIO server & client      ║
-║    $ tb db info                       # Show installation info             ║
+║    $ tb db info --type                # Show installation info             ║
 ║                                                                            ║
 ║  Server Setup (Cloud):                                                     ║
 ║    $ tb db setup-server --name cloud --port 9000                           ║
@@ -1078,6 +1132,7 @@ async def cli_db_runner():
 ║    $ tb db status                     # Show instance status               ║
 ║    $ tb db health                     # Health check all instances         ║
 ║                                                                            ║
+║                                                                            ║
 ║  Sync:                                                                     ║
 ║    $ tb db sync --name mobile         # Manual sync for mobile/desktop     ║
 ║                                                                            ║
@@ -1096,7 +1151,8 @@ async def cli_db_runner():
     subparsers.add_parser('uninstall', help='Uninstall MinIO binaries')
 
     # Info command
-    subparsers.add_parser('info', help='Show system and installation info')
+    p_check = subparsers.add_parser('info', help='Show system and installation info')
+    p_check.add_argument('--type', choices=['server', 'desktop', 'mobile'], required=True, default="all")
 
     # Setup server command
     p_server = subparsers.add_parser('setup-server', help='Setup a central MinIO server')
@@ -1170,7 +1226,14 @@ async def cli_db_runner():
         manager.cmd_uninstall()
 
     elif args.action == 'info':
-        manager.cmd_info()
+        if args.type == "all":
+            manager.cmd_info()
+        else:
+            online = manager.is_one_online(args.type)
+            if online:
+                print_status(f"At least one '{args.type}' is ONLINE", "success")
+            else:
+                print_status(f"No '{args.type}' is online", "error")
 
     elif args.action == 'setup-server':
         manager.cmd_setup_server(

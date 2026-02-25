@@ -229,10 +229,19 @@ class OpenObserveAdapter(ObservabilityAdapter):
                 ctx = ssl.create_default_context()
                 ctx.check_hostname = False
                 ctx.verify_mode = ssl.CERT_NONE
-            with urlopen(req, timeout=5, context=ctx) as resp:
+            with urlopen(req, timeout=2, context=ctx) as resp:
                 return resp.status == 200
-        except Exception:
+        except Exception as e:
             return False
+
+    async def health_check_with_session(self, session):
+        url = f"{self.endpoint}/healthz"
+        resp = await session.fetch(url, method="GET")
+
+        print(resp)
+        if not resp:
+            return False
+        return resp.status == 200
 
     def close(self):
         pass

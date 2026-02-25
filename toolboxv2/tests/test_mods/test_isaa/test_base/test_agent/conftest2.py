@@ -5,12 +5,11 @@ from unittest.mock import MagicMock, AsyncMock
 
 # --- MOCKING EXTERNAL IMPORTS ---
 # Da toolboxv2 evtl. nicht installiert ist, mocken wir die Importe vorab
-sys.modules['toolboxv2'] = MagicMock()
-sys.modules['toolboxv2.mods.isaa.base.Agent.types'] = MagicMock()
-sys.modules['toolboxv2.mods.isaa.base.Agent.rule_set'] = MagicMock()
-sys.modules['litellm'] = MagicMock()
-sys.modules['python_a2a'] = MagicMock()
-sys.modules['mcp.server.fastmcp'] = MagicMock()
+sys.modules['toolboxv2.mods.isaa.base.Agent.types'] = MagicMock(__path__=[])
+sys.modules['toolboxv2.mods.isaa.base.Agent.rule_set'] = MagicMock(__path__=[])
+sys.modules['litellm'] = MagicMock(__path__=[])
+sys.modules['python_a2a'] = MagicMock(__path__=[])
+sys.modules['mcp.server.fastmcp'] = MagicMock(__path__=[])
 
 # --- ASYNC TEST BASE ---
 class AsyncTestCase(unittest.TestCase):

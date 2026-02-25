@@ -427,8 +427,9 @@ class TestFlowHandlers(IsolatedTestCase):
 
         # Mock the flows_dict import
         import sys
+
         mock_flows_module = Mock()
-        mock_flows_module.flows_dict = Mock(return_value={})
+        mock_flows_module.flows_dict = Mock(return_value={},__path__=[])
         sys.modules['toolboxv2.flows'] = mock_flows_module
 
         self.manager.set_app(mock_app)

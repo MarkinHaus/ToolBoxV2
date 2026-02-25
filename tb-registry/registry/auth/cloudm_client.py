@@ -87,9 +87,16 @@ class CloudMAuthClient:
                 algorithms=["HS256"],
                 options={
                     "verify_signature": True,
-                    "require": ["user_id", "username", "email", "exp"],
+                    "require": ["exp"],
                 }
             )
+
+            # Accept both "user_id" and "sub" (standard JWT claim)
+            user_id = payload.get("user_id") or payload.get("sub")
+            username = payload.get("username")
+            if not user_id or not username:
+                logger.warning("Token missing required fields (user_id/sub, username)")
+                return None
 
             # Check expiry (already done by jwt.decode, but explicit check)
             if payload.get("exp", 0) < int(time.time()):
@@ -98,9 +105,9 @@ class CloudMAuthClient:
 
             # Return structured payload
             return TokenPayload(
-                user_id=payload["user_id"],
-                username=payload["username"],
-                email=payload["email"],
+                user_id=user_id,
+                username=username,
+                email=payload.get("email", ""),
                 level=payload.get("level", 1),
                 provider=payload.get("provider", "unknown"),
                 exp=payload["exp"],

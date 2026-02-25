@@ -276,10 +276,10 @@ async def _complete_login(app: App, result: Result, email: str = None) -> Result
         "username": username,
         "email": email or data.get("email", ""),
         "user_id": data.get("user_id", ""),
+        "level": data.get("level", 1),
         "access_token": data.get("access_token", ""),
         "refresh_token": data.get("refresh_token", ""),
         "provider": data.get("provider", ""),
-        "level": data.get("level", 1),
         "authenticated_at": time.time(),
     }
     await _save_cli_token(app, username, session_data)
@@ -350,18 +350,19 @@ def _invalidate_app_session(app: App):
 
 async def auto_login_from_blob(app) -> bool:
     """
-    Auto-Login aus BlobFile. Ersetzt log_in() in main().
+    Auto-Login aus BlobFile mit Token-Refresh. Ersetzt log_in() in main().
 
     Usage:
         from toolboxv2.mods.CloudM.LogInSystem import auto_login_from_blob
         tb_app.run_bg_task_advanced(auto_login_from_blob, tb_app)
     """
     try:
-        result = _find_cli_session(app)
-        if result:
-            _apply_session_to_app(app, result["session_data"])
-            app.print(f"🔓 Logged in as: {result['username']}")
-            app.set_username(result['username'])
+        # Use _check_existing_session for auto-refresh support
+        session_data = await _check_existing_session(app)
+        if session_data:
+            _apply_session_to_app(app, session_data)
+            app.print(f"🔓 Logged in as: {session_data.get('username', 'Unknown')}")
+            app.set_username(session_data.get('username', ''))
             return True
         return False
     except Exception as e:
@@ -433,25 +434,95 @@ def _find_cli_session(app: App = None, username: str = None) -> Optional[dict]:
 
 
 async def _check_existing_session(app: App, username: str = None) -> Optional[dict]:
-    """Check for existing valid CLI session. Ersetzt die alte Version."""
+    """Check for existing valid CLI session. Auto-refreshes if access token expired/expiring."""
     try:
         result = _find_cli_session(app, username)
         if not result:
             return None
 
         session_data = result["session_data"]
+        uname = result["username"]
 
-        # Token beim Auth-Server validieren
+        # 1) Try validating access token
         validate = await app.a_run_any(
             (AUTH_MODULE, "validate_session"),
             token=session_data["access_token"],
             get_results=True,
         )
         if not validate.is_error():
-            return session_data
+            # Token valid — check if expiring soon (< 2 min) → preemptive refresh
+            try:
+                import jwt as pyjwt
+                payload = pyjwt.decode(
+                    session_data["access_token"],
+                    options={"verify_signature": False, "verify_exp": False},
+                )
+                remaining = payload.get("exp", 0) - time.time()
+                if remaining > 120:  # mehr als 2 min → alles gut
+                    return session_data
+                # < 2 min → weiter zu refresh
+            except Exception:
+                return session_data  # decode failed but token valid → use as-is
 
-    except Exception:
-        pass
+        # 2) Access token expired/expiring → try refresh
+        refresh_token = session_data.get("refresh_token")
+        if not refresh_token:
+            print_status("Session expired — no refresh token, please login again (tb login)", "warning")
+            return None
+
+        # Validate refresh token JWT locally
+        from toolboxv2.mods.CloudM.auth.jwt_tokens import (
+            _validate_jwt as _validate_jwt_local,
+            _generate_access_token,
+            _generate_refresh_token,
+        )
+
+        valid, ref_payload = await _validate_jwt_local(app, refresh_token, token_type="refresh")
+        if not valid:
+            print_status("Session expired — please login again (tb login)", "warning")
+            await _clear_cli_token(app, uname)
+            return None
+
+        # 3) Generate new token pair from stored session info
+        #    Extract level from old access token (even if expired)
+        level = session_data.get("level", 1)
+        if level <= 0:
+            try:
+                import jwt as pyjwt
+                old = pyjwt.decode(
+                    session_data["access_token"],
+                    options={"verify_signature": False, "verify_exp": False},
+                )
+                level = old.get("level", 1)
+            except Exception:
+                level = 1
+
+        new_access = _generate_access_token(
+            user_id=session_data["user_id"],
+            username=uname,
+            level=level,
+            provider=session_data.get("provider", ""),
+            email=session_data.get("email", ""),
+        )
+        new_refresh = _generate_refresh_token(session_data["user_id"])
+
+        # 4) Update & persist session
+        session_data["access_token"] = new_access
+        session_data["refresh_token"] = new_refresh
+        session_data["level"] = level
+        session_data["refreshed_at"] = time.time()
+
+        await _save_cli_token(app, uname, session_data)
+
+        if hasattr(app, 'logger'):
+            app.logger.info(f"CLI session auto-refreshed for {uname}")
+
+        return session_data
+
+    except Exception as e:
+        if hasattr(app, 'logger'):
+            app.logger.debug(f"Session check failed: {e}")
+        return None
 
 # =================== Logout ===================
 

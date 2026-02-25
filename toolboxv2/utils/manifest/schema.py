@@ -71,6 +71,7 @@ class AppConfig(BaseModel):
     environment: Environment = Field(default=Environment.DEVELOPMENT)
     debug: bool = Field(default=False)
     log_level: LogLevel = Field(default=LogLevel.INFO)
+    ping_interval: int = Field(default=0)
 
 
 class AutostartConfig(BaseModel):
@@ -148,6 +149,8 @@ class MinioConfig(BaseModel):
     cloud_endpoint: str = Field(default="${MINIO_CLOUD_ENDPOINT:}")
     cloud_access_key: str = Field(default="${MINIO_CLOUD_ACCESS_KEY:}")
     cloud_secret_key: str = Field(default="${MINIO_CLOUD_SECRET_KEY:}")
+
+    default_name: str  = Field(default="my-db")
 
 
 class DatabaseConfig(BaseModel):
@@ -248,12 +251,6 @@ class NginxConfig(BaseModel):
     rate_limit_burst: int = Field(default=20)
 
 
-class ClerkConfig(BaseModel):
-    """Clerk authentication configuration."""
-    secret_key: str = Field(default="${CLERK_SECRET_KEY:}")
-    publishable_key: str = Field(default="${CLERK_PUBLISHABLE_KEY:}")
-
-
 class SessionConfig(BaseModel):
     """Session/cookie configuration."""
     cookie_name: str = Field(default="tb_session")
@@ -267,7 +264,6 @@ class SessionConfig(BaseModel):
 class AuthConfig(BaseModel):
     """Authentication configuration."""
     provider: AuthProvider = Field(default=AuthProvider.CUSTOM)
-    clerk: ClerkConfig = Field(default_factory=ClerkConfig)  # deprecated, kept for backwards compat
     session: SessionConfig = Field(default_factory=SessionConfig)
     ws_require_auth: bool = Field(default=False)
     ws_allow_anonymous: bool = Field(default=True)
@@ -371,6 +367,17 @@ class FeaturesConfig(BaseModel):
         )
     )
 
+    def get_active_features(self) -> List[str]:
+        """
+        Iteriert dynamisch über alle Felder und gibt die Namen derer zurück,
+        die aktiv (enabled=True) sind.
+        """
+        # 'self' gibt beim Iterieren (field_name, field_value) zurück
+        return [
+            name for name, spec in self
+            if isinstance(spec, FeatureSpec) and spec.enabled
+        ]
+
 # =============================================================================
 # Observability Configuration
 # =============================================================================
@@ -428,6 +435,7 @@ class ObservabilityConfig(BaseModel):
     sync: ObservabilitySyncConfig = Field(default_factory=ObservabilitySyncConfig)
     dashboard: ObservabilityDashboardConfig = Field(default_factory=ObservabilityDashboardConfig)
     cleanup: LogCleanupConfig = Field(default_factory=LogCleanupConfig)
+    slow_on_init: bool = Field(default=False)
 
 # =============================================================================
 # ISAA Configuration (conditional - only when isaa is installed)

@@ -193,6 +193,58 @@ except ImportError as e:
 __author__ = """Markin Hausmanns"""
 __email__ = 'Markinhausmanns@gmail.com'
 
+import cProfile
+import pstats
+import io
+import os
+from functools import wraps
+
+
+def profile_code(sort_by="cumulative", top_n=30):
+    """
+    Decorator für cProfile, der nur Calls aus dem eigenen Projekt anzeigt.
+
+    :param sort_by: Sortierung ('cumulative', 'tottime', etc.)
+    :param top_n: Anzahl der angezeigten Einträge
+    """
+
+    if os.getenv("DEBUG_PROFILER", "false") != "true":
+        return lambda x,**y:x
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            profiler = cProfile.Profile()
+            profiler.enable()
+
+            result = func(*args, **kwargs)
+
+            profiler.disable()
+
+            # Stats laden
+            stats_stream = io.StringIO()
+            stats = pstats.Stats(profiler, stream=stats_stream)
+
+            # Projektverzeichnis bestimmen
+            project_root = os.getcwd()
+
+            # Nur eigene Dateien filtern
+            filtered_stats = pstats.Stats(profiler)
+            filtered_stats.stats = {
+                key: value
+                for key, value in stats.stats.items()
+                if key[0].startswith(project_root)
+            }
+
+            # Sortieren & ausgeben
+            filtered_stats.sort_stats(sort_by)
+            filtered_stats.print_stats(top_n)
+
+            return result
+
+        return wrapper
+
+    return decorator
 
 from pathlib import Path
 
