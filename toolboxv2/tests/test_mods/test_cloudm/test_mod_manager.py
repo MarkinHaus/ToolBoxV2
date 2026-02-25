@@ -22,6 +22,8 @@ from unittest.mock import patch, MagicMock, mock_open
 import zipfile
 
 from toolboxv2 import Result
+from toolboxv2.mods.CloudM.ModManager import create_and_pack_module, unpack_and_move_module
+from toolboxv2.tests.a_util import async_test
 
 
 class TestModulePackaging(unittest.TestCase):
@@ -235,7 +237,7 @@ class TestModuleListingMocked(unittest.TestCase):
 
 class TestModuleUploadMocked(unittest.TestCase):
     """Tests for module upload with mocked operations"""
-
+    @async_test
     @patch('toolboxv2.mods.CloudM.ModManager.get_app')
     async def test_upload_mod_validates_form_data(self, mock_get_app):
         """Test that upload_mod validates form data"""
@@ -250,6 +252,7 @@ class TestModuleUploadMocked(unittest.TestCase):
         self.assertIsInstance(result, Result)
         self.assertTrue(result.is_error())
 
+    @async_test
     @patch('toolboxv2.mods.CloudM.ModManager.get_app')
     async def test_upload_mod_validates_file_presence(self, mock_get_app):
         """Test that upload_mod validates file presence"""
@@ -390,6 +393,7 @@ class TestModManagerIntegration(unittest.TestCase):
 class TestRegistryDeprecatedEndpoints(unittest.TestCase):
     """Tests for deprecated endpoints that now redirect to Registry"""
 
+    @async_test
     @patch('toolboxv2.mods.CloudM.ModManager.get_app')
     async def test_upload_mod_returns_deprecated_error(self, mock_get_app):
         """Test that upload_mod returns deprecation error"""
@@ -405,6 +409,7 @@ class TestRegistryDeprecatedEndpoints(unittest.TestCase):
         # Should return HTTP 410 Gone
         self.assertEqual(result.info.exec_code, 410)
 
+    @async_test
     @patch('toolboxv2.mods.CloudM.ModManager.get_app')
     async def test_download_mod_returns_deprecated_error(self, mock_get_app):
         """Test that download_mod returns deprecation error"""
@@ -464,6 +469,7 @@ class TestRegistryClientIntegration(unittest.TestCase):
 class TestRegistryVersionLookup(unittest.TestCase):
     """Tests for version lookup via Registry"""
 
+    @async_test
     @patch('toolboxv2.mods.CloudM.ModManager.get_registry_client')
     @patch('toolboxv2.mods.CloudM.ModManager.find_highest_zip_version')
     async def test_get_mod_version_uses_registry(self, mock_find_zip, mock_get_client):
@@ -483,6 +489,7 @@ class TestRegistryVersionLookup(unittest.TestCase):
         # Should not have fallen back to local
         mock_find_zip.assert_not_called()
 
+    @async_test
     @patch('toolboxv2.mods.CloudM.ModManager.get_registry_client')
     @patch('toolboxv2.mods.CloudM.ModManager.find_highest_zip_version')
     async def test_get_mod_version_falls_back_to_local(self, mock_find_zip, mock_get_client):
@@ -508,6 +515,7 @@ class TestRegistryVersionLookup(unittest.TestCase):
 class TestRegistryInstallRedirect(unittest.TestCase):
     """Tests for install function redirecting to registry"""
 
+    @async_test
     @patch('toolboxv2.mods.CloudM.ModManager.install_from_registry')
     @patch('toolboxv2.mods.CloudM.ModManager.get_state_from_app')
     @patch('toolboxv2.mods.CloudM.ModManager.get_app')
@@ -532,6 +540,7 @@ class TestRegistryInstallRedirect(unittest.TestCase):
 class TestRegistryPublishRedirect(unittest.TestCase):
     """Tests for upload function redirecting to registry"""
 
+    @async_test
     @patch('toolboxv2.mods.CloudM.ModManager.publish_to_registry')
     @patch('toolboxv2.mods.CloudM.ModManager.get_app')
     async def test_upload_uses_registry(self, mock_get_app, mock_publish):

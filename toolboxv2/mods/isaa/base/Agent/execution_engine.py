@@ -1344,6 +1344,478 @@ BEISPIELE:
             return final_response, ctx
         return final_response
 
+
+    async def execute_stream(
+        self,
+        query: str,
+        session_id: str,
+        max_iterations: int = 25,
+        ctx: "ExecutionContext | None" = None,
+        model=None,
+    ) -> tuple[Callable, ExecutionContext]:
+        """
+        Initialize execution and return stream generator + context.
+
+        Returns:
+            tuple[stream_generator_func, ExecutionContext]
+        """
+        session = await self.agent.session_manager.get_or_create(session_id)
+
+        is_resume = ctx is not None
+        if ctx is None:
+            ctx = ExecutionContext()
+
+        self._active_executions[ctx.run_id] = ctx
+        ctx.session_id = session_id
+        ctx.query = query
+
+        # Initialize SubAgentManager
+        if not self.is_sub_agent:
+            self._sub_agent_manager = SubAgentManager(
+                parent_engine=self, parent_session=session, is_sub_agent=False
+            )
+        else:
+            if self.sub_agent_output_dir:
+                session.vfs = RestrictedVFSWrapper(session.vfs, self.sub_agent_output_dir)
+            max_iterations = min(max_iterations, 10)
+
+        self._current_session = session
+
+        if not is_resume:
+            try:
+                ctx.matched_skills = await self.skills_manager.match_skills_async(
+                    query, max_results=2
+                )
+            except:
+                ctx.matched_skills = self.skills_manager.match_skills(
+                    query, max_results=2
+                )
+
+            self._calculate_tool_relevance(ctx, query)
+            self._preload_skill_tools(ctx, query)
+
+            dreamer_insights = getattr(
+                getattr(self.agent.amd, 'persona', None), '_dream_insights', None)
+            ctx.active_persona = self._persona_router.route(
+                query, ctx.matched_skills, dreamer_insights)
+
+            # Apply persona overrides
+
+            if ctx.active_persona.name != "default":
+                max_iterations = ctx.active_persona.apply_max_iterations(max_iterations)
+                self.live.log(
+                    f"Persona: {ctx.active_persona.name} "
+                    f"(model={ctx.active_persona.model_preference}, "
+                    f"temp={ctx.active_persona.temperature}, "
+                    f"max_iter={max_iterations})"
+                )
+
+            system_prompt = self._build_system_prompt(ctx, session)
+            history_depth = 2 if self.is_sub_agent else 6
+            permanent_history = session.get_history_for_llm(last_n=history_depth)
+
+            ctx.working_history = [
+                {"role": "system", "content": system_prompt},
+                *permanent_history,
+                {"role": "user", "content": query},
+            ]
+
+        # Init live state for stream path
+        self.live.run_id = ctx.run_id
+        self.live.max_iterations = max_iterations
+        self.live.t_start = time.time()
+        self.live.skills = [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
+        self.live.tools_loaded = ctx.get_dynamic_tool_names() if ctx.dynamic_tools else []
+        self.live.persona = ctx.active_persona.name
+        self.live.enter(AgentPhase.INIT, f"{'Resume' if is_resume else 'Start'} stream [{ctx.run_id}]")
+
+        async def stream_generator(ctx: ExecutionContext):
+            """Generator that yields chunks during execution"""
+            nonlocal session, max_iterations
+
+            final_response = None
+            success = True
+
+            # Context info for ZEN CLI
+            agent_name = self.agent.amd.name
+            # Determine depth/type (simple heuristic or passed param)
+            is_sub = self.is_sub_agent
+
+            # Helper to enrich chunks
+            def enrich(chunk):
+                chunk["agent"] = agent_name
+                chunk["iter"] = ctx.current_iteration
+                chunk["max_iter"] = max_iterations
+                chunk["is_sub"] = is_sub
+                # Token budget info
+                chunk["tokens_used"] = self._calculate_context_load(ctx)
+                chunk["tokens_max"] = self._get_max_context_tokens()
+                # Skills & Persona
+                chunk["skills"] = [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
+                chunk["persona"] = ctx.active_persona.name if ctx.active_persona else "default"
+                chunk["persona_source"] = ctx.active_persona.source if ctx.active_persona else "default"
+                chunk["persona_model"] = ctx.active_persona.model_preference if ctx.active_persona else "fast"
+                chunk["persona_iterations_factor"] = ctx.active_persona.max_iterations_factor
+                return chunk
+
+            while ctx.current_iteration < max_iterations:
+                ctx.current_iteration += 1
+                self.live.iteration = ctx.current_iteration
+                self.live.enter(AgentPhase.LLM_CALL, f"iter {ctx.current_iteration}/{max_iterations}")
+
+                # Check pause
+                if ctx.status == "paused":
+                    yield enrich({"type": "paused", "run_id": ctx.run_id})
+                    return
+
+                # Check cancellation
+                if ctx.status == "cancelled":
+                    yield enrich({"type": "cancelled", "run_id": ctx.run_id})
+                    return
+
+                if self._should_warn_loop(ctx):
+                    warning_msg = ctx.loop_detector.get_intervention_message()
+                    # Inject into history so LLM sees it
+                    ctx.working_history.append({"role": "system", "content": warning_msg})
+                    ctx.loop_warning_given = True
+                    # Optional: Inform UI about the warning
+                    yield enrich(
+                        {"type": "warning", "message": warning_msg.splitlines()[0]}
+                    )
+
+                # Build messages
+                messages = list(ctx.working_history)
+                focus_msg = ctx.auto_focus.get_focus_message()
+                if focus_msg:
+                    messages.insert(1, focus_msg)
+
+                # Get tool definitions
+                tool_definitions = self._get_tool_definitions(ctx)
+
+                # Stream LLM response state
+                collected_content = ""
+                tool_calls_buffer = {}
+
+                # --- AUTO-RESUME SCHLEIFE FÜR STREAMING ---
+                MAX_CONTINUATIONS = 100
+                continuation_count = 0
+
+                current_messages = messages.copy()
+                current_tools = tool_definitions if tool_definitions else None
+
+                continuing_tool_idx = (
+                    None  # Verfolgt, welches Tool gerade durch Text fortgesetzt wird
+                )
+
+                while continuation_count < MAX_CONTINUATIONS:
+                    stream_kwargs = {"stream": True, "true_stream": True}
+                    if model:
+                        stream_kwargs["model"] = model
+                    else:
+                        stream_kwargs["model_preference"] = ctx.active_persona.model_preference
+                    if ctx.active_persona.temperature is not None:
+                        stream_kwargs["temperature"] = ctx.active_persona.temperature
+                    stream_response = None
+                    try:
+                        stream_response = await self.agent.a_run_llm_completion(
+                            messages=current_messages,
+                            tools=current_tools,
+                            **stream_kwargs,
+                        )
+
+                        if asyncio.iscoroutine(stream_response):
+                            stream_response = await stream_response
+                    except Exception as e:
+                        err_msg = str(e)
+                        if "Event loop is closed" in err_msg:
+                            yield enrich({
+                                "type": "error",
+                                "error": f"LLM stream failed: {err_msg[:200]}"
+                            })
+                            break
+                        raise
+
+                    finish_reason = None
+
+                    try:
+                        async for chunk in stream_response:
+                            delta = (
+                                chunk.choices[0].delta
+                                if hasattr(chunk, "choices") and chunk.choices
+                                else None
+                            )
+
+                            if not delta:
+                                continue
+
+                            if (
+                                hasattr(chunk.choices[0], "finish_reason")
+                                and chunk.choices[0].finish_reason
+                            ):
+                                finish_reason = chunk.choices[0].finish_reason
+
+                            # 1. Content sammeln (oder abgebrochenes Tool fortsetzen)
+                            if delta and hasattr(delta, "content") and delta.content:
+                                if continuing_tool_idx is not None:
+                                    # Das LLM spuckt den Rest des JSON-Strings als reinen Text aus -> ins Tool umleiten!
+                                    tool_calls_buffer[continuing_tool_idx]["function"][
+                                        "arguments"
+                                    ] += delta.content
+                                else:
+                                    collected_content += delta.content
+                                    yield enrich({"type": "content", "chunk": delta.content})
+
+                            # 2. Reasoning sammeln (falls vorhanden)
+                            if (
+                                delta
+                                and hasattr(delta, "reasoning_content")
+                                and delta.reasoning_content
+                            ):
+                                yield enrich(
+                                    {"type": "reasoning", "chunk": delta.reasoning_content}
+                                )
+
+                            # 3. Tool Calls SAMMELN
+                            if delta and hasattr(delta, "tool_calls") and delta.tool_calls:
+                                for tc_chunk in delta.tool_calls:
+                                    idx = tc_chunk.index
+
+                                    # Falls das LLM während eines Resumes trotzdem native Tool_calls nutzt
+                                    target_idx = (
+                                        continuing_tool_idx
+                                        if continuing_tool_idx is not None
+                                        else idx
+                                    )
+
+                                    # Neuen Eintrag anlegen, falls Index noch nicht existiert
+                                    if target_idx not in tool_calls_buffer:
+                                        tool_calls_buffer[target_idx] = (
+                                            ChatCompletionMessageToolCall(
+                                                id=tc_chunk.id,
+                                                type="function",
+                                                function=Function(
+                                                    name=tc_chunk.function.name or "",
+                                                    arguments=tc_chunk.function.arguments
+                                                    or "",
+                                                ),
+                                            )
+                                        )
+                                    else:
+                                        # Bestehenden Eintrag erweitern
+                                        if tc_chunk.function.name:
+                                            tool_calls_buffer[target_idx]["function"][
+                                                "name"
+                                            ] += tc_chunk.function.name
+                                        if tc_chunk.function.arguments:
+                                            tool_calls_buffer[target_idx]["function"][
+                                                "arguments"
+                                            ] += tc_chunk.function.arguments
+                    except RuntimeError as e:
+                        if "Event loop is closed" in str(e):
+                            # Partial result recovery
+                            if collected_content:
+                                final_response = collected_content
+                                yield enrich({"type": "final_answer", "answer": final_response})
+                            else:
+                                yield enrich({
+                                    "type": "error",
+                                    "error": f"Stream aborted: {str(e)[:200]}"
+                                })
+                            break
+                        raise
+                    # --- Ende des Chunks. Prüfen auf Token Limit ---
+                    if finish_reason not in ["length", "max_tokens"]:
+                        break  # Generierung natürlich beendet
+
+                    continuation_count += 1
+                    self.live.status_msg = f"Auto-Resume ({continuation_count}/{MAX_CONTINUATIONS})"
+                    self.live.log(f"Output limit reached. Auto-Resume ({continuation_count}/{MAX_CONTINUATIONS})")
+
+                    # Analysieren, WAS genau abgebrochen ist (Text oder Tool-Call JSON?)
+                    is_tool_cut_off = False
+                    active_cut_off_tool_idx = None
+
+                    if tool_calls_buffer:
+                        last_idx = max(tool_calls_buffer.keys())
+                        last_tc = tool_calls_buffer[last_idx]
+                        try:
+                            json.loads(last_tc["function"]["arguments"])
+                            # Valide -> War nicht abgeschnitten
+                        except json.JSONDecodeError:
+                            is_tool_cut_off = True
+                            active_cut_off_tool_idx = last_idx
+
+                    if is_tool_cut_off:
+                        # Ein Tool Call wurde mitten im JSON abgeschnitten
+                        continuing_tool_idx = active_cut_off_tool_idx
+                        last_tc = tool_calls_buffer[continuing_tool_idx]
+                        t_name = last_tc["function"]["name"]
+                        t_args = last_tc["function"]["arguments"]
+
+                        resume_msg = (
+                            f"Du hast das Output-Token-Limit erreicht, während du das Tool '{t_name}' ausgeführt hast. "
+                            f"Hier ist der JSON-Argument-String, den du bisher geschrieben hast:\n`{t_args}`\n\n"
+                            f"Bitte antworte AUSSCHLIESSLICH mit den fehlenden Zeichen, um das JSON zu vervollständigen. "
+                            f"Gib keine Erklärungen und keinen Code-Block ab. Mache genau da weiter, wo der String abgerissen ist."
+                        )
+                        current_tools = (
+                            None  # Zwinge das LLM, als reinen Text zu antworten!
+                        )
+                        current_messages = messages.copy() + [
+                            {
+                                "role": "assistant",
+                                "content": collected_content
+                                + f"\n[Starte Tool: {t_name}]",
+                            },
+                            {"role": "user", "content": resume_msg},
+                        ]
+                    else:
+                        # Normaler Text wurde abgeschnitten
+                        continuing_tool_idx = None
+                        last_words = collected_content[-100:]
+                        resume_msg = (
+                            f"Du hast das maximale Output-Token-Limit deines Modells erreicht. "
+                            f"Bitte fahre exakt an dem Punkt fort, an dem du aufgehört hast. "
+                            f"Hier sind deine letzten Worte zur Orientierung:\n'...{last_words}'\n\n"
+                            f"Setze den Text/Code lückenlos fort. Bitte benutze keine Floskeln."
+                        )
+                        current_tools = tool_definitions if tool_definitions else None
+                        current_messages = messages.copy() + [
+                            {"role": "assistant", "content": collected_content},
+                            {"role": "user", "content": resume_msg},
+                        ]
+
+                # --- NACH DER SCHLEIFE ---
+                # Das Dictionary in eine Liste umwandeln
+
+                # Nach dem Loop: Das Dictionary in eine Liste umwandeln
+                tool_calls = list(tool_calls_buffer.values())
+
+                # Process tool calls
+                if tool_calls:
+                    assistant_msg = {
+                        "role": "assistant",
+                        "content": collected_content,
+                        "tool_calls": tool_calls,
+                    }
+                    ctx.working_history.append(assistant_msg)
+
+                    for tc in tool_calls:
+                        func_obj = tc.get("function", {})
+                        f_name = func_obj.get("name", "")
+                        f_args = func_obj.get("arguments", "{}")
+
+                        yield enrich(
+                            {"type": "tool_start", "name": f_name, "args": f_args}
+                        )
+
+                        # Check final_answer
+                        if f_name == "final_answer":
+                            try:
+                                args = (
+                                    json.loads(f_args)
+                                    if isinstance(f_args, str)
+                                    else f_args
+                                )
+                                final_response = args.get("answer", collected_content)
+                                success_status = args.get("success", True)
+                            except:
+                                final_response = collected_content
+                                success_status = True
+
+                            yield enrich(
+                                {
+                                    "type": "final_answer",
+                                    "answer": final_response,
+                                    "success": success_status,
+                                }
+                            )
+                            break
+
+                        # --- Sub-agent tools: forward chunks WHILE executing ---
+                        if (
+                            f_name in ("spawn_sub_agent", "wait_for", "resume_sub_agent")
+                            and self._sub_agent_manager
+                        ):
+                            tool_task = asyncio.create_task(
+                                self._execute_tool_call(ctx, tc)
+                            )
+                            # Drain sub-agent chunk queue while tool runs
+                            while not tool_task.done():
+                                try:
+                                    sub_chunk = await asyncio.wait_for(
+                                        self._sub_agent_manager._chunk_queue.get(),
+                                        timeout=0.05,
+                                    )
+                                    if sub_chunk.get("type") == "_sub_done":
+                                        continue
+                                    yield sub_chunk
+                                except asyncio.TimeoutError:
+                                    continue
+                                except Exception:
+                                    break
+
+                            result, is_final = await tool_task
+
+                            # Drain remaining queued chunks
+                            while not self._sub_agent_manager._chunk_queue.empty():
+                                try:
+                                    sub_chunk = self._sub_agent_manager._chunk_queue.get_nowait()
+                                    if sub_chunk.get("type") != "_sub_done":
+                                        yield sub_chunk
+                                except asyncio.QueueEmpty:
+                                    break
+                        else:
+                            # Normal tools: direct await
+                            result, is_final = await self._execute_tool_call(ctx, tc)
+
+                        yield enrich(
+                            {
+                                "type": "tool_result",
+                                "name": f_name,
+                                "is_final": is_final,
+                                "result": str(result),
+                            }
+                        )
+
+                    if final_response:
+                        break
+                else:
+                    # No tool calls - treat content as final
+                    if collected_content:
+                        final_response = collected_content
+                        yield enrich({"type": "final_answer", "answer": final_response})
+                        break
+
+            # Handle max iterations
+            if final_response is None:
+                final_response = self._handle_max_iterations(ctx, query)
+                success = False
+                yield enrich({"type": "max_iterations", "answer": final_response})
+
+                # Commit
+            await self._commit_run(ctx, session, query, final_response, success)
+
+            # Learn
+            if success:
+                app = get_app()
+                app.run_bg_task_advanced(
+                    self._background_learning_task,
+                    query=query,
+                    tools_used=ctx.tools_used,
+                    final_response=final_response,
+                    success=success,
+                    matched_skills=ctx.matched_skills,
+                )
+
+            self._active_executions.pop(ctx.run_id, None)
+
+            yield enrich(
+                {"type": "done", "success": success, "final_answer": final_response}
+            )
+
+        return stream_generator, ctx
+
     def _should_warn_loop(self, ctx: ExecutionContext) -> bool:
         """Check if we should inject a loop warning"""
         if ctx.loop_warning_given:
@@ -2462,489 +2934,6 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
             ctx=ctx,
         )
 
-    async def execute_stream(
-        self,
-        query: str,
-        session_id: str,
-        max_iterations: int = 25,
-        ctx: "ExecutionContext | None" = None,
-        model=None,
-    ) -> tuple[Callable, ExecutionContext]:
-        """
-        Initialize execution and return stream generator + context.
-
-        Returns:
-            tuple[stream_generator_func, ExecutionContext]
-        """
-        session = await self.agent.session_manager.get_or_create(session_id)
-
-        is_resume = ctx is not None
-        if ctx is None:
-            ctx = ExecutionContext()
-
-        self._active_executions[ctx.run_id] = ctx
-        ctx.session_id = session_id
-        ctx.query = query
-
-        # Initialize SubAgentManager
-        if not self.is_sub_agent:
-            self._sub_agent_manager = SubAgentManager(
-                parent_engine=self, parent_session=session, is_sub_agent=False
-            )
-        else:
-            if self.sub_agent_output_dir:
-                session.vfs = RestrictedVFSWrapper(session.vfs, self.sub_agent_output_dir)
-            max_iterations = min(max_iterations, 10)
-
-        self._current_session = session
-
-        if not is_resume:
-            try:
-                ctx.matched_skills = await self.skills_manager.match_skills_async(
-                    query, max_results=2
-                )
-            except:
-                ctx.matched_skills = self.skills_manager.match_skills(
-                    query, max_results=2
-                )
-
-            self._calculate_tool_relevance(ctx, query)
-            self._preload_skill_tools(ctx, query)
-
-            dreamer_insights = getattr(
-                getattr(self.agent.amd, 'persona', None), '_dream_insights', None)
-            ctx.active_persona = self._persona_router.route(
-                query, ctx.matched_skills, dreamer_insights)
-
-            # Apply persona overrides
-
-            if ctx.active_persona.name != "default":
-                max_iterations = ctx.active_persona.apply_max_iterations(max_iterations)
-                self.live.log(
-                    f"Persona: {ctx.active_persona.name} "
-                    f"(model={ctx.active_persona.model_preference}, "
-                    f"temp={ctx.active_persona.temperature}, "
-                    f"max_iter={max_iterations})"
-                )
-
-            system_prompt = self._build_system_prompt(ctx, session)
-            history_depth = 2 if self.is_sub_agent else 6
-            permanent_history = session.get_history_for_llm(last_n=history_depth)
-
-            ctx.working_history = [
-                {"role": "system", "content": system_prompt},
-                *permanent_history,
-                {"role": "user", "content": query},
-            ]
-
-        # Init live state for stream path
-        self.live.run_id = ctx.run_id
-        self.live.max_iterations = max_iterations
-        self.live.t_start = time.time()
-        self.live.skills = [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
-        self.live.tools_loaded = ctx.get_dynamic_tool_names() if ctx.dynamic_tools else []
-        self.live.persona = ctx.active_persona.name
-        self.live.enter(AgentPhase.INIT, f"{'Resume' if is_resume else 'Start'} stream [{ctx.run_id}]")
-
-        async def stream_generator(ctx: ExecutionContext):
-            """Generator that yields chunks during execution"""
-            nonlocal session, max_iterations
-
-            final_response = None
-            success = True
-
-            # Context info for ZEN CLI
-            agent_name = self.agent.amd.name
-            # Determine depth/type (simple heuristic or passed param)
-            is_sub = self.is_sub_agent
-
-            # Helper to enrich chunks
-            def enrich(chunk):
-                chunk["agent"] = agent_name
-                chunk["iter"] = ctx.current_iteration
-                chunk["max_iter"] = max_iterations
-                chunk["is_sub"] = is_sub
-                # Token budget info
-                chunk["tokens_used"] = self._calculate_context_load(ctx)
-                chunk["tokens_max"] = self._get_max_context_tokens()
-                # Skills & Persona
-                chunk["skills"] = [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
-                chunk["persona"] = ctx.active_persona.name if ctx.active_persona else "default"
-                chunk["persona_source"] = ctx.active_persona.source if ctx.active_persona else "default"
-                chunk["persona_model"] = ctx.active_persona.model_preference if ctx.active_persona else "fast"
-                chunk["persona_iterations_factor"] = ctx.active_persona.max_iterations_factor
-                return chunk
-
-            while ctx.current_iteration < max_iterations:
-                ctx.current_iteration += 1
-                self.live.iteration = ctx.current_iteration
-                self.live.enter(AgentPhase.LLM_CALL, f"iter {ctx.current_iteration}/{max_iterations}")
-
-                # Check pause
-                if ctx.status == "paused":
-                    yield enrich({"type": "paused", "run_id": ctx.run_id})
-                    return
-
-                # Check cancellation
-                if ctx.status == "cancelled":
-                    yield enrich({"type": "cancelled", "run_id": ctx.run_id})
-                    return
-
-                if self._should_warn_loop(ctx):
-                    warning_msg = ctx.loop_detector.get_intervention_message()
-                    # Inject into history so LLM sees it
-                    ctx.working_history.append({"role": "system", "content": warning_msg})
-                    ctx.loop_warning_given = True
-                    # Optional: Inform UI about the warning
-                    yield enrich(
-                        {"type": "warning", "message": warning_msg.splitlines()[0]}
-                    )
-
-                # Build messages
-                messages = list(ctx.working_history)
-                focus_msg = ctx.auto_focus.get_focus_message()
-                if focus_msg:
-                    messages.insert(1, focus_msg)
-
-                # Get tool definitions
-                tool_definitions = self._get_tool_definitions(ctx)
-
-                # Stream LLM response state
-                collected_content = ""
-                tool_calls_buffer = {}
-
-                # --- AUTO-RESUME SCHLEIFE FÜR STREAMING ---
-                MAX_CONTINUATIONS = 100
-                continuation_count = 0
-
-                current_messages = messages.copy()
-                current_tools = tool_definitions if tool_definitions else None
-
-                continuing_tool_idx = (
-                    None  # Verfolgt, welches Tool gerade durch Text fortgesetzt wird
-                )
-
-                while continuation_count < MAX_CONTINUATIONS:
-                    stream_kwargs = {"stream": True, "true_stream": True}
-                    if model:
-                        stream_kwargs["model"] = model
-                    else:
-                        stream_kwargs["model_preference"] = ctx.active_persona.model_preference
-                    if ctx.active_persona.temperature is not None:
-                        stream_kwargs["temperature"] = ctx.active_persona.temperature
-                    stream_response = None
-                    try:
-                        stream_response = await self.agent.a_run_llm_completion(
-                            messages=current_messages,
-                            tools=current_tools,
-                            **stream_kwargs,
-                        )
-
-                        if asyncio.iscoroutine(stream_response):
-                            stream_response = await stream_response
-                    except Exception as e:
-                        err_msg = str(e)
-                        if "Event loop is closed" in err_msg:
-                            yield enrich({
-                                "type": "error",
-                                "error": f"LLM stream failed: {err_msg[:200]}"
-                            })
-                            break
-                        raise
-
-                    finish_reason = None
-
-                    try:
-                        async for chunk in stream_response:
-                            delta = (
-                                chunk.choices[0].delta
-                                if hasattr(chunk, "choices") and chunk.choices
-                                else None
-                            )
-
-                            if not delta:
-                                continue
-
-                            if (
-                                hasattr(chunk.choices[0], "finish_reason")
-                                and chunk.choices[0].finish_reason
-                            ):
-                                finish_reason = chunk.choices[0].finish_reason
-
-                            # 1. Content sammeln (oder abgebrochenes Tool fortsetzen)
-                            if delta and hasattr(delta, "content") and delta.content:
-                                if continuing_tool_idx is not None:
-                                    # Das LLM spuckt den Rest des JSON-Strings als reinen Text aus -> ins Tool umleiten!
-                                    tool_calls_buffer[continuing_tool_idx]["function"][
-                                        "arguments"
-                                    ] += delta.content
-                                else:
-                                    collected_content += delta.content
-                                    yield enrich({"type": "content", "chunk": delta.content})
-
-                            # 2. Reasoning sammeln (falls vorhanden)
-                            if (
-                                delta
-                                and hasattr(delta, "reasoning_content")
-                                and delta.reasoning_content
-                            ):
-                                yield enrich(
-                                    {"type": "reasoning", "chunk": delta.reasoning_content}
-                                )
-
-                            # 3. Tool Calls SAMMELN
-                            if delta and hasattr(delta, "tool_calls") and delta.tool_calls:
-                                for tc_chunk in delta.tool_calls:
-                                    idx = tc_chunk.index
-
-                                    # Falls das LLM während eines Resumes trotzdem native Tool_calls nutzt
-                                    target_idx = (
-                                        continuing_tool_idx
-                                        if continuing_tool_idx is not None
-                                        else idx
-                                    )
-
-                                    # Neuen Eintrag anlegen, falls Index noch nicht existiert
-                                    if target_idx not in tool_calls_buffer:
-                                        tool_calls_buffer[target_idx] = (
-                                            ChatCompletionMessageToolCall(
-                                                id=tc_chunk.id,
-                                                type="function",
-                                                function=Function(
-                                                    name=tc_chunk.function.name or "",
-                                                    arguments=tc_chunk.function.arguments
-                                                    or "",
-                                                ),
-                                            )
-                                        )
-                                    else:
-                                        # Bestehenden Eintrag erweitern
-                                        if tc_chunk.function.name:
-                                            tool_calls_buffer[target_idx]["function"][
-                                                "name"
-                                            ] += tc_chunk.function.name
-                                        if tc_chunk.function.arguments:
-                                            tool_calls_buffer[target_idx]["function"][
-                                                "arguments"
-                                            ] += tc_chunk.function.arguments
-                    except RuntimeError as e:
-                        if "Event loop is closed" in str(e):
-                            # Partial result recovery
-                            if collected_content:
-                                final_response = collected_content
-                                yield enrich({"type": "final_answer", "answer": final_response})
-                            else:
-                                yield enrich({
-                                    "type": "error",
-                                    "error": f"Stream aborted: {str(e)[:200]}"
-                                })
-                            break
-                        raise
-                    # --- Ende des Chunks. Prüfen auf Token Limit ---
-                    if finish_reason not in ["length", "max_tokens"]:
-                        break  # Generierung natürlich beendet
-
-                    continuation_count += 1
-                    self.live.status_msg = f"Auto-Resume ({continuation_count}/{MAX_CONTINUATIONS})"
-                    self.live.log(f"Output limit reached. Auto-Resume ({continuation_count}/{MAX_CONTINUATIONS})")
-
-                    # Analysieren, WAS genau abgebrochen ist (Text oder Tool-Call JSON?)
-                    is_tool_cut_off = False
-                    active_cut_off_tool_idx = None
-
-                    if tool_calls_buffer:
-                        last_idx = max(tool_calls_buffer.keys())
-                        last_tc = tool_calls_buffer[last_idx]
-                        try:
-                            json.loads(last_tc["function"]["arguments"])
-                            # Valide -> War nicht abgeschnitten
-                        except json.JSONDecodeError:
-                            is_tool_cut_off = True
-                            active_cut_off_tool_idx = last_idx
-
-                    if is_tool_cut_off:
-                        # Ein Tool Call wurde mitten im JSON abgeschnitten
-                        continuing_tool_idx = active_cut_off_tool_idx
-                        last_tc = tool_calls_buffer[continuing_tool_idx]
-                        t_name = last_tc["function"]["name"]
-                        t_args = last_tc["function"]["arguments"]
-
-                        resume_msg = (
-                            f"Du hast das Output-Token-Limit erreicht, während du das Tool '{t_name}' ausgeführt hast. "
-                            f"Hier ist der JSON-Argument-String, den du bisher geschrieben hast:\n`{t_args}`\n\n"
-                            f"Bitte antworte AUSSCHLIESSLICH mit den fehlenden Zeichen, um das JSON zu vervollständigen. "
-                            f"Gib keine Erklärungen und keinen Code-Block ab. Mache genau da weiter, wo der String abgerissen ist."
-                        )
-                        current_tools = (
-                            None  # Zwinge das LLM, als reinen Text zu antworten!
-                        )
-                        current_messages = messages.copy() + [
-                            {
-                                "role": "assistant",
-                                "content": collected_content
-                                + f"\n[Starte Tool: {t_name}]",
-                            },
-                            {"role": "user", "content": resume_msg},
-                        ]
-                    else:
-                        # Normaler Text wurde abgeschnitten
-                        continuing_tool_idx = None
-                        last_words = collected_content[-100:]
-                        resume_msg = (
-                            f"Du hast das maximale Output-Token-Limit deines Modells erreicht. "
-                            f"Bitte fahre exakt an dem Punkt fort, an dem du aufgehört hast. "
-                            f"Hier sind deine letzten Worte zur Orientierung:\n'...{last_words}'\n\n"
-                            f"Setze den Text/Code lückenlos fort. Bitte benutze keine Floskeln."
-                        )
-                        current_tools = tool_definitions if tool_definitions else None
-                        current_messages = messages.copy() + [
-                            {"role": "assistant", "content": collected_content},
-                            {"role": "user", "content": resume_msg},
-                        ]
-
-                # --- NACH DER SCHLEIFE ---
-                # Das Dictionary in eine Liste umwandeln
-
-                # Nach dem Loop: Das Dictionary in eine Liste umwandeln
-                tool_calls = list(tool_calls_buffer.values())
-
-                # Process tool calls
-                if tool_calls:
-                    assistant_msg = {
-                        "role": "assistant",
-                        "content": collected_content,
-                        "tool_calls": tool_calls,
-                    }
-                    ctx.working_history.append(assistant_msg)
-
-                    for tc in tool_calls:
-                        # Achtung: tc ist jetzt ein Dict, kein Objekt mehr, da wir es manuell gebaut haben
-                        # Zugriff daher via ['key'] oder .get()
-                        func_obj = tc.get("function", {})
-                        f_name = func_obj.get("name", "")
-                        f_args = func_obj.get("arguments", "{}")
-
-                        yield enrich(
-                            {"type": "tool_start", "name": f_name, "args": f_args}
-                        )
-
-                        # Check final_answer
-                        if f_name == "final_answer":
-                            try:
-                                args = (
-                                    json.loads(f_args)
-                                    if isinstance(f_args, str)
-                                    else f_args
-                                )
-                                final_response = args.get("answer", collected_content)
-                                success_status = args.get("success", True)
-                            except:
-                                final_response = collected_content
-                                success_status = True
-
-                            yield enrich(
-                                {
-                                    "type": "final_answer",
-                                    "answer": final_response,
-                                    "success": success_status,
-                                }
-                            )
-                            break
-
-                        result, is_final = await self._execute_tool_call(ctx, tc)
-
-                        yield enrich(
-                            {
-                                "type": "tool_result",
-                                "name": f_name,
-                                "is_final": is_final,
-                                "result": str(result),
-                            }
-                        )
-
-                        # Sub-agent tools: forward chunks while awaiting
-                        if (
-                            f_name in ("spawn_sub_agent", "wait_for", "resume_sub_agent")
-                            and self._sub_agent_manager
-                        ):
-                            tool_task = asyncio.create_task(
-                                self._execute_tool_call(ctx, tc)
-                            )
-                            # Drain sub-agent chunk queue while tool runs
-                            while not tool_task.done():
-                                try:
-                                    sub_chunk = await asyncio.wait_for(
-                                        self._sub_agent_manager._chunk_queue.get(),
-                                        timeout=0.05,
-                                    )
-                                    # Skip internal sentinel
-                                    if sub_chunk.get("type") == "_sub_done":
-                                        continue
-                                    yield sub_chunk  # already enriched by sub-agent
-                                except asyncio.TimeoutError:
-                                    continue
-                                except Exception:
-                                    break
-
-                            result, is_final = await tool_task
-
-                            # Drain remaining queued chunks
-                            while not self._sub_agent_manager._chunk_queue.empty():
-                                try:
-                                    sub_chunk = self._sub_agent_manager._chunk_queue.get_nowait()
-                                    if sub_chunk.get("type") != "_sub_done":
-                                        yield sub_chunk
-                                except asyncio.QueueEmpty:
-                                    break
-                        else:
-                            result, is_final = await self._execute_tool_call(ctx, tc)
-
-                        yield enrich(
-                            {
-                                "type": "tool_result",
-                                "name": f_name,
-                                "is_final": is_final,
-                                "result": str(result),
-                            }
-                        )
-
-                    if final_response:
-                        break
-                else:
-                    # No tool calls - treat content as final
-                    if collected_content:
-                        final_response = collected_content
-                        yield enrich({"type": "final_answer", "answer": final_response})
-                        break
-
-            # Handle max iterations
-            if final_response is None:
-                final_response = self._handle_max_iterations(ctx, query)
-                success = False
-                yield enrich({"type": "max_iterations", "answer": final_response})
-
-                # Commit
-            await self._commit_run(ctx, session, query, final_response, success)
-
-            # Learn
-            if success:
-                app = get_app()
-                app.run_bg_task_advanced(
-                    self._background_learning_task,
-                    query=query,
-                    tools_used=ctx.tools_used,
-                    final_response=final_response,
-                    success=success,
-                    matched_skills=ctx.matched_skills,
-                )
-
-            self._active_executions.pop(ctx.run_id, None)
-
-            yield enrich(
-                {"type": "done", "success": success, "final_answer": final_response}
-            )
-
-        return stream_generator, ctx
 
 
 if __name__ == "__main__":

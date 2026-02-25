@@ -1732,6 +1732,7 @@ class ZenPlus:
         self._on_exit: Optional[Callable] = None
         self._stream_done = False
         self._exit_to_bg = False
+        self._confirm_exit = False
         self._view = ViewMode.GRID
         self._grid_index = 0
         self._detail_type = "graph"
@@ -1825,6 +1826,7 @@ class ZenPlus:
         self._focus = ""
         self._stream_done = False
         self._exit_to_bg = False
+        self._confirm_exit = False
         self._view = ViewMode.GRID
         self._grid_index = 0
         self._global_graph = GlobalGraph()
@@ -1872,6 +1874,12 @@ class ZenPlus:
                 break
             except Exception:
                 pass
+
+    async def _reset_confirm_exit(self):
+        await asyncio.sleep(2.0)
+        self._confirm_exit = False
+        if self._app:
+            self._app.invalidate()
 
     # ── Layout ──────────────────────────────────────────────
 
@@ -2034,6 +2042,9 @@ class ZenPlus:
 
     def _render_status(self) -> list[tuple[str, str]]:
         parts: list[tuple[str, str]] = []
+        if self._confirm_exit:
+            parts.append(("fg:#ef4444 bold", " ⚠ Nochmal Esc/q zum Beenden "))
+            parts.append(("fg:#374151", "│"))
         names = self._ordered_names()
         for i, name in enumerate(names):
             pane = self._panes[name]
@@ -2066,6 +2077,7 @@ class ZenPlus:
         @kb.add("escape")
         def _back(event):
             if zp._view == ViewMode.DETAIL:
+                zp._confirm_exit = False
                 pane = zp._focused_pane()
                 if zp._detail_type == "global":
                     if zp._global_graph._detail_node:
@@ -2073,7 +2085,6 @@ class ZenPlus:
                         return
                     zp._view = ViewMode.GRID
                     return
-                # Agent graph: close node detail first, then exit
                 if zp._detail_type == "graph" and pane and pane.graph._detail_node:
                     pane.graph._detail_node = None
                     return
@@ -2081,11 +2092,26 @@ class ZenPlus:
                 if pane:
                     pane.selected_item = 0
             elif zp._view == ViewMode.FOCUS:
+                zp._confirm_exit = False
                 zp._view = ViewMode.GRID
             else:
-                zp._exit_to_bg = True
-                if 'y' in input("EXIT ? (y/N)").lower():
+                # GRID level: double-Esc to exit
+                if zp._confirm_exit:
+                    zp._confirm_exit = False
+                    zp._exit_to_bg = True
                     event.app.exit()
+                else:
+                    zp._confirm_exit = True
+                    asyncio.get_event_loop().create_task(zp._reset_confirm_exit())
+
+        @kb.add("q")
+        def _quit(event):
+            if zp._confirm_exit:
+                zp._confirm_exit = False
+                event.app.exit()
+            else:
+                zp._confirm_exit = True
+                asyncio.get_event_loop().create_task(zp._reset_confirm_exit())
 
         @kb.add("tab")
         def _next(event):
@@ -2290,11 +2316,6 @@ class ZenPlus:
                     zp._grid_index = min(zp._grid_index, len(new_names) - 1)
                 else:
                     zp._grid_index = 0
-
-        @kb.add("q")
-        def _quit(event):
-            if 'y' in input("EXIT ? (y/N)").lower():
-                event.app.exit()
 
         return kb
 

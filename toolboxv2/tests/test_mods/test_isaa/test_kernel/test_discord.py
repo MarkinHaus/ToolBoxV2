@@ -234,7 +234,7 @@ class MockKernel:
     """Mock Kernel with agent"""
     def __init__(self):
         self.agent = Mock()
-        self.agent.add_tool = AsyncMock()
+        self.agent.add_tool = Mock()
         self.state = "running"
         self.metrics = Mock()
         self.metrics.signals_processed = 100

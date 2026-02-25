@@ -1302,11 +1302,36 @@ class ISAA_Host:
 
         @kb.add("f6")
         def _(event):
-            """Toggle renderer minimize with F6."""
+            """F6: Toggle minimize. Minimized + F6 = maximize. Minimized + F6+F6 = BG."""
+            from prompt_toolkit import print_formatted_text, HTML
             if hasattr(self, '_active_renderer') and self._active_renderer:
-                self._active_renderer.toggle_minimize()
+                renderer = self._active_renderer
+                if renderer.minimized:
+                    # Bereits minimiert → wieder maximieren
+                    renderer.toggle_minimize()
+                    print_formatted_text(HTML(
+                        f"<style fg='#67e8f9'>  ◎ Stream maximized</style>"
+                    ))
+                else:
+                    # Minimieren + Hint anzeigen
+                    renderer.toggle_minimize()
+                    print_formatted_text(HTML(
+                        f"<style fg='#fbbf24'>  ▾ Stream minimized</style>\n"
+                        f"<style fg='{PTColors.ZEN_DIM}'>"
+                        f"    F6 = maximize  │  Enter = move to background</style>"
+                    ))
             else:
-                print("Not active")
+                # Kein aktiver Stream → BG Tasks anzeigen
+                running = [t for t in self.background_tasks.values() if t.status == "running"]
+                if running:
+                    print_formatted_text(HTML(
+                        f"<style fg='{PTColors.ZEN_DIM}'>  "
+                        f"{len(running)} background task(s) running. /task status</style>"
+                    ))
+                else:
+                    print_formatted_text(HTML(
+                        f"<style fg='{PTColors.ZEN_DIM}'>  No active stream</style>"
+                    ))
 
         @kb.add("f2")
         def _(event):
@@ -1316,6 +1341,34 @@ class ISAA_Host:
             print_formatted_text(HTML(
                 f"<style fg='#67e8f9'>  ◎ Mode: {mode}</style>"
             ))
+
+            if self.zen_plus_mode and self._active_renderer:
+                # Mid-stream: ZenPlus sofort starten mit bestehendem Stream
+                zp = ZenPlus.get()
+                zp.clear_panes()
+                self._active_renderer.set_zen_plus(zp)
+
+                # Replay buffered chunks
+                for c in self._active_renderer._chunk_buffer:
+                    zp.feed_chunk(c)
+
+                async def _run_zenplus():
+                    def _on_exit():
+                        self.zen_plus_mode = False
+                        if self._active_renderer:
+                            self._active_renderer.set_zen_plus(None)
+
+                    await zp.start(on_exit=_on_exit)
+
+                asyncio.create_task(_run_zenplus())
+
+            elif not self.zen_plus_mode:
+                # Deactivate: stop ZenPlus, stream continues in ZEN
+                zp = ZenPlus.get()
+                if zp.active:
+                    asyncio.create_task(zp.stop())
+                if self._active_renderer:
+                    self._active_renderer.set_zen_plus(None)
 
         @kb.add("tab")
         def handle_tab(event):
@@ -2633,6 +2686,11 @@ class ISAA_Host:
             " <style fg='ansired'>REC</style>" if self._audio_recording else ""
         )
 
+        # Minimized stream indicator
+        minimized_indicator = ""
+        if hasattr(self, '_active_renderer') and self._active_renderer and self._active_renderer.minimized:
+            minimized_indicator = "<style fg='#fbbf24'>▾minimized</style> "
+
         # Coder Mode Indicator
         if self.active_coder:
             mode_indicator = f"<style fg='ansimagenta'>[CODER:{Path(self.active_coder_path).name}]</style>"
@@ -2655,7 +2713,7 @@ class ISAA_Host:
             f"{agent_indicator}"
             f"{mode_indicator}"
             f"<style fg='grey'>@{self.active_session_id}</style>"
-            f"{bg_indicator}{audio_indicator}{feat_indicator}"
+            f"{bg_indicator}{minimized_indicator}{audio_indicator}{feat_indicator}"
             f"\n<style fg='ansiblue'>></style> "
         )
 
@@ -3027,7 +3085,61 @@ class ISAA_Host:
         args = parts[1:]
 
         if cmd in ("/quit", "/exit", "/q", "/x" ,"/e"):
-            raise EOFError
+            running_bg = [t for t in self.background_tasks.values() if t.status == "running"]
+            # Check minimized stream
+            has_active_stream = (
+                hasattr(self, '_active_renderer')
+                and self._active_renderer
+                and self._active_renderer.minimized
+            )
+
+            if running_bg or has_active_stream:
+                warnings = []
+                if running_bg:
+                    warnings.append(f"{len(running_bg)} background task(s)")
+                if has_active_stream:
+                    warnings.append("1 minimized stream")
+                warn_text = " + ".join(warnings)
+
+                c_print(HTML(
+                    f"<style fg='#ef4444'>⚠ Still running: {esc(warn_text)}</style>\n"
+                    f"<style fg='{PTColors.ZEN_DIM}'>"
+                    f"  [q] quit anyway (cancel all)  "
+                    f"  [b] move all to background  "
+                    f"  [Enter] abort quit</style>"
+                ))
+
+                try:
+                    with patch_stdout():
+                        choice = await self.prompt_session.prompt_async(
+                            HTML(f"<style fg='#ef4444'>▸ </style>")
+                        )
+                    choice = choice.strip().lower()
+
+                    if choice == "q":
+                        # Cancel everything
+                        for t in self.background_tasks.values():
+                            if t.status == "running" and t.task:
+                                t.task.cancel()
+                        raise EOFError
+
+                    elif choice == "b":
+                        c_print(HTML(
+                            f"<style fg='{PTColors.ZEN_DIM}'>  Tasks continue in background. "
+                            f"Reconnect not supported yet.</style>"
+                        ))
+                        raise EOFError
+
+                    else:
+                        c_print(HTML(
+                            f"<style fg='{PTColors.ZEN_DIM}'>  Quit aborted.</style>"
+                        ))
+                        return  # Back to prompt
+
+                except (KeyboardInterrupt, EOFError):
+                    raise EOFError
+            else:
+                raise EOFError
 
         elif cmd == "/clear":
             os.system("cls" if os.name == "nt" else "clear")
@@ -5643,14 +5755,21 @@ class ISAA_Host:
             zp = ZenPlus.get()
             try:
                 result = fut.result()
+                # try: # crate app notifier object wit ez acces
+                #     from toolboxv2.utils.extras.notification import
                 if zp.active:
-                    zp.update_job(task_id, f"completed of {len(running)}")
-                result_preview = (result[:80] + "..") if len(result) > 82 else result
-                c_print(HTML(
-                    f"\n<style fg='{PTColors.ZEN_GREEN}'>✓ {task_id} complete</style>"
-                    f"  <style fg='{PTColors.ZEN_DIM}'>{esc(result_preview)}</style>\n"
-                ))
-            except (asyncio.CancelledError, Exception):
+                    zp.update_job(task_id, "completed")
+                # patch_stdout damit es über dem Prompt erscheint
+                from prompt_toolkit.patch_stdout import patch_stdout as _ps
+                with _ps():
+                    c_print(HTML(
+                        f"\n<style fg='{PTColors.ZEN_GREEN}'>✓ {task_id} complete</style>"
+                        f"  <style fg='{PTColors.ZEN_DIM}'>{esc(result[:80])}</style>\n"
+                    ))
+            except asyncio.CancelledError:
+                if zp.active:
+                    zp.update_job(task_id, "cancelled")
+            except Exception:
                 if zp.active:
                     zp.update_job(task_id, "failed")
 
@@ -5700,17 +5819,27 @@ class ISAA_Host:
             loop = asyncio.get_event_loop()
             hotkey_poller = StreamHotkeyPoller()
 
-            # Callbacks für Hotkeys während des Streams
             def toggle_zen_plus():
                 self.zen_plus_mode = not self.zen_plus_mode
-                # Wir können Zen+ nicht mitten im Stream-Loop starten,
-                # wenn dieser synchron läuft. Wir setzen nur den Flag.
 
             def toggle_min():
                 if self._active_renderer:
                     self._active_renderer.toggle_minimize()
 
+            def toggle_audio():
+                loop.call_soon_threadsafe(
+                    asyncio.ensure_future,
+                    self._toggle_audio_recording()
+                )
+
+            def show_status():
+                async def _s():
+                    await self._print_status_dashboard()
+
+                loop.call_soon_threadsafe(asyncio.ensure_future, _s())
+
             hotkey_poller.on("f2", toggle_zen_plus).on("f6", toggle_min)
+            hotkey_poller.on("f4", toggle_audio).on("f5", show_status)
             hotkey_poller.start()
 
             # State for final processing
@@ -5777,65 +5906,38 @@ class ISAA_Host:
                 except Exception:
                     pass
 
-            # --- Hotkey poller: F-keys during streaming ---
-            _loop = asyncio.get_event_loop()
-            _hotkey_poller = StreamHotkeyPoller()
-
-            def _hk_f6():
-                if hasattr(self, '_active_renderer') and self._active_renderer:
-                    self._active_renderer.toggle_minimize()
-
-            def _hk_f2():
-                self.zen_plus_mode = not self.zen_plus_mode
-
-            def _hk_f4():
-                _loop.call_soon_threadsafe(
-                    asyncio.ensure_future,
-                    self._toggle_audio_recording()
-                )
-
-            def _hk_f5():
-                async def _show_status():
-                    await self._print_status_dashboard()
-                _loop.call_soon_threadsafe(asyncio.ensure_future, _show_status())
-
-            _hotkey_poller.on("f6", _hk_f6).on("f2", _hk_f2)
-            _hotkey_poller.on("f4", _hk_f4).on("f5", _hk_f5)
-            _hotkey_poller.start()
-
             try:
-                    while True:
-                        try:
-                            chunk = await stream.__anext__()
-                        except StopAsyncIteration:
-                            break
+                while True:
+                    try:
+                        chunk = await stream.__anext__()
+                    except StopAsyncIteration:
+                        break
 
-                        # F6 minimize check: hand off stream to background task
-                        if renderer.minimized:
-                            moved_to_bg = True
-                            break
+                    if renderer.minimized:
+                        moved_to_bg = True
+                        break
 
-                        renderer.process_chunk(chunk)
+                    renderer.process_chunk(chunk)
 
-                        if chunk.get("type") == "content":
-                            text = chunk.get("chunk", "")
-                            final_response_text += text
+                    if chunk.get("type") == "content":
+                        text = chunk.get("chunk", "")
+                        final_response_text += text
 
-                            if should_speak and hasattr(self, 'audio_player'):
-                                if '```' in text: stop_for_speech = not stop_for_speech
-                                if not stop_for_speech:
-                                    current_sentence += text
-                                    if any(current_sentence.rstrip().endswith(p) for p in ['.', '!', '?', ':', '\n\n']):
-                                        clean_text = remove_styles(current_sentence.strip())
-                                        if clean_text:
-                                            get_app("ci.audio.bg.task").run_bg_task_advanced(
-                                                self.audio_player.queue_text, clean_text
-                                            )
-                                        current_sentence = ""
+                        if should_speak and hasattr(self, 'audio_player'):
+                            if '```' in text:
+                                stop_for_speech = not stop_for_speech
+                            if not stop_for_speech:
+                                current_sentence += text
+                                if any(current_sentence.rstrip().endswith(p) for p in ['.', '!', '?', ':', '\n\n']):
+                                    clean_text = remove_styles(current_sentence.strip())
+                                    if clean_text:
+                                        get_app("ci.audio.bg.task").run_bg_task_advanced(
+                                            self.audio_player.queue_text, clean_text
+                                        )
+                                    current_sentence = ""
 
             except KeyboardInterrupt:
-                _hotkey_poller.stop()
-                # --- Safe Ctrl+C: stop agent, don't exit program ---
+                hotkey_poller.stop()
                 try:
                     await stream.aclose()
                 except Exception:
@@ -5844,9 +5946,18 @@ class ISAA_Host:
                 c_print()
                 c_print(HTML(f"\n<style fg='ansiyellow'>⚠ Interrupted</style>"))
 
-                for exec_info in agent.list_executions():
-                    if exec_info.get("session_id") == self.active_session_id:
-                        await agent.cancel_execution(exec_info.get("run_id"))
+                try:
+                    if hasattr(agent, 'list_executions'):
+                        exec_list = agent.list_executions()
+                        if asyncio.iscoroutine(exec_list):
+                            exec_list = await exec_list
+                        for exec_info in (exec_list or []):
+                            if exec_info.get("session_id") == self.active_session_id:
+                                cancel = agent.cancel_execution(exec_info.get("run_id"))
+                                if asyncio.iscoroutine(cancel):
+                                    await cancel
+                except Exception:
+                    pass  # Don't let cancel failure prevent continue prompt
 
                 renderer.print_live_summary()
                 c_print()
@@ -5886,6 +5997,7 @@ class ISAA_Host:
 
                 except (KeyboardInterrupt, EOFError):
                     pass
+
             finally:
                 hotkey_poller.stop()
                 if self.zen_plus_mode:

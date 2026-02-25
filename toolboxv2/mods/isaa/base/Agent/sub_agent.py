@@ -212,20 +212,8 @@ class SubAgentManager:
         )
 
         self._sub_agents[sub_id] = state
-
-        # Ensure output directory exists in VFS
-        try:
-            self.parent_session.vfs.mkdir(output_dir, parents=True)
-        except Exception:
-            pass  # Directory might already exist
-
-        # Start execution
-        state._task = asyncio.create_task(
-            self._run_sub_agent(state)
-        )
-
         if wait:
-            # Direkt awaiten – kein Task-Overhead, sauberer Lifecycle
+            # Direkt awaiten – KEIN Task vorher erstellen
             try:
                 await asyncio.wait_for(
                     self._run_sub_agent(state),
@@ -241,31 +229,24 @@ class SubAgentManager:
                     state.error = str(e)
                     state.completed_at = datetime.now()
 
-            # Build result directly
             duration = 0.0
             if state.started_at and state.completed_at:
                 duration = (state.completed_at - state.started_at).total_seconds()
 
             result = SubAgentResult(
-                id=sub_id,
-                success=state.status == SubAgentStatus.COMPLETED,
-                status=state.status,
-                result=state.result,
-                error=state.error,
-                output_dir=state.output_dir,
-                files_written=state.files_written,
-                tokens_used=state.tokens_used,
-                duration_seconds=duration,
+                id=sub_id, success=state.status == SubAgentStatus.COMPLETED,
+                status=state.status, result=state.result, error=state.error,
+                output_dir=state.output_dir, files_written=state.files_written,
+                tokens_used=state.tokens_used, duration_seconds=duration,
                 task=state.task,
                 max_iterations_reached=(state.status == SubAgentStatus.MAX_ITERATIONS),
-                resumable=state.resumable,
-                iterations_used=state.iterations_used,
+                resumable=state.resumable, iterations_used=state.iterations_used,
                 execution_context=state.execution_context if state.resumable else None,
             )
             self._completed[sub_id] = result
             return result
         else:
-            # Async: Task erstellen
+            # Async: NUR hier Task erstellen
             state._task = asyncio.create_task(
                 self._run_sub_agent(state)
             )
