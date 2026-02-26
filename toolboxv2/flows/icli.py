@@ -21,7 +21,6 @@ import os
 import random
 import shutil
 import subprocess
-import threading
 import time
 import time as _time
 import uuid
@@ -971,144 +970,132 @@ class SmartCompleter(Completer):
 # ------------------------------------------------------------
 _help_text = {
     # Agent Management
-    "/agent": """
-    /agent list                - List all agents
-    /agent switch <name>       - Switch active agent
-    /agent spawn <name> <persona> - Create new agent
-    /agent stop <name>         - Stop agent tasks
-    /agent model <fast|complex> <name> - Change LLM model on the fly
-    /agent checkpoint <save|load> [name] - Manage state persistence
-    /agent checkpoint help     - List information about additional args like path
-    /agent load-all            - Initialize all agents from disk
-    /agent save-all            - Save checkpoints for all active agents
-    /agent stats [name]        - Show token usage and cost metrics
-    /agent delete <name>       - Remove agent and its data
-    /agent config <name>       - View raw JSON configuration
+    "agent": """/agent list                - List all agents
+/agent switch <name>       - Switch active agent
+/agent spawn <name> <persona> - Create new agent
+/agent stop <name>         - Stop agent tasks
+/agent model <fast|complex> <name> - Change LLM model on the fly
+/agent checkpoint <save|load> [name] - Manage state persistence
+/agent checkpoint help     - List information about additional args like path
+/agent load-all            - Initialize all agents from disk
+/agent save-all            - Save checkpoints for all active agents
+/agent stats [name]        - Show token usage and cost metrics
+/agent delete <name>       - Remove agent and its data
+/agent config <name>       - View raw JSON configuration
     """,
 
     # Session Management
-    "/session": """
-    /session list              - List sessions
-    /session switch <id>       - Switch session
-    /session new               - Create new session
-    /session show [n]          - Show last n messages (default 10)
-    /session clear             - Clear current session history
+    "session": """/session list              - List sessions
+/session switch <id>       - Switch session
+/session new               - Create new session
+/session show [n]          - Show last n messages (default 10)
+/session clear             - Clear current session history
     """,
 
     # MCP Management (Live)
-    "/mcp": """
-    /mcp list                 - Zeige aktive MCP Verbindungen
-    /mcp add <n> <cmd> [args]  - Server hinzufügen & Tools laden
-    /mcp remove <name>        - Server trennen & Tools löschen
-    /mcp reload               - Alle MCP Tools neu indizieren
+    "mcp": """/mcp list                 - Zeige aktive MCP Verbindungen
+/mcp add <n> <cmd> [args]  - Server hinzufügen & Tools laden
+/mcp remove <name>        - Server trennen & Tools löschen
+/mcp reload               - Alle MCP Tools neu indizieren
     """,
 
     # Task Management
-    "/task": """
-    /task                     - Show all background tasks
-    /task view [id]           - Live view of task (auto‑selects if 1)
-    /task cancel <id>         - Cancel a running task
-    /task clean               - Remove finished tasks
+    "task": """/task                     - Show all background tasks
+/task view [id]           - Live view of task (auto‑selects if 1)
+/task cancel <id>         - Cancel a running task
+/task clean               - Remove finished tasks
     F6 during execution       - Move agent to background
     """,
 
     # Job Scheduler
-    "/job": """
-    /job list                 - List all scheduled jobs
-    /job add                  - Add a new job (interactive)
-    /job remove <id>          - Remove a job
-    /job pause <id>           - Pause a job
-    /job resume <id>          - Resume a paused job
-    /job fire <id>            - Manually fire a job now
-    /job detail <id>          - Show job details
-    /job autowake <cmd>       - Manage OS auto‑wake (install/remove/status)
+    "job": """/job list                 - List all scheduled jobs
+/job add                  - Add a new job (interactive)
+/job remove <id>          - Remove a job
+/job pause <id>           - Pause a job
+/job resume <id>          - Resume a paused job
+/job fire <id>            - Manually fire a job now
+/job detail <id>          - Show job details
+/job autowake <cmd>       - Manage OS auto‑wake (install/remove/status)
 
     Dreamer Job
-    /job dream create [agent] - Create nightly dream job (default: self, 03:00)
-    /job dream status         - Show all configured dream jobs
-    /job dream live           - Run dream process now with visualization
+/job dream create [agent] - Create nightly dream job (default: self, 03:00)
+/job dream status         - Show all configured dream jobs
+/job dream live           - Run dream process now with visualization
     """,
 
     # Advanced
-    "/bind": "/bind <agent_a> <agent_b> - Bind agents",
-    "/teach": "/teach <agent> <skill_name> - Teach skill",
-    "/context": "/context stats - Show context stats",
+    "bind": "/bind <agent_a> <agent_b> - Bind agents",
+    "teach": "/teach <agent> <skill_name> - Teach skill",
+    "context": "/context stats - Show context stats",
 
     # History Management
-    "/history": """
-    /history show [n]         - Show last n messages (default 10)
-    /history clear            - Clear current session history
+    "history": """/history show [n]         - Show last n messages (default 10)
+/history clear            - Clear current session history
     """,
 
     # VFS Management
-    "/vfs": """
-    /vfs                     - Show VFS tree
-    /vfs <path>              - Show file content or dir listing
-    /vfs mount <path> [vfs_path] - Mount local folder
-    /vfs unmount <vfs_path>  - Unmount folder
-    /vfs sync [path]         - Sync file/dir to disk
-    /vfs save <vfs_path> <local> - Save file/dir to local path
-    /vfs refresh <mount>     - Re‑scan mount for changes
-    /vfs pull <path>         - Reload file/dir from disk
-    /vfs mounts              - List active mounts
-    /vfs dirty               - Show modified files
-    /vfs rm/remove           - Remove Folder or File
+    "vfs": """/vfs                     - Show VFS tree
+/vfs <path>              - Show file content or dir listing
+/vfs mount <path> [vfs_path] - Mount local folder
+/vfs unmount <vfs_path>  - Unmount folder
+/vfs sync [path]         - Sync file/dir to disk
+/vfs save <vfs_path> <local> - Save file/dir to local path
+/vfs refresh <mount>     - Re‑scan mount for changes
+/vfs pull <path>         - Reload file/dir from disk
+/vfs mounts              - List active mounts
+/vfs dirty               - Show modified files
+/vfs rm/remove           - Remove Folder or File
     """,
 
     # System Files (Read‑Only)
-    "/vfs sys": """
-    /vfs sys-add <local> [path]   - Add file as read‑only system file
-    /vfs sys-remove <vfs_path>    - Remove a system file
-    /vfs sys-refresh <vfs_path>   - Reload system file from disk
-    /vfs sys-list                 - List all system files
+    "vfs sys": """/vfs sys-add <local> [path]   - Add file as read‑only system file
+/vfs sys-remove <vfs_path>    - Remove a system file
+/vfs sys-refresh <vfs_path>   - Reload system file from disk
+/vfs sys-list                 - List all system files
     """,
 
     # Mount Options
-    "/mount": """
+    "mount": """
     --readonly   - No write operations
     --no-sync    - Manual sync only
     """,
 
     # Skill Management
-    "/skill": """
-    /skill list               - List skills of active agent
-    /skill list --inactive    - List inactive skills
-    /skill show <id>          - Show details/instruction
-    /skill edit <id>          - Edit skill instruction
-    /skill delete <id>        - Delete a skill
-    /skill merge <keep_id> <remove_id>
-    /skill boost <skill_id> 0.3
-    /skill import <path>      - import skills from directory/skill file
-    /skill export <id> <path> - Export skill or all skills
+    "skill": """/skill list               - List skills of active agent
+/skill list --inactive    - List inactive skills
+/skill show <id>          - Show details/instruction
+/skill edit <id>          - Edit skill instruction
+/skill delete <id>        - Delete a skill
+/skill merge <keep_id> <remove_id>
+/skill boost <skill_id> 0.3
+/skill import <path>      - import skills from directory/skill file
+/skill export <id> <path> - Export skill or all skills
     """,
 
     # Tool Management
-    "/tools": """
-    /tools list [cat]         - List all tools (optional by category)
-    /tools all                - List all tools (optional by category)
-    /tools info               - List all tools (optional by category)
-    /tools enable <name/cat>  - Enable a specific tool
-    /tools disable <name/cat> - Disable a specific tool
-    /tools enable-all         - Enable all disabled tools
-    /tools disable-all        - Disable all non‑system tools
+    "tools": """/tools list [cat]         - List all tools (optional by category)
+/tools all                - List all tools (optional by category)
+/tools info               - List all tools (optional by category)
+/tools enable <name/cat>  - Enable a specific tool
+/tools disable <name/cat> - Disable a specific tool
+/tools enable-all         - Enable all disabled tools
+/tools disable-all        - Disable all non‑system tools
     """,
 
     # Additional Features
-    "/feature": """
-    /feature list             - List all features
-    /feature disable <feature> - Disable a feature
-    /feature enable <feature>  - Enable a feature
-    /feature enable desktop    - Enable Desktop Automation
-    /feature enable web <headless> - Enable Desktop Web Automation
+    "feature": """/feature list             - List all features
+/feature disable <feature> - Disable a feature
+/feature enable <feature>  - Enable a feature
+/feature enable desktop    - Enable Desktop Automation
+/feature enable web <headless> - Enable Desktop Web Automation
     """,
 
     # Audio Settings
-    "/audio": """
-    /audio on                - Enable verbose audio
-    /audio off               - Disable verbose audio
-    /audio voice <v>         - Set voice
-    /audio backend <b>       - Set backend (groq/piper/elevenlabs)
-    /audio stop              - Stop current playback
+    "audio": """/audio on                - Enable verbose audio
+/audio off               - Disable verbose audio
+/audio voice <v>         - Set voice
+/audio backend <b>       - Set backend (groq/piper/elevenlabs)
+/audio stop              - Stop current playback
     Tip: Add #audio to any message for one‑time audio response
     """,
 }
@@ -2863,17 +2850,17 @@ class ISAA_Host:
         # Basis-Style für den schwarzen Hintergrund
         bg = "fg:ansiblack"
 
-        # 1. Wort-Logik
-        word = "zen"
-        if is_active and hasattr(self._active_renderer, 'thought_pool') and self._active_renderer.thought_pool:
-            pool = list(self._active_renderer.thought_pool)
-            word = pool[int(now / 1.5) % len(pool)]
-            word = "".join(c for c in str(word) if c.isalnum())[:20]
 
         # 2. Animations-Logik
         if is_active:
             if self.idle_hint:
-                self.idle_hint = ""
+                self.idle_hint = "Done"
+
+            # 1. Wort-Logik
+            word = "zen"
+            if is_active and hasattr(self._active_renderer, 'thought_pool') and self._active_renderer.thought_pool:
+                pool = list(self._active_renderer.thought_pool)
+                word = pool[int(now / 1.5) % len(pool)]
             # Pulsieren: Blau, Cyan, Magenta (Violett)
             colors = ["ansiblue", "ansicyan", "ansimagenta", "ansiblue"]
             c = colors[int(now * 2) % len(colors)]
@@ -2884,8 +2871,9 @@ class ISAA_Host:
             # Inhalt zusammenbauen
             content = [
                 (f"{bg} bg:{c}", f" {sym} "),
-                (f"{bg} bg:{c} italic", f"{word} ")
+                (f"{bg} bg:ansigray italic", f"{word} ")
             ]
+            content.extend(self._get_keybinding_indicator_ansi())
             self.set_dynamic_interval(0.15)
         elif self._was_recording_is_prossesing_audio:
             self.set_dynamic_interval(0.08)
@@ -2935,18 +2923,12 @@ class ISAA_Host:
             content.extend(self._get_keybinding_indicator_ansi())
         else:
             self.set_dynamic_interval(1)
-            try:
-                cols, _ = shutil.get_terminal_size()
-            except:
-                cols = 200
-            cols = int(cols/3)*2
             # IDLE: Dezent
             syms = ["◦", "∙", " "]
             sym = syms[int((now % 6) / 2)]
             content = [
                 (f"{bg} bg:ansibrightblack", f" {sym} "),
-                (f"{bg} bg:ansigray", f" {self.idle_hint} "),
-                (f"{bg}", f" " * cols),
+                (f"{bg} bg:ansigray", f" {self.idle_hint}    "),
 
             ]
             content.extend(self._get_keybinding_indicator_ansi())
@@ -6478,6 +6460,7 @@ class ISAA_Host:
 
                 user_input = user_input.strip()
                 if not user_input:
+                    await self._handle_interrupt()
                     continue
 
                 # Route input
@@ -6512,6 +6495,241 @@ class ISAA_Host:
                 bg_task.task.cancel()
 
         print_status("Goodbye!", "success")
+
+    # ─── Interrupt-Menü ───────────────────────────────────────────────
+
+    async def _handle_interrupt(self):
+        """
+        Interaktives Menü bei Ctrl+C wenn ein Agent-Task fokussiert ist.
+        Returns True wenn die Main-Loop weiterlaufen soll, False für Exit.
+        """
+        task_id = self._focused_task_id
+        if not task_id or task_id not in self._active_tasks:
+            # Kein aktiver Agent → normales continue
+            return True
+
+        task = self._active_tasks[task_id]
+        if task.status != "running":
+            return True
+
+        renderer = task.renderer
+        agent_name = task.agent_name
+
+        if not renderer.minimized:
+            renderer.toggle_minimize()
+
+        # Animation pausieren für saubere Ausgabe
+        if hasattr(renderer, '_stop_footer_anim'):
+            renderer._stop_footer_anim()
+
+        with patch_stdout():
+            c_print(HTML(
+                f"\n<style fg='{PTColors.ZEN_CYAN}'>─── Interrupt: {_esc(agent_name)} ({task_id}) ───</style>\n"
+                f"<style fg='{PTColors.ZEN_DIM}'>"
+                f"  [b] In den Hintergrund verschieben\n"
+                f"  [s] Stoppen (cancel)\n"
+                f"  [r] mit weiterem Context fortsetzen (resume)\n"
+                f"  [n] Nichts tun (weiter warten)\n"
+                f"</style>"
+            ))
+
+        try:
+            with patch_stdout():
+                choice = await self.prompt_session.prompt_async(
+                    HTML(f"<style fg='{PTColors.ZEN_CYAN}'>  Auswahl [b/s/r/n]: </style>"),
+                )
+            choice = choice.strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            # Doppeltes Ctrl+C → nichts tun
+            choice = "n"
+
+        if choice == "b":
+            await self._interrupt_move_to_background(task_id)
+        elif choice == "s":
+            await self._interrupt_stop_task(task_id)
+        elif choice == "r":
+            await self._interrupt_resume_with_context(task_id)
+        else:
+            # 'n' oder ungültig → weiter warten
+            if hasattr(renderer, '_start_footer_anim'):
+                renderer._start_footer_anim()
+            with patch_stdout():
+                c_print(HTML(
+                    f"<style fg='{PTColors.ZEN_DIM}'>  → Weiter warten auf {task_id}</style>\n"
+                ))
+
+        return True
+
+    async def _interrupt_move_to_background(self, task_id: str):
+        """Task minimieren und Fokus freigeben."""
+        task = self._active_tasks.get(task_id)
+        if not task:
+            return
+
+        renderer = task.renderer
+        if not renderer.minimized:
+            renderer.toggle_minimize()
+
+        self._focused_task_id = None
+        self._active_renderer = None
+
+        with patch_stdout():
+            c_print(HTML(
+                f"<style fg='{PTColors.ZEN_DIM}'>"
+                f"  ▾ {task_id} → Hintergrund (Prompt frei)</style>\n"
+            ))
+
+        # Footer-Animation im minimierten Modus weiter
+        if hasattr(renderer, '_start_footer_anim'):
+            renderer._start_footer_anim()
+
+    async def _interrupt_stop_task(self, task_id: str):
+        """Task canceln."""
+        task = self._active_tasks.get(task_id)
+        if not task:
+            return
+
+        task.async_task.cancel()
+
+        # Warten bis wirklich gecancelled
+        try:
+            await asyncio.wait_for(asyncio.shield(task.async_task), timeout=3.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+            pass
+
+        if self._focused_task_id == task_id:
+            self._focused_task_id = None
+            self._active_renderer = None
+
+        with patch_stdout():
+            c_print(HTML(
+                f"<style fg='#f87171'>"
+                f"  ✗ {task_id} gestoppt</style>\n"
+            ))
+
+    async def _interrupt_resume_with_context(self, task_id: str):
+        """Task stoppen, dann mit neuem User-Context via agent.resume_execution fortsetzen."""
+        task = self._active_tasks.get(task_id)
+        if not task:
+            return
+
+        # 1. Aktuellen Stream canceln
+        task.async_task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(task.async_task), timeout=3.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+            pass
+
+        # 2. Neuen Context vom User abfragen
+        with patch_stdout():
+            c_print(HTML(
+                f"<style fg='{PTColors.ZEN_CYAN}'>"
+                f"  Neuer Context für {task.agent_name}:</style>"
+            ))
+
+        try:
+            with patch_stdout():
+                new_context = await self.prompt_session.prompt_async(
+                    HTML(f"<style fg='{PTColors.ZEN_CYAN}'>  > </style>"),
+                )
+            new_context = new_context.strip()
+        except (KeyboardInterrupt, EOFError):
+            with patch_stdout():
+                c_print(HTML(
+                    f"<style fg='{PTColors.ZEN_DIM}'>  → Resume abgebrochen, Task bleibt gestoppt</style>\n"
+                ))
+            if self._focused_task_id == task_id:
+                self._focused_task_id = None
+                self._active_renderer = None
+            return
+
+        if not new_context:
+            new_context = ""
+
+        # 3. Agent holen und resume aufrufen
+        try:
+            agent = await self.isaa_tools.get_agent(task.agent_name)
+            engine = agent._get_execution_engine()
+
+            # Execution-ID aus dem Engine finden (letzte paused execution für diesen Task)
+            execution_id = None
+            for eid, ctx in engine._active_executions.items():
+                if ctx.status == "paused" or ctx.status == "running":
+                    execution_id = eid
+                    break
+
+            if execution_id is None:
+                # Fallback: Einfach neuen Stream starten mit dem alten Query + neuem Context
+                combined_query = f"{task.query}\n\n[Fortgesetzt mit]: {new_context}" if new_context else task.query
+                with patch_stdout():
+                    c_print(HTML(
+                        f"<style fg='{PTColors.ZEN_DIM}'>"
+                        f"  → Kein paused execution gefunden, starte neu</style>"
+                    ))
+                # Neuen Agent-Aufruf als normale Interaktion
+                await self._handle_agent_interaction(combined_query)
+                return
+
+            # 4. Resume mit Stream
+            renderer = ZenRendererV2(engine)
+            stream = await agent.resume_execution(
+                execution_id=execution_id,
+                content=new_context,
+                stream=True,
+            )
+
+            # Wenn resume ein tuple (stream_fn, ctx) zurückgibt
+            if isinstance(stream, tuple):
+                stream = stream[0]
+
+            # 5. Neuen Task registrieren
+            self._task_counter += 1
+            new_task_id = f"agent_{self._task_counter}_{task.agent_name}_resumed"
+
+            async_task = asyncio.create_task(
+                self._drain_agent_stream(new_task_id, stream, renderer, False)
+            )
+
+            live_task = LiveAgentTask(
+                task_id=new_task_id,
+                agent_name=task.agent_name,
+                query=f"[resumed] {new_context[:80]}" if new_context else f"[resumed] {task.query[:80]}",
+                renderer=renderer,
+                async_task=async_task,
+                stream=stream,
+            )
+            self._active_tasks[new_task_id] = live_task
+
+            # Alten Task aus active_tasks entfernen
+            if task_id in self._active_tasks:
+                del self._active_tasks[task_id]
+
+            # Fokus auf neuen Task
+            self._focused_task_id = new_task_id
+            self._active_renderer = renderer
+
+            async_task.add_done_callback(
+                lambda fut: self._on_agent_task_done(new_task_id, fut)
+            )
+
+            renderer._start_footer_anim()
+
+            with patch_stdout():
+                c_print(HTML(
+                    f"<style fg='{PTColors.ZEN_GREEN}'>"
+                    f"  ↻ {task.agent_name} resumed → {new_task_id}</style>\n"
+                ))
+
+        except Exception as e:
+            import traceback
+            with patch_stdout():
+                c_print(HTML(
+                    f"<style fg='#f87171'>"
+                    f"  ✗ Resume fehlgeschlagen: {_esc(str(e)[:80])}</style>\n"
+                ))
+            if self._focused_task_id == task_id:
+                self._focused_task_id = None
+                self._active_renderer = None
 
 
 # =============================================================================

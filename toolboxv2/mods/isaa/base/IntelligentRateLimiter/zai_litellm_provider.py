@@ -1553,92 +1553,92 @@ if __name__ == "__main__":
     ]
 
     async def test():
-        # === Test 0: Direct Provider Test (bypass LiteLLM) ===
-        if False:
-            print("\n📝 Test 0: Direct Provider Test (bypass LiteLLM)")
-            print("-" * 40)
+            # === Test 0: Direct Provider Test (bypass LiteLLM) ===
 
-            try:
-                response = await provider.acompletion(
-                    model=TEST_MODEL,
-                    messages=[{"role": "user", "content": "What's the weather in Berlin?"}],
-                    tools=tools_anthropic,
-                    tool_choice={"type": "auto"},
-                    max_tokens=200
-                )
-                msg = response.choices[0].message
-                print(f"✅ Content: {msg.content}")
-                print(f"   Tool calls: {msg.tool_calls}")
-                print(f"   Finish reason: {response.choices[0].finish_reason}")
-            except Exception as e:
-                print(f"❌ Error: {e}")
-                import traceback
-                traceback.print_exc()
+        print("\n📝 Test 0: Direct Provider Test (bypass LiteLLM)")
+        print("-" * 40)
 
-            # === Test 1: Simple completion ===
-            print("\n📝 Test 1: Simple Completion (via LiteLLM)")
-            print("-" * 40)
+        try:
+            response = await provider.acompletion(
+                model=TEST_MODEL,
+                messages=[{"role": "user", "content": "What's the weather in Berlin?"}],
+                tools=tools_anthropic,
+                tool_choice={"type": "auto"},
+                max_tokens=200
+            )
+            msg = response.choices[0].message
+            print(f"✅ Content: {msg.content}")
+            print(f"   Tool calls: {msg.tool_calls}")
+            print(f"   Finish reason: {response.choices[0].finish_reason}")
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            import traceback
+            traceback.print_exc()
 
-            try:
-                response = await litellm.acompletion(
-                    model=TEST_MODEL,
-                    messages=[{"role": "user", "content": "Say 'Hello from Z.AI!' in exactly 5 words."}],
-                    max_tokens=50
-                )
-                print(f"✅ Response: {response.choices[0].message.content}")
-                print(f"   Usage: {response.usage}")
-            except Exception as e:
-                print(f"❌ Error: {e}")
+        # === Test 1: Simple completion ===
+        print("\n📝 Test 1: Simple Completion (via LiteLLM)")
+        print("-" * 40)
 
-            # === Test 2: Tool Calling via LiteLLM ===
-            print("\n📝 Test 2: Tool Calling via LiteLLM (OpenAI format)")
-            print("-" * 40)
+        try:
+            response = await litellm.acompletion(
+                model=TEST_MODEL,
+                messages=[{"role": "user", "content": "Say 'Hello from Z.AI!' in exactly 5 words."}],
+                max_tokens=50
+            )
+            print(f"✅ Response: {response.choices[0].message.content}")
+            print(f"   Usage: {response.usage}")
+        except Exception as e:
+            print(f"❌ Error: {e}")
 
-            try:
-                response = await litellm.acompletion(
-                    model=TEST_MODEL,
-                    messages=[{"role": "user", "content": "What's the weather like in Munich?"}],
-                    tools=tools_openai,
-                    tool_choice="auto",
-                    max_tokens=200
-                )
+        # === Test 2: Tool Calling via LiteLLM ===
+        print("\n📝 Test 2: Tool Calling via LiteLLM (OpenAI format)")
+        print("-" * 40)
 
-                msg = response.choices[0].message
-                print(f"✅ Content: {msg.content}")
-                print(f"   Tool calls: {msg.tool_calls}")
-                print(f"   Finish reason: {response.choices[0].finish_reason}")
-            except Exception as e:
-                print(f"❌ Error: {e}")
-                import traceback
-                traceback.print_exc()
+        try:
+            response = await litellm.acompletion(
+                model=TEST_MODEL,
+                messages=[{"role": "user", "content": "What's the weather like in Munich?"}],
+                tools=tools_openai,
+                tool_choice="auto",
+                max_tokens=200
+            )
 
-            # === Test 3: Direct Provider with different tool formats ===
-            print("\n📝 Test 3: Direct Provider - Flat format tools")
-            print("-" * 40)
+            msg = response.choices[0].message
+            print(f"✅ Content: {msg.content}")
+            print(f"   Tool calls: {msg.tool_calls}")
+            print(f"   Finish reason: {response.choices[0].finish_reason}")
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            import traceback
+            traceback.print_exc()
 
-            try:
-                response = await provider.acompletion(
-                    model=TEST_MODEL,
-                    messages=[{"role": "user", "content": "What's the weather in Paris?"}],
-                    tools=tools_flat,
-                    tool_choice="auto",
-                    max_tokens=200
-                )
-                msg = response.choices[0].message
-                print(f"✅ Content: {msg.content}")
-                print(f"   Tool calls: {msg.tool_calls}")
-            except Exception as e:
-                print(f"❌ Error: {e}")
+        # === Test 3: Direct Provider with different tool formats ===
+        print("\n📝 Test 3: Direct Provider - Flat format tools")
+        print("-" * 40)
 
-            # === Test 4: Tool conversion verification ===
-            print("\n📝 Test 4: Tool Format Conversion")
-            print("-" * 40)
+        try:
+            response = await provider.acompletion(
+                model=TEST_MODEL,
+                messages=[{"role": "user", "content": "What's the weather in Paris?"}],
+                tools=tools_flat,
+                tool_choice="auto",
+                max_tokens=200
+            )
+            msg = response.choices[0].message
+            print(f"✅ Content: {msg.content}")
+            print(f"   Tool calls: {msg.tool_calls}")
+        except Exception as e:
+            print(f"❌ Error: {e}")
 
-            print("OpenAI format input:")
-            print(f"  {json.dumps(tools_openai[0], indent=2)[:150]}...")
-            converted = convert_tools_to_anthropic(tools_openai)
-            print("\nConverted to Anthropic:")
-            print(f"  {json.dumps(converted[0], indent=2)[:200]}...")
+        # === Test 4: Tool conversion verification ===
+        print("\n📝 Test 4: Tool Format Conversion")
+        print("-" * 40)
+
+        print("OpenAI format input:")
+        print(f"  {json.dumps(tools_openai[0], indent=2)[:150]}...")
+        converted = convert_tools_to_anthropic(tools_openai)
+        print("\nConverted to Anthropic:")
+        print(f"  {json.dumps(converted[0], indent=2)[:200]}...")
 
         # in FlowAgent test
         # === Test 5: Streaming with tool calls ===
@@ -1694,26 +1694,26 @@ if __name__ == "__main__":
         print("\n" + "=" * 60)
         print("✅ All tests completed!")
 
-    #asyncio.run(test())
+    asyncio.run(test())
 
-    for model in ["zglm/GLM-4.7", "zglm/GLM-4.7-flash",  "zglm/glm-4.6", "zglm/glm-4.5", "zglm/glm-4.6v"]:
-        try:
-            start_time = time.perf_counter()
-            response = provider.completion(
-                model=model,
-                messages=[{"role": "user", "content": "What's the weather in Berlin?"}],
-                tools=tools_anthropic,
-                tool_choice={"type": "auto"},
-                max_tokens=200
-            )
-            msg = response.choices[0].message
-            print(f"time: {time.perf_counter() - start_time:.2f}")
-            print(f"✅ Content {model}: {msg.content}")
-            print(f"   Tool calls: {msg.tool_calls}")
-            print(f"   Finish reason: {response.choices[0].finish_reason}")
-        except Exception as e:
-            print(f"❌ Error: {model} {e}")
-            import traceback
-            traceback.print_exc()
-
-
+    #for model in ["zglm/GLM-4.7", "zglm/GLM-4.7-flash",  "zglm/glm-4.6", "zglm/glm-4.5", "zglm/glm-4.6v"]:
+    #    try:
+    #        start_time = time.perf_counter()
+    #        response = provider.completion(
+    #            model=model,
+    #            messages=[{"role": "user", "content": "What's the weather in Berlin?"}],
+    #            tools=tools_anthropic,
+    #            tool_choice={"type": "auto"},
+    #            max_tokens=200
+    #        )
+    #        msg = response.choices[0].message
+    #        print(f"time: {time.perf_counter() - start_time:.2f}")
+    #        print(f"✅ Content {model}: {msg.content}")
+    #        print(f"   Tool calls: {msg.tool_calls}")
+    #        print(f"   Finish reason: {response.choices[0].finish_reason}")
+    #    except Exception as e:
+    #        print(f"❌ Error: {model} {e}")
+    #        import traceback
+    #        traceback.print_exc()
+#
+#

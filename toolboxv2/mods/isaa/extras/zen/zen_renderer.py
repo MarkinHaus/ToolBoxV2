@@ -20,6 +20,7 @@ Just swap `renderer = ZenRenderer()` -> `renderer = ZenRendererV2(engine)`.
 import json
 import os
 import random
+import sys
 import threading
 import time
 from collections import deque
@@ -124,6 +125,7 @@ class ZenRendererV2:
                     If None, works in chunk-only mode (no live state).
         """
         self._footer_active = False
+        self.wit_alim = False
         self.engine = engine
         self._anim_thread = None
         self._anim_stop = threading.Event()
@@ -155,19 +157,22 @@ class ZenRendererV2:
     def _stop_footer_anim(self):
         """Stoppt die Animation und löscht den Footer."""
         self._anim_stop.set()
-        if self._footer_active:
-            print(end='\r\x1b[K', flush=True)
-            self._footer_active = False
+        self._clear_footer()
 
     def _anim_loop(self):
-        """Loop: wartet 200ms, dann animiert bis gestoppt."""
-        if self._anim_stop.wait(0.2):  # 200ms grace period
-            return  # gestoppt bevor Animation begann
-        # Newline falls mid-line
+        if self._anim_stop.wait(0.2):
+            return
+        if self._needs_newline:
+            sys.stderr.write('\n')
+            sys.stderr.flush()
+            self._needs_newline = False
         while not self._anim_stop.is_set():
+            # ZenPlus aktiv → pausieren statt rendern
+            if self._zen_plus and self._zen_plus.active:
+                self._anim_stop.wait(0.5)
+                continue
             self.bottem_alim()
-            self._anim_stop.wait(0.45)
-
+            self._anim_stop.wait(0.15)
     # -- public API -----------------------------------------------------------
 
     def set_zen_plus(self, zp):
@@ -234,14 +239,22 @@ class ZenRendererV2:
         return f"{int(h[0:2], 16)};{int(h[2:4], 16)};{int(h[4:6], 16)}"
 
     def bottem_alim(self):
+        # Nicht in ZenPlus
+        if not self.wit_alim:
+            return
+
+        if self._zen_plus and self._zen_plus.active:
+            return
+
         if self._needs_newline:
-            print(flush=True)
+            sys.stderr.write('\n')
+            sys.stderr.flush()
             self._needs_newline = False
+
         now = time.time()
 
         pool = list(self.thought_pool) if self.thought_pool else ['zen...', 'fiddling', 'processing']
         word = pool[int(now / 1.5) % len(pool)]
-        word = "".join(c for c in str(word) if c.isalnum())[:20]
 
         colors = [c for k, c in C.items() if k not in ["red"]]
         color = colors[int(now * 2) % len(colors)]
@@ -249,11 +262,34 @@ class ZenRendererV2:
         syms = ["◌", "◦", "∙", "●", "∙", "◦"]
         sym = syms[int(now * 8) % len(syms)]
 
-        # ANSI escape: \r = Zeilenanfang, \x1b[K = Rest löschen
-        self._print(
-            f"\r\x1b[K \x1b[38;2;{self._hex_to_rgb(color)}m{sym}\x1b[0m  \x1b[38;2;{self._hex_to_rgb(C['dim'])}m{word}\x1b[0m ",
-            end='', flush=True)
+        # prompt_toolkit Output-Objekt holen — bypassed patch_stdout korrekt
+        try:
+            from prompt_toolkit.output import create_output
+            out = create_output(sys.stderr)
+            out.write_raw('\r\x1b[K')
+            out.write_raw(f' \x1b[38;2;{self._hex_to_rgb(color)}m{sym}\x1b[0m  ')
+            #out.write_raw(f'\x1b[38;2;{self._hex_to_rgb(C["dim"])}m{word}\x1b[0m ')
+            out.write_raw('\r')
+            out.flush()
+        except Exception:
+            # Fallback
+            sys.stderr.write(f'\r\x1b[K {sym}\r')
+            sys.stderr.flush()
+
         self._footer_active = True
+
+    def _clear_footer(self):
+        """Löscht den Footer sauber."""
+        if self.wit_alim and self._footer_active:
+            try:
+                from prompt_toolkit.output import create_output
+                out = create_output(sys.stderr)
+                out.write_raw('\r\x1b[K')
+                out.flush()
+            except Exception:
+                sys.stderr.write('\r\x1b[K')
+                sys.stderr.flush()
+            self._footer_active = False
 
     def print_processes(self, background_tasks: dict, agents_getter=None):
         """
@@ -1172,9 +1208,11 @@ class ZenRendererV2:
 
     def _print(self, html_str: str, end="\n", **k):
         import re
-        if self._footer_active:
-            print(end='\r\x1b[K', flush=True)
-            self._footer_active = False
+        self._clear_footer()
+
+        # Nicht in ZenPlus direkt printen
+        if self._zen_plus and self._zen_plus.active:
+            return
 
         try:
             print_formatted_text(HTML(html_str), end=end, **k)

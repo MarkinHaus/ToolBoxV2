@@ -26,7 +26,7 @@ import uuid
 import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, Coroutine
 
 from litellm.types.utils import (
     ChatCompletionMessageToolCall,
@@ -2906,7 +2906,8 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         """
         return self._active_executions.get(execution_id)
 
-    async def resume(self, execution_id: str, max_iterations: int = 15) -> str:
+    async def resume(self, execution_id: str, max_iterations: int = 15, content="", stream=False) -> str | tuple[
+        Callable[[...], Any], ExecutionContext] | tuple[str, ExecutionContext]:
         """
         Resume a paused execution.
 
@@ -2925,7 +2926,18 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
             return f"Error: Execution {execution_id} is not paused (status: {ctx.status})"
 
         ctx.status = "running"
+        if content:
+            ctx.working_history.append({"role": "system", "content": "Continue with old task using new user information's"})
+            ctx.working_history.append({"role": "user", "content": content})
 
+        if stream:
+            # Resume execution
+            return await self.execute_stream(
+                query=ctx.query,
+                session_id=ctx.session_id,
+                max_iterations=max_iterations,
+                ctx=ctx,
+            )
         # Resume execution
         return await self.execute(
             query=ctx.query,

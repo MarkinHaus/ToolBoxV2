@@ -652,7 +652,7 @@ class FlowAgent:
             session = self.session_manager.get(session_id)
             if session and hasattr(session, 'user_id'):
                 user_id = session.user_id
-            else:
+            elif session and hasattr(session, 'session_id'):
                 user_id = session.session_id
 
         try:
@@ -1363,7 +1363,8 @@ class FlowAgent:
         engine = self._get_execution_engine()
         return engine.list_executions()
 
-    async def resume_execution(self, execution_id: str, max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30)) -> str:
+    async def resume_execution(self, execution_id: str, max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30),
+                               content="", stream=False) -> str:
         """
         Resume a paused execution.
 
@@ -1375,7 +1376,7 @@ class FlowAgent:
             Final response
         """
         engine = self._get_execution_engine()
-        return await engine.resume(execution_id, max_iterations)
+        return await engine.resume(execution_id, max_iterations, content=content, stream=stream)
 
     def get_execution_state(self, execution_id: str) -> dict | None:
         """

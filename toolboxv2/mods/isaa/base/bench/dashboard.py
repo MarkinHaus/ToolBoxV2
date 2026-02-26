@@ -777,6 +777,14 @@ class Dashboard:
             </div>
         </div>
 
+        <!-- Efficiency (Schicht 2) -->
+        <div class="card full-width">
+            <h2>EFFIZIENZ (Schicht 2)</h2>
+            <div id="efficiencyPanel">
+                {Dashboard._gen_efficiency_panel(data)}
+            </div>
+        </div>
+
         <!-- Probe Details -->
         <div class="card full-width">
             <h2>PROBE DETAILS</h2>
@@ -1478,6 +1486,23 @@ class Dashboard:
         // Scores-Anzeige
         const scoresHtml = Object.entries(scores).map(([k, v]) => `${k}: ${v >= 0 ? '+' : ''}${v.toFixed(1)}`).join(' | ') || 'keine Scores';
 
+        // Judge-Score (Phase 2)
+        const judgeScore = probe.judge_score;
+        const judgeReasoning = (probe.judge_reasoning || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        let judgeHtml = '';
+        if (judgeScore !== undefined && judgeScore !== null) {
+            const jColor = judgeScore >= 7 ? 'var(--success)' : judgeScore >= 4 ? 'var(--warning)' : 'var(--danger)';
+            judgeHtml = `
+                <div style="margin-top: 12px; padding: 10px 12px; background: rgba(99,102,241,0.04); border: 1px solid rgba(99,102,241,0.12); border-radius: 6px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                        <span style="font-size: 0.75rem; color: var(--accent); text-transform: uppercase; letter-spacing: 1px;">🧑‍⚖️ LLM Judge</span>
+                        <span style="font-family: monospace; font-weight: 700; font-size: 1rem; color: ${jColor};">${judgeScore.toFixed(1)}/10</span>
+                    </div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted);">${judgeReasoning}</div>
+                </div>
+            `;
+        }
+
         html += `
         <details class="probe-card" data-probe-id="${probeId}" data-category="${scoreCategory}" data-flagged="${flags.length > 0}"
                  style="background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden;">
@@ -1499,6 +1524,7 @@ class Dashboard:
                 <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: var(--text-muted);">
                     <span>Scores: ${scoresHtml}</span>
                 </div>
+                ${judgeHtml}
             </div>
         </details>
         `;
@@ -1664,10 +1690,13 @@ let selectedModel = null;""",
         total_tokens = 0
         total_time = 0
         models_with_cost = 0
+        total_judge_cost = 0
 
         model_costs = []
         for d in data:
             cost = d.get('cost', {})
+            judge = d.get('judge', {})
+            total_judge_cost += judge.get('judge_cost', 0)
             if cost and cost.get('total_cost', 0) > 0:
                 models_with_cost += 1
                 total_cost += cost.get('total_cost', 0)
@@ -1714,6 +1743,11 @@ let selectedModel = null;""",
                 <div style="font-size: 1.2rem; font-weight: 700; color: var(--accent);">{best_value['model']}</div>
                 <div style="font-size: 0.75rem; color: var(--text-muted);">{best_value['value']:.0f} Score/$</div>
             </div>
+            {"" if total_judge_cost == 0 else f"""<div style="background: var(--bg); padding: 15px; border-radius: 8px; text-align: center;">
+                <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 5px;">🧑‍⚖️ Judge-Kosten</div>
+                <div style="font-size: 1.8rem; font-weight: 700; color: var(--purple);">${total_judge_cost:.4f}</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted);">separat von Modell-Kosten</div>
+            </div>"""}
         </div>
 
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px;">
@@ -1758,6 +1792,117 @@ let selectedModel = null;""",
             </div>
         </div>
         '''
+
+        return html
+
+    @staticmethod
+    def _gen_efficiency_panel(data: List[dict]) -> str:
+        """Generate efficiency comparison panel (Schicht 2)"""
+        models = []
+        for d in data:
+            eff = d.get('efficiency', {})
+            cost = d.get('cost', {})
+            total = d.get('total', 0)
+            tokens = cost.get('total_tokens', 0)
+            total_cost = cost.get('total_cost', 0)
+            time_s = cost.get('total_time_s', 0)
+            probes = d.get('probes', 1)
+
+            # Compute efficiency if not pre-computed
+            q_per_ktok = eff.get('quality_per_ktok', 0)
+            if not q_per_ktok and tokens > 0 and total > 0:
+                q_per_ktok = round(total / (tokens / 1000), 2)
+
+            q_per_mcost = eff.get('quality_per_mcost', 0)
+            if not q_per_mcost and total_cost > 0 and total > 0:
+                q_per_mcost = round(total / (total_cost * 1000), 2)
+
+            avg_lat = eff.get('avg_latency_ms', 0)
+            if not avg_lat and time_s > 0 and probes > 0:
+                avg_lat = round(time_s * 1000 / probes, 1)
+
+            output_ratio = eff.get('output_ratio', 0)
+            if not output_ratio and tokens > 0:
+                output_ratio = round(cost.get('tokens_out', 0) / max(tokens, 1), 3)
+
+            models.append({
+                'model': d['model'], 'score': total,
+                'q_per_ktok': q_per_ktok, 'q_per_mcost': q_per_mcost,
+                'avg_lat': avg_lat, 'output_ratio': output_ratio,
+                'tokens': tokens, 'cost': total_cost,
+                'tokens_per_probe': cost.get('tokens_per_probe', 0),
+            })
+
+        if not models:
+            return '<div class="no-data">Keine Effizienz-Daten</div>'
+
+        # Find best in each category
+        best_tok = max(models, key=lambda x: x['q_per_ktok']) if any(m['q_per_ktok'] > 0 for m in models) else None
+        best_cost = max(models, key=lambda x: x['q_per_mcost']) if any(m['q_per_mcost'] > 0 for m in models) else None
+        fastest = min((m for m in models if m['avg_lat'] > 0), key=lambda x: x['avg_lat'], default=None)
+
+        html = '''
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 20px;">
+        '''
+        if best_tok:
+            html += f'''
+            <div style="background: var(--bg); padding: 15px; border-radius: 8px; text-align: center;">
+                <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 5px;">🎯 Qualität/kToken</div>
+                <div style="font-size: 1.2rem; font-weight: 700; color: var(--accent);">{best_tok["model"]}</div>
+                <div style="font-size: 0.85rem; color: var(--text-muted);">{best_tok["q_per_ktok"]:.1f} Score/kTok</div>
+            </div>'''
+        if best_cost:
+            html += f'''
+            <div style="background: var(--bg); padding: 15px; border-radius: 8px; text-align: center;">
+                <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 5px;">💵 Qualität/$</div>
+                <div style="font-size: 1.2rem; font-weight: 700; color: var(--success);">{best_cost["model"]}</div>
+                <div style="font-size: 0.85rem; color: var(--text-muted);">{best_cost["q_per_mcost"]:.1f} Score/$0.001</div>
+            </div>'''
+        if fastest:
+            html += f'''
+            <div style="background: var(--bg); padding: 15px; border-radius: 8px; text-align: center;">
+                <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 5px;">⚡ Schnellste Antwort</div>
+                <div style="font-size: 1.2rem; font-weight: 700; color: var(--warning);">{fastest["model"]}</div>
+                <div style="font-size: 0.85rem; color: var(--text-muted);">∅ {fastest["avg_lat"]:.0f}ms/Probe</div>
+            </div>'''
+        html += '</div>'
+
+        # Efficiency table
+        html += '''
+        <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+                <thead>
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                        <th style="text-align: left; padding: 8px; color: var(--text-faint); font-size: 9px; letter-spacing: 2px; text-transform: uppercase;">Modell</th>
+                        <th style="text-align: right; padding: 8px; color: var(--text-faint); font-size: 9px; letter-spacing: 2px; text-transform: uppercase;">Score</th>
+                        <th style="text-align: right; padding: 8px; color: var(--text-faint); font-size: 9px; letter-spacing: 2px; text-transform: uppercase;">Q/kTok</th>
+                        <th style="text-align: right; padding: 8px; color: var(--text-faint); font-size: 9px; letter-spacing: 2px; text-transform: uppercase;">Q/$</th>
+                        <th style="text-align: right; padding: 8px; color: var(--text-faint); font-size: 9px; letter-spacing: 2px; text-transform: uppercase;">∅ Latenz</th>
+                        <th style="text-align: right; padding: 8px; color: var(--text-faint); font-size: 9px; letter-spacing: 2px; text-transform: uppercase;">Tok/Probe</th>
+                        <th style="text-align: right; padding: 8px; color: var(--text-faint); font-size: 9px; letter-spacing: 2px; text-transform: uppercase;">Out%</th>
+                    </tr>
+                </thead>
+                <tbody>
+        '''
+        for m in sorted(models, key=lambda x: x['q_per_ktok'], reverse=True):
+            score_cls = 'high' if m['score'] >= 70 else 'medium' if m['score'] >= 50 else 'low'
+            out_pct = f"{m['output_ratio']*100:.0f}%" if m['output_ratio'] > 0 else "—"
+            lat_str = f"{m['avg_lat']:.0f}ms" if m['avg_lat'] > 0 else "—"
+            tpp = f"{m['tokens_per_probe']:.0f}" if m['tokens_per_probe'] > 0 else "—"
+            qkt = f"{m['q_per_ktok']:.1f}" if m['q_per_ktok'] > 0 else "—"
+            qmc = f"{m['q_per_mcost']:.1f}" if m['q_per_mcost'] > 0 else "—"
+            html += f'''
+                <tr style="border-bottom: 1px solid var(--border);">
+                    <td style="padding: 8px; color: var(--accent-light); font-weight: 500;">{m['model']}</td>
+                    <td style="padding: 8px; text-align: right;" class="score {score_cls}">{m['score']:.1f}</td>
+                    <td style="padding: 8px; text-align: right; font-family: monospace;">{qkt}</td>
+                    <td style="padding: 8px; text-align: right; font-family: monospace;">{qmc}</td>
+                    <td style="padding: 8px; text-align: right; font-family: monospace;">{lat_str}</td>
+                    <td style="padding: 8px; text-align: right; font-family: monospace;">{tpp}</td>
+                    <td style="padding: 8px; text-align: right; font-family: monospace;">{out_pct}</td>
+                </tr>
+            '''
+        html += '</tbody></table></div>'
 
         return html
 
