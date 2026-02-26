@@ -18,9 +18,11 @@ Version: 4.0.0
 import asyncio
 import logging
 import os
+import random
 import shutil
 import subprocess
 import threading
+import time
 import time as _time
 import uuid
 from dataclasses import dataclass, field
@@ -142,6 +144,8 @@ def c_print(*args, **kwargs):
         print()
     elif isinstance(args[0], HTML):
         print_formatted_text(*args, **kwargs)
+    elif isinstance(args[0], ANSI):
+        print_formatted_text(*args, **kwargs)
     else:
         try:
             print_formatted_text(HTML(esc(text)), **kwargs)
@@ -151,14 +155,14 @@ def c_print(*args, **kwargs):
 
 def print_box_header(title: str, icon: str = "ℹ", width: int = 76):
     """1. Header mit Icon und Titel"""
-    print_formatted_text(HTML(""))  # Leere Zeile
-    print_formatted_text(HTML(f"<style font-weight='bold'>{icon} {esc(title)}</style>"))
-    print_formatted_text(HTML(f"<style fg='{PTColors.GREY}'>{'─' * width}</style>"))
+    c_print(HTML(""))  # Leere Zeile
+    c_print(HTML(f"<style font-weight='bold'>{icon} {esc(title)}</style>"))
+    c_print(HTML(f"<style fg='{PTColors.GREY}'>{'─' * width}</style>"))
 
 
 def print_box_footer(width: int = 76):
     """2. Footer (einfacher Abschluss)"""
-    print_formatted_text(HTML(""))
+    c_print(HTML(""))
 
 
 def print_box_content(text: str, style: str = "", width: int = 76, auto_wrap: bool = True):
@@ -174,9 +178,9 @@ def print_box_content(text: str, style: str = "", width: int = 76, auto_wrap: bo
     if style in style_config:
         config = style_config[style]
         # Icon farbig, Text normal
-        print_formatted_text(HTML(f"  <style fg='{config['color']}'>{config['icon']}</style> {safe_text}"))
+        c_print(HTML(f"  <style fg='{config['color']}'>{config['icon']}</style> {safe_text}"))
     else:
-        print_formatted_text(HTML(f"  {safe_text}"))
+        c_print(HTML(f"  {safe_text}"))
 
 
 def print_status(message: str, status: str = "info"):
@@ -195,12 +199,12 @@ def print_status(message: str, status: str = "info"):
     config = status_config.get(status, {'icon': '•', 'color': PTColors.WHITE})
     color_attr = f"fg='{config['color']}'" if config['color'] else ""
 
-    print_formatted_text(HTML(f"<style {color_attr}>{config['icon']}</style> {esc(message)}"))
+    c_print(HTML(f"<style {color_attr}>{config['icon']}</style> {esc(message)}"))
 
 
 def print_separator(char: str = "─", width: int = 76):
     """5. Trennlinie"""
-    print_formatted_text(HTML(f"<style fg='{PTColors.GREY}'>{char * width}</style>"))
+    c_print(HTML(f"<style fg='{PTColors.GREY}'>{char * width}</style>"))
 
 
 def print_table_header(columns: list, widths: list):
@@ -216,8 +220,8 @@ def print_table_header(columns: list, widths: list):
     joined_headers = " │ ".join(header_parts)
     joined_seps = f"<style fg='{PTColors.BRIGHT_CYAN}'>─┼─</style>".join(sep_parts)
 
-    print_formatted_text(HTML(f"  {joined_headers}"))
-    print_formatted_text(HTML(f"  {joined_seps}"))
+    c_print(HTML(f"  {joined_headers}"))
+    c_print(HTML(f"  {joined_seps}"))
 
 
 def print_table_row(values: list, widths: list, styles: list = None):
@@ -250,7 +254,7 @@ def print_table_row(values: list, widths: list, styles: list = None):
 
     # Vertikale Linien in Grau
     sep = f" <style fg='{PTColors.GREY}'>│</style> "
-    print_formatted_text(HTML(f"  {sep.join(row_parts)}"))
+    c_print(HTML(f"  {sep.join(row_parts)}"))
 
 
 def print_code_block(code: str, language: str = "text", width: int = 76, show_line_numbers: bool = False):
@@ -296,9 +300,9 @@ def print_code_block(code: str, language: str = "text", width: int = 76, show_li
     # Ausgabe
     for i, line in enumerate(lines, 1):
         if show_line_numbers:
-            print_formatted_text(HTML(f"  <style fg='{PTColors.GREY}'>{i:3d}</style> {line}"))
+            c_print(HTML(f"  <style fg='{PTColors.GREY}'>{i:3d}</style> {line}"))
         else:
-            print_formatted_text(HTML(f"  {line}"))
+            c_print(HTML(f"  {line}"))
 
 # =============================================================================
 # CONSTANTS & VERSION
@@ -1081,12 +1085,13 @@ class ISAA_Host:
     def __init__(self, app_instance: Any = None):
         """Initialize the ISAA Host system."""
 
+        self.dynamic_interval = [1]
         from toolboxv2.mods.isaa.extras.isaa_branding import FlowMatrixAnimation, print_isaa_header
 
         self.anim = FlowMatrixAnimation(state='initializing', fps=3)
 
         self.host_id = str(uuid.uuid4())[:8]
-        print_isaa_header(
+        self.idle_hint = print_isaa_header(
             host_id=self.host_id,
             uptime=None,
             version=VERSION,
@@ -1103,9 +1108,9 @@ class ISAA_Host:
         def _(*args, **k):
             text = " ".join(str(a) for a in args)
             try:
-                print_formatted_text(ANSI(text), **k)
+                c_print(ANSI(text), **k)
             except:
-                print_formatted_text(ANSI(text))
+                c_print(ANSI(text))
         self.app._print = _
 
         # Get ISAA Tools module - THE source of truth for agent management
@@ -1149,6 +1154,7 @@ class ISAA_Host:
 
         # Audio state
         self._audio_recording = False
+        self._was_recording_is_prossesing_audio = False
         self._audio_buffer: list[bytes] = []
         self._last_transcription: str | None = None
 
@@ -1309,13 +1315,13 @@ class ISAA_Host:
                 if renderer.minimized:
                     # Bereits minimiert → wieder maximieren
                     renderer.toggle_minimize()
-                    print_formatted_text(HTML(
+                    c_print(HTML(
                         f"<style fg='#67e8f9'>  ◎ Stream maximized</style>"
                     ))
                 else:
                     # Minimieren + Hint anzeigen
                     renderer.toggle_minimize()
-                    print_formatted_text(HTML(
+                    c_print(HTML(
                         f"<style fg='#fbbf24'>  ▾ Stream minimized</style>\n"
                         f"<style fg='{PTColors.ZEN_DIM}'>"
                         f"    F6 = maximize  │  Enter = move to background</style>"
@@ -1324,12 +1330,12 @@ class ISAA_Host:
                 # Kein aktiver Stream → BG Tasks anzeigen
                 running = [t for t in self.background_tasks.values() if t.status == "running"]
                 if running:
-                    print_formatted_text(HTML(
+                    c_print(HTML(
                         f"<style fg='{PTColors.ZEN_DIM}'>  "
                         f"{len(running)} background task(s) running. /task status</style>"
                     ))
                 else:
-                    print_formatted_text(HTML(
+                    c_print(HTML(
                         f"<style fg='{PTColors.ZEN_DIM}'>  No active stream</style>"
                     ))
 
@@ -1338,7 +1344,7 @@ class ISAA_Host:
             self.zen_plus_mode = not self.zen_plus_mode
             mode = "ZEN+" if self.zen_plus_mode else "ZEN"
             from prompt_toolkit import print_formatted_text, HTML
-            print_formatted_text(HTML(
+            c_print(HTML(
                 f"<style fg='#67e8f9'>  ◎ Mode: {mode}</style>"
             ))
 
@@ -1427,7 +1433,7 @@ class ISAA_Host:
         if self._audio_recording:
             self._audio_recording = False
             print_status("Processing audio...", "progress")
-            await self._process_recorded_audio()
+            self.app.run_bg_task_advanced(self._process_recorded_audio)
         else:
             self._audio_recording = True
             self._audio_buffer = []
@@ -1452,6 +1458,14 @@ class ISAA_Host:
             print_status(
                 "Audio requires 'sounddevice'. Install: pip install sounddevice", "error"
             )
+
+    async def active_refresher(self):
+        while self.app.alive:
+            self.prompt_session.app.invalidate()
+            await asyncio.sleep(self.dynamic_interval[0])
+
+    def set_dynamic_interval(self, t):
+        self.dynamic_interval[0] = t
 
     async def _record_audio(self):
         """Record audio from microphone."""
@@ -1490,7 +1504,7 @@ class ISAA_Host:
         if not self._audio_buffer:
             print_status("No audio recorded", "warning")
             return
-
+        self._was_recording_is_prossesing_audio = True
         try:
             import numpy as np
 
@@ -1514,6 +1528,7 @@ class ISAA_Host:
             import traceback
             traceback.print_exc()
         finally:
+            self._was_recording_is_prossesing_audio = False
             self._audio_buffer = []
 
     # =========================================================================
@@ -2717,6 +2732,122 @@ class ISAA_Host:
             f"\n<style fg='ansiblue'>></style> "
         )
 
+    def _get_bottom_toolbar(self):
+        """
+        Tiefschwarze Toolbar über die gesamte Breite mit Animation.
+        """
+        now = time.time()
+        is_active = self._active_renderer is not None
+
+        # Basis-Style für den schwarzen Hintergrund
+        bg = "fg:ansiblack"
+
+        # 1. Wort-Logik
+        word = "zen"
+        if is_active and hasattr(self._active_renderer, 'thought_pool') and self._active_renderer.thought_pool:
+            pool = list(self._active_renderer.thought_pool)
+            word = pool[int(now / 1.5) % len(pool)]
+            word = "".join(c for c in str(word) if c.isalnum())[:20]
+
+        # 2. Animations-Logik
+        if is_active:
+            if self.idle_hint:
+                self.idle_hint = ""
+            # Pulsieren: Blau, Cyan, Magenta (Violett)
+            colors = ["ansiblue", "ansicyan", "ansimagenta", "ansiblue"]
+            c = colors[int(now * 2) % len(colors)]
+
+            syms = ["◌","◦","∙","●","∙","◦"]
+            sym = syms[int(now * 8) % len(syms)]
+
+            # Inhalt zusammenbauen
+            content = [
+                (f"{bg} bg:{c}", f" {sym} "),
+                (f"{bg} bg:{c} italic", f"{word} ")
+            ]
+            self.set_dynamic_interval(0.15)
+        elif self._was_recording_is_prossesing_audio:
+            self.set_dynamic_interval(0.08)
+            try:
+                cols, _ = shutil.get_terminal_size()
+            except:
+                cols = 200
+                # Adaptive Breite (2/3 des Bildschirms)
+            cols = int(cols / 3) * 2
+
+            # SCANNER ANIMATION: Ein pulsierender Block, der hin und her wandert
+            # Erzeugt einen Effekt wie ein "Fortschrittsbalken-Scanner"
+            scan_pos = int(now * 25) % cols
+            # Erzeuge den Balken: Ein heller Punkt (█) auf einem gedimmten Pfad (░)
+            bar_list = []
+            for i in range(cols):
+                if i == scan_pos:
+                    bar_list.append("█")  # Der aktive Scanner
+                elif abs(i - scan_pos) < 3:
+                    bar_list.append("▓")  # Der "Schweif"
+                else:
+                    bar_list.append("░")  # Der Pfad
+            scan_bar = "".join(bar_list)
+
+            content = [
+                ("bg:ansiblack fg:ansimagenta", " ⚙ PROC "),  # Magenta/Violett für Prozess
+                ("bg:ansiblack fg:ansicyan", f" {scan_bar} "),
+            ]
+            # Keybindings am Ende hinzufügen
+            content.extend(self._get_keybinding_indicator_ansi())
+            self.idle_hint = "Press Enter to accept! type /audio for help "
+        elif self._audio_recording:
+            self.set_dynamic_interval(0.08)
+            try:
+                cols, _ = shutil.get_terminal_size()
+            except:
+                cols = 200
+            cols = int(cols/3)*2
+            w_chars = ["_", "▂", "▃", "▄", "▅", "▆", "▇", "▆", "▅", "▄", "▃", "▂", "_"]
+            # Erzeugt eine 10 Zeichen breite, wandernde Welle
+            wave = "".join(w_chars[int((now * 14) + (i * 1.5)) % len(w_chars)] for i in range(cols))
+
+            content = [
+                ("bg:ansiblack fg:ansired", " ● REC "),
+                ("bg:ansicyan fg:ansiblue", f" {wave} "),
+            ]
+            content.extend(self._get_keybinding_indicator_ansi())
+        else:
+            self.set_dynamic_interval(1)
+            try:
+                cols, _ = shutil.get_terminal_size()
+            except:
+                cols = 200
+            cols = int(cols/3)*2
+            # IDLE: Dezent
+            syms = ["◦", "∙", " "]
+            sym = syms[int((now % 6) / 2)]
+            content = [
+                (f"{bg} bg:ansibrightblack", f" {sym} "),
+                (f"{bg} bg:ansigray", f" {self.idle_hint} "),
+                (f"{bg}", f" " * cols),
+
+            ]
+            content.extend(self._get_keybinding_indicator_ansi())
+
+        # 3. DER TRICK: Die Zeile mit Schwarz auffüllen
+        try:
+            # Hol dir die aktuelle Breite des Terminals
+            cols, _ = shutil.get_terminal_size()
+
+            # Berechne die Länge des bisherigen Textes
+            # (sym + " thinking: " + word + Leerzeichen)
+            text_len = 3 + 10 + len(word) + 1
+
+            # Füge so viele Leerzeichen hinzu, dass die ganze Zeile gefüllt ist
+            padding = "_" * (20+max(0, cols - text_len))
+            content.append((f"{bg}", padding))
+        except:
+            # Falls shutil fehlschlägt, einfach ein langes Stück Leerzeichen
+            content.append((f"{bg}", "_" * 200))
+
+        return content
+
     def _get_keybinding_indicator(self) -> str:
         """
         Build compact right-side keybinding hints.
@@ -2744,6 +2875,36 @@ class ISAA_Host:
             items.append("<style fg='ansiyellow'>F6:VIEW</style>")
         width = shutil.get_terminal_size().columns
         return "  ".join(items).rjust(width)
+
+    def _get_keybinding_indicator_ansi(self):
+        """
+        Build compact right-side keybinding hints.
+        ANSI-Version (Formatted Text Tuples) für maximale Stabilität.
+        """
+        items = []
+
+        # F2 – Zen Mode
+        mode = "ZEN+" if self.zen_plus_mode else "ZEN"
+        items.append(("fg:ansiblack  bg:ansimagenta", f"F2:{mode}"))
+        items.append(("fg:ansiblack", "  "))
+
+        # F4 – Audio
+        if hasattr(self, "_audio_recording") and self._audio_recording:
+            items.append(("fg:ansiblack bg:ansired", "F4:REC"))
+        else:
+            items.append(("fg:ansiblack bg:ansigray", "F4:AUDIO"))
+        items.append(("fg:ansiblack", "  "))
+
+        # F5 – Dashboard
+        items.append(("fg:ansiblack bg:ansicyan", "F5:INFOS"))
+        items.append(("fg:ansiblack", "  "))
+
+        # F6 – Minimize Renderer
+        if hasattr(self, "_active_renderer") and self._active_renderer:
+            items.append(("fg:ansiblack bg:ansiyellow", "F6:VIEW"))
+            items.append(("fg:ansiblack", "  "))
+
+        return items
 
     async def _print_status_dashboard(self):
         """Print comprehensive status dashboard."""
@@ -3234,7 +3395,7 @@ class ISAA_Host:
         self.zen_plus_mode = not self.zen_plus_mode
         mode = "ZEN+" if self.zen_plus_mode else "ZEN"
         from prompt_toolkit import print_formatted_text, HTML
-        print_formatted_text(HTML(
+        c_print(HTML(
             f"<style fg='#67e8f9'>  ◎ Renderer: {mode}</style>"
         ))
 
@@ -5607,7 +5768,7 @@ class ISAA_Host:
 
                 # Alle 50 Zeilen ein kleiner Separator zur Orientierung bei Massen
                 if i % 50 == 0:
-                    print_formatted_text(HTML(f"<style fg='{C['dim']}'>{'─' * 50}</style>"))
+                    c_print(HTML(f"<style fg='{C['dim']}'>{'─' * 50}</style>"))
 
             print_box_footer()
             print_status(f"Total: {len(all_tools)} tools listed ({len(tm.get_all())} active).", "success")
@@ -5721,15 +5882,16 @@ class ISAA_Host:
         async def bg_drain():
             result_text = ""
             try:
-                while True:
-                    try:
-                        chunk = await stream_gen.__anext__()
-                    except StopAsyncIteration:
-                        break
-                    if chunk.get("type") == "content":
-                        result_text += chunk.get("chunk", "")
-                    elif chunk.get("type") == "final_answer":
-                        result_text = chunk.get("answer", result_text)
+                with patch_stdout():
+                    while True:
+                        try:
+                            chunk = await stream_gen.__anext__()
+                        except StopAsyncIteration:
+                            break
+                        if chunk.get("type") == "content":
+                            result_text += chunk.get("chunk", "")
+                        elif chunk.get("type") == "final_answer":
+                            result_text = chunk.get("answer", result_text)
 
                 if task_id in host_ref.background_tasks:
                     host_ref.background_tasks[task_id].status = "completed"
@@ -5746,7 +5908,14 @@ class ISAA_Host:
                 if task_id in host_ref.background_tasks:
                     host_ref.background_tasks[task_id].status = "failed"
                 raise
-
+            except KeyboardInterrupt:
+                try:
+                    await stream_gen.aclose()
+                except Exception:
+                    pass
+                if task_id in host_ref.background_tasks:
+                    host_ref.background_tasks[task_id].status = "stopt"
+                # raise KeyboardInterrupt
         async_task = asyncio.create_task(bg_drain())
 
         # Auto-notify on completion
@@ -5813,6 +5982,8 @@ class ISAA_Host:
             # ZenRendererV2 with live state access
             renderer = ZenRendererV2(engine)
             self._active_renderer = renderer
+            renderer.bottem_alim()
+            renderer._start_footer_anim()
             c_print()  # Spacing
 
             # Hotkey Poller initialisieren
@@ -6052,7 +6223,7 @@ class ISAA_Host:
         except Exception as e:
             print_status(f"System Error: {e}", "error")
             import traceback
-            c_print(traceback.format_list())
+            print_status(f"System Error: {traceback.format_exc()}", "error")
         finally:
             self.anim.set_mode('ideal')
 
@@ -6080,7 +6251,7 @@ class ISAA_Host:
     async def run(self):
         """Main CLI execution loop."""
         # Print banner
-
+        from prompt_toolkit.styles import Style as PtStyle
         # Switch to audio recording mode (changes animation)
 
         c_print()
@@ -6120,7 +6291,13 @@ class ISAA_Host:
             ),
             complete_while_typing=True,
             key_bindings=self.key_bindings,
+            bottom_toolbar=self._get_bottom_toolbar,  # Dynamische Zuweisung
+            style=PtStyle.from_dict({
+                'bottom-toolbar': 'bg:ansiblack fg:ansigray',
+                'bottom-toolbar.text': 'fg:ansigray',
+            })
         )
+        self.app.run_bg_task_advanced(self.active_refresher)
 
         # Main loop
         while True:
@@ -6161,7 +6338,8 @@ class ISAA_Host:
             except EOFError:
                 break
             except Exception as e:
-                print_status(f"Unexpected Error: {e}", "error")
+                import traceback
+                print_status(f"Unexpected Error: {traceback.format_exc()}", "error")
                 import traceback
                 traceback.print_exc()
 
