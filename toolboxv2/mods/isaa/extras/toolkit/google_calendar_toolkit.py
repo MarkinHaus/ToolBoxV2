@@ -20,7 +20,6 @@ except ImportError:
     UTC = timezone.utc
 
 from dateutil import parser as dateutil_parser
-from google.oauth2.credentials import Credentials
 
 logger = logging.getLogger(__name__)
 
@@ -224,6 +223,7 @@ class CalendarToolkit:
         if not os.path.exists(path):
             return False
         try:
+            from google.oauth2.credentials import Credentials
             creds = Credentials.from_authorized_user_file(path, self.SCOPES)
             if creds and creds.expired and creds.refresh_token:
                 from google.auth.transport.requests import Request

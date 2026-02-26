@@ -19,7 +19,10 @@ Just swap `renderer = ZenRenderer()` -> `renderer = ZenRendererV2(engine)`.
 
 import json
 import os
+import random
+import threading
 import time
+from collections import deque
 from typing import Any
 
 from prompt_toolkit import print_formatted_text, HTML
@@ -120,17 +123,50 @@ class ZenRendererV2:
             engine: ExecutionEngine instance (has .live: AgentLiveState).
                     If None, works in chunk-only mode (no live state).
         """
+        self._footer_active = False
         self.engine = engine
+        self._anim_thread = None
+        self._anim_stop = threading.Event()
         self.minimized = False
         self._last_agent = None
         self._last_iter = 0
         self._in_think = False
+        self._needs_newline = False
         self._think_buf = ""
+        self._content_buf = ""
         self._chunk_count = 0
         self._zen_plus = None
         self._chunk_buffer: list = []
 
+        self.thought_pool = deque(maxlen=20)  # Speichert die letzten 20 Wörter
+        self._zen_symbols = ["◌", "◦", "•", "∙", "·"]
+        self._current_word = "zen"
+
         self._print("🌌 Zen System")
+
+    def _start_footer_anim(self):
+        """Startet Footer-Animation nach kurzer Verzögerung."""
+        if self._anim_thread and self._anim_thread.is_alive():
+            return  # läuft schon
+        self._anim_stop.clear()
+        self._anim_thread = threading.Thread(target=self._anim_loop, daemon=True)
+        self._anim_thread.start()
+
+    def _stop_footer_anim(self):
+        """Stoppt die Animation und löscht den Footer."""
+        self._anim_stop.set()
+        if self._footer_active:
+            print(end='\r\x1b[K', flush=True)
+            self._footer_active = False
+
+    def _anim_loop(self):
+        """Loop: wartet 200ms, dann animiert bis gestoppt."""
+        if self._anim_stop.wait(0.2):  # 200ms grace period
+            return  # gestoppt bevor Animation begann
+        # Newline falls mid-line
+        while not self._anim_stop.is_set():
+            self.bottem_alim()
+            self._anim_stop.wait(0.45)
 
     # -- public API -----------------------------------------------------------
 
@@ -147,6 +183,7 @@ class ZenRendererV2:
 
     def process_chunk(self, chunk: dict):
         """Main entry: render one stream chunk. prompt_toolkit safe."""
+        self._stop_footer_anim()
         self._chunk_count += 1
         self._chunk_buffer.append(chunk)
         if self._zen_plus and self._zen_plus.active:
@@ -156,6 +193,7 @@ class ZenRendererV2:
 
         # In minimized mode: only show done/error, skip everything else
         if self.minimized and c_type not in ("done", "error", "final_answer"):
+            self.bottem_alim()
             return
 
         # Agent context header (on agent change)
@@ -180,6 +218,42 @@ class ZenRendererV2:
             self._print(f"  <style fg='{C['amber']}'>{SYM['warn']} {_esc(chunk.get('message', ''))}</style>")
         elif c_type == "error":
             self._print(f"  <style fg='{C['red']}'>{SYM['fail']} {_esc(chunk.get('error', ''))}</style>")
+
+        if c_type in ("content", "reasoning"):
+            self._start_footer_anim()
+        elif c_type in ("done", "final_answer"):
+            self._stop_footer_anim()
+        else:
+            self._stop_footer_anim()
+            self.bottem_alim()
+
+    @staticmethod
+    def _hex_to_rgb(hex_color: str) -> str:
+        """'#67e8f9' -> '103;232;249' für ANSI 24-bit color."""
+        h = hex_color.lstrip('#')
+        return f"{int(h[0:2], 16)};{int(h[2:4], 16)};{int(h[4:6], 16)}"
+
+    def bottem_alim(self):
+        if self._needs_newline:
+            print(flush=True)
+            self._needs_newline = False
+        now = time.time()
+
+        pool = list(self.thought_pool) if self.thought_pool else ['zen...', 'fiddling', 'processing']
+        word = pool[int(now / 1.5) % len(pool)]
+        word = "".join(c for c in str(word) if c.isalnum())[:20]
+
+        colors = [c for k, c in C.items() if k not in ["red"]]
+        color = colors[int(now * 2) % len(colors)]
+
+        syms = ["◌", "◦", "∙", "●", "∙", "◦"]
+        sym = syms[int(now * 8) % len(syms)]
+
+        # ANSI escape: \r = Zeilenanfang, \x1b[K = Rest löschen
+        self._print(
+            f"\r\x1b[K \x1b[38;2;{self._hex_to_rgb(color)}m{sym}\x1b[0m  \x1b[38;2;{self._hex_to_rgb(C['dim'])}m{word}\x1b[0m ",
+            end='', flush=True)
+        self._footer_active = True
 
     def print_processes(self, background_tasks: dict, agents_getter=None):
         """
@@ -405,6 +479,16 @@ class ZenRendererV2:
             )
             self._in_think = True
         self._think_buf += chunk.get("chunk", "")
+        words = [w for w in self._think_buf.split()]
+        b = ""
+        offset = 0
+        for w in words:
+            offset+=len(w)
+            b += f"{w} "
+            if offset > 12:
+                self.thought_pool.append(b.strip())
+                b = "" if random.randint(0, 10) < 9 else "..zen.. "
+                offset = 0
 
     def _close_think(self):
         if self._in_think:
@@ -419,7 +503,22 @@ class ZenRendererV2:
     def _on_content(self, chunk: dict):
         self._close_think()
         text = chunk.get("chunk", "")
-        print_formatted_text(HTML(f"<style fg='{C['white']}'>{_esc(text)}</style>"), end="")
+        print_formatted_text(HTML(f"<style fg='{C['white']}'>{_esc(text)}</style>"), end="", flush=True)
+        self._needs_newline = True
+        self._content_buf += chunk.get("chunk", "")
+        words = [w for w in self._content_buf.split()]
+        b = ""
+        offset = 0
+        for w in words:
+            offset += len(w)
+            b += f"{w} "
+            if offset > 12:
+                self.thought_pool.append(b.strip())
+                b = "" if random.randint(0, 10) < 9 else "..zen.. "
+                offset = 0
+
+        if len(words) > 5:
+            self._content_buf = ""
 
     def _on_tool_start(self, chunk: dict):
         self._close_think()
@@ -447,6 +546,7 @@ class ZenRendererV2:
                     f"  <style fg='{C['dim']}'>{SYM['think']} thinking...</style>",
                     end=""
                 )
+            self._needs_newline = True
             return
 
         # final_answer: handled by _on_final_answer, just show start
@@ -1070,13 +1170,15 @@ class ZenRendererV2:
 
     # -- output ---------------------------------------------------------------
 
-    @staticmethod
-    def _print(html_str: str, end="\n"):
-        """prompt_toolkit safe print."""
+    def _print(self, html_str: str, end="\n", **k):
+        import re
+        if self._footer_active:
+            print(end='\r\x1b[K', flush=True)
+            self._footer_active = False
+
         try:
-            print_formatted_text(HTML(html_str), end=end)
+            print_formatted_text(HTML(html_str), end=end, **k)
         except Exception:
-            # Fallback: strip HTML, plain print (encoding safe)
-            import re
             plain = re.sub(r"<[^>]+>", "", html_str)
-            print(plain.encode("utf-8", errors="replace").decode("utf-8"), end=end, flush=True)
+            print(plain, end=end, flush=True)
+

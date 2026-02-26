@@ -1470,7 +1470,7 @@ async def main(App=TbApp, do_exit=True):
         if args.remote:
             await tb_app.rrun_flows(args.modi, **args.kwargs[0])
 
-        flows_dict = flows_dict_func(remote=False, flows_dict_=tb_app.flows)
+        flows_dict = flows_dict_func(s=args.modi, remote=False, flows_dict_=tb_app.flows)
         if args.modi not in flows_dict:
             flows_dict = {
                 **flows_dict,
@@ -1975,7 +1975,13 @@ def runner_setup():
 
     return runner
 
-@profile_code(sort_by="cumulative")
+@profile_code(
+    sort_by="cumulative",
+    top_n=30,
+    graph=True,
+    graph_file="import_graph.html",  # → Obsidian
+    group_depth=5,min_time=0.01,
+)
 def main_runner():
     # The fuck is uv not PyO3 compatible
     sys.excepthook = sys.__excepthook__

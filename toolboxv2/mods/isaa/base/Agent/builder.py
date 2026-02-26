@@ -25,42 +25,11 @@ from toolboxv2 import Spinner, get_logger
 from toolboxv2.mods.isaa.base.Agent.docker_vfs import DockerConfig
 
 # Framework imports with graceful degradation
-try:
-    import litellm
-    from litellm import BudgetManager
-
-    LITELLM_AVAILABLE = True
-except ImportError:
-    LITELLM_AVAILABLE = False
-
-    class BudgetManager:
-        pass
 
 
-try:
-    from python_a2a import A2AServer, AgentCard
-
-    A2A_AVAILABLE = True
-except ImportError:
-    A2A_AVAILABLE = False
-
-    class A2AServer:
-        pass
-
-    class AgentCard:
-        pass
 
 
-try:
-    from mcp.server.fastmcp import FastMCP
-
-    MCP_AVAILABLE = True
-except ImportError:
-    MCP_AVAILABLE = False
-
-    class FastMCP:
-        pass
-
+MCP_AVAILABLE = os.getenv("ISAA_MCP_AVAILABLE", "true") == "true"
 
 from toolboxv2.mods.isaa.base.Agent.flow_agent import FlowAgent
 from toolboxv2.mods.isaa.base.Agent.types import (
@@ -238,7 +207,7 @@ class FlowAgentBuilder:
         self._mcp_session_manager = None
         self._mcp_config_data: dict = {}
         self._mcp_needs_loading: bool = False
-        self._budget_manager: BudgetManager = None
+        self._budget_manager: 'BudgetManager' = None
 
         # Persona patterns for RuleSet
         self._persona_patterns: list[dict] = []
@@ -319,11 +288,16 @@ class FlowAgentBuilder:
 
     def with_budget_manager(self, max_cost: float = 10.0) -> "FlowAgentBuilder":
         """Enable budget management"""
-        if LITELLM_AVAILABLE:
+        try:
+            import litellm
+            from litellm import BudgetManager
+
             self._budget_manager = BudgetManager("agent")
             iprint(f"Budget manager enabled: ${max_cost}")
-        else:
+        except ImportError:
             wprint("LiteLLM not available, budget manager disabled")
+
+
         return self
 
     def verbose(self, enable: bool = True) -> "FlowAgentBuilder":
@@ -623,6 +597,19 @@ class FlowAgentBuilder:
         agent_description: str = None,
     ) -> "FlowAgentBuilder":
         """Enable A2A server for agent-to-agent communication"""
+        try:
+            from python_a2a import A2AServer, AgentCard
+
+            A2A_AVAILABLE = True
+        except ImportError:
+            A2A_AVAILABLE = False
+
+            class A2AServer:
+                pass
+
+            class AgentCard:
+                pass
+
         if not A2A_AVAILABLE:
             wprint("A2A not available, cannot enable server")
             return self
@@ -900,6 +887,19 @@ class FlowAgentBuilder:
 
     def validate_config(self) -> dict[str, list[str]]:
         """Validate the current configuration"""
+        try:
+            from python_a2a import A2AServer, AgentCard
+
+            A2A_AVAILABLE = True
+        except ImportError:
+            A2A_AVAILABLE = False
+
+            class A2AServer:
+                pass
+
+            class AgentCard:
+                pass
+
         issues = {"errors": [], "warnings": []}
 
         if not self.config.fast_llm_model:
@@ -1072,7 +1072,7 @@ class FlowAgentBuilder:
                         eprint(f"Failed to setup MCP server: {e}")
 
                 # Step 10: Setup A2A server
-                if self.config.a2a.enabled and A2A_AVAILABLE:
+                if self.config.a2a.enabled:
                     try:
                         agent.setup_a2a_server(
                             host=self.config.a2a.host, port=self.config.a2a.port

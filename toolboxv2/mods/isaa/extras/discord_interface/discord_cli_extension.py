@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Optional
 from toolboxv2 import get_app
 
 if TYPE_CHECKING:
-    from toolboxv2.flows.cli_v4 import ISAA_Host
+    from toolboxv2.flows.icli import ISAA_Host
 
 # Import print functions (angepasst für cli_v4)
 try:

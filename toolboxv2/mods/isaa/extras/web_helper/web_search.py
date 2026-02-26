@@ -1,12 +1,10 @@
-import concurrent
+import time
 import os
 import re
 from urllib.parse import quote_plus
-
-
+import concurrent
 import requests
 from bs4 import BeautifulSoup
-
 
 def web_search_serpapi(query: str, max_results: int = 5, api_key: str = None) -> list[dict[str, str]]:
     """

@@ -10,7 +10,6 @@ Refactored architecture:
 
 Author: FlowAgent V2
 """
-
 import asyncio
 import contextlib
 import copy
@@ -21,61 +20,48 @@ import os
 import re
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Coroutine, Generator, Union, Optional
+from typing import Any, AsyncGenerator, Callable, Generator, Union, Optional
 
 import yaml
-from litellm import max_tokens
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from toolboxv2 import Style, get_logger, get_app
 from toolboxv2.mods.isaa.base.Agent.chain import Chain, ConditionalChain
-from toolboxv2.mods.isaa.base.Agent.dreamer import Dreamer
 from toolboxv2.mods.isaa.base.Agent.types import (
     AgentModelData,
     DreamConfig,
-    NodeStatus,
-    PersonaConfig,
-    ProgressEvent,
 )
 
+AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
 # Framework imports
 try:
-    import litellm
-
-    # Unterdrückt die störenden LiteLLM Konsolen-Logs
-    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
-    logging.getLogger("litellm").setLevel(logging.WARNING)
+    #import litellm
+    ## Unterdrückt die störenden LiteLLM Konsolen-Logs
+    #logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+    #logging.getLogger("litellm").setLevel(logging.WARNING)
+    #litellm.suppress_debug_info = not AGENT_VERBOSE
     LITELLM_AVAILABLE = True
 except ImportError:
     LITELLM_AVAILABLE = False
-
 try:
-    from python_a2a import A2AServer, AgentCard
-
-    A2A_AVAILABLE = True
-except ImportError:
-    A2A_AVAILABLE = False
-
+    # from python_a2a import A2AServer, AgentCard
     class A2AServer:
         pass
 
     class AgentCard:
         pass
-
+    A2A_AVAILABLE = True
+except ImportError:
+    A2A_AVAILABLE = False
 
 try:
-    from mcp.server.fastmcp import FastMCP
-
+    #from mcp.server.fastmcp import FastMCP
+    class FastMCP:
+        pass
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
-
-    class FastMCP:
-        pass
-
 
 try:
     gmail_toolkit = None
@@ -85,7 +71,6 @@ try:
             CalendarToolkit,
         )
         from toolboxv2.mods.isaa.extras.toolkit.google_gmail_toolkit import GmailToolkit
-
         google_token_dir = os.getenv("GOOGLE_TOKEN_DIR", "token")
         if not os.path.exists(google_token_dir):
             os.makedirs(google_token_dir, exist_ok=True)
@@ -103,10 +88,7 @@ except ImportError as e:
     if os.getenv("WITH_GOOGLE_TOOLS", "false") == "true":
         print(f"⚠️ Google tools not available: {e}")
 
-
 logger = get_logger()
-AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
-litellm.suppress_debug_info = not AGENT_VERBOSE
 
 MAX_CONTINUATIONS = os.environ.get("AGENT_INTERN_MAX_CONTINUATIONS", 100)
 
@@ -370,8 +352,6 @@ class FlowAgent:
         self.total_cost_accumulated = 0.0
         self.total_llm_calls = 0
 
-        self.executor = ThreadPoolExecutor(max_workers=max_parallel_tasks)
-
         # Servers
         self.a2a_server: A2AServer | None = None
         self.mcp_server: FastMCP | None = None
@@ -525,6 +505,7 @@ class FlowAgent:
                 self._vison[model_preference] = supports_vision(model, provider)
                 return self._vison[model_preference]
             except:
+                import litellm
                 has_media = False
                 if not messages:
                     return False
@@ -676,7 +657,7 @@ class FlowAgent:
 
         try:
             from litellm.types.utils import ChatCompletionMessageToolCall, Function, Message
-
+            import litellm
             original_messages = llm_kwargs["messages"].copy()
             original_tools = llm_kwargs.get("tools")
 
@@ -1557,6 +1538,7 @@ class FlowAgent:
             config = DreamConfig()
 
         if not hasattr(self, '_dreamer'):
+            from toolboxv2.mods.isaa.base.Agent.dreamer import Dreamer
             self._dreamer = Dreamer(self)
 
         return await self._dreamer.dream(config)
@@ -2794,7 +2776,7 @@ class FlowAgent:
         # 4. Präzises Token Counting mit Overhead
         model = self.amd.fast_llm_model.split("/")[-1]
         try:
-
+            import litellm
             try:
                 devnull = open(os.devnull, "w")
             except Exception as e:
@@ -2819,6 +2801,7 @@ class FlowAgent:
                     print(e, "\nWhile trying to get devnull")
 
             with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+                import litellm
                 try:
                     if tools:
                         return litellm.token_counter(model=model, messages=msgs, tools=tools)
@@ -3009,6 +2992,13 @@ class FlowAgent:
     # =========================================================================
 
     def setup_mcp_server(self, name: str | None = None):
+        try:
+            from mcp.server.fastmcp import FastMCP
+
+            MCP_AVAILABLE = True
+        except ImportError:
+            MCP_AVAILABLE = False
+
         if not MCP_AVAILABLE:
             logger.warning("MCP not available")
             return
@@ -3021,6 +3011,12 @@ class FlowAgent:
             return await self.a_run(query, session_id=session_id)
 
     def setup_a2a_server(self, host: str = "0.0.0.0", port: int = 5000):
+        try:
+            from python_a2a import A2AServer, AgentCard
+            A2A_AVAILABLE = True
+        except ImportError:
+            A2A_AVAILABLE = False
+
         if not A2A_AVAILABLE:
             logger.warning("A2A not available")
             return
@@ -3045,7 +3041,6 @@ class FlowAgent:
         if self.amd.enable_docker:
             await self.session_manager.cleanup_docker_containers()
         await self.session_manager.close_all()
-        self.executor.shutdown(wait=True)
 
         if self.a2a_server:
             await self.a2a_server.close()

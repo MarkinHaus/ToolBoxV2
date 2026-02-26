@@ -1,4 +1,6 @@
+import os
 import pickle
+import logging
 
 import numpy as np
 
@@ -7,10 +9,25 @@ from toolboxv2.mods.isaa.base.VectorStores.types import AbstractVectorStore, Chu
 
 class FaissVectorStore(AbstractVectorStore):
     def __init__(self, dimension: int):
-        import faiss
+        # 1. Retrieve environment variables
+        agent_verbose = os.getenv("AGENT_VERBOSE", "false").lower() == "true"
+        toolbox_level = os.getenv("TOOLBOX_LOGGING_LEVEL", "INFO").upper()
 
+        # 2. Configure faiss.loader suppression
+        # Logic: Suppress if AGENT_VERBOSE is false
+        # OR if AGENT_VERBOSE is true but we aren't in 'DEBUG' (min debug) or 'NOTSET' (lower)
+        faiss_logger = logging.getLogger("faiss.loader")
+
+        if not agent_verbose or toolbox_level not in ["DEBUG", "NOTSET"]:
+            # Set to WARNING to hide the INFO "Loading faiss..." messages
+            faiss_logger.setLevel(logging.WARNING)
+        else:
+            # Allow INFO/DEBUG messages if verbose is on and we are in debug mode
+            faiss_logger.setLevel(logging.INFO)
+        import faiss
+        self.faiss = faiss
         self.dimension = dimension
-        self.index = faiss.IndexFlatIP(dimension)
+        self.index = self.faiss.IndexFlatIP(dimension)
         self.chunks = []
 
     def add_embeddings(self, embeddings: np.ndarray, chunks: list[Chunk]) -> None:
@@ -41,9 +58,7 @@ class FaissVectorStore(AbstractVectorStore):
         return results
 
     def save(self) -> bytes:
-        import faiss
-
-        index_bytes = faiss.serialize_index(self.index)
+        index_bytes = self.faiss.serialize_index(self.index)
         data = {
             "index_bytes": index_bytes,
             "chunks": self.chunks,
@@ -52,18 +67,16 @@ class FaissVectorStore(AbstractVectorStore):
         return pickle.dumps(data)
 
     def load(self, data: bytes) -> "FaissVectorStore":
-        import faiss
 
         loaded = pickle.loads(data)
         self.dimension = loaded["dimension"]
-        self.index = faiss.deserialize_index(loaded["index_bytes"])
+        self.index = self.faiss.deserialize_index(loaded["index_bytes"])
         self.chunks = loaded["chunks"]
         return self
 
     def clear(self) -> None:
-        import faiss
 
-        self.index = faiss.IndexFlatIP(self.dimension)
+        self.index = self.faiss.IndexFlatIP(self.dimension)
         self.chunks = []
 
     def rebuild_index(self) -> None:

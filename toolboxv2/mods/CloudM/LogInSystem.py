@@ -432,7 +432,6 @@ def _find_cli_session(app: App = None, username: str = None) -> Optional[dict]:
 
     return None
 
-
 async def _check_existing_session(app: App, username: str = None) -> Optional[dict]:
     """Check for existing valid CLI session. Auto-refreshes if access token expired/expiring."""
     try:
