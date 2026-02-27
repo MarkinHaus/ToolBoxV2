@@ -303,9 +303,9 @@ class TestCLISessionManagement(IsolatedTestCase):
         uid = "cli_user_123"
         session_token = "test_jwt_token"
         session_info = {'ip': '127.0.0.1', 'device': 'test'}
-        clerk_user_id = None
+        cloudm_user_id = None
 
-        result = register_cli_session(uid, session_token, session_info, clerk_user_id)
+        result = register_cli_session(uid, session_token, session_info, cloudm_user_id)
 
         self.assertIsInstance(result, Result)
         self.assertTrue(result.is_ok())
@@ -320,7 +320,7 @@ class TestCLISessionManagement(IsolatedTestCase):
             'uid': uid,
             'cli_session_id': cli_session_id,
             'session_token': session_token,
-            'clerk_user_id': clerk_user_id,
+            'cloudm_user_id': cloudm_user_id,
             'created_at': time.time(),
             'last_activity': time.time(),
             'status': 'active',
@@ -329,7 +329,7 @@ class TestCLISessionManagement(IsolatedTestCase):
         self.assertEqual(session['uid'], uid)
         self.assertEqual(session['cli_session_id'], cli_session_id)
         self.assertEqual(session['session_token'], session_token)
-        self.assertEqual(session['clerk_user_id'], clerk_user_id)
+        self.assertEqual(session['cloudm_user_id'], cloudm_user_id)
         self.assertAlmostEqual(session['created_at'], session['last_activity'], delta=4)
         self.assertEqual(session['status'], 'active')
         self.assertEqual(session['session_info'], session_info)

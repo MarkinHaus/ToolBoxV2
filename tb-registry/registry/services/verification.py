@@ -68,7 +68,7 @@ class VerificationService:
 
     async def submit_request(
         self,
-        clerk_user_id: str,
+        cloudm_user_id: str,
         publisher_id: str,
         method: VerificationMethod,
         data: dict,
@@ -76,7 +76,7 @@ class VerificationService:
         """Submit a verification request.
 
         Args:
-            clerk_user_id: Clerk user ID.
+            cloudm_user_id: Clerk user ID.
             publisher_id: Publisher ID.
             method: Verification method.
             data: Method-specific data.

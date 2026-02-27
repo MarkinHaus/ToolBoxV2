@@ -279,7 +279,7 @@ class Session:
     New fields (from SessionData):
         - user_id: User identifier
         - session_id: Session identifier
-        - clerk_user_id: Clerk user ID
+        - cloudm_user_id: Clerk user ID
         - validated: Whether session was validated
         - anonymous: Whether session is anonymous
     """
@@ -293,7 +293,7 @@ class Session:
     # New fields from SessionData (for worker compatibility)
     user_id: str = ""
     session_id: str = ""
-    clerk_user_id: str = ""
+    cloudm_user_id: str = ""
     validated: bool = False
     anonymous: bool = True
 
@@ -310,14 +310,14 @@ class Session:
             'user_name': data.get('user_name', 'anonymous'),
             'user_id': data.get('user_id', ''),
             'session_id': session_id,
-            'clerk_user_id': data.get('clerk_user_id', ''),
+            'cloudm_user_id': data.get('cloudm_user_id', ''),
             'validated': data.get('validated', False),
             'anonymous': data.get('anonymous', True),
         }
 
         # Collect extra data (fields not in known_fields)
         extra_keys = {'SiID', 'level', 'spec', 'user_name', 'user_id', 'session_id',
-                      'clerk_user_id', 'validated', 'anonymous', 'extra_data', 'extra'}
+                      'cloudm_user_id', 'validated', 'anonymous', 'extra_data', 'extra'}
         extra_data = {k: v for k, v in data.items() if k not in extra_keys}
 
         # Merge with existing extra/extra_data
@@ -350,7 +350,7 @@ class Session:
             user_name=getattr(session_data, 'user_name', 'anonymous'),
             user_id=getattr(session_data, 'user_id', ''),
             session_id=getattr(session_data, 'session_id', ''),
-            clerk_user_id=getattr(session_data, 'clerk_user_id', ''),
+            cloudm_user_id=getattr(session_data, 'cloudm_user_id', ''),
             validated=getattr(session_data, 'validated', False),
             anonymous=getattr(session_data, 'anonymous', True),
             extra_data=getattr(session_data, 'extra', {}) or {},
@@ -365,7 +365,7 @@ class Session:
             'user_name': self.user_name,
             'user_id': self.user_id,
             'session_id': self.session_id,
-            'clerk_user_id': self.clerk_user_id,
+            'cloudm_user_id': self.cloudm_user_id,
             'validated': self.validated,
             'anonymous': self.anonymous,
         }

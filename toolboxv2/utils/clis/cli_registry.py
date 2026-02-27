@@ -731,6 +731,230 @@ async def registry_whoami(args):
         await client.close()
 
 
+# ==================== Admin Commands ====================
+
+async def registry_admin_publisher(args):
+    """Admin management for publishers."""
+    token = await _get_auth_token()
+    if not token:
+        print_status("Authentication required. Please login first.", "error")
+        print_status("Use: tb registry login", "info")
+        return 1
+
+    client = RegistryClient(registry_url=args.registry_url)
+    try:
+        await client.login(token)
+
+        # Verify current user is admin
+        user = await client.get_current_user()
+        if not user or not user.is_admin:
+            print_status("Admin privileges required", "error")
+            return 1
+
+        if args.action in ("list", "open"):
+            # "open" is alias for list --status=pending
+            effective_status = args.status
+            if args.action == "open":
+                effective_status = "pending"
+
+            if effective_status == "pending":
+                print_box_header("Admin: Pending Publishers", "⏳")
+                print_box_footer()
+                publishers = await client.admin_list_pending_publishers()
+            else:
+                label = f"Publishers (filter: {effective_status})" if effective_status else "All Publishers"
+                print_box_header(f"Admin: {label}", "🔑")
+                print_box_footer()
+                publishers = await client.list_publishers(
+                    page=1, per_page=100, status=effective_status,
+                )
+
+            if not publishers:
+                print_status(f"No publishers found (filter: {effective_status or 'all'})", "warning")
+                return 0
+
+            columns = [("ID", 15), ("Name", 20), ("Display Name", 20), ("Status", 12), ("Pkgs", 6)]
+            widths = [w for _, w in columns]
+
+            print_table_header(columns, widths)
+            for p in publishers:
+                status_color = {
+                    "verified": "green",
+                    "pending": "yellow",
+                    "rejected": "red",
+                    "unverified": "grey",
+                }.get(p.verification_status, "white")
+                print_table_row(
+                    [p.id[:14], p.name, p.display_name[:19], p.verification_status, str(p.package_count)],
+                    widths,
+                    ["cyan", "white", "white", status_color, "grey"],
+                )
+
+            c_print(f"\n  Total: {len(publishers)} publisher(s)")
+
+        elif args.action == "verify":
+            if not args.target:
+                # Interactive: show pending list, let user pick
+                pending = await client.admin_list_pending_publishers()
+                if not pending:
+                    print_status("No pending verification requests", "info")
+                    return 0
+
+                print_box_header("Pending Verification Requests", "⏳")
+                print_box_footer()
+                for i, p in enumerate(pending, 1):
+                    c_print(f"  {Colors.CYAN}{i}.{Colors.RESET} {p.name} ({p.display_name}) [{p.id}]")
+
+                c_print("")
+                try:
+                    choice = input("  Select publisher # to verify (or 'q' to cancel): ").strip()
+                    if choice.lower() == 'q':
+                        print_status("Cancelled", "info")
+                        return 0
+                    idx = int(choice) - 1
+                    if idx < 0 or idx >= len(pending):
+                        print_status("Invalid selection", "error")
+                        return 1
+                    target = pending[idx].id
+                    target_name = pending[idx].name
+                except (ValueError, IndexError):
+                    print_status("Invalid selection", "error")
+                    return 1
+            else:
+                target = args.target
+                target_name = args.target
+
+            print_box_header(f"Verifying: {target_name}", "🛡️")
+            print_box_footer()
+
+            success = await client.admin_verify_publisher(
+                publisher_id=target,
+                notes=args.notes,
+            )
+            if success:
+                print_status(f"Publisher '{target_name}' is now VERIFIED", "success")
+            else:
+                print_status("Verification failed", "error")
+                return 1
+
+        elif args.action == "reject":
+            if not args.target:
+                pending = await client.admin_list_pending_publishers()
+                if not pending:
+                    print_status("No pending verification requests", "info")
+                    return 0
+
+                print_box_header("Pending Verification Requests", "⏳")
+                print_box_footer()
+                for i, p in enumerate(pending, 1):
+                    c_print(f"  {Colors.CYAN}{i}.{Colors.RESET} {p.name} ({p.display_name}) [{p.id}]")
+
+                c_print("")
+                try:
+                    choice = input("  Select publisher # to reject (or 'q' to cancel): ").strip()
+                    if choice.lower() == 'q':
+                        print_status("Cancelled", "info")
+                        return 0
+                    idx = int(choice) - 1
+                    if idx < 0 or idx >= len(pending):
+                        print_status("Invalid selection", "error")
+                        return 1
+                    target = pending[idx].id
+                    target_name = pending[idx].name
+                except (ValueError, IndexError):
+                    print_status("Invalid selection", "error")
+                    return 1
+            else:
+                target = args.target
+                target_name = args.target
+
+            # Ask for reason if not provided
+            notes = args.notes
+            if notes == "Verified via CLI":
+                notes = input("  Reason for rejection: ").strip() or "Rejected via CLI"
+
+            print_box_header(f"Rejecting: {target_name}", "⚠️")
+            print_box_footer()
+
+            success = await client.admin_reject_publisher(
+                publisher_id=target,
+                notes=notes,
+            )
+            if success:
+                print_status(f"Publisher '{target_name}' REJECTED", "success")
+            else:
+                print_status("Rejection failed", "error")
+                return 1
+
+        elif args.action == "revoke":
+            if not args.target:
+                # Show verified publishers to pick from
+                verified = await client.list_publishers(
+                    page=1, per_page=100, status="verified",
+                )
+                if not verified:
+                    print_status("No verified publishers found", "info")
+                    return 0
+
+                print_box_header("Verified Publishers", "🛡️")
+                print_box_footer()
+                for i, p in enumerate(verified, 1):
+                    c_print(f"  {Colors.CYAN}{i}.{Colors.RESET} {p.name} ({p.display_name}) [{p.id}]")
+
+                c_print("")
+                try:
+                    choice = input("  Select publisher # to revoke (or 'q' to cancel): ").strip()
+                    if choice.lower() == 'q':
+                        print_status("Cancelled", "info")
+                        return 0
+                    idx = int(choice) - 1
+                    if idx < 0 or idx >= len(verified):
+                        print_status("Invalid selection", "error")
+                        return 1
+                    target = verified[idx].id
+                    target_name = verified[idx].name
+                except (ValueError, IndexError):
+                    print_status("Invalid selection", "error")
+                    return 1
+            else:
+                target = args.target
+                target_name = args.target
+
+            notes = args.notes
+            if notes == "Verified via CLI":
+                notes = input("  Reason for revocation: ").strip() or "Revoked via CLI"
+
+            # Confirmation
+            confirm = input(f"  Revoke verification for '{target_name}'? [y/N]: ").strip()
+            if confirm.lower() != 'y':
+                print_status("Cancelled", "info")
+                return 0
+
+            print_box_header(f"Revoking: {target_name}", "🔓")
+            print_box_footer()
+
+            success = await client.admin_revoke_publisher(
+                publisher_id=target,
+                notes=notes,
+            )
+            if success:
+                print_status(f"Publisher '{target_name}' verification REVOKED", "success")
+            else:
+                print_status("Revocation failed", "error")
+                return 1
+
+        return 0
+
+    except RegistryAuthError as e:
+        print_status(f"Authentication failed: {e}", "error")
+        return 1
+    except RegistryError as e:
+        print_status(f"Error: {e}", "error")
+        return 1
+    finally:
+        await client.close()
+
+
 # ==================== Utility Commands ====================
 
 async def registry_health(args):
@@ -874,6 +1098,16 @@ For more information, see: https://github.com/toolboxv2/tb-registry
     subparsers.add_parser("logout", help="Logout from registry")
     subparsers.add_parser("whoami", help="Show current user")
 
+    # ==================== Admin Commands ====================
+    admin_parser = subparsers.add_parser("admin", help="Admin management tools")
+    admin_sub = admin_parser.add_subparsers(dest="admin_command")
+
+    pub_admin = admin_sub.add_parser("publisher", help="Manage registry publishers")
+    pub_admin.add_argument("action", choices=["list", "open", "verify", "reject", "revoke"])
+    pub_admin.add_argument("--target", help="Publisher ID to manage")
+    pub_admin.add_argument("--status", help="Filter by status (unverified, pending, verified, rejected)")
+    pub_admin.add_argument("--notes", help="Action notes / reason", default="Verified via CLI")
+
     # ==================== Utility Commands ====================
     subparsers.add_parser("health", help="Check registry health")
 
@@ -912,6 +1146,10 @@ async def registry():
         "login": registry_login,
         "logout": registry_logout,
         "whoami": registry_whoami,
+        # Admin commands
+        "admin": {
+            "publisher": registry_admin_publisher,
+        },
         # Utility commands
         "health": registry_health,
     }
@@ -919,6 +1157,8 @@ async def registry():
     # Get handler
     if args.command == "server":
         handler = handlers["server"].get(args.server_command)
+    elif args.command == "admin":
+        handler = handlers["admin"].get(args.admin_command)
     else:
         handler = handlers.get(args.command)
 

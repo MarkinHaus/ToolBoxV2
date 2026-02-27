@@ -89,28 +89,28 @@ class UserRepository:
             created_at=datetime.fromisoformat(row["created_at"]),
         )
 
-    async def get_by_clerk_id(self, clerk_user_id: str) -> Optional[User]:
+    async def get_by_clerk_id(self, cloudm_user_id: str) -> Optional[User]:
         """Get a user by Clerk user ID.
 
         DEPRECATED: Use get_by_cloudm_id instead.
         Kept for migration compatibility.
 
         Args:
-            clerk_user_id: Clerk user ID.
+            cloudm_user_id: Clerk user ID.
 
         Returns:
             User or None if not found.
         """
         row = await self.db.fetch_one(
-            "SELECT * FROM users WHERE clerk_user_id = ?",
-            (clerk_user_id,),
+            "SELECT * FROM users WHERE cloudm_user_id = ?",
+            (cloudm_user_id,),
         )
 
         if not row:
             return None
 
         return User(
-            cloudm_user_id=row.get("cloudm_user_id") or row["clerk_user_id"],
+            cloudm_user_id=row.get("cloudm_user_id") or row["cloudm_user_id"],
             email=row["email"],
             username=row["username"],
             publisher_id=row["publisher_id"],
@@ -119,15 +119,15 @@ class UserRepository:
             created_at=datetime.fromisoformat(row["created_at"]),
         )
 
-    async def update_last_login(self, clerk_user_id: str) -> None:
+    async def update_last_login(self, cloudm_user_id: str) -> None:
         """Update user's last login timestamp.
 
         Args:
-            clerk_user_id: Clerk user ID.
+            cloudm_user_id: Clerk user ID.
         """
         await self.db.execute(
-            "UPDATE users SET last_login = ? WHERE clerk_user_id = ?",
-            (datetime.utcnow().isoformat(), clerk_user_id),
+            "UPDATE users SET last_login = ? WHERE cloudm_user_id = ?",
+            (datetime.utcnow().isoformat(), cloudm_user_id),
         )
         await self.db.commit()
 
@@ -209,7 +209,7 @@ class UserRepository:
         """
         return Publisher(
             id=row["id"],
-            cloudm_user_id=row.get("cloudm_user_id") or row["clerk_user_id"],
+            cloudm_user_id=row.get("cloudm_user_id") or row["cloudm_user_id"],
             name=row["name"],
             slug=row["slug"],
             email=row["email"],
@@ -246,18 +246,18 @@ class UserRepository:
 
         return self._row_to_publisher(row)
 
-    async def get_publisher_by_clerk_id(self, clerk_user_id: str) -> Optional[Publisher]:
+    async def get_publisher_by_clerk_id(self, cloudm_user_id: str) -> Optional[Publisher]:
         """Get a publisher by Clerk user ID.
 
         Args:
-            clerk_user_id: Clerk user ID.
+            cloudm_user_id: Clerk user ID.
 
         Returns:
             Publisher or None if not found.
         """
         row = await self.db.fetch_one(
-            "SELECT * FROM publishers WHERE clerk_user_id = ?",
-            (clerk_user_id,),
+            "SELECT * FROM publishers WHERE cloudm_user_id = ?",
+            (cloudm_user_id,),
         )
 
         if not row:
@@ -354,4 +354,5 @@ class UserRepository:
             (publisher_id,),
         )
         await self.db.commit()
+
 

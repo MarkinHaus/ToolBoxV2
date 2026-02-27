@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -129,6 +129,22 @@ class Settings(BaseSettings):
             and self.minio_mirror_bucket
         )
 
+        # Füge diesen Validator am Ende der Klasse (vor den Properties) ein:
+
+    @field_validator("minio_primary_endpoint", "minio_mirror_endpoint", mode="before")
+    @classmethod
+    def clean_minio_endpoint(cls, v: str | None) -> str | None:
+        if not v or not isinstance(v, str):
+            return v
+
+        # Entferne Protokolle (http:// oder https://)
+        clean = v.replace("http://", "").replace("https://", "")
+
+        # Entferne alles nach einem / (Pfad) oder # (Fragment)
+        clean = clean.split("/")[0].split("#")[0]
+
+        # Entferne Leerzeichen (wichtig bei Kommentaren in .env)
+        return clean.strip()
 
 # Global settings instance
 _settings: Settings | None = None

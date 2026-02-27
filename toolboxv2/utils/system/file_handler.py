@@ -95,7 +95,7 @@ class UserContext:
     """
     user_id: str = "system"
     session_id: str = ""
-    clerk_user_id: str = ""
+    cloudm_user_id: str = ""
     is_authenticated: bool = False
     is_admin: bool = False
     roles: List[str] = field(default_factory=list)
@@ -107,7 +107,7 @@ class UserContext:
         return cls(
             user_id=session.user_id or session.user_name or "anonymous",
             session_id=session.session_id or session.SiID,
-            clerk_user_id=session.clerk_user_id,
+            cloudm_user_id=session.cloudm_user_id,
             is_authenticated=session.is_authenticated,
             is_admin=session.spec == "admin" or int(session.level or 0) >= 10,
             roles=[session.spec] if session.spec else [],
@@ -119,7 +119,7 @@ class UserContext:
         return cls(
             user_id=session.user_id or session.user_name or "anonymous",
             session_id=session.session_id or session.SiID,
-            clerk_user_id=getattr(session, 'clerk_user_id', ''),
+            cloudm_user_id=getattr(session, 'cloudm_user_id', ''),
             is_authenticated=getattr(session, 'is_authenticated', False),
             is_admin=session.spec == "admin" or int(session.level or 0) >= 10,
             roles=[session.spec] if session.spec else [],

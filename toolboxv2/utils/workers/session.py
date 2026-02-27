@@ -144,7 +144,7 @@ class SessionData:
             level=data.get("level", AccessLevel.NOT_LOGGED_IN),
             spec=data.get("spec", ""),
             exp=data.get("exp", 0.0),
-            provider_user_id=data.get("provider_user_id", data.get("clerk_user_id", "")),
+            provider_user_id=data.get("provider_user_id", data.get("cloudm_user_id", "")),
             validated=data.get("validated", False),
             anonymous=data.get("anonymous", True),
             extra=data.get("extra", {}),

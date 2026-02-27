@@ -158,7 +158,7 @@ async def submit_verification(
         )
 
     await verification_service.submit_request(
-        clerk_user_id=user.clerk_user_id,
+        cloudm_user_id=user.cloudm_user_id,
         publisher_id=user.publisher_id,
         method=request.method,
         data=request.data,

@@ -1405,7 +1405,7 @@ def setup_zai_provider(
 
     })
 
-    print(f"✅ Registered Z.AI provider as '{provider_name}' with base_url: {base_url or ZAI_BASE_URL}")
+    print(f"✅ Registered{' Z.AI' if provider_name == 'zglm' else ''} provider as '{provider_name}' with base_url: {base_url or ZAI_BASE_URL}")
     return provider
 
 

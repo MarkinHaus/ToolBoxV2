@@ -56,7 +56,7 @@ async def get_current_user_info(
     """
     return {
         "id": user.id,
-        "clerk_user_id": user.clerk_user_id,
+        "cloudm_user_id": user.cloudm_user_id,
         "email": user.email,
         "username": user.username,
         "is_admin": user.is_admin,
@@ -89,8 +89,8 @@ async def register_publisher(
             detail="Already registered as a publisher",
         )
 
-    # Check if name is taken
-    existing = await user_repo.get_publisher_by_name(request.name)
+    # Check if slug is taken
+    existing = await user_repo.get_publisher_by_slug(request.name)
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -99,19 +99,20 @@ async def register_publisher(
 
     publisher = Publisher(
         id="",  # Will be generated
-        name=request.name,
-        display_name=request.display_name,
+        cloudm_user_id=user.cloudm_user_id,
+        name=request.display_name,
+        slug=request.name,
         email=request.email,
-        homepage=request.homepage,
+        website=request.homepage,
     )
 
-    created = await user_repo.create_publisher(publisher, user.id)
+    created = await user_repo.create_publisher(publisher)
 
     return PublisherResponse(
         id=created.id,
-        name=created.name,
-        display_name=created.display_name,
-        verification_status=created.verification_status.value,
+        name=created.slug,
+        display_name=created.name,
+        verification_status=created.status.value,
     )
 
 
@@ -138,8 +139,7 @@ async def get_my_publisher(
 
     return PublisherResponse(
         id=publisher.id,
-        name=publisher.name,
-        display_name=publisher.display_name,
-        verification_status=publisher.verification_status.value,
+        name=publisher.slug,
+        display_name=publisher.name,
+        verification_status=publisher.status.value,
     )
-

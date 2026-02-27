@@ -1,431 +1,362 @@
-"""Package routes."""
+"""Publisher routes."""
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
-from registry.api.deps import (
-    get_current_user,
-    get_optional_user,
-    get_package_service,
-)
-from registry.exceptions import (
-    DuplicatePackageError,
-    DuplicateVersionError,
-    PackageNotFoundError,
-    PermissionDeniedError,
-    VersionNotFoundError,
-)
-from registry.models.package import (
-    Package,
-    PackageCreate,
-    PackageSummary,
-    PackageType,
-    PackageUpdate,
-    PackageVersion,
-)
-from registry.models.user import User
-from registry.services.package_service import PackageService
+from registry.api.deps import get_current_user, get_user_repo, get_verification_service, require_admin
+from registry.db.repositories.user_repo import UserRepository
+from registry.models.user import Publisher, User, VerificationStatus
+from registry.services.verification import VerificationMethod, VerificationService
 
 router = APIRouter()
 
 
-class PackageListResponse(BaseModel):
-    """Response for package list.
+class PublisherResponse(BaseModel):
+    """Publisher response.
 
     Attributes:
-        packages: List of package summaries.
+        id: Publisher ID.
+        name: Publisher name.
+        display_name: Display name.
+        verification_status: Verification status.
+        package_count: Number of packages.
+        total_downloads: Total downloads.
+    """
+
+    id: str
+    name: str
+    display_name: str
+    verification_status: str
+    package_count: int
+    total_downloads: int
+
+
+class PublisherListResponse(BaseModel):
+    """Response for publisher list.
+
+    Attributes:
+        publishers: List of publishers.
         total: Total count.
         page: Current page.
         per_page: Items per page.
     """
 
-    packages: list[PackageSummary]
+    publishers: list[PublisherResponse]
     total: int
     page: int
     per_page: int
 
 
-class DownloadUrlResponse(BaseModel):
-    """Response for download URL.
+class VerificationRequest(BaseModel):
+    """Request to submit verification.
 
     Attributes:
-        url: Presigned download URL.
-        expires_in: Expiration time in seconds.
+        method: Verification method.
+        data: Method-specific data.
     """
 
-    url: str
-    expires_in: int
+    method: VerificationMethod
+    data: dict
 
 
-@router.get("", response_model=PackageListResponse)
-async def list_packages(
+@router.get("", response_model=PublisherListResponse)
+async def list_publishers(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
-    package_type: Optional[PackageType] = None,
-    user: Optional[User] = Depends(get_optional_user),
-    service: PackageService = Depends(get_package_service),
-) -> PackageListResponse:
-    """List packages with pagination.
+    verified_only: bool = Query(False),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    user_repo: UserRepository = Depends(get_user_repo),
+) -> PublisherListResponse:
+    """List publishers with pagination.
 
     Args:
         page: Page number.
         per_page: Items per page.
-        package_type: Filter by package type.
-        user: Optional current user.
-        service: Package service.
+        verified_only: Only show verified publishers (legacy).
+        status_filter: Filter by status (unverified, pending, verified, rejected).
+        user_repo: User repository.
 
     Returns:
-        Paginated package list.
+        Paginated publisher list.
     """
-    viewer_id = user.id if user else None
-    packages, total = await service.list_packages(
+    if status_filter:
+        try:
+            resolved_status = VerificationStatus(status_filter)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status: {status_filter}. "
+                f"Valid: {', '.join(s.value for s in VerificationStatus)}",
+            )
+    elif verified_only:
+        resolved_status = VerificationStatus.VERIFIED
+    else:
+        resolved_status = None
+
+    publishers = await user_repo.list_publishers(
         page=page,
         per_page=per_page,
-        package_type=package_type,
-        viewer_id=viewer_id,
+        status=resolved_status,
     )
 
-    return PackageListResponse(
-        packages=packages,
-        total=total,
+    return PublisherListResponse(
+        publishers=[
+            PublisherResponse(
+                id=p.id,
+                name=p.slug,
+                display_name=p.name,
+                verification_status=p.status.value,
+                package_count=p.packages_count,
+                total_downloads=p.total_downloads,
+            )
+            for p in publishers
+        ],
+        total=len(publishers),
         page=page,
         per_page=per_page,
     )
 
 
-@router.post("", response_model=Package, status_code=status.HTTP_201_CREATED)
-async def create_package(
-    data: PackageCreate,
-    user: User = Depends(get_current_user),
-    service: PackageService = Depends(get_package_service),
-) -> Package:
-    """Create a new package.
+@router.get("/{name}", response_model=PublisherResponse)
+async def get_publisher(
+    name: str,
+    user_repo: UserRepository = Depends(get_user_repo),
+) -> PublisherResponse:
+    """Get a publisher by slug.
 
     Args:
-        data: Package creation data.
-        user: Current authenticated user.
-        service: Package service.
+        name: Publisher slug.
+        user_repo: User repository.
 
     Returns:
-        Created package.
+        Publisher.
+    """
+    publisher = await user_repo.get_publisher_by_slug(name)
+    if not publisher:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Publisher not found",
+        )
 
-    Raises:
-        HTTPException: If not a publisher or package exists.
+    return PublisherResponse(
+        id=publisher.id,
+        name=publisher.slug,
+        display_name=publisher.name,
+        verification_status=publisher.status.value,
+        package_count=publisher.packages_count,
+        total_downloads=publisher.total_downloads,
+    )
+
+
+@router.post("/verify", status_code=status.HTTP_202_ACCEPTED)
+async def submit_verification(
+    request: VerificationRequest,
+    user: User = Depends(get_current_user),
+    verification_service: VerificationService = Depends(get_verification_service),
+) -> dict:
+    """Submit a verification request.
+
+    Args:
+        request: Verification request.
+        user: Current authenticated user.
+        verification_service: Verification service.
+
+    Returns:
+        Submission status.
     """
     if not user.publisher_id:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Must be a registered publisher to create packages",
-        )
-
-    try:
-        return await service.create_package(
-            data=data,
-            publisher_id=user.publisher_id,
-            owner_id=user.id,
-        )
-    except DuplicatePackageError as e:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(e),
-        )
-
-
-@router.get("/{name}", response_model=Package)
-async def get_package(
-    name: str,
-    user: Optional[User] = Depends(get_optional_user),
-    service: PackageService = Depends(get_package_service),
-) -> Package:
-    """Get a package by name.
-
-    Args:
-        name: Package name.
-        user: Optional current user.
-        service: Package service.
-
-    Returns:
-        Package.
-
-    Raises:
-        HTTPException: If package not found or not accessible.
-    """
-    viewer_id = user.id if user else None
-    try:
-        return await service.get_package(name, viewer_id)
-    except PackageNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
-    except PermissionDeniedError as e:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(e),
-        )
-
-
-@router.patch("/{name}", response_model=Package)
-async def update_package(
-    name: str,
-    data: PackageUpdate,
-    user: User = Depends(get_current_user),
-    service: PackageService = Depends(get_package_service),
-) -> Package:
-    """Update a package.
-
-    Args:
-        name: Package name.
-        data: Update data.
-        user: Current authenticated user.
-        service: Package service.
-
-    Returns:
-        Updated package.
-    """
-    try:
-        return await service.update_package(name, data, user.id)
-    except PackageNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
-    except PermissionDeniedError as e:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(e),
-        )
-
-
-@router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_package(
-    name: str,
-    user: User = Depends(get_current_user),
-    service: PackageService = Depends(get_package_service),
-) -> None:
-    """Delete a package.
-
-    Args:
-        name: Package name.
-        user: Current authenticated user.
-        service: Package service.
-    """
-    try:
-        await service.delete_package(name, user.id, user.is_admin)
-    except PackageNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
-    except PermissionDeniedError as e:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(e),
-        )
-
-
-@router.post("/{name}/versions", response_model=PackageVersion, status_code=status.HTTP_201_CREATED)
-async def upload_version(
-    name: str,
-    version: str = Form(...),
-    changelog: str = Form(""),
-    toolbox_version: Optional[str] = Form(None),
-    python_version: Optional[str] = Form(None),
-    upload_type: str = Form("full"),  # "full" or "diff"
-    from_version: Optional[str] = Form(None),  # Required for diff uploads
-    patch: Optional[UploadFile] = File(None),  # Patch file for diff uploads
-    file: UploadFile = File(None),  # Full package file
-    user: User = Depends(get_current_user),
-    service: PackageService = Depends(get_package_service),
-) -> PackageVersion:
-    """Upload a new version with optional diff support.
-
-    Supports two upload modes:
-    - full: Upload complete package file (default)
-    - diff: Upload only patch file, server reconstructs full package
-
-    For diff uploads:
-    - from_version: Source version to diff from
-    - patch: Patch file (bsdiff format)
-
-    Args:
-        name: Package name.
-        version: Version string.
-        changelog: Version changelog.
-        toolbox_version: Required ToolBox version.
-        python_version: Required Python version.
-        upload_type: "full" or "diff"
-        from_version: Source version (required for diff)
-        patch: Patch file (required for diff)
-        file: Full package file (required for full)
-        user: Current authenticated user.
-        service: Package service.
-
-    Returns:
-        Created version.
-    """
-    if not user.publisher_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Must be a registered publisher",
         )
 
-    try:
-        if upload_type == "diff":
-            # Diff upload - validate parameters
-            if not from_version:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="from_version required for diff uploads",
-                )
-            if not patch:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="patch file required for diff uploads",
-                )
+    await verification_service.submit_request(
+        cloudm_user_id=user.cloudm_user_id,
+        publisher_id=user.publisher_id,
+        method=request.method,
+        data=request.data,
+    )
 
-            # Apply patch to reconstruct full package
-            from toolboxv2.utils.extras.install.bsdiff_wrapper import apply_patch_auto
-            import tempfile
-            from pathlib import Path
-
-            # Get old version package
-            old_version = await service.get_version(name, from_version)
-
-            # Download old package to temp file
-            async with service.storage.get(old_version.storage_locations[0].path) as old_file:
-                old_temp = Path(tempfile.mktemp(suffix=".zip"))
-                with open(old_temp, "wb") as f:
-                    f.write(await old_file.read())
-
-            # Save patch to temp file
-            patch_temp = Path(tempfile.mktemp(suffix=".patch"))
-            with open(patch_temp, "wb") as f:
-                f.write(await patch.read())
-
-            # Apply patch to create new package
-            new_temp = Path(tempfile.mktemp(suffix=".zip"))
-            apply_patch_auto(old_temp, patch_temp, new_temp)
-
-            # Create UploadFile from reconstructed package
-            from fastapi import UploadFile as FastUploadFile
-            from io import BytesIO
-
-            with open(new_temp, "rb") as f:
-                content = f.read()
-
-            # Create a mock UploadFile
-            class MockUploadFile:
-                def __init__(self, filename, content):
-                    self.filename = filename
-                    self.content = content
-                    self.file = BytesIO(content)
-
-                async def read(self):
-                    return self.content
-
-                async def seek(self, pos):
-                    self.file.seek(pos)
-
-                async def close(self):
-                    self.file.close()
-
-            file = MockUploadFile(f"{name}-{version}.zip", content)
-
-            # Cleanup temp files
-            old_temp.unlink()
-            patch_temp.unlink()
-            new_temp.unlink()
-
-        # Upload (either full or reconstructed)
-        return await service.upload_version(
-            name=name,
-            version=version,
-            file=file,
-            changelog=changelog,
-            publisher_id=user.publisher_id,
-            toolbox_version=toolbox_version,
-            python_version=python_version,
-        )
-
-    except PackageNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
-    except PermissionDeniedError as e:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(e),
-        )
-    except DuplicateVersionError as e:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(e),
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Upload failed: {str(e)}",
-        )
+    return {"status": "submitted", "message": "Verification request submitted"}
 
 
-@router.get("/{name}/versions/{version}/download", response_model=DownloadUrlResponse)
-async def get_download_url(
-    name: str,
-    version: str,
-    prefer_mirror: bool = Query(False),
-    user: Optional[User] = Depends(get_optional_user),
-    service: PackageService = Depends(get_package_service),
-) -> DownloadUrlResponse:
-    """Get download URL for a version.
+# ==================== Admin Endpoints ====================
 
-    Download permissions based on visibility:
-    - PUBLIC: Anyone can download
-    - UNLISTED: Only authenticated users can download
-    - PRIVATE: Only owner can download
+
+class AdminPublisherAction(BaseModel):
+    """Request body for admin publisher actions.
+
+    Attributes:
+        notes: Optional notes for audit trail.
+    """
+
+    notes: str = ""
+
+
+@router.get("/admin/pending", response_model=PublisherListResponse)
+async def admin_list_pending(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=100),
+    user: User = Depends(require_admin),
+    user_repo: UserRepository = Depends(get_user_repo),
+) -> PublisherListResponse:
+    """List publishers with pending verification requests (admin only).
 
     Args:
-        name: Package name.
-        version: Version string.
-        prefer_mirror: Prefer mirror URL.
-        user: Optional current user for visibility check.
-        service: Package service.
+        page: Page number.
+        per_page: Items per page.
+        user: Current admin user.
+        user_repo: User repository.
 
     Returns:
-        Download URL response.
-
-    Raises:
-        HTTPException: If package not found, version not found, or access denied.
+        Paginated list of pending publishers.
     """
-    try:
-        viewer_id = user.id if user else None
-        url = await service.get_download_url(name, version, prefer_mirror, viewer_id)
-        if not url:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No download available",
+    publishers = await user_repo.list_publishers(
+        page=page,
+        per_page=per_page,
+        status=VerificationStatus.PENDING,
+    )
+
+    return PublisherListResponse(
+        publishers=[
+            PublisherResponse(
+                id=p.id,
+                name=p.slug,
+                display_name=p.name,
+                verification_status=p.status.value,
+                package_count=p.packages_count,
+                total_downloads=p.total_downloads,
             )
+            for p in publishers
+        ],
+        total=len(publishers),
+        page=page,
+        per_page=per_page,
+    )
 
-        # Increment download count
-        await service.increment_downloads(name, version)
 
-        return DownloadUrlResponse(url=url, expires_in=3600)
-    except PackageNotFoundError as e:
+@router.post("/admin/{publisher_id}/verify")
+async def admin_verify_publisher(
+    publisher_id: str,
+    body: AdminPublisherAction = AdminPublisherAction(),
+    user: User = Depends(require_admin),
+    user_repo: UserRepository = Depends(get_user_repo),
+) -> dict:
+    """Verify a publisher (admin only).
+
+    Args:
+        publisher_id: Publisher ID to verify.
+        body: Optional notes.
+        user: Current admin user.
+        user_repo: User repository.
+
+    Returns:
+        Action result.
+    """
+    publisher = await user_repo.get_publisher(publisher_id)
+    if not publisher:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
-    except VersionNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
-    except PermissionDeniedError as e:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(e),
+            detail="Publisher not found",
         )
 
+    await user_repo.update_publisher_status(
+        publisher_id=publisher_id,
+        status=VerificationStatus.VERIFIED,
+        verified_by=user.id,
+        notes=body.notes or f"Verified by {user.username}",
+    )
+
+    return {
+        "status": "verified",
+        "publisher_id": publisher_id,
+        "message": f"Publisher '{publisher.slug}' is now verified",
+    }
+
+
+@router.post("/admin/{publisher_id}/reject")
+async def admin_reject_publisher(
+    publisher_id: str,
+    body: AdminPublisherAction = AdminPublisherAction(),
+    user: User = Depends(require_admin),
+    user_repo: UserRepository = Depends(get_user_repo),
+) -> dict:
+    """Reject a publisher verification (admin only).
+
+    Args:
+        publisher_id: Publisher ID to reject.
+        body: Optional notes with reason.
+        user: Current admin user.
+        user_repo: User repository.
+
+    Returns:
+        Action result.
+    """
+    publisher = await user_repo.get_publisher(publisher_id)
+    if not publisher:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Publisher not found",
+        )
+
+    await user_repo.update_publisher_status(
+        publisher_id=publisher_id,
+        status=VerificationStatus.REJECTED,
+        verified_by=user.id,
+        notes=body.notes or f"Rejected by {user.username}",
+    )
+
+    return {
+        "status": "rejected",
+        "publisher_id": publisher_id,
+        "message": f"Publisher '{publisher.slug}' verification rejected",
+    }
+
+
+@router.post("/admin/{publisher_id}/revoke")
+async def admin_revoke_publisher(
+    publisher_id: str,
+    body: AdminPublisherAction = AdminPublisherAction(),
+    user: User = Depends(require_admin),
+    user_repo: UserRepository = Depends(get_user_repo),
+) -> dict:
+    """Revoke a publisher's verified status (admin only).
+
+    Sets status back to unverified.
+
+    Args:
+        publisher_id: Publisher ID to revoke.
+        body: Optional notes with reason.
+        user: Current admin user.
+        user_repo: User repository.
+
+    Returns:
+        Action result.
+    """
+    publisher = await user_repo.get_publisher(publisher_id)
+    if not publisher:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Publisher not found",
+        )
+
+    if publisher.status != VerificationStatus.VERIFIED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Publisher is not verified (current: {publisher.status.value})",
+        )
+
+    await user_repo.update_publisher_status(
+        publisher_id=publisher_id,
+        status=VerificationStatus.UNVERIFIED,
+        verified_by=user.id,
+        notes=body.notes or f"Revoked by {user.username}",
+    )
+
+    return {
+        "status": "revoked",
+        "publisher_id": publisher_id,
+        "message": f"Publisher '{publisher.slug}' verification revoked",
+    }

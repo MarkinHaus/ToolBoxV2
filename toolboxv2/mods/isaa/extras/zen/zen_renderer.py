@@ -266,14 +266,14 @@ class ZenRendererV2:
         try:
             from prompt_toolkit.output import create_output
             out = create_output(sys.stderr)
-            out.write_raw('\r\x1b[K')
+            out.write_raw('\r\x1b')
             out.write_raw(f' \x1b[38;2;{self._hex_to_rgb(color)}m{sym}\x1b[0m  ')
             #out.write_raw(f'\x1b[38;2;{self._hex_to_rgb(C["dim"])}m{word}\x1b[0m ')
             out.write_raw('\r')
             out.flush()
         except Exception:
             # Fallback
-            sys.stderr.write(f'\r\x1b[K {sym}\r')
+            sys.stderr.write(f'\r\x1b {sym}\r')
             sys.stderr.flush()
 
         self._footer_active = True
@@ -284,10 +284,10 @@ class ZenRendererV2:
             try:
                 from prompt_toolkit.output import create_output
                 out = create_output(sys.stderr)
-                out.write_raw('\r\x1b[K')
+                out.write_raw('\r\x1b')
                 out.flush()
             except Exception:
-                sys.stderr.write('\r\x1b[K')
+                sys.stderr.write('\r\x1b')
                 sys.stderr.flush()
             self._footer_active = False
 

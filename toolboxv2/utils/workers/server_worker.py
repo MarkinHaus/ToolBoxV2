@@ -157,7 +157,7 @@ class ParsedRequest:
     def get_user_id_from_body(self) -> Optional[str]:
         """Get user ID from body."""
         if self.json_data and isinstance(self.json_data, dict):
-            return self.json_data.get("user_id") or self.json_data.get("clerk_user_id") or self.json_data.get("Username")
+            return self.json_data.get("user_id") or self.json_data.get("cloudm_user_id") or self.json_data.get("Username")
         return None
 
     def to_toolbox_request(self) -> Dict[str, Any]:
@@ -1309,7 +1309,7 @@ class WebSocketMessageHandler:
                 # Extract additional session info from event payload
                 user_level = int(event.payload.get("level", AccessLevel.NOT_LOGGED_IN))
                 authenticated = event.payload.get("authenticated", False)
-                provider_user_id = event.payload.get("user_id", event.payload.get("clerk_user_id", ""))
+                provider_user_id = event.payload.get("user_id", event.payload.get("cloudm_user_id", ""))
 
                 request_dict = {
                     "request": {
@@ -1382,7 +1382,7 @@ class WebSocketMessageHandler:
             # Build request object with session data for access control
             user_level = int(event.payload.get("level", AccessLevel.NOT_LOGGED_IN))
             authenticated = event.payload.get("authenticated", False)
-            provider_user_id = event.payload.get("user_id", event.payload.get("clerk_user_id", ""))
+            provider_user_id = event.payload.get("user_id", event.payload.get("cloudm_user_id", ""))
 
             request_dict = {
                 "request": {

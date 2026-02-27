@@ -2198,7 +2198,7 @@ async def list_users_admin(app: App, request: RequestData):
                     user_dict = _parse_db_entry(user_bytes)
                     if not user_dict:
                         continue
-                    uid = user_dict.get("clerk_user_id", user_dict.get("uid", "N/A"))
+                    uid = user_dict.get("cloudm_user_id", user_dict.get("uid", "N/A"))
                     if uid not in seen_ids:
                         seen_ids.add(uid)
                         users_data.append({
@@ -2301,7 +2301,7 @@ async def update_user_admin(app: App, request: RequestData, data: dict=None, **k
             if save_result.is_error():
                 return Result.default_internal_error(info="Failed to save user: " + str(save_result.info))
             try:
-                admin_uid = getattr(admin_user, 'user_id', None) or getattr(admin_user, 'uid', None) or getattr(admin_user, 'clerk_user_id', None)
+                admin_uid = getattr(admin_user, 'user_id', None) or getattr(admin_user, 'uid', None) or getattr(admin_user, 'cloudm_user_id', None)
                 app.audit_logger.log_action(
                     user_id=admin_uid, action="user.update.admin",
                     resource=f"/admin/users/{uid_to_update}/update", status="SUCCESS",
@@ -2335,7 +2335,7 @@ async def update_user_admin(app: App, request: RequestData, data: dict=None, **k
             if save_result.is_error():
                 return Result.default_internal_error(info="Failed to save Clerk user: " + str(save_result.info))
             try:
-                admin_uid = getattr(admin_user, 'user_id', None) or getattr(admin_user, 'uid', None) or getattr(admin_user, 'clerk_user_id', None)
+                admin_uid = getattr(admin_user, 'user_id', None) or getattr(admin_user, 'uid', None) or getattr(admin_user, 'cloudm_user_id', None)
                 app.audit_logger.log_action(
                     user_id=admin_uid, action="user.update.admin",
                     resource=f"/admin/users/{uid_to_update}/update", status="SUCCESS",
@@ -2372,7 +2372,7 @@ async def update_user_admin(app: App, request: RequestData, data: dict=None, **k
     if save_result.is_error():
         return Result.default_internal_error(info="Failed to save user: " + str(save_result.info))
     try:
-        admin_uid = getattr(admin_user, 'user_id', None) or getattr(admin_user, 'uid', None) or getattr(admin_user, 'clerk_user_id', None)
+        admin_uid = getattr(admin_user, 'user_id', None) or getattr(admin_user, 'uid', None) or getattr(admin_user, 'cloudm_user_id', None)
         app.audit_logger.log_action(
             user_id=admin_uid, action="user.update.admin",
             resource=f"/admin/users/{uid_to_update}/update", status="SUCCESS",
@@ -2393,7 +2393,7 @@ async def delete_user_admin(app: App, request: RequestData, data: dict=None, uid
         return Result.default_user_error(info="User UID is required.")
 
     # Check if admin is trying to delete themselves
-    admin_uid = getattr(admin_user, 'clerk_user_id', None) or getattr(admin_user, 'uid', None)
+    admin_uid = getattr(admin_user, 'cloudm_user_id', None) or getattr(admin_user, 'uid', None)
     if admin_uid == uid_to_delete:
         return Result.default_user_error(info="Admin cannot delete themselves.")
 
@@ -2487,7 +2487,7 @@ async def delete_user_admin(app: App, request: RequestData, data: dict=None, uid
 
     if deleted:
         try:
-            admin_uid = getattr(admin_user, 'user_id', None) or getattr(admin_user, 'uid', None) or getattr(admin_user, 'clerk_user_id', None)
+            admin_uid = getattr(admin_user, 'user_id', None) or getattr(admin_user, 'uid', None) or getattr(admin_user, 'cloudm_user_id', None)
             app.audit_logger.log_action(
                 user_id=admin_uid, action="user.delete.admin",
                 resource=f"/admin/users/{uid_to_delete}/delete", status="SUCCESS",
@@ -2514,7 +2514,7 @@ async def reload_module_admin(app: App, request: RequestData, data: dict=None, m
                 app.remove_mod(module_name)
                 app.save_load(module_name)
             try:
-                admin_uid = getattr(admin_user, 'user_id', None) or getattr(admin_user, 'uid', None) or getattr(admin_user, 'clerk_user_id', None)
+                admin_uid = getattr(admin_user, 'user_id', None) or getattr(admin_user, 'uid', None) or getattr(admin_user, 'cloudm_user_id', None)
                 app.audit_logger.log_action(
                     user_id=admin_uid, action="admin.module.reload",
                     resource=f"/admin/modules/{module_name}", status="SUCCESS",

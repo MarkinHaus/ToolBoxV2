@@ -1,4 +1,28 @@
+author: ''
+config_version: '2.0'
 dependencies_file: ./mods/isaa/requirements.txt
+description: ''
+homepage: ''
+license: MIT
+metadata: {}
 module_name: isaa
-version: 0.1.4
-zip: "RST$isaa&v0.1.20\xA70.1.4.zip"
+module_type: package
+platforms:
+  client:
+    files: []
+    required: false
+  common:
+    files:
+    - '*'
+    required: true
+  desktop:
+    files: []
+    required: false
+  mobile:
+    files: []
+    required: false
+  server:
+    files: []
+    required: false
+version: 0.3.0
+zip: RST$isaa&0.1.25§0.3.0.zip

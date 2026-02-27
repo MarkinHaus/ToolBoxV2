@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Generator
@@ -72,6 +73,17 @@ class UserInfo:
     is_verified: bool = False
     is_admin: bool = False
     publisher_id: Optional[str] = None
+
+
+@dataclass
+class PublisherInfo:
+    """Publisher information from registry."""
+    id: str
+    name: str
+    display_name: str
+    verification_status: str = "unverified"
+    package_count: int = 0
+    total_downloads: int = 0
 
 
 @dataclass
@@ -211,7 +223,7 @@ class RegistryClient:
 
     def __init__(
         self,
-        registry_url: str = "https://registry.simplecore.app",
+        registry_url: str = os.getenv("REGISTRY_BASE_URL","https://registry.simplecore.app"),
         auth_token: Optional[str] = None,
         timeout: int = 30,
         cache_dir: Optional[Path] = None,
@@ -464,6 +476,375 @@ class RegistryClient:
             return user is not None
         except RegistryError:
             return False
+
+    # =================== Publisher ===================
+
+    async def get_publisher(self, name: str) -> Optional[PublisherInfo]:
+        """
+        Get publisher info by name.
+
+        Args:
+            name: Publisher name
+
+        Returns:
+            PublisherInfo if found, None otherwise
+        """
+        try:
+            client = await self._get_client()
+            response = await client.get(f"/api/v1/publishers/{name}")
+
+            if response.status_code == 404:
+                return None
+            if response.status_code != 200:
+                self.logger.warning(f"Get publisher failed: {response.status_code}")
+                return None
+
+            data = response.json()
+            return PublisherInfo(
+                id=data.get("id", ""),
+                name=data.get("name", ""),
+                display_name=data.get("display_name", ""),
+                verification_status=data.get("verification_status", "unverified"),
+                package_count=data.get("package_count", 0),
+                total_downloads=data.get("total_downloads", 0),
+            )
+
+        except httpx.RequestError as e:
+            raise RegistryConnectionError(f"Connection failed: {e}") from e
+
+    async def list_publishers(
+        self,
+        page: int = 1,
+        per_page: int = 20,
+        verified_only: bool = False,
+        status: Optional[str] = None,
+    ) -> List[PublisherInfo]:
+        """
+        List publishers with pagination.
+
+        Args:
+            page: Page number (1-based)
+            per_page: Items per page
+            verified_only: Only return verified publishers (legacy)
+            status: Filter by status (unverified, pending, verified, rejected)
+
+        Returns:
+            List of PublisherInfo
+        """
+        try:
+            client = await self._get_client()
+            params = {
+                "page": page,
+                "per_page": per_page,
+            }
+            if status:
+                params["status"] = status
+            elif verified_only:
+                params["verified_only"] = "true"
+
+            response = await client.get("/api/v1/publishers", params=params)
+
+            if response.status_code != 200:
+                self.logger.warning(f"List publishers failed: {response.status_code}")
+                return []
+
+            data = response.json()
+            publishers = data.get("publishers", [])
+
+            return [
+                PublisherInfo(
+                    id=p.get("id", ""),
+                    name=p.get("name", ""),
+                    display_name=p.get("display_name", ""),
+                    verification_status=p.get("verification_status", "unverified"),
+                    package_count=p.get("package_count", 0),
+                    total_downloads=p.get("total_downloads", 0),
+                )
+                for p in publishers
+            ]
+
+        except httpx.RequestError as e:
+            raise RegistryConnectionError(f"Connection failed: {e}") from e
+
+    async def get_my_publisher(self) -> Optional[PublisherInfo]:
+        """
+        Get the current user's publisher profile.
+
+        Returns:
+            PublisherInfo if user is a publisher, None otherwise
+        """
+        if not self.auth_token:
+            return None
+
+        try:
+            response = await self._request_with_retry("GET", "/api/v1/auth/publisher")
+
+            if response.status_code != 200:
+                return None
+
+            data = response.json()
+            if not data:
+                return None
+
+            return PublisherInfo(
+                id=data.get("id", ""),
+                name=data.get("name", ""),
+                display_name=data.get("display_name", ""),
+                verification_status=data.get("verification_status", "unverified"),
+                package_count=data.get("package_count", 0),
+                total_downloads=data.get("total_downloads", 0),
+            )
+
+        except httpx.RequestError as e:
+            raise RegistryConnectionError(f"Connection failed: {e}") from e
+
+    async def register_publisher(
+        self,
+        name: str,
+        display_name: str,
+        email: str,
+        homepage: Optional[str] = None,
+    ) -> Optional[PublisherInfo]:
+        """
+        Register as a publisher.
+
+        Args:
+            name: Publisher handle (unique)
+            display_name: Public display name
+            email: Contact email
+            homepage: Optional homepage URL
+
+        Returns:
+            Created PublisherInfo, or None on failure
+        """
+        if not self.auth_token:
+            raise RegistryAuthError("Authentication required")
+
+        try:
+            payload = {
+                "name": name,
+                "display_name": display_name,
+                "email": email,
+            }
+            if homepage:
+                payload["homepage"] = homepage
+
+            response = await self._request_with_retry(
+                "POST", "/api/v1/auth/register-publisher", json=payload
+            )
+
+            if response.status_code == 400:
+                detail = response.json().get("detail", "Bad request")
+                raise RegistryError(detail)
+            if response.status_code == 409:
+                detail = response.json().get("detail", "Name already taken")
+                raise RegistryError(detail)
+            if response.status_code not in (200, 201):
+                return None
+
+            data = response.json()
+            return PublisherInfo(
+                id=data.get("id", ""),
+                name=data.get("name", ""),
+                display_name=data.get("display_name", ""),
+                verification_status=data.get("verification_status", "unverified"),
+            )
+
+        except httpx.RequestError as e:
+            raise RegistryConnectionError(f"Connection failed: {e}") from e
+
+    async def submit_verification(
+        self,
+        method: str,
+        data: dict,
+    ) -> bool:
+        """
+        Submit a publisher verification request.
+
+        Args:
+            method: Verification method (e.g. 'github', 'domain')
+            data: Method-specific verification data
+
+        Returns:
+            True if submission was accepted
+        """
+        if not self.auth_token:
+            raise RegistryAuthError("Authentication required")
+
+        try:
+            payload = {"method": method, "data": data}
+            response = await self._request_with_retry(
+                "POST", "/api/v1/publishers/verify", json=payload
+            )
+
+            if response.status_code == 400:
+                detail = response.json().get("detail", "Bad request")
+                raise RegistryError(detail)
+            if response.status_code == 202:
+                return True
+
+            return False
+
+        except httpx.RequestError as e:
+            raise RegistryConnectionError(f"Connection failed: {e}") from e
+
+    # =================== Admin Publisher Management ===================
+
+    async def admin_list_pending_publishers(
+        self,
+        page: int = 1,
+        per_page: int = 50,
+    ) -> List[PublisherInfo]:
+        """
+        List publishers with pending verification (admin only).
+
+        Args:
+            page: Page number (1-based)
+            per_page: Items per page
+
+        Returns:
+            List of pending PublisherInfo
+        """
+        if not self.auth_token:
+            raise RegistryAuthError("Authentication required")
+
+        try:
+            params = {"page": page, "per_page": per_page}
+            response = await self._request_with_retry(
+                "GET", "/api/v1/publishers/admin/pending", params=params,
+            )
+
+            if response.status_code == 403:
+                raise RegistryAuthError("Admin privileges required")
+            if response.status_code != 200:
+                self.logger.warning(f"Admin list pending failed: {response.status_code}")
+                return []
+
+            data = response.json()
+            publishers = data.get("publishers", [])
+
+            return [
+                PublisherInfo(
+                    id=p.get("id", ""),
+                    name=p.get("name", ""),
+                    display_name=p.get("display_name", ""),
+                    verification_status=p.get("verification_status", "pending"),
+                    package_count=p.get("package_count", 0),
+                    total_downloads=p.get("total_downloads", 0),
+                )
+                for p in publishers
+            ]
+
+        except httpx.RequestError as e:
+            raise RegistryConnectionError(f"Connection failed: {e}") from e
+
+    async def admin_verify_publisher(
+        self,
+        publisher_id: str,
+        notes: str = "",
+    ) -> bool:
+        """
+        Verify a publisher (admin only).
+
+        Args:
+            publisher_id: Publisher ID to verify
+            notes: Optional notes for audit trail
+
+        Returns:
+            True if successful
+        """
+        if not self.auth_token:
+            raise RegistryAuthError("Authentication required")
+
+        try:
+            payload = {"notes": notes}
+            response = await self._request_with_retry(
+                "POST",
+                f"/api/v1/publishers/admin/{publisher_id}/verify",
+                json=payload,
+            )
+
+            if response.status_code == 403:
+                raise RegistryAuthError("Admin privileges required")
+            if response.status_code == 404:
+                raise RegistryError(f"Publisher '{publisher_id}' not found")
+            return response.status_code == 200
+
+        except httpx.RequestError as e:
+            raise RegistryConnectionError(f"Connection failed: {e}") from e
+
+    async def admin_reject_publisher(
+        self,
+        publisher_id: str,
+        notes: str = "",
+    ) -> bool:
+        """
+        Reject a publisher verification (admin only).
+
+        Args:
+            publisher_id: Publisher ID to reject
+            notes: Reason for rejection
+
+        Returns:
+            True if successful
+        """
+        if not self.auth_token:
+            raise RegistryAuthError("Authentication required")
+
+        try:
+            payload = {"notes": notes}
+            response = await self._request_with_retry(
+                "POST",
+                f"/api/v1/publishers/admin/{publisher_id}/reject",
+                json=payload,
+            )
+
+            if response.status_code == 403:
+                raise RegistryAuthError("Admin privileges required")
+            if response.status_code == 404:
+                raise RegistryError(f"Publisher '{publisher_id}' not found")
+            return response.status_code == 200
+
+        except httpx.RequestError as e:
+            raise RegistryConnectionError(f"Connection failed: {e}") from e
+
+    async def admin_revoke_publisher(
+        self,
+        publisher_id: str,
+        notes: str = "",
+    ) -> bool:
+        """
+        Revoke a publisher's verified status (admin only).
+
+        Args:
+            publisher_id: Publisher ID to revoke
+            notes: Reason for revocation
+
+        Returns:
+            True if successful
+        """
+        if not self.auth_token:
+            raise RegistryAuthError("Authentication required")
+
+        try:
+            payload = {"notes": notes}
+            response = await self._request_with_retry(
+                "POST",
+                f"/api/v1/publishers/admin/{publisher_id}/revoke",
+                json=payload,
+            )
+
+            if response.status_code == 403:
+                raise RegistryAuthError("Admin privileges required")
+            if response.status_code == 404:
+                raise RegistryError(f"Publisher '{publisher_id}' not found")
+            if response.status_code == 400:
+                detail = response.json().get("detail", "Bad request")
+                raise RegistryError(detail)
+            return response.status_code == 200
+
+        except httpx.RequestError as e:
+            raise RegistryConnectionError(f"Connection failed: {e}") from e
 
     # =================== Package Discovery ===================
 
@@ -1848,4 +2229,3 @@ class LockFileManager:
                         })
 
         return constraints
-

@@ -50,7 +50,8 @@ param(
  $DEFAULT_DEV_EXTRA = "false"
  $DEFAULT_AUTO_INSTALL_DEPS = "false"
  $DEFAULT_INSTALL_DIR_BASE_LINUX_MAC = "$HOME/.local/share"
- $DEFAULT_INSTALL_DIR_BASE_WINDOWS = "$env:LOCALAPPDATA" # Uses AppData/Local on Windows
+# Use [Environment]::GetFolderPath for reliable cross-version compatibility
+ $DEFAULT_INSTALL_DIR_BASE_WINDOWS = [Environment]::GetFolderPath("LocalApplicationData")
  $DEFAULT_TB_APP_NAME = "ToolBoxV2"
  $DEFAULT_BIN_DIR_LINUX_MAC = "$HOME/.local/bin"
 # On Windows, we usually put a .bat wrapper in a folder that is in PATH, or add it.
@@ -60,14 +61,14 @@ param(
 # -----------------------------------------------------------------------------
 # DISPLAY HEADER
 # -----------------------------------------------------------------------------
-Write-Host "**************************************************************************" -ForegroundColor Magenta
-Write-Host "***████████╗*██████╗***██████╗**██╗*********██████╗***██████╗*██╗***██╗***" -ForegroundColor Magenta
-Write-Host "***╚══██╔══╝██╔═══██╗*██╔═══██╗*██║*********██╔══██╗*██╔═══██╗*╚██╗██╔╝***" -ForegroundColor Magenta
-Write-Host "******██║***██║***██║*██║***██║*██║*********██████╔╝*██║***██║**╚███╔╝****" -ForegroundColor Magenta
-Write-Host "******██║***██║***██║*██║***██║*██║*********██╔══██╗*██║***██║**██╔██╗****" -ForegroundColor Magenta
-Write-Host "******██║***╚██████╔╝*╚██████╔╝*███████╗****██████╔╝*╚██████╔╝*██╔╝*██╗***" -ForegroundColor Magenta
-Write-Host "******╚═╝****╚═════╝***╚═════╝**╚══════╝****╚═════╝***╚═════╝**╚═╝**╚═╝***" -ForegroundColor Magenta
-Write-Host "**************************************************************************" -ForegroundColor Magenta
+Write-Host "**************************************************************************" -ForegroundColor DarkCyan
+Write-Host "***████████╗*██████╗***██████╗**██╗*********██████╗***██████╗*██╗***██╗***" -ForegroundColor DarkCyan
+Write-Host "***╚══██╔══╝██╔═══██╗*██╔═══██╗*██║*********██╔══██╗*██╔═══██╗*╚██╗██╔╝***" -ForegroundColor DarkCyan
+Write-Host "******██║***██║***██║*██║***██║*██║*********██████╔╝*██║***██║**╚███╔╝****" -ForegroundColor DarkCyan
+Write-Host "******██║***██║***██║*██║***██║*██║*********██╔══██╗*██║***██║**██╔██╗****" -ForegroundColor DarkCyan
+Write-Host "******██║***╚██████╔╝*╚██████╔╝*███████╗****██████╔╝*╚██████╔╝*██╔╝*██╗***" -ForegroundColor DarkCyan
+Write-Host "******╚═╝****╚═════╝***╚═════╝**╚══════╝****╚═════╝***╚═════╝**╚═╝**╚═╝***" -ForegroundColor DarkCyan
+Write-Host "**************************************************************************" -ForegroundColor DarkCyan
 Write-Host "Zero the Hero - ToolBoxV2 Core Installer" -ForegroundColor Cyan
 
 # -----------------------------------------------------------------------------
@@ -109,35 +110,33 @@ function Log-Debug {
 # -----------------------------------------------------------------------------
 # OS DETECTION & PLATFORM SPECIFICS
 # -----------------------------------------------------------------------------
- $OS_TYPE = "Unknown"
- $PYTHON_EXEC_NAME = "python3"
- $USER_BIN_DIR = ""
- $SYSTEM_PKG_INSTALLER_CMD = ""
- $IS_WINDOWS = $false
- $IS_LINUX = $false
- $IS_MAC = $false
+$global:OS_TYPE = "Unknown"
+$global:PYTHON_EXEC_NAME = "python3"
+$global:USER_BIN_DIR = ""
+$global:SYSTEM_PKG_INSTALLER_CMD = ""
+$global:IS_WINDOWS = $false
+$global:IS_LINUX = $false
+$global:IS_MAC = $false
 
-if ($IsWindows) { $OS_TYPE = "Windows"; $IS_WINDOWS = $true }
-elseif ($IsLinux) { $OS_TYPE = "Linux"; $IS_LINUX = $true }
-elseif ($IsMacOS) { $OS_TYPE = "Mac"; $IS_MAC = $true }
+if ($IsWindows) { $global:OS_TYPE = "Windows"; $global:IS_WINDOWS = $true }
+elseif ($IsLinux) { $global:OS_TYPE = "Linux"; $global:IS_LINUX = $true }
+elseif ($IsMacOS) { $global:OS_TYPE = "Mac"; $global:IS_MAC = $true }
 else {
-    # Fallback for older PowerShell versions or environments where $IsWindows isn't set
-    if ($env:OS -eq "Windows_NT") { $OS_TYPE = "Windows"; $IS_WINDOWS = $true }
+    if ($env:OS -eq "Windows_NT") { $global:OS_TYPE = "Windows"; $global:IS_WINDOWS = $true }
 }
 
-# Setup specific paths and commands based on OS
-if ($IS_WINDOWS) {
-    $PYTHON_EXEC_NAME = "python"
-    $USER_BIN_DIR = $DEFAULT_BIN_DIR_WINDOWS
-    if (Get-Command winget -ErrorAction SilentlyContinue) { $SYSTEM_PKG_INSTALLER_CMD = "winget" }
-    elseif (Get-Command choco -ErrorAction SilentlyContinue) { $SYSTEM_PKG_INSTALLER_CMD = "choco" }
+if ($global:IS_WINDOWS) {
+    $global:PYTHON_EXEC_NAME = "python"
+    $global:USER_BIN_DIR = $DEFAULT_BIN_DIR_WINDOWS
+    if (Get-Command winget -ErrorAction SilentlyContinue) { $global:SYSTEM_PKG_INSTALLER_CMD = "winget" }
+    elseif (Get-Command choco -ErrorAction SilentlyContinue) { $global:SYSTEM_PKG_INSTALLER_CMD = "choco" }
 } else {
-    $USER_BIN_DIR = $DEFAULT_BIN_DIR_LINUX_MAC
-    if (Get-Command apt-get -ErrorAction SilentlyContinue) { $SYSTEM_PKG_INSTALLER_CMD = "apt-get" }
-    elseif (Get-Command yum -ErrorAction SilentlyContinue) { $SYSTEM_PKG_INSTALLER_CMD = "yum" }
-    elseif (Get-Command dnf -ErrorAction SilentlyContinue) { $SYSTEM_PKG_INSTALLER_CMD = "dnf" }
-    elseif (Get-Command pacman -ErrorAction SilentlyContinue) { $SYSTEM_PKG_INSTALLER_CMD = "pacman" }
-    elseif (Get-Command brew -ErrorAction SilentlyContinue) { $SYSTEM_PKG_INSTALLER_CMD = "brew" }
+    $global:USER_BIN_DIR = $DEFAULT_BIN_DIR_LINUX_MAC
+    if (Get-Command apt-get -ErrorAction SilentlyContinue) { $global:SYSTEM_PKG_INSTALLER_CMD = "apt-get" }
+    elseif (Get-Command yum -ErrorAction SilentlyContinue) { $global:SYSTEM_PKG_INSTALLER_CMD = "yum" }
+    elseif (Get-Command dnf -ErrorAction SilentlyContinue) { $global:SYSTEM_PKG_INSTALLER_CMD = "dnf" }
+    elseif (Get-Command pacman -ErrorAction SilentlyContinue) { $global:SYSTEM_PKG_INSTALLER_CMD = "pacman" }
+    elseif (Get-Command brew -ErrorAction SilentlyContinue) { $global:SYSTEM_PKG_INSTALLER_CMD = "brew" }
 }
 
 Log-Debug "Detected OS: $OS_TYPE, User Bin: $USER_BIN_DIR, Pkg Installer: $SYSTEM_PKG_INSTALLER_CMD"
@@ -333,28 +332,28 @@ function Read-YesNo {
 # -----------------------------------------------------------------------------
 # CONFIGURATION
 # -----------------------------------------------------------------------------
- $TB_VERSION = $DEFAULT_TB_VERSION
- $INSTALL_SOURCE = $DEFAULT_INSTALL_SOURCE
- $PKG_MANAGER = $DEFAULT_PKG_MANAGER
- $PYTHON_VERSION_TARGET = $DEFAULT_PYTHON_VERSION_TARGET
- $ISAA_EXTRA = $DEFAULT_ISAA_EXTRA
- $DEV_EXTRA = $DEFAULT_DEV_EXTRA
- $AUTO_INSTALL_DEPS = $DEFAULT_AUTO_INSTALL_DEPS
- $INSTALL_DIR = ""
- $TOOLBOX_SRC_DIR = ""
- $PYTHON_EXEC_PATH = ""
- $VENV_PATH = ""
+ $global:TB_VERSION = $DEFAULT_TB_VERSION
+ $global:INSTALL_SOURCE = $DEFAULT_INSTALL_SOURCE
+ $global:PKG_MANAGER = $DEFAULT_PKG_MANAGER
+ $global:PYTHON_VERSION_TARGET = $DEFAULT_PYTHON_VERSION_TARGET
+ $global:ISAA_EXTRA = $DEFAULT_ISAA_EXTRA
+ $global:DEV_EXTRA = $DEFAULT_DEV_EXTRA
+ $global:AUTO_INSTALL_DEPS = $DEFAULT_AUTO_INSTALL_DEPS
+ $global:INSTALL_DIR = ""
+ $global:TOOLBOX_SRC_DIR = ""
+ $global:PYTHON_EXEC_PATH = ""
+ $global:VENV_PATH = ""
 
 function Initialize-Defaults {
-    if ($IS_WINDOWS) {
+    if ($global:IS_WINDOWS) {
         $global:INSTALL_DIR_BASE = $DEFAULT_INSTALL_DIR_BASE_WINDOWS
     } else {
         $global:INSTALL_DIR_BASE = $DEFAULT_INSTALL_DIR_LINUX_MAC
     }
-    $global:INSTALL_DIR = Join-Path $INSTALL_DIR_BASE $DEFAULT_TB_APP_NAME
-    $global:VENV_PATH = Join-Path $INSTALL_DIR ".venv"
-    if ($INSTALL_SOURCE -eq "git") {
-        $global:TOOLBOX_SRC_DIR = Join-Path $INSTALL_DIR "src\$TOOLBOX_REPO_NAME"
+    $global:INSTALL_DIR = Join-Path $global:INSTALL_DIR_BASE $DEFAULT_TB_APP_NAME
+    $global:VENV_PATH = Join-Path $global:INSTALL_DIR ".venv"
+    if ($global:INSTALL_SOURCE -eq "git") {
+        $global:TOOLBOX_SRC_DIR = Join-Path $global:INSTALL_DIR "src\$TOOLBOX_REPO_NAME"
     }
 }
 
@@ -384,33 +383,33 @@ function Load-ConfigFile {
 
 function Set-Configuration {
     # Override with CLI params if set
-    if ($Version) { $TB_VERSION = $Version }
-    if ($Source) { $INSTALL_SOURCE = $Source }
-    if ($Manager) { $PKG_MANAGER = $Manager }
-    if ($Python) { $PYTHON_VERSION_TARGET = $Python }
-    if ($Isaa) { $ISAA_EXTRA = "true" }
-    if ($Dev) { $DEV_EXTRA = "true" }
-    if ($AutoInstallDeps) { $AUTO_INSTALL_DEPS = "true" }
+    if ($Version) { $global:TB_VERSION = $Version }
+    if ($Source) { $global:INSTALL_SOURCE = $Source }
+    if ($Manager) { $global:PKG_MANAGER = $Manager }
+    if ($Python) { $global:PYTHON_VERSION_TARGET = $Python }
+    if ($Isaa) { $global:ISAA_EXTRA = "true" }
+    if ($Dev) { $global:DEV_EXTRA = "true" }
+    if ($AutoInstallDeps) { $global:AUTO_INSTALL_DEPS = "true" }
 
     Initialize-Defaults
 
     Log-Title "Final Configuration"
-    Log-Info "ToolBoxV2 Version: $TB_VERSION"
-    Log-Info "Install Source:    $INSTALL_SOURCE"
-    Log-Info "Package Manager:   $PKG_MANAGER"
-    Log-Info "Target Python:     $PYTHON_VERSION_TARGET"
-    Log-Info "Install ISAA:      $ISAA_EXTRA"
-    Log-Info "Install DEV:       $DEV_EXTRA"
-    Log-Info "Install Dir:       $INSTALL_DIR"
-    Log-Info "OS:                $OS_TYPE"
-    Log-Info "Auto Install Deps: $AUTO_INSTALL_DEPS"
+    Log-Info "ToolBoxV2 Version: $global:TB_VERSION"
+    Log-Info "Install Source:    $global:INSTALL_SOURCE"
+    Log-Info "Package Manager:   $global:PKG_MANAGER"
+    Log-Info "Target Python:     $global:PYTHON_VERSION_TARGET"
+    Log-Info "Install ISAA:      $global:ISAA_EXTRA"
+    Log-Info "Install DEV:       $global:DEV_EXTRA"
+    Log-Info "Install Dir:       $global:INSTALL_DIR"
+    Log-Info "OS:                $global:OS_TYPE"
+    Log-Info "Auto Install Deps: $global:AUTO_INSTALL_DEPS"
 }
 
 # -----------------------------------------------------------------------------
 # AUTO-INSTALLER FUNCTIONS
 # -----------------------------------------------------------------------------
 function Install-SystemPython {
-    Log-Info "Attempting to install Python $PYTHON_VERSION_TARGET using $SYSTEM_PKG_INSTALLER_CMD..."
+    Log-Info "Attempting to install Python $global:PYTHON_VERSION_TARGET using $SYSTEM_PKG_INSTALLER_CMD..."
     $success = $false
 
     switch ($SYSTEM_PKG_INSTALLER_CMD) {
@@ -421,12 +420,12 @@ function Install-SystemPython {
             $cmd = @("choco", "install", "python3", "-y")
         }
         "apt-get" {
-            $pkg = "python$($PYTHON_VERSION_TARGET.Split('.')[0]).$($PYTHON_VERSION_TARGET.Split('.')[1])"
+            $pkg = "python$($global:PYTHON_VERSION_TARGET.Split('.')[0]).$($global:PYTHON_VERSION_TARGET.Split('.')[1])"
             $cmd = @("sudo", "apt-get", "update", "-y"); & $cmd @cmd | Out-Null
             $cmd = @("sudo", "apt-get", "install", "-y", $pkg, "${pkg}-venv", "python3-pip")
         }
         "brew" {
-            $cmd = @("brew", "install", "python@$PYTHON_VERSION_TARGET")
+            $cmd = @("brew", "install", "python@$global:PYTHON_VERSION_TARGET")
         }
         Default {
             Log-Warning "No known install command for Python with $SYSTEM_PKG_INSTALLER_CMD."
@@ -440,16 +439,16 @@ function Install-SystemPython {
         if ($process.ExitCode -eq 0) {
             $success = $true
             # Refresh environment variables (path) in current session if possible, mostly effective in new shells
-            if ($IS_WINDOWS) { $env:Path = [System.Environment]::GetEnvironmentVariable("Path","User") + ";" + [System.Environment]::GetEnvironmentVariable("Path","Machine") }
+            if ($global:IS_WINDOWS) { $env:Path = [System.Environment]::GetEnvironmentVariable("Path","User") + ";" + [System.Environment]::GetEnvironmentVariable("Path","Machine") }
         }
     }
 
     if ($success) {
         Log-Success "Python installation command executed. Verifying..."
-        $result = Invoke-PythonHelper -Action "find_python" -Arguments @($PYTHON_VERSION_TARGET)
+        $result = Invoke-PythonHelper -Action "find_python" -Arguments @($global:PYTHON_VERSION_TARGET)
         if ($result -and $result.path) {
             $global:PYTHON_EXEC_PATH = $result.path
-            Log-Success "Python found at: $PYTHON_EXEC_PATH"
+            Log-Success "Python found at: $global:PYTHON_EXEC_PATH"
             return $true
         }
     }
@@ -487,13 +486,13 @@ function Install-SystemGit {
 # CORE INSTALLATION STEPS
 # -----------------------------------------------------------------------------
 function Step-01_CheckPython {
-    Log-Title "Step 1: Verifying Python $PYTHON_VERSION_TARGET"
+    Log-Title "Step 1: Verifying Python $global:PYTHON_VERSION_TARGET"
 
-    $result = Invoke-PythonHelper -Action "find_python" -Arguments @($PYTHON_VERSION_TARGET)
+    $result = Invoke-PythonHelper -Action "find_python" -Arguments @($global:PYTHON_VERSION_TARGET)
 
     if (-not $result -or -not $result.path) {
-        Log-Warning "Python $PYTHON_VERSION_TARGET not found."
-        if ($AUTO_INSTALL_DEPS -eq "true" -and $SYSTEM_PKG_INSTALLER_CMD) {
+        Log-Warning "Python $global:PYTHON_VERSION_TARGET not found."
+        if ($global:AUTO_INSTALL_DEPS -eq "true" -and $SYSTEM_PKG_INSTALLER_CMD) {
             if (-not (Install-SystemPython)) {
                 Log-Error "Automatic Python installation failed. Please install manually."
             }
@@ -503,21 +502,21 @@ function Step-01_CheckPython {
     }
 
     # Re-verify
-    $result = Invoke-PythonHelper -Action "find_python" -Arguments @($PYTHON_VERSION_TARGET)
+    $result = Invoke-PythonHelper -Action "find_python" -Arguments @($global:PYTHON_VERSION_TARGET)
     if (-not $result -or -not $result.path) {
         Log-Error "Python still not usable."
     }
 
     $global:PYTHON_EXEC_PATH = $result.path
-    Log-Success "Using Python: $PYTHON_EXEC_PATH"
+    Log-Success "Using Python: $global:PYTHON_EXEC_PATH"
 }
 
 function Step-02_CheckGit {
-    if ($INSTALL_SOURCE -eq "git") {
+    if ($global:INSTALL_SOURCE -eq "git") {
         Log-Title "Step 2: Verifying Git"
         if (-not (Test-Command "git")) {
             Log-Warning "Git not found."
-            if ($AUTO_INSTALL_DEPS -eq "true" -and $SYSTEM_PKG_INSTALLER_CMD) {
+            if ($global:AUTO_INSTALL_DEPS -eq "true" -and $SYSTEM_PKG_INSTALLER_CMD) {
                 if (-not (Install-SystemGit)) {
                     Log-Error "Automatic Git installation failed."
                 }
@@ -534,19 +533,19 @@ function Step-02_CheckGit {
 function Step-03_SetupEnvironment {
     Log-Title "Step 3: Setting up Environment"
 
-    if (Test-Path $INSTALL_DIR) {
-        Log-Warning "Directory exists: $INSTALL_DIR"
-        if (Test-Path $VENV_PATH) {
+    if (Test-Path $global:INSTALL_DIR) {
+        Log-Warning "Directory exists: $global:INSTALL_DIR"
+        if (Test-Path $global:VENV_PATH) {
             if (Read-YesNo "Remove existing venv?" "Y") {
-                Remove-Item $VENV_PATH -Recurse -Force
+                Remove-Item $global:VENV_PATH -Recurse -Force
             }
         }
     }
 
-    if (-not (Test-Path $INSTALL_DIR)) { New-Item -ItemType Directory -Path $INSTALL_DIR -Force | Out-Null }
+    if (-not (Test-Path $global:INSTALL_DIR)) { New-Item -ItemType Directory -Path $global:INSTALL_DIR -Force | Out-Null }
 
-    Log-Info "Creating venv at $VENV_PATH..."
-    $result = Invoke-PythonHelper -Action "create_venv" -Arguments @($VENV_PATH, $PYTHON_EXEC_PATH)
+    Log-Info "Creating venv at $global:VENV_PATH..."
+    $result = Invoke-PythonHelper -Action "create_venv" -Arguments @($global:VENV_PATH, $global:PYTHON_EXEC_PATH)
 
     if (-not $result -or $result.success -ne $true) {
         Log-Error "Venv creation failed."
@@ -554,17 +553,17 @@ function Step-03_SetupEnvironment {
     Log-Success "Venv created."
 
     # Install extra managers if needed
-    $pipPathRes = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($VENV_PATH, "pip")
+    $pipPathRes = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($global:VENV_PATH, "pip")
     $pipExe = $pipPathRes.path
 
-    if ($PKG_MANAGER -eq "uv") {
-        $uvCheck = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($VENV_PATH, "uv")
+    if ($global:PKG_MANAGER -eq "uv") {
+        $uvCheck = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($global:VENV_PATH, "uv")
         if (-not $uvCheck.path) {
             Log-Info "Installing UV..."
             & $pipExe install uv
         }
-    } elseif ($PKG_MANAGER -eq "poetry") {
-        $poetryCheck = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($VENV_PATH, "poetry")
+    } elseif ($global:PKG_MANAGER -eq "poetry") {
+        $poetryCheck = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($global:VENV_PATH, "poetry")
         if (-not $poetryCheck.path) {
             Log-Info "Installing Poetry..."
             & $pipExe install poetry
@@ -573,26 +572,26 @@ function Step-03_SetupEnvironment {
 }
 
 function Step-04_PrepareSource {
-    if ($INSTALL_SOURCE -ne "git") { return }
+    if ($global:INSTALL_SOURCE -ne "git") { return }
 
     Log-Title "Step 4: Preparing Git Source"
 
-    if (Test-Path $TOOLBOX_SRC_DIR) {
+    if (Test-Path $global:TOOLBOX_SRC_DIR) {
         Log-Info "Updating existing repo..."
-        Push-Location $TOOLBOX_SRC_DIR
+        Push-Location $global:TOOLBOX_SRC_DIR
         git fetch --all --prune --tags -q
-        git checkout -q $TB_VERSION
+        git checkout -q $global:TB_VERSION
         # If it's a branch, pull. If it's a tag/hash, checkout is enough.
         $ref = git symbolic-ref -q --short HEAD
-        if ($ref -and $ref -eq $TB_VERSION) {
-            git pull -q origin $TB_VERSION
+        if ($ref -and $ref -eq $global:TB_VERSION) {
+            git pull -q origin $global:TB_VERSION
         }
         Pop-Location
     } else {
         Log-Info "Cloning repo..."
-        New-Item -ItemType Directory -Path (Split-Path $TOOLBOX_SRC_DIR) -Force | Out-Null
-        $branchArg = if ($TB_VERSION -ne "latest") { "--branch", $TB_VERSION } else { @() }
-        git clone $branchArg $TOOLBOX_REPO $TOOLBOX_SRC_DIR
+        New-Item -ItemType Directory -Path (Split-Path $global:TOOLBOX_SRC_DIR) -Force | Out-Null
+        $branchArg = if ($global:TB_VERSION -ne "latest") { "--branch", $global:TB_VERSION } else { @() }
+        git clone $branchArg $TOOLBOX_REPO $global:TOOLBOX_SRC_DIR
     }
     Log-Success "Source ready."
 }
@@ -601,36 +600,36 @@ function Step-05_InstallToolBox {
     Log-Title "Step 5: Installing ToolBoxV2"
 
     $extras = @()
-    if ($ISAA_EXTRA -eq "true") { $extras += "isaa" }
-    if ($DEV_EXTRA -eq "true") { $extras += "dev" }
+    if ($global:ISAA_EXTRA -eq "true") { $extras += "isaa" }
+    if ($global:DEV_EXTRA -eq "true") { $extras += "dev" }
 
     $extrasSuffix = ""
     if ($extras.Count -gt 0) { $extrasSuffix = "[$($extras -join ',')]" }
 
-    $mgrRes = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($VENV_PATH, $PKG_MANAGER)
+    $mgrRes = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($global:VENV_PATH, $global:PKG_MANAGER)
     $mgrExe = $mgrRes.path
 
-    if (-not $mgrExe) { Log-Error "Package manager $PKG_MANAGER not found in venv." }
+    if (-not $mgrExe) { Log-Error "Package manager $global:PKG_MANAGER not found in venv." }
 
     $installCmd = @()
 
-    if ($INSTALL_SOURCE -eq "git") {
-        $target = "$TOOLBOX_SRC_DIR$extrasSuffix"
-        if ($PKG_MANAGER -eq "pip") { $installCmd = @($mgrExe, "install", "--upgrade", $target) }
-        elseif ($PKG_MANAGER -eq "uv") { $installCmd = @($mgrExe, "pip", "install", "--system", "--upgrade", $target) }
-        elseif ($PKG_MANAGER -eq "poetry") {
-            Push-Location $TOOLBOX_SRC_DIR
+    if ($global:INSTALL_SOURCE -eq "git") {
+        $target = "$global:TOOLBOX_SRC_DIR$extrasSuffix"
+        if ($global:PKG_MANAGER -eq "pip") { $installCmd = @($mgrExe, "install", "--upgrade", $target) }
+        elseif ($global:PKG_MANAGER -eq "uv") { $installCmd = @($mgrExe, "pip", "install", "--system", "--upgrade", $target) }
+        elseif ($global:PKG_MANAGER -eq "poetry") {
+            Push-Location $global:TOOLBOX_SRC_DIR
             $installCmd = @($mgrExe, "install")
             if ($extras.Count -gt 0) { foreach ($e in $extras) { $installCmd += "--extras"; $installCmd += $e } }
         }
     } else {
         $pkg = $TOOLBOX_PYPI_NAME
-        if ($TB_VERSION -ne "latest") { $pkg += "==$TB_VERSION" }
+        if ($global:TB_VERSION -ne "latest") { $pkg += "==$global:TB_VERSION" }
         $target = "$pkg$extrasSuffix"
 
-        if ($PKG_MANAGER -eq "pip") { $installCmd = @($mgrExe, "install", "--upgrade", $target) }
-        elseif ($PKG_MANAGER -eq "uv") { $installCmd = @($mgrExe, "pip", "install", "--system", "--upgrade", $target) }
-        elseif ($PKG_MANAGER -eq "poetry") {
+        if ($global:PKG_MANAGER -eq "pip") { $installCmd = @($mgrExe, "install", "--upgrade", $target) }
+        elseif ($global:PKG_MANAGER -eq "uv") { $installCmd = @($mgrExe, "pip", "install", "--system", "--upgrade", $target) }
+        elseif ($global:PKG_MANAGER -eq "poetry") {
              # Dummy project for poetry to add dependencies
              $pyproject = @"
 [tool.poetry]
@@ -640,31 +639,31 @@ description = ""
 authors = []
 
 [tool.poetry.dependencies]
-python = "^$PYTHON_VERSION_TARGET"
+python = "^$global:PYTHON_VERSION_TARGET"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 "@
-             Set-Content (Join-Path $INSTALL_DIR "pyproject.toml") $pyproject
-             Push-Location $INSTALL_DIR
+             Set-Content (Join-Path $global:INSTALL_DIR "pyproject.toml") $pyproject
+             Push-Location $global:INSTALL_DIR
              $installCmd = @($mgrExe, "add", $pkg)
              foreach ($e in $extras) { $installCmd += "--extras"; $installCmd += $e }
         }
     }
 
-    Log-Info "Installing using $PKG_MANAGER..."
+    Log-Info "Installing using $global:PKG_MANAGER..."
     & $installCmd[0] $installCmd[1..$installCmd.Length]
     if ($LASTEXITCODE -ne 0) { Log-Error "Installation failed." }
 
-    if ($PKG_MANAGER -eq "poetry") { Pop-Location }
+    if ($global:PKG_MANAGER -eq "poetry") { Pop-Location }
     Log-Success "ToolBoxV2 installed."
 }
 
 function Step-06_CreateCommand {
     Log-Title "Step 6: Creating 'tb' command"
 
-    $tbRes = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($VENV_PATH, "tb")
+    $tbRes = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($global:VENV_PATH, "tb")
     $tbPath = $tbRes.path
 
     if (-not $tbPath) { Log-Warning "Could not find 'tb' executable in venv."; return }
@@ -679,10 +678,10 @@ function Step-06_CreateCommand {
         Log-Success "Command link created at: $linkPath"
         if ($env:PATH -notlike "*$USER_BIN_DIR*") {
             Log-Warning "$USER_BIN_DIR is not in your PATH."
-            if ($IS_WINDOWS) {
+            if ($global:IS_WINDOWS) {
                 Write-Host "Add '$USER_BIN_DIR' to your User Path variables." -ForegroundColor Yellow
             } else {
-                Write-Host "Add to shell config: export PATH=`"$USER_BIN_DIR:`$PATH`"" -ForegroundColor Yellow
+                Write-Host 'Add to shell config: export PATH="$USER_BIN_DIR:$PATH"' -ForegroundColor Yellow
             }
         }
     } else {
@@ -698,7 +697,7 @@ function Step-07_Finalize {
     $tbCmd = "tb"
     if (-not (Test-Command "tb")) {
         # Fallback to direct venv path
-        $res = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($VENV_PATH, "tb")
+        $res = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($global:VENV_PATH, "tb")
         $tbCmd = $res.path
     }
 

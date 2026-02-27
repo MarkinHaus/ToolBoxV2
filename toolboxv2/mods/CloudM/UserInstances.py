@@ -66,9 +66,9 @@ class UserInstances(metaclass=Singleton):
 
     @staticmethod
     @in_mem_cache_150
-    def get_clerk_session_key(clerk_user_id: str) -> Result:
+    def get_clerk_session_key(cloudm_user_id: str) -> Result:
         """Generate Clerk Session Key for mapping"""
-        return Result.ok(data=Code.one_way_hash(clerk_user_id, app.id, 'Clerk-Session'))
+        return Result.ok(data=Code.one_way_hash(cloudm_user_id, app.id, 'Clerk-Session'))
 
 
 # =================== Web Instance Management ===================
@@ -273,7 +273,7 @@ def register_cli_session(
     uid: str,
     session_token: str,
     session_info: Optional[dict] = None,
-    clerk_user_id: Optional[str] = None
+    cloudm_user_id: Optional[str] = None
 ) -> Result:
     """
     Register a new CLI session.
@@ -282,7 +282,7 @@ def register_cli_session(
         uid: User identifier
         session_token: JWT or session token
         session_info: Additional session metadata
-        clerk_user_id: Clerk user ID if using Clerk auth
+        cloudm_user_id: Clerk user ID if using Clerk auth
 
     Returns:
         Result with session data
@@ -305,7 +305,7 @@ def register_cli_session(
         'uid': uid,
         'cli_session_id': cli_session_id,
         'session_token': session_token,
-        'clerk_user_id': clerk_user_id,
+        'cloudm_user_id': cloudm_user_id,
         'created_at': time.time(),
         'last_activity': time.time(),
         'status': 'active',
@@ -315,8 +315,8 @@ def register_cli_session(
     UserInstances().cli_sessions[cli_session_id] = session_data
 
     # Map Clerk session if provided
-    if clerk_user_id:
-        clerk_key = UserInstances.get_clerk_session_key(clerk_user_id).get()
+    if cloudm_user_id:
+        clerk_key = UserInstances.get_clerk_session_key(cloudm_user_id).get()
         UserInstances().clerk_sessions[clerk_key] = {
             'cli_session_id': cli_session_id,
             'uid': uid
@@ -363,9 +363,9 @@ def close_cli_session(cli_session_id: str) -> str:
     session_data['closed_at'] = time.time()
 
     # Remove Clerk mapping if exists
-    clerk_user_id = session_data.get('clerk_user_id')
-    if clerk_user_id:
-        clerk_key = UserInstances.get_clerk_session_key(clerk_user_id).get()
+    cloudm_user_id = session_data.get('cloudm_user_id')
+    if cloudm_user_id:
+        clerk_key = UserInstances.get_clerk_session_key(cloudm_user_id).get()
         if clerk_key in UserInstances().clerk_sessions:
             del UserInstances().clerk_sessions[clerk_key]
 
@@ -399,9 +399,9 @@ def get_user_cli_sessions(uid: str) -> List[dict]:
 
 
 @e
-def get_cli_session_by_clerk_id(clerk_user_id: str) -> Optional[dict]:
+def get_cli_session_by_clerk_id(cloudm_user_id: str) -> Optional[dict]:
     """Get CLI session by Clerk user ID"""
-    clerk_key = UserInstances.get_clerk_session_key(clerk_user_id).get()
+    clerk_key = UserInstances.get_clerk_session_key(cloudm_user_id).get()
 
     if clerk_key in UserInstances().clerk_sessions:
         cli_session_id = UserInstances().clerk_sessions[clerk_key].get('cli_session_id')

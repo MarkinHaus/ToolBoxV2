@@ -156,6 +156,11 @@ def create_app(
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+    @app.get("/health", include_in_schema=False)
+    async def health_check():
+        """Health check endpoint for Docker."""
+        return {"status": "healthy"}
+
     # Web UI routes
     @app.get("/", include_in_schema=False)
     async def index():

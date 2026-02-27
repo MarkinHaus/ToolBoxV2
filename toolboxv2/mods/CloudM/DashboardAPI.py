@@ -54,7 +54,7 @@ async def logout(app: App, request: RequestData):
 
         if current_user:
             user_id = getattr(current_user, "uid", None) or getattr(
-                current_user, "clerk_user_id", None
+                current_user, "cloudm_user_id", None
             )
             app.logger.info(
                 f"[Logout] Logging out user: {getattr(current_user, 'name', 'unknown')}"
@@ -168,7 +168,7 @@ async def render_user_dashboard(app: App, request: RequestData):
             "email": getattr(current_user, "email", ""),
             "level": getattr(current_user, "level", 1),
             "uid": getattr(current_user, "uid", None)
-            or getattr(current_user, "clerk_user_id", ""),
+            or getattr(current_user, "cloudm_user_id", ""),
             "settings": getattr(current_user, "settings", {}) or {},
             "mod_data": getattr(current_user, "mod_data", {}) or {},
         }
@@ -249,7 +249,7 @@ async def render_admin_dashboard(app: App, request: RequestData):
             "email": getattr(current_user, "email", ""),
             "level": user_level,
             "uid": getattr(current_user, "uid", None)
-            or getattr(current_user, "clerk_user_id", ""),
+            or getattr(current_user, "cloudm_user_id", ""),
             "settings": getattr(current_user, "settings", {}) or {},
         }
 
@@ -374,7 +374,7 @@ async def handle_dashboard_event(app: App, request: RequestData, data: dict):
 
 async def _handle_logout(app: App, request: RequestData, user):
     """Logout-Handler Implementierung"""
-    uid = getattr(user, "uid", None) or getattr(user, "clerk_user_id", None)
+    uid = getattr(user, "uid", None) or getattr(user, "cloudm_user_id", None)
 
     # Cleanup
     if uid:
@@ -407,7 +407,7 @@ async def _handle_load_module(app: App, user, payload: dict):
     if not module_name:
         return Result.default_user_error(info="Modulname fehlt")
 
-    uid = getattr(user, "uid", None) or getattr(user, "clerk_user_id", None)
+    uid = getattr(user, "uid", None) or getattr(user, "cloudm_user_id", None)
 
     try:
         from toolboxv2.mods.CloudM.UserInstances import get_user_instance as get_instance
@@ -448,7 +448,7 @@ async def _handle_unload_module(app: App, user, payload: dict):
     if not module_name:
         return Result.default_user_error(info="Modulname fehlt")
 
-    uid = getattr(user, "uid", None) or getattr(user, "clerk_user_id", None)
+    uid = getattr(user, "uid", None) or getattr(user, "cloudm_user_id", None)
 
     try:
         from toolboxv2.mods.CloudM.UserInstances import (
@@ -477,7 +477,7 @@ async def _handle_save_module(app: App, user, payload: dict):
     if not module_name:
         return Result.default_user_error(info="Modulname fehlt")
 
-    uid = getattr(user, "uid", None) or getattr(user, "clerk_user_id", None)
+    uid = getattr(user, "uid", None) or getattr(user, "cloudm_user_id", None)
 
     try:
         from toolboxv2.mods.CloudM.UserInstances import (
@@ -519,7 +519,7 @@ async def _handle_remove_saved_module(app: App, user, payload: dict):
     if not module_name:
         return Result.default_user_error(info="Modulname fehlt")
 
-    uid = getattr(user, "uid", None) or getattr(user, "clerk_user_id", None)
+    uid = getattr(user, "uid", None) or getattr(user, "cloudm_user_id", None)
 
     try:
         from toolboxv2.mods.CloudM.UserInstances import (

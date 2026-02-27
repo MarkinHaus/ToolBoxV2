@@ -41,7 +41,9 @@ Copy `.env.example` to `.env` and configure:
 - `CLERK_SECRET_KEY` - Clerk authentication
 - `MINIO_PRIMARY_*` - Primary storage
 - `MINIO_MIRROR_*` - Optional mirror storage
-
+docker build -t tb-registry .
+- docker run -p 4025:4025 --env-file .env tb-registry
+-
 ## License
 
 MIT

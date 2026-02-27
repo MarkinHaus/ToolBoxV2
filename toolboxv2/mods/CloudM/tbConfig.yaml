@@ -1,4 +1,28 @@
+author: ''
+config_version: '2.0'
 dependencies_file: ./mods/CloudM/requirements.txt
+description: ''
+homepage: ''
+license: MIT
+metadata: {}
 module_name: CloudM
-version: 0.0.3
-zip: "RST$CloudM&v0.1.20\xA70.0.3.zip"
+module_type: package
+platforms:
+  client:
+    files: []
+    required: false
+  common:
+    files:
+    - '*'
+    required: true
+  desktop:
+    files: []
+    required: false
+  mobile:
+    files: []
+    required: false
+  server:
+    files: []
+    required: false
+version: 0.0.5
+zip: RST$CloudM&0.1.25§0.0.5.zip

@@ -1297,19 +1297,11 @@ def get_registry_client(app: App) -> RegistryClient:
     """
     global _registry_client
 
-    # Try to get registry client from CloudM Tools
-    cloudm_mod = app.get_mod("CloudM")
-    if cloudm_mod and hasattr(cloudm_mod, 'registry'):
-        return cloudm_mod.registry
-
-    # Fallback to global instance
     if _registry_client is None:
         # Get registry URL from config or use default
-        registry_url = getattr(app, "registry_url", "https://registry.simplecore.app")
-        cache_dir = Path(app.start_dir) / ".tb-registry" / "cache"
+        registry_url = os.getenv("REGISTRY_BASE_URL","https://registry.simplecore.app")
         _registry_client = RegistryClient(
             registry_url=registry_url,
-            cache_dir=cache_dir,
         )
     return _registry_client
 
@@ -1319,7 +1311,9 @@ async def ensure_registry_auth(app: App) -> bool:
     Ensure the registry client is authenticated.
 
     Tries to authenticate via CloudM Tools first, then falls back
-    to direct authentication.
+    to the shared token file at ~/.tb-registry/auth_token.txt.
+    When authentication succeeds via CloudM, the token is persisted
+    to the shared file so the CLI can reuse it.
 
     Args:
         app: Application instance
@@ -1327,14 +1321,31 @@ async def ensure_registry_auth(app: App) -> bool:
     Returns:
         True if authenticated, False otherwise
     """
+    client = get_registry_client(app)
+
+    # Already authenticated?
+    if await client.is_authenticated():
+        return True
+
     # Try CloudM Tools authentication
     cloudm_mod = app.get_mod("CloudM")
     if cloudm_mod and hasattr(cloudm_mod, 'ensure_registry_auth'):
-        return await cloudm_mod.ensure_registry_auth()
+        if await cloudm_mod.ensure_registry_auth():
+            # Persist token to shared file so CLI can reuse it
+            if client.auth_token:
+                token_file = Path.home() / ".tb-registry" / "auth_token.txt"
+                token_file.parent.mkdir(parents=True, exist_ok=True)
+                token_file.write_text(client.auth_token)
+            return True
 
-    # Fallback: check if client is already authenticated
-    client = get_registry_client(app)
-    return await client.is_authenticated()
+    # Fallback: try token from shared file
+    token_file = Path.home() / ".tb-registry" / "auth_token.txt"
+    if token_file.exists():
+        token = token_file.read_text().strip()
+        if token and await client.login(token):
+            return True
+
+    return False
 
 
 def get_lock_manager(app: App) -> LockFileManager:
@@ -1572,7 +1583,7 @@ async def install_from_registry(
 async def publish_to_registry(
     app: App,
     module_name: str,
-    clerk_token: Optional[str] = None,
+    token: Optional[str] = None,
 ) -> Result:
     """
     Publish a module to the registry.
@@ -1580,7 +1591,7 @@ async def publish_to_registry(
     Args:
         app: Application instance
         module_name: Name of module to publish
-        clerk_token: Clerk authentication token
+        token: Clerk authentication token
 
     Returns:
         Result with publish status
@@ -1595,11 +1606,15 @@ async def publish_to_registry(
         client = get_registry_client(app)
 
         # Login if token provided
-        if clerk_token:
-            if not await client.login(clerk_token):
-                return Result.default_user_error("Authentication failed")
-        elif not await client.is_authenticated():
-            return Result.default_user_error("Authentication required. Provide clerk_token.")
+        is_auth = await client.is_authenticated()
+        if not token and not is_auth:
+            """Get stored auth token."""
+            token_file = Path.home() / ".tb-registry" / "auth_token.txt"
+            if not token_file.exists():
+                return Result.default_user_error("Authentication failed no token run tb registry login or provide token")
+            token = token_file.read_text().strip()
+        if not is_auth and not await client.login(token):
+            return Result.default_user_error("Authentication failed")
 
         # Get module info
         mod = app.get_mod(module_name)
@@ -2267,7 +2282,7 @@ class ModernMenuManager:
             name="MODULE OPERATIONS",
             icon="📦",
             items=[
-                MenuItem("0", "🚀 Start Dev Runner", self._start_dev_runner, icon="▶️"),
+                MenuItem("0", "Start Dev Runner", self._start_dev_runner, icon="▶️"),
                 MenuItem("1", "List all modules", self._list_modules, icon="📋"),
                 MenuItem("2", "Install/Update module", self._install_module, icon="📥"),
                 MenuItem("3", "Uninstall module", self._uninstall_module, icon="🗑️"),
@@ -2314,6 +2329,7 @@ class ModernMenuManager:
                 MenuItem("20", "Check for updates", self._registry_update, icon="🔄"),
                 MenuItem("21", "List installed packages", self._registry_list, icon="📋"),
                 MenuItem("22", "Package info", self._registry_info, icon="ℹ️"),
+                MenuItem("23", "Publisher Dashboard", self._show_publisher_dashboard, icon="🛡️"),
             ]
         )
 
@@ -2791,7 +2807,7 @@ class ModernMenuManager:
     async def _create_from_template(self):
         """Create module from template."""
         # Get templates
-        result = await list_module_templates(self.app_instance)
+        result = list_module_templates(self.app_instance)
         templates = result.get()['templates']
 
         # Build choices
@@ -2847,7 +2863,7 @@ class ModernMenuManager:
 
     async def _list_templates(self):
         """List available templates."""
-        result = await list_module_templates(self.app_instance)
+        result = list_module_templates(self.app_instance)
         templates = result.get()['templates']
 
         lines = []
@@ -3103,6 +3119,168 @@ class ModernMenuManager:
         lines.append("└" + "─" * 60)
 
         await show_message(f"ℹ️ Package: {package_name}", '\n'.join(lines), "info")
+
+    async def _show_publisher_dashboard(self):
+        """Publisher Status Dashboard."""
+        await show_progress("CloudM Registry", "Fetching publisher status...")
+
+        try:
+            client = get_registry_client(self.app_instance)
+            is_auth = await client.is_authenticated()
+
+            if not is_auth:
+                await show_message(
+                    "Not Authenticated",
+                    "Please login first to view publisher status.\n\n"
+                    "Run: tb registry login",
+                    "warning",
+                )
+                return
+
+            user = await client.get_current_user()
+
+            if not user or not user.publisher_id:
+                # Flow für neue Publisher
+                text = (
+                    "Publishing allows you to share your modules with the community.\n"
+                    "To start, you need to register a publisher profile.\n\n"
+                    "Steps:\n"
+                    "  1. Register Profile\n"
+                    "  2. Verify Identity (GitHub or Domain)\n"
+                    "  3. Start Publishing!"
+                )
+                if await show_confirm("Become a ToolBox Publisher", text):
+                    await self._register_publisher_flow()
+                return
+
+            # Dashboard für existierende Publisher
+            pub = await client.get_my_publisher()
+            if not pub:
+                await show_message("Error", "Could not load publisher profile.", "error")
+                return
+
+            status_label = pub.verification_status.upper()
+            dashboard_text = (
+                f"ID:       {pub.id}\n"
+                f"Name:     {pub.display_name} (@{pub.name})\n"
+                f"Status:   [{status_label}]\n\n"
+                f"Packages:   {pub.package_count}\n"
+                f"Downloads:  {pub.total_downloads}\n"
+            )
+
+            choices = [
+                ("verify", "🛡️ Submit Verification Request"),
+                ("back", "← Back"),
+            ]
+
+            choice = await show_choice("Publisher Dashboard", dashboard_text, choices)
+            if choice == "verify":
+                await self._submit_verification_flow()
+
+        except Exception as e:
+            await show_message("Error", f"Could not load dashboard: {e}", "error")
+
+    async def _register_publisher_flow(self):
+        """Interactive publisher registration."""
+        name = await show_input("Publisher ID", "Unique handle (e.g. my-org):")
+        if not name:
+            return
+        display = await show_input("Display Name", "Public name (e.g. My Organization):")
+        if not display:
+            return
+        email = await show_input("Contact Email", "Email for security alerts:")
+        if not email:
+            return
+        homepage = await show_input("Homepage", "Homepage URL (optional):")
+
+        await show_progress("Registering", "Creating publisher profile...")
+
+        try:
+            client = get_registry_client(self.app_instance)
+            result = await client.register_publisher(
+                name=name,
+                display_name=display,
+                email=email,
+                homepage=homepage or None,
+            )
+
+            if result:
+                await show_message(
+                    "Success",
+                    f"Profile created!\n\n"
+                    f"Publisher: @{result.name}\n"
+                    f"Status: {result.verification_status.upper()}\n\n"
+                    "You can now submit a verification request.",
+                    "success",
+                )
+            else:
+                await show_message("Error", "Registration failed.", "error")
+
+        except Exception as e:
+            await show_message("Error", f"Registration failed: {e}", "error")
+
+    async def _submit_verification_flow(self):
+        """Interactive verification submission."""
+        choices = [
+            ("github", "GitHub - Verify via GitHub account"),
+            ("domain", "Domain - Verify via DNS record"),
+            ("cancel", "← Cancel"),
+        ]
+
+        method = await show_choice(
+            "Verification Method",
+            "Choose how to verify your publisher identity:",
+            choices,
+        )
+
+        if not method or method == "cancel":
+            return
+
+        verification_data = {}
+
+        if method == "github":
+            gh_user = await show_input("GitHub Username", "Your GitHub username:")
+            if not gh_user:
+                return
+            gh_repo = await show_input("GitHub Repo", "Repository with FUNDING.yml (optional):")
+            verification_data = {"github_username": gh_user}
+            if gh_repo:
+                verification_data["github_repo"] = gh_repo
+
+        elif method == "domain":
+            domain = await show_input("Domain", "Domain to verify (e.g. example.com):")
+            if not domain:
+                return
+            verification_data = {"domain": domain}
+            await show_message(
+                "DNS Verification",
+                f"Add a TXT record to {domain}:\n\n"
+                "  _tb-verify.{domain}  TXT  <your-publisher-id>\n\n"
+                "Then submit the verification.",
+                "info",
+            )
+
+        await show_progress("Submitting", "Sending verification request...")
+
+        try:
+            client = get_registry_client(self.app_instance)
+            success = await client.submit_verification(
+                method=method,
+                data=verification_data,
+            )
+
+            if success:
+                await show_message(
+                    "Submitted",
+                    "Verification request submitted!\n\n"
+                    "You will be notified when it is reviewed.",
+                    "success",
+                )
+            else:
+                await show_message("Error", "Submission failed.", "error")
+
+        except Exception as e:
+            await show_message("Error", f"Submission failed: {e}", "error")
 
 
 # =================== CLI Parser ===================

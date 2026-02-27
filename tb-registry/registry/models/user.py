@@ -24,7 +24,7 @@ class Publisher:
 
     Attributes:
         id: Unique publisher ID.
-        cloudm_user_id: Associated CloudM.Auth user ID. (was: clerk_user_id)
+        cloudm_user_id: Associated CloudM.Auth user ID. (was: cloudm_user_id)
         name: Publisher display name.
         slug: URL-friendly slug.
         email: Contact email.
@@ -41,12 +41,12 @@ class Publisher:
         total_downloads: Total downloads across all packages.
         created_at: Creation timestamp.
     """
-
     id: str
-    cloudm_user_id: str  # Changed from clerk_user_id
     name: str
     slug: str
     email: str
+    # Fields with defaults MUST come after fields without defaults
+    cloudm_user_id: Optional[str] = None
     website: Optional[str] = None
     github: Optional[str] = None
     status: VerificationStatus = VerificationStatus.UNVERIFIED
@@ -60,16 +60,14 @@ class Publisher:
     total_downloads: int = 0
     created_at: datetime = field(default_factory=datetime.utcnow)
 
-    # TEMPORARY: Keep for migration compatibility
-    clerk_user_id: Optional[str] = None
+    clerk_user_id:None = field(default=None)
 
     @property
-    def user_id(self) -> str:
-        """Alias for cloudm_user_id for backward compatibility.
-
-        Returns:
-            The cloudm_user_id as the publisher's user ID.
-        """
+    def user_id(self) -> Optional[str]:
+        """Alias for cloudm_user_id for backward compatibility."""
+        if self.cloudm_user_id is None and self.clerk_user_id:
+            self.cloudm_user_id = self.clerk_user_id
+            self.clerk_user_id = None # TODO remove
         return self.cloudm_user_id
 
 
@@ -78,7 +76,7 @@ class User:
     """User information.
 
     Attributes:
-        cloudm_user_id: CloudM.Auth user ID. (was: clerk_user_id)
+        cloudm_user_id: CloudM.Auth user ID. (was: cloudm_user_id)
         email: User email.
         username: Username.
         publisher_id: Associated publisher ID.
@@ -87,24 +85,23 @@ class User:
         created_at: Creation timestamp.
     """
 
-    cloudm_user_id: str  # Changed from clerk_user_id
     email: str
     username: str
+    # Fields with defaults MUST come after fields without defaults
+    cloudm_user_id: Optional[str] = None
     publisher_id: Optional[str] = None
     is_admin: bool = False
     last_login: Optional[datetime] = None
     created_at: datetime = field(default_factory=datetime.utcnow)
 
-    # TEMPORARY: Keep clerk_user_id for migration
-    clerk_user_id: Optional[str] = None
+    clerk_user_id:None = field(default=None)
 
     @property
-    def id(self) -> str:
-        """Alias for cloudm_user_id for backward compatibility.
-
-        Returns:
-            The cloudm_user_id as the user's ID.
-        """
+    def id(self) -> Optional[str]:
+        """Alias for cloudm_user_id for backward compatibility."""
+        if self.cloudm_user_id is None and self.clerk_user_id:
+            self.cloudm_user_id = self.clerk_user_id
+            self.clerk_user_id = None # TODO remove
         return self.cloudm_user_id
 
 
@@ -194,7 +191,7 @@ class UserSummary(BaseModel):
         publisher_id: Associated publisher ID.
     """
 
-    cloudm_user_id: str  # Changed from clerk_user_id
+    cloudm_user_id: str  # Changed from cloudm_user_id
     email: str
     username: str
     is_admin: bool

@@ -131,7 +131,7 @@ class AuthenticatedUserWrapper:
     def uid(self) -> str:
         return (
             getattr(self._user, "uid", None)
-            or getattr(self._user, "clerk_user_id", None)
+            or getattr(self._user, "cloudm_user_id", None)
             or str(id(self._user))
         )
 
