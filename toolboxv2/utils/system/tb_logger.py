@@ -665,7 +665,7 @@ class LogSyncManager:
         """Stop the automatic sync background thread."""
         self._auto_stop.set()
         if self._auto_thread:
-            self._auto_thread.join(timeout=5.0)
+            self._auto_thread.join(timeout=2.0)
             self._auto_thread = None
 
     @property

@@ -135,6 +135,12 @@ This is the recommended method for most users on **Linux, macOS, and Windows (vi
     ./install_toolbox.sh --help
     ```
 
+or Windows onliner
+
+```bash
+    & ([scriptblock]::Create((irm "https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.ps1")))
+```
+
 ---
 
 ### 💻 Advanced / Alternative Methods

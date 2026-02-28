@@ -2495,8 +2495,7 @@ class FlowAgent:
             {"tool_func": vfs_list, "name": "vfs_list", "category": ["vfs", "read"]},
             {"tool_func": vfs_open, "name": "vfs_read", "category": ["vfs", "read"]},
             {"tool_func": vfs_create, "name": "vfs_create", "category": ["vfs", "write"]},
-            {"tool_func": vfs_edit, "name": "vfs_write", "category": ["vfs", "write"]},
-            {"tool_func": vfs_write, "name": "vfs_write_full", "category": ["vfs", "write"]},
+            {"tool_func": vfs_write, "name": "vfs_write", "category": ["vfs", "write"]},
             {"tool_func": vfs_edit, "name": "vfs_edit", "category": ["vfs", "write"]},
             {"tool_func": vfs_append, "name": "vfs_append", "category": ["vfs", "write"]},
             {"tool_func": vfs_delete, "name": "vfs_delete", "category": ["vfs", "write"]},
@@ -2505,7 +2504,7 @@ class FlowAgent:
             {"tool_func": vfs_rmdir, "name": "vfs_rmdir", "category": ["vfs", "write"]},
             {"tool_func": vfs_mv, "name": "vfs_mv", "category": ["vfs", "write"]},
         ]
-        tools = [] if hasattr(self, "_vfs_tools_registered") else vfs_tools
+        tools = vfs_tools
         tools.extend(
             [
                 # VFS File Operations

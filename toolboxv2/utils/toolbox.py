@@ -1581,46 +1581,59 @@ class App(AppType, metaclass=Singleton):
         if not self.alive:
             return
 
-        self._stop_event.set()
-        if self.args_sto.debug:
-            self.hide_console()
+        with Spinner("Cleaning app sate"):
 
-        self.disconnect()
+            self._stop_event.set()
+            if self.args_sto.debug:
+                self.hide_console()
 
-        if remove_all:
-            self.remove_all_modules()
 
-        self.logger.info("Exiting ToolBox interface")
-        # ── Flush observability ──
-        try:
-            from toolboxv2.utils.system.tb_logger import disable_live_observability
-            disable_live_observability()  # flushes remaining batch + closes worker
-        except Exception as e:
-            self.debug_rains(e)
-            import traceback
-            traceback.print_exc()
-            pass
+            self.disconnect()
 
-        if self._obs_sync_manager:
+
+            if remove_all:
+                self.remove_all_modules()
+
+            self.logger.info("Exiting ToolBox interface")
+            # ── Flush observability ──
             try:
-                self._obs_sync_manager.stop_auto_sync()
-                self._obs_sync_manager.sync_all()  # final push
+                from toolboxv2.utils.system.tb_logger import disable_live_observability
+                disable_live_observability()  # flushes remaining batch + closes worker
             except Exception as e:
                 self.debug_rains(e)
                 import traceback
                 traceback.print_exc()
                 pass
-        self.alive = False
-        self.called_exit = True, time.time()
-        self.save_exit()
 
-        try:
-            self.config_fh.save_file_handler()
-        except SystemExit:
-            self.logger.warning("If you are testing this is fine, else ...")
+            to = time.time()
+            if self._obs_sync_manager:
+                try:
+                    self._obs_sync_manager.stop_auto_sync()
+                    stats = self._obs_sync_manager.sync_all()  # final push
+                    for s in stats:
+                        d = stats[s]
+                        if d and isinstance(d, list):
+                            self.print(s)
+                            for _s in d:
+                                self.print(_s)
+                        else:
+                            self.print(f"{s}:{d}")
+                except Exception as e:
+                    self.debug_rains(e)
+                    import traceback
+                    traceback.print_exc()
+                    pass
+            self.alive = False
+            self.called_exit = True, time.time()
+            self.save_exit()
 
-        self._cleanup_threads()
-        self._cleanup_event_loop()
+            try:
+                self.config_fh.save_file_handler()
+            except SystemExit:
+                self.logger.warning("If you are testing this is fine, else ...")
+
+            self._cleanup_threads()
+            self._cleanup_event_loop()
 
     async def a_exit(self):
         """
@@ -1629,25 +1642,26 @@ class App(AppType, metaclass=Singleton):
         """
 
         # Cleanup session before removing modules
-        try:
-            if hasattr(self, 'session') and self.session is not None:
-                await self.session.cleanup()
-        except Exception as e:
-            self.logger.debug(f"Session cleanup error (ignored): {e}")
+        with Spinner("Saving data"):
+            try:
+                if hasattr(self, 'session') and self.session is not None:
+                    await self.session.cleanup()
+            except Exception as e:
+                self.logger.debug(f"Session cleanup error (ignored): {e}")
 
-        # Remove all modules asynchronously
-        await self.a_remove_all_modules(delete=True)
+            # Remove all modules asynchronously
+            await self.a_remove_all_modules(delete=True)
 
-        # Run async exit tasks
-        async_exit_tasks = [
-            asyncio.create_task(f())
-            for f in self.exit_tasks
-            if asyncio.iscoroutinefunction(f)
-        ]
-        if async_exit_tasks:
-            results = await asyncio.gather(*async_exit_tasks)
-            for result in results:
-                self.print(f"Function On Exit result: {result}")
+            # Run async exit tasks
+            async_exit_tasks = [
+                asyncio.create_task(f())
+                for f in self.exit_tasks
+                if asyncio.iscoroutinefunction(f)
+            ]
+            if async_exit_tasks:
+                results = await asyncio.gather(*async_exit_tasks)
+                for result in results:
+                    self.print(f"Function On Exit result: {result}")
 
         # Call sync exit without removing modules (already done)
         self.exit(remove_all=False)

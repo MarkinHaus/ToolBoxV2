@@ -960,16 +960,14 @@ class CoderAgent:
         task_full = task
         if synced:
             task_full += f"\n\n[INFO: {len(synced)} file(s) synced from origin: {', '.join(synced[:5])}]"
-
-        if self.agent and hasattr(self.agent, "arun_function"):
-            try:
-                arch_context = await self.agent.arun_function("memory_recall", query=task, search_type="auto")
-                if arch_context and "No results" not in arch_context:
-                    task_full = f"### SYSTEM ARCHITEKTUR-KONTEXT (Aus Memory):\n{arch_context}\n\n### DEINE AUFGABE:\n{task_full}"
-            except Exception as e:
-                logger.warning(f"Auto-Memory fetch failed: {e}")
-                import traceback
-                traceback.print_exc()
+        # fix memory  sqlite3.OperationalError: fts5: syntax error near "." hybrid_memory.py", line 195 from hybrid_memory.py", line 407
+        # if self.agent and hasattr(self.agent, "arun_function"):
+        #     try:
+        #         arch_context = await self.agent.arun_function("memory_recall", query=task, search_type="auto")
+        #         if arch_context and "No results" not in arch_context:
+        #             task_full = f"### SYSTEM ARCHITEKTUR-KONTEXT (Aus Memory):\n{arch_context}\n\n### DEINE AUFGABE:\n{task_full}"
+        #     except Exception as e:
+        #         logger.warning(f"Auto-Memory fetch failed: {e}")
 
         messages = [{"role": "system", "content": sys_msg}, {"role": "user", "content": task_full}]
 

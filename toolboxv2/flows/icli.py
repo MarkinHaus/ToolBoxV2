@@ -2856,25 +2856,9 @@ class ISAA_Host:
             if self.idle_hint:
                 self.idle_hint = "Done"
 
-            # 1. Wort-Logik
-            word = "zen"
-            if is_active and hasattr(self._active_renderer, 'thought_pool') and self._active_renderer.thought_pool:
-                pool = list(self._active_renderer.thought_pool)
-                word = pool[int(now / 1.5) % len(pool)]
-            # Pulsieren: Blau, Cyan, Magenta (Violett)
-            colors = ["ansiblue", "ansicyan", "ansimagenta", "ansiblue"]
-            c = colors[int(now * 2) % len(colors)]
-
-            syms = ["◌","◦","∙","●","∙","◦"]
-            sym = syms[int(now * 8) % len(syms)]
-
             # Inhalt zusammenbauen
-            content = [
-                (f"{bg} bg:{c}", f" {sym} "),
-                (f"{bg} bg:ansigray italic", f"{word} ")
-            ]
-            content.extend(self._get_keybinding_indicator_ansi())
-            self.set_dynamic_interval(0.15)
+            content = []
+            self.set_dynamic_interval(2)
         elif self._was_recording_is_prossesing_audio:
             self.set_dynamic_interval(0.08)
             try:
@@ -6589,12 +6573,14 @@ class ISAA_Host:
         if not task:
             return
 
-        task.async_task.cancel()
+
 
         # Warten bis wirklich gecancelled
         try:
+            task.async_task.cancel()
             await asyncio.wait_for(asyncio.shield(task.async_task), timeout=3.0)
-        except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+        except (asyncio.CancelledError, asyncio.TimeoutError, Exception) as e:
+            c_print(f"Error beim stopped {e}")
             pass
 
         if self._focused_task_id == task_id:
