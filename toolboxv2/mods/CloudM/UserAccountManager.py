@@ -180,11 +180,11 @@ async def update_email(app: App, request: RequestData, new_email: str = None):
                     <p class="tb-text-success tb-text-sm">✓ Gespeichert</p>
                 </div>
             """
-
+        email_value = current_email if current_email != 'Nicht angegeben' else ''
         return f"""
             <div class="tb-space-y-2">
                 <p><strong>Aktuelle E-Mail:</strong> {current_email}</p>
-                <input type="email" name="new_email" value="{current_email if current_email != 'Nicht angegeben' else ''}"
+                <input type="email" name="new_email" value="+"""+email_value+f"""
                        class="tb-input tb-mt-2" placeholder="Neue E-Mail-Adresse">
                 <button data-hx-post="/api/{Name}/update_email"
                         data-hx-include="[name='new_email']"
