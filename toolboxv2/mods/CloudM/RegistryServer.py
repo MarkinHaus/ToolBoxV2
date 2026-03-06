@@ -116,7 +116,7 @@ async def _start_foreground(app: App, reg_path: Path, env: dict) -> Result:
     app.print(f"[RegistryServer] Running on http://{env['SERVER_HOST']}:{env['SERVER_PORT']}")
     app.print("[RegistryServer] Press Ctrl+C to stop")
 
-    try:
+    try: # TODO: use ove venv manger not default uv
         # Use subprocess.Popen for cross-platform compatibility
         # asyncio.create_subprocess_exec doesn't work on Windows default event loop
         process = subprocess.Popen(
