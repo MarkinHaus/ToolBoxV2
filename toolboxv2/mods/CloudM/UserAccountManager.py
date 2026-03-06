@@ -248,7 +248,7 @@ async def update_setting(app: App, request: RequestData, setting_key: str, setti
             <label class="tb-label tb-flex tb-items-center tb-cursor-pointer">
                 <input type="checkbox" {is_checked}
                        data-hx-post="/api/{Name}/update_setting"
-                       data-hx-vals='{{"setting_key": "experimental_features", "setting_value": "{next_value}"}}'
+                       data-hx-vals='{{"setting_key": "experimental_features", "setting_value": """"+next_value+""""}}'
                        data-hx-target="closest div"
                        data-hx-swap="innerHTML"
                        class="tb-checkbox tb-mr-2">
@@ -435,6 +435,10 @@ async def get_account_section_html(app: App, request: RequestData):
     exp_features = settings.get('experimental_features', False)
     exp_checked = 'checked' if exp_features else ''
     exp_next = 'false' if exp_features else 'true'
+    profile_section = ""
+    if is_custom_auth:
+        profile_section = '<div><button onclick="window.TB?.router?.navigate(\'/web/scripts/login.html#profile\')" class="tb-btn tb-btn-secondary">Profil-Einstellungen öffnen</button></div>'
+
 
     return f"""
         <div class="tb-card tb-p-4">
@@ -449,7 +453,7 @@ async def get_account_section_html(app: App, request: RequestData):
                 </div>
 
                 <!-- Profil-Button -->
-                {'<div><button onclick="window.TB?.router?.navigate(\'/web/scripts/login.html#profile\')" class="tb-btn tb-btn-secondary">Profil-Einstellungen öffnen</button></div>' if is_custom_auth else ''}
+                {profile_section}
 
                 <!-- App-Einstellungen -->
                 <div class="tb-border-t tb-pt-4">
