@@ -73,7 +73,7 @@ You can optionally provide additional context that will be injected into the sub
 
 class SubAgentResumeExtension:
     """Mixin for ExecutionEngine to add resume capabilities"""
-    
+
     async def _handle_sub_agent_max_iterations(
         self,
         ctx: 'ExecutionContext',
@@ -82,15 +82,15 @@ class SubAgentResumeExtension:
     ) -> tuple[str, bool]:
         """
         Handle max iterations for sub-agent.
-        
+
         Returns: (response, should_mark_resumable)
         """
         from toolboxv2.mods.isaa.base.Agent.execution_engine import HistoryCompressor
-        
+
         # Generate graceful response
         summary = HistoryCompressor.compress_to_summary(ctx.working_history, ctx.run_id)
         summary_text = summary["content"] if summary else "Keine Aktionen durchgeführt."
-        
+
         response = f"""⏱️ Max Iterations erreicht ({max_iterations})
 
 {summary_text}
@@ -103,12 +103,12 @@ class SubAgentResumeExtension:
 **Status:** Die Aufgabe ist noch nicht abgeschlossen, aber es wurde Fortschritt gemacht.
 
 **Main-Agent:** Du kannst mich mit `resume_sub_agent('{ctx.run_id}')` fortsetzen, wenn du denkst, dass ich die Aufgabe mit mehr Iterationen abschließen kann."""
-        
+
         # Mark as resumable if tools were used (= progress was made)
         should_mark_resumable = len(ctx.tools_used) > 0
-        
+
         return response, should_mark_resumable
-    
+
     async def _tool_resume_sub_agent(
         self,
         sub_agent_id: str,
@@ -117,134 +117,116 @@ class SubAgentResumeExtension:
         wait: bool = True,
         context: Optional[str] = None
     ) -> str:
-        """
-        Resume a sub-agent that hit max iterations.
-        
-        Args:
-            sub_agent_id: ID of sub-agent to resume
-            additional_iterations: Additional iterations to allow
-            additional_budget: Additional token budget
-            wait: Wait for completion
-            context: Optional additional context to inject
-            
-        Returns:
-            Result message
-        """
         if not self._sub_agent_manager:
             return "ERROR: SubAgentManager not initialized (nur Main-Agent kann resumieren)"
-        
+
         if self.is_sub_agent:
             return "ERROR: Sub-Agents können keine anderen Sub-Agents resumieren"
-        
-        # Get sub-agent state
+
         state = self._sub_agent_manager._sub_agents.get(sub_agent_id)
         if not state:
             return f"ERROR: Sub-Agent '{sub_agent_id}' nicht gefunden"
-        
-        # Check if resumable
-        if not hasattr(state, 'resumable') or not state.resumable:
+
+        if not getattr(state, 'resumable', False):
             return f"ERROR: Sub-Agent '{sub_agent_id}' kann nicht resumed werden (status: {state.status.value})"
-        
-        # Check status
+
         from toolboxv2.mods.isaa.base.Agent.sub_agent import SubAgentStatus
         if state.status not in [SubAgentStatus.MAX_ITERATIONS, SubAgentStatus.PAUSED]:
             return f"ERROR: Sub-Agent '{sub_agent_id}' ist nicht pausiert (status: {state.status.value})"
-        
-        # Check if context is preserved
-        if not hasattr(state, 'execution_context') or not state.execution_context:
-            return f"ERROR: Sub-Agent '{sub_agent_id}' hat keinen erhaltenen Context (kann nicht resumed werden)"
-        
+
+        ctx = getattr(state, 'execution_context', None)
+        if not ctx:
+            return f"ERROR: Sub-Agent '{sub_agent_id}' hat keinen erhaltenen Context"
+
         try:
-            # Update status
             state.status = SubAgentStatus.RUNNING
-            
-            # Get preserved context
-            ctx = state.execution_context
-            
-            # Inject additional context if provided
+
             if context:
                 ctx.working_history.append({
                     "role": "system",
                     "content": f"ZUSÄTZLICHER KONTEXT VOM MAIN-AGENT:\n{context}"
                 })
-                print(f"[Resume] Injected additional context: {context[:100]}...")
-            
-            # Increase budget
-            original_budget = getattr(state, 'original_budget', 5000)
-            new_budget = original_budget + additional_budget
-            if hasattr(state, 'engine'):
+
+            new_budget = getattr(state, 'original_budget', 5000) + additional_budget
+            if state.engine:
                 state.engine.sub_agent_budget = new_budget
-            
-            # Resume execution with existing context
+
             result = await state.engine.execute(
                 query=state.task,
                 session_id=state.session_id,
                 max_iterations=additional_iterations,
-                ctx=ctx,  # Pass existing context!
+                ctx=ctx,
                 get_ctx=True
             )
-            
+
             if isinstance(result, tuple):
                 final_response, ctx = result
             else:
                 final_response = result
-                ctx = state.execution_context
-            
-            # Update state
+
             state.tokens_used += getattr(state.engine, '_tokens_used', 0)
             state.iterations_used += ctx.current_iteration
-            
-            # Check if completed or hit max again
+
             if ctx.current_iteration >= additional_iterations:
                 state.status = SubAgentStatus.MAX_ITERATIONS
-                if hasattr(state, 'result'):
-                    state.result.success = False
-                    state.result.max_iterations_reached = True
-                    state.result.resumable = len(ctx.tools_used) > 0
+                state.resumable = len(ctx.tools_used) > 0
+                state.execution_context = ctx if state.resumable else None
                 success_msg = f"⏱️ Wieder Max-Iterations erreicht (total: {state.iterations_used})"
             else:
                 state.status = SubAgentStatus.COMPLETED
-                if hasattr(state, 'result'):
-                    state.result.success = True
-                    state.result.max_iterations_reached = False
-                    state.result.resumable = False
+                state.resumable = False
+                state.execution_context = None
                 success_msg = "✅ Sub-Agent erfolgreich fortgesetzt und abgeschlossen"
-            
-            # Update result
-            if hasattr(state, 'result'):
-                state.result.result = final_response
-                state.result.status = state.status
-                state.result.iterations_used = state.iterations_used
-                state.result.tokens_used = state.tokens_used
-            
-            # Update files written
+
+            state.result = final_response
+
+            # Collect written files
             try:
                 vfs = self._current_session.vfs
-                files = vfs.list_files(state.output_dir)
-                if hasattr(state, 'result'):
-                    state.result.files_written = [f.path for f in files]
-                else:
-                    state.files_written = [f.path for f in files]
-            except:
+                ls_result = vfs.ls(state.output_dir, recursive=True)
+                if ls_result.get("success"):
+                    state.files_written = [f["path"] for f in ls_result.get("files", [])]
+            except Exception:
                 pass
-            
-            if wait:
-                files_str = ', '.join(state.result.files_written[:5]) if hasattr(state, 'result') else ', '.join(state.files_written[:5])
-                return f"""{success_msg}
-Output: {state.output_dir}
-Iterations: {state.iterations_used}
-Tokens: {state.tokens_used}
-Files: {files_str}
 
-Result: {final_response[:500]}"""
-            else:
-                return f"🔄 Sub-Agent '{sub_agent_id}' resumed (async)"
-                
+            # Update SubAgentResult in _completed if present
+            from toolboxv2.mods.isaa.base.Agent.sub_agent import SubAgentResult
+            from datetime import datetime
+            duration = 0.0
+            if state.started_at:
+                duration = (datetime.now() - state.started_at).total_seconds()
+
+            completed_result = SubAgentResult(
+                id=sub_agent_id,
+                success=state.status == SubAgentStatus.COMPLETED,
+                status=state.status,
+                result=final_response,
+                error=None,
+                output_dir=state.output_dir,
+                files_written=state.files_written,
+                tokens_used=state.tokens_used,
+                duration_seconds=duration,
+                task=state.task,
+                max_iterations_reached=(state.status == SubAgentStatus.MAX_ITERATIONS),
+                resumable=state.resumable,
+                iterations_used=state.iterations_used,
+                execution_context=state.execution_context,
+            )
+            self._sub_agent_manager._completed[sub_agent_id] = completed_result
+
+            files_str = ', '.join(state.files_written[:5])
+            return (
+                f"{success_msg}\n"
+                f"Output: {state.output_dir}\n"
+                f"Iterations: {state.iterations_used}\n"
+                f"Tokens: {state.tokens_used}\n"
+                f"Files: {files_str}\n\n"
+                f"Result: {final_response[:500]}"
+            )
+
         except Exception as e:
             import traceback
             traceback.print_exc()
             state.status = SubAgentStatus.FAILED
-            if hasattr(state, 'result'):
-                state.result.success = False
-                state.result.error = f"Resume failed: {str(e)}"
+            state.result = f"Resume failed: {str(e)}"
             return f"ERROR: Resume fehlgeschlagen: {str(e)}"

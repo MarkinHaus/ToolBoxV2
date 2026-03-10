@@ -306,6 +306,7 @@ def _make_tools(pool: CoderPool, agent: Any, project_root: str, config: dict | N
     """Erzeugt alle 8 FlowAgent tool-dicts. Jedes hat tool_func gesetzt."""
     config = config or {}
     root = os.path.abspath(project_root)
+    flow_agent = agent
 
     # ─── 1. analyze_codebase ──────────────────────────────────
     async def analyze_codebase(files_hint: list[str] | None = None,

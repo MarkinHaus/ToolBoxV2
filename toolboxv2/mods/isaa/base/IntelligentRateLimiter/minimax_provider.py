@@ -206,10 +206,7 @@ class MiniMaxProvider(CustomLLM):
     def _sanitize_messages(self, messages: list, model: str = "") -> List[Dict[str, Any]]:
         """
         Sanitize messages for MiniMax OpenAI-compat endpoint.
-
-        Key fix: MiniMax-M2.1/M2 do NOT support role="system" in messages.
-        We merge system messages into the first user message as a prefix.
-        M2.5 supports system, but merging works universally — so we always merge.
+        Fixes system prompt placement AND enforces strict tool_call sequences.
         """
         system_parts: List[str] = []
         non_system: List[Dict[str, Any]] = []
@@ -235,7 +232,6 @@ class MiniMaxProvider(CustomLLM):
             content = str(content)
 
             if role == "system":
-                # Collect all system messages to merge later
                 if content.strip():
                     system_parts.append(content.strip())
                 continue
@@ -245,7 +241,6 @@ class MiniMaxProvider(CustomLLM):
 
             out: Dict[str, Any] = {"role": role, "content": content}
 
-            # Preserve tool-related fields
             if "tool_calls" in msg and msg["tool_calls"]:
                 out["tool_calls"] = msg["tool_calls"]
             if "tool_call_id" in msg:
@@ -255,28 +250,57 @@ class MiniMaxProvider(CustomLLM):
 
             non_system.append(out)
 
+        # --- FINAL FIX: STRICT MINIMAX SEQUENCE VALIDATION ---
+        # Verhindert MiniMax Error 400 (2013): "tool call result does not follow tool call"
+        strict_messages = []
+        for m in non_system:
+            if m["role"] == "tool":
+                # Finde die letzte Nicht-Tool-Nachricht im geprüften Verlauf
+                last_non_tool = None
+                for sm in reversed(strict_messages):
+                    if sm["role"] != "tool":
+                        last_non_tool = sm
+                        break
+
+                valid = False
+                if last_non_tool and last_non_tool["role"] == "assistant" and "tool_calls" in last_non_tool:
+                    req_id = m.get("tool_call_id")
+                    if req_id:
+                        # Prüfe, ob die Tool-ID zum vorherigen Assistant-Call passt
+                        for tc in last_non_tool["tool_calls"]:
+                            tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                            if tc_id == req_id:
+                                valid = True
+                                break
+
+                if not valid:
+                    # Verwaistes Tool-Ergebnis gefunden! Umwandeln in User-Nachricht.
+                    m["role"] = "user"
+                    m["content"] = f"[System: Extracted Tool Result]\n{m.get('content', '')}"
+                    m.pop("tool_call_id", None)
+                    m.pop("name", None)
+
+            strict_messages.append(m)
+
         # Merge system into first user message
-        if system_parts and non_system:
+        if system_parts and strict_messages:
             system_text = "\n\n".join(system_parts)
-            # Find first user message to prepend system text
-            for i, m in enumerate(non_system):
+            for i, m in enumerate(strict_messages):
                 if m["role"] == "user":
-                    non_system[i]["content"] = (
+                    strict_messages[i]["content"] = (
                         f"[System Instructions]\n{system_text}\n\n[User Message]\n{m['content']}"
                     )
                     break
             else:
-                # No user message found — insert as user message at start
-                non_system.insert(0, {
+                strict_messages.insert(0, {
                     "role": "user",
                     "content": f"[System Instructions]\n{system_text}",
                 })
 
-        # MiniMax requires at least one message
-        if not non_system:
-            non_system = [{"role": "user", "content": "Hello"}]
+        if not strict_messages:
+            strict_messages = [{"role": "user", "content": "Hello"}]
 
-        return non_system
+        return strict_messages
 
     def _build_payload(
         self,
@@ -352,7 +376,7 @@ class MiniMaxProvider(CustomLLM):
 
             # Extract reasoning from <think> blocks before stripping
             reasoning = _extract_think_content(raw_content)
-            content = raw_content
+            content = raw_content if os.getenv("MINIMAX_THINK_CONTENT", "false") == "true" else _strip_think_tags(raw_content)
 
             tc_raw = m.get("tool_calls")
             tc = None

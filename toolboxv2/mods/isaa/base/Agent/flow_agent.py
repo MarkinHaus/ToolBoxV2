@@ -32,6 +32,7 @@ from toolboxv2.mods.isaa.base.Agent.types import (
     AgentModelData,
     DreamConfig,
 )
+from toolboxv2.mods.isaa.base.patch.power_vfs import grep_vfs, search_vfs, find_files
 
 AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
 # Framework imports
@@ -337,7 +338,7 @@ class FlowAgent:
     ):
         self._dreamer = None
         self._vison = {"fast":None, "coplex":None}
-        self.amd = amd
+        self.amd : AgentModelData= amd
         self.verbose = verbose
         self.stream = stream
         self._rule_config_path = rule_config_path
@@ -1755,6 +1756,11 @@ class FlowAgent:
 
             Returns:
                 Dict with file content
+
+            Liest den KOMPLETTEN Dateiinhalt (Notfall-Tool).
+Gibt alle Zeilen als 'content' zurück - SEHR kontext-intensiv bei großen Dateien.
+Nutze stattdessen vfs_read + vfs_view für gezielten Zugriff.
+Nur verwenden wenn du den gesamten Inhalt auf einmal brauchst.
             """
             try:
                 result = session.vfs_read(path)
@@ -1948,7 +1954,12 @@ class FlowAgent:
         # --- Open/Close Operations ---
 
         def vfs_open(path: str, line_start: int = 1, line_end: int = -1) -> dict:
-            """Open a file (make permanent visible in context)."""
+            """Öffnet eine Datei in deinem Kontext (bevorzugter Weg).
+Die Datei wird mit dem angegebenen Zeilenbereich in deinen permanenten
+Kontext aufgenommen - d.h. du siehst diesen Abschnitt in jedem Prompt.
+Gibt eine Vorschau der ersten 5 Zeilen zurück. Nutze dann vfs_view
+zum Scrollen. Parameter: path, line_start=1, line_end=-1.
+WICHTIG: Öffne nur den Bereich der für deine aktuelle Aufgabe relevant ist."""
             try:
                 result = session.vfs_open(path, line_start, line_end)
                 if isinstance(result, dict) and not result.get("success", True):
@@ -1971,15 +1982,12 @@ class FlowAgent:
 
         def vfs_view(path: str, line_start: int = 1, line_end: int = -1) -> dict:
             """
-            View/adjust visible window of an open file.
-
-            Args:
-                path: Path to file
-                line_start: First line to show
-                line_end: Last line to show
-
-            Returns:
-                Dict with visible content
+Scrollt in einer bereits geöffneten Datei (wie Ctrl+F).
+Datei muss vorher mit vfs_read geöffnet worden sein.
+Ändert das sichtbare Fenster - ab dem nächsten Prompt siehst du den neuen Bereich.
+Gibt sofort den Inhalt des neuen Bereichs zurück.
+Parameter: path, line_start, line_end.
+Workflow: vfs_read (öffnen) → vfs_view (scrollen) → vfs_edit (ändern) → vfs_close
             """
             return session.vfs.view(path, line_start, line_end)
 
@@ -2246,90 +2254,23 @@ class FlowAgent:
             return session.vfs.execute(path, args=args, timeout=timeout)
 
         def vfs_grep(
-            pattern: str,
-            path: str = "/",
-            recursive: bool = True,
-            case_sensitive: bool = False,
-        ) -> str:
+    pattern: str,
+    file_pattern: str = "*",
+    path: str = "/",
+    context_lines: int = 0,
+        ) -> list[dict]:
             """
-            Search for a regex pattern in files.
-            Efficiently searches in-memory VFS files and local shadow files.
+Grep-ähnliche Suche im VFS.
+Args:
+    pattern: Regex Pattern für Content
+    file_pattern: Glob für Dateinamen
+    path: Start-Pfad
+    context_lines: Anzahl Kontext-Zeilen
 
-            Args:
-                pattern: Regex pattern to search for
-                path: Root path to start search
-                recursive: Search subdirectories
-                case_sensitive: Respect case (default: False)
+Returns:
+    Liste von Match-Dicts
             """
-            import re
-
-            flags = 0 if case_sensitive else re.IGNORECASE
-            try:
-                regex = re.compile(pattern, flags)
-            except re.error as e:
-                return f"Invalid regex: {e}"
-
-            matches = []
-            files_scanned = 0
-
-            # Normalize path for filtering
-            search_root = path if path.startswith("/") else "/" + path
-            search_root = search_root.rstrip("/") + "/"
-            if search_root == "//":
-                search_root = "/"
-
-            # Get candidate files from VFS registry
-            candidates = []
-            for file_path, file_obj in session.vfs.files.items():
-                if not file_path.startswith(search_root):
-                    continue
-                if not recursive and "/" in file_path[len(search_root) :].strip("/"):
-                    continue
-                candidates.append((file_path, file_obj))
-
-            for f_path, f_obj in candidates:
-                files_scanned += 1
-                content = None
-
-                # Strategy: Get content without fully loading into VFS state if possible (peek)
-                # But for VFSFile, we usually just access what's available.
-
-                # 1. In-Memory or Modified Files
-                if hasattr(f_obj, "_content") and f_obj._content is not None:
-                    content = f_obj._content
-
-                # 2. Shadow Files (on disk)
-                elif hasattr(f_obj, "local_path") and f_obj.local_path:
-                    try:
-                        if os.path.exists(f_obj.local_path):
-                            # Read directly from disk to avoid polluting VFS memory with full loads
-                            # for a simple grep
-                            with open(
-                                f_obj.local_path, "r", encoding="utf-8", errors="ignore"
-                            ) as f:
-                                content = f.read()
-                    except:
-                        continue  # Skip unreadable
-
-                if content:
-                    lines = content.splitlines()
-                    for i, line in enumerate(lines):
-                        if regex.search(line):
-                            matches.append(f"{f_path}:{i + 1}: {line.strip()}")
-                            if len(matches) > 50:  # Cap results
-                                matches.append("... (limit reached)")
-                                break
-                if len(matches) > 50:
-                    break
-
-            if not matches:
-                return f"🔍 No matches found for `{pattern}` in {files_scanned} files."
-
-            return (
-                f"🔍 **Found matches** in {files_scanned} files:\n```\n"
-                + "\n".join(matches)
-                + "\n```"
-            )
+            return grep_vfs(vfs=session.vfs, pattern=pattern,file_pattern=file_pattern,path=path,context_lines=context_lines)
 
         # --- Sharing Tools ---
         def vfs_share_create(vfs_path: str, readonly: bool = False, expires_hours: float = None) -> dict:
@@ -2493,7 +2434,7 @@ class FlowAgent:
         # =========================================================================
         vfs_tools = [
             {"tool_func": vfs_list, "name": "vfs_list", "category": ["vfs", "read"]},
-            {"tool_func": vfs_open, "name": "vfs_read", "category": ["vfs", "read"]},
+            {"tool_func": vfs_read, "name": "vfs_read", "category": ["vfs", "read"]},
             {"tool_func": vfs_create, "name": "vfs_create", "category": ["vfs", "write"]},
             {"tool_func": vfs_write, "name": "vfs_write", "category": ["vfs", "write"]},
             {"tool_func": vfs_edit, "name": "vfs_edit", "category": ["vfs", "write"]},
@@ -2510,7 +2451,7 @@ class FlowAgent:
                 # VFS File Operations
                 # VFS Open/Close
                 {
-                    "tool_func": vfs_read,
+                    "tool_func": vfs_open,
                     "name": "vfs_open",
                     "category": ["vfs", "context"],
                 },
@@ -2530,6 +2471,44 @@ class FlowAgent:
                     "name": "vfs_grep",
                     "category": ["vfs", "search"],
                     "description": "Full-text search (grep) in files using regex. Supports recursion and case sensitivity.",
+                },
+                {
+                    "tool_func": lambda *a:find_files(vfs=session.vfs, *a),
+                    "name": "vfs_find_files",
+                    "category": ["vfs", "search", "files"],
+                    "description": """
+    Findet Dateien per Glob-Pattern.
+
+    Args:
+        pattern: Glob-Pattern (z.B. "*.py", "test_*.js")
+        path: Start-Pfad
+
+    Returns:
+        Liste von Dateipfaden
+    """,
+                },
+                {
+                    "tool_func": lambda *a:search_vfs(vfs=session.vfs, *a),
+                    "name": "vfs_search",
+                    "category": ["vfs", "search"],
+                    "description": """
+    Durchsucht das VFS nach Dateien und Inhalten.
+
+    Args:
+        query: Suchbegriff oder Regex
+        path: Start-Pfad für die Suche
+        mode: FILENAME, CONTENT, oder BOTH
+        case_sensitive: Groß-/Kleinschreibung beachten
+        regex: Query als Regex interpretieren
+        max_results: Maximale Anzahl Ergebnisse
+        file_extensions: Nur diese Extensions (z.B. [".py", ".js"])
+        exclude_patterns: Ausschluss-Patterns (fnmatch)
+        include_content_context: Kontext-Zeilen bei Content-Matches
+        context_lines: Anzahl Kontext-Zeilen
+
+    Returns:
+        Liste von SearchResult
+    """,
                 },
                 {
                     "tool_func": fs_copy_dir_from_vfs,

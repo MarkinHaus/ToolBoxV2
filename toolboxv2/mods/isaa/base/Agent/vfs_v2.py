@@ -1281,7 +1281,7 @@ Session: {self.session_id}
             "file_type": self.files[path].file_type.description,
         }
 
-    def read(self, path: str) -> dict:
+    def read(self, path: str, max_chars: int = 25000) -> dict:
         """
         Read file content with auto-load for shadow files and auto-refresh for system files.
         """
@@ -1308,7 +1308,16 @@ Session: {self.session_id}
             if not load_result["success"]:
                 return load_result
 
-        return {"success": True, "content": f.content}
+        content = f.content
+        if len(content) > max_chars*2.1:
+            return {
+                "success": True,
+                "content": content[:max_chars] + f"\n\n... [TRUNCATED: File is {len(content)} chars. Use 'view' for specific lines] ..." + content[:-max_chars],
+                "truncated": True,
+                "total_chars": len(content)
+            }
+
+        return {"success": True, "content": content}
 
     # =========================================================================
     # OVERRIDE: WRITE WITH AUTO-SYNC
@@ -1342,11 +1351,11 @@ Session: {self.session_id}
                 if mount and mount.auto_sync and f.local_path:
                     sync_result = self._sync_to_local(path)
                     if sync_result["success"]:
-                        f.is_dirty = False
                         return {
                             "success": True,
                             "message": f"Updated and synced '{path}'",
                             "synced_to": f.local_path,
+                            "is_dirty": True
                         }
             else:
                 f.content = content
@@ -1984,6 +1993,7 @@ Session: {self.session_id}
                 lines = f.content.split("\n")
                 end = f.view_end if f.view_end > 0 else len(lines)
                 visible = lines[f.view_start : end]
+                total = len(lines)
 
                 icon = f.file_type.icon if f.file_type else "📄"
 
@@ -1993,11 +2003,11 @@ Session: {self.session_id}
                 if len(visible) > self.max_window_lines:
                     visible = visible[: self.max_window_lines]
                     parts.append(
-                        f"\n{icon} [{path}]{dirty} (lines {f.view_start + 1}-{f.view_start + self.max_window_lines}, truncated):"
+                        f"\n{icon} [{path}]{dirty} (lines {f.view_start + 1}-{f.view_start + self.max_window_lines}, truncated, {total=}):"
                     )
                 else:
                     parts.append(
-                        f"\n{icon} [{path}]{dirty} (lines {f.view_start + 1}-{end}):"
+                        f"\n{icon} [{path}]{dirty} (lines {f.view_start + 1}-{end}, {total=}):"
                     )
                 parts.append("\n".join(visible))
         closed_count = sum(1 for f in self.files.values() if f.state == "closed")

@@ -601,7 +601,7 @@ def load_docs_feature(fm):
         except Exception as e:
             c_print(f"<style fg='ansired'>✗ Failed to enable docs: {e}</style>")
             import traceback
-            traceback.print_exc()
+            c_print(traceback.format_exc())
 
     def disable(agent):
         """Disable documentation system."""
@@ -1618,7 +1618,7 @@ class ISAA_Host:
         except Exception as e:
             print_status(f"Audio processing error: {e}", "error")
             import traceback
-            traceback.print_exc()
+            c_print(traceback.format_exc())
         finally:
             self._was_recording_is_prossesing_audio = False
             self._audio_buffer = []
@@ -2924,10 +2924,10 @@ class ISAA_Host:
 
             # Berechne die Länge des bisherigen Textes
             # (sym + " thinking: " + word + Leerzeichen)
-            text_len = 3 + 10 + len(word) + 1
+            # text_len = 3 + 10 + len(word) + 1
 
             # Füge so viele Leerzeichen hinzu, dass die ganze Zeile gefüllt ist
-            padding = "_" * (20+max(0, cols - text_len))
+            padding = "_" * (20+max(0, cols))
             content.append((f"{bg}", padding))
         except:
             # Falls shutil fehlschlägt, einfach ein langes Stück Leerzeichen
@@ -5362,7 +5362,7 @@ class ISAA_Host:
                         print_status(f"Failed: {result.message}", "error")
                 except Exception as e:
                     print_status(f"Critical: {e}", "error")
-                    import traceback; traceback.print_exc()
+                    import traceback; c_print(traceback.format_exc())
 
             elif action == "diff":
                 try:
@@ -5404,7 +5404,7 @@ class ISAA_Host:
                 except Exception as e:
                     print_status(f"Diff error: {e}", "error")
                     import traceback
-                    traceback.print_exc()
+                    c_print(traceback.format_exc())
 
             elif action == "accept":
                 # /coder accept              → apply all (git merge or copy)
@@ -5524,7 +5524,7 @@ class ISAA_Host:
         except Exception as e:
             print_status(f"Could not access skills for agent '{self.active_agent_name}'", "error")
             import traceback
-            traceback.print_exc()
+            c_print(traceback.format_exc())
             return
 
 
@@ -5752,7 +5752,7 @@ class ISAA_Host:
         except Exception as e:
             print_status(f"Could not access agent '{self.active_agent_name}'", "error")
             import traceback
-            traceback.print_exc()
+            c_print(traceback.format_exc())
             return
 
         self.feature_manager.set_agent(agent)
@@ -6013,10 +6013,12 @@ class ISAA_Host:
         try:
             agent = await self.isaa_tools.get_agent(self.active_agent_name)
             overview = await agent.context_overview(self.active_session_id, f_print=c_print)
+            overview = await agent.context_overview(self.active_session_id)
+            c_print(overview)
         except Exception as e:
             print_status(f"Error: {e}", "error")
             import traceback
-            traceback.print_exc()
+            c_print(traceback.format_exc())
 
     def _launch_agent_bg(self, stream, agent, renderer, query: str, should_speak: bool = False) -> str:
         """Startet Agent-Stream als Background-Task mit Renderer in ZenPlus-Pane."""
@@ -6463,7 +6465,7 @@ class ISAA_Host:
                 import traceback
                 print_status(f"Unexpected Error: {traceback.format_exc()}", "error")
                 import traceback
-                traceback.print_exc()
+                c_print(traceback.format_exc())
 
         # Cleanup
         self._save_state()
@@ -6733,7 +6735,7 @@ async def run(app=None, *args):
         print("Discord integration enabled.")
     except ImportError as e:
         import traceback
-        traceback.print_exc()
+        c_print(traceback.format_exc())
         print(e)
         print("⚠️ Discord integration not available.")
         pass

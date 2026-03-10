@@ -428,7 +428,7 @@ class TestDockerConfig(unittest.TestCase):
         """Test default Docker configuration"""
         config = DockerConfig()
 
-        self.assertEqual(config.base_image, "python:3.12-slim")
+        self.assertEqual(config.base_image, "toolboxv2:latest")
         self.assertEqual(config.workspace_dir, "/workspace")
         self.assertEqual(config.memory_limit, "2g")
 
@@ -538,7 +538,7 @@ class TestDockerVFSMocked(unittest.TestCase):
 
         self.assertIn("config", checkpoint)
         self.assertIn("history", checkpoint)
-        self.assertEqual(checkpoint["config"]["base_image"], "python:3.12-slim")
+        self.assertEqual(checkpoint["config"]["base_image"], "toolboxv2:latest")
 
 
 class TestWebAppDisplay(unittest.TestCase):

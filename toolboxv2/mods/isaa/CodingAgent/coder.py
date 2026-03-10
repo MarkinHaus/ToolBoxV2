@@ -127,8 +127,24 @@ class TokenTracker:
             })
 
         new_history.extend(recent_history)
+        # FIX: Verwaiste Tool-Messages (durch das Abschneiden) umwandeln,
+        # damit die LLM APIs (MiniMax, OpenAI etc.) keinen 400 Error werfen.
+        sanitized_history = []
+        for msg in new_history:
+            if msg.get("role") == "tool":
+                prev = sanitized_history[-1] if sanitized_history else None
+                # Prüfen, ob die Nachricht davor wirklich der Auslöser war
+                if not (prev and prev.get("role") == "assistant" and prev.get("tool_calls")):
+                    # Wenn verwaist, in eine normale User-Nachricht umwandeln
+                    sanitized_history.append({
+                        "role": "user",
+                        "content": f"[Info: Ergebnis aus vorherigem Tool-Aufruf]\n{msg.get('content', '')}"
+                    })
+                    continue
+            sanitized_history.append(msg)
+
         self.compressions_done += 1
-        return new_history
+        return sanitized_history
 
     def usage_ratio(self, messages: List[dict]) -> float:
         self.total_tokens = _count_tokens(messages, self.model)
@@ -990,8 +1006,11 @@ class CoderAgent:
 
             self.worktree.commit(task)
         except Exception as e:
-            logger.error(f"Execute failed: {e}")
-            return CoderResult(False, str(e), [], messages)
+            import traceback
+            error_details = traceback.format_exc()
+            error_msg = f"{str(e)}\n\nTraceback:\n{error_details}"
+            logger.error(f"Execute failed: {error_msg}")
+            return CoderResult(False, error_msg, [], messages)
 
         # Deduplicate
         all_changed_files = list(dict.fromkeys(all_changed_files))
@@ -1107,7 +1126,9 @@ class CoderAgent:
                         for tc in delta_tool_calls:
                             idx = tc.index
                             if idx not in full_tool_calls_json:
-                                full_tool_calls_json[idx] = {"id": tc.id, "name": "", "args": ""}
+                                # FIX: Fallback-ID generieren, falls das LLM im ersten Chunk keine ID schickt
+                                fallback_id = tc.id if tc.id else f"call_{uuid.uuid4().hex[:8]}"
+                                full_tool_calls_json[idx] = {"id": fallback_id, "name": "", "args": ""}
                             if hasattr(tc, "id") and tc.id:
                                 full_tool_calls_json[idx]["id"] = tc.id
                             if hasattr(tc, "function"):
@@ -1220,14 +1241,24 @@ class CoderAgent:
 
                         messages.append({"role": "tool", "tool_call_id": tc_id, "content": res})
                     except Exception as e:
-                        err_msg = f"Fehler: {e}"
-                        # Fallback für ID im Fehlerfall
-                        err_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", "unknown")
+                        err_msg = f"Fehler bei Tool-Ausführung: {e}"
+
+                        # FIX: Garantiere, dass wir die korrekte ID des Assistant-Calls verwenden,
+                        # niemals 'unknown', da MiniMax das sonst strikt ablehnt.
+                        if isinstance(tc, dict):
+                            err_id = tc.get("id")
+                        else:
+                            err_id = getattr(tc, "id", None)
+
+                        if not err_id:
+                            err_id = f"call_{uuid.uuid4().hex[:8]}"
+
                         self._log("TOOL ERROR", err_msg, "red")
                         messages.append({"role": "tool", "tool_call_id": err_id, "content": err_msg})
                 continue
             else:
-                messages.append([{"role": "system", "content":"if you ar done with the task or need information's. write the final msg and [DONE] to exit!"}])
+                messages.append({"role": "system",
+                                 "content": "If you are done with the task or need more information, write the final msg and [DONE] to exit!"})
 
             # ===========================================================
             # FIX 2: Finalizing — mit incomplete block handling
@@ -1829,7 +1860,8 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     async def _main():
-        agent = None
+        from toolboxv2 import get_app
+        agent = await get_app(args.project).get_mod("isaa").get_agent("self")
         coder = CoderAgent(agent, os.path.abspath(args.project),
                            {"model": args.model, "stream": args.stream, "run_tests": args.run_tests,
                             "bash_timeout": args.timeout})

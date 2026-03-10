@@ -2365,7 +2365,8 @@ BEISPIELE:
 
         # 4. Working History RESET
         # Wir behalten den ursprünglichen System-Prompt (Index 0)
-        system_prompt = ctx.working_history[0]
+        system_prompt = ctx.working_history[0] if ctx.working_history else {"role": "system",
+                                                                             "content": self.agent.amd.system_message}
         ctx.working_history = [
             system_prompt,
             {

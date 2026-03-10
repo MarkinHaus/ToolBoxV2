@@ -15,3 +15,7 @@ from .zai_litellm_provider import setup_zai_provider
 provider = setup_zai_provider(debug=False)
 if os.getenv("MINIMAX_API_BASE") and os.getenv("MINIMAX_API_KEY"):
     mm_provider = register_minimax(provider_name="mm", debug=False)
+
+from .inception_litellm_provider import setup_inception_provider
+
+setup_inception_provider()

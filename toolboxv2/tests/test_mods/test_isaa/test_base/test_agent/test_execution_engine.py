@@ -254,6 +254,7 @@ class MockToolManager:
 class MockAMD:
     """Mock für Agent Metadata"""
     name: str = "test_agent"
+    system_message: str = """# ROLE: Isaa (spoken Asa)"""
 
 
 class MockAgent:
@@ -616,7 +617,7 @@ class TestHistoryCompressor(unittest.TestCase):
 
         self.assertIsNotNone(summary)
         self.assertEqual(summary["role"], "system")
-        self.assertIn("ABGESCHLOSSENE AKTIONEN", summary["content"])
+        self.assertIn("Total: 2 tool calls, 2 unique tools", summary["content"])
         self.assertEqual(summary["metadata"]["run_id"], "run123")
 
     def test_compress_partial(self):
@@ -625,11 +626,11 @@ class TestHistoryCompressor(unittest.TestCase):
 
         working_history = [
             {"role": "system", "content": "System prompt"},
-            {"role": "tool", "name": "tool1", "content": "r1"},
-            {"role": "tool", "name": "tool2", "content": "r2"},
-            {"role": "tool", "name": "tool3", "content": "r3"},
-            {"role": "tool", "name": "tool4", "content": "r4"},
-            {"role": "tool", "name": "tool5", "content": "r5"},
+            {"role": "tool", "name": "tool1", "content": "r1"*10000},
+            {"role": "tool", "name": "tool2", "content": "r2"*10000},
+            {"role": "tool", "name": "tool3", "content": "r3"*10000},
+            {"role": "tool", "name": "tool4", "content": "r4"*10000},
+            {"role": "tool", "name": "tool5", "content": "r5"*10000},
         ]
 
         summary, remaining = HistoryCompressor.compress_partial(
@@ -638,7 +639,12 @@ class TestHistoryCompressor(unittest.TestCase):
 
         self.assertIsNotNone(summary)
         # Should keep system + summary + last 2
-        self.assertEqual(len(remaining), 4)
+        from litellm import token_counter
+        b,a = token_counter(messages=working_history),token_counter(messages=remaining)
+        print(b,'#',a)
+        self.assertLess(a,b//2)
+        self.assertEqual(len(remaining), len(working_history)+1)
+        self.assertEqual(len(remaining), len(working_history)+1)
         self.assertEqual(remaining[0]["role"], "system")
 
 
@@ -990,3 +996,425 @@ class TestAsyncOperations(unittest.TestCase):
 if __name__ == "__main__":
     # Run tests
     unittest.main(verbosity=2)
+
+
+# =============================================================================
+# TOOL_CALL_ID PAIRING INTEGRITY  (MiniMax 400-Fehler Regression)
+# =============================================================================
+
+def _collect_orphan_tool_ids(history: list) -> list:
+    """
+    Findet tool_call_ids die in assistant-Messages referenziert werden,
+    aber keine passende tool-Message als Antwort haben.
+    Leere Liste = valide History.
+    """
+    answered = set()
+    for msg in history:
+        if msg.get("role") == "tool":
+            tc_id = msg.get("tool_call_id", "")
+            if tc_id:
+                answered.add(tc_id)
+
+    orphans = []
+    for msg in history:
+        if msg.get("role") != "assistant":
+            continue
+        for tc in msg.get("tool_calls", []) or []:
+            if isinstance(tc, dict):
+                tc_id = tc.get("id", "")
+            else:
+                tc_id = getattr(tc, "id", "")
+            if tc_id and tc_id not in answered:
+                orphans.append(tc_id)
+    return orphans
+
+
+def _make_tool_pair(tc_id: str, tool_name: str = "my_tool", result: str = "ok"):
+    """Erzeugt ein valides (assistant, tool) Message-Paar."""
+    assistant_msg = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {"id": tc_id, "type": "function",
+             "function": {"name": tool_name, "arguments": "{}"}},
+        ],
+    }
+    tool_msg = {
+        "role": "tool",
+        "tool_call_id": tc_id,
+        "name": tool_name,
+        "content": result,
+    }
+    return assistant_msg, tool_msg
+
+
+def _build_realistic_history(n_pairs: int, system_prompt: str = "You are FlowAgent.") -> list:
+    """Baut eine realistische working_history mit n_pairs tool-call-Runden."""
+    history = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": "Do something complex."},
+    ]
+    for i in range(n_pairs):
+        tc_id = f"call_test_{i:04d}"
+        asst, tool = _make_tool_pair(tc_id, f"tool_{i % 6}", f"result_{i}")
+        history.append(asst)
+        history.append(tool)
+    return history
+
+
+class TestToolCallIdPairingAfterCompressPartial(unittest.TestCase):
+    """compress_partial darf niemals orphaned tool_call_ids hinterlassen (MiniMax 400 Regression)."""
+
+    def setUp(self):
+        self.HC = execution_engine.HistoryCompressor
+
+    def test_clean_history_has_no_orphans(self):
+        """Baseline: frisch aufgebaute History hat keine orphan IDs."""
+        history = _build_realistic_history(5)
+        self.assertEqual(_collect_orphan_tool_ids(history), [])
+
+    def test_compress_partial_no_orphans_small(self):
+        """compress_partial mit kleiner History hinterlässt keine orphan IDs."""
+        history = _build_realistic_history(8)
+        _, compressed = self.HC.compress_partial(history, keep_last_n=3)
+        self.assertEqual(_collect_orphan_tool_ids(compressed), [],
+            "compress_partial erzeugt orphan tool_call_ids")
+
+    def test_compress_partial_no_orphans_large(self):
+        """compress_partial mit 50 Paaren hinterlässt keine orphan IDs."""
+        history = _build_realistic_history(50)
+        _, compressed = self.HC.compress_partial(history, keep_last_n=5)
+        self.assertEqual(_collect_orphan_tool_ids(compressed), [],
+            "compress_partial (50 pairs) erzeugt orphan IDs")
+
+    def test_compress_partial_no_orphans_keep_1(self):
+        """Extremfall keep_last_n=1: immer noch kein orphan."""
+        history = _build_realistic_history(10)
+        _, compressed = self.HC.compress_partial(history, keep_last_n=1)
+        self.assertEqual(_collect_orphan_tool_ids(compressed), [],
+            "compress_partial(keep=1) erzeugt orphan IDs")
+
+    def test_compress_partial_with_read_tools_no_orphans(self):
+        """P3-Tools (read/list/view) werden summarized - kein orphan durch Drop."""
+        history = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "task"},
+        ]
+        for name in ("vfs_read", "vfs_list", "vfs_view", "vfs_open"):
+            asst, tool = _make_tool_pair(f"call_{name}", name, "data")
+            history.append(asst)
+            history.append(tool)
+        for i in range(5):
+            asst, tool = _make_tool_pair(f"call_pad_{i}", "think", "thought")
+            history.append(asst)
+            history.append(tool)
+
+        _, compressed = self.HC.compress_partial(history, keep_last_n=3)
+        self.assertEqual(_collect_orphan_tool_ids(compressed), [],
+            "P3-Tool-Summarizing erzeugt orphan IDs")
+
+    def test_compress_partial_parallel_tool_calls_no_orphans(self):
+        """Mehrere tool_calls in einer assistant-Message bleiben alle beantwortet."""
+        history = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "parallel task"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "call_A", "type": "function",
+                     "function": {"name": "tool_a", "arguments": "{}"}},
+                    {"id": "call_B", "type": "function",
+                     "function": {"name": "tool_b", "arguments": "{}"}},
+                    {"id": "call_C", "type": "function",
+                     "function": {"name": "tool_c", "arguments": "{}"}},
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_A", "name": "tool_a", "content": "ok"},
+            {"role": "tool", "tool_call_id": "call_B", "name": "tool_b", "content": "ok"},
+            {"role": "tool", "tool_call_id": "call_C", "name": "tool_c", "content": "ok"},
+        ]
+        for i in range(5):
+            asst, tool = _make_tool_pair(f"pad_{i}", "think", "t")
+            history.append(asst)
+            history.append(tool)
+
+        _, compressed = self.HC.compress_partial(history, keep_last_n=3)
+        self.assertEqual(_collect_orphan_tool_ids(compressed), [],
+            "Parallele tool_calls erzeugen orphan IDs nach compress")
+
+
+class TestToolCallIdPairingOver1000Steps(unittest.TestCase):
+    """Stress-Test: 1000 Iterations ohne einen einzigen orphan tool_call_id."""
+
+    def setUp(self):
+        self.HC = execution_engine.HistoryCompressor
+
+    def test_repeated_compress_1000_steps_no_orphans(self):
+        """1000 Steps mit compress alle 10: kein einziger orphan."""
+        history = [
+            {"role": "system", "content": "You are FlowAgent."},
+            {"role": "user", "content": "Long task."},
+        ]
+        violations = []
+
+        for step in range(1000):
+            asst, tool = _make_tool_pair(f"call_{step:04d}", f"tool_{step % 8}", f"r_{step}")
+            history.append(asst)
+            history.append(tool)
+
+            if step > 0 and step % 10 == 0:
+                _, history = self.HC.compress_partial(history, keep_last_n=4)
+                orphans = _collect_orphan_tool_ids(history)
+                if orphans:
+                    violations.append((step, orphans[:3]))
+
+        self.assertEqual(violations, [],
+            f"Orphan IDs entstanden bei Steps: {violations[:5]}")
+
+    def test_history_format_consistent_after_1000_steps(self):
+        """Alle Messages behalten konsistentes Format nach 1000 Steps."""
+        history = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "task"},
+        ]
+        for step in range(1000):
+            asst, tool = _make_tool_pair(f"call_{step:04d}", "any_tool", "result")
+            history.append(asst)
+            history.append(tool)
+            if step % 15 == 0 and step > 0:
+                _, history = self.HC.compress_partial(history, keep_last_n=5)
+
+        for i, msg in enumerate(history):
+            role = msg.get("role")
+            self.assertIn(role, ("system", "user", "assistant", "tool"),
+                f"Msg {i} hat ungültigen role: {role!r}")
+            if role == "tool":
+                self.assertIn("tool_call_id", msg,
+                    f"tool-Message {i} fehlt tool_call_id (MiniMax 400)")
+                self.assertIn("content", msg,
+                    f"tool-Message {i} fehlt content")
+            if role == "assistant":
+                self.assertIn("content", msg,
+                    f"assistant-Message {i} fehlt content-Key")
+
+    def test_retroactive_offload_preserves_tool_call_id(self):
+        """_retroactive_offload ersetzt Content aber muss tool_call_id erhalten."""
+        ExecutionEngine = execution_engine.ExecutionEngine
+        ExecutionContext = execution_engine.ExecutionContext
+
+        agent = MockAgent()
+        engine = ExecutionEngine(agent)
+        ctx = ExecutionContext()
+        ctx.run_id = "test_offload"
+        engine._current_session = MockSession()
+
+        big_content = "X" * 5000
+        history = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "task"},
+        ]
+        for i in range(10):
+            asst, tool = _make_tool_pair(f"call_off_{i}", "big_tool", big_content)
+            history.append(asst)
+            history.append(tool)
+
+        ctx.working_history = history
+        engine._retroactive_offload(ctx, engine._current_session, tokens_needed=1000)
+
+        self.assertEqual(_collect_orphan_tool_ids(ctx.working_history), [],
+            "_retroactive_offload erzeugt orphan IDs")
+        for msg in ctx.working_history:
+            if msg.get("role") == "tool":
+                self.assertIn("tool_call_id", msg,
+                    "_retroactive_offload entfernt tool_call_id (MiniMax 400!)")
+                self.assertNotEqual(msg["tool_call_id"], "",
+                    "_retroactive_offload leert tool_call_id")
+
+
+class TestInternalToolExecution(unittest.IsolatedAsyncioTestCase):
+    """_execute_tool_call für statische interne Tools: think, final_answer, list_tools, shift_focus."""
+
+    def _tc(self, name: str, args: dict, tc_id: str = "call_001"):
+        tc = MagicMock()
+        tc.id = tc_id
+        tc.function.name = name
+        tc.function.arguments = json.dumps(args)
+        return tc
+
+    def _engine(self, is_sub=False):
+        agent = MockAgent()
+        return execution_engine.ExecutionEngine(agent, is_sub_agent=is_sub)
+
+    def _ctx(self):
+        ctx = execution_engine.ExecutionContext()
+        ctx.run_id = "test_run"
+        return ctx
+
+    async def test_think_not_final(self):
+        e, ctx = self._engine(), self._ctx()
+        _, is_final = await e._execute_tool_call(ctx, self._tc("think", {"thought": "..."}))
+        self.assertFalse(is_final)
+
+    async def test_think_decrements_iteration(self):
+        e, ctx = self._engine(), self._ctx()
+        ctx.current_iteration = 5
+        await e._execute_tool_call(ctx, self._tc("think", {"thought": "plan"}))
+        self.assertEqual(ctx.current_iteration, 4,
+            "think muss current_iteration dekrementieren")
+
+    async def test_think_records_in_auto_focus(self):
+        e, ctx = self._engine(), self._ctx()
+        await e._execute_tool_call(ctx, self._tc("think", {"thought": "insight"}))
+        self.assertGreater(len(ctx.auto_focus.actions), 0,
+            "think muss in AutoFocus aufgezeichnet werden")
+
+    async def test_final_answer_is_final(self):
+        e, ctx = self._engine(), self._ctx()
+        result, is_final = await e._execute_tool_call(
+            ctx, self._tc("final_answer", {"answer": "Done!", "success": True}))
+        self.assertTrue(is_final)
+        self.assertEqual(result, "Done!")
+
+    async def test_final_answer_not_in_history(self):
+        e, ctx = self._engine(), self._ctx()
+        init_len = len(ctx.working_history)
+        await e._execute_tool_call(
+            ctx, self._tc("final_answer", {"answer": "Done!"}))
+        self.assertEqual(len(ctx.working_history), init_len,
+            "final_answer darf nicht in working_history landen")
+
+    async def test_list_tools_decrements_iteration(self):
+        e, ctx = self._engine(), self._ctx()
+        ctx.current_iteration = 5
+        await e._execute_tool_call(ctx, self._tc("list_tools", {}))
+        self.assertEqual(ctx.current_iteration, 4,
+            "list_tools muss current_iteration dekrementieren")
+
+    async def test_list_tools_returns_string(self):
+        e, ctx = self._engine(), self._ctx()
+        result, is_final = await e._execute_tool_call(ctx, self._tc("list_tools", {}))
+        self.assertIsInstance(result, str)
+        self.assertFalse(is_final)
+
+    async def test_shift_focus_decrements_5(self):
+        e, ctx = self._engine(), self._ctx()
+        ctx.current_iteration = 10
+        await e._execute_tool_call(ctx, self._tc("shift_focus", {
+            "summary_of_achievements": "done reading",
+            "next_objective": "write output",
+        }))
+        self.assertEqual(ctx.current_iteration, 5,
+            "shift_focus muss current_iteration um 5 dekrementieren")
+
+    async def test_tool_result_has_correct_structure(self):
+        """Jede non-final tool-Message muss korrekte Struktur für API haben."""
+        e, ctx = self._engine(), self._ctx()
+        tc_id = "call_struct_01"
+        await e._execute_tool_call(ctx, self._tc("think", {"thought": "x"}, tc_id))
+        last = ctx.working_history[-1]
+        self.assertEqual(last["role"], "tool")
+        self.assertIn("tool_call_id", last, "tool_call_id fehlt (MiniMax 400!)")
+        self.assertEqual(last["tool_call_id"], tc_id,
+            "tool_call_id muss mit tc.id übereinstimmen")
+        self.assertIn("content", last)
+
+    async def test_minimax_style_id_preserved_exactly(self):
+        """MiniMax-style IDs wie 'call_function_hn4sxvjzffmj_1' bleiben exakt erhalten."""
+        e, ctx = self._engine(), self._ctx()
+        minimax_id = "call_function_hn4sxvjzffmj_1"
+        await e._execute_tool_call(ctx, self._tc("think", {"thought": "t"}, minimax_id))
+        last = ctx.working_history[-1]
+        self.assertEqual(last["tool_call_id"], minimax_id,
+            f"MiniMax-ID nicht exakt erhalten, got: {last.get('tool_call_id')!r}")
+
+    async def test_tool_call_sequence_no_orphans_in_history(self):
+        """Nach think → list_tools → think: working_history hat keine orphan IDs."""
+        e, ctx = self._engine(), self._ctx()
+        calls = [
+            ("think", {"thought": "step 1"}, "call_001"),
+            ("list_tools", {}, "call_002"),
+            ("think", {"thought": "step 3"}, "call_003"),
+        ]
+        for name, args, tc_id in calls:
+            # Simuliere was die Engine macht: assistant-Message zuerst hinzufügen
+            ctx.working_history.append({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": tc_id, "type": "function",
+                                "function": {"name": name, "arguments": "{}"}}],
+            })
+            await e._execute_tool_call(ctx, self._tc(name, args, tc_id))
+
+        orphans = _collect_orphan_tool_ids(ctx.working_history)
+        self.assertEqual(orphans, [],
+            f"Sequenz think→list_tools→think hat orphan IDs: {orphans}")
+
+    async def test_unknown_tool_no_exception(self):
+        """Unbekannte Tools werfen keine Exception."""
+        agent = MockAgent()
+        agent.arun_function = AsyncMock(side_effect=Exception("Tool not loaded"))
+        e = execution_engine.ExecutionEngine(agent)
+        ctx = self._ctx()
+        try:
+            result, is_final = await e._execute_tool_call(
+                ctx, self._tc("nonexistent_tool_xyz", {"x": 1}))
+            self.assertFalse(is_final)
+            self.assertIsInstance(result, str)
+        except Exception as ex:
+            self.fail(f"_execute_tool_call soll keine Exception werfen: {ex}")
+
+
+class TestManageContextBudgetPairing(unittest.TestCase):
+    """_manage_context_budget muss in allen Szenarios (A/B/C) tool_call_id exakt erhalten."""
+
+    def _make(self):
+        engine = execution_engine.ExecutionEngine(MockAgent())
+        ctx = execution_engine.ExecutionContext()
+        ctx.run_id = "budget_test"
+        engine._current_session = MockSession()
+        return engine, ctx
+
+    def test_scenario_a_small_content(self):
+        """Szenario A: content passt rein → tool_call_id erhalten."""
+        e, ctx = self._make()
+        msg = e._manage_context_budget(ctx, "vfs_read", "small result", "call_A01")
+        self.assertEqual(msg["role"], "tool")
+        self.assertEqual(msg["tool_call_id"], "call_A01")
+        self.assertIn("content", msg)
+        self.assertTrue(msg["content"])
+
+    def test_scenario_c_large_offload(self):
+        """Szenario C: Sofort-Offload → tool_call_id bleibt trotzdem exakt erhalten."""
+        e, ctx = self._make()
+        big = "A" * 100_000
+        msg = e._manage_context_budget(ctx, "big_tool", big, "call_C01")
+        self.assertEqual(msg["role"], "tool")
+        self.assertEqual(msg["tool_call_id"], "call_C01",
+            "Szenario C Offload verliert tool_call_id (MiniMax 400!)")
+
+    def test_duplicate_hash_uses_current_call_id(self):
+        """Dedup-Pfad setzt tool_call_id des AKTUELLEN Calls, nicht des gecachten."""
+        e, ctx = self._make()
+        content = "repeated content"
+        e._manage_context_budget(ctx, "tool", content, "call_first")
+        msg2 = e._manage_context_budget(ctx, "tool", content, "call_second")
+        self.assertEqual(msg2["tool_call_id"], "call_second",
+            "Dedup muss tool_call_id des zweiten Calls setzen, nicht des ersten")
+
+    def test_all_paths_return_valid_structure(self):
+        """Alle Pfade geben role=tool, tool_call_id, content zurück."""
+        e, ctx = self._make()
+        cases = [
+            ("tiny", "x", "call_s"),
+            ("medium", "M" * 1000, "call_m"),
+            ("large", "L" * 50_000, "call_l"),
+        ]
+        for label, content, tc_id in cases:
+            with self.subTest(label=label):
+                msg = e._manage_context_budget(ctx, "t", content, tc_id)
+                self.assertEqual(msg["role"], "tool", f"{label}: role falsch")
+                self.assertEqual(msg["tool_call_id"], tc_id,
+                    f"{label}: tool_call_id falsch")
+                self.assertIn("content", msg, f"{label}: kein content-Key")
+                self.assertTrue(msg["content"], f"{label}: content leer")

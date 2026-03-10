@@ -444,6 +444,8 @@ class MockIPython:
     @staticmethod
     def _parse_code(code: str) -> tuple[Any, Any | None, bool, bool]:
         """Parse code and handle top-level await"""
+        if '\n' not in code and r'\n' in code:
+            code = code.replace(r'\n', '\n')
         code_ = ""
         for line in code.split('\n'):
             if line.strip().startswith('#'):

@@ -194,6 +194,7 @@ class ZAIProvider(CustomLLM):
             )
             self._async_client_loop_id = current_loop_id
 
+        print(self.api_key)
         return self._async_client
 
     # =========================================================================
@@ -1498,7 +1499,7 @@ if __name__ == "__main__":
     print("=" * 60)
 
     # Setup provider with debug enabled
-    provider = setup_zai_provider(debug=False)
+    provider = setup_zai_provider(debug=True)
 
     # Test model
     TEST_MODEL = "zglm/GLM-4.7"

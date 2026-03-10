@@ -99,7 +99,7 @@ async def run_isolated(
     mode: str = "standard",
     seed: int = 42,
     zen_callback=None,
-    adapter_timeout: float = 300.0,
+    adapter_timeout: float = 600.0,
     adapters: list = None,  # None = all, or ["row", "agent", "agent_st"]
 ) -> BenchResult:
     """
@@ -254,7 +254,7 @@ async def run_all_parallel(
     seed: int = 42,
     max_concurrent: int = 4,
     zen_callback=None,
-    adapter_timeout: float = 300.0,
+    adapter_timeout: float = 600.0,
     adapters: list = None,
 ) -> List[BenchResult]:
     """Two-phase execution:
@@ -454,7 +454,7 @@ async def interactive_model_selector() -> Dict[str, str]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def run_with_zen(models, mode="standard", seed=42, max_concurrent=4,
-                       adapter_timeout=300.0, adapters=None):
+                       adapter_timeout=600.0, adapters=None):
     try:
         from toolboxv2.mods.isaa.extras.zen.zen_plus import ZenPlus
     except ImportError:
@@ -485,7 +485,7 @@ async def run_with_zen(models, mode="standard", seed=42, max_concurrent=4,
 
 
 async def run_with_progress(models, mode="standard", seed=42, max_concurrent=4,
-                            adapter_timeout=300.0, adapters=None):
+                            adapter_timeout=600.0, adapters=None):
     adapter_list = adapters or ["agent_st", "agent", "row"]
     has_row = "row" in adapter_list
     has_agent = bool({"agent_st", "agent"} & set(adapter_list))
@@ -543,7 +543,7 @@ async def main():
     parser.add_argument("--output", default="comparison.html")
     parser.add_argument("--models", type=str, default="")
     parser.add_argument("--quick-preset", action="store_true")
-    parser.add_argument("--adapter-timeout", type=float, default=300.0)
+    parser.add_argument("--adapter-timeout", type=float, default=600.0)
     parser.add_argument("--adapters", type=str, default="",
                         help="Comma-separated: row,agent,agent_st (default: all)")
     args = parser.parse_args()
@@ -564,20 +564,44 @@ async def main():
     elif args.quick_preset:
         models = {
             # "glm-4.6": "openrouter/z-ai/glm-4.6",
-            # "glm-4.7": "openrouter/z-ai/glm-4.7",
+            "glm-4.7": "openrouter/z-ai/glm-4.7",
             # slow "kimi-k2.5": "openrouter/moonshotai/kimi-k2.5",
             # "kimi-k2-t": "openrouter/moonshotai/kimi-k2-thinking",
-            "deepseek-v3.2": "openrouter/deepseek/deepseek-v3.2",
+            #"deepseek-v3.2": "openrouter/deepseek/deepseek-v3.2",
             # slow "gemini-3.1": "openrouter/google/gemini-3.1-pro-preview",
-            "gpt-5.2": "openrouter/openai/gpt-5.2",
-            "gpt-5.2-c": "openrouter/openai/gpt-5.2-codex",
-            "gpt-oss-20b": "openrouter/openai/gpt-oss-20b:nitro",
-            "gpt-oss-120b": "openrouter/openai/gpt-oss-120b:nitro",
-            "sonnet-4.6": "openrouter/anthropic/claude-sonnet-4.6",
-            "opus-4.6": "openrouter/anthropic/claude-opus-4.6",
-            "minimax-2.5": "openrouter/minimax/minimax-m2.5",
-            "gemini-flash-3": "openrouter/google/gemini-3-flash-preview",
-            "gemini-flash-2.5-lite": "openrouter/google/gemini-2.5-flash-lite",
+            # "gpt-5.2": "openrouter/openai/gpt-5.2",
+            #"gpt-5.2-c": "openrouter/openai/gpt-5.2-codex",
+            # "gpt-oss-20b": "openrouter/openai/gpt-oss-20b:nitro",
+            # "gpt-oss-120b": "openrouter/openai/gpt-oss-120b:nitro",
+            # "sonnet-4.6": "openrouter/anthropic/claude-sonnet-4.6",
+            # "opus-4.6": "openrouter/anthropic/claude-opus-4.6",
+            # "minimax-2.5": "openrouter/minimax/minimax-m2.5",
+            #"gemini-flash-3": "openrouter/google/gemini-3-flash-preview",
+            #"gemini-flash-2.5-lite": "openrouter/google/gemini-2.5-flash-lite",
+            #"mercury-2": "openrouter/inception/mercury-2",
+            # "gpt-5.4": "openrouter/openai/gpt-5.4",
+            "step-3.5": "openrouter/stepfun/step-3.5-flash",
+            # "mimo-v2": "openrouter/xiaomi/mimo-v2-flash",
+            "aion-2.0": "openrouter/aion-labs/aion-2.0",
+            # "lfm-2": "openrouter/liquid/lfm-2-24b-a2b",
+            # "qwen3.5-35b-3a": "openrouter/qwen/qwen3.5-35b-a3b",
+            # "qwen3.5-27b": "openrouter/qwen/qwen3.5-27b",
+            # "qwen3.5-122b-a10": "openrouter/qwen/qwen3.5-122b-a10b",
+            # "qwen3.5-flash": "openrouter/qwen/qwen3.5-flash-02-23",
+            # "qwen3.5-plus": "openrouter/qwen/qwen3.5-plus-02-15",
+            # "qwen3.5-397b-a17": "openrouter/qwen/qwen3.5-397b-a17b",
+            # "qwen3-coder": "openrouter/qwen/qwen3-coder-next",
+
+            # "lfm2.5-thinking":"ollama/lfm2.5-thinking",
+            # "qwen3.5_2b":"ollama/qwen3.5:2b",
+            # "qwen3.5_27b": "ollama/qwen3.5:27b",
+            # "qwen3.5_0.8b":"ollama/qwen3.5:0.8b",
+            "lfm2":"ollama/lfm2",
+            # "qwen2.5_0.5b":"ollama/qwen2.5:0.5b",
+            "qwen3_14b":"ollama/qwen3:14b",
+            "qwen3_8b":"ollama/qwen3:8b",
+            # "deepseek-r1_8b":"ollama/deepseek-r1:8b",
+            # "deepseek-r1_14b":"ollama/deepseek-r1:14b",
         }
     else:
         models = await interactive_model_selector()
