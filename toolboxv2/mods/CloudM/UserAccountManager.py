@@ -180,11 +180,11 @@ async def update_email(app: App, request: RequestData, new_email: str = None):
                     <p class="tb-text-success tb-text-sm">✓ Gespeichert</p>
                 </div>
             """
-
+        email_value = current_email if current_email != 'Nicht angegeben' else ''
         return f"""
             <div class="tb-space-y-2">
                 <p><strong>Aktuelle E-Mail:</strong> {current_email}</p>
-                <input type="email" name="new_email" value="{current_email if current_email != 'Nicht angegeben' else ''}"
+                <input type="email" name="new_email" value="+"""+email_value+f"""
                        class="tb-input tb-mt-2" placeholder="Neue E-Mail-Adresse">
                 <button data-hx-post="/api/{Name}/update_email"
                         data-hx-include="[name='new_email']"
@@ -248,7 +248,7 @@ async def update_setting(app: App, request: RequestData, setting_key: str, setti
             <label class="tb-label tb-flex tb-items-center tb-cursor-pointer">
                 <input type="checkbox" {is_checked}
                        data-hx-post="/api/{Name}/update_setting"
-                       data-hx-vals='{{"setting_key": "experimental_features", "setting_value": "{next_value}"}}'
+                       data-hx-vals='{{"setting_key": "experimental_features", "setting_value": """"+next_value+""""}}'
                        data-hx-target="closest div"
                        data-hx-swap="innerHTML"
                        class="tb-checkbox tb-mr-2">
@@ -435,6 +435,10 @@ async def get_account_section_html(app: App, request: RequestData):
     exp_features = settings.get('experimental_features', False)
     exp_checked = 'checked' if exp_features else ''
     exp_next = 'false' if exp_features else 'true'
+    profile_section = ""
+    if is_custom_auth:
+        profile_section = '<div><button onclick="window.TB?.router?.navigate(\'/web/scripts/login.html#profile\')" class="tb-btn tb-btn-secondary">Profil-Einstellungen öffnen</button></div>'
+
 
     return f"""
         <div class="tb-card tb-p-4">
@@ -449,7 +453,7 @@ async def get_account_section_html(app: App, request: RequestData):
                 </div>
 
                 <!-- Profil-Button -->
-                {'<div><button onclick="window.TB?.router?.navigate(\'/web/scripts/login.html#profile\')" class="tb-btn tb-btn-secondary">Profil-Einstellungen öffnen</button></div>' if is_custom_auth else ''}
+                {profile_section}
 
                 <!-- App-Einstellungen -->
                 <div class="tb-border-t tb-pt-4">

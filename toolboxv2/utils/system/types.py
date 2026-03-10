@@ -1932,7 +1932,7 @@ class AppType:
         try:
             response = await self.session.fetch("https://api64.ipify.org?format=json").json()
             self.ip = response["ip"]
-            response = await self.session.fetch(f"https://ipapi.co/{response["ip"]}/json/").json()
+            response = await self.session.fetch(f"https://ipapi.co/{response['ip']}/json/").json()
             self.location = response
         except Exception as e:
 
