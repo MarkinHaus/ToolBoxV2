@@ -938,7 +938,7 @@ def setup_logging(
     is_online: bool = False,
     file_level: Optional[int] = None,
     interminal: bool = False,
-    logs_directory: str = "../logs",
+    logs_directory: str|None = None,
     app_name: str = "main",
 ) -> Tuple[logging.Logger, str]:
     """
@@ -955,6 +955,10 @@ def setup_logging(
         (logger, log_filename)
     """
     global loggerNameOfToolboxv2, _app_id
+
+    if logs_directory is None:
+        from toolboxv2 import tb_root_dir
+        logs_directory = str(tb_root_dir.parent / "logs")
 
     if not online_level:
         online_level = level

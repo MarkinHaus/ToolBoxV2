@@ -39,7 +39,7 @@ try:
         TelegramTransport, TelegramConfig, TelegramOutputRouter,
         create_telegram_transport
     )
-except ImportError:
+except ImportError and AttributeError:
     print("pip install discord.py")
     print("pip install python-telegram-bot")
     DiscordTransport = None

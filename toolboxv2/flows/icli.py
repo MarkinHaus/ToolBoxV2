@@ -21,6 +21,7 @@ import os
 import random
 import shutil
 import subprocess
+import threading
 import time
 import time as _time
 import uuid
@@ -28,8 +29,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+import requests
 from prompt_toolkit.document import Document
 
+from toolboxv2.mods.isaa.extras.isaa_branding import get_greeting
 from toolboxv2.mods.isaa.extras.zen.zen_plus import ZenPlus
 
 # Suppress noisy loggers
@@ -40,6 +43,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 from prompt_toolkit import PromptSession, ANSI
 from prompt_toolkit.completion import FuzzyCompleter, NestedCompleter, PathCompleter, Completer, \
     Completion
+from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -73,27 +77,159 @@ import sys
 if sys.platform == "win32":
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+    # sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 # =================== Helpers & Setup ===================
 MODEL_MAPPING = {
-    "gemini-3-flash": "openrouter/google/gemini-3-flash-preview",
-    "deepseek-v3.2": "openrouter/deepseek/deepseek-v3.2",
-    "kimi-k2.5": "openrouter/moonshotai/kimi-k2.5",
+
+    # -------------------------------------------------
+    # OpenAI
+    # -------------------------------------------------
     "gpt-oss-120bF": "openrouter/openai/gpt-oss-120b:free",
     "gpt-oss-120b": "openrouter/openai/gpt-oss-120b",
-    "mistral-14b": "openrouter/mistralai/ministral-14b-2512",
-    "devstral": "openrouter/mistralai/devstral-2512",
+    "gpt-oss-20b": "openrouter/openai/gpt-oss-20b:nitro",
+    "gpt-5.2": "openrouter/openai/gpt-5.2",
+    "gpt-5.2-c": "openrouter/openai/gpt-5.2-codex",
+    "gpt-5.4": "openrouter/openai/gpt-5.4",
     "gpt-oss-safeguard-20b": "openrouter/openai/gpt-oss-safeguard-20b",
-    "nemotron-3": "openrouter/nvidia/nemotron-3-nano-30b-a3b",
-    "minimax-m2.1": "openrouter/minimax/minimax-m2.1",
+
+    # -------------------------------------------------
+    # Google Gemini
+    # -------------------------------------------------
+    "gemini-3-flash": "openrouter/google/gemini-3-flash-preview",
+    "gemini-3.1": "openrouter/google/gemini-3.1-pro-preview",
+    "gemini-flash-3": "openrouter/google/gemini-3-flash-preview",
+    "gemini-flash-3.1": "openrouter/google/gemini-3.1-flash-lite-preview",
+    "gemini-flash-2.5-lite": "openrouter/google/gemini-2.5-flash-lite",
+
+    # -------------------------------------------------
+    # DeepSeek
+    # -------------------------------------------------
+    "deepseek-v3.2": "openrouter/deepseek/deepseek-v3.2",
+
+    # -------------------------------------------------
+    # Moonshot AI
+    # -------------------------------------------------
+    "kimi-k2.5": "openrouter/moonshotai/kimi-k2.5",
+    "kimi-k2-thinking": "openrouter/moonshotai/kimi-k2-thinking",
+
+    # -------------------------------------------------
+    # Anthropic
+    # -------------------------------------------------
+    "sonnet-4.6": "openrouter/anthropic/claude-sonnet-4.6",
+    "opus-4.6": "openrouter/anthropic/claude-opus-4.6",
+
+    # -------------------------------------------------
+    # Z-AI (GLM Models)
+    # -------------------------------------------------
+    "glm-4.5f": "openrouter/z-ai/glm-4.5-air:free",
+    "glm-4.6": "openrouter/z-ai/glm-4.6",
+    "glm-4.6v": "openrouter/z-ai/glm-4.6v",
     "glm-4.7-flash": "openrouter/z-ai/glm-4.7-flash",
     "glm-4.7": "openrouter/z-ai/glm-4.7",
-    "glm-4.6v": "openrouter/z-ai/glm-4.6v",
-    "glm-4.5f": "openrouter/z-ai/glm-4.5-air:free",
+    "glm-5": "openrouter/z-ai/glm-5",
+
+    # -------------------------------------------------
+    # MiniMax
+    # -------------------------------------------------
+    "minimax-m2.1": "openrouter/minimax/minimax-m2.1",
+    "minimax-2.5": "openrouter/minimax/minimax-m2.5",
+
+    # -------------------------------------------------
+    # NVIDIA
+    # -------------------------------------------------
+    "nemotron-3": "openrouter/nvidia/nemotron-3-nano-30b-a3b",
+
+    # -------------------------------------------------
+    # Mistral
+    # -------------------------------------------------
+    "mistral-14b": "openrouter/mistralai/ministral-14b-2512",
+    "devstral": "openrouter/mistralai/devstral-2512",
+
+    # -------------------------------------------------
+    # StepFun
+    # -------------------------------------------------
     "step-3.5-flash": "openrouter/stepfun/step-3.5-flash:free",
+    "step-3.5": "openrouter/stepfun/step-3.5-flash",
+
+    # -------------------------------------------------
+    # Arcee
+    # -------------------------------------------------
     "trinity-large": "openrouter/arcee-ai/trinity-large-preview:free",
+
+    # -------------------------------------------------
+    # Inception (Custom Provider)
+    # -------------------------------------------------
+    "mercury-2": "openrouter/inception/mercury-2",
+
+    # -------------------------------------------------
+    # Qwen (OpenRouter)
+    # -------------------------------------------------
+    "qwen3-coder": "openrouter/qwen/qwen3-coder-next",
+    "qwen3.5-27b": "openrouter/qwen/qwen3.5-27b",
+    "qwen3.5-35b-3a": "openrouter/qwen/qwen3.5-35b-a3b",
+    "qwen3.5-122b-a10": "openrouter/qwen/qwen3.5-122b-a10b",
+    "qwen3.5-397b-a17": "openrouter/qwen/qwen3.5-397b-a17b",
+    "qwen3.5-flash": "openrouter/qwen/qwen3.5-flash-02-23",
+    "qwen3.5-plus": "openrouter/qwen/qwen3.5-plus-02-15",
+
+    "lfm2": "ollama/lfm2",
+    "lfm2.5-thinking": "ollama/lfm2.5-thinking",
+
+    "qwen2.5_0.5b": "ollama/qwen2.5:0.5b",
+
+    "qwen3_8b": "ollama/qwen3:8b",
+    "qwen3_14b": "ollama/qwen3:14b",
+
+    "qwen3.5_0.8b": "ollama/qwen3.5:0.8b",
+    "qwen3.5_2b": "ollama/qwen3.5:2b",
+    "qwen3.5_27b": "ollama/qwen3.5:27b",
+
+    "deepseek-r1_8b": "ollama/deepseek-r1:8b",
+    "deepseek-r1_14b": "ollama/deepseek-r1:14b",
 }
+
+
+def load_gateway_models():
+    try:
+        from toolboxv2.mods.isaa.base.IntelligentRateLimiter import gateway
+        models = gateway.get_available_models()
+
+        for m in models:
+            MODEL_MAPPING[m] = f"gateway/{m}"
+
+    except Exception:
+        pass
+    MODEL_MAPPING.update(fetch_openrouter_models())
+def fetch_openrouter_models():
+
+    try:
+
+        r = requests.get(
+            "https://openrouter.ai/api/v1/models",
+            timeout=10
+        )
+
+        data = r.json()
+
+        return {
+            m["id"]: f"openrouter/{m['id']}"
+            for m in data["data"]
+        }
+
+    except Exception:
+        return {}
+
+
+def start_gateway_loader():
+    thread = threading.Thread(
+        target=load_gateway_models,
+        daemon=True
+    )
+    thread.start()
+
+start_gateway_loader()
+
 class PTColors:
     """Farb-Mapping für Prompt Toolkit HTML"""
     GREY = 'gray'
@@ -536,7 +672,7 @@ def load_docs_feature(fm):
             system = DocsSystem(
                 project_root=project_root,
                 docs_root=docs_dir,
-                include_dirs=["toolboxv2", "flows", "mods", "utils", "docs"]
+                include_dirs=["toolboxv2", "flows", "mods", "utils", "docs", "src"]
             )
 
             # Initialize (load existing index or build new one)
@@ -2906,6 +3042,8 @@ class ISAA_Host:
             ]
             content.extend(self._get_keybinding_indicator_ansi())
         else:
+            if self.idle_hint == "Done":
+                self.idle_hint = get_greeting('en')
             self.set_dynamic_interval(1)
             # IDLE: Dezent
             syms = ["◦", "∙", " "]
@@ -5252,7 +5390,8 @@ class ISAA_Host:
                     print_box_content(line, "")
                 print_box_footer()
             except Exception as e:
-                print_status(f"Failed to start coder: {e}", "error")
+                import traceback
+                print_status(f"Failed to start coder: {e} {traceback.format_exc()}", "error")
         elif action == "stream":
             if len(args) < 2:
                 c_print("/coder stream on or off")
@@ -6409,6 +6548,7 @@ class ISAA_Host:
         dict_coplet, vfs_cplet = self._build_completer()
         self.prompt_session = PromptSession(
             history=self.history,
+            auto_suggest=AutoSuggestFromHistory(),
             completer=SmartCompleter(
                 nested_dict=dict_coplet, vfs_completer=vfs_cplet
             ),

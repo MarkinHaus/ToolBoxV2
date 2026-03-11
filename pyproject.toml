@@ -61,7 +61,6 @@ dependencies = [
     "pytz>=2025.2",
     "python-dateutil>=2.9.0.post0",
     "starlette>=0.47.3",
-    "urllib3>=2.5.0",
     "psutil>=7.0.0",
     "dill>=0.3.8",
     "icalendar>=6.3.1",

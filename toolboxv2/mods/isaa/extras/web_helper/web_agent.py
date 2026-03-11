@@ -32,10 +32,12 @@ try:
     from playwright.async_api import async_playwright
 except ImportError:
     os.system("pip install playwright && playwright install chromium")
-    from playwright.async_api import (
-        Browser as ABrowser, BrowserContext as ABrowserContext,
-        Page as APage, Playwright as APlaywright, async_playwright
-    )
+    ABrowser = None
+    ABrowserContext = None
+    APage = None
+    APlaywright = None
+    async_playwright = None
+
 
 
 # ============================================================================

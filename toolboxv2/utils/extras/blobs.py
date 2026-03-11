@@ -477,13 +477,14 @@ class BlobStorage:
         cloud_access_key: Optional[str] = None,
         cloud_secret_key: Optional[str] = None,
         # Local storage
-        storage_directory: str = "./.data/blob_cache",
+        storage_directory: str|None = None,
         # User settings
         user_id: Optional[str] = None,
         encryption_key: Optional[bytes] = None,
         # Options
         auto_sync: bool = True,
         bucket: str = DEFAULT_BUCKET,
+        **kwargs,
     ):
         """
         Initialize BlobStorage.
@@ -512,6 +513,9 @@ class BlobStorage:
 
         self.mode = mode
         self.bucket = bucket
+        if storage_directory is None:
+            from toolboxv2 import tb_root_dir
+            storage_directory = str(tb_root_dir / ".data" /"blob_cache")
         self.storage_directory = os.path.expanduser(storage_directory)
         self.user_id = user_id or self._get_default_user_id()
         self.auto_sync = auto_sync

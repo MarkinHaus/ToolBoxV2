@@ -157,7 +157,6 @@ class ZenRendererV2:
     def _stop_footer_anim(self):
         """Stoppt die Animation und löscht den Footer."""
         self._anim_stop.set()
-        self._clear_footer()
 
     def _anim_loop(self):
         if self._anim_stop.wait(0.2):
@@ -284,10 +283,10 @@ class ZenRendererV2:
             try:
                 from prompt_toolkit.output import create_output
                 out = create_output(sys.stderr)
-                out.write_raw('\r\x1b')
+                out.write_raw('\r\x1b[K')
                 out.flush()
             except Exception:
-                sys.stderr.write('\r\x1b')
+                sys.stderr.write('\r\x1b[K')
                 sys.stderr.flush()
             self._footer_active = False
 
@@ -1208,7 +1207,6 @@ class ZenRendererV2:
 
     def _print(self, html_str: str, end="\n", **k):
         import re
-        self._clear_footer()
 
         # Nicht in ZenPlus direkt printen
         if self._zen_plus and self._zen_plus.active:

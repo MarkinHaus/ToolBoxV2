@@ -4,10 +4,6 @@ from dataclasses import dataclass
 from platform import system
 from typing import Any
 
-from langchain_community.agent_toolkits.load_tools import (
-    load_huggingface_tool,
-    load_tools,
-)
 from langchain_core.tools import BaseTool
 
 
@@ -66,6 +62,10 @@ def functions_to_llm_functions(functions: list):
 
 
 def crate_llm_function_from_langchain_tools(tool: str or BaseTool or list[str], hf=False) -> list[LLMFunction]:
+    from langchain_community.agent_toolkits.load_tools import (
+        load_huggingface_tool,
+        load_tools,
+    )
     if isinstance(tool, BaseTool):
         return [LLMFunction(name=tool.name, description=tool.description, parameters=tool.args, function=tool)]
 

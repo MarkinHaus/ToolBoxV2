@@ -40,11 +40,11 @@ jobs:
         run: |
           echo "=== Testing Feature Pack System ==="
           python build_package.py
-          
+
           echo ""
           echo "=== Verifying Package Structure ==="
           python build_package.py --verify
-          
+
           echo ""
           echo "=== Feature ZIPs Created ==="
           ls -la toolboxv2/features_packed/
@@ -53,11 +53,11 @@ jobs:
         run: |
           echo "=== Building Package ==="
           python -m build --outdir dist
-          
+
           echo ""
           echo "=== Built Packages ==="
           ls -la dist/
-          
+
           echo ""
           echo "=== Verifying Package Contains Feature ZIPs ==="
           WHEEL=$(ls dist/*.whl | head -1)
@@ -347,7 +347,8 @@ jobs:
               uses: Nuitka/Nuitka-Action@main
               with:
                   nuitka-version: main
-                  script-name: toolboxv2/__main__.py
+                  script-name: toolboxv2
+                  python-flag: -m
                   # FIX: Use mode=onefile for single binary (don't combine with onefile: true)
                   # Options: 'onefile', 'standalone', 'app', 'module'
                   mode: onefile

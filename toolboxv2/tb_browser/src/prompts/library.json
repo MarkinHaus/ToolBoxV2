@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "last_sync": null,
+  "prompts": {
+    "tb_agent_context": {
+      "id": "tb_agent_context",
+      "label": "TB Agent Context",
+      "description": "Fügt ToolBoxV2-Kontext ein",
+      "type": "preprompt",
+      "auto_prepend": false,
+      "content": "Context: ToolBoxV2 modular IT infrastructure project. Stack: Python/Rust/JS/TB-lang. Architecture: Agent-based, ISAA module. Philosophy: 50 lines > 500, minimal & production-ready. No em dashes in output. Tests: unittest only.",
+      "tags": ["agent", "toolbox", "context"],
+      "pinned": true
+    },
+    "tb_agent_internal": {
+      "id": "tb_agent_internal",
+      "label": "TB Interner Agent",
+      "description": "System-Kontext für den TB-internen Agenten",
+      "type": "system",
+      "content": "Du bist der interne ToolBoxV2-Agent. Antworte präzise, nutze das TB-Ökosystem (ISAA, FlowAgent, ExecutionEngine V3). Keine Erklärungen die nicht angefragt wurden.",
+      "tags": ["agent", "system", "toolbox"],
+      "pinned": true
+    },
+    "system_prompt_mode": {
+      "id": "system_prompt_mode",
+      "label": "System Prompt Mode",
+      "description": "Für AI Studio System-Prompt Feld",
+      "type": "system",
+      "content": "You are a precise assistant. Be concise. No filler. Answer directly.",
+      "tags": ["system", "ai_studio"]
+    },
+    "glm_context": {
+      "id": "glm_context",
+      "label": "GLM Context",
+      "type": "preprompt",
+      "content": "请精确回答，不要废话。",
+      "tags": ["glm", "system"]
+    },
+    "code_review_de": {
+      "id": "code_review_de",
+      "label": "Code Review (DE)",
+      "description": "Kurzes Code Review auf Deutsch",
+      "type": "task",
+      "shortcut": "cr",
+      "content": "Analysiere diesen Code. Fokus: Bugs, Performance, Lesbarkeit. Halte dich kurz, Stichpunkte reichen.",
+      "tags": ["code", "review", "de"]
+    },
+    "code_review_en": {
+      "id": "code_review_en",
+      "label": "Code Review (EN)",
+      "type": "task",
+      "shortcut": "cre",
+      "content": "Review this code. Focus: bugs, performance, readability. Be concise.",
+      "tags": ["code", "review", "en"]
+    },
+    "refactor_50": {
+      "id": "refactor_50",
+      "label": "Refactor: 50-line Style",
+      "type": "task",
+      "content": "Refactor this to be minimal and production-ready. Target: under 50 lines if possible. No verbose comments, no defensive bloat.",
+      "tags": ["code", "refactor"]
+    },
+    "explain_de": {
+      "id": "explain_de",
+      "label": "Erkläre kurz",
+      "type": "task",
+      "shortcut": "ek",
+      "content": "Erkläre das kurz und präzise. Keine langen Einleitungen.",
+      "tags": ["explain", "de"]
+    },
+    "debug_trace": {
+      "id": "debug_trace",
+      "label": "Debug Trace",
+      "type": "task",
+      "content": "Find the bug. Show only: (1) root cause (2) fix. No explanation of what the code does.",
+      "tags": ["debug", "code"]
+    },
+    "agent_task": {
+      "id": "agent_task",
+      "label": "Agent Task Format",
+      "type": "task",
+      "content": "Execute this as a step-by-step agent task. After each step output: DONE / FAIL / NEEDS_INPUT. Stop on FAIL.",
+      "tags": ["agent", "task"]
+    },
+    "analyze_arch": {
+      "id": "analyze_arch",
+      "label": "Architecture Analysis",
+      "type": "task",
+      "content": "Analyze this architecture/design. Output: strengths, weaknesses, concrete improvement suggestions (max 5 each).",
+      "tags": ["analysis", "architecture"]
+    },
+    "translate_de_en": {
+      "id": "translate_de_en",
+      "label": "DE → EN",
+      "type": "task",
+      "shortcut": "tde",
+      "content": "Translate to English. Keep technical terms. Natural tone.",
+      "tags": ["translate", "de", "en"]
+    },
+    "summarize": {
+      "id": "summarize",
+      "label": "Zusammenfassen",
+      "type": "task",
+      "shortcut": "sum",
+      "content": "Fasse zusammen in 3-5 Stichpunkten. Kernaussagen only.",
+      "tags": ["summary", "de"]
+    }
+  },
+  "category_map": {
+    "claude_chat": ["tb_agent_context", "code_review_de", "refactor_50", "debug_trace", "explain_de", "analyze_arch"],
+    "gemini_chat": ["explain_de", "summarize", "translate_de_en", "code_review_en"],
+    "ai_studio": ["system_prompt_mode", "agent_task", "analyze_arch"],
+    "glm_chat": ["glm_context", "explain_de"],
+    "minimax_chat": ["explain_de", "summarize"],
+    "tb_local": ["tb_agent_internal", "tb_agent_context", "agent_task", "debug_trace"],
+    "openai_chat": ["code_review_en", "refactor_50", "debug_trace", "agent_task"],
+    "search_ai": ["summarize", "analyze_arch"],
+    "_default": ["explain_de", "code_review_de", "summarize"]
+  }
+}

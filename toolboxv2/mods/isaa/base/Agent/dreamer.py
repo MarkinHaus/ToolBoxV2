@@ -461,7 +461,10 @@ class Dreamer:
                         })
 
             if config.do_persona_evolve:
-                self._evolve_persona_from_analysis(analysis, records)
+                await self._evolve_persona_from_analysis(analysis, records, report)
+
+        if config.do_persona_evolve:
+            await self._prune_learned_personas(report)
 
         return state
 
@@ -946,22 +949,154 @@ class Dreamer:
     # PERSONA EVOLUTION
     # =========================================================================
 
-    def _evolve_persona_from_analysis(self, analysis: ClusterAnalysis, records: list[RunRecord]):
-        """Adjust agent persona config based on observed patterns."""
-        persona = getattr(self.agent.amd, 'persona', None)
-        if not persona:
+    _VFS_PERSONAS = "/.memory/dreamer/personas.json"
+
+    async def _evolve_persona_from_analysis(
+        self, analysis: ClusterAnalysis, records: list[RunRecord], report: DreamReport
+    ):
+        """
+        Use internal agent LLM to derive/update a learned PersonaProfile.
+        Writes to VFS (persistent). Builtins are never touched.
+        """
+        # Gate: not enough signal to build a reliable persona
+        if not analysis.dominant_intent or analysis.success_ratio < 0.3 or len(records) < 2:
             return
 
-        if not hasattr(persona, '_dream_insights'):
-            persona._dream_insights = {}
+        store = await self._load_persona_store()
+        key = "learned_" + re.sub(r"\W+", "_", analysis.dominant_intent[:25]).lower().strip("_")
 
-        intent_key = analysis.dominant_intent[:30]
-        persona._dream_insights[intent_key] = {
-            "success_ratio": analysis.success_ratio,
-            "common_tools": list(set(t for r in records for t in r.tools_used[:3])),
-            "failure_hints": analysis.failure_patterns[:2],
-            "updated": datetime.now().isoformat(),
-        }
+        prompt = self._build_persona_prompt(analysis, records)
+        try:
+            response = await self.agent.a_run_llm_completion(
+                messages=[{"role": "user", "content": prompt}],
+                model_preference="fast",
+                max_tokens=300,
+                temperature=0.1,
+                stream=False,
+            )
+            self._budget_used += (len(prompt) + len(response)) // 4
+        except Exception as e:
+            _log.debug(f"[Dreamer] Persona LLM failed for '{key}': {e}")
+            return
+
+        try:
+            clean = response.strip()
+            if clean.startswith("```"):
+                clean = "\n".join(clean.split("\n")[1:])
+            if clean.endswith("```"):
+                clean = "\n".join(clean.split("\n")[:-1])
+            profile_data = json.loads(clean)
+        except Exception as e:
+            _log.debug(f"[Dreamer] Persona parse failed: {e}")
+            return
+
+        # Validate required fields
+        required = {"name", "prompt_modifier", "model_preference", "temperature",
+                    "max_iterations_factor", "verification_level"}
+        if not required.issubset(profile_data.keys()):
+            _log.debug(f"[Dreamer] Persona JSON incomplete: {set(profile_data.keys())}")
+            return
+
+        evidence = len(records)
+        if key in store:
+            ex = store[key]
+            total_ev = ex.get("evidence_count", 0) + evidence
+            weight = min(0.5, evidence / max(total_ev, 1))
+            new_conf = ex.get("confidence", 0.5) * (1 - weight) + analysis.success_ratio * weight
+            ex["confidence"] = round(min(1.0, new_conf), 4)
+            ex["evidence_count"] = total_ev
+            ex["profile"] = profile_data
+            ex["dream_cycles"] = ex.get("dream_cycles", 0) + 1
+        else:
+            store[key] = {
+                "profile": profile_data,
+                "confidence": round(min(0.5, analysis.success_ratio), 4),
+                "evidence_count": evidence,
+                "dream_cycles": 1,
+                "created": datetime.now().isoformat(),
+            }
+
+        await self._persist_persona_store(store)
+        report.personas_evolved.append(key)
+        _log.info(f"[Dreamer] Persona '{key}' evolved "
+                  f"(conf={store[key]['confidence']:.2f}, ev={store[key]['evidence_count']})")
+
+    def _build_persona_prompt(self, analysis: ClusterAnalysis, records: list[RunRecord]) -> str:
+        tools_sample = ", ".join(
+            dict.fromkeys(t for r in records for t in r.tools_used if t not in ("think","final_answer"))
+        )[:200]
+        return f"""Du bist ein Agent-Konfigurations-Experte. Analysiere diese Cluster-Daten und leite ein optimales PersonaProfile ab.
+
+DOMINANT INTENT: {analysis.dominant_intent}
+SUCCESS RATIO: {analysis.success_ratio:.0%} ({len(records)} runs)
+SUCCESS PATTERN: {analysis.success_pattern[:300]}
+FAILURE PATTERNS: {"; ".join(analysis.failure_patterns[:3]) or "Keine"}
+TOOLS GENUTZT: {tools_sample or "keine"}
+
+Erstelle ein JSON PersonaProfile mit exakt diesen Feldern:
+{{
+  "name": "snake_case_name (max 30 chars, englisch)",
+  "prompt_modifier": "\nPERSONA: Name\n- Konkrete Verhaltensregel 1\n- Regel 2\n- Regel 3",
+  "model_preference": "fast" oder "complex",
+  "temperature": 0.0 bis 1.0,
+  "max_iterations_factor": 0.5 bis 2.0,
+  "verification_level": "none" oder "basic" oder "strict"
+}}
+
+Antworte NUR mit dem JSON-Objekt, kein Markdown."""
+
+    async def _prune_learned_personas(self, report: DreamReport):
+        """
+        Remove learned personas that are provably bad or permanently unused.
+        Pruning criteria (OR):
+          - confidence < 0.25 after >= 5 evidence records  (proven bad)
+          - 0 usage reflected in >= 3 dream cycles         (never routed to)
+        Builtins are never in the store, so never pruned.
+        """
+        store = await self._load_persona_store()
+        pruned = []
+        for key, entry in list(store.items()):
+            conf = entry.get("confidence", 1.0)
+            ev   = entry.get("evidence_count", 0)
+            cyc  = entry.get("dream_cycles", 0)
+            # Criterion 1: bad confidence with enough evidence
+            if conf < 0.25 and ev >= 5:
+                del store[key]
+                pruned.append(key)
+                _log.info(f"[Dreamer] Pruned persona '{key}' — bad confidence "
+                          f"(conf={conf:.2f}, ev={ev})")
+                continue
+            # Criterion 2: router never selected it despite multiple cycles
+            # (usage_count absent = 0; only bumped by load_learned_personas hit)
+            usage = entry.get("usage_count", 0)
+            if usage == 0 and cyc >= 3:
+                del store[key]
+                pruned.append(key)
+                _log.info(f"[Dreamer] Pruned persona '{key}' — never used "
+                          f"(cycles={cyc})")
+        if pruned:
+            await self._persist_persona_store(store)
+            report.personas_evolved.extend(f"pruned:{k}" for k in pruned)
+
+    async def _load_persona_store(self) -> dict:
+        """Read /.memory/dreamer/personas.json from VFS."""
+        try:
+            session = await self._get_session()
+            result = session.vfs_read(self._VFS_PERSONAS)
+            if result.get("success"):
+                return json.loads(result["content"])
+        except Exception:
+            pass
+        return {}
+
+    async def _persist_persona_store(self, store: dict):
+        """Write personas.json to VFS (persistent)."""
+        try:
+            session = await self._get_session()
+            session.vfs.mkdir("/.memory/dreamer", parents=True)
+            session.vfs.write(self._VFS_PERSONAS, json.dumps(store, indent=2))
+        except Exception as e:
+            _log.warning(f"[Dreamer] Failed to persist personas: {e}")
 
     # =========================================================================
     # HELPERS

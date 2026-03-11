@@ -106,7 +106,8 @@ def cls():
 
 def text_save(function):
     def deco(text):
-        text = str(text).encode(sys.stdout.encoding or 'utf-8', 'replace').decode(sys.stdout.encoding or 'utf-8')
+        enco = (sys.stdout.encoding if sys.stdout and hasattr(sys.stdout, "encoding") else 'utf-8') or 'utf-8'
+        text = str(text).encode(enco, 'replace').decode(enco)
         return function(text)
     return deco
 

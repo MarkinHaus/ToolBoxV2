@@ -17,7 +17,9 @@ Compression Triggers:
 Author: FlowAgent V3
 """
 
+import dataclasses
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -28,13 +30,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, Coroutine
 
-from litellm.types.utils import (
-    ChatCompletionMessageToolCall,
-    Function,
-    ModelResponseStream,
-)
 
-from toolboxv2 import get_app
+from toolboxv2 import get_app, get_logger
 
 # Import Live State Management
 from toolboxv2.mods.isaa.base.Agent.agent_live_state import (
@@ -372,93 +369,7 @@ class PersonaProfile:
     def apply_max_iterations(self, base: int) -> int:
         return int(base * self.max_iterations_factor)
 
-
-# Built-in personas — task-type → profile
-_BUILTIN_PERSONAS: dict[str, PersonaProfile] = {
-    "debugger": PersonaProfile(
-        name="methodical_debugger",
-        prompt_modifier=(
-            "\nPERSONA: Methodical Debugger\n"
-            "- Reproduce the error FIRST, then hypothesize\n"
-            "- Check logs/stacktraces before guessing\n"
-            "- Verify the fix by running the code again\n"
-            "- One change at a time, test after each"
-        ),
-        model_preference="complex",
-        temperature=0.1,
-        max_iterations_factor=1.4,
-        verification_level="strict",
-    ),
-    "creative": PersonaProfile(
-        name="creative_writer",
-        prompt_modifier=(
-            "\nPERSONA: Creative Writer\n"
-            "- Prioritize originality and style over structure\n"
-            "- Explore multiple angles before committing\n"
-            "- Use metaphors and vivid language"
-        ),
-        model_preference="complex",
-        temperature=0.8,
-        max_iterations_factor=0.6,
-        verification_level="none",
-    ),
-    "devops": PersonaProfile(
-        name="devops_operator",
-        prompt_modifier=(
-            "\nPERSONA: DevOps Operator\n"
-            "- ALWAYS verify state before AND after changes\n"
-            "- Use dry-run/preview when available\n"
-            "- Rollback plan for every destructive operation\n"
-            "- Log every action with timestamps"
-        ),
-        model_preference="fast",
-        temperature=0.1,
-        max_iterations_factor=1.2,
-        verification_level="strict",
-    ),
-    "research": PersonaProfile(
-        name="research_explorer",
-        prompt_modifier=(
-            "\nPERSONA: Research Explorer\n"
-            "- Breadth first: survey multiple sources before deep-diving\n"
-            "- Cite sources and note confidence levels\n"
-            "- Distinguish facts from speculation\n"
-            "- Summarize findings incrementally"
-        ),
-        model_preference="complex",
-        temperature=0.4,
-        max_iterations_factor=1.3,
-        verification_level="basic",
-    ),
-    "data": PersonaProfile(
-        name="data_analyst",
-        prompt_modifier=(
-            "\nPERSONA: Data Analyst\n"
-            "- Start with data shape/schema before analysis\n"
-            "- Validate assumptions with sample queries\n"
-            "- Present numbers with context (%, deltas, trends)\n"
-            "- Visualize when possible"
-        ),
-        model_preference="fast",
-        temperature=0.2,
-        max_iterations_factor=1.0,
-        verification_level="basic",
-    ),
-}
-
-# Keyword → persona name mapping for fast classification
-_PERSONA_KEYWORDS: dict[str, list[str]] = {
-    "debugger": ["debug", "fix", "error", "bug", "traceback", "exception", "stacktrace",
-                 "crash", "broken", "fehler", "reparier", "fixen"],
-    "creative": ["schreib", "write", "story", "gedicht", "poem", "blog", "creative",
-                 "text", "artikel", "essay", "draft"],
-    "devops":   ["deploy", "docker", "kubernetes", "nginx", "server", "container",
-                 "pipeline", "ci/cd", "ssh", "systemctl", "service"],
-    "research": ["research", "recherch", "find out", "herausfinden", "compare",
-                 "vergleich", "analyze", "analys", "investigate", "untersu"],
-    "data":     ["csv", "dataframe", "pandas", "sql", "chart", "graph", "statistik",
-                 "statistics", "tabelle", "xlsx", "daten", "dataset"],
-}
+from toolboxv2.mods.isaa.base.Agent.default_personas import _BUILTIN_PERSONAS, _PERSONA_KEYWORDS
 
 
 class PersonaRouter:
@@ -503,18 +414,24 @@ class PersonaRouter:
                     persona.source = "dreamer"
                     return persona
 
+        # 1.5 Learned personas (dreamer-generated, loaded from VFS)
+        for _pk, _pp in list(self.personas.items()):
+            if _pp.source != "dreamer_learned":
+                continue
+            _words = [w for w in _pk.replace("learned_", "").split("_") if len(w) > 3]
+            if _words and sum(1 for w in _words if w in query_lower) >= min(2, len(_words)):
+                import dataclasses as _dc
+                return _dc.replace(_pp)
+
         # 2. Skill-based: use skill tool_groups / names as hints
         if matched_skills:
             for skill in matched_skills:
                 name_lower = skill.name.lower()
                 for persona_key, keywords in _PERSONA_KEYWORDS.items():
                     if any(kw in name_lower for kw in keywords):
-                        p = PersonaProfile(**{
-                            k: getattr(self.personas[persona_key], k)
-                            for k in PersonaProfile.__dataclass_fields__
-                        })
-                        p.source = "matched"
-                        return p
+                        return dataclasses.replace(
+                            self.personas[persona_key], source="matched"
+                        )
 
         # 3. Keyword classification
         scores: dict[str, int] = {}
@@ -526,12 +443,9 @@ class PersonaRouter:
         if scores:
             best = max(scores, key=scores.get)
             if scores[best] >= 1:
-                p = PersonaProfile(**{
-                    k: getattr(self.personas[best], k)
-                    for k in PersonaProfile.__dataclass_fields__
-                })
-                p.source = "matched"
-                return p
+                return dataclasses.replace(
+                    self.personas[persona_key], source="matched"
+                )
 
         # 4. Default
         return PersonaProfile()
@@ -545,6 +459,44 @@ class PersonaRouter:
                     for k in PersonaProfile.__dataclass_fields__
                 })
         return None
+
+    def load_learned_personas(self, session) -> None:
+        """
+        Inject VFS-persisted learned personas into this router.
+        Called once per ExecutionEngine lifecycle (lazy, on first execute).
+        Only loads entries with confidence >= 0.30.
+        """
+        _VFS_PERSONAS = "/.memory/dreamer/personas.json"
+        try:
+            result = session.vfs_read(_VFS_PERSONAS)
+            if not result.get("success"):
+                return
+            store: dict = json.loads(result["content"])
+        except Exception:
+            return
+        loaded = 0
+        for key, entry in store.items():
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("confidence", 0.0) < 0.30:
+                continue
+            pd_ = entry.get("profile", {})
+            try:
+                self.personas[key] = PersonaProfile(
+                    name=pd_.get("name", key),
+                    prompt_modifier=pd_.get("prompt_modifier", ""),
+                    model_preference=pd_.get("model_preference", "fast"),
+                    temperature=pd_.get("temperature"),
+                    max_iterations_factor=float(pd_.get("max_iterations_factor", 1.0)),
+                    verification_level=pd_.get("verification_level", "basic"),
+                    source="dreamer_learned",
+                )
+                loaded += 1
+            except Exception:
+                pass
+        if loaded:
+            get_logger().debug(f"[PersonaRouter] Loaded {loaded} learned persona(s) from VFS")
+
 
 # =============================================================================
 # EXECUTION CONTEXT
@@ -567,7 +519,7 @@ class ExecutionContext:
 
     # Tool Management (dynamic tools, separate from static)
     dynamic_tools: List[ToolSlot] = field(default_factory=list)
-    max_dynamic_tools: int = os.getenv("MAX_DYNAMIC_TOOLS", 5)
+    max_dynamic_tools: int = int(os.getenv("MAX_DYNAMIC_TOOLS", 5))
     tool_relevance_cache: Dict[str, float] = field(default_factory=dict)
     tool_category_cache: Dict[str, Set[str]] = field(default_factory=dict)
 
@@ -635,8 +587,16 @@ class ExecutionContext:
         self.dynamic_tools.append(
             ToolSlot(name=name, relevance_score=relevance_score, category=category)
         )
-        if len(self.dynamic_tools) >= self.max_dynamic_tools:
-            _ = self.dynamic_tools.pop(1)
+        # Evict the slot with the lowest relevance score,
+        # excluding the newly added tool (never self-evict).
+        if len(self.dynamic_tools) > self.max_dynamic_tools:
+            evict = min(
+                (s for s in self.dynamic_tools if s.name != name),
+                key=lambda s: s.relevance_score,
+                default=None,
+            )
+            if evict:
+                self.remove_tool(evict.name)
         return True
 
     def to_checkpoint(self) -> dict:
@@ -834,12 +794,24 @@ class HistoryCompressor:
             working_history[0] if working_history[0].get("role") == "system" else None
         )
 
+        # Robusterer Split: Verhindert das Abschneiden von Tool-Ketten
+        split_idx = len(working_history) - keep_last_n
+
+        # Sicherheits-Check: Wenn die erste zu behaltende Nachricht ein Tool ist,
+        # müssen wir den Split-Punkt nach vorne verschieben, um den Assistant-Call einzuschließen.
+        max_itter = 1000000000
+        i = 0
+        while split_idx > 1 and working_history[split_idx].get("role") == "tool" and i < max_itter:
+            i += 1
+            split_idx -= 1
+
+        # Jetzt zeigt split_idx entweder auf den Assistant oder eine User-Nachricht
         if system_msg:
-            to_process = working_history[1:-keep_last_n]
-            to_keep = working_history[-keep_last_n:]
+            to_process = working_history[1:split_idx]
+            to_keep = working_history[split_idx:]
         else:
-            to_process = working_history[:-keep_last_n]
-            to_keep = working_history[-keep_last_n:]
+            to_process = working_history[:split_idx]
+            to_keep = working_history[split_idx:]
 
         compressed_msgs = []
         stats = {"kept": 0, "summarized": 0, "dropped": 0}
@@ -1009,6 +981,7 @@ class ExecutionEngine(SubAgentResumeExtension):
             # Store back on agent
             agent.session_manager.skills_manager = self.skills_manager
         self._persona_router = PersonaRouter()
+        self._personas_loaded = False  # lazy VFS load on first execute
         # Add parallel_subtasks skill if not present
         if "parallel_subtasks" not in self.skills_manager.skills:
             from toolboxv2.mods.isaa.base.Agent.skills import Skill
@@ -1066,6 +1039,14 @@ BEISPIELE:
         # Auto-group tools if not done yet
         if not self.skills_manager.tool_groups:
             self._auto_setup_tool_groups()
+
+    @contextlib.asynccontextmanager
+    async def track_phase(self, name):
+        start = time.perf_counter()
+        yield
+        duration = time.perf_counter() - start
+        if duration > 0.5:  # Alles über 500ms loggen
+            get_logger().warning(f"⚠️ PHASE LONG DURATION: {name} took {duration:.2f}s")
 
     def _get_memory_instance(self) -> Any:
         """Get memory instance from agent's session manager"""
@@ -1144,7 +1125,7 @@ BEISPIELE:
         ctx.query = query
 
         # Initialize SubAgentManager (only if NOT a sub-agent)
-        if not self.is_sub_agent:
+        if not self.is_sub_agent and not is_resume:
             self._sub_agent_manager = SubAgentManager(
                 parent_engine=self, parent_session=session, is_sub_agent=False
             )
@@ -1176,6 +1157,9 @@ BEISPIELE:
             # 3. Preload relevant tools from matched skills
             self._preload_skill_tools(ctx, query)
 
+            if not self._personas_loaded:
+                self._persona_router.load_learned_personas(session)
+                self._personas_loaded = True
             # 3b. Route persona based on query + skills + dreamer insights
             dreamer_insights = getattr(
                       getattr(self.agent.amd, 'persona', None), '_dream_insights', None)
@@ -1370,7 +1354,7 @@ BEISPIELE:
         ctx.query = query
 
         # Initialize SubAgentManager
-        if not self.is_sub_agent:
+        if not self.is_sub_agent and not is_resume:
             self._sub_agent_manager = SubAgentManager(
                 parent_engine=self, parent_session=session, is_sub_agent=False
             )
@@ -1394,6 +1378,9 @@ BEISPIELE:
             self._calculate_tool_relevance(ctx, query)
             self._preload_skill_tools(ctx, query)
 
+            if not self._personas_loaded:
+                self._persona_router.load_learned_personas(session)
+                self._personas_loaded = True
             dreamer_insights = getattr(
                 getattr(self.agent.amd, 'persona', None), '_dream_insights', None)
             ctx.active_persona = self._persona_router.route(
@@ -1432,6 +1419,11 @@ BEISPIELE:
         async def stream_generator(ctx: ExecutionContext):
             """Generator that yields chunks during execution"""
             nonlocal session, max_iterations
+
+            from litellm.types.utils import (
+                ChatCompletionMessageToolCall,
+                Function,
+            )
 
             final_response = None
             success = True
@@ -2741,7 +2733,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                 full_log.append(content)
             if ctx.active_persona.name != "default":
                 full_log.append(f"Persona: {ctx.active_persona.name} (source: {ctx.active_persona.source})")
-            session.vfs.write(log_file, "\n".join(full_log))
+            await asyncio.to_thread(session.vfs.write, log_file, "\n".join(full_log))
         except Exception as e:
             self.live.log(f"Failed to write execution log: {e}", logging.WARNING)
 

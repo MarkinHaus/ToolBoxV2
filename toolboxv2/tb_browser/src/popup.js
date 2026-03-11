@@ -9,7 +9,7 @@ class ToolBoxPopup {
         this.recognition = null;
         this.chatHistory = [];
         this.synthesis = null;
-        this.apiBase = 'http://localhost:8001';
+        this.apiBase = 'http://localhost:8080';
         this.isConnected = false;
         this.currentAudio = null;
         this.currentlyPlayingButton = null;
@@ -246,23 +246,30 @@ async saveSettings() {
 }
 
 applySettings() {
-    // Update apiBase based on backend selection
     switch (this.settings.backend) {
         case 'local':
-            this.apiBase = 'http://localhost:8001';
+            this.apiBase = 'http://localhost:8080';
+            break;
+        case 'tauri':
+            this.apiBase = 'http://localhost:5000';
+            break;
+        case 'native':
+            this.apiBase = null;   // kein HTTP – alles über native messaging
             break;
         case 'remote':
             this.apiBase = 'https://simplecore.app';
             break;
         case 'custom':
-            this.apiBase = this.settings.customBackendUrl || 'http://localhost:8001';
+            this.apiBase = this.settings.customBackendUrl || 'http://localhost:8080';
             break;
+        default:
+            this.apiBase = 'http://localhost:8080';
     }
 
-    // Update UI if settings modal is open
     const backendSelector = document.getElementById('backendSelector');
-    const customUrlInput = document.getElementById('customBackendUrl');
-    const agentSelector = document.getElementById('agentSelector');
+    const customUrlInput  = document.getElementById('customBackendUrl');
+    const agentSelector   = document.getElementById('agentSelector');
+    const nativeHint      = document.getElementById('nativeLoginHint');
 
     if (backendSelector) {
         backendSelector.value = this.settings.backend;
@@ -272,7 +279,12 @@ applySettings() {
         }
     }
 
-    // Update agent selector
+    // Hinweis anzeigen wenn Web-Login nicht verfügbar (kein /dist im Worker)
+    if (nativeHint) {
+        const noWebLogin = this.settings.backend === 'tauri' || this.settings.backend === 'native';
+        nativeHint.classList.toggle('hidden', !noWebLogin);
+    }
+
     if (agentSelector && this.settings.agentName) {
         agentSelector.value = this.settings.agentName;
     }
@@ -690,34 +702,69 @@ updateAuthUI() {
           }
         });
 
+        // Tauri Worker Auto-Detect Button
+        document.getElementById('detectTauriBtn')?.addEventListener('click', async () => {
+            const btn = document.getElementById('detectTauriBtn');
+            const prev = btn.textContent;
+            btn.textContent = '🔍 Suche...';
+            btn.disabled = true;
+
+            chrome.runtime.sendMessage({ type: 'DETECT_TAURI' }, (response) => {
+                if (response?.found) {
+                    this.settings.backend = 'tauri';
+                    this.saveSettings();
+                    this.showSettingsFeedback('✅ Tauri Worker gefunden (Port 5000)!', false);
+                } else {
+                    this.showSettingsFeedback('Kein Tauri Worker auf Port 5000.', true);
+                }
+                btn.textContent = prev;
+                btn.disabled = false;
+            });
+        });
+
+        // CLI Session manuell laden (Tauri/Native Modus)
+        document.getElementById('loadCliSessionBtn')?.addEventListener('click', () => {
+            this.handleWebLogin();
+        });
+
     }
 
     async handleWebLogin() {
-        this.showSettingsFeedback('Opening login page...', false);
+        const backend = this.settings.backend;
 
-        try {
-            // Get current backend selection
-            const backend = this.settings.backend;
-
-            // Send message to background script to start web login
-            chrome.runtime.sendMessage({
-                type: 'START_WEB_LOGIN',
-                backend: backend
-            }, (response) => {
+        if (backend === 'tauri' || backend === 'native') {
+            this.showSettingsFeedback('Lade CLI-Session...', false);
+            chrome.runtime.sendMessage({ type: 'START_WEB_LOGIN', backend }, (response) => {
                 if (response?.success) {
-                    this.showSettingsFeedback('Login successful! Reloading...', false);
-                    // Reload settings to get new auth data
+                    this.showSettingsFeedback(`✅ Eingeloggt als ${response.username}`, false);
                     setTimeout(async () => {
                         await this.loadSettings();
                         await this.checkAuthStatus();
-                    }, 1000);
+                    }, 500);
+                } else if (response?.requireCLI) {
+                    this.showSettingsFeedback(
+                        "Kein CLI-Session. Bitte 'tb login' im Terminal ausführen.",
+                        true
+                    );
                 } else {
-                    this.showSettingsFeedback(response?.error || 'Login failed', true);
+                    this.showSettingsFeedback(response?.error || 'Login fehlgeschlagen', true);
                 }
             });
-        } catch (error) {
-            this.showSettingsFeedback(error.message || 'Login failed', true);
+            return;
         }
+
+        this.showSettingsFeedback('Opening login page...', false);
+        chrome.runtime.sendMessage({ type: 'START_WEB_LOGIN', backend }, (response) => {
+            if (response?.success) {
+                this.showSettingsFeedback('Login successful! Reloading...', false);
+                setTimeout(async () => {
+                    await this.loadSettings();
+                    await this.checkAuthStatus();
+                }, 1000);
+            } else {
+                this.showSettingsFeedback(response?.error || 'Login failed', true);
+            }
+        });
     }
 
     async handleSettingsLogin() {
@@ -1044,7 +1091,7 @@ updateAuthUI() {
 
         try {
             // Just check if the server is reachable
-const response = await fetch(this.apiBase+'/api/CloudM/openVersion');
+            const response = await chrome.runtime.sendMessage({type: 'API_REQUEST',data: { endpoint:'/api/CloudM/openVersion'}});
             this.isConnected = response.ok;
             indicator?.classList.remove('connecting', 'error');
             indicator?.classList.add('connected');
@@ -1583,52 +1630,45 @@ const response = await fetch(this.apiBase+'/api/CloudM/openVersion');
             throw error;
         }
     }
+
     async executePageAction(action) {
-        try {
-            if (typeof chrome !== 'undefined' && chrome.tabs) {
-                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
-                // Check if tab is valid for action execution
-                if (!tab || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
-                    this.addChatMessage('isaa', `❌ Cannot execute actions on system pages`);
-                    return { success: false, error: 'System page not supported' };
-                }
-
-                // Wait for content script to be ready
-                const isReady = await this.waitForContentScript(tab.id);
-                if (!isReady) {
-                    this.addChatMessage('isaa', `❌ Content script not ready. Please refresh the page.`);
-                    return { success: false, error: 'Content script not ready' };
-                }
-
-                console.log('🎯 Executing action:', action);
-
-                const response = await chrome.tabs.sendMessage(tab.id, {
-                    type: 'EXECUTE_ACTION',
-                    action: action
-                });
-
-                if (response && response.success) {
-                    this.addChatMessage('isaa', `✅ ${response.message || `Action completed: ${action.action_type}`}`);
-                } else {
-                    this.addChatMessage('isaa', `❌ ${response?.error || 'Action failed'}`);
-                }
-
-                return response;
-            }
-        } catch (error) {
-            console.error('Page action execution error:', error);
-
-            // Provide more specific error messages
-            if (error.message.includes('Receiving end does not exist')) {
-                this.addChatMessage('isaa', `❌ Page not ready for actions. Please refresh the page and try again.`);
-            } else {
-                this.addChatMessage('isaa', `❌ Could not execute action: ${error.message}`);
-            }
-
-            return { success: false, error: error.message };
+        if (!tab || !tab.id || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+            const errorMsg = '❌ Aktionen können nicht auf Systemseiten ausgeführt werden.';
+            this.addChatMessage('isaa', errorMsg);
+            return { success: false, error: 'System page not supported' };
         }
+
+        console.log(`🎯 Sende Aktion an background.js für Tab ${tab.id}:`, action);
+
+        // Dies sendet die Nachricht an den 'AGENT_VIEW'-Listener im Service Worker
+        const response = await chrome.runtime.sendMessage({
+            type: 'AGENT_VIEW',
+            action: 'execute',
+            agentAction: action, // Das ist die Aktion, die von der LLM geplant wurde
+            tabId: tab.id
+        });
+
+        if (response && !response.error) {
+            // AgentView gibt ein Delta-Objekt zurück. Wir zeigen eine Zusammenfassung an.
+            const summary = response.summary || `Aktion '${action.type}' ausgeführt.`;
+            this.addChatMessage('isaa', `✅ ${summary}`);
+            return { success: true, message: summary, data: response };
+        } else {
+            const errorMsg = `❌ Aktion fehlgeschlagen: ${response?.error || 'Unbekannter Fehler'}`;
+            this.addChatMessage('isaa', errorMsg);
+            return { success: false, error: response?.error };
+        }
+
+    } catch (error) {
+        console.error('Page action execution error:', error);
+        const errorMsg = `❌ Fehler beim Senden der Aktion: ${error.message}`;
+        this.addChatMessage('isaa', errorMsg);
+        return { success: false, error: error.message };
     }
+}
 
     addChatMessage(sender, message) {
         const chatMessages = document.getElementById('chatMessages');
@@ -2198,25 +2238,21 @@ const response = await fetch(this.apiBase+'/api/CloudM/openVersion');
         }
     }
 
+
     async makeAPICall(endpoint, method = 'POST', data = null) {
-        const url = `${this.apiBase}${endpoint}`;
-        const options = {
-            method,
-            headers: {
-                'Content-Type': 'application/json',
-            },
-        };
+        // Immer über background.js routen — der hat Auth-Header, Re-Auth und
+        // Native-Fallback-Logik zentral drin.
+        const response = await chrome.runtime.sendMessage({
+            type: 'API_REQUEST',
+            data: { endpoint, method, body: data }
+        });
 
-        if (data && method !== 'GET') {
-            options.body = JSON.stringify(data);
+        if (!response || !response.success) {
+            if (response && response.data) return response.data;
+            throw new Error(response?.error || 'API call failed');
         }
 
-        const response = await fetch(url, options);
-        if (!response.ok) {
-            throw new Error(`API call failed: ${response.status}`);
-        }
-
-        return await response.json();
+        return response.data;
     }
 
     escapeHtml(text) {

@@ -153,8 +153,7 @@ class App(AppType, metaclass=Singleton):
 
         loader = ManifestLoader(self.start_dir)
         if not loader.exists():
-            self.print("No manifest found run tb manifest init")
-            return
+            self.print("No manifest found run tb manifest init / current using defaults")
 
         try:
             manifest = loader.load()
@@ -1610,19 +1609,9 @@ class App(AppType, metaclass=Singleton):
                 try:
                     self._obs_sync_manager.stop_auto_sync()
                     stats = self._obs_sync_manager.sync_all()  # final push
-                    for s in stats:
-                        d = stats[s]
-                        if d and isinstance(d, list):
-                            self.print(s)
-                            for _s in d:
-                                self.print(_s)
-                        else:
-                            self.print(f"{s}:{d}")
+                    self.logger.info(f"AutoSync stop time: {time.time() - to} -> {stats=}")
                 except Exception as e:
                     self.debug_rains(e)
-                    import traceback
-                    traceback.print_exc()
-                    pass
             self.alive = False
             self.called_exit = True, time.time()
             self.save_exit()

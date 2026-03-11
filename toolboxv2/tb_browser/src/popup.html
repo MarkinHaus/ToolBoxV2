@@ -322,7 +322,9 @@
             <div class="settings-section">
                 <h4>Backend Configuration</h4>
                 <select id="backendSelector" class="settings-select">
-                    <option value="local">Local (localhost:8080)</option>
+                    <option value="local">Local HTTP (localhost:8080)</option>
+                    <option value="tauri">Tauri App (localhost:5000)</option>
+                    <option value="native">Native (kein Server)</option>
                     <option value="remote">Remote (simplecore.app)</option>
                     <option value="custom">Custom URL...</option>
                 </select>
@@ -353,8 +355,21 @@
                 </div>
 
                 <div id="loginForm" class="login-form">
-                    <button id="webLoginBtn" class="action-btn primary" style="width: 100%; margin-bottom: 15px;">
+                    <button id="webLoginBtn" class="action-btn primary" style="width: 100%; margin-bottom: 8px;">
                         🔐 Login with Browser
+                    </button>
+                    <div id="nativeLoginHint" class="native-login-hint hidden">
+                        <p style="font-size:12px; color:#aaa; margin:4px 0;">
+                            ⚠️ Tauri/Native: Kein Web-Login.<br>
+                            'tb login' im Terminal ausführen, dann:
+                        </p>
+                        <button id="loadCliSessionBtn" class="action-btn" style="width:100%; margin-bottom:8px;">
+                            🔄 CLI-Session laden
+                        </button>
+                    </div>
+                    <button id="detectTauriBtn" class="action-btn"
+                            style="width:100%; margin-bottom:15px; font-size:11px; opacity:0.7;">
+                        🔍 Tauri Worker erkennen
                     </button>
 
                     <div class="divider">OR</div>

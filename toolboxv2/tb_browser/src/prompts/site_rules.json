@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "claude_ai",
+      "match": { "hostname": "claude.ai", "path_prefix": "/chat" },
+      "label": "Claude.ai",
+      "icon": "🔵",
+      "category": "claude_chat",
+      "model_hint": "claude-sonnet-4-6",
+      "inject_selector": "div[contenteditable='true'].ProseMirror, div[contenteditable='true'][data-placeholder]",
+      "inject_method": "prosemirror",
+      "preprompts": ["tb_agent_context"],
+      "auto_show_panel": true,
+      "supports_system_prompt": false
+    },
+    {
+      "id": "gemini",
+      "match": { "hostname": "gemini.google.com" },
+      "label": "Gemini",
+      "icon": "🟣",
+      "category": "gemini_chat",
+      "model_hint": "gemini-2.0-flash",
+      "inject_selector": "rich-textarea .ql-editor, div[contenteditable][aria-label*='message']",
+      "inject_method": "prosemirror",
+      "preprompts": [],
+      "auto_show_panel": true
+    },
+    {
+      "id": "aistudio",
+      "match": { "hostname": "aistudio.google.com" },
+      "label": "AI Studio",
+      "icon": "🟡",
+      "category": "ai_studio",
+      "model_hint": "gemini-2.0-pro",
+      "inject_selector": "ms-chunk-input textarea, textarea[aria-label*='prompt']",
+      "inject_method": "textarea",
+      "preprompts": ["system_prompt_mode"],
+      "auto_show_panel": true,
+      "supports_system_prompt": true
+    },
+    {
+      "id": "chatglm",
+      "match": { "hostname_contains": "chatglm" },
+      "label": "ChatGLM",
+      "icon": "🔷",
+      "category": "glm_chat",
+      "model_hint": "glm-4",
+      "inject_selector": "#ask-input, textarea.input",
+      "inject_method": "react",
+      "preprompts": ["glm_context"],
+      "auto_show_panel": true
+    },
+    {
+      "id": "hailuo",
+      "match": { "hostname_contains": "hailuo" },
+      "label": "MiniMax Hailuo",
+      "icon": "🟢",
+      "category": "minimax_chat",
+      "model_hint": "minimax-01",
+      "inject_selector": ".chat-input textarea, textarea[placeholder]",
+      "inject_method": "react",
+      "preprompts": [],
+      "auto_show_panel": true
+    },
+    {
+      "id": "tb_local",
+      "match": { "hostname": "localhost", "port_range": [8080, 8090] },
+      "label": "ToolBox Local",
+      "icon": "⚙️",
+      "category": "tb_local",
+      "inject_selector": "#chat-input, .tb-input",
+      "inject_method": "native_tb",
+      "preprompts": ["tb_agent_internal"],
+      "auto_show_panel": true
+    },
+    {
+      "id": "perplexity",
+      "match": { "hostname": "www.perplexity.ai" },
+      "label": "Perplexity",
+      "icon": "🔍",
+      "category": "search_ai",
+      "inject_selector": "textarea[placeholder]",
+      "inject_method": "textarea",
+      "preprompts": [],
+      "auto_show_panel": true
+    },
+    {
+      "id": "openai_chat",
+      "match": { "hostname": "chatgpt.com" },
+      "label": "ChatGPT",
+      "icon": "🤍",
+      "category": "openai_chat",
+      "inject_selector": "div#prompt-textarea",
+      "inject_method": "prosemirror",
+      "preprompts": [],
+      "auto_show_panel": true
+    }
+  ]
+}

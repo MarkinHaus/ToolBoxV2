@@ -238,6 +238,7 @@ class VirtualEnvContext:
 
 class TeeStream:
     """Stream that writes to both console and buffer"""
+    encoding = 'utf-8'
     def __init__(self, console_stream, buffer_stream):
         self.console_stream = console_stream
         self.buffer_stream = buffer_stream

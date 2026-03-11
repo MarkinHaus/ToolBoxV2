@@ -21,7 +21,7 @@ from ..system.tb_logger import get_logger
 load_dotenv()
 
 
-DEVICE_KEY_DIR = "./.info"
+DEVICE_KEY_DIR = os.getenv("DEVICE_KEY_DIR", "./.info")
 DEVICE_KEY_PATH = os.path.join(DEVICE_KEY_DIR, "device.enc")
 
 
@@ -57,6 +57,8 @@ def get_or_create_device_key():
             decrypted_key = decrypt_with_key(encrypted_data, aes_key)
             return decrypted_key.decode()
         else:
+            print("Creating new device key")
+            get_logger().info("Creating new device key")
             key = Fernet.generate_key()  # 32 Byte Base64
             encrypted = encrypt_with_key(key, aes_key)
             with open(DEVICE_KEY_PATH, "wb") as key_file:

@@ -2,7 +2,6 @@
 import os
 import sys
 from pathlib import Path
-
 # Suppress print statements during import in PyO3 environment
 _suppress_output = os.environ.get('PYTHONIOENCODING') == 'utf-8'
 if _suppress_output:
@@ -11,6 +10,27 @@ if _suppress_output:
     _original_stderr = sys.stderr
     sys.stdout = io.StringIO()
     sys.stderr = io.StringIO()
+
+try:
+    from .utils.system.main_tool import MainTool, get_version_from_pyproject
+except ImportError:
+    MainTool = get_version_from_pyproject = None
+    print("⚠️ Missing: utils.system.main_tool")
+
+__author__ = """Markin Hausmanns"""
+__email__ = 'Markinhausmanns@gmail.com'
+
+import os
+from pathlib import Path
+
+__init_cwd__ = init_cwd = Path.cwd()
+
+__tb_root_dir__ = tb_root_dir = Path(__file__).parent
+# os.chdir(__tb_root_dir__)
+os.makedirs(__tb_root_dir__ / 'dist', exist_ok=True)
+__version__ = get_version_from_pyproject() if get_version_from_pyproject is not None else "0.1.25"
+
+ToolBox_over: str = "root"
 
 # =============================================================================
 # Feature Loader (loaded first - unpacks required features)
@@ -64,12 +84,6 @@ try:
 except ImportError:
     Singleton = None
     print("⚠️ Missing: utils.singelton_class.Singleton")
-
-try:
-    from .utils.system.main_tool import MainTool, get_version_from_pyproject
-except ImportError:
-    MainTool = get_version_from_pyproject = None
-    print("⚠️ Missing: utils.system.main_tool")
 
 try:
     from .utils.system.file_handler import FileHandler
@@ -169,7 +183,7 @@ except ImportError:
 
 try:
     from .flows import flows_dict
-except ImportError:
+except ImportError as e:
     flows_dict = {}
     print("⚠️ Missing: flows.flows_dict")
 
@@ -196,26 +210,6 @@ try:
 except ImportError as e:
     PROFILER = e
 
-__author__ = """Markin Hausmanns"""
-__email__ = 'Markinhausmanns@gmail.com'
-
-import cProfile
-import pstats
-import io
-import os
-from functools import wraps
-
-
-from pathlib import Path
-
-__init_cwd__ = init_cwd = Path.cwd()
-
-__tb_root_dir__ = tb_root_dir = Path(__file__).parent
-os.chdir(__tb_root_dir__)
-os.makedirs(__tb_root_dir__/'dist', exist_ok=True)
-__version__ = get_version_from_pyproject() if get_version_from_pyproject is not None else "0.1.25"
-
-ToolBox_over: str = "root"
 __all__ = [
     "App",
     "ToolBox_over",

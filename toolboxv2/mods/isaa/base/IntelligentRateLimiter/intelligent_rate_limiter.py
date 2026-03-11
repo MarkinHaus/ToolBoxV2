@@ -39,20 +39,19 @@ logger = get_logger()
 
 
 def _ensure_lock(lock: Optional[asyncio.Lock]) -> asyncio.Lock:
-    """Get or create an asyncio.Lock bound to the CURRENT event loop.
+    """Get or create an asyncio.Lock compatible with the CURRENT event loop.
 
-    Handles the Python 3.12+ restriction that Locks are bound to
-    the loop they were created in. If a Lock was created in a
-    different loop (e.g., sync __init__ vs async sub-agent task),
-    this creates a new one bound to the current running loop.
+    Python <=3.10: Locks carry a _loop attr set at creation.
+    Python 3.12+:  Locks are loop-agnostic; no private API needed.
+    Avoids the deprecated lock._get_loop() entirely.
     """
     if lock is None:
         return asyncio.Lock()
-    try:
-        lock._get_loop()  # Raises RuntimeError if bound to different loop
-        return lock
-    except RuntimeError:
+    # _loop present only in Python <=3.10 style locks.
+    loop_attr = getattr(lock, '_loop', None)
+    if loop_attr is not None and loop_attr.is_closed():
         return asyncio.Lock()
+    return lock
 
 
 class QuotaType(Enum):
@@ -1040,17 +1039,23 @@ class IntelligentRateLimiter:
         """Berechne die optimale Wartezeit"""
         wait_times = []
 
-        if len(state.minute_window) >= limits.requests_per_minute:
+        effective_rpm = int(limits.requests_per_minute * self.safety_margin)
+        if len(state.minute_window) >= effective_rpm:
             oldest = state.minute_window[0]
             wait_times.append(60.0 - (now - oldest) + 0.1)
 
-        if limits.requests_per_second and len(state.second_window) >= limits.requests_per_second:
+        effective_rps = (
+            int(limits.requests_per_second * self.safety_margin)
+            if limits.requests_per_second else None
+        )
+        if effective_rps and len(state.second_window) >= effective_rps:
             oldest = state.second_window[0]
             wait_times.append(1.0 - (now - oldest) + 0.01)
 
         if limits.input_tokens_per_minute and state.tokens_minute_window:
             current_tokens = sum(t[1] for t in state.tokens_minute_window)
-            if current_tokens >= limits.input_tokens_per_minute:
+            effective_tpm = int(limits.input_tokens_per_minute * self.safety_margin)
+            if current_tokens >= effective_tpm:
                 oldest = state.tokens_minute_window[0][0]
                 wait_times.append(60.0 - (now - oldest) + 0.1)
 
@@ -1598,7 +1603,7 @@ class LiteLLMRateLimitHandler:
                     x in error_str
                     for x in [
                         "rate_limit", "ratelimit", "429", "quota",
-                        "resource_exhausted", "too many requests",
+                        "resource_exhausted", "too many requests", "rate", "limit", "exhausted", "too many"
                     ]
                 )
 

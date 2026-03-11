@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from langchain_community.agent_toolkits.load_tools import load_tools
 from pydantic import BaseModel
 
 from toolboxv2 import (
@@ -267,8 +266,6 @@ class Tools(MainTool):
             folder=f"{app.data_dir}/Memory{extra_path}/summaries/"
         )
 
-        from .kernel.kernelin.run_unified_kernels import main as kernel_start
-
         self.tools = {
             "name": "isaa",
             "Version": self.show_version,
@@ -281,7 +278,6 @@ class Tools(MainTool):
             "get_memory": self.get_memory,
             "save_all_memory_vis": self.save_all_memory_vis,
             "rget_mode": lambda mode: self.controller.rget(mode),
-            "kernel_start": kernel_start,
             # Chain helpers
             "create_chain": self.create_chain,
             "run_chain": self.run_chain,
@@ -1026,6 +1022,7 @@ class Tools(MainTool):
 
         for tool_name in all_lc_tool_names:
             try:
+                from langchain_community.agent_toolkits.load_tools import load_tools
                 loaded_tools = load_tools([tool_name], llm=None)
                 for lc_tool_instance in loaded_tools:
                     if hasattr(lc_tool_instance, "run") and callable(

@@ -375,15 +375,6 @@ class TextSplitter:
 
         return chunks
 
-
-import re
-from collections import Counter, defaultdict
-from typing import Any
-
-
-import spacy
-from spacy.tokens import Doc, Token
-
 # ============================================================================
 # DOMAIN ONTOLOGY - Statische Whitelist für Fachbegriffe
 # ============================================================================

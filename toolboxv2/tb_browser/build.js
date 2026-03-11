@@ -16,13 +16,6 @@ class ExtensionBuilder {
 
         this.filesToCopy = [
             'manifest.json',
-            'src/popup.html',
-            'src/popup.js',
-            'src/popup.css',
-            'src/content.js',
-            'src/content.css',
-            'src/gesture-detector.js',
-            'src/background.js',
             'icons/tb16.png',
             'icons/tb32.png',
             'icons/tb48.png',
@@ -86,36 +79,43 @@ class ExtensionBuilder {
         }
     }
 
+    async copyRecursive(src, dest) {
+        await fs.mkdir(dest, { recursive: true });
+        const entries = await fs.readdir(src, { withFileTypes: true });
+        for (const entry of entries) {
+            const srcPath = path.join(src, entry.name);
+            const destPath = path.join(dest, entry.name);
+            if (entry.isDirectory()) {
+                await this.copyRecursive(srcPath, destPath);
+            } else {
+                await fs.copyFile(srcPath, destPath);
+                console.log(`  ✓ Copied: ${path.relative(__dirname, srcPath)}`);
+            }
+        }
+    }
+
     async copyFiles() {
         console.log('📄 Copying files...');
 
+        // 1. Kopiere die Dateien aus der Liste (manifest + icons)
         for (const file of this.filesToCopy) {
             const srcPath = path.join(__dirname, file);
             const destPath = path.join(this.buildDir, file);
 
             try {
-                const content = await fs.readFile(srcPath, 'utf8');
-
-                // Process file based on type
-                let processedContent = content;
-
-                if (file.endsWith('.js')) {
-                    processedContent = this.processJavaScript(content);
-                } else if (file.endsWith('.css')) {
-                    processedContent = this.processCSS(content);
-                } else if (file.endsWith('.html')) {
-                    processedContent = this.processHTML(content);
-                } else if (file.endsWith('.json')) {
-                    processedContent = this.processJSON(content);
-                }
-
-                await fs.writeFile(destPath, processedContent, 'utf8');
+                // Erstelle Unterverzeichnisse falls nötig (z.B. für icons/)
+                await fs.mkdir(path.dirname(destPath), { recursive: true });
+                await fs.copyFile(srcPath, destPath);
                 console.log(`  ✓ ${file}`);
-
             } catch (error) {
                 console.warn(`  ⚠️ Failed to copy ${file}:`, error.message);
             }
         }
+
+        // 2. Kopiere den gesamten src-Ordner REKURSIV
+        console.log('📂 Copying src folder...');
+        await fs.cp(this.srcDir, path.join(this.buildDir, 'src'), { recursive: true });
+        console.log('  ✓ src directory copied');
     }
 
     processJavaScript(content) {
@@ -189,7 +189,8 @@ class ExtensionBuilder {
         const jsFiles = [
             'src/popup.js',
             'src/content.js',
-            'src/background.js'
+            'src/background.js',
+            'src/content/injector.js'
         ];
 
         for (const file of jsFiles) {
@@ -221,8 +222,13 @@ class ExtensionBuilder {
             'manifest.json',
             'src/popup.html',
             'src/popup.js',
+            'src/site_rules.json',
+            'src/library.json',
             'src/popup.css',
             'src/content.js',
+            'src/agent_view.js',
+            'src/prompt_engine.js',
+            'src/injector.js',
             'src/content.css',
             'src/gesture-detector.js',
             'src/background.js',

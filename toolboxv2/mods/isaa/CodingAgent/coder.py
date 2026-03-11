@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 import sys  # <--- Hinzufügen falls fehlt
 
+from toolboxv2.utils.extras.Style import print_prompt
+
 # === FIX: WINDOWS UTF-8 OUTPUT ===
 if sys.platform == "win32":
     # Zwingt stdout/stderr auf UTF-8, um Abstürze bei Emojis (✔, ⚠) zu verhindern
@@ -66,7 +68,7 @@ def _ctx_limit(model: str) -> int:
             info = litellm.get_model_info(model)
             if lim := (info.get("max_input_tokens") or info.get("max_tokens")): return int(lim)
         except Exception: pass
-    return 8_192
+    return 200_000
 
 def _count_tokens(messages: List[dict], model: str) -> int:
     if litellm:
@@ -76,9 +78,9 @@ def _count_tokens(messages: List[dict], model: str) -> int:
 
 
 class TokenTracker:
-    def __init__(self, model: str, agent=None, limit=0.7):
+    def __init__(self, model: str, agent=None, limit=0.65):
         self.model, self.agent = model, agent
-        self.limit = _ctx_limit(model)
+        self.limit = _ctx_limit(model.split('/')[-1])
         self.threshold = int(self.limit * limit)
         self.total_tokens = self.compressions_done = 0
 
@@ -127,20 +129,32 @@ class TokenTracker:
             })
 
         new_history.extend(recent_history)
-        # FIX: Verwaiste Tool-Messages (durch das Abschneiden) umwandeln,
-        # damit die LLM APIs (MiniMax, OpenAI etc.) keinen 400 Error werfen.
+        # FIX: Verwaiste Tool-Messages umwandeln, dabei Multi-Tool-Blöcke schützen
         sanitized_history = []
+        in_tool_block = False
+
         for msg in new_history:
-            if msg.get("role") == "tool":
+            role = msg.get("role")
+
+            if role == "tool":
+                # Ein Tool-Result ist gültig, wenn wir in einem Block sind ODER ein Assistant davor steht
                 prev = sanitized_history[-1] if sanitized_history else None
-                # Prüfen, ob die Nachricht davor wirklich der Auslöser war
-                if not (prev and prev.get("role") == "assistant" and prev.get("tool_calls")):
-                    # Wenn verwaist, in eine normale User-Nachricht umwandeln
+                is_valid_sequence = (in_tool_block or
+                                     (prev and prev.get("role") == "assistant" and prev.get("tool_calls")))
+
+                if is_valid_sequence:
+                    in_tool_block = True
+                    sanitized_history.append(msg)
+                else:
+                    # Wirklich verwaist -> User-Role
                     sanitized_history.append({
                         "role": "user",
-                        "content": f"[Info: Ergebnis aus vorherigem Tool-Aufruf]\n{msg.get('content', '')}"
+                        "content": f"[Nachgereichtes Tool-Ergebnis]\n{msg.get('content', '')}"
                     })
-                    continue
+                continue
+
+            # Jede andere Nachricht (User/Assistant) beendet einen Tool-Antwort-Block
+            in_tool_block = False
             sanitized_history.append(msg)
 
         self.compressions_done += 1
@@ -1062,7 +1076,7 @@ class CoderAgent:
                 f"**STATUS:**\n"
                 f"- Datei im Fokus: {self.state['current_file']}\n"
                 f"- Erledigt: {', '.join(self.state['done']) or 'Nichts'}\n"
-                f"- Offen: {', '.join(self.state['plan']) or 'Unbekannt'}\n"
+                 f"- Offen: {', '.join(self.state['plan'])}\n Nutze <thought> mit - [ ] für Aufgaben und - [x] für Erledigtes zur Planung\n"
             )
             if iteration == self.max_iters - 1:
                 status_update += "\n⚠️ LETZTE ITERATION! Beende deine Arbeit oder fasse exakt zusammen, was noch fehlt!"
@@ -1081,6 +1095,8 @@ class CoderAgent:
             if self.tracker.needs_compression(messages):
                 self._log("MEMORY", "Compressing context...", "yellow")
                 messages[:] = await self.tracker.compress(messages)
+                # WICHTIG: Nach Kompression ist der alte Index ungültig!
+                _transient_status_idx = None
                 show("COMPRESSION")
 
 

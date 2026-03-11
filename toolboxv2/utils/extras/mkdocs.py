@@ -2286,11 +2286,14 @@ class DocsSystem:
 
 def create_docs_system(
     project_root: str = ".",
-    docs_root: str = "../docs",
+    docs_root: str|None = None,
     include_dirs: Optional[List[str]] = None,
     exclude_dirs: Optional[Set[str]] = None,
 ) -> DocsSystem:
     """Factory function for DocsSystem."""
+    if docs_root is None:
+        from toolboxv2 import tb_root_dir
+        docs_root = str(tb_root_dir.parent / "docs")
     return DocsSystem(
         project_root=Path(project_root).resolve(),
         docs_root=Path(docs_root).resolve(),
@@ -2300,9 +2303,12 @@ def create_docs_system(
 
 
 def add_to_app(
-    app, docs_root: str = "../docs", include_dirs: Optional[List[str]] = None
+    app, docs_root: str|None = None, include_dirs: Optional[List[str]] = None
 ) -> DocsSystem:
     """Add docs system to ToolBoxV2 app."""
+    if docs_root is None:
+        from toolboxv2 import tb_root_dir
+        docs_root = str(tb_root_dir.parent / "docs")
     system = DocsSystem(
         project_root=Path.cwd(),
         docs_root=Path(docs_root).resolve(),

@@ -587,6 +587,7 @@ class FlowAgent:
             "model": model,
             "messages": processed_messages,
             "stream": use_stream,
+            "request_timeout": 300,
             **kwargs,
         }
 

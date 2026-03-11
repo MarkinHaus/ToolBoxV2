@@ -13,7 +13,6 @@ from platform import node, system
 from typing import List, Tuple
 
 from dotenv import load_dotenv
-
 from toolboxv2 import tb_root_dir, profile_code
 from toolboxv2.utils.system.feature_manager import FeatureManager
 
@@ -320,7 +319,6 @@ def setup_service_linux():
 
 RUNNER_KEYS = [
     "venv",
-    "ipy",
     "db",
     "gui",
     "p2p",
@@ -504,20 +502,6 @@ def show_interactive_guide():
     │                                                                            │
     └────────────────────────────────────────────────────────────────────────────┘
 
-    ┌─ IPYTHON INTEGRATION ──────────────────────────────────────────────────────┐
-    │                                                                            │
-    │  Start IPython Shell:                                                      │
-    │    $ tb --ipy                     # Enter IPython toolbox shell            │
-    │                                                                            │
-    │  IPython Magic Commands:                                                   │
-    │    In [1]: tb save NAME           # Save current session                   │
-    │    In [2]: tb inject NAME         # Inject session into file               │
-    │    In [3]: tb loadx NAME          # Load & run session                     │
-    │    In [4]: tb loade NAME          # Reload session                         │
-    │    In [5]: tb open NAME           # Open in Jupyter                        │
-    │                                                                            │
-    └────────────────────────────────────────────────────────────────────────────┘
-
     ┌─ ADVANCED USAGE ───────────────────────────────────────────────────────────┐
     │                                                                            │
     │  Docker Mode:                                                              │
@@ -662,7 +646,6 @@ def parse_args():
         │    $ tb gui                              # Start GUI                   │
         │    $ tb workkers start                   # Start API server            │
         │    $ tb status                           # Check status                │
-        │    $ tb --ipy                            # IPython shell               │
         │                                                                        │
         │  Module Commands:                                                      │
         │    $ tb -c helper                        # List helper functions       │
@@ -835,12 +818,6 @@ def parse_args():
         action="append",
         metavar=("MODULE", "FUNCTION"),
         help="Execute module command: -c MODULE FUNCTION [ARGS...]",
-    )
-
-    core.add_argument(
-        "--ipy",
-        action="store_true",
-        help="Enter IPython toolbox shell with magic commands",
     )
 
     # =================== MODULE MANAGEMENT ===================
@@ -1550,157 +1527,7 @@ async def main(App=TbApp, do_exit=True):
     if do_exit and not tb_app.called_exit[0]:
         await tb_app.a_exit()
         return tb_app
-    # print(
-    #    f"\n\nPython-loc: {init_args[0]}\nCli-loc: {init_args[1]}\nargs: {tb_app.pretty_print(init_args[2:])}")
     return tb_app
-
-
-def install_ipython():
-    os.system("pip install ipython prompt_toolkit")
-
-
-def tb_pre_ipy(app, eo):
-    # print(f"In Data:  \n\t{eo.raw_cell}\n\t{eo.store_history}\n\t{eo.silent}\n\t{eo.shell_futures}\n\t{eo.cell_id}")
-    # app.print(f"{eo.raw_cell=}{eo.raw_cell.split(' ')=}")
-    if eo.raw_cell != "exit":
-        eo.raw_cell = ""
-    # start information getering
-
-
-def tb_post_ipy(app, rest):
-    # print(f"Out Data:  \n\t{rest.execution_count}\n\t{rest.error_before_exec}\n\t{rest.error_in_exec}
-    # \n\t{rest.info.raw_cell}\n\t{rest.info.store_history}\n\t{rest.info.silent}\n\t{rest.info.shell_futures}
-    # \n\t{rest.info.cell_id}\n\t{rest.result} ")
-    # return information
-    return ""
-
-
-def line_magic_ipy(app, ipython, line):
-    app.mod_online(line.split(" ")[0].strip(), True)
-    if line.split(" ")[0].strip() in app.functions:
-        async_test(command_runner)(app, line.split(" "))
-    else:
-        app.print_functions()
-
-
-def configure_ipython(argv):
-    from traitlets.config import Config
-
-    c = Config()
-
-    # Autocompletion with prompt_toolkit
-    c.InteractiveShellCompleter.use_jedi = True
-    c.InteractiveShell.automagic = True
-    # Enable contextual help
-    c.InteractiveShellApp.exec_lines = []
-
-    c.TerminalInteractiveShell.editor = "nano"
-
-    c.PrefilterManager.multi_line_specials = True
-
-    c.InteractiveShell.colors = "LightBG"
-    c.InteractiveShell.confirm_exit = True
-    c.TerminalIPythonApp.display_banner = False
-    c.AliasManager.user_aliases = [
-        ("TB", "tb"),
-        ("@", "!tb -c "),
-    ]
-    c.InteractiveShellApp.exec_lines.append(
-        """import os
-import sys
-import toolboxv2 as tb
-from toolboxv2.tests.a_util import async_test
-from threading import Thread
-# from toolboxv2.utils.system.ipy_completer import get_completer
-
-from IPython.core.magic import register_line_magic, register_cell_magic
-sys.argv = """
-        + str(argv)
-        + """
-app, args = await tb.__main__.setup_app()
-if hasattr(app, "daemon_app"):
-    Thread(target=async_test(app.daemon_app.connect), args=(app,), daemon=True).start()
-
-
-def pre_run_code_hook(eo):
-    tb.__main__.tb_pre_ipy(app, eo)
-
-
-def post_run_code_hook(result):
-    tb.__main__.tb_post_ipy(app, result)
-
-
-def load_ipython_extension(ipython):
-    @register_line_magic
-    def my_line_magic(line):
-        parts = line.split(' ')
-        f_name = "ipy_sessions/"+("tb_session" if len(parts) <= 1 else parts[-1])
-
-        os.makedirs(f'{app.appdata}/ipy_sessions/',exist_ok=True)
-        if "save" in parts[0]:
-            do_inj = not os.path.exists(f'{app.appdata}/{f_name}.ipy')
-            if do_inj:
-                ipython.run_line_magic('save', f'{app.appdata}/{f_name}.ipy')
-            else:
-                ipython.run_line_magic('save', f'-r {app.appdata}/{f_name}.ipy')
-        if "inject" in parts[0]:
-                file_path = f'{app.appdata}/{f_name}.ipy'
-                with open(file_path, 'r') as file:
-                    lines = file.readlines()
-                # Insert lines after the first line
-                lines[1:1] = [line + '\\n' for line in
-                              ["import toolboxv2 as tb", "app, args = await tb.__main__.setup_app()"]]
-                with open(file_path, 'w') as file:
-                    file.writelines(lines)
-        elif "loadX" in parts[0]:
-            # ipython.run_line_magic('store', '-r')
-            ipython.run_line_magic('run', f'{app.appdata}/{f_name}.ipy')
-        elif "load" in parts[0]:
-            # ipython.run_line_magic('store', '-r')
-            ipython.run_line_magic('load', f'{app.appdata}/{f_name}.ipy')
-        elif "open" in parts[0]:
-            file_path = f'{app.appdata}/{f_name}.ipy'
-            if os.path.exists(f'{app.appdata}/{f_name}.ipy'):
-                l = "notebook" if not 'lab' in parts else 'labs'
-                os.system(f"jupyter {l} {file_path}")
-            else:
-                print("Pleas save first")
-        else:
-            tb.__main__.line_magic_ipy(app, ipython, line)
-
-    @register_cell_magic
-    def my_cell_magic(line, cell):
-        print(f"Custom cell magic {line} |CELL| {cell}")
-        line = line + '\\n' + cell
-        tb.__main__.line_magic_ipy(app, ipython, line)
-
-    def apt_completers(self, event):
-        return ['save', 'loadX', 'load', 'open', 'inject']
-
-    ipython.set_hook('complete_command', apt_completers, re_key = '%tb')
-
-    ipython.register_magic_function(my_line_magic, 'line', 'tb')
-    ipython.register_magic_function(my_cell_magic, 'cell', 'tb')
-
-
-load_ipython_extension(get_ipython())
-
-# get_ipython().set_custom_completer(get_completer())
-get_ipython().events.register("pre_run_cell", pre_run_code_hook)
-get_ipython().events.register("post_run_cell", post_run_code_hook)
-
-"""
-    )
-    ()
-    return c
-
-
-def start_ipython_session(argv):
-    from IPython import start_ipython
-
-    config = configure_ipython(argv)
-
-    start_ipython(argv=None, config=config)
 
 
 def runner_setup():
@@ -1931,7 +1758,6 @@ def runner_setup():
         "venv": lambda: __import__(
             "toolboxv2.utils.system.venv_runner", fromlist=["main"]
         ).main(),
-        "ipy": start_ipython_session,
         "db": cli_db_runner,
         "gui": helper_gui,
         "p2p": cli_tcm_runner,
@@ -1989,14 +1815,10 @@ def main_runner():
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    # IPython special case
-    if "--ipy" in sys.argv:
-        argv = sys.argv[1:]
-        sys.argv = sys.argv[:1]
-        start_ipython_session(argv)
+    # IPython special case -> refactor to MocIpy new flow
 
     # Service Manager special case - start all auto-start services and exit
-    elif "--sm" in sys.argv:
+    if "--sm" in sys.argv:
         from toolboxv2.utils.clis.service_manager import run_service_manager_startup
         if 'init' in sys.argv:
             if system() == "Linux":
@@ -2044,7 +1866,7 @@ def main_runner():
             # Group runners by category for better display
             core_runners = ["user", "run", "db", "workers", "services", "registry"]
             util_runners = ["login", "logout", "status", "session", "manifest"]
-            dev_runners = ["venv", "ipy", "mcp", "gui", "browser"]
+            dev_runners = ["venv", "mcp", "gui", "browser"]
             other_runners = [
                 r
                 for r in runner_keys

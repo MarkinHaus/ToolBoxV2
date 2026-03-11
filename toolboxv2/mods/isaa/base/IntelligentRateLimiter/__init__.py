@@ -6,6 +6,7 @@ from .intelligent_rate_limiter import (
     LiteLLMRateLimitHandler,
     load_handler_from_file,
     create_handler_from_config,
+    FallbackReason
 )
 from .minimax_provider import register_minimax
 

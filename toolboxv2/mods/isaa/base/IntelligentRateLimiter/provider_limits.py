@@ -260,7 +260,152 @@ COHERE_LIMITS: Dict[Tier, List[ModelRateLimit]] = {
     ],
 }
 
+# ===== MINIMAX RATE LIMITS =====
+# https://platform.minimax.io/docs/guides/rate-limits
+# Hinweis: MiniMax hat kein separates Free/Paid Tier in den Docs --
+# die unten stehenden Limits gelten pro Account (Pay-as-you-go).
 
+MINIMAX_LIMITS: Dict[Tier, List[ModelRateLimit]] = {
+    Tier.PAY_AS_YOU_GO: [
+        ModelRateLimit(
+            "MiniMax-M2.5",
+            rpm=500,
+            tpm=20_000_000,
+            notes="Gilt auch für MiniMax-M2.5-highspeed",
+        ),
+        ModelRateLimit(
+            "MiniMax-M2.1",
+            rpm=500,
+            tpm=20_000_000,
+            notes="Gilt auch für MiniMax-M2.1-highspeed",
+        ),
+        ModelRateLimit(
+            "MiniMax-M2",
+            rpm=500,
+            tpm=20_000_000,
+        ),
+        ModelRateLimit(
+            "speech-2",
+            rpm=60,
+            tpm=20_000,
+            notes="T2A: speech-2.8-turbo/hd, speech-2.6-turbo/hd, speech-02-turbo/hd",
+        ),
+        ModelRateLimit(
+            "MiniMax-Hailuo",
+            rpm=5,
+            notes="Video Generation: Hailuo-2.3, Hailuo-2.3-Fast, Hailuo-02",
+        ),
+        ModelRateLimit(
+            "image-01",
+            rpm=10,
+            tpm=60,
+            notes="Image Generation",
+        ),
+        ModelRateLimit(
+            "Music",
+            rpm=120,
+            notes="Music-2.5, Music-2.0",
+        ),
+    ],
+}
+
+
+# ===== ZHIPU AI / GLM RATE LIMITS (Z.AI) =====
+# https://docs.z.ai / https://bigmodel.cn
+# Stand: März 2026
+# WICHTIG: Zhipu veröffentlicht keine konkreten RPM/TPM-Zahlen in den Docs.
+# Bekannte Facts:
+#   - GLM-4.7-Flash und GLM-4.5-Flash sind vollständig kostenlos (kein RPD-Cap).
+#   - Free-Tier: ~5-10 concurrent requests beobachtet, höhere Parallelität führt zu 429.
+#   - Coding Plan (Subscription): 5-Stunden-Zyklus + Weekly-Quota, kein direktes RPM-Limit.
+#   - Paid API (Pay-as-you-go): Concurrency-Limits je nach Account-Level, nicht öffentlich.
+# Für Production-Nutzung: Limits über das Dashboard abfragen oder Zhipu kontaktieren.
+# TODO fix wit real limits
+ZHIPU_LIMITS: Dict[Tier, List[ModelRateLimit]] = {
+    Tier.FREE: [
+        ModelRateLimit(
+            "glm-4.7-flash",
+            rpm=60,   # Geschätzt basierend auf Community-Beobachtungen (5-10 concurrent)
+            notes="Vollständig kostenlos, kein RPD-Cap. Offizielles RPM nicht dokumentiert.",
+        ),
+        ModelRateLimit(
+            "glm-4.5-flash",
+            rpm=60,
+            notes="Vollständig kostenlos, kein RPD-Cap. Offizielles RPM nicht dokumentiert.",
+        ),
+    ],
+    Tier.PAY_AS_YOU_GO: [
+        ModelRateLimit(
+            "glm-5",
+            rpm=5,
+            context_window=200_000,
+            notes="Flagship, ~Opus-Level. Offizielles RPM/TPM nicht veröffentlicht. Kontakt: Zhipu Sales.",
+        ),
+        ModelRateLimit(
+            "glm-4.7",
+            rpm=10,
+            context_window=200_000,
+            notes="~Sonnet-Level. $0.60/$2.20 per 1M tokens. RPM nicht öffentlich.",
+        ),
+        ModelRateLimit(
+            "glm-4.7-flashx",
+            rpm=10,
+            context_window=200_000,
+            notes="Paid-Flash-Variante mit besseren Latenz-Garantien.",
+        ),
+        ModelRateLimit(
+            "glm-4.5",
+            rpm=10,
+            context_window=128_000,
+            notes="355B/32B active MoE. RPM nicht öffentlich dokumentiert.",
+        ),
+        ModelRateLimit(
+            "glm-4.5-air",
+            rpm=10,
+            context_window=128_000,
+            notes="106B/12B active MoE, günstiger.",
+        ),
+    ],
+}
+
+
+# ===== INCEPTION LABS / MERCURY RATE LIMITS =====
+# https://docs.inceptionlabs.ai
+# Stand: März 2026
+# WICHTIG: Inception veröffentlicht KEINE öffentlichen RPM/TPM-Zahlen.
+# Bekannte Facts:
+#   - API-Endpoint: https://api.inceptionlabs.ai/v1 (OpenAI-kompatibel)
+#   - Neue API-Keys erhalten 10M kostenlose Token als Startguthaben.
+#   - Beta-Phase: Kein Kredit erforderlich für initiale Tests.
+#   - Context Window: 16K (mercury-coder-small), höher bei mercury-2 / mercury-edit.
+#   - Bei Rate-Limit-Errors: HTTP 429, Exponential Backoff empfohlen.
+# Für genaue Limits: Dashboard unter platform.inceptionlabs.ai prüfen.
+
+INCEPTION_LIMITS: Dict[Tier, List[ModelRateLimit]] = {
+    Tier.FREE: [
+        ModelRateLimit(
+            model_pattern="mercury-coder-small",
+            rpm=100,
+            input_tpm=100_000,
+            output_tpm=10_000,
+            context_window=16_000,
+            notes="Free tier rate limits: 100 RPM, 100k input TPM, 10k output TPM.",
+        ),
+    ],
+    Tier.PAY_AS_YOU_GO: [
+        ModelRateLimit(
+            "mercury-2",
+            rpm=100,
+            context_window=16_000,
+            notes="$0.25/$0.75 per 1M tokens. ~1000 t/s Throughput. RPM nicht öffentlich.",
+        ),
+        ModelRateLimit(
+            "mercury-edit",
+            rpm=100,
+            notes="Code-Edit/Apply/FIM-Modell. RPM nicht öffentlich dokumentiert.",
+        ),
+    ],
+}
 # ===== HELPER FUNCTIONS =====
 
 
@@ -291,6 +436,15 @@ def get_limits_for_model(
         "together_ai": TOGETHER_LIMITS,
         "mistral": MISTRAL_LIMITS,
         "cohere": COHERE_LIMITS,
+        "minimax": MINIMAX_LIMITS,
+        "mm": MINIMAX_LIMITS,
+        "zhipu": ZHIPU_LIMITS,
+        "glm": ZHIPU_LIMITS,
+        "zglm": ZHIPU_LIMITS,
+        "z.ai": ZHIPU_LIMITS,
+        "inception": INCEPTION_LIMITS,
+        "inceptionlabs": INCEPTION_LIMITS,
+        "mercury": INCEPTION_LIMITS,
     }
 
     limits = provider_limits.get(provider, {})
@@ -314,6 +468,9 @@ def print_all_limits():
         "Together AI": TOGETHER_LIMITS,
         "Mistral": MISTRAL_LIMITS,
         "Cohere": COHERE_LIMITS,
+        "MiniMax": MINIMAX_LIMITS,
+        "Zhipu AI / GLM (Z.AI)": ZHIPU_LIMITS,
+        "Inception Labs / Mercury": INCEPTION_LIMITS,
     }
 
     for provider, limits in all_providers.items():

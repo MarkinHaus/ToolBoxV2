@@ -282,25 +282,53 @@ class MiniMaxProvider(CustomLLM):
 
             strict_messages.append(m)
 
-        # Merge system into first user message
-        if system_parts and strict_messages:
-            system_text = "\n\n".join(system_parts)
-            for i, m in enumerate(strict_messages):
-                if m["role"] == "user":
-                    strict_messages[i]["content"] = (
-                        f"[System Instructions]\n{system_text}\n\n[User Message]\n{m['content']}"
-                    )
-                    break
+        # --- FINAL FIX: STRICT MINIMAX ARCHITECTURE ---
+        final_messages = []
+
+        # 1. System Nachricht immer an Index 0 (MiniMax Pflicht)
+        system_content = "\n\n".join(system_parts) if system_parts else "Du bist ein hilfreicher Assistent."
+        final_messages.append({"role": "system", "content": system_content})
+
+        # 2. Tool-Sequenz Reparatur & Verschiebung von Zwischennachrichten
+        pending_tool_results = []
+        expected_ids = set()
+
+        for m in strict_messages:
+            role = m["role"]
+
+            # Wenn wir Tool-Ergebnisse erwarten, aber eine User/System Nachricht kommt
+            if expected_ids and role in ("user", "system"):
+                # Diese Nachricht zwischenspeichern, um sie NACH den Tools einzufügen
+                pending_tool_results.append(m)
+                continue
+
+            if role == "assistant" and "tool_calls" in m:
+                # Neue Erwartungen registrieren
+                for tc in m["tool_calls"]:
+                    tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                    if tc_id: expected_ids.add(tc_id)
+                final_messages.append(m)
+
+            elif role == "tool":
+                t_id = m.get("tool_call_id")
+                if t_id in expected_ids:
+                    final_messages.append(m)
+                    expected_ids.remove(t_id)
+                    # Wenn alle Tools für den letzten Assistant-Call da sind:
+                    if not expected_ids:
+                        final_messages.extend(pending_tool_results)
+                        pending_tool_results = []
+                else:
+                    # Verwaistes Tool -> User
+                    m["role"] = "user"
+                    m.pop("tool_call_id", None)
+                    final_messages.append(m)
             else:
-                strict_messages.insert(0, {
-                    "role": "user",
-                    "content": f"[System Instructions]\n{system_text}",
-                })
+                final_messages.append(m)
 
-        if not strict_messages:
-            strict_messages = [{"role": "user", "content": "Hello"}]
-
-        return strict_messages
+        # Reste anhängen
+        final_messages.extend(pending_tool_results)
+        return final_messages
 
     def _build_payload(
         self,

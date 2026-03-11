@@ -164,10 +164,97 @@ class ToolBoxInstaller:
     def __init__(self):
         self.project_dir = Path(__file__).parent.absolute()
         self.build_dir = self.project_dir / "build"
+        self.native_dir = self.project_dir / "native"
         self.package_json = self.project_dir / "package.json"
         self.build_script = self.project_dir / "build.js"
         self.system = platform.system().lower()
         self.machine = platform.machine().lower()
+
+    # +++++++++++++++++++ BEGIN NATIVE HOST CORE LOGIC +++++++++++++++++++
+
+    def register_native_host(self, extension_id: str = None, browser: str = "chrome") -> bool:
+        """
+        Registriert den Native Messaging Host im Betriebssystem.
+        """
+        print_header("Native Messaging Host registrieren")
+
+        native_host_script = self.native_dir / "toolbox_native_host.py"
+        if not native_host_script.exists():
+            native_host_script = self.project_dir / "src" / "toolbox_native_host.py"
+        if not native_host_script.exists():
+            print_status('error', f"toolbox_native_host.py nicht gefunden in {self.native_dir}")
+            return False
+
+        system = platform.system()
+
+        if system == "Windows":
+            wrapper_path = self.native_dir / "toolbox_native_host_wrapper.bat"
+            wrapper_path.parent.mkdir(parents=True, exist_ok=True)
+            wrapper_path.write_text(
+                f'@echo off\n"{sys.executable}" "{native_host_script.absolute()}" %*\n',
+                encoding="utf-8"
+            )
+            host_path = str(wrapper_path.absolute())
+        else:
+            try:
+                native_host_script.chmod(0o755)
+            except Exception as e:
+                print_status('warning', f"chmod fehlgeschlagen: {e}")
+            host_path = str(native_host_script.absolute())
+
+        manifest = {
+            "name": "com.toolbox.native",
+            "description": "ToolBoxV2 Native Messaging Bridge",
+            "path": host_path,
+            "type": "stdio",
+            "allowed_origins": [],
+        }
+
+        if extension_id:
+            manifest["allowed_origins"].append(f"chrome-extension://{extension_id}/")
+        else:
+            manifest["allowed_origins"].append("chrome-extension://EXTENSION_ID_HIER/")
+            print_status('warning', "Extension ID nicht gesetzt! Nach der Installation erneut registrieren.")
+
+        manifest_json = json.dumps(manifest, indent=2)
+        self.native_dir.mkdir(parents=True, exist_ok=True)
+        manifest_file = self.native_dir / "com.toolbox.native.json"
+        manifest_file.write_text(manifest_json, encoding="utf-8")
+        print_status('success', f"Manifest gespeichert: {manifest_file}")
+
+        if system == "Windows":
+            return self._register_windows(browser, manifest_file)
+        elif system == "Darwin":
+            return self._register_macos(browser, manifest_json)
+        else:
+            return self._register_linux(browser, manifest_json)
+
+    def _register_windows(self, browser: str, manifest_path: Path) -> bool:
+        import winreg
+        browsers_registry = {
+            "chrome":   r"Software\Google\Chrome\NativeMessagingHosts\com.toolbox.native",
+            "edge":     r"Software\Microsoft\Edge\NativeMessagingHosts\com.toolbox.native",
+            "brave":    r"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\com.toolbox.native",
+        }
+        key_path = browsers_registry.get(browser, browsers_registry["chrome"])
+        try:
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, str(manifest_path.absolute()))
+            print_status('success', f"Registry: HKCU\\{key_path}")
+            return True
+        except Exception as e:
+            print_status('error', f"Registry-Fehler: {e}")
+            return False
+
+    def _register_macos(self, browser: str, manifest_json: str) -> bool:
+        # Implementierung für macOS Registrierung
+        pass
+
+    def _register_linux(self, browser: str, manifest_json: str) -> bool:
+        # Implementierung für Linux Registrierung
+        pass
+
+    # ++++++++++++++++++++ END NATIVE HOST CORE LOGIC ++++++++++++++++++++
 
     def check_requirements(self) -> bool:
         """Check if Node.js and npm are installed"""
@@ -455,11 +542,13 @@ class ToolBoxInstaller:
                 '│') + f"  {Style.CYAN('4.')} {Style.WHITE('📖 Show Installation Instructions')}" + ' ' * 32 + Style.WHITE('│'))
             print(Style.WHITE(
                 '│') + f"  {Style.CYAN('5.')} {Style.WHITE('🌐 Open Extension Folder')}" + ' ' * 41 + Style.WHITE('│'))
+            print(Style.WHITE(
+                '│') + f"  {Style.CYAN('6.')} {Style.WHITE('🔌 Native Host registrieren')}" + ' ' * 38 + Style.WHITE('│'))
             print(Style.WHITE('│') + f"  {Style.CYAN('0.')} {Style.WHITE('❌ Exit')}" + ' ' * 58 + Style.WHITE('│'))
             print(Style.WHITE('│') + ' ' * 70 + Style.WHITE('│'))
             print(Style.Bold(Style.WHITE('└──────────────────────────────────────────────────────────────────────┘')))
 
-            choice = input(f"\n{Style.CYAN('❯')} {Style.WHITE('Enter your choice (0-5):')} ").strip()
+            choice = input(f"\n{Style.CYAN('❯')} {Style.WHITE('Enter your choice (0-6):')} ").strip()
 
             if choice == '1':
                 if self.run_build('dev'):
@@ -503,12 +592,21 @@ class ToolBoxInstaller:
                     print_status('warning', "Build folder doesn't exist yet. Build first!")
                 input(f"\n{Style.GREY('Press Enter to continue...')}")
 
+            elif choice == '6':
+                ext_id = input(f"  Extension ID (optional, kann später nachgetragen werden): ").strip() or None
+                browser = input(f"  Browser [chrome/edge/brave] (default: chrome): ").strip() or "chrome"
+                if self.register_native_host(ext_id, browser):
+                    print_status('success', "Native Host erfolgreich registriert!")
+                    if not ext_id:
+                        print_status('info', "Führe die Registrierung erneut aus, sobald die Extension-ID bekannt ist.")
+                input(f"\n{Style.GREY('Press Enter to continue...')}")
+
             elif choice == '0':
                 print(f"\n{Style.GREEN('👋 Thanks for using ToolBox Pro!')}")
                 sys.exit(0)
 
             else:
-                print_status('warning', "Invalid choice. Please select 0-5.")
+                print_status('warning', "Invalid choice. Please select 0-6.")
 
     def quick_install(self) -> bool:
         """Quick automated installation"""
@@ -564,6 +662,7 @@ Commands:
   build     - Build production version
   dev       - Build development version
   package   - Build and create ZIP package
+  native    - Native Host registrieren. Bsp: `tb browser native [extension_id]`
   help      - Show this help message
 
 Examples:
@@ -604,6 +703,15 @@ Examples:
             else:
                 sys.exit(1)
             return
+
+        elif command == 'native':
+            installer.check_requirements()
+            ext_id  = sys.argv[2] if len(sys.argv) > 2 else None
+            browser = sys.argv[3] if len(sys.argv) > 3 else "chrome"
+            if not installer.register_native_host(ext_id, browser):
+                sys.exit(1)
+            return
+
 
     # Default: Interactive menu
     installer.check_requirements()

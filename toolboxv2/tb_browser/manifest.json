@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "ToolBox Pro - AI Assistant & Password Manager",
+  "name": "ToolBoxV2",
   "version": "3.0.0",
   "description": "Advanced browser extension with gesture control, ISAA AI assistant, voice input, live search, and secure password management with 2FA support",
 
@@ -13,11 +13,14 @@
     "tabs",
     "clipboardWrite",
     "clipboardRead",
-    "sidePanel"
+    "sidePanel",
+    "nativeMessaging",
+    "debugger"
   ],
 
   "host_permissions": [
     "http://localhost:8080/*",
+    "http://localhost:5000/*",
     "https://simplecore.app/*",
     "<all_urls>"
   ],
@@ -27,7 +30,9 @@
       "resources": [
         "src/*",
         "assets/*",
-        "icons/*"
+        "icons/*",
+        "src/prompts/*",
+        "src/content/*"
       ],
       "matches": ["<all_urls>"]
     }
@@ -45,6 +50,20 @@
       "css": ["src/content.css"],
       "run_at": "document_idle",
       "all_frames": false
+    },
+    {
+      "matches": [
+        "https://claude.ai/*",
+        "https://gemini.google.com/*",
+        "https://aistudio.google.com/*",
+        "https://*.chatglm.cn/*",
+        "https://*.hailuo.ai/*",
+        "https://chatgpt.com/*",
+        "https://www.perplexity.ai/*"
+      ],
+      "js": ["src/content/injector.js"],
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
 
@@ -58,33 +77,25 @@
     }
   },
 
-    "side_panel": {
+  "side_panel": {
     "default_path": "src/popup.html"
   },
 
   "commands": {
-    "toggle-toolbox": {
-      "suggested_key": {
-        "default": "Alt+T"
-      },
-      "description": "Toggle ToolBox Pro"
+    "prompt-inject": {
+      "suggested_key": { "default": "Alt+P" },
+      "description": "Open Prompt Library Panel"
     },
     "voice-command": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+V"
-      },
+      "suggested_key": { "default": "Ctrl+Shift+V" },
       "description": "Activate Voice Command"
     },
     "quick-search": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+F"
-      },
+      "suggested_key": { "default": "Ctrl+Shift+F" },
       "description": "Quick Page Search"
     },
     "password-autofill": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+P"
-      },
+      "suggested_key": { "default": "Ctrl+Shift+P" },
       "description": "Auto-fill Password"
     }
   },
