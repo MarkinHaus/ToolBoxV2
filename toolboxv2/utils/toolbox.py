@@ -195,7 +195,7 @@ class App(AppType, metaclass=Singleton):
         try:
             self.config_fh.load_file_handler()
         except Exception as e:
-            self.debug_rains(e)
+            print(e)
         self._debug = args.debug
         self.flows = {}
         self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])
