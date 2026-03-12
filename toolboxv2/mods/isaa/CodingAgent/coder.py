@@ -734,9 +734,12 @@ class GitWorktree:
     async def changed_files(self) -> list[str]:
         if not self.path: return []
         if self._is_git:
-            r = _safe_run(["git", "diff", "--name-only", "HEAD"], cwd=self.path, timeout=10)
-            u = _safe_run(["git", "ls-files", "--others", "--exclude-standard"], cwd=self.path, timeout=10)
-            return [f for f in (r.stdout + u.stdout).splitlines() if f.strip()]
+            try:
+                r = _safe_run(["git", "diff", "--name-only", "HEAD"], cwd=self.path, timeout=20)
+                u = _safe_run(["git", "ls-files", "--others", "--exclude-standard"], cwd=self.path, timeout=20)
+                return [f for f in (r.stdout + u.stdout).splitlines() if f.strip()]
+            except subprocess.TimeoutExpired:
+                print("Git TimeoutExpired repo to large (increase timeout)")
 
         src_files = self._list_tracked_files(self.path)
         dst_files = [(self.origin_root / f.relative_to(self.path)) for f in src_files]

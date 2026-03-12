@@ -619,11 +619,131 @@ class VirtualFileSystemV2:
         """Initialize root directory"""
         self.directories["/"] = VFSDirectory(name="/", readonly=True)
 
+    def _build_vfs_guide(self) -> str:
+        """Build the VFS usage guide that is injected as /vfs_guide.md."""
+        return """# VFS — Schnellreferenz
+
+## Die zwei Kern-Tools
+
+| Tool | Zweck |
+|------|-------|
+| `vfs_shell(command)` | Alle Datei-Operationen (lesen, schreiben, suchen, navigieren) |
+| `vfs_view(path, ...)` | Kontext-Fenster steuern — was du im nächsten Prompt **siehst** |
+
+---
+
+## Kontext-Fenster — Konzept
+
+Offene Dateien erscheinen in **jedem folgenden Prompt** (= Token-Kosten!).
+Geschlossene Dateien sind unsichtbar — nur Metadaten bleiben erhalten.
+
+**Regel**: Öffne immer nur den Bereich, der für deine aktuelle Aufgabe direkt relevant ist.
+
+---
+
+## Fokussierter Recherche-Workflow (x und y finden)
+
+```
+# 1. x suchen
+vfs_shell("grep -rn 'ClassX' /src")
+# → /src/models.py:42:class ClassX:
+
+# 2. Auf x einzoomen  →  models.py erscheint ab jetzt im Kontext
+vfs_view("/src/models.py", scroll_to="ClassX", context_lines=60)
+
+# 3. y suchen
+vfs_shell("grep -rn 'method_y' /src")
+# → /src/services.py:88:    def method_y(self):
+
+# 4. y zum Kontext hinzufügen  →  jetzt sind BEIDE Abschnitte sichtbar
+vfs_view("/src/services.py", scroll_to="method_y", context_lines=40)
+
+# 5. Antwort geben — du siehst genau x und y, nichts Überflüssiges
+
+# 6. Aufräumen  →  alles schließen, neu starten
+vfs_view("/src/neue_datei.py", scroll_to="...", close_others=True)
+# ODER einzeln:
+vfs_shell("close /src/models.py")
+vfs_shell("close /src/services.py")
+```
+
+---
+
+## vfs_shell Referenz
+
+```
+# Navigation
+ls [-la] [-R] [path]         tree [path] [-L depth]      pwd
+
+# Lesen
+cat <path>                   head -n N <path>            tail -n N <path>
+wc -l <path>                 stat <path>
+
+# Suchen
+find [path] -name "*.py"     find [path] -type f -name pattern
+grep -rn "pattern" /src      grep -in "pattern" /file.py
+
+# Schreiben (klein)
+touch <path>
+echo "content" > <path>      echo "line" >> <path>
+
+# Schreiben (groß / mehrzeilig)
+write <path> "zeile1\\nzeile2\\nzeile3"
+
+# Zeilen ersetzen (präzises Editieren)
+edit <path> <start> <end> "neuer inhalt\\nzeile2"
+
+# Verzeichnisse
+mkdir -p /src/components      rm -rf /old_dir/
+
+# Dateien
+rm /file.py                   mv /old.py /new.py          cp /src.py /dst.py
+
+# Kontext
+close <path>                  (entfernt Datei aus dem Kontext-Fenster)
+
+# Ausführen
+exec <path> [args...]
+```
+
+---
+
+## vfs_view Parameter
+
+```
+vfs_view(
+    path         : str,         # Dateipfad (Pflicht)
+    line_start   : int = 1,     # Startzeile — wird ignoriert wenn scroll_to gesetzt
+    line_end     : int = -1,    # Endzeile   — wird ignoriert wenn scroll_to gesetzt
+    scroll_to    : str = None,  # Pattern → erste Übereinstimmung finden & zentrieren
+    context_lines: int = 40,    # Zeilen um den Treffer anzeigen
+    close_others : bool = False # Alle anderen offenen Dateien zuerst schließen
+)
+```
+
+---
+
+## Mount-Punkte
+
+| Pfad | Beschreibung |
+|------|-------------|
+| `/global/` | Geteilt zwischen allen Sessions (persistent auf Disk) |
+| `/shared/{id}/` | Cross-Session/Agent Shares  →  `vfs_share_*` Tools |
+| `/project/` | Typischer Einhängepunkt für lokale Projektordner  →  `vfs_mount` |
+"""
+
     def _init_system_files(self):
         """Initialize read-only system files"""
         self.files["/system_context.md"] = VFSFile(
             filename="system_context.md",
             _content=self._build_system_context(),
+            state="open",
+            readonly=True,
+        )
+
+        self.files["/vfs_guide.md"] = VFSFile(
+            filename="vfs_guide.md",
+            _content=self._build_vfs_guide(),
             state="open",
             readonly=True,
         )

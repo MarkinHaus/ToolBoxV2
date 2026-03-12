@@ -31,6 +31,8 @@ import os
 import threading
 import time
 
+from toolboxv2.mods.isaa.base.IntelligentRateLimiter import setup_inception_provider
+
 # ─── Windows: Binary-Modus auf stdin/stdout setzen ───────────────────────────
 if sys.platform == "win32":
     import msvcrt
@@ -122,6 +124,7 @@ def get_toolbox_app():
             _app = get_app("native_host")
             logger.info("ToolBoxV2 app initialized")
 
+            setup_inception_provider()
         except Exception as e:
             logger.error(f"Failed to initialize toolboxv2: {e}")
             raise
@@ -267,7 +270,6 @@ async def handle_list_agents(app, payload: Dict) -> Dict:
 async def handle_format_class(app, payload: Dict) -> Dict:
     from pydantic import BaseModel, create_model
     from typing import Any
-
     format_schema = payload.get("format_schema")
     task = payload.get("task", "")
     if not format_schema or not task:
