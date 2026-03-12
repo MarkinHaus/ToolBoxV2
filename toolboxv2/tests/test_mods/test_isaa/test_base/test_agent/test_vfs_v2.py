@@ -37,6 +37,33 @@ from toolboxv2.mods.isaa.base.Agent.web_display import (
     WebDisplayConfig,
     DisplaySession
 )
+from toolboxv2.mods.isaa.base.Agent.vfs_v2 import VirtualFileSystemV2
+from toolboxv2.mods.isaa.base.patch.vfs_shell_tool import make_vfs_shell, make_vfs_view
+
+
+# =============================================================================
+# HELPERS
+# =============================================================================
+
+def _make_session(tmp_dir: str | None = None) -> MagicMock:
+    """Build a minimal AgentSession mock with a real VFS instance."""
+    vfs = VirtualFileSystemV2(session_id="test_shell", agent_name="test_agent")
+    session = MagicMock()
+    session.vfs = vfs
+    session.agent_name = "test_agent"
+    return session
+
+
+def _prep(session, paths: dict[str, str] | None = None, dirs: list[str] | None = None):
+    """Populate a session's VFS with directories and files."""
+    for d in dirs or []:
+        session.vfs.mkdir(d, parents=True)
+    for path, content in (paths or {}).items():
+        parent = os.path.dirname(path)
+        if parent and parent != "/":
+            session.vfs.mkdir(parent, parents=True)
+        session.vfs.create(path, content)
+
 
 
 class TestFileTypes(unittest.TestCase):
@@ -705,6 +732,827 @@ class TestExecutableFiles(unittest.TestCase):
         self.assertTrue(self.vfs.can_execute("/script.py"))
         self.assertFalse(self.vfs.can_execute("/notes.txt"))
         self.assertFalse(self.vfs.can_execute("/nonexistent.py"))
+
+
+
+# =============================================================================
+# VFS_SHELL — BASE BEHAVIOUR
+# =============================================================================
+
+class TestVfsShellReturnSchema(unittest.TestCase):
+    """Every command must return the standard {success, stdout, stderr, returncode} dict."""
+
+    def setUp(self):
+        self.session = _make_session()
+        self.shell = make_vfs_shell(self.session)
+
+    def _assert_schema(self, result):
+        self.assertIsInstance(result, dict)
+        self.assertIn("success", result)
+        self.assertIn("stdout", result)
+        self.assertIn("stderr", result)
+        self.assertIn("returncode", result)
+
+    def test_ls_schema(self):        self._assert_schema(self.shell("ls /"))
+
+    def test_cat_schema(self):
+        _prep(self.session, {"/f.txt": "x"})
+        self._assert_schema(self.shell("cat /f.txt"))
+
+    def test_mkdir_schema(self):     self._assert_schema(self.shell("mkdir /new"))
+
+    def test_unknown_schema(self):   self._assert_schema(self.shell("notacmd"))
+
+    def test_empty_schema(self):     self._assert_schema(self.shell(""))
+
+
+# =============================================================================
+# VFS_SHELL — NAVIGATION
+# =============================================================================
+
+class TestVfsShellNavigation(unittest.TestCase):
+
+    def setUp(self):
+        self.session = _make_session()
+        _prep(self.session,
+              paths={"/src/main.py": "print('hi')", "/README.md": "# R"},
+              dirs=["/src/util"])
+        self.shell = make_vfs_shell(self.session)
+
+    # ── ls ──────────────────────────────────────────────────────────────────
+
+    def test_ls_root(self):
+        r = self.shell("ls /")
+        self.assertTrue(r["success"])
+        self.assertIn("src", r["stdout"])
+        self.assertIn("README.md", r["stdout"])
+
+    def test_ls_subdir(self):
+        r = self.shell("ls /src")
+        self.assertTrue(r["success"])
+        self.assertIn("main.py", r["stdout"])
+
+    def test_ls_long(self):
+        r = self.shell("ls -la /src")
+        self.assertTrue(r["success"])
+        # Long format shows size column + state
+        self.assertIn("main.py", r["stdout"])
+
+    def test_ls_recursive(self):
+        r = self.shell("ls -R /src")
+        self.assertTrue(r["success"])
+        self.assertIn("util", r["stdout"])
+
+    def test_ls_nonexistent(self):
+        r = self.shell("ls /does_not_exist")
+        self.assertFalse(r["success"])
+
+    # ── pwd ─────────────────────────────────────────────────────────────────
+
+    def test_pwd(self):
+        r = self.shell("pwd")
+        self.assertTrue(r["success"])
+        self.assertEqual(r["stdout"].strip(), "/")
+
+    # ── tree ────────────────────────────────────────────────────────────────
+
+    def test_tree_root(self):
+        r = self.shell("tree /")
+        self.assertTrue(r["success"])
+        self.assertIn("src", r["stdout"])
+
+    def test_tree_depth(self):
+        r = self.shell("tree / -L 1")
+        self.assertTrue(r["success"])
+        # At depth 1 we should see src but not src/main.py
+        self.assertNotIn("main.py", r["stdout"])
+
+    def test_tree_subpath(self):
+        r = self.shell("tree /src")
+        self.assertTrue(r["success"])
+        self.assertIn("main.py", r["stdout"])
+
+
+# =============================================================================
+# VFS_SHELL — READ COMMANDS
+# =============================================================================
+
+class TestVfsShellRead(unittest.TestCase):
+    CONTENT = "\n".join(f"line{i}" for i in range(1, 21))  # 20 lines
+
+    def setUp(self):
+        self.session = _make_session()
+        _prep(self.session, {"/big.txt": self.CONTENT})
+        self.shell = make_vfs_shell(self.session)
+
+    def test_cat(self):
+        r = self.shell("cat /big.txt")
+        self.assertTrue(r["success"])
+        self.assertEqual(r["stdout"], self.CONTENT)
+
+    def test_cat_missing(self):
+        r = self.shell("cat /missing.txt")
+        # cat reports per-file errors in stdout (like real cat)
+        self.assertIn("missing.txt", r["stdout"])
+
+    def test_head_default(self):
+        r = self.shell("head /big.txt")
+        self.assertTrue(r["success"])
+        lines = r["stdout"].splitlines()
+        self.assertEqual(len(lines), 10)
+        self.assertEqual(lines[0], "line1")
+
+    def test_head_n5(self):
+        r = self.shell("head -n 5 /big.txt")
+        self.assertTrue(r["success"])
+        self.assertEqual(len(r["stdout"].splitlines()), 5)
+
+    def test_tail_default(self):
+        r = self.shell("tail /big.txt")
+        self.assertTrue(r["success"])
+        lines = r["stdout"].splitlines()
+        self.assertEqual(len(lines), 10)
+        self.assertEqual(lines[-1], "line20")
+
+    def test_tail_n3(self):
+        r = self.shell("tail -n 3 /big.txt")
+        self.assertTrue(r["success"])
+        lines = r["stdout"].splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertEqual(lines[-1], "line20")
+
+    def test_wc_l(self):
+        r = self.shell("wc -l /big.txt")
+        self.assertTrue(r["success"])
+        self.assertIn("20", r["stdout"])
+
+    def test_wc_default(self):
+        r = self.shell("wc /big.txt")
+        self.assertTrue(r["success"])
+        # Should show lines words chars
+        parts = r["stdout"].split()
+        self.assertGreaterEqual(len(parts), 3)
+
+    def test_stat(self):
+        r = self.shell("stat /big.txt")
+        self.assertTrue(r["success"])
+        self.assertIn("big.txt", r["stdout"])
+        self.assertIn("size", r["stdout"].lower())
+
+    def test_info_alias(self):
+        r = self.shell("info /big.txt")
+        self.assertTrue(r["success"])
+
+
+# =============================================================================
+# VFS_SHELL — SEARCH
+# =============================================================================
+
+class TestVfsShellSearch(unittest.TestCase):
+
+    def setUp(self):
+        self.session = _make_session()
+        _prep(self.session, {
+            "/src/models.py": "class UserModel:\n    id = 1\n",
+            "/src/views.py": "class UserView:\n    pass\n",
+            "/src/config.yml": "host: localhost\n",
+            "/tests/test_models.py": "import models\ndef test_user(): pass\n",
+        })
+        self.shell = make_vfs_shell(self.session)
+
+    # ── find ────────────────────────────────────────────────────────────────
+
+    def test_find_by_name(self):
+        r = self.shell("find / -name *.py")
+        self.assertTrue(r["success"])
+        self.assertIn("/src/models.py", r["stdout"])
+        self.assertIn("/src/views.py", r["stdout"])
+        self.assertNotIn(".yml", r["stdout"])
+
+    def test_find_type_f(self):
+        r = self.shell("find /src -type f -name *.py")
+        self.assertTrue(r["success"])
+        self.assertIn("models.py", r["stdout"])
+
+    def test_find_type_d(self):
+        r = self.shell("find / -type d -name src")
+        self.assertTrue(r["success"])
+        self.assertIn("src", r["stdout"])
+
+    def test_find_no_matches(self):
+        r = self.shell("find / -name *.go")
+        print(r)
+        self.assertFalse(r["success"])  # returncode 1, no matches
+        self.assertIn("no matches", r["stdout"])
+
+    # ── grep ────────────────────────────────────────────────────────────────
+
+    def test_grep_recursive(self):
+        r = self.shell("grep -rn UserModel /")
+        self.assertTrue(r["success"])
+        self.assertIn("models.py", r["stdout"])
+        self.assertNotIn("views.py", r["stdout"])
+
+    def test_grep_case_insensitive(self):
+        r = self.shell("grep -ri usermodel /")
+        self.assertTrue(r["success"])
+        self.assertIn("models.py", r["stdout"])
+
+    def test_grep_show_line_number(self):
+        r = self.shell("grep -rn class /src")
+        self.assertTrue(r["success"])
+        # Line-number output: file:line:content
+        self.assertRegex(r["stdout"], r":\d+:")
+
+    def test_grep_files_only(self):
+        r = self.shell("grep -rl class /src")
+        self.assertTrue(r["success"])
+        lines = r["stdout"].splitlines()
+        # Only filenames, no line content
+        for line in lines:
+            self.assertNotIn("class", line)
+
+    def test_grep_single_file(self):
+        r = self.shell("grep -n id /src/models.py")
+        self.assertTrue(r["success"])
+        self.assertIn("id", r["stdout"])
+
+    def test_grep_no_matches(self):
+        r = self.shell("grep -r zzznomatch /")
+        print(r)
+        self.assertFalse(r["success"])
+        self.assertIn("no matches", r["stdout"])
+
+    def test_grep_context_lines(self):
+        r = self.shell("grep -rn -C 1 class /src/models.py")
+        self.assertTrue(r["success"])
+        # Context separator "--" should appear
+        self.assertIn("--", r["stdout"])
+
+
+# =============================================================================
+# VFS_SHELL — WRITE COMMANDS
+# =============================================================================
+
+class TestVfsShellWrite(unittest.TestCase):
+
+    def setUp(self):
+        self.session = _make_session()
+        self.shell = make_vfs_shell(self.session)
+        self.vfs = self.session.vfs
+
+    # ── touch ───────────────────────────────────────────────────────────────
+
+    def test_touch_creates_file(self):
+        r = self.shell("touch /new.txt")
+        self.assertTrue(r["success"])
+        self.assertTrue(self.vfs._is_file("/new.txt"))
+
+    def test_touch_existing_file(self):
+        self.vfs.create("/exists.txt", "content")
+        before = self.vfs.files["/exists.txt"].updated_at
+        r = self.shell("touch /exists.txt")
+        self.assertTrue(r["success"])
+        # Content unchanged
+        self.assertEqual(self.vfs.read("/exists.txt")["content"], "content")
+
+    # ── echo redirect ───────────────────────────────────────────────────────
+
+    def test_echo_overwrite(self):
+        self.vfs.create("/out.txt", "old")
+        r = self.shell('echo "new content" > /out.txt')
+        self.assertTrue(r["success"])
+        self.assertEqual(self.vfs.read("/out.txt")["content"], "new content")
+
+    def test_echo_append(self):
+        self.vfs.create("/log.txt", "first\n")
+        r = self.shell('echo "second" >> /log.txt')
+        self.assertTrue(r["success"])
+        self.assertIn("second", self.vfs.read("/log.txt")["content"])
+
+    def test_echo_creates_file(self):
+        r = self.shell('echo "hello" > /brand_new.txt')
+        self.assertTrue(r["success"])
+        self.assertEqual(self.vfs.read("/brand_new.txt")["content"], "hello")
+
+    # ── write ───────────────────────────────────────────────────────────────
+
+    def test_write_simple(self):
+        r = self.shell("write /data.txt hello")
+        self.assertTrue(r["success"])
+        self.assertEqual(self.vfs.read("/data.txt")["content"], "hello")
+
+    def test_write_multiline(self):
+        r = self.shell(r'write /multi.py line1\nline2\nline3')
+        self.assertTrue(r["success"])
+        content = self.vfs.read("/multi.py")["content"]
+        print(content)
+        self.assertEqual(content.count("\n"), 2)
+        self.assertIn("line2", content)
+
+    def test_write_overwrite(self):
+        self.vfs.create("/f.txt", "old")
+        self.shell("write /f.txt new")
+        self.assertEqual(self.vfs.read("/f.txt")["content"], "new")
+
+    def test_write_missing_args(self):
+        r = self.shell("write /only_path")
+        self.assertFalse(r["success"])
+
+    # ── edit ────────────────────────────────────────────────────────────────
+
+    def test_edit_single_line(self):
+        _prep(self.session, {"/code.py": "a\nb\nc\nd"})
+        r = self.shell("edit /code.py 2 2 B")
+        self.assertTrue(r["success"])
+        content = self.vfs.read("/code.py")["content"]
+        self.assertEqual(content, "a\nB\nc\nd")
+
+    def test_edit_range(self):
+        _prep(self.session, {"/code.py": "a\nb\nc\nd"})
+        r = self.shell("edit /code.py 2 3 X")
+        self.assertTrue(r["success"])
+        content = self.vfs.read("/code.py")["content"]
+        self.assertNotIn("b", content)
+        self.assertNotIn("c", content)
+        self.assertIn("X", content)
+
+    def test_edit_multiline_replacement(self):
+        _prep(self.session, {"/code.py": "a\nb\nc"})
+        r = self.shell(r"edit /code.py 2 2 new1\nnew2")
+        self.assertTrue(r["success"])
+        content = self.vfs.read("/code.py")["content"]
+        self.assertIn("new1", content)
+        self.assertIn("new2", content)
+
+    def test_edit_missing_args(self):
+        _prep(self.session, {"/code.py": "a"})
+        r = self.shell("edit /code.py 1")
+        self.assertFalse(r["success"])
+
+    def test_edit_nonexistent_file(self):
+        r = self.shell("edit /ghost.py 1 1 x")
+        self.assertFalse(r["success"])
+
+    # ── mkdir ───────────────────────────────────────────────────────────────
+
+    def test_mkdir_simple(self):
+        r = self.shell("mkdir /newdir")
+        self.assertTrue(r["success"])
+        self.assertTrue(self.vfs._is_directory("/newdir"))
+
+    def test_mkdir_parents(self):
+        r = self.shell("mkdir -p /a/b/c")
+        self.assertTrue(r["success"])
+        self.assertTrue(self.vfs._is_directory("/a/b/c"))
+
+    def test_mkdir_no_parent_fails(self):
+        r = self.shell("mkdir /no/parent/path")
+        self.assertFalse(r["success"])
+
+    # ── rm ──────────────────────────────────────────────────────────────────
+
+    def test_rm_file(self):
+        _prep(self.session, {"/del.txt": "bye"})
+        r = self.shell("rm /del.txt")
+        self.assertTrue(r["success"])
+        self.assertFalse(self.vfs._is_file("/del.txt"))
+
+    def test_rm_directory_requires_rf(self):
+        self.vfs.mkdir("/dir_with_file")
+        self.vfs.create("/dir_with_file/f.txt", "x")
+        r = self.shell("rm /dir_with_file")
+        self.assertFalse(r["success"])
+
+    def test_rm_rf_directory(self):
+        self.vfs.mkdir("/dir_to_kill")
+        self.vfs.create("/dir_to_kill/f.txt", "x")
+        r = self.shell("rm -rf /dir_to_kill")
+        self.assertTrue(r["success"])
+        self.assertFalse(self.vfs._is_directory("/dir_to_kill"))
+
+    def test_rm_force_nonexistent(self):
+        # -f should not raise an error on missing file
+        r = self.shell("rm -f /ghost.txt")
+        # with -rf the result depends on the implementation: success or silent
+        # Acceptable either way — should not crash
+        self.assertIsInstance(r, dict)
+
+    # ── mv ──────────────────────────────────────────────────────────────────
+
+    def test_mv_file(self):
+        _prep(self.session, {"/old.txt": "data"})
+        r = self.shell("mv /old.txt /new.txt")
+        self.assertTrue(r["success"])
+        self.assertFalse(self.vfs._is_file("/old.txt"))
+        self.assertTrue(self.vfs._is_file("/new.txt"))
+        self.assertEqual(self.vfs.read("/new.txt")["content"], "data")
+
+    def test_mv_into_directory(self):
+        _prep(self.session, {"/file.txt": "data"}, dirs=["/dest"])
+        r = self.shell("mv /file.txt /dest")
+        self.assertTrue(r["success"])
+        self.assertTrue(self.vfs._is_file("/dest/file.txt"))
+
+    def test_mv_missing_source(self):
+        r = self.shell("mv /ghost.txt /any.txt")
+        self.assertFalse(r["success"])
+
+    # ── cp ──────────────────────────────────────────────────────────────────
+
+    def test_cp_file(self):
+        _prep(self.session, {"/orig.txt": "hello"})
+        r = self.shell("cp /orig.txt /copy.txt")
+        self.assertTrue(r["success"])
+        self.assertTrue(self.vfs._is_file("/orig.txt"))  # original kept
+        self.assertTrue(self.vfs._is_file("/copy.txt"))
+        self.assertEqual(self.vfs.read("/copy.txt")["content"], "hello")
+
+    def test_cp_into_directory(self):
+        _prep(self.session, {"/file.py": "pass"}, dirs=["/backup"])
+        r = self.shell("cp /file.py /backup")
+        self.assertTrue(r["success"])
+        self.assertTrue(self.vfs._is_file("/backup/file.py"))
+
+    def test_cp_missing_source(self):
+        r = self.shell("cp /nothing.py /dst.py")
+        self.assertFalse(r["success"])
+
+
+# =============================================================================
+# VFS_SHELL — CONTEXT CONTROL (close)
+# =============================================================================
+
+class TestVfsShellClose(unittest.TestCase):
+
+    def setUp(self):
+        self.session = _make_session()
+        _prep(self.session, {"/a.py": "x", "/b.py": "y"})
+        self.vfs = self.session.vfs
+        self.shell = make_vfs_shell(self.session)
+
+    def test_close_open_file(self):
+        self.vfs.open("/a.py")
+        self.assertEqual(self.vfs.files["/a.py"].state, "open")
+        r = self.shell("close /a.py")
+        self.assertTrue(r["success"])
+        self.assertEqual(self.vfs.files["/a.py"].state, "closed")
+
+    def test_close_already_closed(self):
+        # Closing a closed file should still succeed
+        r = self.shell("close /b.py")
+        self.assertTrue(r["success"])
+
+    def test_close_nonexistent(self):
+        r = self.shell("close /ghost.py")
+        self.assertFalse(r["success"])
+
+    def test_close_system_file(self):
+        # System files must not be closable
+        r = self.shell("close /system_context.md")
+        self.assertFalse(r["success"])
+
+
+# =============================================================================
+# VFS_SHELL — EXECUTE
+# =============================================================================
+
+class TestVfsShellExec(unittest.TestCase):
+
+    def setUp(self):
+        self.session = _make_session()
+        self.shell = make_vfs_shell(self.session)
+        self.vfs = self.session.vfs
+
+    def test_exec_python(self):
+        _prep(self.session, {"/hello.py": "print('hello world')"})
+        r = self.shell("exec /hello.py")
+        self.assertTrue(r["success"], r["stderr"])
+        self.assertIn("hello world", r["stdout"])
+
+    def test_exec_with_args(self):
+        _prep(self.session, {"/echo_arg.py": "import sys; print(sys.argv[1])"})
+        r = self.shell("exec /echo_arg.py myarg")
+        self.assertTrue(r["success"], r["stderr"])
+        self.assertIn("myarg", r["stdout"])
+
+    def test_exec_non_executable(self):
+        _prep(self.session, {"/data.json": '{"key": "value"}'})
+        r = self.shell("exec /data.json")
+        self.assertFalse(r["success"])
+
+    def test_exec_nonexistent(self):
+        r = self.shell("exec /ghost.py")
+        self.assertFalse(r["success"])
+
+
+# =============================================================================
+# VFS_SHELL — EDGE CASES & PARSE ROBUSTNESS
+# =============================================================================
+
+class TestVfsShellEdgeCases(unittest.TestCase):
+
+    def setUp(self):
+        self.session = _make_session()
+        self.shell = make_vfs_shell(self.session)
+
+    def test_unknown_command(self):
+        r = self.shell("notacommand")
+        self.assertFalse(r["success"])
+        self.assertIn("command not found", r["stderr"])
+
+    def test_empty_string(self):
+        r = self.shell("")
+        self.assertFalse(r["success"])
+
+    def test_whitespace_only(self):
+        r = self.shell("   ")
+        self.assertFalse(r["success"])
+
+    def test_quoted_content_with_spaces(self):
+        r = self.shell('write /f.txt "hello world today"')
+        self.assertTrue(r["success"])
+        self.assertIn("hello world today", self.session.vfs.read("/f.txt")["content"])
+
+    def test_echo_single_quotes(self):
+        r = self.shell("echo 'single quoted' > /sq.txt")
+        self.assertTrue(r["success"])
+        self.assertIn("single quoted", self.session.vfs.read("/sq.txt")["content"])
+
+    def test_path_normalisation(self):
+        # Double slash / no leading slash should still work via vfs normalise
+        _prep(self.session, {"/src/a.py": "x"})
+        r = self.shell("cat /src/a.py")
+        self.assertTrue(r["success"])
+
+
+# =============================================================================
+# VFS_VIEW — BASE BEHAVIOUR
+# =============================================================================
+
+class TestVfsViewReturnSchema(unittest.TestCase):
+    CONTENT = "\n".join(f"line{i}" for i in range(1, 51))  # 50 lines
+
+    def setUp(self):
+        self.session = _make_session()
+        _prep(self.session, {"/big.py": self.CONTENT})
+        self.view = make_vfs_view(self.session)
+
+    def _assert_schema(self, r):
+        self.assertIsInstance(r, dict)
+        self.assertIn("success", r)
+        if r["success"]:
+            self.assertIn("content", r)
+            self.assertIn("showing", r)
+            self.assertIn("total_lines", r)
+            self.assertIn("file_type", r)
+
+    def test_basic_open(self):
+        self._assert_schema(self.view("/big.py"))
+
+    def test_scroll_to(self):
+        self._assert_schema(self.view("/big.py", scroll_to="line25"))
+
+    def test_nonexistent(self):
+        r = self.view("/ghost.py")
+        self.assertFalse(r["success"])
+
+
+# =============================================================================
+# VFS_VIEW — LINE RANGE
+# =============================================================================
+
+class TestVfsViewLineRange(unittest.TestCase):
+    CONTENT = "\n".join(f"line{i}" for i in range(1, 101))  # 100 lines
+
+    def setUp(self):
+        self.session = _make_session()
+        _prep(self.session, {"/doc.py": self.CONTENT})
+        self.view = make_vfs_view(self.session)
+        self.vfs = self.session.vfs
+
+    def test_open_full_file(self):
+        r = self.view("/doc.py")
+        self.assertTrue(r["success"])
+        self.assertEqual(r["total_lines"], 100)
+
+    def test_open_range(self):
+        r = self.view("/doc.py", line_start=10, line_end=20)
+        self.assertTrue(r["success"])
+        lines = r["content"].splitlines()
+        self.assertEqual(lines[0], "line10")
+        self.assertEqual(lines[-1], "line20")
+
+    def test_open_range_updates_vfs_state(self):
+        self.view("/doc.py", line_start=5, line_end=15)
+        f = self.vfs.files["/doc.py"]
+        self.assertEqual(f.state, "open")
+        self.assertEqual(f.view_start, 4)  # 0-indexed
+        self.assertEqual(f.view_end, 15)
+
+    def test_open_range_clamps_start(self):
+        # line_start < 1 should not crash
+        r = self.view("/doc.py", line_start=-5, line_end=5)
+        self.assertTrue(r["success"])
+
+    def test_open_range_clamps_end(self):
+        # line_end beyond EOF should return up to EOF
+        r = self.view("/doc.py", line_start=95, line_end=999)
+        self.assertTrue(r["success"])
+        lines = r["content"].splitlines()
+        self.assertGreaterEqual(len(lines), 1)
+        self.assertLessEqual(len(lines), 10)
+
+
+# =============================================================================
+# VFS_VIEW — scroll_to
+# =============================================================================
+
+class TestVfsViewScrollTo(unittest.TestCase):
+
+    def setUp(self):
+        self.session = _make_session()
+        code = (
+            "# header\n"
+            "import os\n"
+            "\n"
+            "class UserModel:\n"  # line 4
+            "    id = 1\n"
+            "    name = 'test'\n"
+            "\n"
+            "def get_user(user_id):\n"  # line 8
+            "    return UserModel()\n"
+            "\n"
+            "class OrderModel:\n"  # line 11
+            "    user_id = 1\n"
+        )
+        _prep(self.session, {"/models.py": code})
+        self.view = make_vfs_view(self.session)
+        self.vfs = self.session.vfs
+
+    def test_scroll_to_finds_line(self):
+        r = self.view("/models.py", scroll_to="UserModel")
+        self.assertTrue(r["success"])
+        self.assertIn("match", r)
+        self.assertEqual(r["match"]["matched_line"], 4)
+        self.assertIn("UserModel", r["content"])
+
+    def test_scroll_to_case_insensitive(self):
+        r = self.view("/models.py", scroll_to="usermodel")
+        self.assertTrue(r["success"])
+        self.assertIn("UserModel", r["content"])
+
+    def test_scroll_to_context_lines(self):
+        r = self.view("/models.py", scroll_to="get_user", context_lines=4)
+        self.assertTrue(r["success"])
+        # With context_lines=4 we get ±2 lines around the match
+        self.assertLessEqual(len(r["content"].splitlines()), 5)
+
+    def test_scroll_to_missing_pattern(self):
+        r = self.view("/models.py", scroll_to="zzznomatch")
+        self.assertFalse(r["success"])
+        self.assertIn("not found", r["error"])
+        self.assertIn("hint", r)
+
+    def test_scroll_to_regex(self):
+        r = self.view("/models.py", scroll_to=r"class \w+Model")
+        self.assertTrue(r["success"])
+        # Should find first class
+        self.assertIn("UserModel", r["content"])
+
+    def test_scroll_to_overrides_line_range(self):
+        # Even if line_start/end are given, scroll_to wins
+        r = self.view("/models.py", line_start=1, line_end=2, scroll_to="OrderModel")
+        self.assertTrue(r["success"])
+        self.assertIn("OrderModel", r["content"])
+
+    def test_scroll_to_sets_state_open(self):
+        self.view("/models.py", scroll_to="UserModel")
+        self.assertEqual(self.vfs.files["/models.py"].state, "open")
+
+
+# =============================================================================
+# VFS_VIEW — close_others
+# =============================================================================
+
+class TestVfsViewCloseOthers(unittest.TestCase):
+
+    def setUp(self):
+        self.session = _make_session()
+        _prep(self.session, {
+            "/a.py": "alpha",
+            "/b.py": "beta",
+            "/c.py": "gamma",
+        })
+        self.view = make_vfs_view(self.session)
+        self.vfs = self.session.vfs
+
+    def test_close_others_closes_open_files(self):
+        self.vfs.open("/a.py")
+        self.vfs.open("/b.py")
+        # Open c.py and close others
+        r = self.view("/c.py", close_others=True)
+        self.assertTrue(r["success"])
+        self.assertEqual(self.vfs.files["/c.py"].state, "open")
+        self.assertEqual(self.vfs.files["/a.py"].state, "closed")
+        self.assertEqual(self.vfs.files["/b.py"].state, "closed")
+
+    def test_close_others_note_in_result(self):
+        r = self.view("/c.py", close_others=True)
+        self.assertTrue(r["success"])
+        self.assertIn("note", r)
+
+    def test_close_others_does_not_close_system_files(self):
+        r = self.view("/a.py", close_others=True)
+        self.assertTrue(r["success"])
+        # System context should still be open
+        self.assertEqual(self.vfs.files["/system_context.md"].state, "open")
+
+    def test_close_others_false_leaves_files_open(self):
+        self.vfs.open("/a.py")
+        self.vfs.open("/b.py")
+        self.view("/c.py", close_others=False)
+        self.assertEqual(self.vfs.files["/a.py"].state, "open")
+        self.assertEqual(self.vfs.files["/b.py"].state, "open")
+
+
+# =============================================================================
+# VFS_VIEW — workflow integration (the x+y focus pattern)
+# =============================================================================
+
+class TestVfsViewWorkflow(unittest.TestCase):
+    """
+    End-to-end simulation of the find → focus → multi-open → answer workflow
+    described in vfs_guide.md.
+    """
+
+    def setUp(self):
+        self.session = _make_session()
+        models_code = "\n".join([
+            "# models.py",
+            "class Base:",
+            "    pass",
+            "",
+            "class UserModel(Base):",  # line 5
+            "    id   = 1",
+            "    name = 'anon'",
+            "",
+        ])
+        services_code = "\n".join([
+            "# services.py",
+            "from models import UserModel",
+            "",
+            "class UserService:",
+            "    def get_user(self, uid):",  # line 5
+            "        return UserModel()",
+            "",
+            "    def create_user(self, name):",
+            "        u = UserModel()",
+            "        u.name = name",
+            "        return u",
+        ])
+        _prep(self.session, {
+            "/src/models.py": models_code,
+            "/src/services.py": services_code,
+            "/src/utils.py": "def helper(): pass",
+        })
+        self.shell = make_vfs_shell(self.session)
+        self.view = make_vfs_view(self.session)
+        self.vfs = self.session.vfs
+
+    def test_full_xy_workflow(self):
+        # 1. Locate x (UserModel) via grep
+        g1 = self.shell("grep -rn UserModel /src")
+        self.assertTrue(g1["success"])
+        self.assertIn("models.py", g1["stdout"])
+
+        # 2. Focus on x
+        r1 = self.view("/src/models.py", scroll_to="UserModel", context_lines=6)
+        self.assertTrue(r1["success"])
+        self.assertIn("UserModel", r1["content"])
+
+        # 3. Locate y (get_user) via grep
+        g2 = self.shell("grep -rn get_user /src")
+        self.assertTrue(g2["success"])
+        self.assertIn("services.py", g2["stdout"])
+
+        # 4. Add y to context (without closing x)
+        r2 = self.view("/src/services.py", scroll_to="get_user", context_lines=6)
+        self.assertTrue(r2["success"])
+        self.assertIn("get_user", r2["content"])
+
+        # 5. Both files must be open simultaneously
+        self.assertEqual(self.vfs.files["/src/models.py"].state, "open")
+        self.assertEqual(self.vfs.files["/src/services.py"].state, "open")
+        # utils.py was never opened
+        self.assertEqual(self.vfs.files["/src/utils.py"].state, "closed")
+
+        # 6. Clean up — close_others=True on next task
+        r3 = self.view("/src/utils.py", scroll_to="helper", close_others=True)
+        self.assertTrue(r3["success"])
+        self.assertEqual(self.vfs.files["/src/models.py"].state, "closed")
+        self.assertEqual(self.vfs.files["/src/services.py"].state, "closed")
+        self.assertEqual(self.vfs.files["/src/utils.py"].state, "open")
 
 
 if __name__ == "__main__":

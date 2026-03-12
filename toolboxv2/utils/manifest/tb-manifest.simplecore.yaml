@@ -1,0 +1,307 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# tb-manifest.yaml - ToolBoxV2 LIVE SERVER CONFIG für simplecore.app
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# DEPLOYMENT-CHECKLISTE (vor erstem Start):
+#
+#   1. Certbot ausführen (falls noch nicht geschehen):
+#        certbot --nginx -d simplecore.app -d www.simplecore.app
+#      Erwartet werden dann:
+#        /etc/letsencrypt/live/simplecore.app/fullchain.pem
+#        /etc/letsencrypt/live/simplecore.app/privkey.pem
+#
+#   2. Umgebungsvariablen setzen (z.B. in /etc/environment oder .env):
+#        TB_JWT_SECRET=<min. 64 Zeichen, zufällig>
+#        TB_COOKIE_SECRET=<min. 32 Zeichen, zufällig>
+#        MINIO_ENDPOINT=<host:port>
+#        MINIO_ACCESS_KEY=<key>
+#        MINIO_SECRET_KEY=<secret>
+#        DB_CONNECTION_URI=redis://localhost:6379   # falls RR/LR statt CB
+#
+#   3. Validieren:   tb manifest validate
+#   4. Anwenden:     tb manifest apply
+#   5. Config testen: nginx -t
+#
+# WARUM SSL HIER FUNKTIONIERT, LOKAL ABER NICHT:
+#   Der Code prüft SSLManager.discover() → sucht physisch nach
+#   /etc/letsencrypt/live/{server_name}/fullchain.pem
+#   Lokal existiert diese Datei nicht → use_ssl = False → kein SSL-Block.
+#   Auf dem Server existiert sie nach certbot → use_ssl = True → SSL-Block wird generiert.
+#   Zusätzlich prüft loader.validate() die Felder ssl_certificate / ssl_certificate_key —
+#   diese müssen im Manifest stehen, sonst schlägt die Validierung fehl.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+manifest_version: "1.0.0"
+
+# =============================================================================
+# Application Identity
+# =============================================================================
+app:
+  name: ToolBoxV2
+  version: "0.1.0"
+  instance_id: tbv2_simplecore_prod
+  environment: production      # ← aktiviert den production-Override-Block unten
+  debug: false
+  log_level: INFO
+
+# =============================================================================
+# Autostart (systemd auf dem Server empfohlen)
+# =============================================================================
+autostart:
+  enabled: true
+  services:
+    - workers
+    - db
+  commands:
+    - "tb -v"
+    - "tb status"
+
+# =============================================================================
+# Module Management
+# =============================================================================
+mods:
+  installed:
+    CloudM: "^0.1.0"
+    DB: "^0.0.3"
+
+  dependencies: {}
+
+  init_modules:
+    - CloudM
+    - DB
+
+  open_modules:
+    - CloudM.AuthManager
+    - CloudM.Auth
+
+  watch_modules: []
+
+# =============================================================================
+# Database Configuration
+# =============================================================================
+# production-Override setzt mode auf CB (MinIO).
+# Alternativ: mode hier explizit auf RR setzen und Redis-URL angeben.
+database:
+  mode: CB                     # wird durch production-Override erzwungen
+
+  local:
+    path: ".data/MiniDictDB.json"
+
+  redis:
+    url: "${DB_CONNECTION_URI:redis://localhost:6379}"
+    username: "${DB_USERNAME:}"
+    password: "${DB_PASSWORD:}"
+    db_index: 0
+    max_connections: 10
+
+  minio:
+    endpoint: "${MINIO_ENDPOINT:localhost:9000}"
+    access_key: "${MINIO_ACCESS_KEY:minioadmin}"
+    secret_key: "${MINIO_SECRET_KEY:minioadmin}"
+    bucket: user-data-enc
+    use_ssl: true              # MinIO selbst auch über TLS ansprechen (empfohlen)
+    default_name: "simplecore-db"
+
+# =============================================================================
+# Services Configuration
+# =============================================================================
+services:
+  enabled:
+    - workers
+    - db
+
+  zmq:
+    pub_endpoint: "tcp://127.0.0.1:5555"
+    sub_endpoint: "tcp://127.0.0.1:5556"
+    req_endpoint: "tcp://127.0.0.1:5557"
+    http_to_ws_endpoint: "tcp://127.0.0.1:5558"
+    hwm_send: 10000
+    hwm_recv: 10000
+
+  manager:
+    web_ui_enabled: true
+    web_ui_host: "127.0.0.1"  # Manager-UI NUR lokal erreichbar (nicht über Nginx exposed)
+    web_ui_port: 9000
+    health_check_interval: 10
+    restart_delay: 2
+    max_restart_attempts: 5
+
+# =============================================================================
+# Worker Instances
+# =============================================================================
+workers:
+  http:
+    - name: http_main
+      host: "127.0.0.1"
+      port: 8000
+      workers: 4
+      max_concurrent: 100
+      timeout: 30
+      ssl: false               # Worker spricht HTTP → Nginx terminiert SSL
+
+  websocket:
+    - name: ws_main
+      host: "127.0.0.1"
+      port: 8100
+      max_connections: 10000
+      ping_interval: 30
+      ping_timeout: 10
+      compression: true
+
+# =============================================================================
+# Nginx Reverse Proxy  ← KERNSTÜCK FÜR DEN LIVE-SERVER
+# =============================================================================
+nginx:
+  enabled: true
+
+  # !! server_name muss EXAKT dem Certbot-Domainnamen entsprechen !!
+  # SSLManager.discover() sucht nach:
+  #   /etc/letsencrypt/live/simplecore.app/fullchain.pem
+  #   /etc/letsencrypt/live/simplecore.app/privkey.pem
+  server_name: "simplecore.app"
+
+  listen_port: 80
+  listen_ssl_port: 443
+
+  # ssl_enabled: true → _generate_ssl_server_block() wird aufgerufen
+  # (aber nur wenn die Certs auch physisch existieren, s.o.)
+  ssl_enabled: true
+
+  # Diese Pfade werden von loader.validate() geprüft (sonst Validation-Error).
+  # Sie müssen mit dem Certbot-Output übereinstimmen.
+  ssl_certificate: "/etc/letsencrypt/live/simplecore.app/fullchain.pem"
+  ssl_certificate_key: "/etc/letsencrypt/live/simplecore.app/privkey.pem"
+
+  static_enabled: true
+
+  # Rate Limiting — auf dem Live-Server ggf. anpassen
+  rate_limit_enabled: true
+  rate_limit_zone: tb_limit
+  rate_limit_rate: "10r/s"
+  rate_limit_burst: 20
+  auth_rate_limit_rate: "5r/s"
+  auth_rate_limit_burst: 10
+
+# =============================================================================
+# Authentication
+# =============================================================================
+auth:
+  provider: custom
+
+  jwt:
+    secret: "${TB_JWT_SECRET:}"          # MUSS als Env-Var gesetzt sein!
+    algorithm: "HS256"
+    access_expiry: 900                   # 15 min
+    refresh_expiry: 604800               # 7 Tage
+
+  session:
+    cookie_name: tb_session
+    cookie_secret: "${TB_COOKIE_SECRET:}" # MUSS als Env-Var gesetzt sein!
+    cookie_max_age: 604800
+    cookie_secure: true                  # production-Override setzt dies auch
+    cookie_httponly: true
+    cookie_samesite: Lax
+
+  ws_require_auth: false
+  ws_allow_anonymous: true
+
+# =============================================================================
+# Paths Configuration
+# =============================================================================
+paths:
+  data_dir: "${TB_DATA_DIR:/opt/toolboxv2/.data}"
+  config_dir: "/opt/toolboxv2/.config"
+  logs_dir: "/var/log/toolboxv2"
+  mods_dir: "/opt/toolboxv2/mods"
+  mods_dev_dir: "/opt/toolboxv2/mods_dev"
+  mods_storage_dir: "/opt/toolboxv2/mods_sto"
+  dist_dir: "${TB_DIST_DIR:/opt/toolboxv2/dist}"
+  web_dir: "/opt/toolboxv2/web"
+  registry_cache_dir: "/opt/toolboxv2/.tb-registry/cache"
+
+# =============================================================================
+# Registry Configuration
+# =============================================================================
+registry:
+  url: "https://registry.simplecore.app"
+  auto_update: false
+  check_interval: 3600
+
+# =============================================================================
+# ToolBox Settings
+# =============================================================================
+toolbox:
+  client_prefix: api-client
+  timeout_seconds: 60
+  max_instances: 2
+  api_prefix: "/api"
+
+# =============================================================================
+# Utilities
+# =============================================================================
+utilities:
+  enabled: []
+
+# =============================================================================
+# Observability
+# =============================================================================
+observability:
+  sync:
+    enabled: false
+    target: minio
+    remote_bucket: system-audit-logs
+    interval_seconds: 300
+
+  dashboard:
+    enabled: false
+    endpoint: "${OPENOBSERVE_ENDPOINT:http://localhost:5080}"
+    user: "${OPENOBSERVE_USER:root@example.com}"
+    password: "${OPENOBSERVE_PASSWORD:}"
+    org: default
+    system_stream: system_logs
+    audit_stream: audit_logs
+    flush_interval: 5.0
+
+  cleanup:
+    enabled: true              # auf dem Live-Server Logs aufräumen
+    max_age_days: 30
+    max_size_mb: 500
+    keep_levels:
+      - ERROR
+      - WARNING
+    keep_audit: true
+
+# =============================================================================
+# Environment-Specific Overrides
+# =============================================================================
+# Da app.environment = production, werden diese Overrides automatisch angewendet
+# wenn manifest.get_effective_config() aufgerufen wird.
+#
+# Was der production-Override tut:
+#   - app.debug: false          (Sicherheit)
+#   - app.log_level: INFO
+#   - database.mode: CB         → MinIO-Credentials müssen verfügbar sein
+#   - nginx.enabled: true
+#   - nginx.ssl_enabled: true   → SSL-Block wird in site config generiert
+#   - auth.session.cookie_secure: true → Cookies nur über HTTPS
+environments:
+  development:
+    app.debug: true
+    app.log_level: DEBUG
+    database.mode: LC
+    nginx.enabled: false
+    auth.session.cookie_secure: false
+
+  production:
+    app.debug: false
+    app.log_level: INFO
+    database.mode: CB
+    nginx.enabled: true
+    nginx.ssl_enabled: true
+    auth.session.cookie_secure: true
+
+  staging:
+    app.debug: false
+    app.log_level: DEBUG
+    database.mode: CB
+    nginx.enabled: true
