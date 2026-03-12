@@ -164,7 +164,7 @@ class ToolBoxBackground {
                 pending.reject(new Error(err));
             }
             this._nativePendingCalls.clear();
-            logger.warn('Native port disconnected:', err);
+            console.warn('Native port disconnected:', err);
         });
 
         return this._nativePort;
