@@ -192,7 +192,10 @@ class App(AppType, metaclass=Singleton):
             "develop-mode": False,
         }
         self.config_fh = FileHandler(collective_identification + ".config", keys=self.keys, defaults=defaults)
-        self.config_fh.load_file_handler()
+        try:
+            self.config_fh.load_file_handler()
+        except Exception as e:
+            self.debug_rains(e)
         self._debug = args.debug
         self.flows = {}
         self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])
