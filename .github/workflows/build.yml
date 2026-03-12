@@ -279,6 +279,14 @@ jobs:
               working-directory: ./toolboxv2/tb_browser
               run: npm install || true
 
+          -   name: Run Extension Tests
+              if: steps.check.outputs.exists == 'true'
+              working-directory: ./toolboxv2/tb_browser/test
+              run: |
+                  npm install
+                  npm run test:unit
+                  npm run test:e2e
+
           -   name: Build extension
               if: steps.check.outputs.exists == 'true'
               working-directory: ./toolboxv2/tb_browser

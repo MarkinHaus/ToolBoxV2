@@ -284,6 +284,8 @@ class Tools(MainTool):
             # Agent export/import
             "save_agent": self.save_agent,
             "load_agent": self.load_agent,
+
+            "load_all_agents": self.load_all_agents,
             "export_agent_network": self.export_agent_network,
             "import_agent_network": self.import_agent_network,
         }
@@ -783,6 +785,66 @@ class Tools(MainTool):
 
         except Exception as e:
             return None, None, [f"Failed to load agent: {str(e)}"]
+
+    async def load_all_agents(self, do_not_cleanup: bool = False) -> dict:
+        """
+        Lädt alle verfügbaren Agenten aus dem 'Agents'-Verzeichnis von der Festplatte
+        und löscht standardmäßig alle 'bench_'-Ordner im aktuellen Arbeitsverzeichnis.
+
+        Args:
+            do_not_cleanup (bool): Wenn True, wird der Cleanup der 'bench_'-Ordner übersprungen.
+
+        Returns:
+            dict: Statusbericht mit geladenen Agenten und gelöschten Ordnern.
+        """
+        import shutil
+        from pathlib import Path
+
+        report = {
+            "loaded_agents": [],
+            "deleted_bench_folders": [],
+            "errors": []
+        }
+
+        # --- 1. Agenten laden ---
+        async def _(_):
+            try:
+                # get_agent initialisiert, baut und registriert den Agenten sicher im System
+                await self.get_agent(_)
+                report["loaded_agents"].append(_)
+            except Exception as e:
+                report["errors"].append(f"Fehler beim Laden von Agent '{_}': {e}")
+
+        try:
+            agent_dir = Path(get_app().data_dir) / "Agents"
+            tasks = []
+            if agent_dir.exists():
+                for d in agent_dir.iterdir():
+                    if d.is_dir() and (d / "agent.json").exists():
+                        tasks.append(_(d.name))
+                await asyncio.gather(*tasks)
+        except Exception as e:
+            report["errors"].append(f"Kritischer Fehler beim Durchsuchen des Agenten-Verzeichnisses: {e}")
+
+        # --- 2. Workspace Cleanup (bench_ Ordner) ---
+        if not do_not_cleanup:
+            try:
+                base_dir = Path(self.working_directory).resolve()
+                if base_dir.exists():
+                    for item in base_dir.iterdir():
+                        if item.is_dir() and item.name.startswith("bench_"):
+                            try:
+                                shutil.rmtree(item)
+                                report["deleted_bench_folders"].append(item.name)
+                            except Exception as e:
+                                report["errors"].append(f"Fehler beim Löschen von Ordner '{item.name}': {e}")
+            except Exception as e:
+                report["errors"].append(f"Kritischer Fehler beim Cleanup: {e}")
+
+        self.print(f"Loaded {len(report['loaded_agents'])} agents. "
+                   f"Deleted {len(report['deleted_bench_folders'])} bench_ folders.")
+
+        return report
 
     async def export_agent_network(
         self,
@@ -1494,7 +1556,7 @@ class Tools(MainTool):
         mode: Any = None,
         max_tokens_override: int | None = None,
         task_from="system",
-        stream_function: Callable | None = None,
+        stream: bool = False,
         message_history: list | None = None,
         agent_name="TaskCompletion",
         use_complex: bool = False,
@@ -1566,20 +1628,7 @@ class Tools(MainTool):
         if kwargs:
             llm_params.update(kwargs)
 
-        if stream_function:
-            llm_params["stream"] = True
-            original_stream_cb = agent.stream_callback
-            original_stream_val = agent.stream
-            agent.stream_callback = stream_function
-            agent.stream = True
-            try:
-                response_content = await agent.a_run_llm_completion(**llm_params)
-            finally:
-                agent.stream_callback = original_stream_cb
-                agent.stream = original_stream_val
-            return response_content
-
-        llm_params["stream"] = False
+        llm_params["stream"] = stream
         response_content = await agent.a_run_llm_completion(**llm_params)
         return response_content
 
@@ -2086,7 +2135,11 @@ def cleanup_sessions() -> str:
 
 @export(mod_name="isaa", name="listAllAgents", api=True, request_as_kwarg=True)
 async def list_all_agents(self, request: RequestData | None = None):
-    return self.config.get("agents-name-list", [])
+    res = self.config.get("agents-name-list", [])
+    if not res:
+        await self.load_all_agents()
+        res = self.config.get("agents-name-list", [])
+    return res
 
 
 # =============================================================================

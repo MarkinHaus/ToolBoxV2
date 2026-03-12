@@ -470,13 +470,13 @@ class Session(metaclass=Singleton):
                 else:
                     return await self.session.get(url, headers=headers, **kwargs)
             except ClientConnectorError as e:
-                print(f"Server not reachable: {e}")
+                get_logger().error(f"Server not reachable: {e}")
                 return False
             except ClientError as e:
-                print(f"Client error: {e}")
+                get_logger().warning(f"Client error: {e}")
                 return False
             except Exception as e:
-                print(f"Error: {e}")
+                get_logger().error(f"Error: in session fetch {e}")
                 return requests.request(method, url, json=data if method.upper() == 'POST' else None, headers=headers)
         else:
             return requests.request(
@@ -514,12 +514,12 @@ class Session(metaclass=Singleton):
                             if not chunk:
                                 break
                             f.write(chunk)
-                    print(f'File downloaded: {file_path}')
+                    get_logger().info(f'File downloaded: {file_path}')
                     return True
                 else:
-                    print(f'Failed to download: {url} (Status: {response.status})')
+                    get_logger().warning(f'Failed to download: {url} (Status: {response.status})')
         except Exception as e:
-            print(f"Download error: {e}")
+            get_logger().error(f"Download error: {e}")
         return False
 
     async def upload_file(self, file_path: str, upload_url: str):
@@ -542,13 +542,13 @@ class Session(metaclass=Singleton):
             try:
                 async with self.session.post(upload_url, data=mpwriter, headers=headers, timeout=20000) as response:
                     if response.status == 200:
-                        print(f"File uploaded: {file_path}")
+                        get_logger().info(f"File uploaded: {file_path}")
                         return await response.json()
                     else:
-                        print(f"Upload failed: {response.status}")
+                        get_logger().warning(f"Upload failed: {response.status}")
                         return None
             except Exception as e:
-                print(f"Upload error: {e}")
+                get_logger().error(f"Upload error: {e}")
                 return None
 
     async def cleanup(self):
@@ -575,7 +575,7 @@ def get_public_ip() -> Optional[str]:
         response = requests.get('https://api.ipify.org?format=json')
         return response.json()['ip']
     except Exception as e:
-        print(f"Error getting public IP: {e}")
+        get_logger().error(f"Error getting public IP: {e}")
         return None
 
 
@@ -586,7 +586,7 @@ def get_local_ip() -> Optional[str]:
             s.connect(("8.8.8.8", 80))
             return s.getsockname()[0]
     except Exception as e:
-        print(f"Error getting local IP: {e}")
+        get_logger().error(f"Error getting local IP: {e}")
         return None
 
 

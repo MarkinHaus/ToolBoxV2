@@ -15,7 +15,8 @@ class ToolBoxBackground {
         this.promptLibrary = { prompts: {}, category_map: {} };
         this.promptEngine = new PromptEngine();
         this.agentViews = {}; // tabId → AgentView state
-
+        this._ws = null;
+        this._wsReconnectTimer = null;
         this.init();
     }
 
@@ -24,11 +25,14 @@ class ToolBoxBackground {
         setTimeout(async () => {
             await this.promptEngine.init();
         },1)
-        this.loadBackendSettings().then(() => {
+        this.loadBackendSettings().then(async () => {
             this.setupEventListeners();
-            this.checkConnection();
+            await this.checkConnection();
+            if (this.isConnected && (!this._ws || this._ws.readyState > 1)) {
+                this.setupWebSocket();
+            }
             this.setupPeriodicTasks();
-            this.loadPromptLibrary();
+            await this.loadPromptLibrary();
             console.log('✅ ToolBox Pro background service worker initialized');
         });
     }
@@ -84,21 +88,102 @@ class ToolBoxBackground {
         }
     }
 
+
+    // background.js – in der Klasse hinzufügen:
+
+    setupWebSocket() {
+        if (this.useNative || !this.apiBase || !this.isConnected) return;
+        const isLocal = this.apiBase.includes('localhost') || this.apiBase.includes('127.0.0.1');
+        const wsBase = isLocal
+            ? this.apiBase.replace(/^http/, 'ws').replace(/:\d+$/, '') + ':5001'
+            : this.apiBase.replace(/^http/, 'ws');
+        this._connectWS(wsBase + '/ws');
+    }
+
+    _connectWS(url) {
+        if (this._ws) { try { this._ws.close(); } catch {} }
+        try {
+            this._ws = new WebSocket(url);
+            this._ws.onopen = () => {
+                console.log('WS connected:', url);
+                // Auth-Status sofort senden
+                if (this.authData.jwt) {
+                    this._ws.send(JSON.stringify({ type: 'AUTH', jwt: this.authData.jwt, username: this.authData.username }));
+                }
+            };
+            this._ws.onmessage = (evt) => {
+                try {
+                    const msg = JSON.parse(evt.data);
+                    if (msg.type === 'AUTH_STATUS') {
+                        this.authData.isAuthenticated = msg.authenticated;
+                        this.authData.username = msg.username || this.authData.username;
+                        chrome.storage.sync.get(['toolboxSettings']).then(s => {
+                            if (s.toolboxSettings) {
+                                s.toolboxSettings.isAuthenticated = msg.authenticated;
+                                chrome.storage.sync.set({ toolboxSettings: s.toolboxSettings });
+                            }
+                        });
+                    }
+                } catch {}
+            };
+            this._ws.onerror = () => {};
+            this._ws.onclose = () => {
+            if (this.isConnected) {
+                this._wsReconnectTimer = setTimeout(() => this._connectWS(url), 5000);
+            }
+        };
+        } catch (e) {
+            console.warn('WS connect failed:', e.message);
+        }
+    }
+
     // ─── Native Messaging ────────────────────────────────────────────────────
 
-    async makeNativeCall(action, payload) {
+    _getNativePort() {
+        if (this._nativePort && this._nativePortAlive) return this._nativePort;
+
+        this._nativePendingCalls = this._nativePendingCalls || new Map();
+        this._nativePort = chrome.runtime.connectNative('com.toolbox.native');
+        this._nativePortAlive = true;
+
+        this._nativePort.onMessage.addListener((msg) => {
+            const pending = this._nativePendingCalls.get(msg._callId);
+            if (pending) {
+                clearTimeout(pending.timer);
+                this._nativePendingCalls.delete(msg._callId);
+                pending.resolve(msg);
+            }
+        });
+
+        this._nativePort.onDisconnect.addListener(() => {
+            this._nativePortAlive = false;
+            this._nativePort = null;
+            const err = chrome.runtime.lastError?.message || 'Native port disconnected';
+            for (const [, pending] of this._nativePendingCalls) {
+                clearTimeout(pending.timer);
+                pending.reject(new Error(err));
+            }
+            this._nativePendingCalls.clear();
+            logger.warn('Native port disconnected:', err);
+        });
+
+        return this._nativePort;
+    }
+
+    async makeNativeCall(action, payload, timeoutMs = 90000) {
+        const callId = `${action}_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
         return new Promise((resolve, reject) => {
-            chrome.runtime.sendNativeMessage(
-                'com.toolbox.native',
-                { action, payload: payload || {} },
-                (response) => {
-                    if (chrome.runtime.lastError) {
-                        reject(new Error(chrome.runtime.lastError.message));
-                    } else {
-                        resolve(response);
-                    }
-                }
-            );
+            try {
+                const port = this._getNativePort();
+                const timer = setTimeout(() => {
+                    this._nativePendingCalls.delete(callId);
+                    reject(new Error(`Native timeout: ${action} nach ${timeoutMs}ms`));
+                }, timeoutMs);
+                this._nativePendingCalls.set(callId, { resolve, reject, timer });
+                port.postMessage({ action, payload: payload || {}, _callId: callId });
+            } catch (e) {
+                reject(e);
+            }
         });
     }
 
@@ -389,9 +474,9 @@ class ToolBoxBackground {
     async handleCommand(command) {
         const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
         switch (command) {
-            case 'toggle-toolbox':
-                if (activeTab) await chrome.sidePanel.open({ windowId: activeTab.windowId });
-                break;
+            // case 'toggle-toolbox':
+            //     if (activeTab) await chrome.sidePanel.open({ windowId: activeTab.windowId });
+            //     break;
             case 'voice-command':
                 await this.activateVoiceCommand(activeTab);
                 break;
@@ -498,9 +583,8 @@ class ToolBoxBackground {
             return this.makeNativeCall(action, data);
         }
 
-        if (!this.apiBase) {
-            throw new Error('No backend configured');
-        }
+        if (!this.apiBase) throw new Error('No backend configured');
+        if (!this.isConnected) throw new Error('Server not reachable');
 
         const url = `${this.apiBase}${endpoint}`;
         const headers = { 'Content-Type': 'application/json' };
@@ -689,7 +773,7 @@ class ToolBoxBackground {
     // ── Prompt Library ──────────────────────────────────────────────────────
 
     async loadPromptLibrary() {
-        const stored = await chrome.storage.local.get(['promptLibrary', 'siteRules']);
+        const stored = await chrome.storage.sync.get(['promptLibrary', 'siteRules']);
         if (stored.promptLibrary) this.promptLibrary = stored.promptLibrary;
         if (stored.siteRules) this.promptRules = stored.siteRules.rules || [];
         // Load bundled defaults if nothing stored
@@ -739,7 +823,7 @@ class ToolBoxBackground {
             if (!res.ok) return false;
             const data = await res.json();
             this.promptLibrary = data;
-            await chrome.storage.local.set({ promptLibrary: data, lastPromptSync: Date.now() });
+            await chrome.storage.sync.set({ promptLibrary: data, lastPromptSync: Date.now() });
             return true;
         } catch (_) { return false; }
     }

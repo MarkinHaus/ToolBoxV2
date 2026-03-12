@@ -72,8 +72,8 @@ class AISemanticMemory(metaclass=Singleton):
             default_model = os.getenv("BLITZMODEL", "")
         if default_embedding_model is None:
             default_embedding_model = os.getenv("DEFAULTMODELEMBEDDING", "")
-
-        self.base_path: str = os.path.join(os.getcwd(), ".data", base_path)
+        from toolboxv2 import tb_root_dir
+        self.base_path: str = os.path.join(str(tb_root_dir), ".data", base_path)
         os.makedirs(self.base_path, exist_ok=True)
 
         self.memories: dict[str, HybridMemoryStore] = {}

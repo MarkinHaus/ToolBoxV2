@@ -57,13 +57,13 @@
                 </svg>
                 <span>Live Search</span>
             </button>
-            <button class="tab-btn" data-tab="passwords">
+            <button class="tab-btn" data-tab="extras">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                     <circle cx="12" cy="16" r="1"></circle>
                     <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                 </svg>
-                <span>Passwords</span>
+                <span>Extras</span>
             </button>
         </nav>
 
@@ -125,47 +125,177 @@
             </div>
 
             <!-- Password Manager Panel -->
-            <div id="passwordsPanelContent" class="panel-content">
-                <div class="password-container">
-                    <div id="passwordList" class="password-list">
-                        <div class="loading-passwords">
-                            <div class="spinner"></div>
-                            <p>Loading passwords...</p>
+            <!-- Extras Panel (Passwords + Prompt Library) -->
+            <div id="extrasPanelContent" class="panel-content">
+                <!-- Sub-Tab Nav -->
+                <div class="extras-subnav">
+                    <button class="extras-tab-btn active" data-extras-tab="passwords">🔑 Passwords</button>
+                    <button class="extras-tab-btn" data-extras-tab="prompts">⚡ Prompts</button>
+                    <button class="extras-tab-btn" data-extras-tab="help">❓ Hilfe</button>
+                </div>
+
+                <!-- Sub: Passwords (unveränderter Inhalt) -->
+                <div id="extrasPasswordsPane" class="extras-pane active">
+                    <div class="password-container">
+                        <div id="passwordList" class="password-list">
+                            <div class="loading-passwords">
+                                <div class="spinner"></div>
+                                <p>Loading passwords...</p>
+                            </div>
+                        </div>
+                        <div class="password-header">
+                            <div class="password-actions">
+                                <button id="autofillBtn" class="action-btn primary">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M9 12l2 2 4-4"></path>
+                                        <path d="M21 12c-1 0-3-1-3-3s2-3 3-3 3 1 3 3-2 3-3 3"></path>
+                                        <path d="M3 12c1 0 3-1 3-3s-2-3-3-3-3 1-3 3 2 3 3 3"></path>
+                                    </svg>
+                                    Auto-fill
+                                </button>
+                                <button id="generateBtn" class="action-btn">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                                    </svg>
+                                    Generate
+                                </button>
+                                <button id="addPasswordBtn" class="action-btn">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                                    </svg>
+                                    Hinzufügen
+                                </button>
+                                <button id="importBtn" class="action-btn">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                        <polyline points="14,2 14,8 20,8"></polyline>
+                                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                                    </svg>
+                                    Import
+                                </button>
+                            </div>
                         </div>
                     </div>
-                    <div class="password-header">
-                        <div class="password-actions">
-                            <button id="autofillBtn" class="action-btn primary">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M9 12l2 2 4-4"></path>
-                                    <path d="M21 12c-1 0-3-1-3-3s2-3 3-3 3 1 3 3-2 3-3 3"></path>
-                                    <path d="M3 12c1 0 3-1 3-3s-2-3-3-3-3 1-3 3 2 3 3 3"></path>
-                                </svg>
-                                Auto-fill
-                            </button>
-                            <button id="generateBtn" class="action-btn">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
-                                </svg>
-                                Generate
-                            </button>
-                             <button id="addPasswordBtn" class="action-btn">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <line x1="12" y1="5" x2="12" y2="19"></line>
-                                    <line x1="5" y1="12" x2="19" y2="12"></line>
-                                </svg>
-                                Hinzufügen
-                            </button>
-                            <button id="importBtn" class="action-btn">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                                    <polyline points="14,2 14,8 20,8"></polyline>
-                                    <line x1="16" y1="13" x2="8" y2="13"></line>
-                                    <line x1="16" y1="17" x2="8" y2="17"></line>
-                                </svg>
-                                Import
-                            </button>
+                </div>
+
+                <!-- Sub: Prompt Library (offline) -->
+                <div id="extrasPromptsPane" class="extras-pane">
+                    <div class="prompt-lib-container">
+                        <div class="prompt-lib-toolbar">
+                            <input type="text" id="promptSearch" placeholder="Search prompts..." class="prompt-search-input">
+                            <button id="newPromptBtn" class="action-btn primary">+ New</button>
+                            <button id="exportPromptsBtn" class="action-btn" title="Export prompts as JSON">⬇️</button>
+                            <label class="action-btn" title="Import prompts from JSON" style="cursor:pointer;margin:0">
+                                ⬆️<input type="file" id="importPromptsFile" accept=".json" style="display:none">
+                            </label>
                         </div>
+                        <div id="promptList" class="prompt-list"></div>
+
+                        <!-- New / Edit Form -->
+                        <div id="promptForm" class="prompt-form hidden">
+                            <div class="prompt-form-row">
+                                <input type="text" id="promptLabel" placeholder="Label" class="settings-input">
+                                <input type="text" id="promptShortcut" placeholder="Shortcut" class="settings-input" style="width:100px">
+                            </div>
+                            <div class="prompt-form-row">
+                                <input type="text" id="promptSite" placeholder="Site hostname (e.g. claude.ai)" class="settings-input">
+                                <input type="text" id="promptModel" placeholder="Model hint (optional)" class="settings-input">
+                            </div>
+                            <textarea id="promptContent" placeholder="Prompt content..." class="prompt-content-input" rows="5"></textarea>
+                            <!-- Prompt Generator Steps -->
+                            <div id="promptGenStep1" class="prompt-gen-step">
+                                <div style="font-size:11px;color:#6060aa;margin-bottom:4px;">
+                                    Step 1: Discovery — Inject the capability-probe into the current AI tab, then paste the model's response below.
+                                </div>
+                                <button id="injectDiscoveryBtn" class="action-btn">🔍 Inject Discovery Prompt</button>
+                            </div>
+                            <div id="promptGenStep2" class="prompt-gen-step hidden">
+                                <div style="font-size:11px;color:#6060aa;margin-bottom:4px;">
+                                    Step 2: Paste the model's response, then generate the optimized prompt.
+                                </div>
+                                <textarea id="discoveryResponse" placeholder="Paste model capability response here..." class="prompt-content-input" rows="4"></textarea>
+                                <div class="prompt-form-actions" style="margin-top:4px;">
+                                    <button id="generateFromDiscoveryBtn" class="action-btn primary">✨ Generate Prompt</button>
+                                    <button id="skipDiscoveryBtn" class="action-btn">Skip</button>
+                                </div>
+                            </div>
+                            <div class="prompt-form-row">
+                                <input type="text" id="promptTags" placeholder="Tags comma-separated" class="settings-input">
+                                <label class="prompt-pin-label">
+                                    <input type="checkbox" id="promptPinned"> Pinned
+                                </label>
+                            </div>
+                            <div class="prompt-form-actions">
+                                <button id="savePromptBtn" class="action-btn primary">Save</button>
+                                <button id="cancelPromptBtn" class="action-btn">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Hilfe Pane -->
+                <div id="extrasHelpPane" class="extras-pane">
+                    <div class="help-container">
+
+                        <div class="help-section">
+                            <div class="help-section-title">🤖 ISAA Chat</div>
+                            <div class="help-item"><span class="help-key">Eingabe + Enter</span>Nachricht senden</div>
+                            <div class="help-item"><span class="help-key">Doppelklick Textfeld</span>Spracheingabe starten</div>
+                            <div class="help-item"><span class="help-key">Ctrl+Shift+V</span>Voice-Modus ein/aus</div>
+                            <div class="help-desc">Stellt Fragen über die aktuelle Seite, lässt Aufgaben ausführen oder Inhalte analysieren. Erfordert Server-Verbindung.</div>
+                        </div>
+
+                        <div class="help-section">
+                            <div class="help-section-title">🔍 Live Search</div>
+                            <div class="help-item"><span class="help-key">Ctrl+Shift+F</span>Tab öffnen + Fokus</div>
+                            <div class="help-item"><span class="help-key">Index Page</span>Seite für Suche indexieren</div>
+                            <div class="help-desc">Durchsucht den sichtbaren Inhalt der aktuellen Seite lokal — kein Server nötig.</div>
+                        </div>
+
+                        <div class="help-section">
+                            <div class="help-section-title">🔑 Passwords</div>
+                            <div class="help-item"><span class="help-key">Ctrl+Shift+P</span>Auto-fill auslösen</div>
+                            <div class="help-item"><span class="help-key">Auto-fill</span>Felder auf der Seite füllen</div>
+                            <div class="help-item"><span class="help-key">Generate</span>Sicheres Passwort erstellen</div>
+                            <div class="help-item"><span class="help-key">Hinzufügen</span>Passwort manuell speichern</div>
+                            <div class="help-desc">Erfordert Server-Verbindung. Passwörter werden verschlüsselt auf dem Backend gespeichert.</div>
+                        </div>
+
+                        <div class="help-section">
+                            <div class="help-section-title">⚡ Prompt Library</div>
+                            <div class="help-item"><span class="help-key">📋 Copy</span>Prompt in Zwischenablage</div>
+                            <div class="help-item"><span class="help-key">→ Inject</span>An Cursor-Position einfügen</div>
+                            <div class="help-item"><span class="help-key">✏️</span>Prompt bearbeiten</div>
+                            <div class="help-item"><span class="help-key">🗑️</span>Prompt löschen</div>
+                            <div class="help-item"><span class="help-key">+ New → 🔍 Inject Discovery</span>2-Schritt KI-Prompt-Generator</div>
+                            <div class="help-desc">Funktioniert vollständig offline. Prompts werden lokal gespeichert. Mit Site-Feld wird der Prompt für eine bestimmte Domain vorgeschlagen.</div>
+                        </div>
+
+                        <div class="help-section">
+                            <div class="help-section-title">🖱️ Gesten (Rechtsklick+Ziehen)</div>
+                            <div class="help-item"><span class="help-key">← Links</span>Seite zurück</div>
+                            <div class="help-item"><span class="help-key">→ Rechts</span>Seite vor</div>
+                            <div class="help-item"><span class="help-key">↑ Hoch / ↓ Runter</span>Seite scrollen</div>
+                            <div class="help-item"><span class="help-key">3× Linksklick</span>Extension öffnen</div>
+                            <div class="help-desc">Gesten funktionieren auf jeder Seite ohne Server. Alt+Pfeiltasten als Tastatur-Alternative.</div>
+                        </div>
+
+                        <div class="help-section">
+                            <div class="help-section-title">⌨️ Globale Shortcuts</div>
+                            <div class="help-item"><span class="help-key">Alt+P</span>Prompt-Panel auf AI-Seiten</div>
+                            <div class="help-item"><span class="help-key">Ctrl+Shift+V</span>Voice Command</div>
+                            <div class="help-item"><span class="help-key">Ctrl+Shift+F</span>Quick Search</div>
+                            <div class="help-item"><span class="help-key">Ctrl+Shift+P</span>Password Autofill</div>
+                        </div>
+
+                        <div class="help-section">
+                            <div class="help-section-title">🌐 Verbindungsstatus</div>
+                            <div class="help-item"><span class="help-key" style="color:#4caf50">● Connected</span>Server erreichbar, alle Features aktiv</div>
+                            <div class="help-item"><span class="help-key" style="color:#f44336">● Disconnected</span>Offline — Gesten, Suche, Prompts weiter nutzbar</div>
+                        </div>
+
                     </div>
                 </div>
             </div>

@@ -70,7 +70,7 @@ class ToolBoxPopup {
         // Initialize panels
         this.initializeISAAPanel();
         this.initializeSearchPanel();
-        this.initializePasswordPanel();
+        this.initializeExtrasPanel();
 
         // Make sure the app is visible
         const app = document.getElementById('app');
@@ -345,10 +345,17 @@ async checkAuthStatus() {
     }
 
     try {
-        const response = await this.makeAPICall('/validateSession', 'POST', {
-            Username: this.settings.username,
-            Jwt_claim: this.settings.jwt
-        });
+        let response;
+        try {
+            response = await this.makeAPICall('/validateSession', 'POST', {
+                Username: this.settings.username,
+                Jwt_claim: this.settings.jwt
+            });
+        } catch {
+            // Offline – lokalen Auth-State beibehalten
+            this.updateAuthUI();
+            return;
+        }
 
         // Check multiple possible response formats
         const isValid = response.result?.data_info === 'Valid Session' ||
@@ -973,7 +980,9 @@ updateAuthUI() {
                     lang: this.voiceLanguage.split('-')[0]
                 });
 
-                if (response.result?.data || response.result?.data?.audio_content) {
+                const audioPayload = response.data ?? response.result?.data ?? response;
+                const audioBase64 = audioPayload?.audio_content ?? (typeof audioPayload === 'string' ? audioPayload : null);
+                if (audioBase64) {
                     const audioBase64 = response.result.data.audio_content;
                     const audioSrc = `data:audio/mp3;base64,${audioBase64}`;
 
@@ -1091,11 +1100,17 @@ updateAuthUI() {
 
         try {
             // Just check if the server is reachable
-            const response = await chrome.runtime.sendMessage({type: 'API_REQUEST',data: { endpoint:'/api/CloudM/openVersion'}});
-            this.isConnected = response.ok;
-            indicator?.classList.remove('connecting', 'error');
-            indicator?.classList.add('connected');
-            if (text) text.textContent = 'Connected';
+            const response = await chrome.runtime.sendMessage({type: 'API_REQUEST', data: { endpoint: '/health', method: 'GET' }});
+            this.isConnected = response?.success === true && !!response?.data;
+            if (this.isConnected) {
+                indicator?.classList.remove('connecting', 'error');
+                indicator?.classList.add('connected');
+                if (text) text.textContent = 'Connected';
+            } else {
+                indicator?.classList.remove('connecting', 'connected');
+                indicator?.classList.add('error');
+                if (text) text.textContent = 'Disconnected';
+            }
         } catch (error) {
             this.isConnected = false;
             indicator?.classList.remove('connecting', 'connected');
@@ -1337,8 +1352,8 @@ updateAuthUI() {
         activePanel?.classList.add('active');
 
         // Initialize panel if needed
-        if (tabName === 'passwords') {
-            this.loadPasswords().catch(console.error);
+        if (tabName === 'extras') {
+            this.initializeExtrasPanel();
         }else if(tabName === 'isaa'){
             // focus input lement for direct typing
             const inputElement= document.getElementById('chatInput');
@@ -1362,8 +1377,8 @@ updateAuthUI() {
             searchInput?.classList.remove('hidden');
 
             // Switch to appropriate tab based on query
-            if (query.toLowerCase().includes('password')) {
-                this.switchTab('passwords');
+            if (query.toLowerCase().includes('extras')) {
+                this.switchTab('extras');
             } else {
                 this.switchTab('search');
                 const liveSearchInput = document.getElementById('liveSearchInput');
@@ -1420,6 +1435,27 @@ updateAuthUI() {
         this.chatHistory.push({ role, content });
     }
 
+    prettyContext(obj, indent = 0) {
+        if (obj === null || obj === undefined) return '(none)';
+        const pad = '  '.repeat(indent);
+        if (typeof obj !== 'object') return String(obj);
+        if (Array.isArray(obj)) {
+            if (obj.length === 0) return '(empty)';
+            return obj.map((item, i) =>
+                `${pad}- [${i}] ${this.prettyContext(item, indent + 1)}`
+            ).join('\n');
+        }
+        return Object.entries(obj)
+            .filter(([, v]) => v !== null && v !== undefined)
+            .map(([k, v]) => {
+                const val = typeof v === 'object'
+                    ? '\n' + this.prettyContext(v, indent + 1)
+                    : ` ${v}`;
+                return `${pad}${k}:${val}`;
+            })
+            .join('\n');
+    }
+
     async sendChatMessage() {
         const chatInput = document.getElementById('chatInput');
         const message = chatInput?.value.trim();
@@ -1447,23 +1483,45 @@ updateAuthUI() {
                 await this.runAgentLoop(message);
             } else {
             // Prepare context with page information
-             const freshContext = await this.getFreshPageContext();
+             let freshContext = null;
+            try {
+                freshContext = await this.getFreshPageContext();
+            } catch (_) {}
 
-                const contextData = {
-                    mini_task: 'Browser extension chat with page context. Must answer in ' + JSON.stringify(this.voiceLanguage) + ` language! Browser context: ${JSON.stringify(freshContext)}`,
-                    user_task:message ,
-                    agent_name: this.settings.agentName || 'speed',
-                    task_from: 'browser_extension',
-                    message_history: this.chatHistory,
-                };
+            const pageIndexSnippet = freshContext?.pageIndex
+                ? Object.values(freshContext.pageIndex)
+                    .slice(0, 40)
+                    .map(e => `[${e.type}] ${e.title}: ${e.snippet}`)
+                    .join('\n')
+                : '';
+            const contextSummary = freshContext
+                ? `URL: ${freshContext.url || ''}\nTitle: ${freshContext.title || ''}\nSummary: ${this.prettyContext(freshContext.summary || {})}\nPageIndex:\n${pageIndexSnippet}`
+                : 'Kein Seitenkontext verfügbar.';
+
+            const contextData = {
+                mini_task: `Du bist ein Browser-Assistent. Antworte auf Deutsch (${this.voiceLanguage}). Seitenkontext: ${contextSummary}`,
+                user_task: message,
+                agent_name: this.settings.agentName || 'speed',
+                task_from:  'browser_extension',
+                message_history: this.chatHistory,
+            };
 
             const response = await this.makeAPICall('/api/isaa/mini_task_completion', 'POST', contextData);
 
             this.hideTypingIndicator();
 
-            const responseText = response.result?.data || response.data || 'I understand. How can I help you further?';
+            const responseText = response.result?.data
+                ?? response.data
+                ?? response?.error
+                ?? null;
+
             this.addMessageToHistory('user', message);
-            this.addChatMessage('isaa', responseText);
+            if (!responseText) {
+                this.addChatMessage('isaa', '⚠️ Keine Antwort vom Backend erhalten.');
+                console.warn('[ISAA] Leere Response:', response);
+            } else {
+                this.addChatMessage('isaa', responseText);
+            }
 
             }
 
@@ -1473,7 +1531,6 @@ updateAuthUI() {
             console.error('ISAA API error:', error);
         }
     }
-    // popup.js (fügen Sie dies als neue Methode in der Klasse hinzu)
 
     async runAgentLoop(initialTask) {
         let actionHistory = [];
@@ -1505,13 +1562,25 @@ updateAuthUI() {
             const executionResult = await this.executePageAction(plannedAction);
 
             // Füge das Ergebnis der Aktion zur Historie für den nächsten Schleifendurchlauf hinzu
+            const isNavigating = ['navigate', 'click'].includes(plannedAction.action_type);
+            await new Promise(resolve => setTimeout(resolve, isNavigating ? 2500 : 600));
+
+            if (isNavigating) {
+                try {
+                    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+                    if (tab?.id) await chrome.tabs.sendMessage(tab.id, { type: 'INDEX_PAGE' });
+                    await new Promise(resolve => setTimeout(resolve, 400)); // Index aufbauen lassen
+                } catch (_) {}
+            }
+
+            const postCtx = await this.getFreshPageContext().catch(() => null);
             actionHistory.push({
                 action: plannedAction,
-                result: executionResult.success ? "Success" : `Failed: ${executionResult.error}`
+                result: executionResult.success ? 'Success' : `Failed: ${executionResult.error}`,
+                pageAfter: postCtx
+                    ? { url: postCtx.url, title: postCtx.title, summary: postCtx.summary }
+                    : null
             });
-
-            // Warte einen Moment, damit der Benutzer die Aktion sehen kann
-            await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
         this.addChatMessage('isaa', "⚠️ Reached maximum steps. If the task is not complete, please try again with a more specific request.");
@@ -1568,9 +1637,9 @@ updateAuthUI() {
                         'description': "CSS selector for the target element. Be precise."
                     },
                     'data': {
-                        'anyOf': [{ 'additionalProperties': true, 'type': 'object' }, { 'type': 'null' }],
-                        'default': null,
-                        'title': 'Data'
+                        'type': 'object',
+                        'title': 'Data',
+                        'description': 'Action payload. For fill_form: {"value": "text"}. For navigate: {"url": "https://..."}. For scroll: {"direction": "down", "amount": 300}. Omit if not needed.'
                     },
                     'continue': {
                         'title': 'Continue Plan',
@@ -1586,12 +1655,12 @@ updateAuthUI() {
             const freshContext = await this.getFreshPageContext();
 
             const contextInfo = freshContext
-                ? `Current page context: "${JSON.stringify(freshContext)}"`
+                ? `Current page context:\n${this.prettyContext({ url: freshContext.url, title: freshContext.title, summary: freshContext.summary, pageIndex: freshContext.pageIndex })}`
                 : 'Could not access the current page context. The page may be protected.';
 
-            const historyInfo = actionHistory.length > 0 ?
-                `You have already performed these actions: ${JSON.stringify(actionHistory)}` :
-                "This is the first step.";
+            const historyInfo = actionHistory.length > 0
+                ? `You have already performed these actions:\n${this.prettyContext(actionHistory)}`
+                : 'This is the first step.';
 
             // Der Rest der Funktion (API-Aufruf etc.) bleibt unverändert...
             const response = await this.makeAPICall('/api/isaa/format_class', 'POST', {
@@ -1856,14 +1925,356 @@ updateAuthUI() {
     }
 
     // Password Manager Methods
-    initializePasswordPanel() {
-        console.log('Password panel initialized');
+    initializeExtrasPanel() {
+        // Sub-tab switching
+        document.querySelectorAll('.extras-tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const target = btn.dataset.extrasTab;
+                document.querySelectorAll('.extras-tab-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                document.querySelectorAll('.extras-pane').forEach(p => p.classList.remove('active'));
+                const paneMap = {
+                    passwords: 'extrasPasswordsPane',
+                    prompts: 'extrasPromptsPane',
+                    help: 'extrasHelpPane'
+                };
+                document.getElementById(paneMap[target])?.classList.add('active');
+                if (target === 'passwords') this.loadPasswords().catch(console.error);
+                if (target === 'prompts') this.loadPromptLibrary();
+            });
+        });
+
+        // Default: load passwords
+        this.loadPasswords().catch(console.error);
+
+        // New prompt button
+        document.getElementById('newPromptBtn')?.addEventListener('click', () => this.openPromptForm());
+        document.getElementById('savePromptBtn')?.addEventListener('click', () => this.savePrompt());
+        document.getElementById('cancelPromptBtn')?.addEventListener('click', () => this.closePromptForm());
+        document.getElementById('exportPromptsBtn')?.addEventListener('click', () => this.exportPrompts());
+        document.getElementById('importPromptsFile')?.addEventListener('change', (e) => this.importPrompts(e));
+
+        // Search
+        document.getElementById('promptSearch')?.addEventListener('input', (e) => {
+            this.renderPrompts(this._allPrompts || [], e.target.value);
+        });
+    }
+
+    exportPrompts() {
+        const lib = this._promptLib || { prompts: {}, category_map: {} };
+        const blob = new Blob([JSON.stringify(lib, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `tb-prompts-${new Date().toISOString().slice(0,10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    async importPrompts(e) {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        try {
+            const text = await file.text();
+            const incoming = JSON.parse(text);
+            if (!incoming.prompts) throw new Error('Invalid format');
+
+            if (!this._promptLib) this._promptLib = { prompts: {}, category_map: {} };
+            // Merge — incoming wins on conflict
+            Object.assign(this._promptLib.prompts, incoming.prompts);
+            Object.entries(incoming.category_map || {}).forEach(([cat, ids]) => {
+                const existing = this._promptLib.category_map[cat] || [];
+                this._promptLib.category_map[cat] = [...new Set([...existing, ...ids])];
+            });
+
+            await chrome.storage.local.set({ promptLibrary: this._promptLib });
+            this._allPrompts = Object.values(this._promptLib.prompts);
+            this.renderPrompts(this._allPrompts);
+        } catch (err) {
+            console.error('Import failed:', err);
+        }
+        e.target.value = ''; // reset so same file can be re-imported
+    }
+
+    async loadPromptLibrary() {
+        const stored = await chrome.storage.local.get(['promptLibrary']);
+        const lib = stored.promptLibrary || { prompts: {}, category_map: {} };
+        // Fallback: load bundled
+        if (!Object.keys(lib.prompts).length) {
+            try {
+                const res = await fetch(chrome.runtime.getURL('src/prompts/library.json'));
+                const bundled = await res.json();
+                lib.prompts = bundled.prompts || {};
+                lib.category_map = bundled.category_map || {};
+                await chrome.storage.local.set({ promptLibrary: lib });
+            } catch {}
+        }
+        this._promptLib = lib;
+        this._allPrompts = Object.values(lib.prompts);
+        this.renderPrompts(this._allPrompts);
+    }
+
+    renderPrompts(prompts, filter = '') {
+        const list = document.getElementById('promptList');
+        if (!list) return;
+        const q = filter.toLowerCase();
+        const filtered = q
+            ? prompts.filter(p =>
+                p.label?.toLowerCase().includes(q) ||
+                (p.description || '').toLowerCase().includes(q) ||
+                (p.tags || []).some(t => t.includes(q)) ||
+                (p.shortcut || '').includes(q))
+            : prompts;
+
+        filtered.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+
+        list.innerHTML = filtered.length ? '' : '<div class="no-results"><p>No prompts found.</p></div>';
+        filtered.forEach(p => {
+            const item = document.createElement('div');
+            item.className = 'prompt-item';
+            item.innerHTML = `
+                <div class="prompt-item-header">
+                    <span class="prompt-item-label">${p.pinned ? '★ ' : ''}${this.escapeHtml(p.label)}</span>
+                    ${p.shortcut ? `<span class="prompt-shortcut">${p.shortcut}</span>` : ''}
+                    ${p.site ? `<span class="prompt-site-badge">${p.site}</span>` : ''}
+                </div>
+                ${p.description ? `<div class="prompt-item-desc">${this.escapeHtml(p.description)}</div>` : ''}
+                <div class="prompt-item-actions">
+                    <button class="action-btn prompt-copy-btn" data-id="${p.id}">📋 Copy</button>
+                    <button class="action-btn prompt-inject-btn" data-id="${p.id}">→ Inject</button>
+                    <button class="action-btn prompt-edit-btn" data-id="${p.id}">✏️</button>
+                    <button class="action-btn prompt-del-btn" data-id="${p.id}">🗑️</button>
+                </div>`;
+
+            item.querySelector('.prompt-copy-btn').addEventListener('click', () => {
+                navigator.clipboard.writeText(p.content).catch(() => {});
+            });
+            item.querySelector('.prompt-inject-btn').addEventListener('click', () => {
+                this.injectPromptIntoPage(p.content);
+            });
+            item.querySelector('.prompt-edit-btn').addEventListener('click', () => {
+                this.openPromptForm(p);
+            });
+            item.querySelector('.prompt-del-btn').addEventListener('click', async () => {
+                delete this._promptLib.prompts[p.id];
+                await chrome.storage.local.set({ promptLibrary: this._promptLib });
+                this._allPrompts = Object.values(this._promptLib.prompts);
+                this.renderPrompts(this._allPrompts, document.getElementById('promptSearch')?.value || '');
+            });
+
+            list.appendChild(item);
+        });
+    }
+
+    openPromptForm(existing = null) {
+        this._editingPromptId = existing?.id || null;
+        document.getElementById('promptLabel').value = existing?.label || '';
+        document.getElementById('promptShortcut').value = existing?.shortcut || '';
+        document.getElementById('promptSite').value = existing?.site || '';
+        document.getElementById('promptModel').value = existing?.model_hint || '';
+        document.getElementById('promptContent').value = existing?.content || '';
+        document.getElementById('promptTags').value = (existing?.tags || []).join(', ');
+        document.getElementById('promptPinned').checked = !!existing?.pinned;
+        document.getElementById('promptForm').classList.remove('hidden');
+        document.getElementById('promptList').classList.add('hidden');
+        // Reset generator steps
+        document.getElementById('promptGenStep1')?.classList.remove('hidden');
+        document.getElementById('promptGenStep2')?.classList.add('hidden');
+        document.getElementById('discoveryResponse') && (document.getElementById('discoveryResponse').value = '');
+
+        document.getElementById('injectDiscoveryBtn')?.addEventListener('click', () => this.injectDiscoveryPrompt());
+        document.getElementById('generateFromDiscoveryBtn')?.addEventListener('click', () => this.generatePromptFromDiscovery());
+        document.getElementById('skipDiscoveryBtn')?.addEventListener('click', () => {
+            document.getElementById('promptGenStep2').classList.add('hidden');
+            document.getElementById('promptGenStep1').classList.remove('hidden');
+        });
+    }
+
+    // Step 1: Discovery-Prompt in aktive AI-Seite injizieren
+    async injectDiscoveryPrompt() {
+        const discoveryPrompt = `
+<system_instruction>
+Du bist ein KI-Modell und deine Aufgabe ist es, für mich eine "Betriebsanleitung" zu erstellen, damit ich dich als Expertensystem nutzen kann.
+Analysiere dich selbst und antworte in strukturierter Form.
+Sei präzise, ehrlich und vermeide halluzinierte Fähigkeiten.
+</system_instruction>
+
+<task>
+Beantworte die folgenden Punkte detailliert:
+
+1. ARCHITEKTUR: Was ist dein Modellname und deine Version? Was sind deine Stärken (z.B. Logik, Kreativität, Coding)?
+2. TOOL-SET: Welche "Agent"-Funktionen (Web-Suche, Code-Ausführung, Bild-Erstellung) stehen dir zur Verfügung?
+3. KAPAZITÄT: Wie hoch ist dein Kontext-Fenster für produktive Arbeit (nicht nur theoretische Limits)?
+4. "THINKING"-STIL: Bist du eher auf direkte Antworten optimiert (Commanding) oder kannst du komplexe Reasoning-Aufgaben übernehmen (Chain-of-Thought)?
+5. SCHWÄCHEN: Wo liegen deine Grenzen (z.B. Halluzinationen bei komplexen Fakten, limitierte Daten-Historie)?
+6. OPTIMALE INTERAKTION: Wie sollte ich dich instruieren, um die besten Ergebnisse zu erzielen? (z.B. XML-Tags, Few-Shot Beispiele, Persona-Zuweisung)?
+
+Bitte antworte so, dass ich diese Informationen direkt als "System-Prompt" für zukünftige, spezialisierte Workflows verwenden kann.
+</task>
+`;
+
+        await this.injectPromptIntoPage(discoveryPrompt);
+
+        document.getElementById('promptGenStep1')?.classList.add('hidden');
+        document.getElementById('promptGenStep2')?.classList.remove('hidden');
+    }
+
+    // Step 2: Finale Prompt aus User-Idee + Discovery-Antwort generieren
+    async generatePromptFromDiscovery() {
+        const userIdea = document.getElementById('promptContent').value.trim();
+        const discoveryResponse = document.getElementById('discoveryResponse').value.trim();
+        const btn = document.getElementById('generateFromDiscoveryBtn');
+
+        if (!userIdea) { return; }
+
+        btn.textContent = '⏳ Generating...';
+        btn.disabled = true;
+
+        const metaPrompt = `Du bist ein Weltklasse-Experte für Prompt Engineering. Deine Aufgabe ist es, für den User einen hochgradig optimierten Prompt zu entwickeln, der auf das spezifische Zielmodell und den Use-Case zugeschnitten ist.
+
+=== ZIEL-SYSTEM CAPABILITIES ===
+${discoveryResponse || 'Nutze allgemeine Best Practices für LLMs.'}
+
+=== USER ANFRAGE / INITIALE IDEE ===
+${userIdea}
+
+=== OPTIMIERUNGS-STRATEGIE (Chain-of-Thought) ===
+Gehe bei der Erstellung des Prompts nach dieser Logik vor:
+1. ROLLEN-FRAMING: Weise dem Modell eine Expertenrolle zu, die den Kontext der Anfrage perfekt abdeckt.
+2. KONTEXT-STRUKTUR: Nutze XML-Tags (z.B. <context>, <instructions>, <constraints>) zur logischen Trennung. Dies erhöht die Präzision, ohne das Modell in seiner Flexibilität einzuschränken.
+3. LOGIK-STEUERUNG: Wenn die Aufgabe komplex ist, füge eine Anweisung zum 'Reasoning' ein (z.B. 'Think step-by-step').
+4. OUTPUT-MANAGEMENT: Definiere das gewünschte Ausgabeformat (JSON, Tabelle, Markdown, Prosa), ohne es starr zu erzwingen, sofern der User keine exklusiven Anforderungen stellt.
+5. ITERATIONS-LOOP: Erstelle eine Struktur, die das Modell dazu einlädt, bei Rückfragen selbstständig Zwischenschritte zu prüfen.
+
+=== AUSGABE-REGELN ===
+Antworte AUSSCHLIESSLICH im folgenden JSON-Format ohne weiteren Text:
+
+{
+  "optimized_prompt": "Der optimierte Prompt inklusive XML-Struktur für bessere Logik-Trennung",
+  "label": "Ein prägnanter Name (max 40 Zeichen)",
+  "description": "Eine kurze Beschreibung der Funktionalität (max 80 Zeichen)"
+}`;
+
+        try {
+            const response = await this.makeAPICall('/api/isaa/mini_task_completion', 'POST', {
+                mini_task: metaPrompt,
+                agent_name: 'speed'
+            });
+
+            const raw = response?.result?.data || response?.data || '';
+            if (!raw || typeof raw !== 'string') {
+                console.warn('[PromptGen] Leere Antwort:', response);
+                return;
+            }
+
+            const jsonStart = raw.indexOf('{');
+            const jsonEnd   = raw.lastIndexOf('}') + 1;
+            if (jsonStart === -1 || jsonEnd <= jsonStart) {
+                console.warn('[PromptGen] Kein JSON in Antwort:', raw.slice(0, 200));
+                return;
+            }
+
+            let data;
+            try {
+                data = JSON.parse(raw.slice(jsonStart, jsonEnd));
+            } catch (e) {
+                console.warn('[PromptGen] JSON parse error:', e.message, raw.slice(jsonStart, jsonStart + 100));
+                return;
+            }
+
+            if (data.optimized_prompt) {
+                document.getElementById('promptContent').value = data.optimized_prompt;
+            }
+            if (data.label && !document.getElementById('promptLabel').value) {
+                document.getElementById('promptLabel').value = data.label;
+            }
+            if (data.description) {
+                this._generatedDescription = data.description;
+            }
+        } catch (e) {
+            console.warn('[PromptGen] API error:', e.message);
+            // Offline-Fallback: bleibe bei der ursprünglichen Idee
+        }
+
+        btn.textContent = '✨ Generate Prompt';
+        btn.disabled = false;
+        document.getElementById('promptGenStep2').classList.add('hidden');
+        document.getElementById('promptGenStep1').classList.remove('hidden');
+    }
+
+    closePromptForm() {
+        document.getElementById('promptForm').classList.add('hidden');
+        document.getElementById('promptList').classList.remove('hidden');
+        this._editingPromptId = null;
+    }
+
+    async savePrompt() {
+        const label = document.getElementById('promptLabel').value.trim();
+        const content = document.getElementById('promptContent').value.trim();
+        if (!label || !content) return;
+
+        const id = this._editingPromptId || `custom_${Date.now()}`;
+        const prompt = {
+            id,
+            label,
+            shortcut: document.getElementById('promptShortcut').value.trim() || undefined,
+            site: document.getElementById('promptSite').value.trim() || undefined,
+            model_hint: document.getElementById('promptModel').value.trim() || undefined,
+            content,
+            tags: document.getElementById('promptTags').value.split(',').map(t => t.trim()).filter(Boolean),
+            pinned: document.getElementById('promptPinned').checked,
+            description: this._generatedDescription || document.getElementById('promptLabel').value,
+            type: 'task'
+        };
+        this._generatedDescription = null;
+
+        if (!this._promptLib) this._promptLib = { prompts: {}, category_map: {} };
+        this._promptLib.prompts[id] = prompt;
+
+        // If site given: add to category_map key matching site hostname
+        if (prompt.site) {
+            const cat = prompt.site.replace(/\./g, '_');
+            if (!this._promptLib.category_map[cat]) this._promptLib.category_map[cat] = [];
+            if (!this._promptLib.category_map[cat].includes(id)) this._promptLib.category_map[cat].push(id);
+        }
+
+        await chrome.storage.local.set({ promptLibrary: this._promptLib });
+        this._allPrompts = Object.values(this._promptLib.prompts);
+        this.closePromptForm();
+        this.renderPrompts(this._allPrompts);
+    }
+
+    async injectPromptIntoPage(text) {
+        // 1. Versuch: an letzter Cursor-Position im Popup einfügen
+        if (this.lastSelectedInput?.isConnected) {
+            const el = this.lastSelectedInput;
+            if (el.isContentEditable) {
+                el.focus();
+                document.execCommand('insertText', false, text);
+            } else {
+                const start = el.selectionStart ?? el.value.length;
+                const end = el.selectionEnd ?? start;
+                el.value = el.value.slice(0, start) + text + el.value.slice(end);
+                el.selectionStart = el.selectionEnd = start + text.length;
+                el.dispatchEvent(new InputEvent('input', { bubbles: true }));
+            }
+            return;
+        }
+
+        // 2. Versuch: in aktive AI-Seite via Content Script
+        try {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            await chrome.tabs.sendMessage(tab.id, { type: 'TB_INJECT_TEXT', text });
+        } catch {
+            // 3. Fallback: Clipboard
+            navigator.clipboard.writeText(text).catch(() => {});
+        }
     }
 
     async loadPasswords() {
         let passwordList = document.getElementById('passwordList');
 
-        // try {
+        try {
             const response = await this.makeAPICall('/api/PasswordManager/list_passwords', 'POST', {});
             const passwords = response?.result?.data || response?.data || [];
 
@@ -1934,14 +2345,10 @@ updateAuthUI() {
                 });
             });
 
-        // } catch (error) {
-        //     console.error('Failed to load passwords:', error);
-        //     passwordList.innerHTML = `
-        //         <div class="error-message">
-        //             <p>Failed to load passwords. Please check your connection.</p>
-        //         </div>
-        //     `+JSON.stringify(error);
-        // }
+        } catch {
+            if (passwordList) passwordList.innerHTML = `
+                <div class="no-passwords"><p>Server nicht erreichbar. Passwörter nicht verfügbar.</p></div>`;
+        }
     }
 
 

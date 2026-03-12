@@ -201,10 +201,4 @@ class SiteInjector {
   }
 }
 
-// Export for popup and content scripts
-if (typeof module !== 'undefined') {
-  module.exports = { PromptEngine, SiteInjector };
-} else {
-  window.PromptEngine = PromptEngine;
-  window.SiteInjector = SiteInjector;
-}
+export { PromptEngine, SiteInjector };

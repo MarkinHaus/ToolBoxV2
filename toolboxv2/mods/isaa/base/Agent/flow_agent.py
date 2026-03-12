@@ -91,7 +91,7 @@ except ImportError as e:
 
 logger = get_logger()
 
-MAX_CONTINUATIONS = os.environ.get("AGENT_INTERN_MAX_CONTINUATIONS", 100)
+MAX_CONTINUATIONS = os.environ.get("AGENT_INTERN_MAX_CONTINUATIONS", 5)
 
 # ===== MEDIA PARSING UTILITIES =====
 def parse_media_from_query(query: str) -> tuple[str, list[dict]]:
@@ -1007,8 +1007,8 @@ class FlowAgent:
                     pass
         return cost or (input_tokens / 1000) * 0.002 + (output_tokens / 1000) * 0.01
 
-    @staticmethod
-    async def _process_streaming_response(response, task_id, model, get_response_message):
+
+    async def _process_streaming_response(self, response, task_id, model, get_response_message):
         from litellm.types.utils import ChatCompletionMessageToolCall, Function, Message
 
         result = ""
@@ -1020,6 +1020,11 @@ class FlowAgent:
             delta = chunk.choices[0].delta
             content = delta.content or ""
             result += content
+            if hasattr(self, 'stream_callback') and self.stream_callback:
+                res = self.stream_callback(content)
+                if res and asyncio.iscoroutine(res):
+                    await res
+
 
             if getattr(delta, "tool_calls", None):
                 for tc in delta.tool_calls:
@@ -2908,10 +2913,10 @@ Returns:
         sys_det = m["system_details"]
 
         print_row("System Prompt", bd["System & VFS"])
-        print_row("VFS Files", sys_det["VFS Content"], True)
-        print_row("Base Rules", sys_det["Base Rules"], True)
+        print_row("VFS Files      ", sys_det["VFS Content"], True)
+        print_row("Base Rules      ", sys_det["Base Rules"], True)
         if sys_det["Skills"] > 0:
-            print_row("Skills", sys_det["Skills"], True)
+            print_row("Skills      ", sys_det["Skills"], True)
 
         # Tools Breakdown
         meta = m["meta"]

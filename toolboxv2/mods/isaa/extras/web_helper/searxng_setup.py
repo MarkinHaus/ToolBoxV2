@@ -516,10 +516,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python searxng_setup.py              # Full setup
-  python searxng_setup.py --start      # Start existing
-  python searxng_setup.py --stop       # Stop
-  python searxng_setup.py --test       # Test API
+  python toolboxv2/mods/isaa/extras/web_helper/searxng_setup.py              # Full setup
+  python toolboxv2/mods/isaa/extras/web_helper/searxng_setup.py --start      # Start existing
+  python toolboxv2/mods/isaa/extras/web_helper/searxng_setup.py --stop       # Stop
+  python toolboxv2/mods/isaa/extras/web_helper/searxng_setup.py --test       # Test API
         """
     )
 

@@ -6,9 +6,9 @@ SearXNG Quick Start - Ultra Minimal
 Ein Befehl zum Starten von SearXNG mit Docker.
 
 Usage:
-    python searxng_quick.py              # Start
-    python searxng_quick.py --stop       # Stop
-    python searxng_quick.py --test       # Test API
+    python toolboxv2/mods/isaa/extras/web_helper/searxng_quick.py              # Start
+    python toolboxv2/mods/isaa/extras/web_helper/searxng_quick.py --stop       # Stop
+    python toolboxv2/mods/isaa/extras/web_helper/searxng_quick.py --test       # Test API
 """
 
 import argparse

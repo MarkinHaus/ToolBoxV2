@@ -6151,9 +6151,12 @@ class ISAA_Host:
         """Handle /context commands."""
         try:
             agent = await self.isaa_tools.get_agent(self.active_agent_name)
-            overview = await agent.context_overview(self.active_session_id, f_print=c_print)
-            overview = await agent.context_overview(self.active_session_id)
-            c_print(overview)
+
+            def ansi_c_print(*a, **kw):
+                text = " ".join(str(x) for x in a)
+                # Wir übergeben es explizit als ANSI-Objekt an c_print
+                c_print(ANSI(text), **kw)
+            await agent.context_overview(self.active_session_id,print_visual=True, f_print=ansi_c_print)
         except Exception as e:
             print_status(f"Error: {e}", "error")
             import traceback
@@ -6710,21 +6713,41 @@ class ISAA_Host:
             renderer._start_footer_anim()
 
     async def _interrupt_stop_task(self, task_id: str):
-        """Task canceln."""
         task = self._active_tasks.get(task_id)
         if not task:
             return
 
+        with patch_stdout():
+            c_print(HTML(f"<style fg='#fbbf24'>  Signalisiere sauberen Stopp für {task_id}...</style>"))
 
-
-        # Warten bis wirklich gecancelled
         try:
-            task.async_task.cancel()
-            await asyncio.wait_for(asyncio.shield(task.async_task), timeout=3.0)
-        except (asyncio.CancelledError, asyncio.TimeoutError, Exception) as e:
-            c_print(f"Error beim stopped {e}")
-            pass
+            # 1. Dem Agenten (Engine) sagen, dass er sofort & sauber abbrechen soll
+            agent = await self.isaa_tools.get_agent(task.agent_name)
+            engine = agent._get_execution_engine()
 
+            # Finde die aktive Execution-ID
+            execution_id = None
+            for eid, ctx in engine._active_executions.items():
+                if ctx.status in ("running", "paused") and ctx.session_id == self.active_session_id:
+                    execution_id = eid
+                    break
+
+            if execution_id:
+                await agent.cancel_execution(execution_id)
+
+            # 2. Frontend Task canceln
+            task.async_task.cancel()
+
+            # Timeout, falls der Task hängt. (WICHTIG: KEIN asyncio.shield mehr!)
+            try:
+                await asyncio.wait_for(task.async_task, timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+
+        except Exception:
+            pass  # Fehler beim forced shutdown ignorieren, um die Haupt-App nicht zu crashen
+
+        # Fokus freigeben
         if self._focused_task_id == task_id:
             self._focused_task_id = None
             self._active_renderer = None
@@ -6732,28 +6755,51 @@ class ISAA_Host:
         with patch_stdout():
             c_print(HTML(
                 f"<style fg='#f87171'>"
-                f"  ✗ {task_id} gestoppt</style>\n"
+                f"  ✗ {task_id} erfolgreich gestoppt</style>\n"
             ))
 
     async def _interrupt_resume_with_context(self, task_id: str):
-        """Task stoppen, dann mit neuem User-Context via agent.resume_execution fortsetzen."""
         task = self._active_tasks.get(task_id)
         if not task:
             return
 
-        # 1. Aktuellen Stream canceln
-        task.async_task.cancel()
-        try:
-            await asyncio.wait_for(asyncio.shield(task.async_task), timeout=3.0)
-        except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
-            pass
-
-        # 2. Neuen Context vom User abfragen
         with patch_stdout():
-            c_print(HTML(
-                f"<style fg='{PTColors.ZEN_CYAN}'>"
-                f"  Neuer Context für {task.agent_name}:</style>"
-            ))
+            c_print(HTML(f"<style fg='#fbbf24'>  Pausiere {task_id} regulär...</style>"))
+
+        try:
+            agent = await self.isaa_tools.get_agent(task.agent_name)
+            engine = agent._get_execution_engine()
+
+            execution_id = None
+            for eid, ctx in engine._active_executions.items():
+                if ctx.status in ("running", "paused") and ctx.session_id == self.active_session_id:
+                    execution_id = eid
+                    break
+
+            if execution_id:
+                # 1. Engine SAUBER pausieren (speichert den State!)
+                await agent.pause_execution(execution_id)
+            else:
+                with patch_stdout():
+                    c_print(HTML("<style fg='#f87171'>  Keine aktive Ausführung zum Pausieren gefunden.</style>"))
+                return
+
+            # 2. Warten, bis der Stream von alleine (durch den Pause-Befehl) geordnet stoppt
+            try:
+                await asyncio.wait_for(task.async_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                task.async_task.cancel()  # Fallback
+            except asyncio.CancelledError:
+                pass
+
+        except Exception as e:
+            with patch_stdout():
+                c_print(HTML(f"<style fg='#f87171'>  Fehler beim Pausieren: {_esc(str(e))}</style>"))
+            return
+
+        # 3. Neuen Context (Anweisungen) vom Nutzer abfragen
+        with patch_stdout():
+            c_print(HTML(f"<style fg='{PTColors.ZEN_CYAN}'>  Neuer Context für {task.agent_name}:</style>"))
 
         try:
             with patch_stdout():
@@ -6763,42 +6809,14 @@ class ISAA_Host:
             new_context = new_context.strip()
         except (KeyboardInterrupt, EOFError):
             with patch_stdout():
-                c_print(HTML(
-                    f"<style fg='{PTColors.ZEN_DIM}'>  → Resume abgebrochen, Task bleibt gestoppt</style>\n"
-                ))
+                c_print(HTML(f"<style fg='{PTColors.ZEN_DIM}'>  → Resume abgebrochen, Task bleibt pausiert.</style>\n"))
             if self._focused_task_id == task_id:
                 self._focused_task_id = None
                 self._active_renderer = None
             return
 
-        if not new_context:
-            new_context = ""
-
-        # 3. Agent holen und resume aufrufen
+        # 4. Resume via Engine starten
         try:
-            agent = await self.isaa_tools.get_agent(task.agent_name)
-            engine = agent._get_execution_engine()
-
-            # Execution-ID aus dem Engine finden (letzte paused execution für diesen Task)
-            execution_id = None
-            for eid, ctx in engine._active_executions.items():
-                if ctx.status == "paused" or ctx.status == "running":
-                    execution_id = eid
-                    break
-
-            if execution_id is None:
-                # Fallback: Einfach neuen Stream starten mit dem alten Query + neuem Context
-                combined_query = f"{task.query}\n\n[Fortgesetzt mit]: {new_context}" if new_context else task.query
-                with patch_stdout():
-                    c_print(HTML(
-                        f"<style fg='{PTColors.ZEN_DIM}'>"
-                        f"  → Kein paused execution gefunden, starte neu</style>"
-                    ))
-                # Neuen Agent-Aufruf als normale Interaktion
-                await self._handle_agent_interaction(combined_query)
-                return
-
-            # 4. Resume mit Stream
             renderer = ZenRendererV2(engine)
             stream = await agent.resume_execution(
                 execution_id=execution_id,
@@ -6806,11 +6824,12 @@ class ISAA_Host:
                 stream=True,
             )
 
-            # Wenn resume ein tuple (stream_fn, ctx) zurückgibt
+            # Falls resume ein Tuple zurückgibt (z.B. stream_func, ctx)
             if isinstance(stream, tuple):
-                stream = stream[0]
+                stream_func, ctx = stream
+                stream = stream_func(ctx)
 
-            # 5. Neuen Task registrieren
+            # 5. Neuen Background-Task hochziehen
             self._task_counter += 1
             new_task_id = f"agent_{self._task_counter}_{task.agent_name}_resumed"
 
@@ -6828,11 +6847,11 @@ class ISAA_Host:
             )
             self._active_tasks[new_task_id] = live_task
 
-            # Alten Task aus active_tasks entfernen
+            # Alten Task wegräumen
             if task_id in self._active_tasks:
                 del self._active_tasks[task_id]
 
-            # Fokus auf neuen Task
+            # Fokus übergeben
             self._focused_task_id = new_task_id
             self._active_renderer = renderer
 
@@ -6843,22 +6862,15 @@ class ISAA_Host:
             renderer._start_footer_anim()
 
             with patch_stdout():
-                c_print(HTML(
-                    f"<style fg='{PTColors.ZEN_GREEN}'>"
-                    f"  ↻ {task.agent_name} resumed → {new_task_id}</style>\n"
-                ))
+                c_print(
+                    HTML(f"<style fg='{PTColors.ZEN_GREEN}'>  ↻ {task.agent_name} resumed → {new_task_id}</style>\n"))
 
         except Exception as e:
-            import traceback
             with patch_stdout():
-                c_print(HTML(
-                    f"<style fg='#f87171'>"
-                    f"  ✗ Resume fehlgeschlagen: {_esc(str(e)[:80])}</style>\n"
-                ))
+                c_print(HTML(f"<style fg='#f87171'>  ✗ Resume fehlgeschlagen: {_esc(str(e)[:80])}</style>\n"))
             if self._focused_task_id == task_id:
                 self._focused_task_id = None
                 self._active_renderer = None
-
 
 # =============================================================================
 # ENTRY POINT

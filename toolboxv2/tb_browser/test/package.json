@@ -1,0 +1,28 @@
+{
+  "name": "tb-browser-tests",
+  "version": "1.0.0",
+  "description": "ToolBox Pro Extension — Unit + E2E Test Suite",
+  "scripts": {
+    "test":        "jest --testPathPattern='unit' --forceExit",
+    "test:unit":   "jest --testPathPattern='unit' --forceExit --verbose",
+    "test:e2e":    "jest --testPathPattern='e2e' --forceExit --verbose --testTimeout=30000",
+    "test:all":    "jest --forceExit --verbose --testTimeout=30000",
+    "test:watch":  "jest --testPathPattern='unit' --watch",
+    "test:nativeH": "node diagnose_native_host.js",
+    "server:mock": "node setup/mock_server.js 8080 & node setup/mock_server.js 5000"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "setupFiles": ["./mocks/chrome.js"],
+    "testMatch": [
+      "**/unit/**/*.test.js",
+      "**/e2e/**/*.e2e.test.js"
+    ],
+    "testTimeout": 10000,
+    "verbose": true
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "@jest/globals": "^29.7.0"
+  }
+}

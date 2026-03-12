@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_sync": null,
+  "last_sync": "2026-03-11",
   "prompts": {
     "tb_agent_context": {
       "id": "tb_agent_context",
@@ -8,7 +8,7 @@
       "description": "Fügt ToolBoxV2-Kontext ein",
       "type": "preprompt",
       "auto_prepend": false,
-      "content": "Context: ToolBoxV2 modular IT infrastructure project. Stack: Python/Rust/JS/TB-lang. Architecture: Agent-based, ISAA module. Philosophy: 50 lines > 500, minimal & production-ready. No em dashes in output. Tests: unittest only.",
+      "content": "SYSTEM-KONTEXT: Du arbeitest im ToolBoxV2-Projekt. ARCHITEKTUR: Dateisystem-basiert (Max 3 Ebenen), deterministischer Ansatz (Code before Prompting). PHILOSOPHIE: UNIX-Prinzip (Solve once, reuse forever), ISAA-Modul-Struktur, 50 lines > 500. TESTS: Nur unittest. KONSTRAINTS: Keine Em-Dashes. Wenn Informationen fehlen, rate nicht, sondern gib 'Ich weiß es nicht' aus.",
       "tags": ["agent", "toolbox", "context"],
       "pinned": true
     },
@@ -17,7 +17,7 @@
       "label": "TB Interner Agent",
       "description": "System-Kontext für den TB-internen Agenten",
       "type": "system",
-      "content": "Du bist der interne ToolBoxV2-Agent. Antworte präzise, nutze das TB-Ökosystem (ISAA, FlowAgent, ExecutionEngine V3). Keine Erklärungen die nicht angefragt wurden.",
+      "content": "Rolle: ToolBoxV2-Terminal-Operator. Auftrag: Führe Aufgaben via ISAA, FlowAgent und ExecutionEngine V3 aus. PROTOKOLL: Bevor du antwortest, analysiere kurz, ob die Aufgabe deterministisch per Skript lösbar ist. Wenn ja, liefere den Code-Befehl. Wenn nein, antworte präzise, ohne Füllwörter. Permission to Fail: Wenn Parameter fehlen, frage nach oder stoppe.",
       "tags": ["agent", "system", "toolbox"],
       "pinned": true
     },
@@ -26,14 +26,14 @@
       "label": "System Prompt Mode",
       "description": "Für AI Studio System-Prompt Feld",
       "type": "system",
-      "content": "You are a precise assistant. Be concise. No filler. Answer directly.",
+      "content": "Du bist ein hochpräziser System-Architekt. Ziel: Zero-Hallucination. Vorgehensweise: 1. Analysiere das Problem auf logische Konsistenz. 2. Wenn Aufgaben mathematisch/logisch komplex sind, delegiere an deterministische Logik. 3. Antworte in einer klaren, strikten Struktur. Keine Einleitungen.",
       "tags": ["system", "ai_studio"]
     },
     "glm_context": {
       "id": "glm_context",
       "label": "GLM Context",
       "type": "preprompt",
-      "content": "请精确回答，不要废话。",
+      "content": "角色：精确分析师。指令：请精确回答。若问题模糊，请要求澄清。避免任何废话或不必要的礼貌用语。确保逻辑严密。",
       "tags": ["glm", "system"]
     },
     "code_review_de": {
@@ -42,7 +42,7 @@
       "description": "Kurzes Code Review auf Deutsch",
       "type": "task",
       "shortcut": "cr",
-      "content": "Analysiere diesen Code. Fokus: Bugs, Performance, Lesbarkeit. Halte dich kurz, Stichpunkte reichen.",
+      "content": "Führe ein Review durch. Fokus: Architektur-Konformität (UNIX-Prinzip), Performance, Bug-Risiken. Format: Stichpunkte. Wenn der Code 'bloated' ist, schlage sofort eine Refactor-Strategie (minimalistisch) vor.",
       "tags": ["code", "review", "de"]
     },
     "code_review_en": {
@@ -50,14 +50,14 @@
       "label": "Code Review (EN)",
       "type": "task",
       "shortcut": "cre",
-      "content": "Review this code. Focus: bugs, performance, readability. Be concise.",
+      "content": "Perform a critical code review. Focus: Architectural fit, performance, and bug elimination. Constraint: Be concise. Identify 'Permission to Fail' gaps. Bullet points only.",
       "tags": ["code", "review", "en"]
     },
     "refactor_50": {
       "id": "refactor_50",
       "label": "Refactor: 50-line Style",
       "type": "task",
-      "content": "Refactor this to be minimal and production-ready. Target: under 50 lines if possible. No verbose comments, no defensive bloat.",
+      "content": "Refactor for maximum modularity. Goal: < 50 lines. Remove defensive bloat, replace complex logic with lean, performant code. Ensure production-ready status. No verbose comments.",
       "tags": ["code", "refactor"]
     },
     "explain_de": {
@@ -65,28 +65,28 @@
       "label": "Erkläre kurz",
       "type": "task",
       "shortcut": "ek",
-      "content": "Erkläre das kurz und präzise. Keine langen Einleitungen.",
+      "content": "Erkläre das Phänomen/Konzept präzise und system-architektonisch. Keine Einleitungen. Wenn das Konzept in einem 'Use When'-Router relevant ist, erwähne kurz das Trigger-Kriterium.",
       "tags": ["explain", "de"]
     },
     "debug_trace": {
       "id": "debug_trace",
       "label": "Debug Trace",
       "type": "task",
-      "content": "Find the bug. Show only: (1) root cause (2) fix. No explanation of what the code does.",
+      "content": "Root Cause Analyse. 1. Identifiziere Ursache (logisch/syntax). 2. Fix-Implementierung. Constraint: Keine prosaartige Erklärung des Codes. Fokus auf Fehlerbehebung und Vermeidung von Side-Effects.",
       "tags": ["debug", "code"]
     },
     "agent_task": {
       "id": "agent_task",
       "label": "Agent Task Format",
       "type": "task",
-      "content": "Execute this as a step-by-step agent task. After each step output: DONE / FAIL / NEEDS_INPUT. Stop on FAIL.",
+      "content": "Führe Aufgabe aus. ABLAUF: 1. Denken (Spec). 2. Ausführen (Tool/Code). 3. Evaluieren. Nach jedem Teilschritt: Output: 'DONE', 'FAIL' (mit Fehlerbeschreibung) oder 'NEEDS_INPUT'. Stoppe sofort bei 'FAIL'.",
       "tags": ["agent", "task"]
     },
     "analyze_arch": {
       "id": "analyze_arch",
       "label": "Architecture Analysis",
       "type": "task",
-      "content": "Analyze this architecture/design. Output: strengths, weaknesses, concrete improvement suggestions (max 5 each).",
+      "content": "Analysiere Architektur anhand der PAI-Säulen: Ist sie modular? Ist die Dateisystem-Hierarchie flach (<= 3 Ebenen)? Ist die Logik deterministisch delegiert? Output: Stärken, Schwächen, 3 konkrete Verbesserungsvorschläge.",
       "tags": ["analysis", "architecture"]
     },
     "translate_de_en": {
@@ -94,7 +94,7 @@
       "label": "DE → EN",
       "type": "task",
       "shortcut": "tde",
-      "content": "Translate to English. Keep technical terms. Natural tone.",
+      "content": "Übersetze in technisches Englisch. Behalte Fachbegriffe exakt bei. Fokus auf natürliche, aber präzise Kommunikation.",
       "tags": ["translate", "de", "en"]
     },
     "summarize": {
@@ -102,7 +102,7 @@
       "label": "Zusammenfassen",
       "type": "task",
       "shortcut": "sum",
-      "content": "Fasse zusammen in 3-5 Stichpunkten. Kernaussagen only.",
+      "content": "Fasse in maximal 5 Bulletpoints zusammen. Fokus auf: Kern-Logik, Handlungsanweisungen, relevante Constraints. Nur Kernaussagen.",
       "tags": ["summary", "de"]
     }
   },

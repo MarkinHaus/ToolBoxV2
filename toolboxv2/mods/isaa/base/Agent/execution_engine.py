@@ -1489,7 +1489,6 @@ BEISPIELE:
                 tool_calls_buffer = {}
 
                 # --- AUTO-RESUME SCHLEIFE FÜR STREAMING ---
-                MAX_CONTINUATIONS = 100
                 continuation_count = 0
 
                 current_messages = messages.copy()

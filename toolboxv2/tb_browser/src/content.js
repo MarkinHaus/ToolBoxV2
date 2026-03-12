@@ -139,6 +139,24 @@ class ToolBoxContent {
                     sendResponse({ success: true });
                     break;
 
+                case 'TB_INJECT_TEXT': {
+                    const el = document.activeElement;
+                    if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' ||
+                               el.isContentEditable)) {
+                        if (el.isContentEditable) {
+                            document.execCommand('insertText', false, message.text);
+                        } else {
+                            const start = el.selectionStart ?? el.value.length;
+                            el.value = el.value.slice(0, start) + message.text + el.value.slice(el.selectionEnd ?? start);
+                            el.dispatchEvent(new InputEvent('input', { bubbles: true }));
+                        }
+                    } else {
+                        navigator.clipboard.writeText(message.text).catch(() => {});
+                    }
+                    sendResponse({ success: true });
+                    break;
+                }
+
                 case 'FILL_GENERATED_PASSWORD':
                     this.fillGeneratedPassword(message.password);
                     sendResponse({ success: true });

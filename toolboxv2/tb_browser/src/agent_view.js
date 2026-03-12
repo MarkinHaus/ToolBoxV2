@@ -401,4 +401,4 @@ class AgentView {
   }
 }
 
-export default AgentView
+export { AgentView };

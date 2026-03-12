@@ -33,6 +33,15 @@ class TBGestureDetector {
         this.init();
     }
 
+    _safeSend(msg, cb) {
+        try {
+            if (!chrome?.runtime?.id) return; // context bereits tot
+            chrome.runtime.sendMessage(msg, cb);
+        } catch (e) {
+            if (!e.message?.includes('Extension context')) console.warn('sendMessage failed:', e);
+        }
+    }
+
     async init() {
 
         try {
@@ -344,21 +353,14 @@ class TBGestureDetector {
         }
 
         // Send to background script
-        chrome.runtime.sendMessage({
-            type: 'GESTURE_DETECTED',
-            gesture: gesture,
-            timestamp: Date.now()
-        });
+        this._safeSend({ type: 'GESTURE_DETECTED', gesture, timestamp: Date.now() });
     }
 
     handleTripleClick(e) {
-        console.log('🎯 Double-click detected, opening ToolBox popup');
+        console.log('🎯 Triple-click detected, opening ToolBox popup');
 
         // Open extension popup
-        chrome.runtime.sendMessage({
-            type: 'OPEN_POPUP',
-            position: { x: e.clientX, y: e.clientY }
-        });
+        this._safeSend({ type: 'OPEN_POPUP', position: { x: e.clientX, y: e.clientY } });
     }
 
     // Navigation Actions

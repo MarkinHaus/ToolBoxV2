@@ -1920,7 +1920,7 @@ class AppType:
         response = "No Internet"
         try:
             # Kombinierter Call an deine interne API
-            response = await self.session.fetch(f"{self._base_url}/api/geo", timeout=3).json()
+            response = await (await self.session.fetch(f"{self._base_url}/api/geo", timeout=3)).json()
             with self._lock:
                 self.ip = response.get("ip")
                 self.location = response
@@ -1930,9 +1930,9 @@ class AppType:
         if done:
             return
         try:
-            response = await self.session.fetch("https://api64.ipify.org?format=json").json()
+            response = await (await self.session.fetch("https://api64.ipify.org?format=json")).json()
             self.ip = response["ip"]
-            response = await self.session.fetch(f"https://ipapi.co/{response['ip']}/json/").json()
+            response = await (await self.session.fetch(f"https://ipapi.co/{response['ip']}/json/")).json()
             self.location = response
         except Exception as e:
 

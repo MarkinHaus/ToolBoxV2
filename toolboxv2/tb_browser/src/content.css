@@ -146,7 +146,7 @@ form:hover .tb-form-indicator-wrapper {
     border-radius: 12px !important;
     font-size: 14px !important;
     font-weight: 600 !important;
-    z-index: 10001 !important;
+    z-index: 2147483647 !important;
     animation: tbGestureFeedback 1.5s ease-in-out forwards !important;
     backdrop-filter: blur(10px) !important;
     border: 1px solid rgba(255, 255, 255, 0.2) !important;
