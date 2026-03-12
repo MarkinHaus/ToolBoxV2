@@ -17,20 +17,33 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 
-// ─── Konfiguration ────────────────────────────────────────────────────────────
+// ─── Automatische Pfad-Erkennung ──────────────────────────────────────────────
+// Pfade werden relativ zur Testdatei aufgelöst — kein hardcoding mehr
+const NATIVE_DIR = path.resolve(__dirname, '../../native');
+const BAT_FILE   = path.join(NATIVE_DIR, 'toolbox_native_host_wrapper.bat');
+const PY_SCRIPT  = path.join(NATIVE_DIR, 'toolbox_native_host.py');
 
-const PYTHON_EXE =
-    process.env.TOOLBOX_PYTHON ||
-    'C:\\Users\\Markin\\Workspace\\ToolBoxV2\\.venv\\Scripts\\python.exe';
+// Python aus der .bat lesen (erste Zeile nach @echo off)
+function getPythonFromBat() {
+    try {
+        const bat = fs.readFileSync(BAT_FILE, 'utf8');
+        const match = bat.match(/"([^"]+python[^"]*\.exe)"/i);
+        return match ? match[1] : process.env.TOOLBOX_PYTHON || 'python';
+    } catch {
+        return process.env.TOOLBOX_PYTHON || 'python';
+    }
+}
 
-const HOST_SCRIPT =
-    process.env.TOOLBOX_NATIVE_SCRIPT ||
-    'C:\\Users\\Markin\\Workspace\\ToolBoxV2\\toolboxv2\\tb_browser\\native\\toolbox_native_host.py';
+const PYTHON_EXE  = getPythonFromBat();
+const HOST_SCRIPT = process.env.TOOLBOX_NATIVE_SCRIPT || PY_SCRIPT;
 
-const STARTUP_TIMEOUT_MS = 10000; // toolboxv2 import kann dauern
+const STARTUP_TIMEOUT_MS = 15000;
 const MSG_TIMEOUT_MS     = 8000;
 
+console.log(`[E2E] Python:  ${PYTHON_EXE}`);
+console.log(`[E2E] Script:  ${HOST_SCRIPT}`);
 // ─── Protokoll-Helpers ───────────────────────────────────────────────────────
 
 /**

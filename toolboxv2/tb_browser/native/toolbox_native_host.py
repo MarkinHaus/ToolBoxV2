@@ -25,46 +25,42 @@ UNTERSTÜTZTE ACTIONS:
     password_list       → PasswordManager get_all_passwords
     version_check       → openVersion-äquivalent
 """
-
 import sys
 import os
-import threading
-import time
 
-from toolboxv2.mods.isaa.base.IntelligentRateLimiter import setup_inception_provider
-
-# ─── Windows: Binary-Modus auf stdin/stdout setzen ───────────────────────────
+# ─── Windows: Binary-Modus auf stdin/stdout ───────────────────────────────────
 if sys.platform == "win32":
     import msvcrt
-    msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
+    msvcrt.setmode(sys.stdin.fileno(),  os.O_BINARY)
     msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
 
-# ─── Protokoll-Pipe sichern BEVOR toolboxv2 print()s sie korrumpieren ────────
-_proto_fd = os.dup(sys.stdout.fileno())          # fd 1 duplizieren → Protokoll-Kanal
+# ─── Protokoll-Pipe sichern VOR toolboxv2-Imports ────────────────────────────
+# toolboxv2.get_app() ruft print() auf → "System$main-...: Infos:" landet auf
+# fd 1 → Node.js/Chrome liest 'S' (0x53) als Length-Header → 1,4 Mrd. Bytes erwartet → Timeout
+_proto_fd = os.dup(sys.stdout.fileno())
 _PROTOCOL_STDOUT = os.fdopen(_proto_fd, 'wb', buffering=0)
-os.dup2(sys.stderr.fileno(), sys.stdout.fileno()) # fd 1 selbst → stderr (OS-Level!)
-sys.stdout = sys.stderr                           # Python-Objekt auch
 
-import json
-import struct
-import asyncio
-import logging
-import platform
+# fd 1 auf OS-Ebene auf stderr umleiten (auch C-Extensions/urllib3/litellm)
+os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+sys.stdout = sys.stderr
+
+# ─── Logging ─────────────────────────────────────────────────────────────────
 from pathlib import Path
-from typing import Any, Dict, Optional
+import logging
 
-# ─── Logging (nur stderr — stdout ist reserviert für Chrome) ─────────────────
 _log_file = Path(__file__).parent / "native_host_debug.log"
 logging.basicConfig(
     handlers=[
         logging.FileHandler(_log_file, encoding="utf-8"),
         logging.StreamHandler(sys.stderr),
     ],
-    level=logging.DEBUG,  # DEBUG für maximale Info
+    level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("toolbox_native_host")
 
+import json, struct, asyncio, platform, threading, concurrent.futures, time
+from typing import Any, Dict, Optional
 
 # ─── Native Messaging Protokoll ──────────────────────────────────────────────
 
@@ -122,9 +118,11 @@ def get_toolbox_app():
 
             patch_logger()
             _app = get_app("native_host")
+
+            from toolboxv2.mods.isaa.base.IntelligentRateLimiter import setup_inception_provider
+            setup_inception_provider()
             logger.info("ToolBoxV2 app initialized")
 
-            setup_inception_provider()
         except Exception as e:
             logger.error(f"Failed to initialize toolboxv2: {e}")
             raise

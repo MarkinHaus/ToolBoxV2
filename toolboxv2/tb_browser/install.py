@@ -199,6 +199,16 @@ class ToolBoxInstaller:
         else:
             host_path = str(native_host_script.absolute())
 
+        if self.system == "windows":
+            bat_path = self.native_dir / "toolbox_native_host_wrapper.bat"
+            bat_path.write_text(
+                f'@echo off\n"{sys.executable}" -u "{native_host_script.absolute()}" %*\n',
+                encoding="utf-8"
+            )
+            host_path = str(bat_path.absolute())
+        else:
+            host_path = str(native_host_script.absolute())
+
         manifest = {
             "name": "com.toolbox.native",
             "description": "ToolBoxV2 Native Messaging Bridge",
