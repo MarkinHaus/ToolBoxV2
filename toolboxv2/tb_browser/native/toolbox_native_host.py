@@ -345,7 +345,9 @@ async def handle_isaa_chat(app, payload: Dict) -> Dict:
         return {"success": True, "data": result.get()}
 
     except Exception as e:
-        logger.error(f"ISAA chat error: {e}")
+        import traceback
+        details = traceback.format_exc()
+        logger.error(f"ISAA chat error: {e} traceback: {details}")
         return error_response(f"ISAA nicht verfügbar: {e}")
 
 

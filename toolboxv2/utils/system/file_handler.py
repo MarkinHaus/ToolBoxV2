@@ -752,7 +752,7 @@ class FileHandlerV2:
     def load_file_handler(self) -> "FileHandlerV2":
         """Load all data from storage (legacy API)."""
         backend = self._get_backend()
-
+        print(f"{self.file_handler_file_prefix}/{self.filename} #/")
         # Load main data store
         data = backend.load("_main")
         if data and isinstance(data, dict):

@@ -20,15 +20,6 @@ from ..system.tb_logger import get_logger
 
 load_dotenv()
 
-
-DEVICE_KEY_DIR = os.getenv("DEVICE_KEY_DIR", "./.info")
-DEVICE_KEY_PATH = os.path.join(DEVICE_KEY_DIR, "device.enc")
-
-
-def ensure_device_key_dir_exists():
-    if not os.path.exists(DEVICE_KEY_DIR):
-        os.makedirs(DEVICE_KEY_DIR)
-
 TB_R_KEY = os.getenv("TB_R_KEY", "randomstring")
 
 def derive_aes_key(tb_r_key: str) -> bytes:
@@ -47,6 +38,15 @@ def decrypt_with_key(encrypted_data: bytes, key: bytes) -> bytes:
     return aesgcm.decrypt(nonce, ciphertext, None)
 
 def get_or_create_device_key():
+    DEVICE_KEY_DIR = os.getenv("DEVICE_KEY_DIR", None)
+    if DEVICE_KEY_DIR is None:
+        from toolboxv2 import tb_root_dir
+        DEVICE_KEY_DIR = str(tb_root_dir / ".info")
+    DEVICE_KEY_PATH = os.path.join(DEVICE_KEY_DIR, "device.enc")
+
+    def ensure_device_key_dir_exists():
+        if not os.path.exists(DEVICE_KEY_DIR):
+            os.makedirs(DEVICE_KEY_DIR)
     try:
         ensure_device_key_dir_exists()
         aes_key = derive_aes_key(TB_R_KEY)

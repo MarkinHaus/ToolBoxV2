@@ -65,7 +65,7 @@ function buildChatPayload({ freshContext, message, voiceLanguage, agentName, cha
         mini_task:       `Du bist ein Browser-Assistent. Antworte auf Deutsch (${voiceLanguage}). Seitenkontext: ${contextSummary}`,
         user_task:       message,
         agent_name:      agentName || 'speed',
-        task_from:       'browser_extension',
+        task_from:       'system',
         message_history: chatHistory || [],
     };
 }
@@ -237,9 +237,9 @@ describe('buildChatPayload — mini_task / user_task Mapping', () => {
         expect(payload.mini_task).toContain('de-DE');
     });
 
-    test('task_from ist immer "browser_extension"', () => {
+    test('task_from ist immer "system"', () => {
         const payload = buildChatPayload({ ...base, freshContext: null });
-        expect(payload.task_from).toBe('browser_extension');
+        expect(payload.task_from).toBe('system');
     });
 });
 

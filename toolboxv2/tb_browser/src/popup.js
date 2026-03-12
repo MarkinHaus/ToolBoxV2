@@ -1502,7 +1502,7 @@ updateAuthUI() {
                 mini_task: `Du bist ein Browser-Assistent. Antworte auf Deutsch (${this.voiceLanguage}). Seitenkontext: ${contextSummary}`,
                 user_task: message,
                 agent_name: this.settings.agentName || 'speed',
-                task_from:  'browser_extension',
+                task_from:  'system',
                 message_history: this.chatHistory,
             };
 
