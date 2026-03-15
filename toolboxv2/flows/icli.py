@@ -4756,7 +4756,7 @@ class ISAA_Host:
         """Handle /vfs commands - mount, unmount, sync, tree, file content."""
         try:
             agent = await self.isaa_tools.get_agent(self.active_agent_name)
-            session = agent.session_manager.get_or_create(self.active_session_id) # TODO expose args
+            session = await agent.session_manager.get_or_create(self.active_session_id) # TODO expose args
 
             if not session or not hasattr(session, "vfs"):
                 print_status("No VFS available in current session", "warning")
