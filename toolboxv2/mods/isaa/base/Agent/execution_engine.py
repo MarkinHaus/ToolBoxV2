@@ -64,6 +64,8 @@ from toolboxv2.mods.isaa.base.Agent.sub_agent_resume_extension import (
     SubAgentResumeExtension,
 )
 
+
+MAX_CONTINUATIONS = os.environ.get("AGENT_INTERN_MAX_CONTINUATIONS", 5)
 # =============================================================================
 # STATIC TOOL DEFINITIONS (separate from dynamic limit)
 # =============================================================================
