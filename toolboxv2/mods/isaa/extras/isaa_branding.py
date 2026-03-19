@@ -1181,7 +1181,7 @@ async def print_status_dashboard_v2(host: 'ISAA_Host') -> int:
         print_table_header, print_table_row, c_print, AgentInfo
     )
 
-    running = [t for t in host.background_tasks.values() if t.status == "running"]
+    running = [t for t in host.all_executions.values() if t.status == "running"]
     agents = host.isaa_tools.config.get("agents-name-list", [])
 
     state = 'online'
@@ -1207,7 +1207,7 @@ async def print_status_dashboard_v2(host: 'ISAA_Host') -> int:
         for name in agents[:10]:
             info = host.agent_registry.get(name, AgentInfo(name=name))
             st = "Active" if f"agent-instance-{name}" in host.isaa_tools.config else "Idle"
-            bg = sum(1 for t in host.background_tasks.values() if t.agent_name == name and t.status == "running")
+            bg = sum(1 for t in host.all_executions.values() if t.agent_name == name and t.status == "running")
             p = info.persona[:20]+".." if len(info.persona)>22 else info.persona
             print_table_row([name, st, p, str(bg)], ws,
                 ["cyan" if info.is_self_agent else "white", "green" if st=="Active" else "grey", "grey", "yellow"])

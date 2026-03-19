@@ -113,6 +113,15 @@ def create_parser() -> argparse.ArgumentParser:
     p_packed = subparsers.add_parser("packed", help="List available packed features")
     p_packed.add_argument("--dir", type=str, help="Directory to search (default: ./features_sto/)")
 
+    # set
+    p_set = subparsers.add_parser("set", help="Set manifest value (also syncs .env)")
+    p_set.add_argument("key", help="Dotted key, e.g. database.mode")
+    p_set.add_argument("value", help="New value")
+
+    # get
+    p_get = subparsers.add_parser("get", help="Get manifest value")
+    p_get.add_argument("key", help="Dotted key, e.g. database.mode")
+
     return parser
 
 
@@ -842,7 +851,125 @@ def cmd_packed(args) -> int:
         print_box_footer()
         return 1
 
+# =============================================================================
+# Set / Get Commands
+# =============================================================================
 
+_MANIFEST_TO_ENV = {
+    "app.profile": "TB_PROFILE",
+    "database.mode": "TB_DB_MODE",
+    "app.debug": "TB_DEBUG",
+    "app.log_level": "TB_LOG_LEVEL",
+    "app.environment": "TB_ENVIRONMENT",
+    "auth.jwt.secret": "TB_JWT_SECRET",
+    "auth.session.cookie_secret": "TB_COOKIE_SECRET",
+    "database.minio.endpoint": "MINIO_ENDPOINT",
+    "database.minio.access_key": "MINIO_ACCESS_KEY",
+    "database.minio.secret_key": "MINIO_SECRET_KEY",
+    "database.redis.url": "DB_CONNECTION_URI",
+    "nginx.server_name": "TB_NGINX_SERVER_NAME",
+    "paths.data_dir": "TB_DATA_DIR",
+}
+
+
+def _coerce(value: str):
+    """Auto-cast string to bool/int/float where sensible."""
+    if value.lower() in ("true", "false"):
+        return value.lower() == "true"
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    return value
+
+
+def cmd_set(args) -> int:
+    """Set a manifest key and optionally sync to .env."""
+    import yaml
+    from toolboxv2 import tb_root_dir
+    from toolboxv2.utils.manifest import ManifestLoader
+
+    loader = ManifestLoader(tb_root_dir)
+    if not loader.exists():
+        print_status("No tb-manifest.yaml found — run 'tb manifest init' first", "error")
+        return 1
+
+    try:
+        with open(loader.manifest_path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+
+        keys = args.key.split(".")
+        node = data
+        for k in keys[:-1]:
+            if k not in node or not isinstance(node[k], dict):
+                node[k] = {}
+            node = node[k]
+
+        old_val = node.get(keys[-1], "<unset>")
+        new_val = _coerce(args.value)
+        node[keys[-1]] = new_val
+
+        with open(loader.manifest_path, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+        print_status(f"{args.key}: {old_val!r} → {new_val!r}", "success")
+
+        # Sync to .env if mapping exists
+        env_key = _MANIFEST_TO_ENV.get(args.key)
+        if env_key:
+            env_path = tb_root_dir / ".env"
+            lines, found = [], False
+            if env_path.exists():
+                for line in env_path.read_text(encoding="utf-8").splitlines():
+                    if line.startswith(f"{env_key}="):
+                        lines.append(f"{env_key}={args.value}")
+                        found = True
+                    else:
+                        lines.append(line)
+            if not found:
+                lines.append(f"{env_key}={args.value}")
+            env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            print_status(f".env: {env_key}={args.value}", "info")
+
+        return 0
+
+    except Exception as e:
+        print_status(f"Error: {e}", "error")
+        return 1
+
+
+def cmd_get(args) -> int:
+    """Get a manifest key value."""
+    import yaml
+    from toolboxv2 import tb_root_dir
+    from toolboxv2.utils.manifest import ManifestLoader
+
+    loader = ManifestLoader(tb_root_dir)
+    if not loader.exists():
+        print_status("No tb-manifest.yaml found", "error")
+        return 1
+
+    try:
+        with open(loader.manifest_path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+
+        node = data
+        for k in args.key.split("."):
+            if not isinstance(node, dict) or k not in node:
+                print_status(f"Key not found: {args.key}", "error")
+                return 1
+            node = node[k]
+
+        print(f"{args.key} = {node!r}")
+        return 0
+
+    except Exception as e:
+        print_status(f"Error: {e}", "error")
+        return 1
 # =============================================================================
 # Main Entry Point
 # =============================================================================
@@ -873,6 +1000,8 @@ def cli_manifest_main():
         "pack": cmd_pack,
         "unpack": cmd_unpack,
         "packed": cmd_packed,
+        "set": cmd_set,
+        "get": cmd_get,
     }
 
     handler = commands.get(args.command)

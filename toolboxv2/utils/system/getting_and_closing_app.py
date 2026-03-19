@@ -69,16 +69,30 @@ async def a_get_proxy_app(app, host="localhost", port=6587, key="remote@root", t
 
 @atexit.register
 def save_closing_app():
+    # Coroutine erst hier erstellen, damit sie nicht vorzeitig "verloren" geht
+    coro = a_save_closing_app()
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
     except RuntimeError:
-        loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(a_save_closing_app())
-    except RuntimeError as e:
-        if registered_apps[0] is None:
-            return
-        # registered_apps[0].exit()
+        loop = None
+
+    if loop and loop.is_running():
+        # Loop läuft bereits (z.B. in einem Thread) → threadsafe einplanen
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        try:
+            future.result(timeout=10)
+        except Exception as e:
+            if registered_apps[0] is None:
+                return
+    else:
+        # Keine laufende Loop → neue erstellen und blockierend ausführen
+        try:
+            asyncio.run(coro)
+        except RuntimeError as e:
+            # Coroutine explizit schließen, damit kein "never awaited" entsteht
+            coro.close()
+            if registered_apps[0] is None:
+                return
 
 
 async def a_save_closing_app():

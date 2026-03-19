@@ -1302,27 +1302,6 @@ http {{
     # =========================================================================
     # Write methods
     # =========================================================================
-    def write_nginx_conf(self) -> bool:
-        """Write main nginx.conf"""
-        content = self.generate_nginx_conf()
-        config_path = os.environ.get("NGINX_CONF_PATH") or DEFAULT_CONF_PATH
-        try:
-            # Backup existing
-            if os.path.exists(config_path):
-                backup_path = config_path + ".backup"
-                shutil.copy(config_path, backup_path)
-                logger.info(f"Backed up existing nginx.conf to {backup_path}")
-
-            with open(config_path, "w") as f:
-                f.write(content)
-            logger.info(f"nginx.conf written to {config_path}")
-            return True
-        except PermissionError:
-            logger.error(f"Permission denied writing to {config_path}. Try with sudo.")
-            return False
-        except Exception as e:
-            logger.error(f"Failed to write nginx.conf: {e}")
-            return False
 
     def write_site_config(
         self,
@@ -1373,22 +1352,6 @@ http {{
         except Exception as e:
             logger.error(f"Failed to enable site: {e}")
             return False
-
-    def write_config(
-        self,
-        http_ports: List[int],
-        ws_ports: List[int],
-        http_sockets: List[str] = None,
-        ws_sockets: List[str] = None,
-        remote_nodes: List[Tuple[str, int]] = None
-    ) -> bool:
-        """
-        Legacy method - writes site config (not full nginx.conf).
-        For full config, use write_nginx_conf() separately.
-        """
-        return self.write_site_config(
-            http_ports, ws_ports, http_sockets, ws_sockets, remote_nodes
-        )
 
     def test_config(self) -> bool:
         if not self._nginx_path:

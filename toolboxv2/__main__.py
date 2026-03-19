@@ -159,6 +159,61 @@ except ModuleNotFoundError:
 import os
 import subprocess
 
+def _get_profile() -> str | None:
+    """
+    Lese app.profile aus dem Manifest.
+    None = Manifest existiert nicht oder profile nicht gesetzt → First-Run.
+    """
+    try:
+        from toolboxv2 import tb_root_dir
+        from toolboxv2.utils.manifest import ManifestLoader
+        loader = ManifestLoader(tb_root_dir)
+        if not loader.exists():
+            return None
+        manifest = loader.load()
+        return manifest.app.profile.value if manifest.app.profile else None
+    except Exception:
+        return None
+
+
+def _run_server_overview():
+    """ASCII-Übersicht für profile=server."""
+    import datetime
+    try:
+        from toolboxv2.utils.clis.service_manager import ServiceManager
+        sm = ServiceManager()
+        status = sm.get_all_status(include_registry=True)
+    except Exception:
+        status = {}
+
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    running = sum(1 for v in status.values() if v.get("running"))
+    total = len(status)
+
+    print(f"\n{'═'*52}")
+    print(f"  ToolBoxV2 Server Overview  •  {now}")
+    print(f"{'═'*52}")
+    print(f"  Services : {running}/{total} running")
+    for name, info in status.items():
+        state = "▶ running" if info.get("running") else "■ stopped"
+        pid   = f"pid={info['pid']}" if info.get("pid") else "      "
+        print(f"  {'✅' if info.get('running') else '🔴'} {name:<18} {state:<12} {pid}")
+    print(f"{'═'*52}\n")
+
+
+def _run_business_overview():
+    """3-Zeilen Health-Summary für profile=business."""
+    try:
+        from toolboxv2.utils.clis.service_manager import ServiceManager
+        status = ServiceManager().get_all_status(include_registry=True)
+        running = sum(1 for v in status.values() if v.get("running"))
+        total   = len(status)
+        health  = "✅ Healthy" if running == total and total > 0 else ("⚠️  Degraded" if running > 0 else "🔴 Down")
+    except Exception:
+        health, running, total = "❓ Unknown", 0, 0
+
+    print(f"\n  ToolBoxV2 Status: {health}  ({running}/{total} services)  — run 'tb status' for details\n")
+
 
 def start(pidname, args, filename):
     caller = args[0]
@@ -344,7 +399,8 @@ RUNNER_KEYS = [
     "manifest",
     "llm-gateway",
     "docksh",
-    "docker-image"
+    "docker-image",
+    "fl"
 ]
 
 DEFAULT_MODI = "cli"
@@ -1797,6 +1853,9 @@ def runner_setup():
         "docker-image": lambda: __import__(
             "toolboxv2.utils.clis.docker_image_cli", fromlist=["main"]
         ).main(),
+        "fl": lambda: __import__(
+            "toolboxv2.feature_loader", fromlist=["main"]
+        ).main(),
     }
 
     return runner
@@ -1831,6 +1890,10 @@ def main_runner():
                 )
         sys.exit(run_service_manager_startup())
 
+    if "--print-root" in sys.argv:
+        from toolboxv2 import tb_root_dir
+        print(str(tb_root_dir.parent))
+        sys.exit(0)
     # Normale Main-App
     else:
         # Clear screen for clean start
@@ -1893,7 +1956,24 @@ def main_runner():
                 # Default to interactive dashboard if no runner specified
                 # This applies to: `tb`, `tb -l`, `tb --debug`, etc.
                 if runner_name is None:
-                    runner_name = "default"
+                    profile = _get_profile()
+
+                    if profile is None and not len(sys.argv) < 2:
+                        # First Run
+                        from toolboxv2.utils.clis.first_run import run_first_run
+                        profile = run_first_run()
+
+                    if profile == "consumer":
+                        runner_name = "gui"
+                    elif profile == "server":
+                        _run_server_overview()
+                        return
+                    elif profile == "business":
+                        _run_business_overview()
+                        return
+                    else:
+                        # homelab, developer → interactive dashboard
+                        runner_name = "default"
 
                 app = await main(TbApp, runner_name == "default")
 

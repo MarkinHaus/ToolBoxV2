@@ -110,6 +110,47 @@ esac
 log_debug "Detected OS_TYPE: $OS_TYPE, User bin dir: $USER_BIN_DIR, Python exec name hint: $PYTHON_EXEC_NAME"
 log_debug "System Pkg Installer: $SYSTEM_PKG_INSTALLER_CMD, Sudo: $SUDO_CMD"
 
+
+# ─── Installation Discovery ────────────────────────────────────────────────
+EXISTING_TB_DIR=""
+EXISTING_VENV_PATH=""
+INSTALL_MODE="enduser"
+
+find_existing_toolbox() {
+    local candidates=("$HOME/.local/share/ToolBoxV2" "$HOME/.toolboxv2" "/opt/toolboxv2")
+    # Via importiertem Paket
+    local py_root; py_root=$(python3 -c "import toolboxv2; print(toolboxv2.tb_root_dir.parent)" 2>/dev/null || echo "")
+    [[ -n "$py_root" && -d "$py_root" ]] && candidates=("$py_root" "${candidates[@]}")
+    for dir in "${candidates[@]}"; do
+        if [[ -f "$dir/.toolbox_version" || -f "$dir/toolboxv2/__init__.py" ]]; then
+            EXISTING_TB_DIR="$dir"
+            for vd in "$dir/.venv" "$dir/venv" "$dir/.toolbox_venv"; do
+                [[ -f "$vd/bin/activate" || -f "$vd/Scripts/activate" ]] && EXISTING_VENV_PATH="$vd" && break
+            done
+            log_info "Found existing install: ${C_CYAN}$EXISTING_TB_DIR${C_RESET} (venv: ${EXISTING_VENV_PATH:-none})"
+            return
+        fi
+    done
+    log_info "No existing installation found."
+}
+
+select_install_mode() {
+    log_title "${E_GEAR} Installation Mode"
+    echo -e "  ${C_CYAN}1)${C_RESET} End-User   → ${C_GREEN}$HOME/.local/share/ToolBoxV2${C_RESET}"
+    echo -e "  ${C_CYAN}2)${C_RESET} Server     → ${C_GREEN}/opt/toolboxv2${C_RESET}  (nginx write)"
+    echo -e "  ${C_CYAN}3)${C_RESET} Developer  → ${C_GREEN}$(pwd)/ToolBoxV2${C_RESET}  (git, editable)"
+    echo -e "  ${C_CYAN}4)${C_RESET} Custom path"
+    local choice; read -r -p "$(echo -e "${C_BOLD}Choice [1]: ${C_RESET}")" choice
+    case "${choice:-1}" in
+        1) INSTALL_MODE="enduser";  INSTALL_DIR="$HOME/.local/share/ToolBoxV2" ;;
+        2) INSTALL_MODE="server";   INSTALL_DIR="/opt/toolboxv2"; INSTALL_SOURCE="git" ;;
+        3) INSTALL_MODE="dev";      INSTALL_DIR="$(pwd)/ToolBoxV2"; INSTALL_SOURCE="git" ;;
+        4) read -r -p "Path: " INSTALL_DIR; INSTALL_MODE="custom" ;;
+        *) INSTALL_MODE="enduser";  INSTALL_DIR="$HOME/.local/share/ToolBoxV2" ;;
+    esac
+    VENV_PATH="$INSTALL_DIR/.venv"
+    log_info "Mode: ${C_CYAN}$INSTALL_MODE${C_RESET} → $INSTALL_DIR"
+}
 # -----------------------------------------------------------------------------
 # PYTHON HELPER SCRIPT (Embedded)
 # -----------------------------------------------------------------------------
@@ -733,12 +774,55 @@ step_06_create_tb_command() {
     if command_exists tb && [[ -n "$user_executable_path" && ":$PATH:" == *":$USER_BIN_DIR:"* ]]; then TB_CMD_FOR_INIT="tb"; fi
 }
 step_07_finalize_installation() {
-    # ... (same as v2.0.0) ...
-    log_title "${E_PARTY} Step 7: Finalizing Installation"
-    if [[ -z "$TB_CMD_FOR_INIT" ]]; then log_error "Path to 'tb' command for initialization is not set."; fi
-    log_info "Running ToolBoxV2 initialization: ${C_CYAN}$TB_CMD_FOR_INIT -init main${C_RESET}"
-    if "$TB_CMD_FOR_INIT" -init main; then log_success "ToolBoxV2 initialized successfully!"; else
-        log_error "ToolBoxV2 initialization failed. Please try running '${C_CYAN}$TB_CMD_FOR_INIT -init main${C_RESET}' manually."; fi
+    log_title "${E_PARTY} Step 7: Onboarding"
+    [[ -z "$TB_CMD_FOR_INIT" ]] && log_error "TB_CMD_FOR_INIT not set."
+
+    # Core init
+    "$TB_CMD_FOR_INIT" -init main 2>/dev/null || log_warning "Init exited non-zero, continuing."
+
+    # --- PATH permanent injizieren ---
+    if [[ "$OS_TYPE" != "Windows" ]]; then
+        local shell_rc="$HOME/.bashrc"
+        [[ "$SHELL" == *"zsh"* ]] && shell_rc="$HOME/.zshrc"
+        if ! grep -qF "$USER_BIN_DIR" "$shell_rc" 2>/dev/null; then
+            { echo ""; echo "# ToolBoxV2"; echo "export PATH=\"$USER_BIN_DIR:\$PATH\""; } >> "$shell_rc"
+            log_success "PATH injected into $shell_rc"
+        else
+            log_info "PATH already in $shell_rc"
+        fi
+        export PATH="$USER_BIN_DIR:$PATH"
+    fi
+
+    # --- Optionaler Alias ---
+    read -r -p "$(echo -e "${C_BOLD}Add alias 'toolbox'→'tb'? [y/N]: ${C_RESET}")" add_alias
+    if [[ "${add_alias,,}" == "y" ]]; then
+        local src="$HOME/.bashrc"; [[ "$SHELL" == *"zsh"* ]] && src="$HOME/.zshrc"
+        echo "alias toolbox='tb'" >> "$src"
+        log_success "Alias added."
+    fi
+
+    # --- Feature Selection ---
+    log_title "${E_BOX} Features"
+    local feats=("web" "isaa" "desktop" "exotic")
+    for feat in "${feats[@]}"; do
+        read -r -p "$(echo -e "  Install ${C_CYAN}$feat${C_RESET}? [y/N]: ")" yn
+        if [[ "${yn,,}" == "y" ]]; then
+            "$TB_CMD_FOR_INIT" fl unpack "$feat" && log_success "$feat loaded" \
+                || log_warning "$feat download failed (network or registry unavailable)"
+        fi
+    done
+
+    # --- Manifest Wizard ---
+    read -r -p "$(echo -e "${C_BOLD}Run config wizard now? [Y/n]: ${C_RESET}")" run_wiz
+    if [[ "${run_wiz,,}" != "n" ]]; then
+        "$TB_CMD_FOR_INIT" manifest init || log_warning "Wizard exited early."
+    fi
+
+    # --- Autostart (nur Server-Mode) ---
+    if [[ "$INSTALL_MODE" == "server" ]]; then
+        read -r -p "$(echo -e "${C_BOLD}Setup systemd autostart? [Y/n]: ${C_RESET}")" setup_svc
+        [[ "${setup_svc,,}" != "n" ]] && "$TB_CMD_FOR_INIT" --sm init || true
+    fi
 }
 
 
@@ -751,6 +835,22 @@ main() {
     echo -e "Detected OS: ${C_CYAN}$OS_TYPE${C_RESET} ${os_icon}"
 
     finalize_os_specific_defaults
+    find_existing_toolbox
+
+    if [[ -n "$EXISTING_TB_DIR" ]]; then
+        echo -e "\n${C_YELLOW}Existing installation found: $EXISTING_TB_DIR${C_RESET}"
+        read -r -p "$(echo -e "${C_BOLD}Update it? [Y/n]: ${C_RESET}")" do_update
+        if [[ "${do_update,,}" == "n" ]]; then
+            select_install_mode
+        else
+            INSTALL_DIR="$EXISTING_TB_DIR"
+            VENV_PATH="${EXISTING_VENV_PATH:-$EXISTING_TB_DIR/.venv}"
+            log_info "Updating existing install at $INSTALL_DIR"
+        fi
+    else
+        [[ "$ARGS_PROVIDED" == "false" ]] && select_install_mode
+    fi
+
     parse_arguments "$@"
     [[ "$ARGS_PROVIDED" == "false" ]] && load_config_from_file
     finalize_config

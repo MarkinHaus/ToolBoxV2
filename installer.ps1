@@ -142,6 +142,77 @@ if ($global:IS_WINDOWS) {
 Log-Debug "Detected OS: $OS_TYPE, User Bin: $USER_BIN_DIR, Pkg Installer: $SYSTEM_PKG_INSTALLER_CMD"
 
 # -----------------------------------------------------------------------------
+# INSTALLATION DISCOVERY & MODE SELECTION
+# -----------------------------------------------------------------------------
+$global:EXISTING_TB_DIR = ""
+$global:EXISTING_VENV_PATH = ""
+$global:INSTALL_MODE = "enduser"
+
+function Find-ExistingToolbox {
+    $candidates = @(
+        "$HOME\.local\share\ToolBoxV2",
+        "$HOME\.toolboxv2",
+        "C:\opt\toolboxv2",
+        "$env:LOCALAPPDATA\ToolBoxV2"
+    )
+
+    # Versuche über importiertes Paket
+    try {
+        $pyRoot = & python -c "import toolboxv2; print(str(toolboxv2.tb_root_dir.parent))" 2>$null
+        if ($pyRoot -and (Test-Path $pyRoot)) {
+            $candidates = @($pyRoot) + $candidates
+        }
+    } catch {}
+
+    foreach ($dir in $candidates) {
+        if ((Test-Path "$dir\.toolbox_version") -or (Test-Path "$dir\toolboxv2\__init__.py")) {
+            $global:EXISTING_TB_DIR = $dir
+            foreach ($vd in @("$dir\.venv", "$dir\venv", "$dir\.toolbox_venv")) {
+                if (Test-Path "$vd\Scripts\activate") {
+                    $global:EXISTING_VENV_PATH = $vd
+                    break
+                }
+            }
+            Log-Info "Found existing install: $global:EXISTING_TB_DIR (venv: $($global:EXISTING_VENV_PATH -ne '' ? $global:EXISTING_VENV_PATH : 'none'))"
+            return
+        }
+    }
+    Log-Info "No existing installation found."
+}
+
+function Select-InstallMode {
+    Log-Title "Installation Mode"
+    Write-Host "  1) End-User   -> $HOME\.local\share\ToolBoxV2" -ForegroundColor Cyan
+    Write-Host "  2) Server     -> C:\opt\toolboxv2  (nginx write)" -ForegroundColor Cyan
+    Write-Host "  3) Developer  -> $(Get-Location)\ToolBoxV2  (git, editable)" -ForegroundColor Cyan
+    Write-Host "  4) Custom path" -ForegroundColor Cyan
+
+    $choice = Read-Host "Choice [1]"
+    switch ($choice) {
+        "2" {
+            $global:INSTALL_MODE = "server"
+            $global:INSTALL_DIR = "C:\opt\toolboxv2"
+            $global:INSTALL_SOURCE = "git"
+        }
+        "3" {
+            $global:INSTALL_MODE = "dev"
+            $global:INSTALL_DIR = "$(Get-Location)\ToolBoxV2"
+            $global:INSTALL_SOURCE = "git"
+        }
+        "4" {
+            $global:INSTALL_DIR = Read-Host "Path"
+            $global:INSTALL_MODE = "custom"
+        }
+        default {
+            $global:INSTALL_MODE = "enduser"
+            $global:INSTALL_DIR = "$HOME\.local\share\ToolBoxV2"
+        }
+    }
+    $global:VENV_PATH = "$global:INSTALL_DIR\.venv"
+    Log-Info "Mode: $global:INSTALL_MODE -> $global:INSTALL_DIR"
+}
+
+# -----------------------------------------------------------------------------
 # PYTHON HELPER SCRIPT (Embedded)
 # -----------------------------------------------------------------------------
  $PYTHON_HELPER_SCRIPT = @"
@@ -691,29 +762,101 @@ function Step-06_CreateCommand {
 }
 
 function Step-07_Finalize {
-    Log-Title "Step 7: Finalizing"
+    Log-Title "Step 7: Onboarding"
 
-    # Try to find 'tb' command
-    $tbCmd = "tb"
-    if (-not (Test-Command "tb")) {
-        # Fallback to direct venv path
+    $tbCmd = ""
+    if (Test-Command "tb") {
+        $tbCmd = "tb"
+    } else {
         $res = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($global:VENV_PATH, "tb")
         $tbCmd = $res.path
     }
+    if (-not $tbCmd) { Log-Warning "Cannot find tb executable — run '$global:VENV_PATH\Scripts\tb' manually."; return }
 
-    if ($tbCmd) {
-        Log-Info "Running init: $tbCmd -init main"
-        & $tbCmd "-init" "main"
-        if ($LASTEXITCODE -eq 0) { Log-Success "Initialization complete!" }
-        else { Log-Warning "Initialization failed. Run manually: $tbCmd -init main" }
+    # Core init
+    & $tbCmd "-init" "main" 2>$null
+    if ($LASTEXITCODE -ne 0) { Log-Warning "Init exited non-zero, continuing." }
+
+    # --- PATH permanent setzen (User-Scope, kein Admin nötig) ---
+    $currentPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+    if ($currentPath -notlike "*$global:USER_BIN_DIR*") {
+        [Environment]::SetEnvironmentVariable(
+            "PATH",
+            "$global:USER_BIN_DIR;$currentPath",
+            "User"
+        )
+        Log-Success "PATH updated (User scope): $global:USER_BIN_DIR"
+        Log-Info "Restart your terminal for PATH to take effect."
+    } else {
+        Log-Info "PATH already contains $global:USER_BIN_DIR"
+    }
+
+    # --- Optionaler Alias via PowerShell-Profil ---
+    $addAlias = Read-YesNo "Add 'toolbox' alias to PowerShell profile?" "N"
+    if ($addAlias) {
+        $profileDir = Split-Path $PROFILE
+        if (-not (Test-Path $profileDir)) { New-Item -ItemType Directory -Path $profileDir -Force | Out-Null }
+        if (-not (Test-Path $PROFILE)) { New-Item -ItemType File -Path $PROFILE -Force | Out-Null }
+        $aliasLine = "Set-Alias toolbox tb"
+        if (-not (Select-String -Path $PROFILE -Pattern "Set-Alias toolbox" -Quiet)) {
+            Add-Content $PROFILE "`n# ToolBoxV2`n$aliasLine"
+            Log-Success "Alias added to $PROFILE"
+        } else {
+            Log-Info "Alias already in profile."
+        }
+    }
+
+    # --- Feature Selection ---
+    Log-Title "Features"
+    $feats = @("web", "isaa", "desktop", "exotic")
+    foreach ($feat in $feats) {
+        $install = Read-YesNo "Install feature '$feat'?" "N"
+        if ($install) {
+            & $tbCmd "fl" "unpack" $feat
+            if ($LASTEXITCODE -eq 0) { Log-Success "$feat loaded." }
+            else { Log-Warning "$feat download failed (network or registry unavailable)." }
+        }
+    }
+
+    # --- Manifest Wizard ---
+    $runWiz = Read-YesNo "Run config wizard now?" "Y"
+    if ($runWiz) {
+        & $tbCmd "manifest" "init"
+        if ($LASTEXITCODE -ne 0) { Log-Warning "Wizard exited early." }
+    }
+
+    # --- Windows Task Scheduler (nur Server-Mode) ---
+    if ($global:INSTALL_MODE -eq "server") {
+        $setupSvc = Read-YesNo "Setup Windows Task Scheduler autostart?" "Y"
+        if ($setupSvc) {
+            & $tbCmd "--sm" "init"
+        }
     }
 }
 
 # -----------------------------------------------------------------------------
 # MAIN
 # -----------------------------------------------------------------------------
-Load-ConfigFile
-Set-Configuration
+Find-ExistingToolbox
+
+if ($global:EXISTING_TB_DIR -ne "") {
+    Write-Host "`nExisting installation found: $global:EXISTING_TB_DIR" -ForegroundColor Yellow
+    if (Read-YesNo "Update it?" "Y") {
+        $global:INSTALL_DIR = $global:EXISTING_TB_DIR
+        $global:VENV_PATH = if ($global:EXISTING_VENV_PATH -ne "") { $global:EXISTING_VENV_PATH } else { "$global:INSTALL_DIR\.venv" }
+        Log-Info "Updating existing install at $global:INSTALL_DIR"
+        Load-ConfigFile
+        Set-Configuration
+    } else {
+        Load-ConfigFile
+        Select-InstallMode
+        Set-Configuration
+    }
+} else {
+    Load-ConfigFile
+    Select-InstallMode
+    Set-Configuration
+}
 
 Step-01_CheckPython
 Step-02_CheckGit

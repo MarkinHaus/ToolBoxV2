@@ -138,6 +138,7 @@ class ZenRendererV2:
         self._content_buf = ""
         self._chunk_count = 0
         self._zen_plus = None
+        self._execution_id: str | None = None
         self._chunk_buffer: list = []
 
         self.thought_pool = deque(maxlen=20)  # Speichert die letzten 20 Wörter
@@ -146,32 +147,6 @@ class ZenRendererV2:
 
         self._print("🌌 Zen System")
 
-    def _start_footer_anim(self):
-        """Startet Footer-Animation nach kurzer Verzögerung."""
-        if self._anim_thread and self._anim_thread.is_alive():
-            return  # läuft schon
-        self._anim_stop.clear()
-        self._anim_thread = threading.Thread(target=self._anim_loop, daemon=True)
-        self._anim_thread.start()
-
-    def _stop_footer_anim(self):
-        """Stoppt die Animation und löscht den Footer."""
-        self._anim_stop.set()
-
-    def _anim_loop(self):
-        if self._anim_stop.wait(0.2):
-            return
-        if self._needs_newline:
-            sys.stderr.write('\n')
-            sys.stderr.flush()
-            self._needs_newline = False
-        while not self._anim_stop.is_set():
-            # ZenPlus aktiv → pausieren statt rendern
-            if self._zen_plus and self._zen_plus.active:
-                self._anim_stop.wait(0.5)
-                continue
-            self.bottem_alim()
-            self._anim_stop.wait(0.15)
     # -- public API -----------------------------------------------------------
 
     def set_zen_plus(self, zp):
@@ -185,19 +160,24 @@ class ZenRendererV2:
         else:
             self._print(f"<style fg='{C['dim']}'>{SYM['expand']} expanded</style>")
 
+    def set_execution_id(self, eid: str):
+        self._execution_id = eid
+
     def process_chunk(self, chunk: dict):
         """Main entry: render one stream chunk. prompt_toolkit safe."""
-        self._stop_footer_anim()
         self._chunk_count += 1
+        if self._execution_id:
+            chunk = dict(chunk)
+            chunk["_execution_id"] = self._execution_id
         self._chunk_buffer.append(chunk)
-        if self._zen_plus and self._zen_plus.active:
+        if self._zen_plus:
             self._zen_plus.feed_chunk(chunk)
+        if self._zen_plus and self._zen_plus.active:
             return
         c_type = chunk.get("type", "")
 
         # In minimized mode: only show done/error, skip everything else
         if self.minimized and c_type not in ("done", "error", "final_answer"):
-            self.bottem_alim()
             return
 
         # Agent context header (on agent change)
@@ -223,72 +203,11 @@ class ZenRendererV2:
         elif c_type == "error":
             self._print(f"  <style fg='{C['red']}'>{SYM['fail']} {_esc(chunk.get('error', ''))}</style>")
 
-        if c_type in ("content", "reasoning"):
-            self._start_footer_anim()
-        elif c_type in ("done", "final_answer"):
-            self._stop_footer_anim()
-        else:
-            self._stop_footer_anim()
-            self.bottem_alim()
-
     @staticmethod
     def _hex_to_rgb(hex_color: str) -> str:
         """'#67e8f9' -> '103;232;249' für ANSI 24-bit color."""
         h = hex_color.lstrip('#')
         return f"{int(h[0:2], 16)};{int(h[2:4], 16)};{int(h[4:6], 16)}"
-
-    def bottem_alim(self):
-        # Nicht in ZenPlus
-        if not self.wit_alim:
-            return
-
-        if self._zen_plus and self._zen_plus.active:
-            return
-
-        if self._needs_newline:
-            sys.stderr.write('\n')
-            sys.stderr.flush()
-            self._needs_newline = False
-
-        now = time.time()
-
-        pool = list(self.thought_pool) if self.thought_pool else ['zen...', 'fiddling', 'processing']
-        word = pool[int(now / 1.5) % len(pool)]
-
-        colors = [c for k, c in C.items() if k not in ["red"]]
-        color = colors[int(now * 2) % len(colors)]
-
-        syms = ["◌", "◦", "∙", "●", "∙", "◦"]
-        sym = syms[int(now * 8) % len(syms)]
-
-        # prompt_toolkit Output-Objekt holen — bypassed patch_stdout korrekt
-        try:
-            from prompt_toolkit.output import create_output
-            out = create_output(sys.stderr)
-            out.write_raw('\r\x1b')
-            out.write_raw(f' \x1b[38;2;{self._hex_to_rgb(color)}m{sym}\x1b[0m  ')
-            #out.write_raw(f'\x1b[38;2;{self._hex_to_rgb(C["dim"])}m{word}\x1b[0m ')
-            out.write_raw('\r')
-            out.flush()
-        except Exception:
-            # Fallback
-            sys.stderr.write(f'\r\x1b {sym}\r')
-            sys.stderr.flush()
-
-        self._footer_active = True
-
-    def _clear_footer(self):
-        """Löscht den Footer sauber."""
-        if self.wit_alim and self._footer_active:
-            try:
-                from prompt_toolkit.output import create_output
-                out = create_output(sys.stderr)
-                out.write_raw('\r\x1b[K')
-                out.flush()
-            except Exception:
-                sys.stderr.write('\r\x1b[K')
-                sys.stderr.flush()
-            self._footer_active = False
 
     def print_processes(self, background_tasks: dict, agents_getter=None):
         """

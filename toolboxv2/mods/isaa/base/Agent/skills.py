@@ -262,7 +262,7 @@ class SkillIOAnthropicFormat:
             tools_used=tools_used,
             tool_groups=[],
             source=source_tag,
-            confidence=0.8 if source_tag == "imported" else 0.3,  # Imported skills start higher
+            confidence=0.8 if source_tag == "imported" else 0.65,  # Imported skills start higher
             activation_threshold=0.6
         )
 

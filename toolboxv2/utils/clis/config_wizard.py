@@ -594,7 +594,32 @@ def run_config_wizard(root_dir: Optional[Path] = None) -> int:
         section_header("ISAA AI Agent", 5, total_steps)
         manifest_data = wizard_isaa_settings(manifest_data)
 
-        # Step 6: Environment Variables
+        # Step 6: Features
+        section_header("Features", 6, total_steps)
+        from toolboxv2.feature_loader import (
+            list_available_features, is_feature_installed, get_required_features
+        )
+        available = list_available_features()
+        required = get_required_features()
+        if available:
+            c_print(f"  Available features: {', '.join(available)}")
+            c_print(f"  Already required:   {', '.join(required) or 'core only'}")
+            print()
+            features_to_load = []
+            for feat in available:
+                if feat in ("core",) or is_feature_installed(feat):
+                    continue
+                if prompt_bool(f"Install feature '{feat}'?", default=False):
+                    features_to_load.append(feat)
+            if features_to_load:
+                from toolboxv2.feature_loader import unpack_feature
+                for feat in features_to_load:
+                    ok = unpack_feature(feat)
+                    print_status(f"Feature '{feat}': {'loaded' if ok else 'failed'}", "success" if ok else "error")
+        else:
+            print_status("No additional features available", "info")
+
+        # Step 7: Environment Variables
         section_header("Environment Variables", 6, total_steps)
 
         template_path = root_dir / "env-template"
@@ -618,7 +643,7 @@ def run_config_wizard(root_dir: Optional[Path] = None) -> int:
         else:
             print_status("No env-template found, skipping", "warning")
 
-        # Step 7: Save and Apply
+        # Step 8: Save and Apply
         section_header("Save Configuration", 7, total_steps)
 
         # Update manifest

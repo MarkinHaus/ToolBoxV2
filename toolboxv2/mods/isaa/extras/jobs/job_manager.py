@@ -703,6 +703,14 @@ class JobScheduler:
 
         # Load persisted jobs
         self._load_jobs()
+        # Live state writer — sidecar .live.json for job_viewer
+        self._live: "JobLiveStateWriter | None" = None
+        if self.jobs_file:
+            try:
+                from .job_live_state import JobLiveStateWriter
+                self._live = JobLiveStateWriter(self.jobs_file.with_suffix(".live.json"))
+            except Exception:
+                pass
 
     # --- Persistence ---
 
@@ -876,23 +884,33 @@ class JobScheduler:
 
         _log.debug("Firing job %s (%s)", job.job_id, job.name)
 
+        # ── Live state: mark running ──────────────────────────────────────
+        if self._live:
+            self._live.start(job.job_id, job.name, job.agent_name, job.query)
+
         try:
             result = await asyncio.wait_for(
                 self._fire_callback(job),
-                timeout=job.timeout_seconds
+                timeout=job.timeout_seconds,
             )
             job.last_result = "completed"
             self.event_bus.emit("job_completed", {"job_id": job.job_id, "result": result})
+            if self._live:
+                self._live.finish(job.job_id, "done")
         except asyncio.TimeoutError:
             job.last_result = "timeout"
             job.fail_count += 1
             self.event_bus.emit("job_timeout", {"job_id": job.job_id})
             _log.warning("Job %s timed out after %ds", job.job_id, job.timeout_seconds)
+            if self._live:
+                self._live.finish(job.job_id, "timeout")
         except Exception as e:
             job.last_result = "failed"
             job.fail_count += 1
             self.event_bus.emit("job_failed", {"job_id": job.job_id, "error": str(e)})
             _log.warning("Job %s failed: %s", job.job_id, e)
+            if self._live:
+                self._live.finish(job.job_id, "failed")
         finally:
             self._firing.discard(job.job_id)
             self._save_jobs()
@@ -955,6 +973,104 @@ class JobScheduler:
     @property
     def total_count(self) -> int:
         return len(self._jobs)
+
+    # -------------------------------------------------------------------------
+    # Persistence helpers — offline catch-up & OS scheduler integration
+    # -------------------------------------------------------------------------
+
+    _PERSISTENT_TRIGGER_TYPES: frozenset[str] = frozenset({
+        "on_time", "on_interval", "on_cron", "on_system_boot",
+    })
+
+    def has_persistent_jobs(self) -> bool:
+        """True if active jobs exist that benefit from OS-level scheduling."""
+        return any(
+            j.status == "active" and j.trigger.trigger_type in self._PERSISTENT_TRIGGER_TYPES
+            for j in self._jobs.values()
+        )
+
+    def get_missed_jobs(self) -> list[JobDefinition]:
+        """Return active jobs that were due while the CLI was offline."""
+        now = datetime.now(timezone.utc)
+        missed: list[JobDefinition] = []
+
+        for job in self._jobs.values():
+            if job.status != "active":
+                continue
+            tt = job.trigger.trigger_type
+
+            if tt == "on_interval":
+                interval = job.trigger.interval_seconds
+                if not interval:
+                    continue
+                if job.last_run_at:
+                    try:
+                        last = datetime.fromisoformat(job.last_run_at)
+                        if last.tzinfo is None:
+                            last = last.replace(tzinfo=timezone.utc)
+                        if (now - last).total_seconds() >= interval:
+                            missed.append(job)
+                    except (ValueError, TypeError):
+                        missed.append(job)
+                else:
+                    missed.append(job)  # never ran
+
+            elif tt == "on_time":
+                at = job.trigger.at_datetime
+                if not at:
+                    continue
+                try:
+                    target = datetime.fromisoformat(at)
+                    if target.tzinfo is None:
+                        target = target.replace(tzinfo=timezone.utc)
+                    if now >= target and not job.last_run_at:
+                        missed.append(job)
+                    elif now >= target and job.last_run_at:
+                        last = datetime.fromisoformat(job.last_run_at)
+                        if last.tzinfo is None:
+                            last = last.replace(tzinfo=timezone.utc)
+                        if last < target:
+                            missed.append(job)
+                except (ValueError, TypeError):
+                    pass
+
+            elif tt == "on_cron":
+                expr = job.trigger.cron_expression
+                if not expr:
+                    continue
+                try:
+                    from croniter import croniter
+                    base = (
+                        datetime.fromisoformat(job.last_run_at)
+                        if job.last_run_at
+                        else now.replace(hour=0, minute=0, second=0, microsecond=0)
+                    )
+                    if base.tzinfo is None:
+                        base = base.replace(tzinfo=timezone.utc)
+                    cron = croniter(expr, base)
+                    next_fire = cron.get_next(datetime)
+                    if next_fire.tzinfo is None:
+                        next_fire = next_fire.replace(tzinfo=timezone.utc)
+                    if now >= next_fire:
+                        missed.append(job)
+                except ImportError:
+                    _log.debug("croniter not installed — skipping cron missed-check")
+                except Exception as e:
+                    _log.debug("Cron missed-check error for %s: %s", job.job_id, e)
+
+        if missed:
+            _log.info(
+                "get_missed_jobs: %d job(s) were due while CLI was offline: %s",
+                len(missed), [j.job_id for j in missed],
+            )
+        return missed
+
+    async def fire_missed_jobs(self) -> int:
+        """Fire all missed jobs immediately. Returns number of jobs fired."""
+        missed = self.get_missed_jobs()
+        for job in missed:
+            asyncio.ensure_future(self._fire_job(job))
+        return len(missed)
 
     def add_dream_job(
         self,

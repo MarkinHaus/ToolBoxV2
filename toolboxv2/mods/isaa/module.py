@@ -1203,7 +1203,291 @@ class Tools(MainTool):
             complex_llm_model=self.config.get(
                 f"{name.upper()}MODEL", self.config["COMPLEXMODEL"]
             ),
-            system_message="You are a production-ready autonomous agent.",
+            system_message= self.app.manifest.isaa.self_agent.system_message if self.app.manifest.isaa and self.app.manifest.isaa.self_agent.system_messageelse else ("""# ISAA Agent System Prompt v2.1
+
+---
+
+## IDENTITY
+
+You are an autonomous agent in the ISAA system.
+Your job: complete the user's task using available tools, then call `final_answer`.
+You are NOT a chatbot by default — **you act**.
+But you can also think out loud, brainstorm, and have a real conversation when that is what is needed.
+Read the MODE section below to know which applies.
+
+---
+
+## MODE — ACT vs. TALK
+
+**ACT mode** (default when a concrete task is given):
+- Tool calls, verification, `final_answer`
+- Minimal prose, maximum action
+- Output: results, file references, status
+
+**TALK mode** (when the user is brainstorming, exploring, or in audio/voice):
+- Conversational, warm, exploratory
+- No forced tool use — respond like a knowledgeable partner.
+- all information must be in context or from tool results!
+- Ask clarifying questions, offer options, think out loud together
+- Output: natural language, ideas, questions back
+
+**How to detect TALK mode:**
+- "what do you think about…", "let's brainstorm…", "help me understand…"
+- Audio/voice context (short sentences, no markdown lists)
+- No concrete deliverable requested
+- User explicitly says "just talk to me" or "let's think through this"
+
+**Switching:** You can switch mid-conversation. If the user shifts from brainstorming to "okay, build it", "deep dive" — switch to ACT immediately.
+
+---
+
+## YOUR TOOLS
+
+### Always available (static)
+| Tool | When to use |
+|---|---|
+| `think` | Before any irreversible action. Max 2 consecutive calls, then act. |
+| `final_answer` | Exactly once: task done, blocked, or max iterations reached |
+| `shift_focus` | > 8 iterations elapsed — archive progress, reset context |
+| `list_tools` | Don't know what's available — always check before assuming |
+| `load_tools` | Load tools by name after discovering them via list_tools |
+
+### Filesystem (VFS) — always available
+| Tool | What it does |
+|---|---|
+| `vfs_shell` | Unix-like shell: `ls cat head tail wc stat tree find grep touch write edit echo mkdir rm mv cp close exec` — returns `{success, stdout, stderr, returncode}` |
+| `vfs_view` | Open/scroll a file in the context window. Use `scroll_to=` to jump to a pattern. Files opened here appear in EVERY following prompt. |
+| `search_vfs` | Find files or code by name/content/regex. Returns file list + snippets. |
+
+### Filesystem (real FS ↔ VFS)
+| Tool | What it does |
+|---|---|
+| `fs_copy_to_vfs` | Copy real-filesystem file → VFS |
+| `fs_copy_from_vfs` | Copy VFS file → real filesystem |
+| `fs_copy_dir_from_vfs` | Recursively export a VFS directory → real filesystem |
+
+### Mount
+| Tool | What it does |
+|---|---|
+| `vfs_mount` | Mount local folder as lazy shadow into VFS |
+| `vfs_unmount` | Unmount, optionally save dirty files to disk |
+| `vfs_refresh_mount` | Re-scan mount for new/deleted files |
+| `vfs_sync_all` | Sync all modified VFS files back to disk |
+
+### Sharing
+| Tool | What it does |
+|---|---|
+| `vfs_share_create` | Create shareable ID for a VFS directory |
+| `vfs_share_list` | List directories shared with this agent |
+| `vfs_share_mount` | Mount a shared directory from another agent into your VFS |
+
+### LSP / Docker / History
+| Tool | What it does |
+|---|---|
+| `vfs_diagnostics` | LSP errors/warnings/hints for a code file (async) |
+| `docker_run` | Run shell command in Docker container (syncs VFS before/after) |
+| `docker_start_app` | Start web app in Docker |
+| `docker_stop_app` | Stop running web app |
+| `docker_logs` | Get last N log lines from running app |
+| `docker_status` | Docker container status (ports, running, etc.) |
+| `history` | Last N messages from conversation history |
+| `set_agent_situation` | Set current situation + intent for rule-based behavior |
+| `check_permissions` | Check if an action is permitted under active rule set |
+
+### Dynamic tools (loaded on demand)
+Use `list_tools` to discover, `load_tools` to activate. These are session-specific and not pre-loaded.
+
+---
+
+## ABSOLUTE RULES
+
+**ALWAYS:**
+1. Call `think` before any destructive or irreversible action
+2. Call `final_answer` exactly once — when done, blocked, or at max iterations
+3. Reference code as `file_path:line_number`
+4. Check tool results before the next step — not after
+5. Use `search_vfs` before `vfs_shell write` if the target path is unknown
+
+**NEVER:**
+1. Call `final_answer` more than once
+2. Repeat the same tool call with same arguments 3+ times
+3. Invent file paths, tool names, or command syntax — verify first
+4. Assume a tool is loaded — use `list_tools` when unsure
+5. Write code comments unless explicitly requested
+6. Continue past a hard block — escalate via `final_answer`
+
+**On verification:** Not every tool returns content on success. A `vfs_shell` `mkdir` returns `{success: true, stdout: ""}` — that is valid. Verify the *right* thing via the *appropriate* tool:
+- Write operations → verify with a subsequent `vfs_shell stat` or `vfs_shell cat`
+- Async operations → verify with a status tool (`docker_status`, `vfs_diagnostics`)
+- Side-effect tools → trust `success: true` unless behavior is observable otherwise
+
+---
+
+## CORE DECISION CHAINS (X → Y → Z)
+
+### Chain 1 — Unknown task, unclear tools
+```
+user_query
+  → think("what category of task is this?")
+  → list_tools(category="relevant_keyword")
+  → load_tools(["tool_a", "tool_b"])
+  → execute tool
+  → final_answer(answer=result, success=True)
+```
+
+### Chain 2 — File task (read / write / modify)
+```
+user asks about file
+  → search_vfs(query="filename_or_symbol") to locate it
+  → vfs_view(path="found_file") OR vfs_shell("cat found_file")
+  → think("what changes are needed?")
+  → vfs_shell("write target_file ...")
+  → vfs_shell("stat target_file")   ← verify write succeeded
+  → final_answer(answer="Done. target_file:line_number", success=True)
+```
+
+### Chain 3 — Multi-step task (> 3 actions)
+```
+complex_task
+  → think("steps: 1. X  2. Y  3. Z")
+  → execute step 1 → check result
+  → execute step 2 → check result
+  → [step fails] → think("alternative?")
+               → retry once OR final_answer(success=False, explain)
+  → execute step 3
+  → final_answer(summary_of_all_steps, success=True)
+```
+
+### Chain 4 — Tool not working
+```
+tool_call fails
+  → think("why? wrong args? missing dependency? wrong path?")
+  → [fixable] → adjust args → retry ONCE
+  → [still fails] → list_tools() → find alternative
+  → [no alternative] → final_answer("Blocked: reason", success=False)
+  → NEVER retry the same call 3+ times
+```
+
+### Chain 5 — Stuck or looping
+```
+loop_detected (same tool, same args, repeated)
+  → STOP immediately
+  → think("what am I missing? what would unblock this?")
+  → [answerable] → different approach
+  → [not answerable] → final_answer(explain_block, success=False)
+```
+
+### Chain 6 — Context getting large (> 8 iterations)
+```
+many_iterations_elapsed
+  → shift_focus(
+      summary_of_achievements="what was done, what files were created",
+      next_objective="next concrete step"
+    )
+  → continue with clean context
+```
+
+### Chain 7 — Delegating to a sub-agent
+```
+task_needs_parallel_work OR isolated_subtask_identified
+  → think("what exactly should the sub-agent do?")
+  → spawn sub-agent with:
+      task = "concrete, self-contained instruction"
+      output_dir = "/workspace/{sub_agent_name}/"   ← sub-agent writes ONLY here
+  → sub-agent executes independently, writes results to its output_dir
+  → main agent reads results via:
+      vfs_shell("cat /workspace/{sub_agent_name}/result.md") OR
+      vfs_share_mount(share_id="...", mount_point="/shared/{sub_agent_name}")
+  → integrate results → final_answer
+
+SUB-AGENT CONSTRAINT: A sub-agent may ONLY write to its assigned output_dir.
+It may read from anywhere (read-only outside its dir).
+It must call final_answer with a path to its output, not inline all content.
+```
+
+---
+
+## TASK EXECUTION PROTOCOL
+
+### Phase 1 — UNDERSTAND (before first tool call)
+- What exactly is being asked?
+- Do I have the right tools loaded?
+- What is the success condition?
+- What could go wrong?
+
+Use `think`. Do not skip on complex tasks.
+
+### Phase 2 — EXECUTE
+- One objective at a time
+- Check tool result before next step
+- Fail → think → adapt → retry once → escalate
+
+### Phase 3 — VERIFY
+- Does the output match what was asked?
+- File exists? Code runs? Data looks right?
+- If no: back to Phase 2 for that step only
+
+### Phase 4 — REPORT (`final_answer`)
+- What was accomplished
+- File references: `path:line_number`
+- If partial: what remains and why
+
+---
+
+## SKEPTICAL REASONING
+
+```
+"I think the code does X"        → WRONG. Read the file first.
+"This should work"               → WRONG. Test it.
+"The tool probably exists"       → WRONG. Call list_tools.
+"It returned nothing = failure"  → WRONG. Check the tool's contract.
+Internal confidence ≠ correctness. Ground in evidence.
+```
+
+When uncertain:
+```
+uncertain_about_X
+  → think("minimum needed to verify X?")
+  → cheapest verification (read before write, stat before cat)
+  → proceed only after confirmation
+```
+
+---
+
+## COMMON FAILURE MODES
+
+| Pattern | What it looks like | Fix |
+|---|---|---|
+| **Loop** | Same tool, same args, 3× | `think` → alternative → `final_answer` if blocked |
+| **Hallucinated path** | Writing to file never read or located | `search_vfs` first, always |
+| **Tool assumption** | Calling tool never loaded | `list_tools` → `load_tools` first |
+| **Silent failure** | Tool errors, agent continues anyway | Always check `success` field before next step |
+| **Over-planning** | 3+ consecutive `think` calls, no action | Act after 2 `think` calls max |
+| **Missing verify** | Writes file, never confirms | Follow write with `vfs_shell stat` or `vfs_shell cat` |
+| **Wrong final_answer timing** | Called before task complete | Only when: done, blocked, or max iterations |
+| **Sub-agent scope leak** | Sub-agent writes outside its output_dir | Enforce output_dir constraint at spawn time |
+| **TALK mode rigidity** | Using markdown lists in audio/voice context | Detect mode, switch to natural sentences |
+
+---
+
+## OUTPUT FORMAT
+
+**In ACT mode:**
+- Tool calls: concise args, no explanation text in args
+- After tool results: `think` to interpret if needed, then next action
+- `final_answer`:
+  ```
+  ✅ Done: [one-line summary]
+  📁 [file_path:line_number if relevant]
+  ⚠️ Remaining: [if anything unfinished, and why]
+  ```
+- Max 5 sentences unless detail was requested
+
+**In TALK mode:**
+- Natural prose, no forced structure
+- No markdown lists unless user is reading on screen
+- Short sentences in audio context
+- End with a question or an offer: "Want me to investigate that?" / "Should we go deeper on X?"""),
             temperature=0.7,
             max_tokens_output=2048,
             max_tokens_input=32768,
@@ -2143,6 +2427,503 @@ async def list_all_agents(self, request: RequestData | None = None):
 
 
 # =============================================================================
+# JOB MANAGEMENT + CLI/VIEWER LAUNCH  ─  ToolBox-facing API
+# =============================================================================
+
+import os
+import subprocess
+import sys
+import threading
+from pathlib import Path
+import json as _json
+
+
+# ── helper: live state enrichment ────────────────────────────────────────────
+
+def _enrich_with_live(job_dict: dict, live_entry) -> dict:
+    """Merge a JobLiveEntry into a job dict for API output."""
+    if live_entry is None:
+        return job_dict
+    job_dict["is_running"]    = live_entry.status == "running"
+    job_dict["iteration"]     = live_entry.iteration if live_entry.status == "running" else None
+    job_dict["context_pct"]   = round(live_entry.context_pct(), 1) if live_entry.status == "running" else None
+    job_dict["last_thought"]  = live_entry.last_thought[-400:] if live_entry.last_thought else None
+    job_dict["tool_calls"]    = live_entry.tool_calls[-6:] if live_entry.tool_calls else []
+    return job_dict
+
+
+def _next_fire_label(job) -> str | None:
+    """Human-readable 'next fire' string for a JobDefinition."""
+    from datetime import datetime, timezone
+    tt  = job.trigger.trigger_type
+    now = datetime.now(timezone.utc)
+
+    if tt == "on_time" and job.trigger.at_datetime:
+        try:
+            target = datetime.fromisoformat(job.trigger.at_datetime)
+            if target.tzinfo is None:
+                target = target.replace(tzinfo=timezone.utc)
+            secs = int((target - now).total_seconds())
+            if secs <= 0:
+                return "overdue"
+            return f"in {secs // 60}m" if secs < 3600 else f"in {secs // 3600}h"
+        except Exception:
+            return None
+
+    if tt == "on_interval" and job.trigger.interval_seconds:
+        if job.last_run_at:
+            try:
+                last = datetime.fromisoformat(job.last_run_at)
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=timezone.utc)
+                rem = job.trigger.interval_seconds - int((now - last).total_seconds())
+                return "now" if rem <= 0 else f"in {rem}s"
+            except Exception:
+                pass
+        return f"every {job.trigger.interval_seconds}s"
+
+    if tt == "on_cron" and job.trigger.cron_expression:
+        return job.trigger.cron_expression
+
+    return tt.replace("on_", "")
+
+
+# ── 1. List all jobs ──────────────────────────────────────────────────────────
+
+@export(mod_name="isaa", name="jobList", api=True, request_as_kwarg=True)
+async def job_list(self, request: RequestData | None = None) -> list[dict]:
+    """Return all jobs enriched with live state."""
+    from toolboxv2.mods.isaa.extras.jobs.job_live_state import JobLiveStateReader
+
+    live_file = self.job_scheduler.jobs_file.with_suffix(".live.json")
+    reader    = JobLiveStateReader(live_file)
+    live      = reader.read()
+
+    result = []
+    for job in self.job_scheduler.list_jobs():
+        d = job.to_dict()
+        d["next_fire"]  = _next_fire_label(job)
+        d["is_running"] = job.job_id in self.job_scheduler._firing
+        d = _enrich_with_live(d, live.get(job.job_id))
+        result.append(d)
+
+    return result
+
+
+# ── 2. Add a job ─────────────────────────────────────────────────────────────
+
+@export(mod_name="isaa", name="jobAdd", api=True, request_as_kwarg=True)
+async def job_add(
+    self,
+    name: str | None = None,
+    agent_name: str | None = None,
+    query: str | None = None,
+    trigger_type: str = "on_interval",
+    interval_seconds: int | None = None,
+    at_datetime: str | None = None,
+    cron_expression: str | None = None,
+    session_id: str = "default",
+    timeout_seconds: int = 300,
+    request: RequestData | None = None,
+) -> dict:
+    """Create and register a new persistent job."""
+    # Accept body from HTTP POST as well
+    if request is not None:
+        body = request.request.body or {}
+        name             = name             or body.get("name")
+        agent_name       = agent_name       or body.get("agent_name")
+        query            = query            or body.get("query")
+        trigger_type     = body.get("trigger_type", trigger_type)
+        interval_seconds = interval_seconds or body.get("interval_seconds")
+        at_datetime      = at_datetime      or body.get("at_datetime")
+        cron_expression  = cron_expression  or body.get("cron_expression")
+        session_id       = body.get("session_id", session_id)
+        timeout_seconds  = body.get("timeout_seconds", timeout_seconds)
+
+    if not name or not agent_name or not query:
+        return {"ok": False, "message": "name, agent_name and query are required", "job_id": None}
+
+    trigger = TriggerConfig(
+        trigger_type=trigger_type,
+        interval_seconds=interval_seconds,
+        at_datetime=at_datetime,
+        cron_expression=cron_expression,
+    )
+    job = JobDefinition(
+        job_id=JobDefinition.generate_id(),
+        name=name,
+        agent_name=agent_name,
+        query=query,
+        trigger=trigger,
+        session_id=session_id,
+        timeout_seconds=timeout_seconds,
+    )
+    job_id = self.job_scheduler.add_job(job)
+
+    # Auto-install OS autowake when first persistent job is created
+    if self.job_scheduler.has_persistent_jobs():
+        try:
+            from toolboxv2.mods.isaa.extras.jobs.os_scheduler import (
+                autowake_status, install_autowake,
+            )
+            if "Not installed" in autowake_status():
+                install_autowake(self.job_scheduler.jobs_file)
+        except Exception:
+            pass
+
+    return {"ok": True, "message": f"Job '{name}' created", "job_id": job_id}
+
+
+# ── 3. Remove a job ───────────────────────────────────────────────────────────
+
+@export(mod_name="isaa", name="jobRemove", api=True, request_as_kwarg=True)
+async def job_remove(
+    self,
+    job_id: str | None = None,
+    request: RequestData | None = None,
+) -> dict:
+    if request and not job_id:
+        job_id = (request.request.body or {}).get("job_id")
+    if not job_id:
+        return {"ok": False, "message": "job_id required", "job_id": None}
+
+    ok = self.job_scheduler.remove_job(job_id)
+    return {
+        "ok": ok,
+        "message": "removed" if ok else "job not found",
+        "job_id": job_id,
+    }
+
+
+# ── 4. Pause / Resume ─────────────────────────────────────────────────────────
+
+@export(mod_name="isaa", name="jobPause", api=True, request_as_kwarg=True)
+async def job_pause(
+    self,
+    job_id: str | None = None,
+    request: RequestData | None = None,
+) -> dict:
+    if request and not job_id:
+        job_id = (request.request.body or {}).get("job_id")
+    if not job_id:
+        return {"ok": False, "message": "job_id required", "job_id": None}
+    ok = self.job_scheduler.pause_job(job_id)
+    return {"ok": ok, "message": "paused" if ok else "not found / already paused", "job_id": job_id}
+
+
+@export(mod_name="isaa", name="jobResume", api=True, request_as_kwarg=True)
+async def job_resume(
+    self,
+    job_id: str | None = None,
+    request: RequestData | None = None,
+) -> dict:
+    if request and not job_id:
+        job_id = (request.request.body or {}).get("job_id")
+    if not job_id:
+        return {"ok": False, "message": "job_id required", "job_id": None}
+    ok = self.job_scheduler.resume_job(job_id)
+    return {"ok": ok, "message": "resumed" if ok else "not found / not paused", "job_id": job_id}
+
+
+# ── 5. Manual fire ────────────────────────────────────────────────────────────
+
+@export(mod_name="isaa", name="jobFire", api=True, request_as_kwarg=True)
+async def job_fire(
+    self,
+    job_id: str | None = None,
+    request: RequestData | None = None,
+) -> dict:
+    if request and not job_id:
+        job_id = (request.request.body or {}).get("job_id")
+    if not job_id:
+        return {"ok": False, "message": "job_id required", "job_id": None}
+
+    job = self.job_scheduler.get_job(job_id)
+    if not job:
+        return {"ok": False, "message": "job not found", "job_id": job_id}
+
+    asyncio.ensure_future(self.job_scheduler._fire_job(job))
+    return {"ok": True, "message": f"Job '{job.name}' fired", "job_id": job_id}
+
+
+# ── 6. Job detail (full live snapshot) ───────────────────────────────────────
+
+@export(mod_name="isaa", name="jobDetail", api=True, request_as_kwarg=True)
+async def job_detail(
+    self,
+    job_id: str | None = None,
+    request: RequestData | None = None,
+) -> dict:
+    if request and not job_id:
+        job_id = (request.request.query or {}).get("job_id") or (request.request.body or {}).get("job_id")
+    if not job_id:
+        return {"ok": False, "message": "job_id required"}
+
+    job = self.job_scheduler.get_job(job_id)
+    if not job:
+        return {"ok": False, "message": "job not found"}
+
+    from toolboxv2.mods.isaa.extras.jobs.job_live_state import JobLiveStateReader
+    live_file = self.job_scheduler.jobs_file.with_suffix(".live.json")
+    live = JobLiveStateReader(live_file).read()
+
+    d = job.to_dict()
+    d["next_fire"]  = _next_fire_label(job)
+    d["is_running"] = job.job_id in self.job_scheduler._firing
+    d = _enrich_with_live(d, live.get(job_id))
+    d["ok"] = True
+    return d
+
+
+# ── 7. OS autowake control ────────────────────────────────────────────────────
+
+@export(mod_name="isaa", name="jobAutowake", api=True, request_as_kwarg=True)
+async def job_autowake(
+    self,
+    action: str = "status",             # install | remove | status
+    request: RequestData | None = None,
+) -> dict:
+    if request:
+        action = (request.request.body or {}).get("action", action)
+    try:
+        from toolboxv2.mods.isaa.extras.jobs.os_scheduler import (
+            install_autowake, remove_autowake, autowake_status,
+        )
+    except ImportError:
+        return {"ok": False, "message": "os_scheduler not available"}
+
+    if action == "install":
+        msg = install_autowake(self.job_scheduler.jobs_file)
+    elif action == "remove":
+        msg = remove_autowake()
+    else:
+        msg = autowake_status()
+
+    return {"ok": True, "action": action, "message": msg}
+
+
+# ── 8. Launch ISAA CLI in a new terminal window ───────────────────────────────
+
+@export(mod_name="isaa", name="launchCLI", api=True, request_as_kwarg=True)
+async def launch_cli(
+    self,
+    terminal: str = "auto",             # auto | wt | xterm | gnome-terminal | tmux | screen
+    extra_args: list[str] | None = None,
+    request: RequestData | None = None,
+) -> dict:
+    """
+    Start the ISAA interactive CLI (icli.py) in a new OS terminal window.
+    Works on Windows (wt / cmd), Linux (xterm / gnome-terminal), macOS (osascript).
+    """
+    if request:
+        body     = request.request.body or {}
+        terminal = body.get("terminal", terminal)
+        extra_args = body.get("extra_args", extra_args)
+
+    py   = sys.executable
+    cmd  = [py, "-m", "toolboxv2.flows.icli"] + (extra_args or [])
+    cmd_str = " ".join(f'"{c}"' if " " in c else c for c in cmd)
+
+    launched = False
+    error    = ""
+    used     = ""
+
+    def _try(args):
+        subprocess.Popen(args, creationflags=subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0)
+
+    system = sys.platform
+
+    try:
+        if terminal == "auto":
+            if system == "win32":
+                # Prefer Windows Terminal, fallback to cmd
+                try:
+                    _try(["wt", "--", *cmd])
+                    used = "wt"
+                except FileNotFoundError:
+                    _try(["cmd", "/c", "start", "cmd", "/k", cmd_str])
+                    used = "cmd"
+            elif system == "darwin":
+                script = f'tell application "Terminal" to do script "{cmd_str}"'
+                subprocess.Popen(["osascript", "-e", script])
+                used = "Terminal.app"
+            else:
+                # Linux: try common terminals in order
+                for term in ["gnome-terminal", "xterm", "konsole", "xfce4-terminal"]:
+                    try:
+                        if term == "gnome-terminal":
+                            _try([term, "--", *cmd])
+                        else:
+                            _try([term, "-e", cmd_str])
+                        used = term
+                        break
+                    except FileNotFoundError:
+                        continue
+                else:
+                    # Fallback: tmux new-window or screen
+                    try:
+                        _try(["tmux", "new-window", cmd_str])
+                        used = "tmux"
+                    except FileNotFoundError:
+                        _try(["screen", "-dm", *cmd])
+                        used = "screen"
+        else:
+            # Explicit terminal requested
+            if terminal == "wt":
+                _try(["wt", "--", *cmd])
+            elif terminal == "tmux":
+                _try(["tmux", "new-window", cmd_str])
+            elif terminal == "screen":
+                _try(["screen", "-dm", *cmd])
+            else:
+                _try([terminal, "-e", cmd_str])
+            used = terminal
+
+        launched = True
+    except Exception as e:
+        error = str(e)
+
+    return {
+        "ok": launched,
+        "terminal": used,
+        "command": cmd_str,
+        "message": f"CLI launched in '{used}'" if launched else f"Launch failed: {error}",
+    }
+
+
+# ── 9. Launch Job Viewer (web + optional terminal TUI) ───────────────────────
+
+@export(mod_name="isaa", name="launchViewer", api=True, request_as_kwarg=True)
+async def launch_viewer(
+    self,
+    mode: str = "web",                  # web | terminal | both
+    port: int = 7799,
+    refresh: float = 1.0,
+    request: RequestData | None = None,
+) -> dict:
+    """
+    Start the ISAA Job Viewer.
+    - mode='web'      → background HTTP server on /port/
+    - mode='terminal' → new terminal window with rich TUI
+    - mode='both'     → web server + terminal TUI
+    Returns the URL for the web viewer.
+    """
+    if request:
+        body    = request.request.body or {}
+        mode    = body.get("mode", mode)
+        port    = body.get("port", port)
+        refresh = body.get("refresh", refresh)
+
+    jobs_file = self.job_scheduler.jobs_file
+    live_file = jobs_file.with_suffix(".live.json")
+    py        = sys.executable
+    viewer_mod = "toolboxv2.mods.isaa.extras.jobs.job_viewer"
+
+    launched_web      = False
+    launched_terminal = False
+    url               = None
+
+    # ── Web server (in-process daemon thread) ────────────────────────────────
+    if mode in ("web", "both"):
+        from toolboxv2.mods.isaa.extras.jobs.job_viewer import run_web_viewer
+        t = threading.Thread(
+            target=run_web_viewer,
+            args=(jobs_file, live_file, port),
+            daemon=True,
+            name=f"isaa-job-viewer-web-{port}",
+        )
+        # Only start if not already running
+        existing = [th for th in threading.enumerate() if th.name == t.name]
+        if not existing:
+            t.start()
+        launched_web = True
+        url = f"http://localhost:{port}"
+
+    # ── Terminal TUI in new window ────────────────────────────────────────────
+    if mode in ("terminal", "both"):
+        viewer_args = [
+            py, "-m", viewer_mod,
+            "--jobs-file", str(jobs_file),
+            "--refresh", str(refresh),
+        ]
+        cmd_str = " ".join(viewer_args)
+        try:
+            system = sys.platform
+            if system == "win32":
+                try:
+                    subprocess.Popen(["wt", "--", *viewer_args],
+                                     creationflags=subprocess.CREATE_NEW_CONSOLE)
+                except FileNotFoundError:
+
+                    subprocess.Popen(["cmd", "/c", "start", "cmd", "/k", cmd_str])
+            elif system == "darwin":
+                script = f'tell application "Terminal" to do script "{cmd_str}"'
+                subprocess.Popen(["osascript", "-e", script])
+            else:
+                for term in ["gnome-terminal", "xterm", "konsole"]:
+                    try:
+                        if term == "gnome-terminal":
+                            subprocess.Popen([term, "--", *viewer_args])
+                        else:
+                            subprocess.Popen([term, "-e", cmd_str])
+                        break
+                    except FileNotFoundError:
+                        continue
+            launched_terminal = True
+        except Exception as e:
+            pass
+
+    return {
+        "ok": launched_web or launched_terminal,
+        "mode": mode,
+        "web_url": url,
+        "web_launched": launched_web,
+        "terminal_launched": launched_terminal,
+        "message": (
+            f"Viewer running at {url}" if launched_web
+            else "Terminal viewer launched" if launched_terminal
+            else "Launch failed"
+        ),
+    }
+
+
+# ── 10. Combined job + viewer status snapshot ─────────────────────────────────
+
+@export(mod_name="isaa", name="jobDashboard", api=True, request_as_kwarg=True)
+async def job_dashboard(self, request: RequestData | None = None) -> dict:
+    """
+    Single-call snapshot: all jobs + live state + scheduler + autowake status.
+    Designed for a frontend dashboard polling every few seconds.
+    """
+    from toolboxv2.mods.isaa.extras.jobs.job_live_state import JobLiveStateReader
+    try:
+        from toolboxv2.mods.isaa.extras.jobs.os_scheduler import autowake_status
+        aw = autowake_status()
+    except Exception:
+        aw = "unavailable"
+
+    live_file = self.job_scheduler.jobs_file.with_suffix(".live.json")
+    live      = JobLiveStateReader(live_file).read()
+
+    jobs_out = []
+    for job in self.job_scheduler.list_jobs():
+        d = job.to_dict()
+        d["next_fire"]  = _next_fire_label(job)
+        d["is_running"] = job.job_id in self.job_scheduler._firing
+        d = _enrich_with_live(d, live.get(job.job_id))
+        jobs_out.append(d)
+
+    return {
+        "jobs":            jobs_out,
+        "total":           self.job_scheduler.total_count,
+        "active":          self.job_scheduler.active_count,
+        "running":         len(self.job_scheduler._firing),
+        "autowake_status": aw,
+        "has_persistent":  self.job_scheduler.has_persistent_jobs(),
+        "jobs_file":       str(self.job_scheduler.jobs_file),
+    }
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -2169,4 +2950,11 @@ if __name__ == "__main__":
         if success:
             print(f"Manifest: {manifest}")
 
+
+    import sys
+    if "--test-ollama" in sys.argv:
+        from toolboxv2.mods.isaa.model_tool_test import run_ollama_tool_diagnostic_cli
+        run_ollama_tool_diagnostic_cli()
+    else:
+        asyncio.run(test_isaa_tools())  # bisheriger Test
     asyncio.run(test_isaa_tools())

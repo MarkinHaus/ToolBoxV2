@@ -66,6 +66,7 @@ from toolboxv2.mods.isaa.base.Agent.sub_agent_resume_extension import (
 
 
 MAX_CONTINUATIONS = os.environ.get("AGENT_INTERN_MAX_CONTINUATIONS", 5)
+MAX_PARALLEL_SKILLS = os.environ.get("AGENT_INTERN_MAX_PARALLEL_SKILLS", 3)
 # =============================================================================
 # STATIC TOOL DEFINITIONS (separate from dynamic limit)
 # =============================================================================
@@ -444,9 +445,9 @@ class PersonaRouter:
 
         if scores:
             best = max(scores, key=scores.get)
-            if scores[best] >= 1:
+            if scores[best] >= 1 and best in self.personas:
                 return dataclasses.replace(
-                    self.personas[persona_key], source="matched"
+                    self.personas[best], source="matched"
                 )
 
         # 4. Default
@@ -1146,12 +1147,15 @@ BEISPIELE:
             # 1. Match skills (hybrid: keyword + embedding)
             try:
                 ctx.matched_skills = await self.skills_manager.match_skills_async(
-                    query, max_results=2
+                    query, max_results=MAX_PARALLEL_SKILLS
                 )
-            except:
-                ctx.matched_skills = self.skills_manager.match_skills(
-                    query, max_results=2
+            except Exception as _skill_err:
+                self.live.log(
+                    f"[Skills] async match failed ({type(_skill_err).__name__}), "
+                    f"falling back to keyword-only: {_skill_err}",
+                    logging.WARNING,
                 )
+                ctx.matched_skills = self.skills_manager.match_skills(query, max_results=MAX_PARALLEL_SKILLS)
 
             # 2. Calculate tool relevance scores (once at start, cached)
             self._calculate_tool_relevance(ctx, query)
@@ -1370,12 +1374,15 @@ BEISPIELE:
         if not is_resume:
             try:
                 ctx.matched_skills = await self.skills_manager.match_skills_async(
-                    query, max_results=2
+                    query, max_results=MAX_PARALLEL_SKILLS
                 )
-            except:
-                ctx.matched_skills = self.skills_manager.match_skills(
-                    query, max_results=2
+            except Exception as _skill_err:
+                self.live.log(
+                    f"[Skills] async match failed ({type(_skill_err).__name__}), "
+                    f"falling back to keyword-only: {_skill_err}",
+                    logging.WARNING,
                 )
+                ctx.matched_skills = self.skills_manager.match_skills(query, max_results=MAX_PARALLEL_SKILLS)
 
             self._calculate_tool_relevance(ctx, query)
             self._preload_skill_tools(ctx, query)

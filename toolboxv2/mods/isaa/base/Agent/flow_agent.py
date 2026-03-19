@@ -591,6 +591,10 @@ class FlowAgent:
             **kwargs,
         }
 
+        # Ollama ignoriert tool_choice='auto' bei einigen Modellen
+        if model.startswith("ollama") and llm_kwargs.get("tool_choice") == "auto":
+            llm_kwargs.pop("tool_choice", None)
+
         session_id = session_id or self.active_session
         system_msg = self.amd.get_system_message()
         session = None
@@ -660,6 +664,7 @@ class FlowAgent:
         try:
             from litellm.types.utils import ChatCompletionMessageToolCall, Function, Message
             import litellm
+            litellm.drop_params = True
             original_messages = llm_kwargs["messages"].copy()
             original_tools = llm_kwargs.get("tools")
 

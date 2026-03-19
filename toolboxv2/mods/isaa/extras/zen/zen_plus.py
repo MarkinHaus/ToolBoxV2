@@ -70,7 +70,6 @@ GRAPH_NODE_COLOR = {
     "job": C["purple"],
 }
 
-
 def _short(s: str, n: int = 40) -> str:
     return s[:n] + ".." if len(s) > n + 2 else s
 
@@ -1740,6 +1739,9 @@ class ZenPlus:
         self._global_graph = GlobalGraph()
         self._global_rebuild_counter = 0
         self._dismissed: set[str] = set()
+        # Option-A routing: agent_name → most-recent task_id used as pane key.
+        # Two parallel runs of the same agent get distinct panes.
+        self._agent_route: Dict[str, str] = {}
 
     @property
     def active(self) -> bool:
@@ -1760,14 +1762,24 @@ class ZenPlus:
             task_id=task_id, agent_name=agent_name, query=query,
             status=status, started_at=time.time(), run_id=run_id, kind=kind,
         )
+        # Option-A: pre-create a pane keyed by task_id so two parallel runs of
+        # the same agent each get their own panel in the grid.
+        pane = self._get_pane(task_id)
+        pane.name = agent_name          # shown in all render methods
+        pane.phase = status if status in ("running","completed","done","failed","cancelled","error") else "running"
+        self._agent_route[agent_name] = task_id
         if self._app:
             self._app.invalidate()
 
     def update_job(self, task_id: str, status: str):
         if task_id in self._jobs:
             self._jobs[task_id].status = status
-            if self._app:
-                self._app.invalidate()
+        # Mirror terminal status into the pane so grid colours stay in sync
+        if task_id in self._panes:
+            phase = {"completed": "done", "cancelled": "done"}.get(status, status)
+            self._panes[task_id].phase = phase
+        if self._app:
+            self._app.invalidate()
 
     def remove_job(self, task_id: str):
         self._jobs.pop(task_id, None)
@@ -1832,6 +1844,7 @@ class ZenPlus:
         self._global_graph = GlobalGraph()
         self._global_rebuild_counter = 0
         self._dismissed.clear()
+        self._agent_route.clear()
         while not self._queue.empty():
             try:
                 self._queue.get_nowait()
@@ -1856,9 +1869,19 @@ class ZenPlus:
             try:
                 chunk = await asyncio.wait_for(self._queue.get(), timeout=0.25)
                 agent = chunk.get("agent", "") or "default"
-                pane = self._get_pane(agent)
-                if agent in self._dismissed and chunk.get("type") not in ("done", "error"):
-                    self._dismissed.discard(agent)
+                # Route to the pane registered for this agent_name.
+                # _agent_route[agent] is the task_id used as pane key (Option A).
+                # Fall back to agent_name directly for panes created the old way.
+                pane_key = (
+                    chunk.get("_execution_id")
+                    or self._agent_route.get(agent)
+                    or agent
+                )
+                pane = self._get_pane(pane_key)
+                if pane.name != agent and agent:
+                    pane.name = agent  # keep display name fresh
+                if pane_key in self._dismissed and chunk.get("type") not in ("done", "error"):
+                    self._dismissed.discard(pane_key)
                 pane.ingest(chunk)
                 self._global_rebuild_counter += 1
                 # Rebuild global graph every 4 chunks or on tool events
@@ -2049,12 +2072,14 @@ class ZenPlus:
         for i, name in enumerate(names):
             pane = self._panes[name]
             phase_col = STATUS_COLOR.get(pane.phase, C["dim"])
+            # Use pane.name (agent_name) for display; pane key is task_id in Option-A.
+            display = _short(pane.name or name, 12)
             if name == self._focus and self._view != ViewMode.GRID:
-                parts.append(("fg:#67e8f9 bold", f" ▸{_short(name, 12)} "))
+                parts.append(("fg:#67e8f9 bold", f" ▸{display} "))
             elif i == self._grid_index and self._view == ViewMode.GRID:
-                parts.append(("fg:#67e8f9", f" [{_short(name, 12)}] "))
+                parts.append(("fg:#67e8f9", f" [{display}] "))
             else:
-                parts.append((f"fg:{phase_col}", f"  {_short(name, 12)} "))
+                parts.append((f"fg:{phase_col}", f"  {display} "))
             elapsed = time.time() - pane.started_at
             parts.append(("fg:#6b7280", f"{_fmt_elapsed(elapsed)} "))
         running = sum(1 for j in self._jobs.values() if j.status == "running")

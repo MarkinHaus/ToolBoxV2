@@ -64,7 +64,7 @@ def get_features_dir() -> Path:
 def is_feature_installed(feature_name: str) -> bool:
     """
     Prüfe ob ein Feature bereits entpackt/installiert ist.
-    
+
     Ein Feature gilt als installiert wenn:
     1. Das Feature-Verzeichnis existiert UND
     2. Eine feature.yaml UND .installed Marker darin liegt
@@ -83,7 +83,7 @@ def is_feature_available(feature_name: str) -> bool:
     feature_yaml = get_features_dir() / feature_name / "feature.yaml"
     if feature_yaml.exists():
         return True
-    
+
     # Als ZIP vorhanden?
     return is_feature_packed(feature_name)
 
@@ -93,7 +93,7 @@ def is_feature_packed(feature_name: str) -> bool:
     packed_dir = get_features_packed_dir()
     if not packed_dir.exists():
         return False
-    
+
     # Suche nach tbv2-feature-{name}-*.zip
     for _ in packed_dir.glob(f"tbv2-feature-{feature_name}-*.zip"):
         return True
@@ -105,68 +105,97 @@ def get_packed_feature_path(feature_name: str) -> Optional[Path]:
     packed_dir = get_features_packed_dir()
     if not packed_dir.exists():
         return None
-    
+
     # Finde neueste Version
     candidates = list(packed_dir.glob(f"tbv2-feature-{feature_name}-*.zip"))
     if not candidates:
         return None
-    
+
     # Sortiere nach Dateiname (enthält Version)
     candidates.sort(reverse=True)
     return candidates[0]
 
+def download_feature_from_registry(feature_name: str) -> Optional[Path]:
+    """Download feature ZIP from registry if not available locally."""
+    import urllib.request
+    registry_url = os.environ.get("TB_REGISTRY_URL", "https://registry.simplecore.app")
+    packed_dir = get_features_packed_dir()
+    packed_dir.mkdir(parents=True, exist_ok=True)
+
+    # Versuche Metadaten-Endpoint, Fallback auf direkten Pfad
+    zip_path = packed_dir / f"tbv2-feature-{feature_name}-latest.zip"
+    try:
+        meta_url = f"{registry_url}/api/v1/features/{feature_name}/latest"
+        with urllib.request.urlopen(meta_url, timeout=8) as r:
+            import json as _json
+            meta = _json.loads(r.read())
+            download_url = meta.get("download_url", f"{registry_url}/features/tbv2-feature-{feature_name}-latest.zip")
+    except Exception:
+        download_url = f"{registry_url}/features/tbv2-feature-{feature_name}-latest.zip"
+
+    try:
+        print(f"Downloading feature '{feature_name}' from registry...", file=sys.stderr)
+        urllib.request.urlretrieve(download_url, zip_path)
+        return zip_path
+    except Exception as e:
+        print(f"Warning: Registry download failed for '{feature_name}': {e}", file=sys.stderr)
+        if zip_path.exists():
+            zip_path.unlink()
+        return None
 
 def detect_installed_extras() -> Set[str]:
     """
     Erkenne welche optional-dependencies installiert sind.
-    
+
     Prüft ob die Marker-Packages für jedes Feature importierbar sind.
     """
     installed_extras = set()
-    
+
     for extra_name, marker_packages in FEATURE_DETECTION.items():
         # Prüfe ob mindestens ein Marker-Package installiert ist
         for pkg in marker_packages:
             if importlib.util.find_spec(pkg) is not None:
                 installed_extras.add(extra_name)
                 break
-    
+
     return installed_extras
 
 
 def get_required_features() -> Set[str]:
     """
     Ermittle welche Features basierend auf installierten Extras benötigt werden.
-    
+
     Returns:
         Set von Feature-Namen die entpackt werden sollen
     """
     required = {CORE_FEATURE}  # Core ist immer dabei
-    
+
     installed_extras = detect_installed_extras()
-    
+
     for extra in installed_extras:
         if extra in EXTRA_TO_FEATURES:
             required.update(EXTRA_TO_FEATURES[extra])
-    
+
     return required
 
 
 def unpack_feature(feature_name: str, force: bool = False) -> bool:
     """
     Entpacke ein Feature aus seinem ZIP.
-    
+
     Args:
         feature_name: Name des Features
         force: Überschreibe existierendes Feature
-        
+
     Returns:
         True wenn erfolgreich entpackt
     """
     if is_feature_installed(feature_name) and not force:
         return True  # Bereits installiert
-    
+
     zip_path = get_packed_feature_path(feature_name)
+    if not zip_path:
+        zip_path = download_feature_from_registry(feature_name)
     if not zip_path:
         # Kein ZIP vorhanden - Feature ist vielleicht schon im Source
         # Erstelle .installed Marker falls feature.yaml existiert
@@ -175,46 +204,46 @@ def unpack_feature(feature_name: str, force: bool = False) -> bool:
             (get_features_dir() / feature_name / ".installed").touch()
             return True
         return False
-    
+
     try:
         package_root = get_package_root()
         features_dir = get_features_dir()
         feature_target = features_dir / feature_name
-        
+
         # Erstelle Features-Verzeichnis falls nicht vorhanden
         features_dir.mkdir(parents=True, exist_ok=True)
         feature_target.mkdir(parents=True, exist_ok=True)
-        
+
         with zipfile.ZipFile(zip_path, 'r') as zf:
             # Entpacke feature.yaml nach features/{name}/
             if "feature.yaml" in zf.namelist():
                 with zf.open("feature.yaml") as src:
                     (feature_target / "feature.yaml").write_bytes(src.read())
-                
+
                 # Extrahiere requirements.txt falls vorhanden
                 if "requirements.txt" in zf.namelist():
                     with zf.open("requirements.txt") as src:
                         (feature_target / "requirements.txt").write_bytes(src.read())
-            
+
             # Entpacke files/ nach entsprechenden Verzeichnissen
             for name in zf.namelist():
                 if name.startswith("files/") and not name.endswith("/"):
                     # Relativer Pfad ohne "files/" Prefix
                     rel_path = name[6:]  # Remove "files/"
                     target_file = package_root / rel_path
-                    
+
                     # Erstelle Verzeichnis falls nötig
                     target_file.parent.mkdir(parents=True, exist_ok=True)
-                    
+
                     # Extrahiere Datei
                     with zf.open(name) as src:
                         target_file.write_bytes(src.read())
-        
+
         # Erstelle .installed Marker
         (feature_target / ".installed").touch()
-        
+
         return True
-        
+
     except Exception as e:
         print(f"Warning: Failed to unpack feature '{feature_name}': {e}", file=sys.stderr)
         return False
@@ -223,15 +252,15 @@ def unpack_feature(feature_name: str, force: bool = False) -> bool:
 def ensure_features_loaded() -> Dict[str, bool]:
     """
     Stelle sicher dass alle benötigten Features geladen sind.
-    
+
     Wird beim Import von toolboxv2 aufgerufen.
-    
+
     Returns:
         Dict mit {feature_name: success}
     """
     results = {}
     required = get_required_features()
-    
+
     for feature_name in required:
         if is_feature_installed(feature_name):
             results[feature_name] = True
@@ -247,26 +276,26 @@ def ensure_features_loaded() -> Dict[str, bool]:
                 results[feature_name] = True
             else:
                 results[feature_name] = False
-    
+
     return results
 
 
 def get_feature_status() -> Dict[str, dict]:
     """
     Zeige Status aller Features.
-    
+
     Returns:
         Dict mit Feature-Infos
     """
     status = {}
-    
+
     # Alle möglichen Features
     all_features = {CORE_FEATURE}
     for features in EXTRA_TO_FEATURES.values():
         all_features.update(features)
-    
+
     required = get_required_features()
-    
+
     for feature_name in sorted(all_features):
         status[feature_name] = {
             "required": feature_name in required,
@@ -274,21 +303,21 @@ def get_feature_status() -> Dict[str, dict]:
             "packed": is_feature_packed(feature_name),
             "available": is_feature_available(feature_name),
         }
-    
+
     return status
 
 
 def list_available_features() -> List[str]:
     """Liste alle verfügbaren Features (installiert oder gepackt)."""
     available = set()
-    
+
     # Installierte Features
     features_dir = get_features_dir()
     if features_dir.exists():
         for feature_dir in features_dir.iterdir():
             if feature_dir.is_dir() and (feature_dir / "feature.yaml").exists():
                 available.add(feature_dir.name)
-    
+
     # Gepackte Features
     packed_dir = get_features_packed_dir()
     if packed_dir.exists():
@@ -299,26 +328,26 @@ def list_available_features() -> List[str]:
                 parts = name[13:].rsplit("-", 2)  # Remove prefix, split by -
                 if parts:
                     available.add(parts[0])
-    
+
     return sorted(available)
 
 
 def cleanup_unpacked_features(keep_features: Optional[Set[str]] = None):
     """
     Lösche entpackte Features die nicht mehr benötigt werden.
-    
+
     Args:
         keep_features: Features die behalten werden sollen (Default: required features)
     """
     if keep_features is None:
         keep_features = get_required_features()
-    
+
     features_dir = get_features_dir()
     package_root = get_package_root()
-    
+
     if not features_dir.exists():
         return
-    
+
     for feature_dir in features_dir.iterdir():
         if feature_dir.is_dir() and feature_dir.name not in keep_features:
             # Prüfe ob es ein gepacktes Backup gibt
@@ -331,7 +360,7 @@ def cleanup_unpacked_features(keep_features: Optional[Set[str]] = None):
                         import yaml
                         with open(feature_yaml) as f:
                             config = yaml.safe_load(f) or {}
-                        
+
                         # Lösche Feature-Dateien
                         for pattern in config.get("files", []):
                             if pattern.endswith("/*"):
@@ -344,7 +373,7 @@ def cleanup_unpacked_features(keep_features: Optional[Set[str]] = None):
                                     file_path.unlink()
                     except Exception:
                         pass
-                
+
                 # Lösche Feature-Verzeichnis
                 shutil.rmtree(feature_dir)
 
@@ -353,90 +382,90 @@ def cleanup_unpacked_features(keep_features: Optional[Set[str]] = None):
 def main():
     """CLI für Feature-Loader."""
     import argparse
-    
+
     parser = argparse.ArgumentParser(
         description="ToolBoxV2 Feature Loader",
-        prog="python -m toolboxv2.feature_loader"
+        prog="tb fl"
     )
-    
+
     subparsers = parser.add_subparsers(dest="command")
-    
+
     # status
     subparsers.add_parser("status", help="Show feature status")
-    
+
     # list
     subparsers.add_parser("list", help="List available features")
-    
+
     # load
     p_load = subparsers.add_parser("load", help="Load/unpack required features")
     p_load.add_argument("--all", action="store_true", help="Load all features")
     p_load.add_argument("--force", action="store_true", help="Force reload")
-    
+
     # unpack
     p_unpack = subparsers.add_parser("unpack", help="Unpack specific feature")
     p_unpack.add_argument("feature", help="Feature name")
     p_unpack.add_argument("--force", action="store_true", help="Force unpack")
-    
+
     # cleanup
     p_cleanup = subparsers.add_parser("cleanup", help="Remove non-required features")
-    
+
     args = parser.parse_args()
-    
+
     if args.command == "status":
         print("\n=== Feature Status ===\n")
         status = get_feature_status()
         required = get_required_features()
         installed_extras = detect_installed_extras()
-        
+
         print(f"Detected extras: {installed_extras or 'none'}")
         print(f"Required features: {required}")
         print()
-        
+
         for name, info in status.items():
             req = "✓" if info["required"] else " "
             inst = "✓" if info["installed"] else "✗"
             pack = "✓" if info["packed"] else " "
             avail = "✓" if info["available"] else "✗"
             print(f"  [{req}] {name:12} installed={inst} packed={pack} available={avail}")
-    
+
     elif args.command == "list":
         print("\n=== Available Features ===\n")
         for feature in list_available_features():
             installed = "✓" if is_feature_installed(feature) else " "
             packed = "(packed)" if is_feature_packed(feature) else "(source)"
             print(f"  [{installed}] {feature} {packed}")
-        
+
     elif args.command == "load":
         if args.all:
             features = set(list_available_features())
         else:
             features = get_required_features()
-        
+
         print(f"\nLoading features: {features}\n")
         for feature in features:
             success = unpack_feature(feature, force=args.force)
             status = "✓" if success else "✗"
             print(f"  {status} {feature}")
-            
+
     elif args.command == "unpack":
         if not is_feature_available(args.feature):
             print(f"✗ Feature not available: {args.feature}")
             print(f"  Available: {list_available_features()}")
             sys.exit(1)
-        
+
         success = unpack_feature(args.feature, force=args.force)
         if success:
             print(f"✓ Unpacked: {args.feature}")
         else:
             print(f"✗ Failed to unpack: {args.feature}")
             sys.exit(1)
-    
+
     elif args.command == "cleanup":
         print("\nCleaning up non-required features...\n")
         required = get_required_features()
         cleanup_unpacked_features(required)
         print("Done.")
-        
+
     else:
         parser.print_help()
 

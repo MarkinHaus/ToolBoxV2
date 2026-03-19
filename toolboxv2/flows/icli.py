@@ -18,14 +18,10 @@ Version: 4.0.0
 import asyncio
 import logging
 import os
-import random
 import shutil
 import subprocess
 import threading
-import time
-import time as _time
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -33,7 +29,6 @@ import requests
 from prompt_toolkit.document import Document
 
 from toolboxv2.mods.isaa.extras.isaa_branding import get_greeting
-from toolboxv2.mods.isaa.extras.zen.zen_plus import ZenPlus
 
 # Suppress noisy loggers
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
@@ -45,7 +40,6 @@ from prompt_toolkit.completion import FuzzyCompleter, NestedCompleter, PathCompl
     Completion
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.history import FileHistory
-from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
 
 # ToolBoxV2 Imports
@@ -63,14 +57,13 @@ from toolboxv2.mods.isaa.base.Agent.vfs_v2 import FileBackingType, VFSFile
 from toolboxv2.mods.isaa.base.AgentUtils import detect_shell
 from toolboxv2.mods.isaa.base.audio_io.audioIo import AudioStreamPlayer
 
-from toolboxv2.mods.isaa.extras.zen.zen_renderer import ZenRendererV2, _esc, C
+from toolboxv2.mods.isaa.extras.zen.zen_renderer import  _esc, C
 from toolboxv2.mods.isaa.extras.jobs import JobDefinition, TriggerConfig, JobScheduler
 
 import html
 from pathlib import Path
 from toolboxv2.utils.extras.mkdocs import DocsSystem
 from toolboxv2 import init_cwd, tb_root_dir
-import json
 from prompt_toolkit import print_formatted_text, HTML
 from toolboxv2.mods.isaa.CodingAgent.coder import CoderAgent
 import sys
@@ -78,6 +71,516 @@ if sys.platform == "win32":
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     # sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
+
+"""
+ISAA Live View — A+B combined task dashboard.
+A: persistent bottom_toolbar (all tasks always visible)
+B: F2 fullscreen overlay (left=task list, right=iteration detail)
+"""
+import json
+import time
+from dataclasses import dataclass, field
+from typing import Optional
+
+from prompt_toolkit import Application
+from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout import Layout, HSplit, VSplit, Window, FormattedTextControl
+from prompt_toolkit.layout.dimension import Dimension
+
+C = {
+    "dim": "#6b7280", "cyan": "#67e8f9", "green": "#4ade80",
+    "red": "#f87171", "amber": "#fbbf24", "white": "#e5e7eb",
+    "bright": "#ffffff", "blue": "#60a5fa", "purple": "#a78bfa",
+}
+SYM = {
+    "ok": "✓", "fail": "✗", "done": "●", "think": "◎",
+    "tool": "◇", "sub": "✦", "bar_fill": "━", "bar_empty": "─",
+}
+STATUS_SYM = {
+    "running":   ("◯", "cyan"),
+    "completed": ("●", "green"),
+    "done":      ("●", "green"),
+    "failed":    ("✗", "red"),
+    "error":     ("✗", "red"),
+    "cancelled": ("⏸", "dim"),
+}
+
+
+def _short(s: str, n: int) -> str:
+    return s[:n] + ".." if len(s) > n + 2 else s
+
+
+def _bar(cur: int, total: int, w: int = 8) -> str:
+    if total <= 0:
+        return SYM["bar_empty"] * w
+    f = int(w * min(cur, total) / total)
+    return SYM["bar_fill"] * f + SYM["bar_empty"] * (w - f)
+
+
+def _fmt_elapsed(secs: float) -> str:
+    s = int(secs)
+    if s < 60:
+        return f"{s}s"
+    m, s = divmod(s, 60)
+    if m < 60:
+        return f"{m}m{s:02d}s"
+    h, m = divmod(m, 60)
+    return f"{h}h{m:02d}m"
+
+
+def _tool_result_info(name: str, result_raw: str) -> tuple[bool, str]:
+    """Returns (success, short_info). Matches init_session_tools return types."""
+    try:
+        r = json.loads(result_raw) if isinstance(result_raw, str) and result_raw.strip() else result_raw
+    except Exception:
+        r = {}
+    if isinstance(r, list):
+        return True, f"{len(r)} items"
+    if not isinstance(r, dict):
+        return True, _short(str(result_raw), 35)
+
+    success = r.get("success", True)
+
+    if name == "vfs_shell":
+        stdout = r.get("stdout", "") or ""
+        return success, _short(stdout.split("\n")[0], 38)
+    if name == "vfs_view":
+        lines = r.get("lines_shown", r.get("total_lines", ""))
+        return success, f"{lines} lines" if lines else ""
+    if name == "search_vfs":
+        results = r.get("results", r.get("matches", []))
+        return success, f"{len(results) if isinstance(results, list) else '?'} results"
+    if name in ("fs_copy_to_vfs", "fs_copy_from_vfs", "fs_copy_dir_from_vfs",
+                "vfs_mount", "vfs_unmount", "vfs_sync_all", "vfs_refresh_mount"):
+        return success, _short(r.get("path", r.get("vfs_path", "")), 30)
+    if name == "docker_run":
+        stdout = r.get("stdout", "") or ""
+        return success, _short(stdout.split("\n")[0], 38)
+    if name == "docker_logs":
+        logs = r.get("logs", r.get("output", "")) or ""
+        return success, _short(logs.split("\n")[-2] if logs else "", 38)
+    if name == "check_permissions":
+        return r.get("allowed", True), _short(r.get("rule", ""), 30)
+    if name == "set_agent_situation":
+        return success, _short(r.get("intent", ""), 30)
+    if name == "vfs_share_create":
+        return success, _short(r.get("share_id", ""), 20)
+    for key in ("message", "info", "path", "error"):
+        if key in r:
+            return success, _short(str(r[key]), 35)
+    return success, ""
+
+
+# ── Data model ────────────────────────────────────────────────────────────────
+
+@dataclass
+class IterView:
+    n: int
+    thoughts: list[str] = field(default_factory=list)
+    # (tool_name, success, elapsed_s, info_str)
+    tools: list[tuple[str, bool, float, str]] = field(default_factory=list)
+    _tool_start_times: dict[str, float] = field(default_factory=dict)
+    pending_tool: str = ""   # currently running tool name
+
+
+@dataclass
+class TaskView:
+    task_id: str
+    agent_name: str
+    query: str
+    status: str = "running"
+    persona: str = ""
+    skills: list[str] = field(default_factory=list)
+    iteration: int = 0
+    max_iter: int = 0
+    tokens_used: int = 0
+    tokens_max: int = 0
+    phase: str = "running"
+    last_tool: str = ""
+    last_tool_ok: bool = True
+    last_tool_info: str = ""
+    last_thought: str = ""
+    sub_agents: dict[str, int] = field(default_factory=dict)
+    _sub_color_counter: int = 0
+    iterations: list[IterView] = field(default_factory=list)
+    _iter_map: dict[int, IterView] = field(default_factory=dict)
+    started_at: float = field(default_factory=time.time)
+
+    def _get_iter(self, n: int) -> IterView:
+        if n not in self._iter_map:
+            iv = IterView(n=n)
+            self._iter_map[n] = iv
+            self.iterations.append(iv)
+        return self._iter_map[n]
+
+    def _sub_color(self, name: str) -> int:
+        if name not in self.sub_agents:
+            self.sub_agents[name] = self._sub_color_counter % 6
+            self._sub_color_counter += 1
+        return self.sub_agents[name]
+
+
+def ingest_chunk(tv: TaskView, chunk: dict) -> None:
+    """Fill TaskView from one stream chunk. No side effects outside tv."""
+    if chunk.get("agent"):
+        tv.agent_name = chunk["agent"]
+    if chunk.get("persona"):
+        tv.persona = chunk["persona"]
+    if chunk.get("skills"):
+        tv.skills = chunk["skills"]
+    if chunk.get("iter") is not None:
+        tv.iteration = chunk["iter"]
+    if chunk.get("max_iter") is not None:
+        tv.max_iter = chunk["max_iter"]
+    if chunk.get("tokens_used") is not None:
+        tv.tokens_used = chunk["tokens_used"]
+    if chunk.get("tokens_max") is not None:
+        tv.tokens_max = chunk["tokens_max"]
+
+    sub_id = chunk.get("_sub_agent_id", "")
+    if sub_id:
+        tv._sub_color(sub_id)
+
+    t = chunk.get("type", "")
+    iv = tv._get_iter(tv.iteration) if tv.iteration > 0 else None
+
+    if t == "reasoning":
+        thought = chunk.get("chunk", "")
+        tv.phase = "thinking"
+        tv.last_thought = thought
+        if iv and thought:
+            iv.thoughts.append(thought)
+
+    elif t == "content":
+        tv.phase = "content"
+
+    elif t == "tool_start":
+        name = chunk.get("name", "?")
+        tv.last_tool = name
+        tv.phase = "tool"
+        if iv:
+            iv.pending_tool = name
+            iv._tool_start_times[name] = time.time()
+
+    elif t == "tool_result":
+        name = chunk.get("name", tv.last_tool)
+        result_raw = chunk.get("result", "")
+        success, info = _tool_result_info(name, result_raw)
+        elapsed = 0.0
+        if iv and name in iv._tool_start_times:
+            elapsed = time.time() - iv._tool_start_times.pop(name)
+        tv.last_tool = name
+        tv.last_tool_ok = success
+        tv.last_tool_info = info
+        tv.phase = "tool_done"
+        if iv:
+            iv.tools.append((name, success, elapsed, info))
+            iv.pending_tool = ""
+
+    elif t == "done":
+        tv.status = "completed" if chunk.get("success", True) else "failed"
+        tv.phase = "done"
+
+    elif t == "error":
+        tv.status = "error"
+        tv.phase = "error"
+
+    elif t == "final_answer":
+        tv.phase = "done"
+        tv.status = "completed"
+
+
+# ── A: Footer toolbar renderer ────────────────────────────────────────────────
+
+def render_footer_toolbar(
+    task_views: dict[str, TaskView],
+    focused_id: Optional[str],
+    audio_recording: bool = False,
+    audio_processing: bool = False,
+    overlay_open: bool = False,
+) -> list[tuple[str, str]]:
+    """FormattedText tuples for PromptSession bottom_toolbar. Multi-line."""
+    out: list[tuple[str, str]] = []
+    bg = "fg:ansiblack "
+
+    if audio_recording:
+        out.append((bg + "bg:ansired", " ● REC  F4=stop "))
+        return out
+    if audio_processing:
+        out.append((bg + "bg:ansimagenta", " ⚙ PROC  processing... "))
+        return out
+
+    if not task_views:
+        out.append((bg + "bg:#6b7280", " ◦ idle   F2=overview  F4=audio  F5=status "))
+        return out
+
+    if overlay_open:
+        out.append((bg + "fg:#67e8f9", " ◎ ZEN+ OPEN "))
+        out.append((bg + "fg:#6b7280", " Esc=close\n"))
+
+    shown = list(task_views.items())[:5]
+    overflow = len(task_views) - len(shown)
+
+    for tid, tv in shown:
+        _append_task_line(out, tv, tid == focused_id)
+        out.append((bg, "\n"))
+
+    if overflow:
+        out.append((bg + "fg:#6b7280", f"  … +{overflow} more "))
+        out.append((bg, "\n"))
+
+    out.append((bg + "fg:#374151",
+                " F2=detail  F6=focus  F7=cycle  F8=cancel  F4=audio  F5=status "))
+    return out
+
+
+def _append_task_line(out: list, tv: TaskView, focused: bool) -> None:
+    bg = "bg:ansiblack "
+    out.append((bg + ("fg:#67e8f9" if focused else "fg:#6b7280"), " ▸ " if focused else "   "))
+
+    sym, col = STATUS_SYM.get(tv.status, ("◯", "cyan"))
+    out.append((bg + f"fg:{C[col]}", f"{sym} "))
+    out.append((bg + "fg:#e5e7eb", f"{_short(tv.agent_name, 10):<10} "))
+
+    bar = _bar(tv.iteration, tv.max_iter, 8)
+    out.append((bg + "fg:#67e8f9", bar))
+    out.append((bg + "fg:#6b7280", f" {tv.iteration}/{tv.max_iter:<3} "))
+
+    if tv.persona and tv.persona != "default":
+        out.append((bg + "fg:#a78bfa", f"{_short(tv.persona, 8):<8} "))
+    else:
+        out.append((bg + "fg:#6b7280", "         "))
+
+    if tv.tokens_max > 0:
+        pct = min(100, int(100 * tv.tokens_used / tv.tokens_max))
+        tc = C["green"] if pct < 50 else (C["amber"] if pct < 80 else C["red"])
+        out.append((bg + f"fg:{tc}", f"{pct:3d}% "))
+    else:
+        out.append((bg + "fg:#6b7280", "     "))
+
+    if tv.phase == "thinking":
+        out.append((bg + "fg:#6b7280", f"◎ {_short(tv.last_thought.replace(chr(10), ' '), 30)} "))
+    elif tv.phase in ("tool", "tool_done") and tv.last_tool:
+        ok_col = C["green"] if tv.last_tool_ok else C["red"]
+        ok_sym = SYM["ok"] if tv.last_tool_ok else SYM["fail"]
+        out.append((bg + "fg:#60a5fa", f"◇ {_short(tv.last_tool, 14)} "))
+        out.append((bg + f"fg:{ok_col}", f"{ok_sym} "))
+        if tv.last_tool_info:
+            out.append((bg + "fg:#6b7280", f"{_short(tv.last_tool_info, 20)} "))
+    elif tv.status == "completed":
+        out.append((bg + f"fg:{C['green']}", f"● done {_fmt_elapsed(time.time() - tv.started_at)} "))
+    elif tv.status in ("failed", "error"):
+        out.append((bg + f"fg:{C['red']}", "✗ failed "))
+    else:
+        out.append((bg + "fg:#6b7280", "⋯ "))
+
+    if tv.sub_agents:
+        out.append((bg + "fg:#f472b6", f"✦{len(tv.sub_agents)} "))
+
+
+# ── B: Fullscreen overlay ─────────────────────────────────────────────────────
+
+class TaskOverlay:
+    """
+    Fullscreen detail view. Shared reference to task_views — no copy, no queue.
+    ingest_chunk() writes directly; invalidate() redraws.
+    """
+
+    def __init__(self, task_views: dict[str, TaskView]):
+        self._views = task_views
+        self._selected: str = ""
+        self._scroll: int = 0
+        self._app: Optional[Application] = None
+
+    async def run(self, on_exit) -> None:
+        running = [k for k, v in self._views.items() if v.status == "running"]
+        self._selected = running[0] if running else (next(iter(self._views), ""))
+        self._scroll = 0
+
+        left = Window(
+            FormattedTextControl(self._render_left, focusable=False),
+            width=Dimension(min=26, max=30),
+            style="bg:ansiblack",
+        )
+        right = Window(
+            FormattedTextControl(self._render_right, focusable=False),
+            style="bg:ansiblack",
+        )
+        divider = Window(width=1, char="│", style="fg:#374151 bg:ansiblack")
+        footer_win = Window(
+            FormattedTextControl(self._render_footer, focusable=False),
+            height=1,
+            style="bg:#111827",
+        )
+
+        self._app = Application(
+            layout=Layout(HSplit([VSplit([left, divider, right]), footer_win])),
+            key_bindings=self._build_keys(on_exit),
+            full_screen=True,
+            mouse_support=False,
+        )
+        await self._app.run_async()
+
+    def invalidate(self) -> None:
+        if self._app:
+            self._app.invalidate()
+
+    # ── renderers ────────────────────────────────────────────────────────────
+
+    def _render_left(self) -> FormattedText:
+        bg = "bg:ansiblack "
+        out: list[tuple[str, str]] = [
+            (bg + "fg:#67e8f9 bold", " ◯ Tasks\n"),
+            (bg + "fg:#374151", " " + "─" * 26 + "\n"),
+        ]
+        for tid, tv in self._views.items():
+            sel = tid == self._selected
+            sym, col = STATUS_SYM.get(tv.status, ("◯", "cyan"))
+            bg2 = "bg:#1f2937 " if sel else bg
+            out.append((bg2 + f"fg:{C[col]}", (" ▸ " if sel else "   ") + sym + " "))
+            out.append((bg2 + ("fg:#ffffff bold" if sel else "fg:#e5e7eb"),
+                        _short(tv.agent_name, 17) + "\n"))
+            for sub in tv.sub_agents:
+                out.append((bg2 + "fg:#f472b6", "    ✦ " + _short(sub, 14) + "\n"))
+        return FormattedText(out)
+
+    def _render_right(self) -> FormattedText:
+        bg = "bg:ansiblack "
+        out: list[tuple[str, str]] = []
+        tv = self._views.get(self._selected)
+        if not tv:
+            out.append((bg + "fg:#6b7280", " No task selected\n"))
+            return FormattedText(out)
+
+        # Header
+        sym, col = STATUS_SYM.get(tv.status, ("◯", "cyan"))
+        out.append((bg + f"fg:{C[col]} bold", f" {sym} {tv.agent_name}"))
+        out.append((bg + "fg:#6b7280", f"  {_short(tv.query, 55)}\n"))
+
+        # Persona + skills
+        if tv.persona and tv.persona != "default":
+            out.append((bg + "fg:#a78bfa", f"   Persona: {tv.persona}"))
+            if tv.skills:
+                out.append((bg + "fg:#6b7280", "  Skills: "))
+                out.append((bg + "fg:#60a5fa", " ".join(tv.skills[:8])))
+            out.append((bg, "\n"))
+
+        # Token bar
+        if tv.tokens_max > 0:
+            pct = min(100, int(100 * tv.tokens_used / tv.tokens_max))
+            filled = int(20 * pct / 100)
+            bar = "█" * filled + "░" * (20 - filled)
+            tc = C["green"] if pct < 50 else (C["amber"] if pct < 80 else C["red"])
+            out.append((bg + "fg:#6b7280", "   Tokens: "))
+            out.append((bg + f"fg:{tc}", f"[{bar}] {pct}%"))
+            out.append((bg + "fg:#6b7280", f"  {tv.tokens_used:,}/{tv.tokens_max:,}\n"))
+
+        # Iter progress bar
+        bar_s = _bar(tv.iteration, tv.max_iter, 20)
+        out.append((bg + "fg:#67e8f9", f"   {bar_s}"))
+        out.append((bg + "fg:#6b7280", f"  iter {tv.iteration}/{tv.max_iter}\n"))
+        out.append((bg + "fg:#374151", "   " + "─" * 62 + "\n"))
+
+        # Iteration history (newest first, scrollable)
+        iters = list(reversed(tv.iterations))
+        skip = self._scroll
+
+        for iv in iters:
+            iter_lines = 1 + len(iv.thoughts) + len(iv.tools) + (1 if iv.pending_tool else 0)
+            if skip >= iter_lines:
+                skip -= iter_lines
+                continue
+
+            is_cur = iv.n == tv.iteration and tv.status == "running"
+            hint = " ▸ running" if is_cur else ""
+            out.append((bg + "fg:#fbbf24 bold",
+                        f"   ── iter {iv.n}{hint} " + "─" * 28 + "\n"))
+
+            # Thoughts (full, no truncation on selected, short otherwise)
+            for thought in iv.thoughts:
+                clean = thought.replace("\n", " ")
+                out.append((bg + "fg:#6b7280", "   ◎ "))
+                out.append((bg + "fg:#e5e7eb", _short(clean, 72) + "\n"))
+
+            # Completed tools
+            for tname, tok, elapsed, info in iv.tools:
+                ok_col = C["green"] if tok else C["red"]
+                ok_sym = SYM["ok"] if tok else SYM["fail"]
+                elapsed_s = f"{elapsed:.2f}s" if elapsed > 0 else "     "
+                out.append((bg + "fg:#60a5fa", "   ◇ "))
+                out.append((bg + "fg:#e5e7eb", f"{_short(tname, 18):<18} "))
+                out.append((bg + f"fg:{ok_col}", f"{ok_sym}  "))
+                out.append((bg + "fg:#6b7280", f"{elapsed_s:>7}  "))
+                if info:
+                    out.append((bg + "fg:#9ca3af", _short(info, 40)))
+                out.append((bg, "\n"))
+
+            # Running tool
+            if iv.pending_tool:
+                out.append((bg + "fg:#60a5fa", "   ◇ "))
+                out.append((bg + "fg:#fbbf24",
+                            f"{_short(iv.pending_tool, 18):<18} ⋯ running...\n"))
+
+        if not tv.iterations:
+            out.append((bg + "fg:#6b7280", "   waiting for first iteration...\n"))
+
+        return FormattedText(out)
+
+    def _render_footer(self) -> FormattedText:
+        tv = self._views.get(self._selected)
+        n_run = sum(1 for v in self._views.values() if v.status == "running")
+        iter_s = f"iter {tv.iteration}/{tv.max_iter}" if tv else ""
+        return FormattedText([(
+            "bg:#111827 fg:#6b7280",
+            f" ↑↓/Tab=select  j/k PgDn/PgUp=scroll  Esc/F2=close "
+            f"│ {n_run} running │ {iter_s} "
+        )])
+
+    # ── keys ────────────────────────────────────────────────────────────────
+
+    def _build_keys(self, on_exit) -> KeyBindings:
+        kb = KeyBindings()
+        ov = self
+
+        @kb.add("escape")
+        @kb.add("f2")
+        def _close(event):
+            event.app.exit()
+            on_exit()
+
+        @kb.add("tab")
+        @kb.add("down")
+        def _next(event):
+            keys = list(ov._views.keys())
+            if not keys:
+                return
+            idx = keys.index(ov._selected) if ov._selected in keys else -1
+            ov._selected = keys[(idx + 1) % len(keys)]
+            ov._scroll = 0
+
+        @kb.add("s-tab")
+        @kb.add("up")
+        def _prev(event):
+            keys = list(ov._views.keys())
+            if not keys:
+                return
+            idx = keys.index(ov._selected) if ov._selected in keys else 0
+            ov._selected = keys[(idx - 1) % len(keys)]
+            ov._scroll = 0
+
+        @kb.add("pagedown")
+        @kb.add("j")
+        def _sd(event):
+            ov._scroll += 5
+
+        @kb.add("pageup")
+        @kb.add("k")
+        def _su(event):
+            ov._scroll = max(0, ov._scroll - 5)
+
+        return kb
 
 # =================== Helpers & Setup ===================
 MODEL_MAPPING = {
@@ -268,7 +771,6 @@ def esc(text: Any) -> str:
     """Escaped Text für HTML-Tags, verhindert Crash bei < oder > im Text"""
     return html.escape(str(text).encode().decode(encoding="utf-8", errors="replace"))
 
-
 def c_print(*args, **kwargs):
     """Drop-in Replacement für print, nutzt prompt_toolkit"""
     # Konvertiert alles zu Strings und escaped es
@@ -287,6 +789,10 @@ def c_print(*args, **kwargs):
         except:
             print(text)
 
+def ansi_c_print(*a, **kw):
+    text = " ".join(str(x) for x in a)
+    # Wir übergeben es explizit als ANSI-Objekt an c_print
+    c_print(ANSI(text), **kw)
 
 def print_box_header(title: str, icon: str = "ℹ", width: int = 76):
     """1. Header mit Icon und Titel"""
@@ -473,16 +979,27 @@ DEFAULT_RATE_LIMITER_CONFIG = {
 
 
 @dataclass
-class BackgroundTask:
-    """Represents a background task running an agent."""
+class ExecutionTask:
+    """Unified execution record — single source of truth for all agent runs.
+    kind  : 'chat' | 'task' | 'job' | 'delegate'
+    """
 
     task_id: str
     agent_name: str
-    run_id: str
     query: str
-    task: asyncio.Task
-    started_at: datetime = field(default_factory=datetime.now)
+    kind: str                                   # 'chat' | 'task' | 'job' | 'delegate'
+    async_task: asyncio.Task
+    run_id: str = ""
+    stream: Any = None
+    started_at: float = field(default_factory=time.time)
     status: str = "running"
+    is_focused: bool = False
+    result_text: str = ""
+    _agent_ref: Any = None
+
+
+# Backward-compat alias — nothing external should need this any more
+BackgroundTask = ExecutionTask
 
 
 @dataclass
@@ -1235,17 +1752,7 @@ _help_text = {
     Tip: Add #audio to any message for one‑time audio response
     """,
 }
-@dataclass
-class LiveAgentTask:
-    task_id: str
-    agent_name: str
-    query: str
-    renderer: ZenRendererV2
-    async_task: asyncio.Task
-    stream: Any = None
-    started_at: float = field(default_factory=time.time)
-    status: str = "running"  # running, completed, failed, cancelled
-    result_text: str = ""
+
 # =============================================================================
 # ISAA HOST - MAIN CLASS
 # =============================================================================
@@ -1296,8 +1803,9 @@ class ISAA_Host:
                 c_print(ANSI(text))
         self.app._print = _
 
-        self._active_tasks: dict[str, "LiveAgentTask"] = {}  # task_id → LiveAgentTask
-        self._focused_task_id: str | None = None  # welcher Task gerade Output zeigt
+        # SSOT: single registry for ALL executions (chat / task / job / delegate)
+        self.all_executions: dict[str, ExecutionTask] = {}
+        self._focused_task_id: str | None = None
 
         # Get ISAA Tools module - THE source of truth for agent management
         self.isaa_tools: 'IsaaTools' = self.app.get_mod("isaa")
@@ -1311,8 +1819,6 @@ class ISAA_Host:
         # Agent Registry (metadata only - actual instances via isaa_tools)
         self.agent_registry: dict[str, AgentInfo] = {}
 
-        # Background Task Manager
-        self.background_tasks: dict[str, BackgroundTask] = {}
         self._task_counter = 0
 
         # Session state
@@ -1359,7 +1865,9 @@ class ISAA_Host:
 
         # Self Agent initialization flag
         self._self_agent_initialized = False
-        self._active_renderer: ZenRendererV2 | None = None
+
+        self._task_views: dict[str, TaskView] = {}
+        self._overlay: TaskOverlay | None = None
 
         # Job Scheduler
         self.jobs_file = Path(self.app.appdata) / "icli" / "isaa_host_jobs.json"
@@ -1374,6 +1882,23 @@ class ISAA_Host:
         for feature in ALL_FEATURES.values():
             feature(self.feature_manager)
 
+    def _ingest_chunk(self, task_id: str, chunk: dict) -> None:
+        """Forward one stream chunk into the TaskView for task_id."""
+        tv = self._task_views.get(task_id)
+        if tv is None:
+            return
+        running = any(v.status == "running" for v in self._task_views.values())
+        self.set_dynamic_interval(0.5 if running else 1.5)
+        ingest_chunk(tv, chunk)
+        # Trigger toolbar refresh
+        if self.prompt_session and self.prompt_session.app:
+            try:
+                self.prompt_session.app.invalidate()
+            except Exception:
+                pass
+        # Trigger overlay refresh
+        if self._overlay:
+            self._overlay.invalidate()
 
     # =========================================================================
     # RATE LIMITER CONFIG MANAGEMENT
@@ -1494,115 +2019,73 @@ class ISAA_Host:
 
         @kb.add("f6")
         def _(event):
-            """F6: Toggle fokussierten Task minimize/maximize."""
+            running = [t for t in self.all_executions.values() if t.status == "running"]
             if not self._focused_task_id:
-                running = [t for t in self._active_tasks.values() if t.status == "running"]
                 if running:
-                    c_print(HTML(
-                        f"<style fg='{PTColors.ZEN_DIM}'>"
-                        f"  {len(running)} tasks running. /task status</style>"
-                    ))
+                    first = running[0]
+                    first.is_focused = True
+                    self._focused_task_id = first.task_id
+                    c_print(HTML(f"<style fg='{PTColors.ZEN_CYAN}'>  ◎ Focus → {first.task_id}</style>"))
                 else:
                     c_print(HTML(f"<style fg='{PTColors.ZEN_DIM}'>  No active tasks</style>"))
                 return
-
-            task = self._active_tasks.get(self._focused_task_id)
-            if not task:
-                return
-
-            renderer = task.renderer
-            renderer.toggle_minimize()
-
-            if renderer.minimized:
-                c_print(HTML(
-                    f"<style fg='#fbbf24'>  ▾ {task.task_id} minimized</style>"
-                ))
-            else:
-                c_print(HTML(
-                    f"<style fg='#67e8f9'>  ◎ {task.task_id} maximized</style>"
-                ))
+            if self._focused_task_id in self.all_executions:
+                self.all_executions[self._focused_task_id].is_focused = False
+            self._focused_task_id = None
+            c_print(HTML(f"<style fg='{PTColors.ZEN_DIM}'>  ▾ Task unfocused</style>"))
 
         @kb.add("f7")
         def _(event):
-            """F7: Fokus auf nächsten laufenden Task wechseln."""
-            running = [tid for tid, t in self._active_tasks.items()
-                       if t.status == "running"]
-            if len(running) < 2:
+            candidates = [tid for tid, t in self.all_executions.items() if t.status == "running"]
+            if not candidates:
                 return
-
-            # Minimize aktuellen
-            if self._focused_task_id and self._focused_task_id in self._active_tasks:
-                old = self._active_tasks[self._focused_task_id]
-                if not old.renderer.minimized:
-                    old.renderer.toggle_minimize()
-
-            # Nächsten finden
+            if self._focused_task_id and self._focused_task_id in self.all_executions:
+                self.all_executions[self._focused_task_id].is_focused = False
             try:
-                idx = running.index(self._focused_task_id)
-                next_id = running[(idx + 1) % len(running)]
-            except ValueError:
-                next_id = running[0]
-
+                idx = candidates.index(self._focused_task_id)
+                next_id = candidates[(idx + 1) % len(candidates)]
+            except (ValueError, TypeError):
+                next_id = candidates[0]
+            self.all_executions[next_id].is_focused = True
             self._focused_task_id = next_id
-            new_task = self._active_tasks[next_id]
-            self._active_renderer = new_task.renderer
-            if new_task.renderer.minimized:
-                new_task.renderer.toggle_minimize()
-
-            c_print(HTML(
-                f"<style fg='#67e8f9'>"
-                f"  ◎ Focus → {next_id}</style>"
-            ))
+            c_print(HTML(f"<style fg='#67e8f9'>  ◎ Focus → {next_id}</style>"))
 
         @kb.add("f8")
         def _(event):
-            """F8: Fokussierten Task canceln."""
+            """F8: Cancel the focused task — isolated, does not kill the CLI."""
             if not self._focused_task_id:
                 return
-            task = self._active_tasks.get(self._focused_task_id)
-            if task and task.status == "running":
-                task.async_task.cancel()
+            exc = self.all_executions.get(self._focused_task_id)
+            if exc and exc.status == "running":
+                exc.async_task.cancel()
                 c_print(HTML(
-                    f"<style fg='#fbbf24'>"
-                    f"  ⚠ Cancelling {task.task_id}...</style>"
+                    f"<style fg='#fbbf24'>  ⚠ Cancelling {exc.task_id}...</style>"
                 ))
 
         @kb.add("f2")
         def _(event):
+            if self._overlay:
+                # Already open — ignore (Esc closes it from inside)
+                return
             self.zen_plus_mode = not self.zen_plus_mode
             mode = "ZEN+" if self.zen_plus_mode else "ZEN"
-            from prompt_toolkit import print_formatted_text, HTML
-            c_print(HTML(
-                f"<style fg='#67e8f9'>  ◎ Mode: {mode}</style>"
-            ))
+            c_print(HTML(f"<style fg='#67e8f9'>  ◎ Mode: {mode}</style>"))
 
-            if self.zen_plus_mode and self._active_renderer:
-                # Mid-stream: ZenPlus sofort starten mit bestehendem Stream
-                zp = ZenPlus.get()
-                zp.clear_panes()
-                self._active_renderer.set_zen_plus(zp)
+            if self.zen_plus_mode:
+                overlay = TaskOverlay(self._task_views)
+                self._overlay = overlay
 
-                # Replay buffered chunks
-                for c in self._active_renderer._chunk_buffer:
-                    zp.feed_chunk(c)
-
-                async def _run_zenplus():
+                async def _run_overlay():
                     def _on_exit():
                         self.zen_plus_mode = False
-                        if self._active_renderer:
-                            self._active_renderer.set_zen_plus(None)
+                        self._overlay = None
 
-                    await zp.start(on_exit=_on_exit)
+                    await overlay.run(on_exit=_on_exit)
 
-                asyncio.create_task(_run_zenplus())
-
-            elif not self.zen_plus_mode:
-                # Deactivate: stop ZenPlus, stream continues in ZEN
-                zp = ZenPlus.get()
-                if zp.active:
-                    asyncio.create_task(zp.stop())
-                if self._active_renderer:
-                    self._active_renderer.set_zen_plus(None)
+                asyncio.create_task(_run_overlay())
+            else:
+                # Toggle off — nothing to close (Esc does it from inside)
+                self._overlay = None
 
         @kb.add("tab")
         def handle_tab(event):
@@ -2366,7 +2849,7 @@ class ISAA_Host:
 
             bg_tasks = sum(
                 1
-                for t in self.background_tasks.values()
+                for t in self.all_executions.values()
                 if t.agent_name == agent_name and t.status == "running"
             )
 
@@ -2390,53 +2873,54 @@ class ISAA_Host:
     async def _tool_delegate(
         self, agent_name: str, task: str, wait: bool, session_id: str
     ) -> str:
-        """Implementation: Delegate task to agent."""
+        """Delegate task to another agent, registered in SSOT."""
         try:
             agent = await self.isaa_tools.get_agent(agent_name)
-
             run_id = uuid.uuid4().hex[:8]
 
             if wait:
-                # For synchronous wait, we still might want to see it in stats if possible,
-                # but usually CLI blocks here.
                 result = await agent.a_run(query=task, session_id=session_id, execution_id=run_id)
                 return str(result)
-            else:
-                self._task_counter += 1
-                task_id = f"task_{self._task_counter}_{agent_name}"
 
-                async def run_task():
-                    try:
-                        # Pass execution_id explicitly to link with engine
-                        result = await agent.a_run(query=task, session_id=session_id, execution_id=run_id)
-                        if task_id in self.background_tasks:
-                            self.background_tasks[task_id].status = "completed"
-                        return result
-                    except asyncio.CancelledError:
-                        if task_id in self.background_tasks:
-                            self.background_tasks[task_id].status = "cancelled"
-                        raise
-                    except Exception as e:
-                        if task_id in self.background_tasks:
-                            self.background_tasks[task_id].status = "failed"
-                        print_status(f"Task {task_id} failed: {e}", "error")
-                        raise
+            _tid_holder = [None]
 
-                async_task = asyncio.create_task(run_task())
+            async def run_task():
+                try:
+                    result = await agent.a_run(query=task, session_id=session_id, execution_id=run_id)
+                    exc = self.all_executions.get(_tid_holder[0])
+                    if exc:
+                        exc.status = "completed"
+                    return result
+                except asyncio.CancelledError:
+                    exc = self.all_executions.get(_tid_holder[0])
+                    if exc:
+                        exc.status = "cancelled"
+                    return ""
+                except Exception as e:
+                    exc = self.all_executions.get(_tid_holder[0])
+                    if exc:
+                        exc.status = "failed"
+                    return ""
 
-                self.background_tasks[task_id] = BackgroundTask(
-                    task_id=task_id,
-                    run_id=run_id,  # Store run_id
-                    agent_name=agent_name,
-                    query=task[:100],
-                    task=async_task,
-                )
-                zp = ZenPlus.get()
-                if zp.active:
-                    zp.inject_job(task_id, agent_name, task[:60], "running",
-                                  run_id=run_id, kind="delegate")
+            async_task = asyncio.create_task(run_task())
 
-                return f"✓ Background task started: {task_id} (RunID: {run_id})"
+            exc = self._create_execution(
+                kind="delegate",
+                agent_name=agent_name,
+                query=task,
+                async_task=async_task,
+                run_id=run_id,
+                take_focus=False,
+            )
+            _tid_holder[0] = exc.task_id
+
+            def _on_done(fut):
+                tv = self._task_views.get(_tid_holder[0])
+                if tv:
+                    tv.status = "completed" if not fut.cancelled() and fut.exception() is None else "failed"
+
+            async_task.add_done_callback(_on_done)
+            return f"✓ Background task started: {exc.task_id} (RunID: {run_id})"
 
         except Exception as e:
             return f"✗ Delegation failed: {e}"
@@ -2445,9 +2929,9 @@ class ISAA_Host:
         """Implementation: Stop agent tasks."""
         stopped = 0
 
-        for _, bg_task in list(self.background_tasks.items()):
+        for _, bg_task in list(self.all_executions.items()):
             if bg_task.agent_name == agent_name and bg_task.status == "running":
-                bg_task.task.cancel()
+                bg_task.async_task.cancel()
                 bg_task.status = "cancelled"
                 stopped += 1
 
@@ -2465,27 +2949,30 @@ class ISAA_Host:
 
     async def _tool_task_status(self, task_id: str | None = None) -> str:
         """Implementation: Check task status."""
-        if task_id and task_id in self.background_tasks:
-            t = self.background_tasks[task_id]
+        import time as _t
+        if task_id and task_id in self.all_executions:
+            t = self.all_executions[task_id]
+            elapsed = _t.time() - t.started_at
             return (
                 f"Task: {t.task_id}\n"
+                f"Kind: {t.kind}\n"
                 f"Agent: {t.agent_name}\n"
                 f"Query: {t.query}\n"
                 f"Status: {t.status}\n"
-                f"Started: {t.started_at.isoformat()}"
+                f"Elapsed: {elapsed:.1f}s"
             )
 
-        result = ["=== Background Tasks ===\n"]
+        result = ["=== Executions ===\n"]
 
-        for tid, t in self.background_tasks.items():
+        for tid, t in self.all_executions.items():
             result.append(
-                f"  [{t.status.upper()}] {tid}\n"
+                f"  [{t.status.upper()}] {tid} ({t.kind})\n"
                 f"    Agent: {t.agent_name}\n"
                 f"    Query: {t.query[:50]}...\n"
             )
 
-        if not self.background_tasks:
-            result.append("  No background tasks.\n")
+        if not self.all_executions:
+            result.append("  No executions.\n")
 
         return "\n".join(result)
 
@@ -2799,7 +3286,7 @@ class ISAA_Host:
         d = {
             "/agent": None, "/audio": None, "/coder": None, "/job": None,
             "/mcp": None, "/session": None, "/skill": None, "/task": None,
-            "/tools": None, "/vfs": None, "/zenplus": None, "/feature": None
+            "/tools": None, "/vfs": None, "/feature": None
         }
 
         # Die spezifischen Hilfe-Kategorien
@@ -2853,7 +3340,6 @@ class ISAA_Host:
                 "diff": None,
                 "files": None,
             },
-            "/zenplus": None,
             "/agent": {
                 "switch": {a: None for a in agents},
                 "list": None,
@@ -2886,10 +3372,10 @@ class ISAA_Host:
             },
             "/task": {
                 "list": None,
-                "view": {t: None for t in self.background_tasks.keys()},
-                "cancel": {t: None for t in self.background_tasks.keys()},
+                "view": {t: None for t in self.all_executions.keys()},
+                "cancel": {t: None for t in self.all_executions.keys()},
                 "clean": None,
-                "status": {t: None for t in self.background_tasks.keys()},
+                "status": {t: None for t in self.all_executions.keys()},
             },
             "/job": {
                 "list": None,
@@ -2936,7 +3422,7 @@ class ISAA_Host:
     def get_prompt_text(self) -> HTML:
         """Generate prompt text with status indicators."""
         cwd_name = Path.cwd().name
-        bg_count = sum(1 for t in self.background_tasks.values() if t.status == "running")
+        bg_count = sum(1 for t in self.all_executions.values() if t.status == "running")
         bg_indicator = (
             f" <style fg='ansiyellow'>[{bg_count}bg]</style>" if bg_count > 0 else ""
         )
@@ -2944,11 +3430,6 @@ class ISAA_Host:
         audio_indicator = (
             " <style fg='ansired'>REC</style>" if self._audio_recording else ""
         )
-
-        # Minimized stream indicator
-        minimized_indicator = ""
-        if hasattr(self, '_active_renderer') and self._active_renderer and self._active_renderer.minimized:
-            minimized_indicator = "<style fg='#fbbf24'>▾minimized</style> "
 
         # Coder Mode Indicator
         if self.active_coder:
@@ -2972,106 +3453,18 @@ class ISAA_Host:
             f"{agent_indicator}"
             f"{mode_indicator}"
             f"<style fg='grey'>@{self.active_session_id}</style>"
-            f"{bg_indicator}{minimized_indicator}{audio_indicator}{feat_indicator}"
+            f"{bg_indicator}{audio_indicator}{feat_indicator}"
             f"\n<style fg='ansiblue'>></style> "
         )
 
     def _get_bottom_toolbar(self):
-        """
-        Tiefschwarze Toolbar über die gesamte Breite mit Animation.
-        """
-        now = time.time()
-        is_active = self._active_renderer is not None
-
-        # Basis-Style für den schwarzen Hintergrund
-        bg = "fg:ansiblack"
-
-
-        # 2. Animations-Logik
-        if is_active:
-            if self.idle_hint:
-                self.idle_hint = "Done"
-
-            # Inhalt zusammenbauen
-            content = []
-            self.set_dynamic_interval(2)
-        elif self._was_recording_is_prossesing_audio:
-            self.set_dynamic_interval(0.08)
-            try:
-                cols, _ = shutil.get_terminal_size()
-            except:
-                cols = 200
-                # Adaptive Breite (2/3 des Bildschirms)
-            cols = int(cols / 3) * 2
-
-            # SCANNER ANIMATION: Ein pulsierender Block, der hin und her wandert
-            # Erzeugt einen Effekt wie ein "Fortschrittsbalken-Scanner"
-            scan_pos = int(now * 25) % cols
-            # Erzeuge den Balken: Ein heller Punkt (█) auf einem gedimmten Pfad (░)
-            bar_list = []
-            for i in range(cols):
-                if i == scan_pos:
-                    bar_list.append("█")  # Der aktive Scanner
-                elif abs(i - scan_pos) < 3:
-                    bar_list.append("▓")  # Der "Schweif"
-                else:
-                    bar_list.append("░")  # Der Pfad
-            scan_bar = "".join(bar_list)
-
-            content = [
-                ("bg:ansiblack fg:ansimagenta", " ⚙ PROC "),  # Magenta/Violett für Prozess
-                ("bg:ansiblack fg:ansicyan", f" {scan_bar} "),
-            ]
-            # Keybindings am Ende hinzufügen
-            content.extend(self._get_keybinding_indicator_ansi())
-            self.idle_hint = "Press Enter to accept! type /audio for help "
-        elif self._audio_recording:
-            self.set_dynamic_interval(0.08)
-            try:
-                cols, _ = shutil.get_terminal_size()
-            except:
-                cols = 200
-            cols = int(cols/3)*2
-            w_chars = ["_", "▂", "▃", "▄", "▅", "▆", "▇", "▆", "▅", "▄", "▃", "▂", "_"]
-            # Erzeugt eine 10 Zeichen breite, wandernde Welle
-            wave = "".join(w_chars[int((now * 14) + (i * 1.5)) % len(w_chars)] for i in range(cols))
-
-            content = [
-                ("bg:ansiblack fg:ansired", " ● REC "),
-                ("bg:ansicyan fg:ansiblue", f" {wave} "),
-            ]
-            content.extend(self._get_keybinding_indicator_ansi())
-        else:
-            if self.idle_hint == "Done":
-                self.idle_hint = get_greeting('en')
-            self.set_dynamic_interval(1)
-            # IDLE: Dezent
-            syms = ["◦", "∙", " "]
-            sym = syms[int((now % 6) / 2)]
-            content = [
-                (f"{bg} bg:ansibrightblack", f" {sym} "),
-                (f"{bg} bg:ansigray", f" {self.idle_hint}    "),
-
-            ]
-            content.extend(self._get_keybinding_indicator_ansi())
-
-        # 3. DER TRICK: Die Zeile mit Schwarz auffüllen
-        try:
-            # Hol dir die aktuelle Breite des Terminals
-            cols, _ = shutil.get_terminal_size()
-
-            # Berechne die Länge des bisherigen Textes
-            # (sym + " thinking: " + word + Leerzeichen)
-            # text_len = 3 + 10 + len(word) + 1
-
-            # Füge so viele Leerzeichen hinzu, dass die ganze Zeile gefüllt ist
-            padding = "_" * (20+max(0, cols))
-            content.append((f"{bg}", padding))
-        except:
-            # Falls shutil fehlschlägt, einfach ein langes Stück Leerzeichen
-            content.append((f"{bg}", "_" * 200))
-
-        return content
+        return render_footer_toolbar(
+            task_views=self._task_views,
+            focused_id=self._focused_task_id,
+            audio_recording=self._audio_recording,
+            audio_processing=self._was_recording_is_prossesing_audio,
+            overlay_open=self._overlay is not None,
+        )
 
     def _get_keybinding_indicator(self) -> str:
         """
@@ -3083,7 +3476,7 @@ class ISAA_Host:
         # F2 – Zen Mode
         mode = "ZEN+" if self.zen_plus_mode else "ZEN"
         items.append(
-            f"<style fg='ansimagenta'>F2:{mode}</style>"
+            f"<style fg='ansimagenta'>F2</style>"
         )
 
         # F4 – Audio
@@ -3095,9 +3488,6 @@ class ISAA_Host:
         # F5 – Dashboard
         items.append("<style fg='ansicyan'>F5:INFOS</style>")
 
-        # F6 – Minimize Renderer
-        if hasattr(self, "_active_renderer") and self._active_renderer:
-            items.append("<style fg='ansiyellow'>F6:VIEW</style>")
         width = shutil.get_terminal_size().columns
         return "  ".join(items).rjust(width)
 
@@ -3123,11 +3513,6 @@ class ISAA_Host:
         # F5 – Dashboard
         items.append(("fg:ansiblack bg:ansicyan", "F5:INFOS"))
         items.append(("fg:ansiblack", "  "))
-
-        # F6 – Minimize Renderer
-        if hasattr(self, "_active_renderer") and self._active_renderer:
-            items.append(("fg:ansiblack bg:ansiyellow", "F6:VIEW"))
-            items.append(("fg:ansiblack", "  "))
 
         return items
 
@@ -3162,7 +3547,7 @@ class ISAA_Host:
 
             bg_count = sum(
                 1
-                for t in self.background_tasks.values()
+                for t in self.all_executions.values()
                 if t.agent_name == name and t.status == "running"
             )
 
@@ -3179,7 +3564,7 @@ class ISAA_Host:
         print_separator()
 
         # Background Tasks - read from engine.live for real-time state
-        running_tasks = [t for t in self.background_tasks.values() if t.status == "running"]
+        running_tasks = [t for t in self.all_executions.values() if t.status == "running"]
         print_status(f"Background Tasks: {len(running_tasks)} running", "progress")
         if running_tasks:
             print_table_header(
@@ -3215,7 +3600,7 @@ class ISAA_Host:
                         focus_str = live.status_msg[:20]
 
                 except Exception:
-                    elapsed = (datetime.now() - t.started_at).total_seconds()
+                    elapsed = (__import__("time").time() - t.started_at)
                     bar_str = f"{'─' * 20} {elapsed:.0f}s"
 
                 print_table_row(
@@ -3231,8 +3616,20 @@ class ISAA_Host:
 
         # Jobs summary
         if self.job_scheduler and self.job_scheduler.total_count > 0:
+            aw_indicator = ""
+            if self.job_scheduler.has_persistent_jobs():
+                try:
+                    from toolboxv2.mods.isaa.extras.jobs.os_scheduler import autowake_status
+                    _aw_s = autowake_status()
+                    aw_indicator = (
+                        "  [OS✓]" if "Installed" in _aw_s or "Registered" in _aw_s
+                        else "  [OS✗ — run /job autowake install]"
+                    )
+                except Exception:
+                    aw_indicator = ""
             print_status(
-                f"Scheduled Jobs: {self.job_scheduler.active_count} active / {self.job_scheduler.total_count} total",
+                f"Scheduled Jobs: {self.job_scheduler.active_count} active"
+                f" / {self.job_scheduler.total_count} total{aw_indicator}",
                 "data"
             )
 
@@ -3290,6 +3687,9 @@ class ISAA_Host:
         else:
             # Suche nach spezifischer Hilfe für einen Befehl (z.B. /help vfs)
             print_status(f"Detail-Hilfe für {sub} folgt (Nutze /help all für alles)", "info")
+
+            if not args:
+                return
             self._print_help_min()
 
     def _print_help_keys(self):
@@ -3315,6 +3715,7 @@ class ISAA_Host:
         print_box_content("/agent switch    - Agent wechseln", "")
         print_box_content("/tools list      - Tools verwalten", "")
         print_box_content("F4               - Voice Recording Start/Stop", "")
+        print_box_content("F2               - toggel the Live View Overlay.", "")
         print_box_content("F6/F7/F8         - Minimize/Focus/Cancel Agent Tasks", "")
         print_box_content("! <cmd>          - Shell Befehl direkt ausführen", "")
         print_separator()
@@ -3369,7 +3770,6 @@ class ISAA_Host:
         print_box_content("/help                                        - Show this help", "")
         print_box_content("/status                                      - Show status dashboard (or F5)", "")
         print_box_content("/clear                                       - Clear screen", "")
-        print_box_content("/zenplus                                     - Togged full Screen agent live vier", "")
         print_box_content("/quit, /exit - Exit CLI", "")
         print_box_content("F2                                           - Switch between ZEN and ZEN+ interaction mode",
                           "")
@@ -3530,28 +3930,32 @@ class ISAA_Host:
         cmd = parts[0].lower()
         args = parts[1:]
 
-        if cmd in ("/quit", "/exit", "/q", "/x" ,"/e"):
-            running_bg = [t for t in self.background_tasks.values() if t.status == "running"]
-            # Check minimized stream
-            has_active_stream = (
-                hasattr(self, '_active_renderer')
-                and self._active_renderer
-                and self._active_renderer.minimized
-            )
+        if cmd in ("/quit", "/exit", "/q", "/x", "/e"):
+            running_bg = [t for t in self.all_executions.values() if t.status == "running"]
+            active_jobs = self.job_scheduler.active_count if self.job_scheduler else 0
 
-            if running_bg or has_active_stream:
-                warnings = []
-                if running_bg:
-                    warnings.append(f"{len(running_bg)} background task(s)")
-                if has_active_stream:
-                    warnings.append("1 minimized stream")
+            warnings = []
+            if running_bg:
+                warnings.append(f"{len(running_bg)} background task(s)")
+            if active_jobs:
+                warnings.append(f"{active_jobs} scheduled job(s)")
+
+            if warnings:
                 warn_text = " + ".join(warnings)
+                has_persistent = (
+                    self.job_scheduler is not None
+                    and self.job_scheduler.has_persistent_jobs()
+                )
+                bg_label = (
+                    "quit + keep jobs via OS scheduler"
+                    if has_persistent else "move tasks to background"
+                )
 
                 c_print(HTML(
                     f"<style fg='#ef4444'>⚠ Still running: {esc(warn_text)}</style>\n"
                     f"<style fg='{PTColors.ZEN_DIM}'>"
-                    f"  [q] quit anyway (cancel all)  "
-                    f"  [b] move all to background  "
+                    f"  [q] quit anyway (cancel all)    "
+                    f"  [b] {esc(bg_label)}    "
                     f"  [Enter] abort quit</style>"
                 ))
 
@@ -3563,16 +3967,41 @@ class ISAA_Host:
                     choice = choice.strip().lower()
 
                     if choice == "q":
-                        # Cancel everything
-                        for t in self.background_tasks.values():
-                            if t.status == "running" and t.task:
-                                t.task.cancel()
+                        for t in self.all_executions.values():
+                            if t.status == "running":
+                                t.async_task.cancel()
                         raise EOFError
 
                     elif choice == "b":
+                        if has_persistent:
+                            try:
+                                from toolboxv2.mods.isaa.extras.jobs.os_scheduler import (
+                                    install_autowake,
+                                )
+                                aw_result = install_autowake(self.jobs_file)
+                                c_print(HTML(
+                                    f"<style fg='{PTColors.ZEN_DIM}'>"
+                                    f"  OS scheduler: {esc(aw_result)}</style>"
+                                ))
+                            except Exception as _aw_err:
+                                c_print(HTML(
+                                    f"<style fg='#f59e0b'>"
+                                    f"  ⚠ OS scheduler unavailable: {esc(str(_aw_err))}</style>"
+                                ))
+
+                        if running_bg:
+                            c_print(HTML(
+                                f"<style fg='{PTColors.ZEN_DIM}'>"
+                                f"  {len(running_bg)} task(s) cancelled.</style>"
+                            ))
+                            for t in self.all_executions.values():
+                                if t.status == "running":
+                                    t.async_task.cancel()
+
                         c_print(HTML(
-                            f"<style fg='{PTColors.ZEN_DIM}'>  Tasks continue in background. "
-                            f"Reconnect not supported yet.</style>"
+                            f"<style fg='{PTColors.ZEN_DIM}'>"
+                            f"  Scheduled jobs continue via OS scheduler.\n"
+                            f"  Reconnect to CLI to see results and manage jobs.</style>"
                         ))
                         raise EOFError
 
@@ -3580,7 +4009,7 @@ class ISAA_Host:
                         c_print(HTML(
                             f"<style fg='{PTColors.ZEN_DIM}'>  Quit aborted.</style>"
                         ))
-                        return  # Back to prompt
+                        return
 
                 except (KeyboardInterrupt, EOFError):
                     raise EOFError
@@ -3599,9 +4028,6 @@ class ISAA_Host:
 
         elif cmd == "/agent":
             await self._cmd_agent(args)
-
-        elif cmd == "/zenplus":
-            await self._cmd_zenplus(args)
 
         elif cmd == "/session":
             await self._cmd_session(args)
@@ -3675,14 +4101,6 @@ class ISAA_Host:
         else:
             print_status(f"Unknown command: {cmd}. Type /help for help.", "error")
 
-    async def _cmd_zenplus(self, args: list):
-        """Toggle Zen+ mode. Usage: /zenplus"""
-        self.zen_plus_mode = not self.zen_plus_mode
-        mode = "ZEN+" if self.zen_plus_mode else "ZEN"
-        from prompt_toolkit import print_formatted_text, HTML
-        c_print(HTML(
-            f"<style fg='#67e8f9'>  ◎ Renderer: {mode}</style>"
-        ))
 
     async def _cmd_agent(self, args: list[str]):
         """Handle /agent commands."""
@@ -4109,42 +4527,37 @@ class ISAA_Host:
             print_status(f"Unknown session action: {action}", "error")
 
     async def _cmd_task(self, args: list[str]):
-        """Handle /task commands."""
+        """Handle /task commands — all from SSOT all_executions."""
         if not args:
-            # Default: show task overview
             await self._task_show_overview()
             return
-
         action = args[0]
 
         if action == "cancel":
             if len(args) < 2:
                 print_status("Usage: /task cancel <id>", "warning")
                 return
-            task_id = args[1]
-            # Allow partial match
-            matched = [t for t in self.background_tasks if t.startswith(task_id) or t == task_id]
+            prefix = args[1]
+            matched = [tid for tid in self.all_executions if tid.startswith(prefix) or tid == prefix]
             if not matched:
-                print_status(f"Task '{task_id}' not found", "error")
+                print_status(f"Task '{prefix}' not found", "error")
                 return
             for tid in matched:
-                self.background_tasks[tid].task.cancel()
-                self.background_tasks[tid].status = "cancelled"
+                exc = self.all_executions[tid]
+                exc.async_task.cancel()
+                exc.status = "cancelled"
                 print_status(f"Task {tid} cancelled", "success")
 
         elif action in ("status", "list"):
             await self._task_show_overview()
 
         elif action == "view":
-            # /task view [id] - show live state or result of a task
             if len(args) < 2:
-                # Auto-select: if only 1 running, show that one
-                running = [t for t in self.background_tasks.values() if t.status == "running"]
+                running = [t for t in self.all_executions.values() if t.status == "running"]
                 if len(running) == 1:
                     await self._task_view_detail(running[0].task_id)
                 elif not running:
-                    # Show most recent completed
-                    completed = [t for t in self.background_tasks.values() if t.status == "completed"]
+                    completed = [t for t in self.all_executions.values() if t.status == "completed"]
                     if completed:
                         await self._task_view_detail(completed[-1].task_id)
                     else:
@@ -4153,108 +4566,104 @@ class ISAA_Host:
                     print_status(f"{len(running)} tasks running. Specify: /task view <id>", "warning")
                     await self._task_show_overview()
                 return
-            task_id = args[1]
-            # Partial match
-            matched = [t for t in self.background_tasks if t.startswith(task_id) or t == task_id]
+            prefix = args[1]
+            matched = [tid for tid in self.all_executions if tid.startswith(prefix) or tid == prefix]
             if matched:
                 await self._task_view_detail(matched[0])
             else:
-                print_status(f"Task '{task_id}' not found", "error")
+                print_status(f"Task '{prefix}' not found", "error")
 
         elif action == "clean":
-            # Remove completed/failed/cancelled tasks
-            to_remove = [tid for tid, t in self.background_tasks.items()
+            to_remove = [tid for tid, t in self.all_executions.items()
                          if t.status in ("completed", "failed", "cancelled")]
             for tid in to_remove:
-                del self.background_tasks[tid]
+                del self.all_executions[tid]
+                if tid in self._task_views:
+                    del self._task_views[tid]
             print_status(f"Cleaned {len(to_remove)} finished tasks", "success")
 
         else:
             print_status(f"Unknown task action: {action}. Use: list, view, cancel, clean", "error")
 
     async def _task_show_overview(self):
-        """Show compact task overview table."""
-        if not self.background_tasks:
-            print_status("No background tasks", "info")
+        """Show compact table of all executions (SSOT)."""
+        if not self.all_executions:
+            print_status("No executions", "info")
             return
-
-        print_box_header("Background Tasks", "◈")
-        columns = [("ID", 22), ("Agent", 12), ("Status", 10), ("Elapsed", 8), ("Query", 22)]
-        widths = [22, 12, 10, 8, 22]
+        import time as _t
+        print_box_header("Executions", "◈")
+        columns = [("ID", 26), ("Kind", 8), ("Agent", 12), ("Status", 10), ("Elapsed", 8), ("Query", 22)]
+        widths   = [26, 8, 12, 10, 8, 22]
         print_table_header(columns, widths)
-
-        for tid, t in self.background_tasks.items():
-            elapsed = (datetime.now() - t.started_at).total_seconds()
+        for tid, t in self.all_executions.items():
+            elapsed = _t.time() - t.started_at
             elapsed_str = f"{elapsed:.0f}s"
-            status_style = {
-                "running": "green", "completed": "cyan",
-                "failed": "red", "cancelled": "yellow"
-            }.get(t.status, "grey")
-
+            focused_mark = "▸" if t.is_focused else " "
+            status_style = {"running": "green", "completed": "cyan",
+                            "failed": "red", "cancelled": "yellow"}.get(t.status, "grey")
             query_short = t.query[:20] + ".." if len(t.query) > 22 else t.query
             print_table_row(
-                [tid[:22], t.agent_name[:12], t.status, elapsed_str, query_short],
+                [f"{focused_mark}{tid[:25]}", t.kind[:8], t.agent_name[:12],
+                 t.status, elapsed_str, query_short],
                 widths,
-                ["cyan", "white", status_style, "grey", "grey"],
+                ["cyan", "grey", "white", status_style, "grey", "grey"],
             )
         print_box_footer()
 
     async def _task_view_detail(self, task_id: str):
-        """Show detailed view of a specific task (live state or result)."""
-        t = self.background_tasks.get(task_id)
+        """Show detailed view of a specific execution."""
+        import time as _t
+        t = self.all_executions.get(task_id)
         if not t:
             print_status(f"Task {task_id} not found", "error")
             return
 
-        elapsed = (datetime.now() - t.started_at).total_seconds()
-        print_box_header(f"Task: {task_id}", "◈")
-        print_box_content(f"Agent: {t.agent_name}  Status: {t.status}  Elapsed: {elapsed:.1f}s", "info")
+        elapsed = _t.time() - t.started_at
+        print_box_header(f"Execution: {task_id}", "◈")
+        print_box_content(
+            f"Agent: {t.agent_name}  Kind: {t.kind}  Status: {t.status}  "
+            f"Elapsed: {elapsed:.1f}s  Focused: {t.is_focused}", "info"
+        )
         print_box_content(f"Query: {t.query}", "")
 
         if t.status == "running":
-            # Show live engine state
             try:
                 agent = await self.isaa_tools.get_agent(t.agent_name)
                 engine = agent._get_execution_engine()
                 live = engine.live
-
                 it, mx = live.iteration, live.max_iterations
-                if mx > 0:
-                    filled = int(20 * it / mx)
-                    bar = f"{'━' * filled}{'─' * (20 - filled)} {it}/{mx}"
-                else:
-                    bar = f"{'─' * 20} {it}/?"
+                bar = f"{'━' * int(20*it/mx) if mx else 0}{'─' * (20 - int(20*it/mx) if mx else 20)} {it}/{'?' if not mx else mx}"
                 print_box_content(f"Progress: {bar}", "")
-
                 if live.phase:
                     print_box_content(f"Phase: {live.phase.value}", "info")
                 if live.thought:
                     print_box_content(f"Thought: {live.thought[:80]}", "")
                 if live.tool.name:
                     print_box_content(f"Tool: {live.tool.name} {live.tool.args_summary[:40]}", "")
-                if live.status_msg:
-                    print_box_content(f"Status: {live.status_msg}", "")
             except Exception:
                 print_box_content("(live state unavailable)", "warning")
 
         elif t.status == "completed":
-            # Show result
-            try:
-                result = t.task.result()
-                if result:
-                    result_str = str(result)
-                    if len(result_str) > 500:
-                        print_box_content(f"Result ({len(result_str)} chars):", "success")
-                        print_code_block(result_str[:500] + "\n... (truncated)")
-                    else:
-                        print_box_content("Result:", "success")
-                        c_print(result_str)
-            except Exception as e:
-                print_box_content(f"Result error: {e}", "error")
+            if t.result_text:
+                result_str = t.result_text
+                if len(result_str) > 500:
+                    print_box_content(f"Result ({len(result_str)} chars):", "success")
+                    print_code_block(result_str[:500] + "\n... (truncated)")
+                else:
+                    print_box_content("Result:", "success")
+                    c_print(result_str)
+            else:
+                # Fallback: try fut.result() for non-chat tasks
+                try:
+                    r = t.async_task.result()
+                    if r:
+                        c_print(str(r)[:500])
+                except Exception:
+                    pass
 
         elif t.status == "failed":
             try:
-                t.task.result()
+                t.async_task.result()
             except Exception as e:
                 print_box_content(f"Error: {e}", "error")
 
@@ -4265,56 +4674,88 @@ class ISAA_Host:
     # =========================================================================
 
     async def _fire_job_from_scheduler(self, job: JobDefinition) -> str:
-        """Callback for JobScheduler: run an agent query as a BackgroundTask."""
-        self._task_counter += 1
-        task_id = f"job_{self._task_counter}_{job.agent_name}"
+        """Callback for JobScheduler: run an agent query, registered in SSOT."""
         run_id = uuid.uuid4().hex[:8]
         host_ref = self
+        _tid_holder = [None]
 
         async def _run_job():
             try:
                 agent = await host_ref.isaa_tools.get_agent(job.agent_name)
+
+                # ── Live state step-callback ──────────────────────────────
+                _scheduler = host_ref.job_scheduler
+                _iter = [0]
+
+                def _on_step(thought: str = "", tool: str = "",
+                             context_used: int = 0, context_max: int = 0):
+                    _iter[0] += 1
+                    if _scheduler and _scheduler._live:
+                        _scheduler._live.update_iteration(
+                            job.job_id,
+                            iteration=_iter[0],
+                            tool=tool or None,
+                            thought=thought or None,
+                            context_used=context_used or None,
+                            context_max=context_max or None,
+                        )
+
+                # Inject callback if agent supports it
+                if hasattr(agent, "set_step_callback"):
+                    agent.set_step_callback(_on_step)
+                # ─────────────────────────────────────────────────────────
+
                 result = await agent.a_run(
                     job.query,
                     session_id=job.session_id,
                     execution_id=run_id,
                 )
-                if task_id in host_ref.background_tasks:
-                    host_ref.background_tasks[task_id].status = "completed"
+                exc = host_ref.all_executions.get(_tid_holder[0])
+                if exc:
+                    exc.status = "completed"
                 return result or ""
+            except asyncio.CancelledError:
+                exc = host_ref.all_executions.get(_tid_holder[0])
+                if exc:
+                    exc.status = "cancelled"
+                return ""
             except Exception as e:
-                if task_id in host_ref.background_tasks:
-                    host_ref.background_tasks[task_id].status = "failed"
-                raise
+                exc = host_ref.all_executions.get(_tid_holder[0])
+                if exc:
+                    exc.status = "failed"
+                return ""
 
         async_task = asyncio.create_task(_run_job())
 
+        exc = self._create_execution(
+            kind="job",
+            agent_name=job.agent_name,
+            query=job.query,
+            async_task=async_task,
+            run_id=run_id,
+            take_focus=False,
+        )
+        _tid_holder[0] = exc.task_id
+
         def _on_done(fut):
+            _tid = _tid_holder[0]
             try:
-                r = fut.result()
+                r = fut.result() or ""
                 preview = (r[:60] + "..") if len(r) > 62 else r
-                zp = ZenPlus.get()
-                if zp.active:
-                    zp.update_job(task_id, preview)
-                c_print(HTML(f"\n<style fg='{PTColors.ZEN_GREEN}'>✓ {task_id}</style>"
-                             f"  <style fg='{PTColors.ZEN_DIM}'>{html.escape(preview)}</style>\n"))
+                tv = self._task_views.get(_tid)
+                if tv:
+                    tv.status = "completed"
+                with patch_stdout():
+                    c_print(HTML(
+                        f"\n<style fg='{PTColors.ZEN_GREEN}'>✓ {_tid}</style>"
+                        f"  <style fg='{PTColors.ZEN_DIM}'>{html.escape(preview)}</style>\n"
+                    ))
             except (asyncio.CancelledError, Exception):
-                zp = ZenPlus.get()
-                if zp.active:
-                    zp.update_job(task_id, "failed")
-                pass
+                tv = self._task_views.get(_tid)
+                if tv:
+                    tv.status = "failed"
 
         async_task.add_done_callback(_on_done)
-        self.background_tasks[task_id] = BackgroundTask(
-            task_id=task_id, agent_name=job.agent_name,
-            run_id=run_id, query=job.query, task=async_task,
-        )
-
-        zp = ZenPlus.get()
-        if zp.active:
-            zp.inject_job(task_id, job.agent_name, job.query[:60], "running", kind="job")
-
-        # Wait for it (scheduler handles timeout externally)
         return await async_task
 
     async def _cmd_job(self, args: list[str]):
@@ -4557,21 +4998,45 @@ class ISAA_Host:
             return
 
         try:
-            from toolboxv2.mods.isaa.extras.jobs.os_scheduler import install_autowake, remove_autowake, autowake_status
+            from toolboxv2.mods.isaa.extras.jobs.os_scheduler import (
+                install_autowake, remove_autowake, autowake_status,
+            )
         except ImportError:
             print_status("OS scheduler module not available", "error")
             return
 
         action = args[0]
         if action == "install":
+            if self.job_scheduler and not self.job_scheduler.has_persistent_jobs():
+                print_status(
+                    "No persistent jobs (interval/cron/time/boot) — autowake would do nothing. "
+                    "Add a job first.",
+                    "warning",
+                )
+                return
             result = install_autowake(self.jobs_file)
             print_status(result, "success" if "installed" in result.lower() else "error")
+
         elif action == "remove":
             result = remove_autowake()
             print_status(result, "success" if "removed" in result.lower() else "error")
+
         elif action == "status":
             result = autowake_status()
             print_status(result, "info")
+            if self.job_scheduler:
+                persistent = [
+                    j for j in self.job_scheduler.list_jobs()
+                    if j.status == "active"
+                       and j.trigger.trigger_type in self.job_scheduler._PERSISTENT_TRIGGER_TYPES
+                ]
+                if persistent:
+                    print_status(
+                        f"{len(persistent)} persistent job(s) will run via OS scheduler "
+                        f"while CLI is offline: "
+                        + ", ".join(j.name for j in persistent),
+                        "info",
+                    )
         else:
             print_status("Usage: /job autowake <install|remove|status>", "warning")
 
@@ -6151,74 +6616,112 @@ class ISAA_Host:
         """Handle /context commands."""
         try:
             agent = await self.isaa_tools.get_agent(self.active_agent_name)
-
-            def ansi_c_print(*a, **kw):
-                text = " ".join(str(x) for x in a)
-                # Wir übergeben es explizit als ANSI-Objekt an c_print
-                c_print(ANSI(text), **kw)
             await agent.context_overview(self.active_session_id,print_visual=True, f_print=ansi_c_print)
         except Exception as e:
             print_status(f"Error: {e}", "error")
             import traceback
             c_print(traceback.format_exc())
 
-    def _launch_agent_bg(self, stream, agent, renderer, query: str, should_speak: bool = False) -> str:
-        """Startet Agent-Stream als Background-Task mit Renderer in ZenPlus-Pane."""
-        self._task_counter += 1
-        agent_name = self.active_agent_name
-        task_id = f"agent_{self._task_counter}_{agent_name}"
-        run_id = uuid.uuid4().hex[:8]
-        host_ref = self
+    # =========================================================================
+    # UNIFIED EXECUTION FACTORY
+    # =========================================================================
 
-        zp = ZenPlus.get()
+    def _create_execution(
+        self,
+        *,
+        kind: str,
+        agent_name: str,
+        query: str,
+        async_task: asyncio.Task,
+        run_id: str = "",
+        stream=None,
+        agent_ref=None,
+        take_focus: bool = False,
+    ) -> ExecutionTask:
+        """Single factory: build an ExecutionTask, register it, notify ZenPlus.
+
+        All three former entry-points (chat / delegate / scheduler-job) call
+        this method.  ZenPlus.inject_job() is always called so Zen+ stays in
+        sync regardless of how the execution was created.
+        """
+        self._task_counter += 1
+        task_id_final = f"{kind}_{self._task_counter}_{agent_name}"
+
+        exc = ExecutionTask(
+            task_id=task_id_final,
+            agent_name=agent_name,
+            query=query[:100],
+            kind=kind,
+            async_task=async_task,
+            run_id=run_id,
+            stream=stream,
+            _agent_ref=agent_ref,
+            is_focused=take_focus,
+        )
+        self.all_executions[task_id_final] = exc
+
+        # Focus management
+        if take_focus:
+            # Mute the previously focused task
+            old_id = self._focused_task_id
+            if old_id and old_id in self.all_executions:
+                self.all_executions[old_id].is_focused = False
+            self._focused_task_id = task_id_final
+
+        # Always notify ZenPlus — regardless of active state
+        # Register TaskView — single source of truth for the live dashboard
+        self._task_views[task_id_final] = TaskView(
+            task_id=task_id_final,
+            agent_name=agent_name,
+            query=query[:80],
+        )
+
+        return exc
+
+    def _launch_agent_bg(self, stream, agent, query: str, should_speak: bool = False) -> str:
+        """Startet Agent-Stream als Background-Task"""
+        run_id = uuid.uuid4().hex[:8]
+        agent_name = self.active_agent_name
+        host_ref = self
 
         async def bg_agent_drain():
             final_response_text = ""
             current_sentence = ""
             stop_for_speech = False
-
             try:
                 while True:
                     try:
-                        chunk = await stream.__anext__()
+                        raw = await stream.__anext__()
                     except StopAsyncIteration:
                         break
-
-                    renderer.process_chunk(chunk)
+                    chunk = dict(raw)  # mutable copy — litellm objects are NOT safe to mutate
+                    self._ingest_chunk(_tid_holder[0], chunk)
+                    is_focused = (host_ref._focused_task_id == _tid_holder[0])
 
                     if chunk.get("type") == "content":
                         text = chunk.get("chunk", "")
                         final_response_text += text
-
-                        # Audio TTS
                         if should_speak and hasattr(host_ref, 'audio_player'):
                             if '```' in text:
                                 stop_for_speech = not stop_for_speech
                             if not stop_for_speech:
                                 current_sentence += text
-                                if any(current_sentence.rstrip().endswith(p) for p in ['.', '!', '?', ':', '\n\n']):
+                                if any(current_sentence.rstrip().endswith(p)
+                                       for p in ['.', '!', '?', ':', '\n\n']):
                                     clean_text = remove_styles(current_sentence.strip())
                                     if clean_text:
                                         get_app("ci.audio.bg.task").run_bg_task_advanced(
                                             host_ref.audio_player.queue_text, clean_text
                                         )
                                     current_sentence = ""
-
                     elif chunk.get("type") == "final_answer":
                         final_response_text = chunk.get("answer", final_response_text)
 
-                # Fertig
-                renderer._stop_footer_anim()
+                exc = host_ref.all_executions.get(_tid_holder[0])
+                if exc:
+                    exc.status = "completed"
+                    exc.result_text = final_response_text
 
-                if task_id in host_ref.background_tasks:
-                    host_ref.background_tasks[task_id].status = "completed"
-
-                # Final summary
-                pane = zp._panes.get(agent_name) if zp.active else None
-                if pane:
-                    renderer.print_final_summary(pane)
-
-                # JSON post-processing
                 try:
                     if "```json" in final_response_text:
                         json_str = final_response_text.split("```json")[1].split("```")[0].strip()
@@ -6232,65 +6735,58 @@ class ISAA_Host:
                             )
                 except Exception:
                     pass
-
                 return final_response_text
 
             except asyncio.CancelledError:
-                renderer._stop_footer_anim()
                 try:
                     await stream.aclose()
                 except Exception:
                     pass
-                if task_id in host_ref.background_tasks:
-                    host_ref.background_tasks[task_id].status = "cancelled"
-                raise
+                exc = host_ref.all_executions.get(_tid_holder[0])
+                if exc:
+                    exc.status = "cancelled"
+                # Isolated cancel — must NOT propagate to the event loop / CLI
+                return ""
 
             except Exception as e:
-                renderer._stop_footer_anim()
-                if task_id in host_ref.background_tasks:
-                    host_ref.background_tasks[task_id].status = "failed"
-                raise
+                exc = host_ref.all_executions.get(_tid_holder[0])
+                if exc:
+                    exc.status = "failed"
+                return ""
 
         async_task = asyncio.create_task(bg_agent_drain())
 
-        # Done-Callback
-        def _on_done(fut):
-            if zp.active:
-                try:
-                    fut.result()
-                    zp.update_job(task_id, "completed")
-                except asyncio.CancelledError:
-                    zp.update_job(task_id, "cancelled")
-                except Exception:
-                    zp.update_job(task_id, "failed")
+        exc = self._create_execution(
+            kind="task",
+            agent_name=agent_name,
+            query=query,
+            async_task=async_task,
+            run_id=run_id,
+            stream=stream,
+            agent_ref=agent,
+            take_focus=False,
+        )
+        _tid_holder = [exc.task_id]  # mutable cell shared with the coroutine's closure
 
-            from prompt_toolkit.patch_stdout import patch_stdout as _ps
-            with _ps():
-                try:
-                    result = fut.result()
-                    c_print(HTML(
-                        f"\n<style fg='{C['green']}'>✓ {task_id} complete</style>"
-                        f"  <style fg='{C['dim']}'>{_esc(result[:80])}</style>\n"
-                    ))
-                except Exception:
-                    pass
+        def _on_done(fut):
+            _tid = _tid_holder[0]
+            try:
+                fut.result()
+                tv = host_ref._task_views.get(_tid)
+                if tv: tv.status = "completed"
+                with patch_stdout():
+                    c_print(HTML(f"\n<style fg='{PTColors.ZEN_GREEN}'>✓ {_tid} complete</style>\n"))
+            except asyncio.CancelledError:
+                tv = host_ref._task_views.get(_tid)
+                if tv: tv.status = "cancelled"
+            except Exception as e:
+                tv = host_ref._task_views.get(_tid)
+                if tv: tv.status = "failed"
+                with patch_stdout():
+                    c_print(HTML(f"\n<style fg='{PTColors.ZEN_RED}'>✗ {_tid} failed: {_esc(str(e)[:60])}</style>\n"))
 
         async_task.add_done_callback(_on_done)
-
-        # Registrieren
-        self.background_tasks[task_id] = BackgroundTask(
-            task_id=task_id,
-            run_id=run_id,
-            agent_name=agent_name,
-            query=query[:100],
-            task=async_task,
-            _agent_ref=agent,
-        )
-
-        if zp.active:
-            zp.inject_job(task_id, agent_name, query[:60], "running", kind="agent")
-
-        return task_id
+        return exc.task_id
 
     async def _handle_agent_interaction(self, user_input: str):
         if self.active_coder and not user_input.startswith("@"):
@@ -6309,13 +6805,7 @@ class ISAA_Host:
                 user_input = user_input.rsplit("#audio", 1)[0].strip()
             should_speak = wants_audio or getattr(self, 'verbose_audio', False)
 
-            # Renderer erstellen (pro Task)
-            renderer = ZenRendererV2(engine)
-
-            # Task-ID
-            self._task_counter += 1
             agent_name = self.active_agent_name
-            task_id = f"agent_{self._task_counter}_{agent_name}"
 
             # Stream starten
             stream = agent.a_stream(
@@ -6323,49 +6813,27 @@ class ISAA_Host:
                 session_id=self.active_session_id,
             )
 
-            # Background-Consumer erstellen
+            # Consumer-Task (task_id assigned by _create_execution below)
             async_task = asyncio.create_task(
-                self._drain_agent_stream(task_id, stream, renderer, should_speak)
+                self._drain_agent_stream("__pending__", stream, should_speak)
             )
 
-            # Registrieren
-            live_task = LiveAgentTask(
-                task_id=task_id,
+            # _create_execution: registers, sets focus, notifies ZenPlus
+            exc = self._create_execution(
+                kind="chat",
                 agent_name=agent_name,
-                query=user_input[:100],
-                renderer=renderer,
+                query=user_input,
                 async_task=async_task,
                 stream=stream,
+                take_focus=True,
             )
-            self._active_tasks[task_id] = live_task
-
-            # Fokus auf neuen Task setzen
-            old_focused = self._focused_task_id
-            self._focused_task_id = task_id
-            self._active_renderer = renderer
-
-            # Alten fokussierten Task stumm schalten
-            if old_focused and old_focused in self._active_tasks:
-                old_renderer = self._active_tasks[old_focused].renderer
-                if not old_renderer.minimized:
-                    old_renderer.toggle_minimize()
-                    c_print(HTML(
-                        f"<style fg='{PTColors.ZEN_DIM}'>"
-                        f"  ▾ {old_focused} minimized (new agent started)</style>"
-                    ))
-
-            # ZenPlus falls aktiv
-            if self.zen_plus_mode:
-                zp = ZenPlus.get()
-                zp.clear_panes()
-                renderer.set_zen_plus(zp)
+            task_id = exc.task_id  # now the canonical ID
 
             # Notification bei Completion
             async_task.add_done_callback(
                 lambda fut: self._on_agent_task_done(task_id, fut)
             )
 
-            renderer._start_footer_anim()
             c_print(HTML(
                 f"<style fg='{PTColors.ZEN_CYAN}'>"
                 f"  ◯ {agent_name} gestartet → {task_id}</style>"
@@ -6380,16 +6848,18 @@ class ISAA_Host:
             print_status(f"System Error: {traceback.format_exc()}", "error")
 
     def _on_agent_task_done(self, task_id: str, fut: asyncio.Future):
-        """Wird aufgerufen wenn ein Agent-Task fertig ist."""
-        task = self._active_tasks.get(task_id)
-        if not task:
-            return
+        """Called when a chat-mode agent task finishes. Updates SSOT + focus."""
+        exc = self.all_executions.get(task_id)
 
-        renderer = task.renderer
-        renderer._stop_footer_anim()
-
+        # _drain_agent_stream already swallows exceptions; fut.result() is safe here
+        # but we still guard so a programming error in the callback never kills the CLI.
         try:
             result = fut.result()
+            if exc and exc.status not in ("cancelled", "failed"):
+                exc.status = "completed"
+            tv = self._task_views.get(task_id)
+            if tv:
+                tv.status = "completed"
             with patch_stdout():
                 c_print(HTML(
                     f"\n<style fg='{PTColors.ZEN_GREEN}'>"
@@ -6397,74 +6867,73 @@ class ISAA_Host:
                     f"  <style fg='{PTColors.ZEN_DIM}'>"
                     f"{_esc(str(result)[:80])}</style>\n"
                 ))
-
-                # ZenPlus Summary falls aktiv
-                if self.zen_plus_mode:
-                    zp = ZenPlus.get()
-                    pane = zp._panes.get(task.agent_name)
-                    if pane:
-                        renderer.print_final_summary(pane)
-
         except asyncio.CancelledError:
+            if exc:
+                exc.status = "cancelled"
+            tv = self._task_views.get(task_id)
+            if tv:
+                tv.status = "cancelled"
             with patch_stdout():
                 c_print(HTML(
                     f"\n<style fg='{PTColors.ZEN_DIM}'>"
                     f"  ⏸ {task_id} cancelled</style>\n"
                 ))
         except Exception as e:
+            if exc:
+                exc.status = "failed"
+            tv = self._task_views.get(task_id)
+            if tv:
+                tv.status = "failed"
             with patch_stdout():
                 c_print(HTML(
                     f"\n<style fg='#f87171'>"
                     f"  ✗ {task_id} failed: {_esc(str(e)[:60])}</style>\n"
                 ))
 
-        # Wenn das der fokussierte Task war → Fokus freigeben
+        # Focus hand-off — find next running task
         if self._focused_task_id == task_id:
             self._focused_task_id = None
-            self._active_renderer = None
 
-            # Nächsten laufenden Task fokussieren
-            running = [t for t in self._active_tasks.values()
-                       if t.status == "running"]
-            if running:
-                next_task = running[0]
+            next_task = next(
+                (t for t in self.all_executions.values() if t.status == "running"),
+                None,
+            )
+            if next_task:
+                next_task.is_focused = True
                 self._focused_task_id = next_task.task_id
-                self._active_renderer = next_task.renderer
-                if next_task.renderer.minimized:
-                    next_task.renderer.toggle_minimize()
+
     async def _drain_agent_stream(
-        self, task_id: str, stream, renderer: ZenRendererV2, should_speak: bool = False
+        self, task_id: str, stream, should_speak: bool = False
     ):
-        """Konsumiert den Agent-Stream im Hintergrund. Renderer schreibt via patch_stdout."""
+        """Consume an agent stream.
+        Cancelled/failed executions are fully isolated: errors do NOT propagate
+        to the event loop or the main CLI prompt.
+        """
         result_text = ""
         current_sentence = ""
         stop_for_speech = False
-        task = self._active_tasks.get(task_id)
+
+        def _get_exc() -> "ExecutionTask | None":
+            return self.all_executions.get(task_id) or next(
+                (t for t in self.all_executions.values() if t.stream is stream), None
+            )
 
         try:
             with patch_stdout():
                 while True:
                     try:
-                        chunk = await stream.__anext__()
+                        raw = await stream.__anext__()
                     except StopAsyncIteration:
                         break
+                    chunk = dict(raw)  # mutable copy — litellm chunks are not safe to mutate
 
-                    # Nur rendern wenn dieser Task fokussiert ist
-                    is_focused = (self._focused_task_id == task_id)
+                    exc = _get_exc()
+                    real_id = exc.task_id if exc else task_id
+                    self._ingest_chunk(real_id, chunk)
 
-                    if is_focused and not renderer.minimized:
-                        renderer.process_chunk(chunk)
-                    elif is_focused and renderer.minimized:
-                        # Minimiert: nur done/error durchlassen
-                        if chunk.get("type") in ("done", "error", "final_answer"):
-                            renderer.process_chunk(chunk)
-
-                    # Text sammeln (immer, auch wenn minimiert)
                     if chunk.get("type") == "content":
                         text = chunk.get("chunk", "")
                         result_text += text
-
-                        # Audio
                         if should_speak and hasattr(self, 'audio_player'):
                             if '```' in text:
                                 stop_for_speech = not stop_for_speech
@@ -6478,20 +6947,18 @@ class ISAA_Host:
                                             self.audio_player.queue_text, clean
                                         )
                                     current_sentence = ""
-
                     elif chunk.get("type") == "final_answer":
                         result_text = chunk.get("answer", result_text)
 
-            # Stream schließen
             try:
                 await stream.aclose()
             except Exception:
                 pass
 
-            if task:
-                task.status = "completed"
-                task.result_text = result_text
-
+            exc = _get_exc()
+            if exc:
+                exc.status = "completed"
+                exc.result_text = result_text
             return result_text
 
         except asyncio.CancelledError:
@@ -6499,14 +6966,27 @@ class ISAA_Host:
                 await stream.aclose()
             except Exception:
                 pass
-            if task:
-                task.status = "cancelled"
-            raise
+            exc = _get_exc()
+            if exc:
+                exc.status = "cancelled"
+            # Isolated cancel — must NOT kill the CLI event loop
+            return ""
 
         except Exception as e:
-            if task:
-                task.status = "failed"
-            raise
+            try:
+                await stream.aclose()
+            except Exception:
+                pass
+            exc = _get_exc()
+            if exc:
+                exc.status = "failed"
+            # Isolated failure — log but do not re-raise
+            with patch_stdout():
+                c_print(HTML(
+                    f"<style fg='{PTColors.ZEN_RED}'>  ✗ stream error ({type(e).__name__}): "
+                    f"{_esc(str(e)[:80])}</style>"
+                ))
+            return ""
 
 
     # =========================================================================
@@ -6527,9 +7007,31 @@ class ISAA_Host:
         await self._init_self_agent()
 
         # Start Job Scheduler
+        # Start Job Scheduler
         self.job_scheduler = JobScheduler(self.jobs_file, self._fire_job_from_scheduler)
         await self.job_scheduler.start()
         await self.job_scheduler.fire_lifecycle("on_cli_start")
+
+        # ── Catch up jobs that fired while CLI was offline ────────────────────
+        missed_count = await self.job_scheduler.fire_missed_jobs()
+        if missed_count:
+            c_print(HTML(
+                f"<style fg='#fbbf24'>↺ {missed_count} job(s) were due while offline"
+                f" — catching up now.</style>"
+            ))
+
+        # ── Auto-install OS autowake if persistent jobs exist ─────────────────
+        if self.job_scheduler.has_persistent_jobs():
+            try:
+                from toolboxv2.mods.isaa.extras.jobs.os_scheduler import (
+                    autowake_status, install_autowake,
+                )
+                status_str = autowake_status()
+                if "Not installed" in status_str:
+                    result = install_autowake(self.jobs_file)
+                    #info("Auto-installed OS autowake on startup: %s", result)
+            except Exception as _aw_err:
+                c_print("OS autowake auto-install skipped: %s", _aw_err)
 
         # Show active features
         all_feats = self.feature_manager.list_features()
@@ -6616,40 +7118,48 @@ class ISAA_Host:
         # Stop job scheduler
         if self.job_scheduler:
             await self.job_scheduler.fire_lifecycle("on_cli_exit")
+            # Remove OS autowake only when no persistent jobs remain
+            if not self.job_scheduler.has_persistent_jobs():
+                try:
+                    from toolboxv2.mods.isaa.extras.jobs.os_scheduler import remove_autowake
+                    remove_autowake()
+                    c_print("Removed OS autowake (no persistent jobs left)")
+                except Exception:
+                    pass
             await self.job_scheduler.stop()
 
-        # Cancel background tasks
-        for _, bg_task in self.background_tasks.items():
+        # Cancel in-flight background tasks
+        for _, bg_task in self.all_executions.items():
             if bg_task.status == "running":
-                bg_task.task.cancel()
+                bg_task.async_task.cancel()
 
         print_status("Goodbye!", "success")
 
     # ─── Interrupt-Menü ───────────────────────────────────────────────
 
     async def _handle_interrupt(self):
-        """
-        Interaktives Menü bei Ctrl+C wenn ein Agent-Task fokussiert ist.
-        Returns True wenn die Main-Loop weiterlaufen soll, False für Exit.
-        """
         task_id = self._focused_task_id
-        if not task_id or task_id not in self._active_tasks:
-            # Kein aktiver Agent → normales continue
+
+        # Auto-focus first running task if none focused
+        if not task_id:
+            running = next(
+                (t for t in self.all_executions.values() if t.status == "running"), None
+            )
+            if running:
+                running.is_focused = True
+                self._focused_task_id = running.task_id
+                task_id = running.task_id
+            else:
+                return True
+
+        if task_id not in self.all_executions:
             return True
 
-        task = self._active_tasks[task_id]
+        task = self.all_executions[task_id]
         if task.status != "running":
             return True
 
-        renderer = task.renderer
         agent_name = task.agent_name
-
-        if not renderer.minimized:
-            renderer.toggle_minimize()
-
-        # Animation pausieren für saubere Ausgabe
-        if hasattr(renderer, '_stop_footer_anim'):
-            renderer._stop_footer_anim()
 
         with patch_stdout():
             c_print(HTML(
@@ -6680,8 +7190,6 @@ class ISAA_Host:
             await self._interrupt_resume_with_context(task_id)
         else:
             # 'n' oder ungültig → weiter warten
-            if hasattr(renderer, '_start_footer_anim'):
-                renderer._start_footer_anim()
             with patch_stdout():
                 c_print(HTML(
                     f"<style fg='{PTColors.ZEN_DIM}'>  → Weiter warten auf {task_id}</style>\n"
@@ -6691,16 +7199,12 @@ class ISAA_Host:
 
     async def _interrupt_move_to_background(self, task_id: str):
         """Task minimieren und Fokus freigeben."""
-        task = self._active_tasks.get(task_id)
+        task = self.all_executions.get(task_id)
         if not task:
             return
 
-        renderer = task.renderer
-        if not renderer.minimized:
-            renderer.toggle_minimize()
-
         self._focused_task_id = None
-        self._active_renderer = None
+
 
         with patch_stdout():
             c_print(HTML(
@@ -6708,12 +7212,8 @@ class ISAA_Host:
                 f"  ▾ {task_id} → Hintergrund (Prompt frei)</style>\n"
             ))
 
-        # Footer-Animation im minimierten Modus weiter
-        if hasattr(renderer, '_start_footer_anim'):
-            renderer._start_footer_anim()
-
     async def _interrupt_stop_task(self, task_id: str):
-        task = self._active_tasks.get(task_id)
+        task = self.all_executions.get(task_id)
         if not task:
             return
 
@@ -6749,8 +7249,10 @@ class ISAA_Host:
 
         # Fokus freigeben
         if self._focused_task_id == task_id:
+            if task:
+                task.is_focused = False
             self._focused_task_id = None
-            self._active_renderer = None
+
 
         with patch_stdout():
             c_print(HTML(
@@ -6759,7 +7261,7 @@ class ISAA_Host:
             ))
 
     async def _interrupt_resume_with_context(self, task_id: str):
-        task = self._active_tasks.get(task_id)
+        task = self.all_executions.get(task_id)
         if not task:
             return
 
@@ -6812,12 +7314,11 @@ class ISAA_Host:
                 c_print(HTML(f"<style fg='{PTColors.ZEN_DIM}'>  → Resume abgebrochen, Task bleibt pausiert.</style>\n"))
             if self._focused_task_id == task_id:
                 self._focused_task_id = None
-                self._active_renderer = None
+
             return
 
         # 4. Resume via Engine starten
         try:
-            renderer = ZenRendererV2(engine)
             stream = await agent.resume_execution(
                 execution_id=execution_id,
                 content=new_context,
@@ -6829,37 +7330,32 @@ class ISAA_Host:
                 stream_func, ctx = stream
                 stream = stream_func(ctx)
 
-            # 5. Neuen Background-Task hochziehen
-            self._task_counter += 1
-            new_task_id = f"agent_{self._task_counter}_{task.agent_name}_resumed"
-
             async_task = asyncio.create_task(
-                self._drain_agent_stream(new_task_id, stream, renderer, False)
+                self._drain_agent_stream("__pending__", stream, False)
             )
 
-            live_task = LiveAgentTask(
-                task_id=new_task_id,
+            query_text = f"[resumed] {new_context[:80]}" if new_context else f"[resumed] {task.query[:80]}"
+
+            exc = self._create_execution(
+                kind="chat",
                 agent_name=task.agent_name,
-                query=f"[resumed] {new_context[:80]}" if new_context else f"[resumed] {task.query[:80]}",
-                renderer=renderer,
+                query=query_text,
                 async_task=async_task,
                 stream=stream,
+                take_focus=True,
             )
-            self._active_tasks[new_task_id] = live_task
+            new_task_id = exc.task_id
 
             # Alten Task wegräumen
-            if task_id in self._active_tasks:
-                del self._active_tasks[task_id]
-
-            # Fokus übergeben
-            self._focused_task_id = new_task_id
-            self._active_renderer = renderer
+            if task_id in self.all_executions:
+                del self.all_executions[task_id]
+            if task_id in self._task_views:
+                del self._task_views[task_id]
 
             async_task.add_done_callback(
                 lambda fut: self._on_agent_task_done(new_task_id, fut)
             )
 
-            renderer._start_footer_anim()
 
             with patch_stdout():
                 c_print(
@@ -6870,7 +7366,7 @@ class ISAA_Host:
                 c_print(HTML(f"<style fg='#f87171'>  ✗ Resume fehlgeschlagen: {_esc(str(e)[:80])}</style>\n"))
             if self._focused_task_id == task_id:
                 self._focused_task_id = None
-                self._active_renderer = None
+
 
 # =============================================================================
 # ENTRY POINT
