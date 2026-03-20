@@ -102,7 +102,7 @@ class Session(metaclass=Singleton):
         data_dir = os.environ.get("TB_DATA_DIR", None)
         if not data_dir:
             # Fallback logic identical to App setup
-            data_dir = str(Path(__file__).parent.parent.parent.parent / ".data")
+            data_dir = str(Path(__file__).parent.parent.parent / ".data")
 
         storage_path = Path(data_dir) / "cli_sessions"
         return BlobStorage(

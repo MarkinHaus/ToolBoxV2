@@ -154,7 +154,8 @@ def get_asset_for_platform(release_info: Dict[str, Any]) -> Optional[Dict[str, A
     # Look for matching asset
     patterns = []
     if IS_WINDOWS:
-        patterns = [f"{APP_NAME}_{target}.zip", f"{APP_NAME}_x64-setup.exe",
+        patterns = [f"{APP_NAME}_{target}.zip", f"{APP_NAME}_x64-setup.exe",f"simple-core_x64_en-US.msi",      # Tauri default MSI name
+        f"simple-core_x64-setup.exe",
                     f"{APP_NAME}_{target}.msi", "simple-core_x64-setup.exe"]
     elif IS_MACOS:
         if "aarch64" in target:
@@ -226,9 +227,25 @@ def extract_and_install(archive_path: Path, install_dir: Path) -> bool:
             import tarfile
             with tarfile.open(archive_path, "r:*") as tf:
                 tf.extractall(install_dir)
+        elif archive_path.suffix == ".msi":
+            print_status("Running MSI installer (silent)...", "progress")
+            result = subprocess.run(
+                ["msiexec", "/i", str(archive_path), "/quiet", "/norestart",
+                 f"INSTALLDIR={install_dir}"],
+                capture_output=True
+            )
+            if result.returncode not in (0, 1641, 3010):  # 3010 = reboot required, ok
+                print_status(f"MSI installer failed (code {result.returncode})", "error")
+                return False
         elif archive_path.suffix == ".exe":
-            # Windows installer - just copy
-            shutil.copy2(archive_path, install_dir / archive_path.name)
+            # NSIS silent install
+            result = subprocess.run(
+                [str(archive_path), "/S", f"/D={install_dir}"],
+                capture_output=True
+            )
+            if result.returncode != 0:
+                print_status(f"Installer failed (code {result.returncode})", "error")
+                return False
         elif archive_path.suffix == ".dmg":
             # macOS - mount and copy
             print_status("Please open the .dmg file and drag the app to Applications", "info")
@@ -327,6 +344,175 @@ def download_app(source: str = "auto", version: str = "latest",
     print_status(f"Version: {version}", "success")
     return True
 
+
+def create_desktop_shortcut(app_path: Path) -> bool:
+    """Create desktop shortcut/launcher for the installed app."""
+    desktop = Path.home() / "Desktop"
+    if not desktop.exists():
+        desktop.mkdir(parents=True, exist_ok=True)
+
+    try:
+        shortcut_path = ""
+        if IS_WINDOWS:
+            shortcut_path = desktop / "SimpleCore.lnk"
+            # PowerShell — no pywin32 dependency needed
+            ps_script = (
+                f'$s=(New-Object -COM WScript.Shell).CreateShortcut("{shortcut_path}");'
+                f'$s.TargetPath="{app_path}";'
+                f'$s.Description="SimpleCore Desktop App";'
+                f'$s.Save()'
+            )
+            subprocess.run(["powershell", "-Command", ps_script],
+                           capture_output=True, check=True)
+
+        elif IS_LINUX:
+            shortcut_path = desktop / "SimpleCore.desktop"
+            # Also register in ~/.local/share/applications for app launcher
+            apps_dir = Path.home() / ".local" / "share" / "applications"
+            apps_dir.mkdir(parents=True, exist_ok=True)
+            content = (
+                "[Desktop Entry]\n"
+                "Version=1.0\n"
+                "Type=Application\n"
+                "Name=SimpleCore\n"
+                f"Exec={app_path}\n"
+                "Icon=simplecore\n"
+                "Terminal=false\n"
+                "Categories=Utility;\n"
+            )
+            for path in (shortcut_path, apps_dir / "SimpleCore.desktop"):
+                path.write_text(content)
+                os.chmod(path, 0o755)
+
+        elif IS_MACOS:
+            shortcut_path = desktop / "SimpleCore.app"
+            # Symlink to installed .app bundle
+            app_bundle = app_path.parent.parent.parent  # .../simple-core.app
+            if shortcut_path.exists() or shortcut_path.is_symlink():
+                shortcut_path.unlink()
+            os.symlink(app_bundle, shortcut_path)
+
+        print_status(f"Desktop shortcut created: {shortcut_path}", "success")
+        return True
+
+    except Exception as e:
+        print_status(f"Shortcut creation failed: {e}", "warning")
+        return False  # Non-fatal
+
+def init_app(source: str = "auto", force: bool = False,
+             no_shortcut: bool = False) -> bool:
+    """Download, install, and create desktop shortcut."""
+    print_box_header("Initializing SimpleCore Desktop App", "🚀")
+
+    if not download_app(source=source, force=force):
+        return False
+
+    app_path = get_installed_app_path()
+    if not app_path:
+        print_status("Installation verification failed", "error")
+        return False
+
+    if not no_shortcut:
+        create_desktop_shortcut(app_path)
+
+    version = get_installed_version()
+    print_status(f"SimpleCore v{version} ready!", "success")
+    print_status("Launch via desktop icon or: tb gui run", "info")
+    return True
+
+
+def update_app(source: str = "auto") -> bool:
+    """Check for update and install if newer version available."""
+    print_box_header("Updating SimpleCore Desktop App", "🔄")
+
+    current = get_installed_version()
+    if not current:
+        print_status("App not installed — run: tb gui init", "warning")
+        return False
+
+    print_status(f"Installed: v{current}", "info")
+    print_status("Checking for updates...", "progress")
+
+    # Fetch latest version tag without downloading
+    release_info = fetch_latest_release_info()
+    if not release_info:
+        print_status("Could not reach GitHub, trying registry...", "warning")
+        registry_info = fetch_registry_artifacts()
+        if not registry_info:
+            print_status("No update source reachable", "error")
+            return False
+        latest = (registry_info.get("versions") or [{}])[0].get("version", "")
+    else:
+        latest = release_info.get("tag_name", "").lstrip("v")
+
+    if not latest:
+        print_status("Could not determine latest version", "error")
+        return False
+
+    print_status(f"Latest:    v{latest}", "info")
+
+    if current == latest:
+        print_status("Already up to date!", "success")
+        return True
+
+    print_status(f"Update available: {current} → {latest}", "success")
+    if not download_app(source=source, force=True):
+        return False
+
+    # Refresh shortcut with potentially new path
+    app_path = get_installed_app_path()
+    if app_path:
+        create_desktop_shortcut(app_path)
+
+    print_status(f"Updated to v{latest}!", "success")
+    return True
+
+
+def update_app(source: str = "auto") -> bool:
+    """Check for update and install if newer version available."""
+    print_box_header("Updating SimpleCore Desktop App", "🔄")
+
+    current = get_installed_version()
+    if not current:
+        print_status("App not installed — run: tb gui init", "warning")
+        return False
+
+    print_status(f"Installed: v{current}", "info")
+    print_status("Checking for updates...", "progress")
+
+    # Fetch latest version tag without downloading
+    release_info = fetch_latest_release_info()
+    if not release_info:
+        print_status("Could not reach GitHub, trying registry...", "warning")
+        registry_info = fetch_registry_artifacts()
+        if not registry_info:
+            print_status("No update source reachable", "error")
+            return False
+        latest = (registry_info.get("versions") or [{}])[0].get("version", "")
+    else:
+        latest = release_info.get("tag_name", "").lstrip("v")
+
+    if not latest:
+        print_status("Could not determine latest version", "error")
+        return False
+
+    print_status(f"Latest:    v{latest}", "info")
+
+    if current == latest:
+        print_status("Already up to date!", "success")
+        return True
+
+    print_status(f"Update available: {current} → {latest}", "success")
+    if not download_app(source=source, force=True):
+        return False
+
+    # Refresh shortcut with potentially new path
+    app_path = get_installed_app_path()
+    if app_path:
+        create_desktop_shortcut(app_path)
+
+    print_status(f"Updated to v{latest}!", "success")
+    return True
 
 def run_app(with_worker: bool = True, http_port: int = 5000,
             ws_port: int = 5001, no_ws: bool = False,
@@ -732,6 +918,22 @@ Examples:
     download_parser.add_argument("--force", action="store_true",
                                  help="Force re-download even if installed")
 
+    # init
+    init_parser = subparsers.add_parser(
+        "init", help="Download, install, and create desktop shortcut (first-time setup)")
+    init_parser.add_argument("--source", choices=["auto", "github", "registry"],
+                             default="auto", help="Download source")
+    init_parser.add_argument("--force", action="store_true",
+                             help="Force reinstall even if already installed")
+    init_parser.add_argument("--no-shortcut", action="store_true",
+                             help="Skip desktop shortcut creation")
+
+    # update
+    update_parser = subparsers.add_parser(
+        "update", help="Check and install latest version if available")
+    update_parser.add_argument("--source", choices=["auto", "github", "registry"],
+                               default="auto", help="Download source")
+
     # status
     subparsers.add_parser("status", help="Show installation status")
 
@@ -857,6 +1059,18 @@ def main():
             version=args.version,
             force=args.force
         )
+        sys.exit(0 if success else 1)
+
+    elif args.command == "init":
+        success = init_app(
+            source=args.source,
+            force=args.force,
+            no_shortcut=args.no_shortcut
+        )
+        sys.exit(0 if success else 1)
+
+    elif args.command == "update":
+        success = update_app(source=args.source)
         sys.exit(0 if success else 1)
 
     elif args.command == "status":

@@ -16,6 +16,160 @@ eprint = print if AGENT_VERBOSE else lambda *a, **k: None
 wprint = print if AGENT_VERBOSE else lambda *a, **k: None
 iprint = print if AGENT_VERBOSE else lambda *a, **k: None
 
+import json as _json
+from pathlib import Path as _Path
+
+
+def _make_mcp_tool_func(session, server_name: str, tool_name: str, tool_info: dict):
+    """
+    Returns an async callable that calls session.call_tool().
+    Works without FlowAgentBuilder.
+    """
+    input_schema = tool_info.get("input_schema", {}) or {}
+    props = input_schema.get("properties", {})
+    required = input_schema.get("required", [])
+
+    async def mcp_tool_func(**kwargs) -> str:
+        try:
+            # MCPSessionManager stores live sessions — use it directly
+            result = await session.call_tool(tool_name, arguments=kwargs)
+            # result.content is a list of ContentBlock objects
+            if hasattr(result, "content"):
+                parts = []
+                for block in result.content:
+                    if hasattr(block, "text"):
+                        parts.append(block.text)
+                    elif hasattr(block, "data"):
+                        parts.append(str(block.data))
+                    else:
+                        parts.append(str(block))
+                return "\n".join(parts)
+            return str(result)
+        except Exception as e:
+            return f"MCP tool error ({server_name}.{tool_name}): {e}"
+
+    # Docstring for tool_manager description lookup
+    mcp_tool_func.__name__ = f"{server_name}_{tool_name}"
+    mcp_tool_func.__doc__ = tool_info.get("description", f"MCP tool: {tool_name}")
+
+    return mcp_tool_func
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Register one MCP server config on an already-obtained session
+# Returns count of registered tools
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _register_mcp_session(
+    agent,
+    session,  # live ClientSession
+    server_name: str,
+    mcp_session_manager,
+) -> int:
+    """
+    Extract capabilities from session and register tools on agent.tool_manager.
+    Returns number of tools registered.
+    """
+    if session is None:
+        return 0
+
+    caps = await mcp_session_manager.extract_capabilities_with_timeout(session, server_name)
+    tools = caps.get("tools", {})
+
+    count = 0
+    for t_name, t_info in tools.items():
+        wrapper_name = f"{server_name}_{t_name}"
+        func = _make_mcp_tool_func(session, server_name, t_name, t_info)
+
+        # agent.add_tools() accepts a list of dicts OR callables — use dict form
+        # which matches how FlowAgentBuilder registers MCP tools:
+        agent.add_tools([{
+            "tool_func": func,
+            "name": wrapper_name,
+            "description": t_info.get("description", f"{server_name}: {t_name}"),
+            "category": [f"mcp_{server_name}", "mcp"],
+            "flags": {"mcp": True, "server": server_name},
+        }])
+        count += 1
+
+    return count
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Claude-Code config loader
+# Supports: .mcp.json  /  claude_desktop_config.json  /  ~/.claude.json
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _load_claude_mcp_configs(path: str) -> dict[str, dict]:
+    """
+    Parse a Claude-Code-compatible MCP config file.
+
+    Supported formats:
+      { "mcpServers": { "name": { "command": "...", "args": [...], "env": {} } } }
+      { "mcp": { "servers": [ { "name": "...", "command": "...", ... } ] } }
+
+    Returns dict: server_name → server_config
+    """
+    p = _Path(path).expanduser().resolve()
+    if not p.exists():
+        raise FileNotFoundError(f"Config not found: {p}")
+
+    with open(p, encoding="utf-8") as f:
+        raw = _json.load(f)
+
+    servers: dict[str, dict] = {}
+
+    # Format 1: Claude Desktop / Claude Code  {"mcpServers": {...}}
+    if "mcpServers" in raw:
+        for name, cfg in raw["mcpServers"].items():
+            servers[name] = {
+                "command": cfg.get("command", ""),
+                "args": cfg.get("args", []),
+                "env": cfg.get("env", {}),
+                "transport": cfg.get("transport", "stdio"),
+            }
+
+    # Format 2: toolboxv2 legacy  {"mcp": {"servers": [...]}}
+    elif "mcp" in raw and "servers" in raw.get("mcp", {}):
+        for entry in raw["mcp"]["servers"]:
+            name = entry.get("name", "unknown")
+            servers[name] = {
+                "command": entry.get("command", ""),
+                "args": entry.get("args", []),
+                "env": entry.get("env", {}),
+                "transport": entry.get("transport", "stdio"),
+            }
+
+    # Format 3: flat list  [{"name":..., "command":...}]
+    elif isinstance(raw, list):
+        for entry in raw:
+            name = entry.get("name", "unknown")
+            servers[name] = {
+                "command": entry.get("command", ""),
+                "args": entry.get("args", []),
+                "env": entry.get("env", {}),
+                "transport": entry.get("transport", "stdio"),
+            }
+
+    return servers
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Default config file search order (Claude Code compatible)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _find_default_mcp_configs() -> list[str]:
+    candidates = [
+        ".mcp.json",
+        "mcp.json",
+        str(_Path.home() / ".claude.json"),
+        str(_Path.home() / ".config" / "claude" / "mcp.json"),
+        str(_Path.home() / "AppData" / "Roaming" / "Claude" / "claude_desktop_config.json"),
+        str(_Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"),
+    ]
+    return [c for c in candidates if _Path(c).expanduser().exists()]
+
+
 class MCPSessionManager:
     """Manages persistent MCP sessions with automatic reconnection and parallel processing"""
 

@@ -375,6 +375,18 @@ class Tools(MainTool):
                             loaded_config[key] = value
                     self.config = loaded_config
 
+                    self.config.update(
+                        {"FASTMODEL": os.getenv("FASTMODEL", self.config.get("FASTMODEL")),
+                         "AUDIOMODEL": os.getenv("AUDIOMODEL", self.config.get("AUDIOMODEL")),
+                         "BLITZMODEL": os.getenv("BLITZMODEL", self.config.get("BLITZMODEL")),
+                         "COMPLEXMODEL": os.getenv("COMPLEXMODEL", self.config.get("COMPLEXMODEL")),
+                         "SUMMARYMODEL": os.getenv("SUMMARYMODEL", self.config.get("SUMMARYMODEL")),
+                         "IMAGEMODEL": os.getenv("IMAGEMODEL", self.config.get("IMAGEMODEL")),
+                         "DEFAULTMODELEMBEDDING": os.getenv("DEFAULTMODELEMBEDDING",
+                                                            self.config.get("DEFAULTMODELEMBEDDING"))}
+                    )
+
+
             if self.spec == "app":
                 self.load_keys_from_env()
                 from .extras.agent_ui import initialize

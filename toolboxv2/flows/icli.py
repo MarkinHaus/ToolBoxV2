@@ -182,7 +182,9 @@ class IterView:
     # (tool_name, success, elapsed_s, info_str)
     tools: list[tuple[str, bool, float, str]] = field(default_factory=list)
     _tool_start_times: dict[str, float] = field(default_factory=dict)
+    _tool_start_inputs: dict[str, str] = field(default_factory=dict)
     pending_tool: str = ""   # currently running tool name
+    tools_raw: list[tuple[str, str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -202,11 +204,14 @@ class TaskView:
     last_tool_ok: bool = True
     last_tool_info: str = ""
     last_thought: str = ""
+    completed_at: Optional[float] = None
     sub_agents: dict[str, int] = field(default_factory=dict)
+    sub_task_ids: dict[str, str] = field(default_factory=dict)
     _sub_color_counter: int = 0
     iterations: list[IterView] = field(default_factory=list)
     _iter_map: dict[int, IterView] = field(default_factory=dict)
     started_at: float = field(default_factory=time.time)
+    final_answer: str = ""
 
     def _get_iter(self, n: int) -> IterView:
         if n not in self._iter_map:
@@ -258,11 +263,17 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
 
     elif t == "tool_start":
         name = chunk.get("name", "?")
+        raw_args = chunk.get("args", chunk.get("input", chunk.get("arguments", "")))
+        if isinstance(raw_args, dict):
+            import json as _j
+            raw_args = _j.dumps(raw_args, indent=2)
         tv.last_tool = name
         tv.phase = "tool"
         if iv:
             iv.pending_tool = name
             iv._tool_start_times[name] = time.time()
+            if raw_args:
+                iv._tool_start_inputs[name] = str(raw_args)
 
     elif t == "tool_result":
         name = chunk.get("name", tv.last_tool)
@@ -278,18 +289,42 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
         if iv:
             iv.tools.append((name, success, elapsed, info))
             iv.pending_tool = ""
+            # Rohdaten für späteren Drill-Down sichern
+            raw_result = chunk.get("result", "")
+            raw_input = chunk.get("args", chunk.get("input", chunk.get("arguments", "")))
+            if not raw_input:
+                raw_input = iv._tool_start_inputs.pop(name, "")
+            else:
+                iv._tool_start_inputs.pop(name, None)
+            if isinstance(raw_result, dict):
+                import json as _j
+                raw_result = _j.dumps(raw_result, indent=2)
+            if isinstance(raw_input, dict):
+                import json as _j
+                raw_input = _j.dumps(raw_input, indent=2)
+            iv.tools_raw.append((name, str(raw_result), str(raw_input)))
+
 
     elif t == "done":
-        tv.status = "completed" if chunk.get("success", True) else "failed"
+        if not chunk.get("_sub_agent_id"):  # sub-agent chunks must not overwrite parent status
+            tv.status = "completed" if chunk.get("success", True) else "failed"
         tv.phase = "done"
+        tv.completed_at = time.time()
+
 
     elif t == "error":
-        tv.status = "error"
+        if not chunk.get("_sub_agent_id"):
+            tv.status = "error"
         tv.phase = "error"
+        tv.completed_at = time.time()
 
     elif t == "final_answer":
         tv.phase = "done"
         tv.status = "completed"
+        tv.completed_at = time.time()
+        answer = chunk.get("answer", chunk.get("content", chunk.get("chunk", "")))
+        if answer:
+            tv.final_answer = str(answer)
 
 
 # ── A: Footer toolbar renderer ────────────────────────────────────────────────
@@ -301,83 +336,117 @@ def render_footer_toolbar(
     audio_processing: bool = False,
     overlay_open: bool = False,
 ) -> list[tuple[str, str]]:
-    """FormattedText tuples for PromptSession bottom_toolbar. Multi-line."""
     out: list[tuple[str, str]] = []
-    bg = "fg:ansiblack "
+    bg     = "fg:#111827 "   # konsistent dunkel, kein terminal-default
+    fg_dim = "bg:#6b7280"
 
     if audio_recording:
-        out.append((bg + "bg:ansired", " ● REC  F4=stop "))
+        out.append((bg + "fg:#dc2626 bg:#ffffff", " ● REC  F4=stop "))
+        out.append((bg + fg_dim, " " * 260))
         return out
+
     if audio_processing:
-        out.append((bg + "bg:ansimagenta", " ⚙ PROC  processing... "))
+        out.append((bg + "fg:#7c3aed bg:#ffffff", " ⚙ PROC  processing... "))
+        out.append((bg + fg_dim, " " * 250))
         return out
 
     if not task_views:
-        out.append((bg + "bg:#6b7280", " ◦ idle   F2=overview  F4=audio  F5=status "))
+        out.append((bg + fg_dim, f" ◦ idle   F2=overview  F4=audio  F5=status "))
+        out.append((bg + fg_dim, " " * 230))
         return out
 
     if overlay_open:
-        out.append((bg + "fg:#67e8f9", " ◎ ZEN+ OPEN "))
-        out.append((bg + "fg:#6b7280", " Esc=close\n"))
+        out.append((bg + "bg:#67e8f9", " ◎ ZEN+ OPEN "))
+        out.append((bg + fg_dim, " Esc=close\n"))
 
     shown = list(task_views.items())[:5]
     overflow = len(task_views) - len(shown)
 
     for tid, tv in shown:
         _append_task_line(out, tv, tid == focused_id)
-        out.append((bg, "\n"))
+
+        # Finale Antwort / letzte Nachricht für abgeschlossene Tasks
+        if tv.status in ("completed", "done") and tv.final_answer:
+            # Erste Zeile der Antwort, kurz
+            first_line = tv.final_answer.split("\n")[0].strip()
+            out.append(("fg:#111827 bg:#4ade80", f"  ↳ {_short(first_line, 90)} "))
+            out.append(("fg:#111827 " + fg_dim, " " * 240))
+
+        out.append(("fg:#111827 " + fg_dim, "\n"))
 
     if overflow:
-        out.append((bg + "fg:#6b7280", f"  … +{overflow} more "))
-        out.append((bg, "\n"))
+        out.append(("fg:#111827 " + fg_dim, f"  … +{overflow} more "))
+        out.append(("fg:#111827 " + fg_dim, "\n"))
 
-    out.append((bg + "fg:#374151",
-                " F2=detail  F6=focus  F7=cycle  F8=cancel  F4=audio  F5=status "))
+    # Shortcut-Leiste — explizit dunkel hinterlegt
+    out.append(("fg:#0f172a bg:#4b5563",
+                " F2=detail  F6=focus  F7=cycle  F8=cancel  F9=close-done  F4=audio  F5=status  "+" "*260))
     return out
 
 
 def _append_task_line(out: list, tv: TaskView, focused: bool) -> None:
-    bg = "bg:ansiblack "
-    out.append((bg + ("fg:#67e8f9" if focused else "fg:#6b7280"), " ▸ " if focused else "   "))
+    # Basis: dunkler Hintergrund, Text hell — alles explizit gesetzt
+    bg      = "fg:#111827 "   # dunkelgrau, kein ansiblack (vermeidet terminal-default weiß)
+    fg_dim  = "bg:#6b7280"
+    fg_main = "bg:#e5e7eb"
 
+    # Fokus-Indikator
+    out.append((bg + ("bg:#67e8f9" if focused else fg_dim), " ▸ " if focused else "   "))
+
+    # Status-Symbol — farbig auf gleichem bg
     sym, col = STATUS_SYM.get(tv.status, ("◯", "cyan"))
-    out.append((bg + f"fg:{C[col]}", f"{sym} "))
-    out.append((bg + "fg:#e5e7eb", f"{_short(tv.agent_name, 10):<10} "))
+    out.append((bg + f"bg:{C[col]}", f"{sym} "))
 
+    # Agent-Name
+    out.append((bg + fg_main, f"{_short(tv.agent_name, 10):<10} "))
+
+    # Fortschrittsbalken
     bar = _bar(tv.iteration, tv.max_iter, 8)
-    out.append((bg + "fg:#67e8f9", bar))
-    out.append((bg + "fg:#6b7280", f" {tv.iteration}/{tv.max_iter:<3} "))
+    out.append((bg + "bg:#67e8f9", bar))
+    out.append((bg + fg_dim, f" {tv.iteration}/{tv.max_iter:<3} "))
 
+    # Persona — vollständig wenn fertig
     if tv.persona and tv.persona != "default":
-        out.append((bg + "fg:#a78bfa", f"{_short(tv.persona, 8):<8} "))
+        name = tv.persona if tv.status in ("completed", "done", "failed", "error") \
+               else _short(tv.persona, 14)
+        out.append((bg + "bg:#a78bfa", f"{name} "))
     else:
-        out.append((bg + "fg:#6b7280", "         "))
+        out.append((bg + fg_dim, " "))
 
+    # Token-Prozent
     if tv.tokens_max > 0:
         pct = min(100, int(100 * tv.tokens_used / tv.tokens_max))
         tc = C["green"] if pct < 50 else (C["amber"] if pct < 80 else C["red"])
-        out.append((bg + f"fg:{tc}", f"{pct:3d}% "))
+        out.append((bg + f"bg:{tc}", f"{pct:3d}% "))
     else:
-        out.append((bg + "fg:#6b7280", "     "))
+        out.append((bg + fg_dim, "     "))
 
-    if tv.phase == "thinking":
-        out.append((bg + "fg:#6b7280", f"◎ {_short(tv.last_thought.replace(chr(10), ' '), 30)} "))
+    # Hauptstatus-Block
+    if tv.status in ("completed", "done"):
+        elapsed = (tv.completed_at or tv.started_at) - tv.started_at
+        out.append((bg + f"bg:{C['green']}", f"● {_fmt_elapsed(elapsed)} "))
+        if tv.skills:
+            out.append((bg + "bg:#60a5fa", " ".join(tv.skills) + " "))
+    elif tv.status in ("failed", "error"):
+        elapsed = (tv.completed_at or tv.started_at) - tv.started_at
+        out.append((bg + f"bg:{C['red']}", f"✗ {_fmt_elapsed(elapsed)} "))
+    elif tv.phase == "thinking":
+        out.append((bg + fg_dim, f"◎ {_short(tv.last_thought.replace(chr(10), ' '), 30)} "))
     elif tv.phase in ("tool", "tool_done") and tv.last_tool:
         ok_col = C["green"] if tv.last_tool_ok else C["red"]
         ok_sym = SYM["ok"] if tv.last_tool_ok else SYM["fail"]
-        out.append((bg + "fg:#60a5fa", f"◇ {_short(tv.last_tool, 14)} "))
-        out.append((bg + f"fg:{ok_col}", f"{ok_sym} "))
+        out.append((bg + "bg:#60a5fa", f"◇ {_short(tv.last_tool, 14)} "))
+        out.append((bg + f"bg:{ok_col}", f"{ok_sym} "))
         if tv.last_tool_info:
-            out.append((bg + "fg:#6b7280", f"{_short(tv.last_tool_info, 20)} "))
-    elif tv.status == "completed":
-        out.append((bg + f"fg:{C['green']}", f"● done {_fmt_elapsed(time.time() - tv.started_at)} "))
-    elif tv.status in ("failed", "error"):
-        out.append((bg + f"fg:{C['red']}", "✗ failed "))
+            out.append((bg + fg_dim, f"{_short(tv.last_tool_info, 20)} "))
     else:
-        out.append((bg + "fg:#6b7280", "⋯ "))
+        out.append((bg + fg_dim, "⋯ "))
 
     if tv.sub_agents:
-        out.append((bg + "fg:#f472b6", f"✦{len(tv.sub_agents)} "))
+        out.append((bg + "bg:#f472b6", f"✦{len(tv.sub_agents)} "))
+
+    # Padding-Block bis Zeilenende — verhindert weißen Rest
+    out.append((bg + fg_dim, " " * 260))
 
 
 # ── B: Fullscreen overlay ─────────────────────────────────────────────────────
@@ -390,18 +459,62 @@ class TaskOverlay:
 
     def __init__(self, task_views: dict[str, TaskView]):
         self._views = task_views
-        self._selected: str = ""
-        self._scroll: int = 0
+        self._selected: str = ""  # aktuell gewählte task_id
+        self._selected_sub: str = ""  # gewählte sub-agent id ("" = task selbst)
+        self._focus: str = "left"  # "left" | "right"
+        self._left_scroll: int = 0  # scroll in linker Liste (für viele tasks)
+        self._right_scroll: int = 0  # scroll im rechten Panel
+        self._selected_iter: Optional[int] = None  # None = liste; int = drill-down
+        self._right_iter_cursor: int = 0  # Index in reversed(tv.iterations) — welche Iter ist im Cursor
+        self._selected_tool_idx: int = 0  # Welches Tool ist im Drill-Down ausgewählt
+        self._tool_view: str = "list"  # "list" | "detail" — detail zeigt raw args+result
         self._app: Optional[Application] = None
 
+    def _left_items(self) -> list[tuple[str, str]]:
+        """Flache Liste aller navigierbaren Einträge: (task_id, sub_id).
+        sub_id == "" bedeutet der Task selbst ist ausgewählt."""
+        items: list[tuple[str, str]] = []
+        for tid, tv in self._views.items():
+            items.append((tid, ""))
+            for sub in tv.sub_agents:
+                items.append((tid, sub))
+        return items
+
+    def _effective_view(self) -> Optional[TaskView]:
+        if self._selected_sub:
+            parent_tv = self._views.get(self._selected)
+            if parent_tv:
+                sub_task_id = parent_tv.sub_task_ids.get(self._selected_sub)
+                if sub_task_id and sub_task_id in self._views:
+                    return self._views[sub_task_id]
+            # Fallback: Agent-Name oder Task-ID passt direkt
+            for tv in self._views.values():
+                if tv.agent_name == self._selected_sub or tv.task_id == self._selected_sub:
+                    return tv
+        return self._views.get(self._selected)
+
     async def run(self, on_exit) -> None:
-        running = [k for k, v in self._views.items() if v.status == "running"]
-        self._selected = running[0] if running else (next(iter(self._views), ""))
-        self._scroll = 0
+        items = self._left_items()
+        # Erstes laufendes Item vorauswählen
+        for tid, sub in items:
+            tv = self._views.get(tid)
+            if tv and tv.status == "running":
+                self._selected = tid
+                self._selected_sub = sub
+                break
+        else:
+            if items:
+                self._selected, self._selected_sub = items[0]
+
+        def _left_style():
+            return "bg:ansiblack" if self._focus == "right" else "bg:#0a0f1a"
+
+        def _right_style():
+            return "bg:ansiblack" if self._focus == "left" else "bg:#0a0f1a"
 
         left = Window(
             FormattedTextControl(self._render_left, focusable=False),
-            width=Dimension(min=26, max=30),
+            width=Dimension(min=28, max=32),
             style="bg:ansiblack",
         )
         right = Window(
@@ -431,35 +544,84 @@ class TaskOverlay:
 
     def _render_left(self) -> FormattedText:
         bg = "bg:ansiblack "
+        focus_bg = "bg:#1a2035 "
         out: list[tuple[str, str]] = [
             (bg + "fg:#67e8f9 bold", " ◯ Tasks\n"),
-            (bg + "fg:#374151", " " + "─" * 26 + "\n"),
+            (bg + "fg:#374151", " " + "─" * 28 + "\n"),
         ]
         for tid, tv in self._views.items():
-            sel = tid == self._selected
+            # Nur Haupt-Tasks zeigen (sub-task-IDs herausfiltern)  ← NEU
+            if "__sub__" in tid:
+                continue
+
+            task_sel = (tid == self._selected and self._selected_sub == "")
+            row_bg = focus_bg if task_sel else bg
             sym, col = STATUS_SYM.get(tv.status, ("◯", "cyan"))
-            bg2 = "bg:#1f2937 " if sel else bg
-            out.append((bg2 + f"fg:{C[col]}", (" ▸ " if sel else "   ") + sym + " "))
-            out.append((bg2 + ("fg:#ffffff bold" if sel else "fg:#e5e7eb"),
-                        _short(tv.agent_name, 17) + "\n"))
+            focus_arrow = "▸ " if (self._focus == "left" and task_sel) else "  "
+            out.append((row_bg + f"fg:{C[col]}", f" {focus_arrow}{sym} "))
+            out.append((row_bg + ("fg:#ffffff bold" if task_sel else "fg:#e5e7eb"),
+                        _short(tv.agent_name, 18) + "\n"))
+
+            # Sub-Agents
             for sub in tv.sub_agents:
-                out.append((bg2 + "fg:#f472b6", "    ✦ " + _short(sub, 14) + "\n"))
+                sub_sel = (tid == self._selected and self._selected_sub == sub)
+                sub_bg = "bg:#1f2937 " if sub_sel else bg
+                sub_arrow = "  ▸" if (self._focus == "left" and sub_sel) else "   "
+
+                # Eigene TaskView des Sub-Agents holen                    ← ÄNDERUNG
+                sub_task_id = tv.sub_task_ids.get(sub)
+                sub_tv = self._views.get(sub_task_id) if sub_task_id else None
+                if not sub_tv:
+                    sub_tv = next(
+                        (v for v in self._views.values()
+                         if v.agent_name == sub or v.task_id == sub), None
+                    )
+
+                sub_sym, sub_col = STATUS_SYM.get(
+                    sub_tv.status if sub_tv else "running", ("✦", "purple")
+                )
+                out.append((sub_bg + f"fg:{C.get(sub_col, '#f472b6')}",
+                            f"{sub_arrow} {sub_sym} "))
+                out.append((sub_bg + ("fg:#ffffff bold" if sub_sel else "fg:#d1a8f0"),
+                            _short(sub, 16) + "\n"))
+
+                if sub_sel and sub_tv:  # ← ÄNDERUNG
+                    # Persona anzeigen
+                    if sub_tv.persona and sub_tv.persona != "default":
+                        out.append((sub_bg + "fg:#a78bfa",
+                                    f"       ✦ {_short(sub_tv.persona, 14)}\n"))
+                    # Skills (max 3)
+                    if sub_tv.skills:
+                        skills_str = " ".join(sub_tv.skills[:3])
+                        out.append((sub_bg + "fg:#60a5fa",
+                                    f"       {_short(skills_str, 18)}\n"))
+                    # Iter-Stand
+                    out.append((sub_bg + "fg:#6b7280",
+                                f"       iter {sub_tv.iteration}/{sub_tv.max_iter}\n"))
+
+        out.append((bg + "fg:#374151", " " + "─" * 28 + "\n"))
+        if self._focus == "left":
+            out.append((bg + "fg:#6b7280", " ↑↓=nav  →/Enter=right\n"))
+        else:
+            out.append((bg + "fg:#6b7280", " ←=focus left\n"))
         return FormattedText(out)
 
     def _render_right(self) -> FormattedText:
         bg = "bg:ansiblack "
+        sel_bg = "bg:#1a2035 "
         out: list[tuple[str, str]] = []
-        tv = self._views.get(self._selected)
+        tv = self._effective_view()
         if not tv:
             out.append((bg + "fg:#6b7280", " No task selected\n"))
             return FormattedText(out)
 
-        # Header
+        # ── Header ──────────────────────────────────────────────────────────
         sym, col = STATUS_SYM.get(tv.status, ("◯", "cyan"))
         out.append((bg + f"fg:{C[col]} bold", f" {sym} {tv.agent_name}"))
-        out.append((bg + "fg:#6b7280", f"  {_short(tv.query, 55)}\n"))
+        if self._selected_sub:
+            out.append((bg + "fg:#f472b6", "  ✦ sub-agent"))
+        out.append((bg + "fg:#6b7280", f"  {_short(tv.query, 52)}\n"))
 
-        # Persona + skills
         if tv.persona and tv.persona != "default":
             out.append((bg + "fg:#a78bfa", f"   Persona: {tv.persona}"))
             if tv.skills:
@@ -467,7 +629,6 @@ class TaskOverlay:
                 out.append((bg + "fg:#60a5fa", " ".join(tv.skills[:8])))
             out.append((bg, "\n"))
 
-        # Token bar
         if tv.tokens_max > 0:
             pct = min(100, int(100 * tv.tokens_used / tv.tokens_max))
             filled = int(20 * pct / 100)
@@ -477,51 +638,170 @@ class TaskOverlay:
             out.append((bg + f"fg:{tc}", f"[{bar}] {pct}%"))
             out.append((bg + "fg:#6b7280", f"  {tv.tokens_used:,}/{tv.tokens_max:,}\n"))
 
-        # Iter progress bar
         bar_s = _bar(tv.iteration, tv.max_iter, 20)
         out.append((bg + "fg:#67e8f9", f"   {bar_s}"))
         out.append((bg + "fg:#6b7280", f"  iter {tv.iteration}/{tv.max_iter}\n"))
-        out.append((bg + "fg:#374151", "   " + "─" * 62 + "\n"))
+        out.append((bg + "fg:#374151", "   " + "─" * 64 + "\n"))
 
-        # Iteration history (newest first, scrollable)
+        # ── Drill-Down: eine Iteration im Detail ─────────────────────────────
+        if self._selected_iter is not None:
+            iv = tv._iter_map.get(self._selected_iter)
+            if not iv:
+                out.append((bg + "fg:#f87171", f"   Iter {self._selected_iter} not found\n"))
+                return FormattedText(out)
+
+            is_cur = iv.n == tv.iteration and tv.status == "running"
+            hint = " ▸ running" if is_cur else " ● done"
+            out.append((bg + "fg:#fbbf24 bold",
+                        f"   ── Iter {iv.n}{hint} " + "─" * 40 + "\n"))
+
+            # ── Tool-Detail-Ansicht ──────────────────────────────────────────
+            if self._tool_view == "detail" and iv.tools:
+                idx = min(self._selected_tool_idx, len(iv.tools) - 1)
+                tname, tok, elapsed, info = iv.tools[idx]
+                raw_result = iv.tools_raw[idx][1] if idx < len(iv.tools_raw) else ""
+                raw_input  = iv.tools_raw[idx][2] if idx < len(iv.tools_raw) else ""
+                ok_col = C["green"] if tok else C["red"]
+                ok_sym = SYM["ok"] if tok else SYM["fail"]
+
+                out.append((bg + "fg:#60a5fa bold",
+                            f"   ◇ Tool {idx + 1}/{len(iv.tools)}: {tname}\n"))
+                out.append((bg + f"fg:{ok_col}", f"   {ok_sym}  {elapsed:.3f}s\n"))
+                out.append((bg + "fg:#374151", "   " + "─" * 64 + "\n"))
+
+                if raw_input:
+                    import textwrap as _tw
+                    out.append((bg + "fg:#a78bfa bold", "   → Input / Arguments:\n"))
+                    for line in raw_input.split("\n"):
+                        for sub in (_tw.wrap(line, width=72) or [""]):
+                            out.append((bg + "fg:#d1d5db", f"     {sub}\n"))
+                    out.append((bg + "fg:#374151", "   " + "─" * 64 + "\n"))
+
+                import textwrap as _tw
+
+                if raw_result:
+                    out.append((bg + "fg:#4ade80 bold", "   ← Result:\n"))
+                    skip = self._right_scroll
+                    display_lines: list[str] = []
+                    for line in raw_result.split("\n"):
+                        # wrap each logical line to 72 chars so it fits the panel
+                        wrapped = _tw.wrap(line, width=72) or [""]
+                        display_lines.extend(wrapped)
+                    for i, line in enumerate(display_lines):
+                        if i < skip:
+                            continue
+                        out.append((bg + "fg:#e5e7eb", f"     {line}\n"))
+                else:
+                    out.append((bg + "fg:#6b7280", "   (no result data)\n"))
+
+                out.append((bg + "fg:#374151", "\n   " + "─" * 64 + "\n"))
+                out.append((bg + "fg:#6b7280",
+                            "   ←/→ = prev/next tool  Backspace = tool list  j/k = scroll result\n"))
+                return FormattedText(out)
+
+            # ── Tool-Liste innerhalb der Iter ────────────────────────────────
+            out.append((bg + "fg:#6b7280",
+                        "   ← Backspace=iter list   Enter=tool detail   j/k=scroll\n"))
+            out.append((bg + "fg:#374151", "   " + "─" * 64 + "\n"))
+
+            if iv.thoughts:
+                out.append((bg + "fg:#a78bfa bold", "   ◎ Thoughts:\n"))
+                skip = self._right_scroll
+                for i, thought in enumerate(iv.thoughts):
+                    for line in thought.split("\n"):
+                        if skip > 0:
+                            skip -= 1
+                            continue
+                        out.append((bg + "fg:#d1d5db", f"     {line}\n"))
+                    out.append((bg + "fg:#374151", "     ·\n"))
+
+            if iv.tools:
+                out.append((bg + "fg:#60a5fa bold", f"   ◇ Tools ({len(iv.tools)}):\n"))
+                for idx, (tname, tok, elapsed, info) in enumerate(iv.tools):
+                    is_sel = (self._focus == "right" and
+                              idx == self._selected_tool_idx % len(iv.tools))
+                    row_bg = sel_bg if is_sel else bg
+                    ok_col = C["green"] if tok else C["red"]
+                    ok_sym = SYM["ok"] if tok else SYM["fail"]
+                    cursor = "▸ " if is_sel else "  "
+                    elapsed_s = f"{elapsed:.2f}s" if elapsed > 0 else "—"
+                    out.append((row_bg + "fg:#60a5fa",
+                                f"   {cursor}◇ "))
+                    out.append((row_bg + "fg:#e5e7eb",
+                                f"{_short(tname, 20):<20} "))
+                    out.append((row_bg + f"fg:{ok_col}", f"{ok_sym}  "))
+                    out.append((row_bg + "fg:#6b7280", f"{elapsed_s:>7}  "))
+                    if info:
+                        out.append((row_bg + "fg:#9ca3af", _short(info, 36)))
+                    out.append((row_bg, "\n"))
+
+            if iv.pending_tool:
+                out.append((bg + "fg:#60a5fa", "   ◇ "))
+                out.append((bg + "fg:#fbbf24",
+                            f"{_short(iv.pending_tool, 20):<20} ⋯ running...\n"))
+
+            if not iv.thoughts and not iv.tools and not iv.pending_tool:
+                out.append((bg + "fg:#6b7280", "   (no data yet)\n"))
+
+            if tv.final_answer and iv.n == max(
+                (i.n for i in tv.iterations), default=0
+            ):
+                out.append((bg + "fg:#374151", "\n   " + "─" * 64 + "\n"))
+                out.append((bg + "fg:#4ade80 bold", "   ● Final Answer:\n\n"))
+                for line in tv.final_answer.split("\n"):
+                    out.append((bg + "fg:#e5e7eb", f"   {line}\n"))
+
+            return FormattedText(out)
+
+        # ── Iterations-Liste (kein Drill-Down) ──────────────────────────────
         iters = list(reversed(tv.iterations))
-        skip = self._scroll
+        skip = self._right_scroll
+        cursor_abs = self._right_iter_cursor  # Index in iters-Liste
 
-        for iv in iters:
+        for list_idx, iv in enumerate(iters):
             iter_lines = 1 + len(iv.thoughts) + len(iv.tools) + (1 if iv.pending_tool else 0)
             if skip >= iter_lines:
                 skip -= iter_lines
                 continue
 
             is_cur = iv.n == tv.iteration and tv.status == "running"
+            is_cursor_sel = (self._focus == "right" and list_idx == cursor_abs)
             hint = " ▸ running" if is_cur else ""
-            out.append((bg + "fg:#fbbf24 bold",
-                        f"   ── iter {iv.n}{hint} " + "─" * 28 + "\n"))
 
-            # Thoughts (full, no truncation on selected, short otherwise)
+            # Cursor-Highlight: farbige Hintergrundzeile für die markierte Iter
+            iter_bg = sel_bg if is_cursor_sel else bg
+            cursor_sym = "▸ " if is_cursor_sel else "  "
+            iter_label = f"   {cursor_sym}── iter {iv.n}{hint} " + "─" * 28 + "\n"
+            label_col = "#ffffff bold" if is_cursor_sel else "#fbbf24 bold"
+            out.append((iter_bg + f"fg:{label_col}", iter_label))
+
             for thought in iv.thoughts:
                 clean = thought.replace("\n", " ")
-                out.append((bg + "fg:#6b7280", "   ◎ "))
-                out.append((bg + "fg:#e5e7eb", _short(clean, 72) + "\n"))
+                out.append((bg + "fg:#6b7280", "      ◎ "))
+                out.append((bg + "fg:#e5e7eb", _short(clean, 68) + "\n"))
 
-            # Completed tools
             for tname, tok, elapsed, info in iv.tools:
                 ok_col = C["green"] if tok else C["red"]
                 ok_sym = SYM["ok"] if tok else SYM["fail"]
                 elapsed_s = f"{elapsed:.2f}s" if elapsed > 0 else "     "
-                out.append((bg + "fg:#60a5fa", "   ◇ "))
-                out.append((bg + "fg:#e5e7eb", f"{_short(tname, 18):<18} "))
+                out.append((bg + "fg:#60a5fa", "      ◇ "))
+                out.append((bg + "fg:#e5e7eb", f"{_short(tname, 16):<16} "))
                 out.append((bg + f"fg:{ok_col}", f"{ok_sym}  "))
                 out.append((bg + "fg:#6b7280", f"{elapsed_s:>7}  "))
                 if info:
-                    out.append((bg + "fg:#9ca3af", _short(info, 40)))
+                    out.append((bg + "fg:#9ca3af", _short(info, 36)))
                 out.append((bg, "\n"))
 
-            # Running tool
             if iv.pending_tool:
-                out.append((bg + "fg:#60a5fa", "   ◇ "))
+                out.append((bg + "fg:#60a5fa", "      ◇ "))
                 out.append((bg + "fg:#fbbf24",
-                            f"{_short(iv.pending_tool, 18):<18} ⋯ running...\n"))
+                            f"{_short(iv.pending_tool, 16):<16} ⋯ running...\n"))
+
+        if tv.final_answer:
+            out.append((bg + "fg:#374151", "\n   " + "─" * 64 + "\n"))
+            out.append((bg + "fg:#4ade80 bold", "   ● Final Answer:\n\n"))
+            for line in tv.final_answer.split("\n"):
+                out.append((bg + "fg:#e5e7eb", f"   {line}\n"))
 
         if not tv.iterations:
             out.append((bg + "fg:#6b7280", "   waiting for first iteration...\n"))
@@ -529,13 +809,34 @@ class TaskOverlay:
         return FormattedText(out)
 
     def _render_footer(self) -> FormattedText:
-        tv = self._views.get(self._selected)
+        tv = self._effective_view()
         n_run = sum(1 for v in self._views.values() if v.status == "running")
         iter_s = f"iter {tv.iteration}/{tv.max_iter}" if tv else ""
+        sub_s = f" ✦ {_short(self._selected_sub, 12)}" if self._selected_sub else ""
+
+        if self._selected_iter is not None and self._tool_view == "detail":
+            iv = tv._iter_map.get(self._selected_iter) if tv else None
+            n_tools = len(iv.tools) if iv else 0
+            cur_tool = min(self._selected_tool_idx, n_tools - 1) + 1 if n_tools else 0
+            hint = (f" ←/→=prev/next tool ({cur_tool}/{n_tools})"
+                    f"  Backspace=back  j/k=scroll result")
+        elif self._selected_iter is not None:
+            iv = tv._iter_map.get(self._selected_iter) if tv else None
+            n_tools = len(iv.tools) if iv else 0
+            cur_tool = self._selected_tool_idx % n_tools + 1 if n_tools else 0
+            hint = (f" ↑↓=select tool ({cur_tool}/{n_tools})"
+                    f"  Enter=tool detail  Backspace=iter list  j/k=scroll")
+        elif self._focus == "left":
+            hint = " ↑↓=navigate  →/Enter=focus right  Tab=switch"
+        else:
+            n_iters = len(tv.iterations) if tv else 0
+            cur_iter = self._right_iter_cursor + 1 if n_iters else 0
+            hint = (f" ↑↓=select iter ({cur_iter}/{n_iters})"
+                    f"  Enter=drill-in  ←/Backspace=left  Tab=switch")
+
         return FormattedText([(
             "bg:#111827 fg:#6b7280",
-            f" ↑↓/Tab=select  j/k PgDn/PgUp=scroll  Esc/F2=close "
-            f"│ {n_run} running │ {iter_s} "
+            f"{hint} │ {n_run} running │ {iter_s}{sub_s}  Esc/F2=close "
         )])
 
     # ── keys ────────────────────────────────────────────────────────────────
@@ -551,34 +852,153 @@ class TaskOverlay:
             on_exit()
 
         @kb.add("tab")
-        @kb.add("down")
-        def _next(event):
-            keys = list(ov._views.keys())
-            if not keys:
-                return
-            idx = keys.index(ov._selected) if ov._selected in keys else -1
-            ov._selected = keys[(idx + 1) % len(keys)]
-            ov._scroll = 0
+        def _toggle_focus(event):
+            ov._focus = "right" if ov._focus == "left" else "left"
+            ov._selected_iter = None
+            ov._tool_view = "list"
 
-        @kb.add("s-tab")
+        # ── Links: Task/Sub-Agent navigieren ────────────────────────────────
         @kb.add("up")
-        def _prev(event):
-            keys = list(ov._views.keys())
-            if not keys:
+        def _nav_up(event):
+            if ov._focus == "right":
+                if ov._selected_iter is not None:
+                    if ov._tool_view == "detail":
+                        ov._right_scroll = max(0, ov._right_scroll - 1)
+                    else:
+                        # Tool-Cursor hoch
+                        ov._selected_tool_idx = max(0, ov._selected_tool_idx - 1)
+                else:
+                    # Iter-Cursor hoch (= neuere Iter, da reversed)
+                    tv = ov._effective_view()
+                    n = len(tv.iterations) if tv else 0
+                    ov._right_iter_cursor = max(0, ov._right_iter_cursor - 1)
                 return
-            idx = keys.index(ov._selected) if ov._selected in keys else 0
-            ov._selected = keys[(idx - 1) % len(keys)]
-            ov._scroll = 0
+            items = ov._left_items()
+            if not items:
+                return
+            cur = (ov._selected, ov._selected_sub)
+            idx = items.index(cur) if cur in items else 0
+            ov._selected, ov._selected_sub = items[(idx - 1) % len(items)]
+            ov._selected_iter = None
+            ov._tool_view = "list"
+            ov._right_scroll = 0
+            ov._right_iter_cursor = 0
 
-        @kb.add("pagedown")
+        @kb.add("down")
+        def _nav_down(event):
+            if ov._focus == "right":
+                if ov._selected_iter is not None:
+                    if ov._tool_view == "detail":
+                        ov._right_scroll += 1
+                    else:
+                        # Tool-Cursor runter
+                        tv = ov._effective_view()
+                        iv = tv._iter_map.get(ov._selected_iter) if tv else None
+                        max_idx = len(iv.tools) - 1 if iv and iv.tools else 0
+                        ov._selected_tool_idx = min(max_idx, ov._selected_tool_idx + 1)
+                else:
+                    # Iter-Cursor runter (= ältere Iter)
+                    tv = ov._effective_view()
+                    n = len(tv.iterations) if tv else 0
+                    ov._right_iter_cursor = min(max(n - 1, 0), ov._right_iter_cursor + 1)
+                return
+            items = ov._left_items()
+            if not items:
+                return
+            cur = (ov._selected, ov._selected_sub)
+            idx = items.index(cur) if cur in items else -1
+            ov._selected, ov._selected_sub = items[(idx + 1) % len(items)]
+            ov._selected_iter = None
+            ov._tool_view = "list"
+            ov._right_scroll = 0
+            ov._right_iter_cursor = 0
+
+        # ── Enter: Drill-In ──────────────────────────────────────────────────
+        @kb.add("right")
+        @kb.add("enter")
+        def _enter_or_drill(event):
+            if ov._focus == "left":
+                ov._focus = "right"
+                return
+
+            if ov._selected_iter is None:
+                # Iter-Liste → Drill into cursor-Iter
+                tv = ov._effective_view()
+                if not tv or not tv.iterations:
+                    return
+                iters_rev = list(reversed(tv.iterations))
+                idx = min(ov._right_iter_cursor, len(iters_rev) - 1)
+                ov._selected_iter = iters_rev[idx].n
+                ov._selected_tool_idx = 0
+                ov._tool_view = "list"
+                ov._right_scroll = 0
+            elif ov._tool_view == "list":
+                # Iter-Drill → Tool-Detail öffnen wenn Tool ausgewählt
+                tv = ov._effective_view()
+                iv = tv._iter_map.get(ov._selected_iter) if tv else None
+                if iv and iv.tools:
+                    ov._tool_view = "detail"
+                    ov._right_scroll = 0
+
+        # ── ← / Backspace: einen Level zurück ───────────────────────────────
+        @kb.add("left")
+        @kb.add("backspace")
+        def _back(event):
+            if ov._tool_view == "detail":
+                # Tool-Detail → Tool-Liste
+                ov._tool_view = "list"
+                ov._right_scroll = 0
+            elif ov._selected_iter is not None:
+                # Iter-Drill → Iter-Liste
+                ov._selected_iter = None
+                ov._tool_view = "list"
+                ov._right_scroll = 0
+            else:
+                # Iter-Liste → Fokus nach links
+                ov._focus = "left"
+
+        # ── Tool-Navigation in Detail-Ansicht ───────────────────────────────
+        @kb.add("c-right")
+        def _next_tool(event):
+            if ov._selected_iter is not None and ov._tool_view == "detail":
+                tv = ov._effective_view()
+                iv = tv._iter_map.get(ov._selected_iter) if tv else None
+                if iv and iv.tools:
+                    ov._selected_tool_idx = (ov._selected_tool_idx + 1) % len(iv.tools)
+                    ov._right_scroll = 0
+
+        @kb.add("c-left")
+        def _prev_tool(event):
+            if ov._selected_iter is not None and ov._tool_view == "detail":
+                tv = ov._effective_view()
+                iv = tv._iter_map.get(ov._selected_iter) if tv else None
+                if iv and iv.tools:
+                    ov._selected_tool_idx = (ov._selected_tool_idx - 1) % len(iv.tools)
+                    ov._right_scroll = 0
+
+        # ── Scroll ──────────────────────────────────────────────────────────
         @kb.add("j")
+        @kb.add("pagedown")
         def _sd(event):
-            ov._scroll += 5
+            ov._right_scroll += 5
 
-        @kb.add("pageup")
         @kb.add("k")
+        @kb.add("pageup")
         def _su(event):
-            ov._scroll = max(0, ov._scroll - 5)
+            ov._right_scroll = max(0, ov._right_scroll - 5)
+
+        # ── Direkt zu Iter 1-9 springen ─────────────────────────────────────
+        for n in range(1, 10):
+            def _jump_iter(event, _n=n):
+                tv = ov._effective_view()
+                if tv and _n in tv._iter_map and ov._selected_iter is None:
+                    ov._selected_iter = _n
+                    ov._selected_tool_idx = 0
+                    ov._tool_view = "list"
+                    ov._right_scroll = 0
+                    ov._focus = "right"
+
+            kb.add(str(n))(_jump_iter)
 
         return kb
 
@@ -1617,6 +2037,38 @@ class SmartCompleter(Completer):
 # HOTKEY POLLER (active during agent streaming, when prompt_toolkit is idle)
 # =============================================================================
 
+import re as _re
+
+_MEDIA_EXTENSIONS = {
+    "image": {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".svg"},
+    "pdf":   {".pdf"},
+    "video": {".mp4", ".mov", ".avi", ".mkv", ".webm"},
+    "audio": {".mp3", ".wav", ".ogg", ".flac", ".m4a"},
+}
+
+def _is_pasteable_media_path(text: str) -> bool:
+    """Gibt True zurück wenn text ein lokaler Pfad oder eine URL zu einer Mediendatei ist."""
+    stripped = text.strip()
+    # Kein Whitespace im Pfad (außer quoted) → kein Fließtext
+    if "\n" in stripped or (len(stripped.split()) > 1 and not stripped.startswith('"')):
+        return False
+    p = Path(stripped.strip('"').strip("'"))
+    ext = p.suffix.lower()
+    for exts in _MEDIA_EXTENSIONS.values():
+        if ext in exts:
+            return True
+    return False
+
+
+def _safe_decode_paste(raw: str) -> str:
+    """Normalisiert eingefügten Text zu sauberem UTF-8."""
+    try:
+        safe = raw.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+    except Exception:
+        safe = raw.encode("ascii", errors="replace").decode("ascii", errors="replace")
+    # Null-Bytes und Windows-Zeilenenden normalisieren
+    safe = safe.replace("\x00", "").replace("\r\n", "\n").replace("\r", "\n")
+    return safe
 
 # ------------------------------------------------------------
 #  Hilfedaten (aus den von dir angegebenen Quellen)
@@ -1794,6 +2246,8 @@ class ISAA_Host:
         # Startup: animated rain for 2.5s
         # app_instance.run_bg_task_advanced(self.anim.play_startup,duration=1.5)
         self.zen_plus_mode = False
+        self.max_iteration = os.getenv("DEFAULT_MAX_ITERATIONS", 30)
+
         self.app = app_instance or get_app("isaa-host")
         def _(*args, **k):
             text = " ".join(str(a) for a in args)
@@ -1883,20 +2337,44 @@ class ISAA_Host:
             feature(self.feature_manager)
 
     def _ingest_chunk(self, task_id: str, chunk: dict) -> None:
-        """Forward one stream chunk into the TaskView for task_id."""
+        """Forward one stream chunk. Sub-agent chunks go to their own TaskView."""
         tv = self._task_views.get(task_id)
         if tv is None:
             return
+
+        sub_id = chunk.get("_sub_agent_id", "")
+
+        if sub_id:
+            # Sicherstellen dass Eltern-TV den Sub-Agent kennt (für linkes Panel)
+            tv._sub_color(sub_id)
+
+            # Eigene TaskView für Sub-Agent anlegen falls noch nicht vorhanden
+            sub_task_id = tv.sub_task_ids.get(sub_id)
+            if sub_task_id is None:
+                sub_task_id = f"{task_id}__sub__{sub_id}"
+                tv.sub_task_ids[sub_id] = sub_task_id
+                sub_tv = TaskView(
+                    task_id=sub_task_id,
+                    agent_name=sub_id,
+                    query=f"[sub] {tv.query[:60]}",
+                )
+                self._task_views[sub_task_id] = sub_tv
+
+            sub_tv = self._task_views[sub_task_id]
+            # _sub_agent_id entfernen → ingest behandelt es als direkten Chunk
+            chunk_for_sub = {k: v for k, v in chunk.items() if k != "_sub_agent_id"}
+            ingest_chunk(sub_tv, chunk_for_sub)
+            # Eltern-TV bekommt KEINEN Iterations-Eintrag mehr für Sub-Chunks
+        else:
+            ingest_chunk(tv, chunk)  # normale Chunks
+
         running = any(v.status == "running" for v in self._task_views.values())
         self.set_dynamic_interval(0.5 if running else 1.5)
-        ingest_chunk(tv, chunk)
-        # Trigger toolbar refresh
         if self.prompt_session and self.prompt_session.app:
             try:
                 self.prompt_session.app.invalidate()
             except Exception:
                 pass
-        # Trigger overlay refresh
         if self._overlay:
             self._overlay.invalidate()
 
@@ -1999,6 +2477,64 @@ class ISAA_Host:
         """Create prompt_toolkit key bindings."""
         kb = KeyBindings()
 
+        # ── Safe Paste: Bracketed-Paste (große Texte, Dateipfade, Medien) ──
+        @kb.add("<bracketed-paste>")
+        def handle_bracketed_paste(event):
+            """
+            Sicheres Einfügen:
+            - Normalisiert Encoding (verhindert UTF-8-Fehler bei großen Texten)
+            - Erkennt Medienpfade (Bilder, PDFs) → fügt [media:pfad] ein
+            - Erkennt Textdateipfade → liest Inhalt und fügt ihn ein
+            """
+            buf = event.app.current_buffer
+            raw = event.data or ""
+            safe = _safe_decode_paste(raw)
+            stripped = safe.strip()
+
+            # ── Mediendatei-Pfad → [media:] Tag ──────────────────────────
+            if _is_pasteable_media_path(stripped):
+                clean_path = stripped.strip('"').strip("'")
+                buf.insert_text(f"[media:{clean_path}]")
+                return
+
+            # ── Textdatei-Pfad → Dateiinhalt inline einfügen ─────────────
+            if "\n" not in stripped and len(stripped.split()) == 1:
+                candidate = Path(stripped.strip('"').strip("'"))
+                if candidate.is_file() and candidate.suffix.lower() in (
+                        ".txt", ".md", ".py", ".js", ".ts", ".json", ".yaml",
+                        ".yml", ".toml", ".csv", ".log", ".sh", ".env",
+                ):
+                    try:
+                        content = candidate.read_text(encoding="utf-8", errors="replace")
+                        buf.insert_text(_safe_decode_paste(content))
+                        return
+                    except Exception:
+                        pass  # Fallthrough zu normalem Einfügen
+
+            # ── Normaler Text: safe einfügen ─────────────────────────────
+            buf.insert_text(safe)
+
+        # ── Ctrl+V Fallback (terminals ohne bracketed-paste support) ──────
+        @kb.add("c-v")
+        def handle_ctrl_v(event):
+            """Ctrl+V: versucht Clipboard zu lesen, fällt auf bracket-paste zurück."""
+            try:
+                import pyperclip
+                text = pyperclip.paste() or ""
+            except Exception:
+                # Kein pyperclip → normales Terminal-Paste (Terminal sendet Zeichen direkt)
+                return
+            if not text:
+                return
+            safe = _safe_decode_paste(text)
+            stripped = safe.strip()
+            buf = event.app.current_buffer
+            if _is_pasteable_media_path(stripped):
+                clean_path = stripped.strip('"').strip("'")
+                buf.insert_text(f"[media:{clean_path}]")
+            else:
+                buf.insert_text(safe)
+
         @kb.add("f4")
         def _(event):
             """Toggle audio recording with F4."""
@@ -2060,6 +2596,23 @@ class ISAA_Host:
                 exc.async_task.cancel()
                 c_print(HTML(
                     f"<style fg='#fbbf24'>  ⚠ Cancelling {exc.task_id}...</style>"
+                ))
+
+        @kb.add("f9")
+        def _(event):
+            """F9: Abgeschlossene Tasks aus der Ansicht entfernen."""
+            done_ids = [
+                tid for tid, t in self.all_executions.items()
+                if t.status in ("completed", "failed", "error", "cancelled")
+            ]
+            for tid in done_ids:
+                self.all_executions.pop(tid, None)
+                self._task_views.pop(tid, None)
+                if self._focused_task_id == tid:
+                    self._focused_task_id = None
+            if done_ids:
+                c_print(HTML(
+                    f"<style fg='{PTColors.ZEN_DIM}'>  ✓ {len(done_ids)} task(s) closed</style>"
                 ))
 
         @kb.add("f2")
@@ -2804,22 +3357,17 @@ class ISAA_Host:
     # =========================================================================
 
     async def _tool_spawn_agent(
-        self, name: str, persona: str, model: str | None = None, background: bool = False
+        self, name: str, persona: str, model=None, background=False
     ) -> str:
-        """Implementation: Spawn a new agent."""
         try:
             if name in self.agent_registry:
-                return f"Agent '{name}' already exists. Use a different name."
+                return f"Agent '{name}' already exists."
 
             builder = self.isaa_tools.get_agent_builder(
                 name=name, add_base_tools=True, with_dangerous_shell=False
             )
-
             self._apply_rate_limiter_to_builder(builder)
-            builder.config.system_message = (
-                f"You are {persona}. Act according to this role."
-            )
-
+            builder.config.system_message = f"You are {persona}. Act according to this role."
             if model:
                 builder.with_models(model, model)
 
@@ -2829,6 +3377,14 @@ class ISAA_Host:
                 name=name, persona=persona, is_self_agent=False, has_shell_access=False
             )
             self._save_state()
+
+            # ── NEU: TaskView für Spawn-Vorgang eintragen ─────────────────────
+            self._task_counter += 1
+            spawn_id = f"spawn_{self._task_counter}_{name}"
+            tv = TaskView(task_id=spawn_id, agent_name=name, query=f"[spawn] {persona[:60]}")
+            tv.status = "completed"
+            tv.completed_at = time.time()
+            self._task_views[spawn_id] = tv
 
             return f"✓ Agent '{name}' spawned with persona: {persona}"
 
@@ -2873,36 +3429,17 @@ class ISAA_Host:
     async def _tool_delegate(
         self, agent_name: str, task: str, wait: bool, session_id: str
     ) -> str:
-        """Delegate task to another agent, registered in SSOT."""
+        """Delegate task — jetzt MIT Stream + Ingest-Hook für beide Modi."""
         try:
             agent = await self.isaa_tools.get_agent(agent_name)
             run_id = uuid.uuid4().hex[:8]
 
-            if wait:
-                result = await agent.a_run(query=task, session_id=session_id, execution_id=run_id)
-                return str(result)
+            # ── STREAM starten (statt a_run) ──────────────────────────────────
+            stream = agent.a_stream(query=task, session_id=session_id)
 
-            _tid_holder = [None]
-
-            async def run_task():
-                try:
-                    result = await agent.a_run(query=task, session_id=session_id, execution_id=run_id)
-                    exc = self.all_executions.get(_tid_holder[0])
-                    if exc:
-                        exc.status = "completed"
-                    return result
-                except asyncio.CancelledError:
-                    exc = self.all_executions.get(_tid_holder[0])
-                    if exc:
-                        exc.status = "cancelled"
-                    return ""
-                except Exception as e:
-                    exc = self.all_executions.get(_tid_holder[0])
-                    if exc:
-                        exc.status = "failed"
-                    return ""
-
-            async_task = asyncio.create_task(run_task())
+            async_task = asyncio.create_task(
+                self._drain_agent_stream("__pending__", stream, False)
+            )
 
             exc = self._create_execution(
                 kind="delegate",
@@ -2910,17 +3447,25 @@ class ISAA_Host:
                 query=task,
                 async_task=async_task,
                 run_id=run_id,
+                stream=stream,
                 take_focus=False,
             )
-            _tid_holder[0] = exc.task_id
+            task_id = exc.task_id
 
-            def _on_done(fut):
-                tv = self._task_views.get(_tid_holder[0])
-                if tv:
-                    tv.status = "completed" if not fut.cancelled() and fut.exception() is None else "failed"
+            async_task.add_done_callback(
+                lambda fut: self._on_agent_task_done(task_id, fut)
+            )
 
-            async_task.add_done_callback(_on_done)
-            return f"✓ Background task started: {exc.task_id} (RunID: {run_id})"
+            # ── WAIT=True: Caller blockiert, Stream läuft trotzdem durch ──────
+            if wait:
+                try:
+                    result = await asyncio.shield(async_task)
+                    return str(result) if result else ""
+                except asyncio.CancelledError:
+                    return ""
+
+            # ── WAIT=False: sofort zurück, task läuft im Hintergrund ──────────
+            return f"✓ Background task started: {task_id} (RunID: {run_id})"
 
         except Exception as e:
             return f"✗ Delegation failed: {e}"
@@ -3458,7 +4003,7 @@ class ISAA_Host:
         )
 
     def _get_bottom_toolbar(self):
-        return render_footer_toolbar(
+        return [] if self.zen_plus_mode else render_footer_toolbar(
             task_views=self._task_views,
             focused_id=self._focused_task_id,
             audio_recording=self._audio_recording,
@@ -4708,7 +5253,7 @@ class ISAA_Host:
                 result = await agent.a_run(
                     job.query,
                     session_id=job.session_id,
-                    execution_id=run_id,
+                    execution_id=run_id, max_iterations=self.max_iteration
                 )
                 exc = host_ref.all_executions.get(_tid_holder[0])
                 if exc:
@@ -5043,114 +5588,350 @@ class ISAA_Host:
     async def _cmd_mcp(self, args: list[str]):
         """Handle live MCP management commands."""
         if not args:
-            print_status("Usage: /mcp <list|add|remove|reload|info> [args]", "warning")
+            print_status(
+                "Usage: /mcp <list|add|load|remove|reload> [args]", "warning"
+            )
             return
 
         action = args[0].lower()
         agent = await self.isaa_tools.get_agent(self.active_agent_name)
-
-        # Sicherstellen, dass der Agent einen MCPSessionManager hat
-        if not hasattr(agent, "_mcp_session_manager") or agent._mcp_session_manager is None:
+        from toolboxv2.mods.isaa.extras.mcp_session_manager import _find_default_mcp_configs, _load_claude_mcp_configs
+        # Ensure MCPSessionManager exists on agent
+        if not getattr(agent, "_mcp_session_manager", None):
             from toolboxv2.mods.isaa.extras.mcp_session_manager import MCPSessionManager
             agent._mcp_session_manager = MCPSessionManager()
+        mcp_mgr = agent._mcp_session_manager
 
+        # ── LIST ──────────────────────────────────────────────────────────────
         if action == "list":
             print_box_header(f"MCP Servers: {self.active_agent_name}", "🔌")
-            active_sessions = agent._mcp_session_manager.sessions
-            if not active_sessions:
+            if not mcp_mgr.sessions:
                 print_box_content("Keine aktiven MCP Server.", "info")
-            for name, session in active_sessions.items():
-                print_box_content(f"{name} (Status: Connected)", "success")
+            else:
+                columns = [("Name", 20), ("Tools", 6), ("Transport", 12)]
+                widths = [20, 6, 12]
+                print_table_header(columns, widths)
+                for name in mcp_mgr.sessions:
+                    caps = mcp_mgr.capabilities_cache.get(name, {})
+                    n_tools = len(caps.get("tools", {}))
+                    print_table_row(
+                        [name, str(n_tools), "stdio"],
+                        widths,
+                        ["cyan", "green", "grey"],
+                    )
             print_box_footer()
 
+        # ── ADD (wizard or inline JSON) ───────────────────────────────────────
         elif action == "add":
-            if len(args) < 3:
-                print_status("Usage: /mcp add <name> <command> [args...]", "warning")
+            rest = args[1:]
+
+            # ── Inline JSON: /mcp add {"name":"x","command":"npx","args":["y"]}
+            if rest and rest[0].strip().startswith("{"):
+                try:
+                    cfg = json.loads(" ".join(rest))
+                    name = cfg.pop("name")
+                    cfg.setdefault("transport", "stdio")
+                    cfg.setdefault("args", [])
+                    cfg.setdefault("env", {})
+                except (json.JSONDecodeError, KeyError) as e:
+                    print_status(f"Invalid JSON: {e}", "error")
+                    return
+                servers = {name: cfg}
+
+            # ── One-liner: /mcp add <name> <command> [arg1 arg2 …]
+            elif len(rest) >= 2:
+                name = rest[0]
+                command = rest[1]
+                cmd_args = rest[2:]
+                servers = {name: {"command": command, "args": cmd_args,
+                                  "transport": "stdio", "env": {}}}
+
+            # ── Interactive wizard
+            else:
+                servers = await self._mcp_add_wizard()
+                if not servers:
+                    return
+
+            # Connect all collected server configs
+            for srv_name, srv_cfg in servers.items():
+                await self._mcp_connect_and_register(
+                    agent, mcp_mgr, srv_name, srv_cfg
+                )
+
+        # ── LOAD (Claude-Code config file) ────────────────────────────────────
+        elif action == "load":
+            path = args[1] if len(args) > 1 else None
+
+            if not path:
+                # Wizard: search for config files
+                found = _find_default_mcp_configs()
+                if not found:
+                    print_status(
+                        "No .mcp.json / claude_desktop_config.json found. "
+                        "Provide path: /mcp load <path>", "warning"
+                    )
+                    return
+                if len(found) == 1:
+                    path = found[0]
+                    print_status(f"Auto-detected: {path}", "info")
+                else:
+                    print_box_header("Found MCP config files", "📄")
+                    for i, f in enumerate(found):
+                        print_box_content(f"[{i}] {f}", "")
+                    try:
+                        idx_str = await self.prompt_session.prompt_async(
+                            HTML("<style fg='grey'>Select [0]: </style>")
+                        )
+                        path = found[int(idx_str.strip()) if idx_str.strip().isdigit() else 0]
+                    except (EOFError, KeyboardInterrupt):
+                        return
+
+            try:
+                servers = _load_claude_mcp_configs(path)
+            except Exception as e:
+                print_status(f"Failed to load config: {e}", "error")
                 return
 
-            name = args[1]
-            cmd = args[2]
-            cmd_args = args[3:] if len(args) > 3 else []
+            print_status(f"Loading {len(servers)} server(s) from {path}...", "progress")
+            for srv_name, srv_cfg in servers.items():
+                await self._mcp_connect_and_register(
+                    agent, mcp_mgr, srv_name, srv_cfg
+                )
 
-            server_config = {"command": cmd, "args": cmd_args}
-
-            print_status(f"Connecting to MCP '{name}'...", "progress")
-            try:
-                # 1. Verbindung herstellen
-                session = await agent._mcp_session_manager.get_session(name, server_config)
-                # 2. Tools extrahieren
-                caps = await agent._mcp_session_manager.extract_capabilities(session, name)
-
-                # 3. Tools im ToolManager des Agenten registrieren (Live-Rebuild)
-                count = 0
-                for t_name, t_info in caps.get('tools', {}).items():
-                    wrapper_name = f"{name}_{t_name}"
-
-                    # Nutze die Builder-Logik für den Wrapper (simuliert)
-                    from toolboxv2.mods.isaa.base.Agent.builder import FlowAgentBuilder
-                    builder_tmp = FlowAgentBuilder()
-                    wrapper = builder_tmp._create_mcp_tool_wrapper(name, t_name, t_info, session)
-
-                    agent.add_tool(
-                        wrapper,
-                        name=wrapper_name,
-                        description=t_info.get('description'),
-                        category=[f"mcp_{name}", "mcp"]
-                    )
-                    count += 1
-
-                # 4. In agent.json persistent speichern
-                await self._tool_mcp_connect(name, cmd, cmd_args, self.active_agent_name)
-
-                print_status(f"Successfully added {count} tools from '{name}'", "success")
-
-            except Exception as e:
-                print_status(f"Failed to add MCP server: {e}", "error")
-
+        # ── REMOVE ────────────────────────────────────────────────────────────
         elif action == "remove":
             if len(args) < 2:
                 print_status("Usage: /mcp remove <name>", "warning")
                 return
-
             name = args[1]
-            # 1. Session schließen
-            if name in agent._mcp_session_manager.sessions:
-                # Wir löschen die Session (Shutdown erfolgt im Manager)
-                del agent._mcp_session_manager.sessions[name]
 
-            # 2. Tools aus Registry entfernen
-            tools_to_remove = [t for t in agent.tool_manager.tools.keys() if t.startswith(f"{name}_")]
-            for t in tools_to_remove:
-                del agent.tool_manager.tools[t]
+            await mcp_mgr._cleanup_session(name)
 
-            # 3. Config bereinigen
-            agent_config_path = Path(self.app.data_dir) / "Agents" / self.active_agent_name / "agent.json"
-            if agent_config_path.exists():
-                with open(agent_config_path, 'r+') as f:
+            # Remove tools from tool_manager
+            removed = 0
+            for t_name in list(agent.tool_manager._registry.keys()):
+                if t_name.startswith(f"{name}_"):
+                    agent.tool_manager.unregister(t_name)
+                    removed += 1
+
+            # Persist to agent.json
+            agent_cfg_path = Path(self.app.data_dir) / "Agents" / self.active_agent_name / "agent.json"
+            if agent_cfg_path.exists():
+                with open(agent_cfg_path, "r+", encoding="utf-8") as f:
                     cfg = json.load(f)
                     if "mcp" in cfg and "servers" in cfg["mcp"]:
-                        cfg["mcp"]["servers"] = [s for s in cfg["mcp"]["servers"] if s['name'] != name]
-                        f.seek(0)
-                        json.dump(cfg, f, indent=2)
+                        cfg["mcp"]["servers"] = [
+                            s for s in cfg["mcp"]["servers"] if s.get("name") != name
+                        ]
+                        f.seek(0);
+                        json.dump(cfg, f, indent=2);
                         f.truncate()
 
-            print_status(f"MCP server '{name}' and its {len(tools_to_remove)} tools removed.", "success")
+            print_status(f"Removed '{name}' and {removed} tool(s).", "success")
 
+        # ── RELOAD ───────────────────────────────────────────────────────────
         elif action == "reload":
-            print_status("Reloading all MCP configurations...", "progress")
-            # Wir triggern den FlowAgentBuilder Re-Process
-            from toolboxv2.mods.isaa.base.Agent.builder import FlowAgentBuilder
-            agent_config_path = Path(self.app.data_dir) / "Agents" / self.active_agent_name / "agent.json"
+            agent_cfg_path = Path(self.app.data_dir) / "Agents" / self.active_agent_name / "agent.json"
+            if not agent_cfg_path.exists():
+                print_status("No agent.json found.", "error")
+                return
+            print_status("Reloading MCP servers from agent.json...", "progress")
+            with open(agent_cfg_path, encoding="utf-8") as f:
+                cfg = json.load(f)
+            servers_raw = cfg.get("mcp", {}).get("servers", [])
+            for entry in servers_raw:
+                name = entry.get("name", "")
+                if not name:
+                    continue
+                srv_cfg = {
+                    "command": entry.get("command", ""),
+                    "args": entry.get("args", []),
+                    "env": entry.get("env", {}),
+                    "transport": entry.get("transport", "stdio"),
+                }
+                await self._mcp_connect_and_register(
+                    agent, mcp_mgr, name, srv_cfg
+                )
 
-            if agent_config_path.exists():
-                builder = FlowAgentBuilder(config_path=str(agent_config_path))
-                # Extrahiere Config-Teil
-                mcp_data = {"mcpServers": {s['name']: s for s in builder.config.mcp.model_dump().get('servers', [])}}
-                builder.load_mcp_tools_from_config(mcp_data)
-                await builder._process_mcp_config(agent)
-                print_status("MCP Rebuild complete.", "success")
+        else:
+            print_status(
+                f"Unknown MCP action: {action}. "
+                "Use: list, add, load, remove, reload", "error"
+            )
+
+        # ── Mini-Wizard ────────────────────────────────────────────────────────────
+
+    async def _mcp_add_wizard(self) -> dict[str, dict] | None:
+        """
+        Interactive wizard for /mcp add.
+        Returns {server_name: config_dict} or None on cancel.
+        """
+        print_box_header("Add MCP Server", "🔌")
+        print_box_content(
+            "Examples:  npx @modelcontextprotocol/server-filesystem /path\n"
+            "           python -m mcp_server_git\n"
+            "           node /path/to/server.js",
+            "info",
+        )
+        print_box_footer()
+
+        try:
+            ps = self.prompt_session
+
+            name = (await ps.prompt_async(
+                HTML("<style fg='ansicyan'>Name: </style>")
+            )).strip()
+            if not name:
+                print_status("Cancelled.", "warning");
+                return None
+
+            print_box_content(
+                "Transport: [1] stdio (default)  [2] http/streamable-http", ""
+            )
+            transport_choice = (await ps.prompt_async(
+                HTML("<style fg='grey'>Transport [1]: </style>")
+            )).strip() or "1"
+            transport = "http" if transport_choice == "2" else "stdio"
+
+            if transport == "stdio":
+                cmd_line = (await ps.prompt_async(
+                    HTML("<style fg='ansicyan'>Command + args (e.g. npx pkg arg): </style>")
+                )).strip()
+                if not cmd_line:
+                    print_status("Cancelled.", "warning");
+                    return None
+                import shlex as _shlex
+                parts = _shlex.split(cmd_line)
+                command = parts[0]
+                cmd_args = parts[1:]
+                url = ""
             else:
-                print_status("No config found to reload.", "error")
+                url = (await ps.prompt_async(
+                    HTML("<style fg='ansicyan'>URL (e.g. http://localhost:8000/mcp): </style>")
+                )).strip()
+                command = "";
+                cmd_args = []
+
+            env_line = (await ps.prompt_async(
+                HTML("<style fg='grey'>Env vars (KEY=VAL KEY2=VAL2, empty=none): </style>")
+            )).strip()
+            env = {}
+            if env_line:
+                for pair in env_line.split():
+                    if "=" in pair:
+                        k, v = pair.split("=", 1)
+                        env[k.strip()] = v.strip()
+
+            cfg = {
+                "command": command,
+                "args": cmd_args,
+                "transport": transport,
+                "env": env,
+            }
+            if url:
+                cfg["url"] = url
+
+            print_box_header("Confirm", "✓")
+            print_box_content(f"Name:      {name}", "")
+            print_box_content(f"Transport: {transport}", "")
+            if command:
+                print_box_content(f"Command:   {command} {' '.join(cmd_args)}", "")
+            if url:
+                print_box_content(f"URL:       {url}", "")
+            if env:
+                print_box_content(f"Env:       {env}", "")
+            print_box_footer()
+
+            ok = (await ps.prompt_async(
+                HTML("<style fg='ansicyan'>Connect? [Y/n]: </style>")
+            )).strip().lower()
+            if ok in ("n", "no"):
+                print_status("Cancelled.", "warning");
+                return None
+
+            return {name: cfg}
+
+        except (EOFError, KeyboardInterrupt):
+            print_status("Cancelled.", "warning")
+            return None
+
+        # ── Core connect + register ────────────────────────────────────────────────
+
+    async def _mcp_connect_and_register(
+        self,
+        agent,
+        mcp_mgr,
+        srv_name: str,
+        srv_cfg: dict,
+    ) -> None:
+        """
+        Connect one MCP server, register its tools on agent, persist to agent.json.
+        Full error reporting — never silently returns 0.
+        """
+        print_status(f"Connecting '{srv_name}'...", "progress")
+
+        # 1. Get session (with timeout + retries handled by MCPSessionManager)
+        session = await mcp_mgr.get_session_with_timeout(srv_name, srv_cfg)
+
+        if session is None:
+            print_status(
+                f"✗ Failed to connect '{srv_name}'. "
+                f"Command: {srv_cfg.get('command')} {' '.join(srv_cfg.get('args', []))}\n"
+                f"  Check: is the package installed? Try running the command manually.",
+                "error",
+            )
+            return
+
+        # 2. Extract capabilities (with timeout)
+        caps = await mcp_mgr.extract_capabilities_with_timeout(session, srv_name)
+        tools = caps.get("tools", {})
+
+        if not tools:
+            print_status(
+                f"⚠ Connected to '{srv_name}' but found 0 tools. "
+                f"Resources: {len(caps.get('resources', {}))}, "
+                f"Prompts: {len(caps.get('prompts', {}))}. "
+                f"The server may need different args or a different transport.",
+                "warning",
+            )
+            # Still continue — maybe it has resources/prompts
+
+        # 3. Register tools directly on agent.tool_manager
+        from toolboxv2.mods.isaa.extras.mcp_session_manager import _make_mcp_tool_func
+        count = 0
+        for t_name, t_info in tools.items():
+            wrapper_name = f"{srv_name}_{t_name}"
+            func = _make_mcp_tool_func(session, srv_name, t_name, t_info)
+
+            agent.add_tools([{
+                "tool_func": func,
+                "name": wrapper_name,
+                "description": t_info.get("description", f"{srv_name}: {t_name}"),
+                "category": [f"mcp_{srv_name}", "mcp"],
+                "flags": {"mcp": True, "server": srv_name},
+            }])
+            count += 1
+
+        print_status(f"✓ '{srv_name}': {count} tool(s) loaded.", "success")
+
+        # 4. Persist to agent.json for /mcp reload
+        agent_cfg_path = Path(self.app.data_dir) / "Agents" / self.active_agent_name / "agent.json"
+        if agent_cfg_path.exists():
+            try:
+                with open(agent_cfg_path, encoding="utf-8") as f:
+                    cfg = json.load(f)
+                cfg.setdefault("mcp", {"enabled": True, "servers": []})
+                cfg["mcp"].setdefault("servers", [])
+                # Replace existing entry or append
+                entry = {"name": srv_name, **srv_cfg}
+                cfg["mcp"]["servers"] = [
+                    s for s in cfg["mcp"]["servers"] if s.get("name") != srv_name
+                ]
+                cfg["mcp"]["servers"].append(entry)
+                with open(agent_cfg_path, "w", encoding="utf-8") as f:
+                    json.dump(cfg, f, indent=2)
+            except Exception as e:
+                print_status(f"  (Could not persist to agent.json: {e})", "warning")
 
 
     def _print_vfs_tree(self, tree: dict, level: int = 0, max_depth: int = 4):
@@ -6952,7 +7733,7 @@ class ISAA_Host:
 
             try:
                 await stream.aclose()
-            except Exception:
+            except BaseException:
                 pass
 
             exc = _get_exc()
@@ -6963,8 +7744,8 @@ class ISAA_Host:
 
         except asyncio.CancelledError:
             try:
-                await stream.aclose()
-            except Exception:
+                await asyncio.shield(stream.aclose())
+            except BaseException:
                 pass
             exc = _get_exc()
             if exc:
@@ -6974,8 +7755,8 @@ class ISAA_Host:
 
         except Exception as e:
             try:
-                await stream.aclose()
-            except Exception:
+                await asyncio.shield(stream.aclose())
+            except BaseException:  # ← FIX A2: was "except Exception"
                 pass
             exc = _get_exc()
             if exc:
@@ -7104,6 +7885,11 @@ class ISAA_Host:
 
             except KeyboardInterrupt:
                 continue
+            except asyncio.CancelledError:
+                # CancelledError is BaseException — never let it kill the CLI loop.
+                # All stop/resume paths should have swallowed it, but this is
+                # the final safety net.
+                continue
             except EOFError:
                 break
             except Exception as e:
@@ -7140,7 +7926,6 @@ class ISAA_Host:
     async def _handle_interrupt(self):
         task_id = self._focused_task_id
 
-        # Auto-focus first running task if none focused
         if not task_id:
             running = next(
                 (t for t in self.all_executions.values() if t.status == "running"), None
@@ -7161,41 +7946,120 @@ class ISAA_Host:
 
         agent_name = task.agent_name
 
-        with patch_stdout():
-            c_print(HTML(
-                f"\n<style fg='{PTColors.ZEN_CYAN}'>─── Interrupt: {_esc(agent_name)} ({task_id}) ───</style>\n"
-                f"<style fg='{PTColors.ZEN_DIM}'>"
-                f"  [b] In den Hintergrund verschieben\n"
-                f"  [s] Stoppen (cancel)\n"
-                f"  [r] mit weiterem Context fortsetzen (resume)\n"
-                f"  [n] Nichts tun (weiter warten)\n"
-                f"</style>"
-            ))
-
-        try:
-            with patch_stdout():
-                choice = await self.prompt_session.prompt_async(
-                    HTML(f"<style fg='{PTColors.ZEN_CYAN}'>  Auswahl [b/s/r/n]: </style>"),
-                )
-            choice = choice.strip().lower()
-        except (KeyboardInterrupt, EOFError):
-            # Doppeltes Ctrl+C → nichts tun
-            choice = "n"
-
-        if choice == "b":
-            await self._interrupt_move_to_background(task_id)
-        elif choice == "s":
-            await self._interrupt_stop_task(task_id)
-        elif choice == "r":
-            await self._interrupt_resume_with_context(task_id)
-        else:
-            # 'n' oder ungültig → weiter warten
+        # ── [i] kann mehrfach gedrückt werden → Loop ─────────────────────
+        while True:
             with patch_stdout():
                 c_print(HTML(
-                    f"<style fg='{PTColors.ZEN_DIM}'>  → Weiter warten auf {task_id}</style>\n"
+                    f"\n<style fg='{PTColors.ZEN_CYAN}'>─── Interrupt: {_esc(agent_name)} ({task_id}) ───</style>\n"
+                    f"<style fg='{PTColors.ZEN_DIM}'>"
+                    f"  [i] Info: letzter Gedanke / aktives Tool / Antwort\n"
+                    f"  [b] In den Hintergrund verschieben\n"
+                    f"  [s] Stoppen (cancel)\n"
+                    f"  [r] mit weiterem Context fortsetzen (resume)\n"
+                    f"  [n] Nichts tun (weiter warten)\n"
+                    f"</style>"
                 ))
 
+            try:
+                with patch_stdout():
+                    choice = await self.prompt_session.prompt_async(
+                        HTML(f"<style fg='{PTColors.ZEN_CYAN}'>  Auswahl [i/b/s/r/n]: </style>"),
+                    )
+                choice = choice.strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                choice = "n"
+
+            if choice == "i":
+                self._interrupt_show_info(task_id)
+                # Menü erneut anzeigen (Loop weiterführen)
+                continue
+            elif choice == "b":
+                await self._interrupt_move_to_background(task_id)
+            elif choice == "s":
+                await self._interrupt_stop_task(task_id)
+            elif choice == "r":
+                await self._interrupt_resume_with_context(task_id)
+            else:
+                with patch_stdout():
+                    c_print(HTML(
+                        f"<style fg='{PTColors.ZEN_DIM}'>  → Weiter warten auf {task_id}</style>\n"
+                    ))
+            break  # alle anderen Optionen verlassen den Loop
+
         return True
+
+    def _interrupt_show_info(self, task_id: str):
+        """[i] — zeigt Snapshot aus TaskView: Gedanken, Tool, Antwort."""
+        tv = self._task_views.get(task_id)
+        if not tv:
+            with patch_stdout():
+                c_print(HTML(f"<style fg='{PTColors.ZEN_DIM}'>  (keine TaskView für {task_id})</style>\n"))
+            return
+
+        lines = []
+
+        # ── Phase / Status ────────────────────────────────────────────────
+        lines.append(
+            f"<style fg='{PTColors.ZEN_CYAN}'>  ── Snapshot: {_esc(tv.agent_name)} "
+            f"iter {tv.iteration}/{tv.max_iter} [{tv.phase}] ──</style>"
+        )
+
+        # ── Letzter Gedanke ───────────────────────────────────────────────
+        if tv.last_thought:
+            thought = tv.last_thought.replace("\n", " ").strip()
+            lines.append(
+                f"<style fg='{PTColors.ZEN_DIM}'>  ◎ Gedanke:  </style>"
+                f"<style fg='#e5e7eb'>{_esc(thought[:200])}"
+                f"{'…' if len(thought) > 200 else ''}</style>"
+            )
+
+        # ── Aktives / letztes Tool ────────────────────────────────────────
+        if tv.last_tool:
+            ok_col = PTColors.ZEN_GREEN if tv.last_tool_ok else PTColors.ZEN_RED
+            ok_sym = "✓" if tv.last_tool_ok else "✗"
+            info_part = (
+                f"  <style fg='{PTColors.ZEN_DIM}'>{_esc(tv.last_tool_info[:60])}</style>"
+                if tv.last_tool_info else ""
+            )
+            lines.append(
+                f"<style fg='{PTColors.ZEN_DIM}'>  ◇ Tool:     </style>"
+                f"<style fg='#60a5fa'>{_esc(tv.last_tool)}</style> "
+                f"<style fg='{ok_col}'>{ok_sym}</style>"
+                f"{info_part}"
+            )
+
+        # ── Letzte Iteration: Tools-Liste ─────────────────────────────────
+        if tv.iterations:
+            last_iv = tv.iterations[-1]
+            if last_iv.tools:
+                tool_summary = "  ".join(
+                    f"{'✓' if ok else '✗'}{name[:14]}"
+                    for name, ok, _, _ in last_iv.tools[-4:]  # max 4 zeigen
+                )
+                lines.append(
+                    f"<style fg='{PTColors.ZEN_DIM}'>  ◈ Tools[iter {last_iv.n}]: "
+                    f"{_esc(tool_summary)}</style>"
+                )
+            if last_iv.pending_tool:
+                lines.append(
+                    f"<style fg='#fbbf24'>  ⟳ Läuft:   {_esc(last_iv.pending_tool)}</style>"
+                )
+
+        # ── Finale Antwort (falls schon vorhanden) ────────────────────────
+        if tv.final_answer:
+            answer = tv.final_answer.replace("\n", " ").strip()
+            lines.append(
+                f"<style fg='{PTColors.ZEN_DIM}'>  ✦ Antwort: </style>"
+                f"<style fg='#4ade80'>{_esc(answer[:300])}"
+                f"{'…' if len(answer) > 300 else ''}</style>"
+            )
+        elif not tv.last_thought and not tv.last_tool:
+            lines.append(
+                f"<style fg='{PTColors.ZEN_DIM}'>  (wartet noch auf erste Iteration…)</style>"
+            )
+
+        with patch_stdout():
+            c_print(HTML("\n".join(lines) + "\n"))
 
     async def _interrupt_move_to_background(self, task_id: str):
         """Task minimieren und Fokus freigeben."""
@@ -7221,43 +8085,53 @@ class ISAA_Host:
             c_print(HTML(f"<style fg='#fbbf24'>  Signalisiere sauberen Stopp für {task_id}...</style>"))
 
         try:
-            # 1. Dem Agenten (Engine) sagen, dass er sofort & sauber abbrechen soll
             agent = await self.isaa_tools.get_agent(task.agent_name)
             engine = agent._get_execution_engine()
 
-            # Finde die aktive Execution-ID
+            # Find execution_id (search all statuses — session_id check dropped:
+            # if task is focused, it IS the active one regardless of session)
             execution_id = None
             for eid, ctx in engine._active_executions.items():
-                if ctx.status in ("running", "paused") and ctx.session_id == self.active_session_id:
+                if ctx.status in ("running", "paused"):
                     execution_id = eid
                     break
 
             if execution_id:
-                await agent.cancel_execution(execution_id)
+                try:
+                    await agent.cancel_execution(execution_id)
+                    # cancel() pops ctx from _active_executions and cancels
+                    # sub-agent tasks (state._task.cancel() — non-blocking)
+                except BaseException:
+                    pass
 
-            # 2. Frontend Task canceln
+            # Cancel the CLI drain task
             task.async_task.cancel()
 
-            # Timeout, falls der Task hängt. (WICHTIG: KEIN asyncio.shield mehr!)
+            # asyncio.wait() returns (done, pending) — never raises.
+            # asyncio.wait_for() would re-raise CancelledError from the task,
+            # even with except (CancelledError, TimeoutError) in some edge cases.
             try:
-                await asyncio.wait_for(task.async_task, timeout=2.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+                done, pending = await asyncio.wait(
+                    {task.async_task}, timeout=2.0
+                )
+                # If still pending after timeout: cancel and move on (no await)
+                for t in pending:
+                    t.cancel()
+            except BaseException:
                 pass
 
-        except Exception:
-            pass  # Fehler beim forced shutdown ignorieren, um die Haupt-App nicht zu crashen
+        except BaseException:  # ← FIX B: was "except Exception"
+            pass
 
-        # Fokus freigeben
         if self._focused_task_id == task_id:
             if task:
                 task.is_focused = False
             self._focused_task_id = None
 
-
         with patch_stdout():
             c_print(HTML(
                 f"<style fg='#f87171'>"
-                f"  ✗ {task_id} erfolgreich gestoppt</style>\n"
+                f"  ✗ {task_id} gestoppt</style>\n"
             ))
 
     async def _interrupt_resume_with_context(self, task_id: str):
@@ -7266,43 +8140,64 @@ class ISAA_Host:
             return
 
         with patch_stdout():
-            c_print(HTML(f"<style fg='#fbbf24'>  Pausiere {task_id} regulär...</style>"))
+            c_print(HTML(f"<style fg='#fbbf24'>  Pausiere {task_id}...</style>"))
 
+        # ── Step 1: Memo execution_id BEFORE any cancel ───────────────────────
+        execution_id = None
+        agent = None
         try:
             agent = await self.isaa_tools.get_agent(task.agent_name)
             engine = agent._get_execution_engine()
 
-            execution_id = None
             for eid, ctx in engine._active_executions.items():
-                if ctx.status in ("running", "paused") and ctx.session_id == self.active_session_id:
+                if ctx.status == "running":
                     execution_id = eid
                     break
 
-            if execution_id:
-                # 1. Engine SAUBER pausieren (speichert den State!)
-                await agent.pause_execution(execution_id)
-            else:
+            if not execution_id:
                 with patch_stdout():
-                    c_print(HTML("<style fg='#f87171'>  Keine aktive Ausführung zum Pausieren gefunden.</style>"))
+                    c_print(HTML(
+                        "<style fg='#f87171'>  Keine laufende Execution gefunden.</style>\n"
+                    ))
+                if self._focused_task_id == task_id:
+                    self._focused_task_id = None
                 return
 
-            # 2. Warten, bis der Stream von alleine (durch den Pause-Befehl) geordnet stoppt
+            # ── Step 2: Set status="paused" (ctx stays in _active_executions) ─
+            # pause() is: ctx.status="paused", live.enter(PAUSED,...) — no awaits
             try:
-                await asyncio.wait_for(task.async_task, timeout=5.0)
-            except asyncio.TimeoutError:
-                task.async_task.cancel()  # Fallback
-            except asyncio.CancelledError:
+                await agent.pause_execution(execution_id)
+            except BaseException:
                 pass
 
-        except Exception as e:
+        except BaseException as e:
             with patch_stdout():
-                c_print(HTML(f"<style fg='#f87171'>  Fehler beim Pausieren: {_esc(str(e))}</style>"))
+                c_print(HTML(
+                    f"<style fg='#f87171'>  Engine-Fehler: {_esc(str(e)[:60])}</style>\n"
+                ))
+            if self._focused_task_id == task_id:
+                self._focused_task_id = None
             return
 
-        # 3. Neuen Context (Anweisungen) vom Nutzer abfragen
-        with patch_stdout():
-            c_print(HTML(f"<style fg='{PTColors.ZEN_CYAN}'>  Neuer Context für {task.agent_name}:</style>"))
+        # ── Step 3: Cancel drain task, wait for it to finish ─────────────────
+        # stream_generator checks ctx.status=="paused" at iteration start,
+        # but current LLM call might take seconds. Cancel immediately.
+        # With FIX A, the drain task handles CancelledError cleanly.
+        task.async_task.cancel()
+        try:
+            done, pending = await asyncio.wait({task.async_task}, timeout=3.0)
+            for t in pending:
+                t.cancel()  # timeout: force cancel, no await needed
+        except BaseException:
+            pass
 
+        # ── Step 4: Get new context from user ────────────────────────────────
+        with patch_stdout():
+            c_print(HTML(
+                f"<style fg='{PTColors.ZEN_CYAN}'>  Neuer Context für {task.agent_name}:</style>"
+            ))
+
+        new_context = ""
         try:
             with patch_stdout():
                 new_context = await self.prompt_session.prompt_async(
@@ -7311,61 +8206,81 @@ class ISAA_Host:
             new_context = new_context.strip()
         except (KeyboardInterrupt, EOFError):
             with patch_stdout():
-                c_print(HTML(f"<style fg='{PTColors.ZEN_DIM}'>  → Resume abgebrochen, Task bleibt pausiert.</style>\n"))
+                c_print(HTML(
+                    f"<style fg='{PTColors.ZEN_DIM}'>  → Resume abgebrochen.</style>\n"
+                ))
             if self._focused_task_id == task_id:
                 self._focused_task_id = None
-
             return
 
-        # 4. Resume via Engine starten
+        # ── Step 5: Resume via engine ─────────────────────────────────────────
+        # engine.resume() finds ctx in _active_executions (pause left it there)
+        # verifies ctx.status=="paused", adds content, calls execute_stream(ctx=ctx)
+        # returns tuple[Callable, ExecutionContext]
         try:
-            stream = await agent.resume_execution(
+            resume_result = await agent.resume_execution(
                 execution_id=execution_id,
                 content=new_context,
                 stream=True,
             )
-
-            # Falls resume ein Tuple zurückgibt (z.B. stream_func, ctx)
-            if isinstance(stream, tuple):
-                stream_func, ctx = stream
-                stream = stream_func(ctx)
-
-            async_task = asyncio.create_task(
-                self._drain_agent_stream("__pending__", stream, False)
-            )
-
-            query_text = f"[resumed] {new_context[:80]}" if new_context else f"[resumed] {task.query[:80]}"
-
-            exc = self._create_execution(
-                kind="chat",
-                agent_name=task.agent_name,
-                query=query_text,
-                async_task=async_task,
-                stream=stream,
-                take_focus=True,
-            )
-            new_task_id = exc.task_id
-
-            # Alten Task wegräumen
-            if task_id in self.all_executions:
-                del self.all_executions[task_id]
-            if task_id in self._task_views:
-                del self._task_views[task_id]
-
-            async_task.add_done_callback(
-                lambda fut: self._on_agent_task_done(new_task_id, fut)
-            )
-
-
+        except BaseException as e:
             with patch_stdout():
-                c_print(
-                    HTML(f"<style fg='{PTColors.ZEN_GREEN}'>  ↻ {task.agent_name} resumed → {new_task_id}</style>\n"))
-
-        except Exception as e:
-            with patch_stdout():
-                c_print(HTML(f"<style fg='#f87171'>  ✗ Resume fehlgeschlagen: {_esc(str(e)[:80])}</style>\n"))
+                c_print(HTML(
+                    f"<style fg='#f87171'>  ✗ resume_execution: {_esc(str(e)[:80])}</style>\n"
+                ))
             if self._focused_task_id == task_id:
                 self._focused_task_id = None
+            return
+
+        # Unpack (stream_func, ctx) — execute_stream always returns this tuple
+        if isinstance(resume_result, tuple):
+            stream_func, ctx_obj = resume_result
+            stream = stream_func(ctx_obj)
+        elif isinstance(resume_result, str) and resume_result.startswith("Error:"):
+            with patch_stdout():
+                c_print(HTML(
+                    f"<style fg='#f87171'>  ✗ {_esc(resume_result)}</style>\n"
+                ))
+            if self._focused_task_id == task_id:
+                self._focused_task_id = None
+            return
+        else:
+            stream = resume_result  # unexpected but handle gracefully
+
+        # ── Step 6: Register new drain task ──────────────────────────────────
+        async_task = asyncio.create_task(
+            self._drain_agent_stream("__pending__", stream, False)
+        )
+
+        query_text = (
+            f"[resumed] {new_context[:80]}"
+            if new_context
+            else f"[resumed] {task.query[:80]}"
+        )
+
+        exc = self._create_execution(
+            kind="chat",
+            agent_name=task.agent_name,
+            query=query_text,
+            async_task=async_task,
+            stream=stream,
+            take_focus=True,
+        )
+        new_task_id = exc.task_id
+
+        # Clean up old task from SSOT
+        self.all_executions.pop(task_id, None)
+        self._task_views.pop(task_id, None)
+
+        async_task.add_done_callback(
+            lambda fut: self._on_agent_task_done(new_task_id, fut)
+        )
+
+        with patch_stdout():
+            c_print(HTML(
+                f"<style fg='{PTColors.ZEN_GREEN}'>"
+                f"  ↻ {task.agent_name} resumed → {new_task_id}</style>\n"
+            ))
 
 
 # =============================================================================

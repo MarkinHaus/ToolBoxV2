@@ -374,7 +374,7 @@ class FlowAgent:
 
         self.session_manager = SessionManager(
             agent_name=self.amd.name,
-            default_max_history=100,
+            default_max_history=os.getenv("DEFAULT_MAX_HISTORY_LENGTH", 100),
             vfs_max_window_lines=self.amd.vfs_max_window_lines,
             rule_config_path=self._rule_config_path,
             summarizer=self._create_summarizer(),
@@ -665,6 +665,7 @@ class FlowAgent:
             from litellm.types.utils import ChatCompletionMessageToolCall, Function, Message
             import litellm
             litellm.drop_params = True
+            litellm.suppress_debug_info = True
             original_messages = llm_kwargs["messages"].copy()
             original_tools = llm_kwargs.get("tools")
 

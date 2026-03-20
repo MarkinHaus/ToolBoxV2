@@ -28,7 +28,7 @@ def test_settings(tmp_path: Path) -> Settings:
         database_url=f"sqlite:///{db_path}",
         cors_origins=["http://localhost:3000"],
         # CloudM.Auth configuration
-        cloudm_jwt_secret="test_jwt_secret_for_cloudm_auth",
+        cloudm_jwt_secret="test_jwt_secret_for_cloudm_auth0",
         cloudm_auth_url="http://localhost:4025",
         # Clerk (deprecated, for backward compatibility)
         clerk_secret_key="test_secret",

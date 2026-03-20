@@ -4,8 +4,8 @@ from .types import Signal, SignalType, ISignalBus, UserState, UserContext, IStat
 from .types import IDecisionEngine, IProAKernel, IOutputRouter, ConsoleOutputRouter
 
 from .models import ContextStore, ProactiveActionTracker, LearningEngine, MemoryStore, TaskScheduler, WebSocketOutputRouter, MultiChannelRouter, AgentIntegrationLayer
-from .kernelin.tools.discord_tools import DiscordKernelTools
-from .kernelin.tools.whatsapp_tools import WhatsAppKernelTools
+from toolboxv2.mods.isaa.extras.tools import DiscordKernelTools
+from toolboxv2.mods.isaa.extras.tools import WhatsAppKernelTools
 
 __version__ = "1.0.0"
 __all__ = ["KernelConfig", "KernelState", "KernelMetrics", "InteractionType",

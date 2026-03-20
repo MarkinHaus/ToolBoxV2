@@ -489,7 +489,7 @@ class AgentSessionV2:
         # Close all open VFS files
         for path, f in list(self.vfs.files.items()):
             if f.state == "open" and not f.readonly:
-                await self.vfs.close(path)
+                await self.vfs.close(path, do_summary=False)
 
         # Stop Docker container
         if self._docker_vfs:

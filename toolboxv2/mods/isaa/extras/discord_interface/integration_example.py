@@ -37,11 +37,7 @@ async def run_standalone_discord_bot():
     )
 
     # Agent konfigurieren
-    builder.with_persona(
-        name="Discord Assistant",
-        description="Helpful assistant on Discord",
-        style="friendly and concise",
-    )
+    builder.with_creative_persona()
 
     # Agent registrieren
     await isaa.register_agent(builder)
@@ -140,7 +136,7 @@ async def minimal_discord_integration():
     # Agent erstellen (vereinfacht)
     amd = AgentModelData(
         name="minimal_bot",
-        persona="You are a helpful Discord bot.",
+        context_adapters=["You are a helpful Discord bot."],
         fast_llm_model="gpt-4o-mini",
         complex_llm_model="gpt-4o",
     )

@@ -13,40 +13,92 @@ from platform import node, system
 from typing import List, Tuple
 
 from dotenv import load_dotenv
-from toolboxv2 import tb_root_dir, profile_code
-from toolboxv2.utils.system.feature_manager import FeatureManager
 
-from toolboxv2.flows import flows_dict as flows_dict_func
-from toolboxv2.setup_helper import run_command
-from toolboxv2.tests.a_util import async_test
-from toolboxv2.utils import get_app
-from toolboxv2.utils.clis.cli_worker_manager import main as cli_worker_manager
-from toolboxv2.utils.clis.db_cli_manager import cli_db_runner
-from toolboxv2.utils.clis.user_manager import main as user_manager_main
-from toolboxv2.utils.clis.tb_lang_cli import cli_tbx_main
-from toolboxv2.utils.clis.tcm_p2p_cli import cli_tcm_runner
+# from toolboxv2 import tb_root_dir, profile_code
+# from toolboxv2.utils.system.feature_manager import FeatureManager
+#
+# from toolboxv2.flows import flows_dict as flows_dict_func
+# from toolboxv2.setup_helper import run_command
+# from toolboxv2.tests.a_util import async_test
+# from toolboxv2.utils import get_app
+# from toolboxv2.utils.clis.cli_worker_manager import main as cli_worker_manager
+# from toolboxv2.utils.clis.db_cli_manager import cli_db_runner
+# from toolboxv2.utils.clis.user_manager import main as user_manager_main
+# from toolboxv2.utils.clis.tb_lang_cli import cli_tbx_main
+# from toolboxv2.utils.clis.tcm_p2p_cli import cli_tcm_runner
+#
+# # TEMPORARY FIX: Disabled user_dashboard import due to pywintypes dependency issue
+# from toolboxv2.utils.clis.user_dashboard import interactive_user_dashboard
+# from toolboxv2.utils.daemon import DaemonApp
+# from toolboxv2.utils.extras.Style import Spinner, Style
+# from toolboxv2.utils.proxy import ProxyApp
+# from toolboxv2.utils.system import CallingObject, get_state_from_app
+# from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
+# from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
+# from toolboxv2.utils.workers import cli_event, cli_http_worker, cli_session, cli_ws_worker
+#
+# from .utils.toolbox import App as TbApp
 
-# TEMPORARY FIX: Disabled user_dashboard import due to pywintypes dependency issue
-from toolboxv2.utils.clis.user_dashboard import interactive_user_dashboard
-from toolboxv2.utils.daemon import DaemonApp
-from toolboxv2.utils.extras.Style import Spinner, Style
-from toolboxv2.utils.proxy import ProxyApp
-from toolboxv2.utils.system import CallingObject, get_state_from_app
-from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
-from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
-from toolboxv2.utils.workers import cli_event, cli_http_worker, cli_session, cli_ws_worker
+# try:
+#     from .mcp_server.__main__ import main as cli_mcp_server
+# except ImportError:
+#     cli_mcp_server = lambda: None
 
-from .utils.toolbox import App as TbApp
-
-try:
-    from .mcp_server.__main__ import main as cli_mcp_server
-except ImportError:
-    cli_mcp_server = lambda: None
 
 load_dotenv()
 
 import os
 import sys
+
+from toolboxv2 import tb_root_dir, profile_code, _feature_enabled
+from toolboxv2.utils.system.feature_manager import FeatureManager
+from toolboxv2.flows import flows_dict as flows_dict_func
+from toolboxv2.setup_helper import run_command
+from toolboxv2.tests.a_util import async_test
+from toolboxv2.utils import get_app
+from toolboxv2.utils.clis.db_cli_manager import cli_db_runner
+from toolboxv2.utils.clis.user_manager import main as user_manager_main
+from toolboxv2.utils.clis.tb_lang_cli import cli_tbx_main
+from toolboxv2.utils.clis.tcm_p2p_cli import cli_tcm_runner
+from toolboxv2.utils.extras.Style import Spinner, Style
+from toolboxv2.utils.system import CallingObject, get_state_from_app
+from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
+from .utils.toolbox import App as TbApp
+
+# ── WEB-Feature: workers, proxy, dashboard ────────────────────────────────────
+_WEB_AVAILABLE = False
+cli_worker_manager = None
+interactive_user_dashboard = None
+DaemonApp = None
+ProxyApp = None
+a_get_proxy_app = None
+cli_event = cli_http_worker = cli_session = cli_ws_worker = None
+
+if _feature_enabled("web"):
+    try:
+        from toolboxv2.utils.clis.cli_worker_manager import main as cli_worker_manager
+        from toolboxv2.utils.clis.user_dashboard import interactive_user_dashboard
+        from toolboxv2.utils.daemon import DaemonApp
+        from toolboxv2.utils.proxy import ProxyApp
+        from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
+        from toolboxv2.utils.workers import (
+            cli_event, cli_http_worker, cli_session, cli_ws_worker,
+        )
+        _WEB_AVAILABLE = True
+    except ImportError as _e:
+        import sys
+        print(f"[web] Import failed (starlette/uvicorn missing?): {_e}", file=sys.stderr)
+
+# ── ISAA-Feature: MCP server ──────────────────────────────────────────────────
+cli_mcp_server = None
+if _feature_enabled("isaa"):
+    try:
+        from .mcp_server.__main__ import main as cli_mcp_server
+    except ImportError:
+        cli_mcp_server = lambda: None
+else:
+    cli_mcp_server = lambda: None
+
 
 # Set UTF-8 encoding for Windows console (place at top of your script)
 if sys.platform == "win32":
@@ -1625,6 +1677,9 @@ def runner_setup():
         except Exception as e:
             print(f"🔐 Authentication: ❌ Status check failed: {e}")
 
+        _run_server_overview()
+        _run_business_overview()
+
         print()
         sys.argv = ["db", "status"]
         await cli_db_runner()
@@ -1858,7 +1913,38 @@ def runner_setup():
         ).main(),
     }
 
+    runner = _build_guarded_runners(runner)
+
     return runner
+
+def _build_guarded_runners(runner: dict) -> dict:
+    """
+    Ersetze None-Runner durch hilfreiche Fehlermeldungen.
+    Wird am Ende von runner_setup() aufgerufen.
+    """
+    def _missing_feature(name: str):
+        def _handler():
+            print(f"\n❌ Feature '{name}' is not enabled.")
+            print(f"   Enable with: tb manifest enable {name}")
+            print(f"   Install deps: pip install toolboxv2[{name}]\n")
+            import sys; sys.exit(1)
+        return _handler
+
+    # web-abhängige Runner
+    if not _WEB_AVAILABLE:
+        for key in ("workers", "http_worker", "ws_worker"):
+            runner[key] = _missing_feature("web")
+
+    # isaa-abhängige Runner
+    if not _feature_enabled("isaa"):
+        runner["mcp"] = _missing_feature("isaa")
+
+    # desktop-abhängige Runner
+    if not _feature_enabled("desktop"):
+        runner["gui"] = _missing_feature("desktop")
+
+    return runner
+
 
 @profile_code(
     sort_by="cumulative",
@@ -1955,7 +2041,7 @@ def main_runner():
             async def main_helper(runner_name):
                 # Default to interactive dashboard if no runner specified
                 # This applies to: `tb`, `tb -l`, `tb --debug`, etc.
-                if runner_name is None:
+                if runner_name is None and not '--test' in sys.argv:
                     profile = _get_profile()
 
                     if profile is None and not len(sys.argv) < 2:

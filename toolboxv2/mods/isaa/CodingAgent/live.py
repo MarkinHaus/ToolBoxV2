@@ -530,9 +530,11 @@ class MockIPython:
                             finalbody=[]
                         ),
                         # return result
-                        ast.Return(
-                            value=ast.Name(id='result', ctx=ast.Load())
-                        ) if isinstance(tree.body[-1], ast.Expr) else None
+                        *(  # unpack: entweder [Return] oder []
+                            [ast.Return(value=ast.Name(id='result', ctx=ast.Load()))]
+                            if isinstance(tree.body[-1], ast.Expr)
+                            else []
+                        ),
                     ],
                     decorator_list=[],
                     returns=None,
@@ -547,12 +549,6 @@ class MockIPython:
 
                 return (
                     compile(wrapped_module, '<exec>', 'exec'),
-                    None,
-                    True,
-                    True
-                )
-                return (
-                    compile(wrapped_tree, '<exec>', 'exec'),
                     None,
                     True,
                     True

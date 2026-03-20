@@ -15,13 +15,12 @@ Tests:
 """
 
 import unittest
-import asyncio
-from datetime import datetime, timedelta
-from unittest.mock import Mock, AsyncMock, MagicMock, patch
-from typing import Dict, Any, List, Optional
+from datetime import datetime
+from unittest.mock import Mock, AsyncMock, MagicMock
+from typing import Dict
 
 # Import the real DiscordKernelTools
-from toolboxv2.mods.isaa.kernel.kernelin.tools.discord_tools import DiscordKernelTools
+from toolboxv2.mods.isaa.extras.tools.discord_tools import DiscordKernelTools
 import importlib.util
 DISCORD_AVAILABLE = importlib.util.find_spec("discord") is not None
 
@@ -451,18 +450,6 @@ class TestDiscordKernelToolsReal(unittest.IsolatedAsyncioTestCase):
         self.assertIn("latency", result)
         self.assertIn("guilds", result)
         self.assertIn("kernel_state", result)
-
-    async def test_get_kernel_metrics(self):
-        """Test get_kernel_metrics returns metrics"""
-        # Set up proper mock values that can be rounded
-        self.mock_kernel.metrics.avg_response_time = 0.5
-
-        result = await self.tools.get_kernel_metrics()
-
-        self.assertIn("total_signals", result)
-        self.assertIn("user_inputs", result)
-        self.assertIn("errors", result)
-        self.assertIn("avg_response_time", result)
 
     # ===== Voice Tests =====
 

@@ -39,6 +39,34 @@ class FeatureManager(metaclass=Singleton):
         self._load_feature_metadata()
         self._initialized = True
 
+    def _log(self, level: str, msg: str) -> None:
+        """
+        Logging mit App-Referenz oder stdlib-Fallback.
+
+        BUG 3 FIX: app kann None sein (Singleton vor App init gebaut).
+        Nutze stdlib logger als Fallback.
+        """
+        if self.app is not None:
+            getattr(self.app.logger, level, self.app.logger.info)(msg)
+        else:
+            import logging
+            getattr(logging.getLogger("FeatureManager"), level, logging.info)(msg)
+
+    def set_app(self, app: "App") -> None:
+        """
+        Setze App-Referenz nachträglich.
+
+        Wird in App.__init__() aufgerufen, NACHDEM der Singleton
+        bereits ohne App gebaut wurde.
+
+        Aufruf in toolbox.py App.__init__() nach Zeile 160:
+            from toolboxv2 import _feature_manager
+            if _feature_manager is not None:
+                _feature_manager.set_app(self)
+        """
+        self.app = app
+        self._log("debug", "FeatureManager: app reference set")
+
     def _load_feature_metadata(self):
         """Lade alle features/*/feature.yaml Dateien"""
         # Versuche zuerst aus YAML-Dateien zu laden
@@ -49,13 +77,47 @@ class FeatureManager(metaclass=Singleton):
         if not self.features:
             self._load_from_manifest()
 
+        self._apply_env_override()
+
+    def _apply_env_override(self) -> None:
+        """
+        Wende TB_ENABLED_FEATURES env-Variable an.
+
+        Nur gesetzte Features werden aktiviert, alle anderen deaktiviert.
+        Immutable Features (core) werden immer aktiviert.
+
+        Beispiel .env:
+            TB_ENABLED_FEATURES=core,cli,isaa
+
+        Beispiel inline:
+            TB_ENABLED_FEATURES=core,cli,isaa tb fl status
+        """
+        import os
+        override = os.environ.get("TB_ENABLED_FEATURES")
+        if not override:
+            return
+
+        enabled_set = {name.strip() for name in override.split(",")}
+
+        for name, spec in self.features.items():
+            if spec.immutable:
+                # Immutable (core) immer aktiv — env kann das nicht überschreiben
+                spec.enabled = True
+                continue
+            new_state = name in enabled_set
+            if spec.enabled != new_state:
+                self._log(
+                    "debug",
+                    f"TB_ENABLED_FEATURES override: '{name}' enabled={new_state}"
+                )
+            spec.enabled = new_state
+
     def _load_from_yaml_files(self):
         """Lade Features aus features/*/feature.yaml"""
         try:
             import yaml
         except ImportError:
-            if self.app:
-                self.app.logger.warning("PyYAML not installed, skipping YAML feature loading")
+            self._log("warning", "PyYAML not installed, skipping YAML feature loading")
             return
 
         for feature_yaml in self.features_dir.glob("*/feature.yaml"):
@@ -73,14 +135,14 @@ class FeatureManager(metaclass=Singleton):
                     # Cache der Dateien für schnellen Lookup
                     self._feature_files_cache[feature_name] = data.get("files", [])
 
-                    if self.app:
-                        self.app.logger.debug(f"Loaded feature metadata: {feature_name}")
+
+                    self._log("debug", f"Loaded feature metadata: {feature_name}")
             except Exception as e:
                 print(f"Failed to load feature {feature_name}: {e}")
                 import traceback
                 traceback.print_exc()
-                if self.app:
-                    self.app.logger.error(f"Failed to load feature {feature_name}: {e}")
+
+                self._log("error", f"Failed to load feature {feature_name}: {e}")
 
     def _load_from_manifest(self):
         """Lade Features aus tb-manifest.yaml"""
@@ -104,8 +166,8 @@ class FeatureManager(metaclass=Singleton):
                     break
 
             if not manifest_path:
-                if self.app:
-                    self.app.logger.debug("No tb-manifest.yaml found for feature loading")
+
+                self._log("debug", "No tb-manifest.yaml found for feature loading")
                 return
 
             with open(manifest_path, encoding="utf-8") as f:
@@ -120,12 +182,12 @@ class FeatureManager(metaclass=Singleton):
                     )
                     self._feature_files_cache[feature_name] = feature_config.get("files", [])
 
-                    if self.app:
-                        self.app.logger.debug(f"Loaded feature from manifest: {feature_name}")
+
+                    self._log("debug", f"Loaded feature from manifest: {feature_name}")
 
         except Exception as e:
-            if self.app:
-                self.app.logger.error(f"Failed to load features from manifest: {e}")
+
+            self._log("error", f"Failed to load features from manifest: {e}")
 
     def enabled(self, feature_name: str) -> bool:
         """
@@ -146,44 +208,128 @@ class FeatureManager(metaclass=Singleton):
         return feature.enabled
 
     def enable(self, feature_name: str) -> bool:
-        """
-        Aktiviere Feature mit auto-Installation der Dependencies
-        """
+        """Aktiviere Feature mit auto-Installation der Dependencies."""
         feature = self.features.get(feature_name)
         if not feature:
-            if self.app:
-                self.app.logger.error(f"Feature not found: {feature_name}")
+            self._log("error", f"Feature not found: {feature_name}")
             return False
 
         if feature.immutable:
-            if self.app:
-                self.app.logger.warning(
-                    f"Warning: Feature '{feature_name}' is marked as immutable. "
-                    f"Enabling it may have unexpected effects."
-                )
-            # Warnung aber erlaubt
+            self._log("warning",
+                f"Feature '{feature_name}' is immutable. Enabling anyway.")
 
-        # Prüfe Dependencies
+        # Prüfe Required-Dependencies
         if feature.requires:
             for req in feature.requires:
                 if not self.is_enabled(req):
-                    if self.app:
-                        self.app.logger.error(
-                            f"Cannot enable {feature_name}: required feature {req} is not enabled"
-                        )
+                    self._log("error",
+                        f"Cannot enable {feature_name}: required feature '{req}' not enabled")
                     return False
 
-        # Installiere Dependencies mit pip oder uv
+        # Dependencies installieren
         if feature.dependencies:
             if not self._install_dependencies(feature.dependencies):
-                if self.app:
-                    self.app.logger.error(f"Failed to install dependencies for {feature_name}")
+                self._log("error", f"Failed to install dependencies for {feature_name}")
                 return False
 
         feature.enabled = True
-        if self.app:
-            self.app.logger.info(f"Feature enabled: {feature_name}")
+        self._log("info", f"Feature enabled: {feature_name}")
+
+        # BUG 2 FIX: Persistieren
+        self._persist_feature_yaml(feature_name)
+        self._sync_to_manifest(feature_name)
+
         return True
+
+    def _persist_feature_yaml(self, feature_name: str) -> bool:
+        """
+        Schreibe enabled-Status in features/{name}/feature.yaml.
+
+        BUG 2 FIX: enable()/disable() war bisher nur in-memory.
+        """
+        feature = self.features.get(feature_name)
+        if not feature:
+            return False
+
+        feature_yaml = self.features_dir / feature_name / "feature.yaml"
+        if not feature_yaml.exists():
+            self._log("warning",
+                f"Cannot persist: {feature_yaml} not found")
+            return False
+
+        try:
+            import yaml
+            with open(feature_yaml, encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+
+            data["enabled"] = feature.enabled
+
+            with open(feature_yaml, "w", encoding="utf-8") as f:
+                yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+
+            self._log("debug",
+                f"Persisted feature '{feature_name}': enabled={feature.enabled}")
+            return True
+
+        except Exception as e:
+            self._log("error", f"Failed to persist feature '{feature_name}': {e}")
+            return False
+
+
+    def _sync_to_manifest(self, feature_name: str) -> bool:
+        """
+        Synchronisiere Feature-Status in tb-manifest.yaml.
+
+        DISCONNECT FIX: Manifest ist die Single Source of Truth.
+        Nach enable()/disable() muss tb-manifest.yaml aktualisiert werden.
+
+        Schema-Pfad: manifest.features.{feature_name}.enabled
+        """
+        feature = self.features.get(feature_name)
+        if not feature:
+            return False
+
+        try:
+            import yaml
+            from pathlib import Path
+
+            # Manifest finden (gleiche Suchlogik wie _load_from_manifest)
+            manifest_paths = [
+                self.features_dir.parent / "tb-manifest.yaml",
+                Path.cwd() / "tb-manifest.yaml",
+            ]
+            if self.app:
+                manifest_paths.insert(
+                    0,
+                    Path(self.app.start_dir) / "tb-manifest.yaml",
+                )
+
+            manifest_path = next((p for p in manifest_paths if p.exists()), None)
+            if not manifest_path:
+                self._log("debug", "No tb-manifest.yaml found, skipping manifest sync")
+                return False
+
+            with open(manifest_path, encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+
+            # features.{name}.enabled setzen — Manifest-Struktur aufbauen wenn nötig
+            if "features" not in data:
+                data["features"] = {}
+            if feature_name not in data["features"]:
+                data["features"][feature_name] = {}
+
+            data["features"][feature_name]["enabled"] = feature.enabled
+
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+
+            self._log("debug",
+                f"Synced feature '{feature_name}' to manifest: enabled={feature.enabled}")
+            return True
+
+        except Exception as e:
+            self._log("warning", f"Could not sync feature '{feature_name}' to manifest: {e}")
+            return False
 
     def _install_dependencies(self, dependencies: List[str]) -> bool:
         """
@@ -209,9 +355,9 @@ class FeatureManager(metaclass=Singleton):
 
         cmd.extend(dependencies)
 
-        if self.app:
-            self.app.logger.info(f"Installing dependencies: {' '.join(dependencies)}")
-            self.app.logger.info(f"Using: {'uv' if use_uv else 'pip'}")
+
+        self._log("info", f"Installing dependencies: {' '.join(dependencies)}")
+        self._log("info", f"Using: {'uv' if use_uv else 'pip'}")
 
         try:
             result = subprocess.run(
@@ -221,40 +367,35 @@ class FeatureManager(metaclass=Singleton):
                 text=True
             )
 
-            if self.app:
-                self.app.logger.info("Dependencies installed successfully")
+            self._log("info", "Dependencies installed successfully")
             return True
         except subprocess.CalledProcessError as e:
-            if self.app:
-                self.app.logger.error(f"Failed to install dependencies: {e}")
-                if e.stderr:
-                    self.app.logger.error(f"Error output: {e.stderr}")
+            self._log("error", f"Failed to install dependencies: {e}")
+            if e.stderr:
+                self._log("error", f"Error output: {e.stderr}")
             return False
 
     def disable(self, feature_name: str) -> bool:
-        """Deaktiviere Feature"""
+        """Deaktiviere Feature."""
         feature = self.features.get(feature_name)
         if not feature:
             return False
 
         if feature_name == "core":
-            if self.app:
-                self.app.logger.warning(
-                    "Warning: Disabling 'core' feature is not recommended. "
-                    "This may break essential functionality."
-                )
-            # Warnung aber erlaubt (wie gewünscht)
+            self._log("warning", "Disabling 'core' is not recommended.")
 
         if feature_name in self.loaded_features:
-            if self.app:
-                self.app.logger.warning(
-                    f"Cannot disable loaded feature: {feature_name} (already imported)"
-                )
+            self._log("warning",
+                f"Cannot disable loaded feature '{feature_name}' (already imported)")
             return False
 
         feature.enabled = False
-        if self.app:
-            self.app.logger.info(f"Feature disabled: {feature_name}")
+        self._log("info", f"Feature disabled: {feature_name}")
+
+        # BUG 2 FIX: Persistieren
+        self._persist_feature_yaml(feature_name)
+        self._sync_to_manifest(feature_name)
+
         return True
 
     def get_files_for_feature(self, feature_name: str) -> List[str]:
@@ -359,8 +500,7 @@ class FeatureManager(metaclass=Singleton):
 
             return True
         except Exception as e:
-            if self.app:
-                self.app.logger.error(f"Failed to save feature to manifest: {e}")
+            self._log("error", f"Failed to save feature to manifest: {e}")
             return False
 
     # =================== State Sync ===================
@@ -382,8 +522,7 @@ class FeatureManager(metaclass=Singleton):
             if feature_name in self.features:
                 # Update local feature mit State Info
                 self.features[feature_name].enabled = feature_state.enabled
-                if self.app:
-                    self.app.logger.debug(
+                self._log("debug",
                         f"Synced feature '{feature_name}' from state: enabled={feature_state.enabled}"
                     )
             else:
@@ -395,8 +534,7 @@ class FeatureManager(metaclass=Singleton):
                     dependencies=feature_state.dependencies,
                     requires=feature_state.requires,
                 )
-                if self.app:
-                    self.app.logger.info(f"Restored feature '{feature_name}' from state")
+                self._log("info", f"Restored feature '{feature_name}' from state")
 
     def export_to_state(self) -> Dict[str, dict]:
         """
@@ -440,14 +578,12 @@ class FeatureManager(metaclass=Singleton):
 
         feature = self.features.get(feature_name)
         if not feature:
-            if self.app:
-                self.app.logger.error(f"Feature not found: {feature_name}")
+            self._log("error", f"Feature not found: {feature_name}")
             return None
 
         feature_dir = self.features_dir / feature_name
         if not feature_dir.exists():
-            if self.app:
-                self.app.logger.error(f"Feature directory not found: {feature_dir}")
+            self._log("error", f"Feature directory not found: {feature_dir}")
             return None
 
         # Output Verzeichnis
@@ -501,15 +637,12 @@ class FeatureManager(metaclass=Singleton):
                     "files_count": len(zf.namelist()),
                 }
                 zf.writestr("_metadata.yaml", yaml.dump(metadata, allow_unicode=True))
-
-            if self.app:
-                self.app.logger.info(f"Feature packed: {zip_path}")
+            self._log("info", f"Feature packed: {zip_path}")
 
             return str(zip_path)
 
         except Exception as e:
-            if self.app:
-                self.app.logger.error(f"Failed to pack feature: {e}")
+            self._log("error", f"Failed to pack feature: {e}")
             # Cleanup
             if zip_path.exists():
                 zip_path.unlink()
@@ -530,16 +663,14 @@ class FeatureManager(metaclass=Singleton):
 
         zip_path = Path(zip_path)
         if not zip_path.exists():
-            if self.app:
-                self.app.logger.error(f"ZIP file not found: {zip_path}")
+            self._log("error", f"ZIP file not found: {zip_path}")
             return None
 
         try:
             with zipfile.ZipFile(zip_path, 'r') as zf:
                 # 1. Lese feature.yaml um Namen zu ermitteln
                 if "feature.yaml" not in zf.namelist():
-                    if self.app:
-                        self.app.logger.error("Invalid feature package: missing feature.yaml")
+                    self._log("error", "Invalid feature package: missing feature.yaml")
                     return None
 
                 feature_yaml_content = zf.read("feature.yaml").decode("utf-8")
@@ -559,8 +690,7 @@ class FeatureManager(metaclass=Singleton):
                         feature_name = stem
 
                 if not feature_name:
-                    if self.app:
-                        self.app.logger.error("Could not determine feature name")
+                    self._log("error", "Could not determine feature name")
                     return None
 
                 # 2. Zielverzeichnis
@@ -577,8 +707,7 @@ class FeatureManager(metaclass=Singleton):
                     if backup_path.exists():
                         shutil.rmtree(backup_path)
                     shutil.move(str(feature_target), str(backup_path))
-                    if self.app:
-                        self.app.logger.info(f"Created backup: {backup_path}")
+                    self._log("info", f"Created backup: {backup_path}")
 
                 feature_target.mkdir(parents=True, exist_ok=True)
 
@@ -602,15 +731,12 @@ class FeatureManager(metaclass=Singleton):
 
                 # 5. Reload Feature Metadata
                 self._load_single_feature(feature_name)
-
-                if self.app:
-                    self.app.logger.info(f"Feature unpacked: {feature_name} -> {feature_target}")
+                self._log("info", f"Feature unpacked: {feature_name} -> {feature_target}")
 
                 return feature_name
 
         except Exception as e:
-            if self.app:
-                self.app.logger.error(f"Failed to unpack feature: {e}")
+            self._log("error", f"Failed to unpack feature: {e}")
             return None
 
     def _get_tb_root(self) -> Path:
@@ -682,8 +808,7 @@ class FeatureManager(metaclass=Singleton):
                 self._feature_files_cache[feature_name] = data.get("files", [])
                 return True
         except Exception as e:
-            if self.app:
-                self.app.logger.error(f"Failed to reload feature {feature_name}: {e}")
+            self._log("error", f"Failed to reload feature {feature_name}: {e}")
 
         return False
 

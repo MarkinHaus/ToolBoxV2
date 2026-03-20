@@ -1079,7 +1079,7 @@ BEISPIELE:
         self,
         query: str,
         session_id: str,
-        max_iterations: int = 25,
+        max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30),
         ctx: "ExecutionContext | None" = None,
         get_ctx: bool = False,
     ) -> "tuple[str, ExecutionContext] | str":
@@ -1098,7 +1098,7 @@ BEISPIELE:
         Args:
             query: User query
             session_id: Session identifier
-            max_iterations: Max iterations (default 15)
+            max_iterations: Max iterations (default 30)
             ctx: Existing ExecutionContext (for resume)
             get_ctx: If True, return (result, ctx) tuple
 
@@ -1136,8 +1136,6 @@ BEISPIELE:
             # Sub-agent: Apply VFS write restriction
             if self.sub_agent_output_dir:
                 session.vfs = RestrictedVFSWrapper(session.vfs, self.sub_agent_output_dir)
-            # Limit iterations for sub-agents
-            max_iterations = min(max_iterations, 15)
 
         # Store session reference for sub-agent spawning
         self._current_session = session
@@ -1367,7 +1365,6 @@ BEISPIELE:
         else:
             if self.sub_agent_output_dir:
                 session.vfs = RestrictedVFSWrapper(session.vfs, self.sub_agent_output_dir)
-            max_iterations = min(max_iterations, 10)
 
         self._current_session = session
 
@@ -2589,10 +2586,10 @@ BEISPIELE:
         active_str = (
             ", ".join(ctx.get_dynamic_tool_names()) if ctx.dynamic_tools else "keine"
         )
-
+        prompt_parts = [self.agent.amd.system_message]
         # Base prompt - different for sub-agents
         if self.is_sub_agent:
-            prompt_parts = [
+            prompt_parts.append("\n".join([
                 "You are a focused SUB-AGENT for a specific task.",
                 "",
                 "⚠️ SUB-AGENT CONSTRAINTS:",
@@ -2613,11 +2610,11 @@ BEISPIELE:
                 "1. Focus ONLY on the given task",
                 "2. Write results to your output directory",
                 "3. Use final_answer when finished",
-                "4. If something is unclear: make the best assumption and document it",
-            ]
+                "4. If something is unclear: make the best assumption and document it"])
+            )
 
         else:
-            prompt_parts = [
+            prompt_parts.append("\n".join([
                 "IDENTITY: You are FlowAgent, an autonomous execution unit capable of file operations, code execution, and data processing.",
                 "",
                 "OPERATING PROTOCOL:",
@@ -2638,7 +2635,7 @@ BEISPIELE:
                 "C. VERIFY: Check if the tool output matches expectations.",
                 "   → AFTER state-changing tools (createJob, deleteJob, spawn_sub_agent, etc.), ALWAYS call the corresponding list tool (listJobs, list_agents, etc.) to verify!",
                 "D. REPORT: Use `final_answer()` only when the objective is met or definitively impossible.",
-            ]
+           ]))
 
         # Add skills section if matched
         if ctx.matched_skills:
@@ -2907,7 +2904,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         """
         return self._active_executions.get(execution_id)
 
-    async def resume(self, execution_id: str, max_iterations: int = 15, content="", stream=False) -> str | tuple[
+    async def resume(self, execution_id: str, max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30), content="", stream=False) -> str | tuple[
         Callable[[...], Any], ExecutionContext] | tuple[str, ExecutionContext]:
         """
         Resume a paused execution.

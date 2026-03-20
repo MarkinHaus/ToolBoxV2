@@ -665,6 +665,13 @@ def make_vfs_view(session: "AgentSessionV2"):
         """
         import re as _re
 
+        if isinstance(line_start, str):
+            line_start = int(line_start.strip())
+        if isinstance(line_end, str):
+            line_end = int(line_end.strip())
+        if isinstance(context_lines, str):
+            context_lines = int(context_lines.strip())
+
         try:
             np = vfs._normalize_path(path)
 

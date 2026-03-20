@@ -1767,14 +1767,13 @@ Session: {self.session_id}
             # Falls Datei offen war, schließen um Context neu zu bauen
             if f.state == "open":
                 f.state = "closed"
-                f.is_loaded = True  # Content ist geladen
 
             return {"success": True, "loaded_bytes": f.size_bytes}
 
         except Exception as e:
             return {"success": False, "error": f"Sync from local error: {e}"}
 
-    async def close(self, path: str) -> dict:
+    async def close(self, path: str, do_summary=True) -> dict:
         """Close file (create summary, remove from context)"""
         path = self._normalize_path(path)
 
@@ -1786,18 +1785,19 @@ Session: {self.session_id}
             return {"success": False, "error": f"Cannot close system file: {path}"}
 
         # Generate summary
-        if f.size > 100 and self._summarizer:
-            try:
-                summary = self._summarizer(f.content[:2000])
-                if hasattr(summary, "__await__"):
-                    summary = await summary
-                f.mini_summary = str(summary).strip()
-            except Exception:
-                f.mini_summary = (
-                    f"[{f.size} chars, {len(f.content.splitlines())} lines]"
-                )
-        else:
-            f.mini_summary = f"[{f.size} chars]"
+
+        f.mini_summary = f"[{f.size} chars]"
+        if do_summary:
+            if f.size > 100 and self._summarizer:
+                try:
+                    summary = self._summarizer(f.content[:2000])
+                    if hasattr(summary, "__await__"):
+                        summary = await summary
+                    f.mini_summary = str(summary).strip()
+                except Exception:
+                    f.mini_summary = (
+                        f"[{f.size} chars, {len(f.content.splitlines())} lines]"
+                    )
 
         f.state = "closed"
         self._dirty = True

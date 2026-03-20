@@ -18,6 +18,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.output import ColorDepth
 from prompt_toolkit.shortcuts import set_title
 from prompt_toolkit.styles import Style
+from regex import Pattern
 
 from toolboxv2 import App, get_app
 
@@ -52,7 +53,9 @@ class _RlCompleter(Completer):
         self._ex = executor
 
     def get_completions(self, document, complete_event):
-        word = document.get_word_before_cursor(pattern=r"[\w\.]+")
+        word = document.get_word_before_cursor(
+            pattern=re.compile(r"[\w\.]+")
+        )
         rc = rlcompleter.Completer(self._ex.get_namespace())
         i, seen = 0, set()
         while True:
@@ -158,7 +161,21 @@ class _HybridCompleter(Completer):
             else:
                 self._sig["text"] = ""
 
-            for c in interp.complete(line, col):
+            raw_completions = interp.complete(line, col)
+            inside_call = bool(sigs)
+
+            if inside_call:
+                # ── priority buckets (only when inside a call) ──
+                # 0: param  1: keyword  2: function/class  3: rest
+                _PRIO = {"param": 0, "keyword": 1, "function": 2, "class": 2}
+                buckets: dict[int, list] = {0: [], 1: [], 2: [], 3: []}
+                for c in raw_completions:
+                    buckets[_PRIO.get(c.type, 3)].append(c)
+                ordered = buckets[0] + buckets[1] + buckets[2] + buckets[3]
+            else:
+                ordered = raw_completions
+
+            for c in ordered:
                 yield Completion(
                     c.name_with_symbols,
                     start_position=-(len(c.name_with_symbols) - len(c.complete)),

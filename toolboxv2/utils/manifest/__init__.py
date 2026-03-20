@@ -26,6 +26,7 @@ from .schema import (
     ToolboxConfig,
     UtilitiesConfig,
     IsaaConfig,
+    ProfileType
 )
 from .loader import ManifestLoader
 from .converter import ConfigConverter
@@ -46,6 +47,7 @@ __all__ = [
     "ToolboxConfig",
     "UtilitiesConfig",
     "IsaaConfig",
+    "ProfileType",
     "ManifestLoader",
     "ConfigConverter",
     "ManifestServiceManager",

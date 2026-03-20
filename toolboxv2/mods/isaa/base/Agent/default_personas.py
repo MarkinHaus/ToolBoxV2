@@ -199,8 +199,8 @@ _BUILTIN_PERSONAS: dict[str, PersonaProfile] = {
         verification_level="basic",
     ),
 
-    "discord_moderator": PersonaProfile(
-        name="discord_moderator",
+    "moderator": PersonaProfile(
+        name="moderator",
         prompt_modifier=(
             "\nPERSONA: Discord & Community Moderator\n"
             "SPRACHE: Antworte immer in der Sprache der Anfrage (DE oder EN).\n"
@@ -1461,8 +1461,8 @@ _BUILTIN_PERSONAS: dict[str, PersonaProfile] = {
     # Niedrige Keyword-Spezifität by design — kommen erst nach allen anderen.
     # =========================================================================
 
-    "fallback_analyst": PersonaProfile(
-        name="fallback_analyst",
+    "analyst": PersonaProfile(
+        name="analyst",
         prompt_modifier=(
             "\nPERSONA: General Analyst (Fallback)\n"
             "SPRACHE: Antworte immer in der Sprache der Anfrage (DE oder EN).\n"
@@ -1484,8 +1484,8 @@ _BUILTIN_PERSONAS: dict[str, PersonaProfile] = {
         verification_level="basic",
     ),
 
-    "fallback_communicator": PersonaProfile(
-        name="fallback_communicator",
+    "communicator": PersonaProfile(
+        name="communicator",
         prompt_modifier=(
             "\nPERSONA: General Communicator (Fallback)\n"
             "SPRACHE: Antworte immer in der Sprache der Anfrage (DE oder EN).\n"
@@ -1507,8 +1507,8 @@ _BUILTIN_PERSONAS: dict[str, PersonaProfile] = {
         verification_level="none",
     ),
 
-    "fallback_planner": PersonaProfile(
-        name="fallback_planner",
+    "planner": PersonaProfile(
+        name="planner",
         prompt_modifier=(
             "\nPERSONA: General Planner (Fallback)\n"
             "SPRACHE: Antworte immer in der Sprache der Anfrage (DE oder EN).\n"
@@ -1594,7 +1594,7 @@ _PERSONA_KEYWORDS: dict[str, list[str]] = {
         "support request", "classify", "categorize", "assign ticket",
         "incoming request", "priority ticket",
     ],
-    "discord_moderator": [
+    "moderator": [
         "discord", "moderation", "mod", "server regeln", "ban", "timeout", "kick",
         "community regeln", "spam discord", "raid", "kanal struktur",
         "moderator", "server rules", "community management", "brigading",
@@ -1918,15 +1918,15 @@ _PERSONA_KEYWORDS: dict[str, list[str]] = {
     ],
 
     # ---- FALLBACK (absichtlich generisch — niedrigster Score by design) ------
-    "fallback_analyst": [
+    "analyst": [
         "analysier", "untersuche", "bewerte",
         "analyze", "analyse", "assess", "evaluate", "examine",
     ],
-    "fallback_communicator": [
+    "communicator": [
         "schreib", "formulier", "text erstellen",
         "write", "draft", "compose",
     ],
-    "fallback_planner": [
+    "planner": [
         "plan erstellen", "vorgehen planen",
         "create plan", "plan approach", "how to proceed",
     ],

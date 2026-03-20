@@ -13,7 +13,7 @@ Die Feature-ZIPs liegen in toolboxv2/features_packed/ und werden nach
 toolboxv2/features/{name}/ und toolboxv2/{target_dirs}/ entpackt.
 """
 import importlib.util
-import os
+import os, sys
 import shutil
 import sys
 import zipfile
@@ -115,33 +115,33 @@ def get_packed_feature_path(feature_name: str) -> Optional[Path]:
     candidates.sort(reverse=True)
     return candidates[0]
 
-def download_feature_from_registry(feature_name: str) -> Optional[Path]:
-    """Download feature ZIP from registry if not available locally."""
-    import urllib.request
-    registry_url = os.environ.get("TB_REGISTRY_URL", "https://registry.simplecore.app")
-    packed_dir = get_features_packed_dir()
-    packed_dir.mkdir(parents=True, exist_ok=True)
-
-    # Versuche Metadaten-Endpoint, Fallback auf direkten Pfad
-    zip_path = packed_dir / f"tbv2-feature-{feature_name}-latest.zip"
-    try:
-        meta_url = f"{registry_url}/api/v1/features/{feature_name}/latest"
-        with urllib.request.urlopen(meta_url, timeout=8) as r:
-            import json as _json
-            meta = _json.loads(r.read())
-            download_url = meta.get("download_url", f"{registry_url}/features/tbv2-feature-{feature_name}-latest.zip")
-    except Exception:
-        download_url = f"{registry_url}/features/tbv2-feature-{feature_name}-latest.zip"
-
-    try:
-        print(f"Downloading feature '{feature_name}' from registry...", file=sys.stderr)
-        urllib.request.urlretrieve(download_url, zip_path)
-        return zip_path
-    except Exception as e:
-        print(f"Warning: Registry download failed for '{feature_name}': {e}", file=sys.stderr)
-        if zip_path.exists():
-            zip_path.unlink()
-        return None
+try:
+    from .feature_loader_registry import download_feature_from_registry  # noqa: F401
+except ImportError:
+    # Fallback wenn feature_loader_registry noch nicht vorhanden
+    def download_feature_from_registry(feature_name: str, version=None, force=False):
+        """Minimal urllib fallback."""
+        import urllib.request, json as _json
+        registry_url = os.environ.get("TB_REGISTRY_URL", "https://registry.simplecore.app")
+        packed_dir = get_features_packed_dir()
+        packed_dir.mkdir(parents=True, exist_ok=True)
+        zip_path = packed_dir / f"tbv2-feature-{feature_name}-latest.zip"
+        try:
+            meta_url = f"{registry_url}/api/v1/features/tbv2-feature-{feature_name}/latest"
+            with urllib.request.urlopen(meta_url, timeout=8) as r:
+                meta = _json.loads(r.read())
+                download_url = meta.get("download_url", f"{registry_url}/features/tbv2-feature-{feature_name}-latest.zip")
+        except Exception:
+            download_url = f"{registry_url}/features/tbv2-feature-{feature_name}-latest.zip"
+        try:
+            print(f"Downloading feature '{feature_name}' from registry...", file=sys.stderr)
+            urllib.request.urlretrieve(download_url, zip_path)
+            return zip_path
+        except Exception as e:
+            print(f"Warning: Registry download failed for '{feature_name}': {e}", file=sys.stderr)
+            if zip_path.exists():
+                zip_path.unlink()
+            return None
 
 def detect_installed_extras() -> Set[str]:
     """
@@ -390,24 +390,30 @@ def main():
 
     subparsers = parser.add_subparsers(dest="command")
 
-    # status
+    # --- Bestehende Subcommands ---
     subparsers.add_parser("status", help="Show feature status")
-
-    # list
     subparsers.add_parser("list", help="List available features")
 
-    # load
     p_load = subparsers.add_parser("load", help="Load/unpack required features")
     p_load.add_argument("--all", action="store_true", help="Load all features")
     p_load.add_argument("--force", action="store_true", help="Force reload")
 
-    # unpack
     p_unpack = subparsers.add_parser("unpack", help="Unpack specific feature")
     p_unpack.add_argument("feature", help="Feature name")
     p_unpack.add_argument("--force", action="store_true", help="Force unpack")
 
-    # cleanup
-    p_cleanup = subparsers.add_parser("cleanup", help="Remove non-required features")
+    subparsers.add_parser("cleanup", help="Remove non-required features")
+
+    # --- NEU: Registry Subcommands ---
+    try:
+        from toolboxv2.feature_loader_registry import (
+            extend_feature_loader_cli,
+            handle_registry_cli_command,
+        )
+        extend_feature_loader_cli(subparsers)
+        _registry_cli = handle_registry_cli_command
+    except ImportError:
+        _registry_cli = lambda x:None
 
     args = parser.parse_args()
 
@@ -466,7 +472,17 @@ def main():
         cleanup_unpacked_features(required)
         print("Done.")
 
+
+    elif args.command in ("upload", "check-updates", "update"):
+        if _registry_cli:
+            sys.exit(_registry_cli(args))
+        else:
+            print("Error: feature_loader_registry.py not installed.")
+            sys.exit(1)
+
+
     else:
+
         parser.print_help()
 
 

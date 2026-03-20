@@ -48,6 +48,7 @@ from typing import (
 from dataclasses import dataclass, field
 
 import litellm
+litellm.suppress_debug_info = True
 from litellm import CustomLLM
 from litellm.types.utils import (
     GenericStreamingChunk,

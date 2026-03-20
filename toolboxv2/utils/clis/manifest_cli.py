@@ -857,6 +857,7 @@ def cmd_packed(args) -> int:
 
 _MANIFEST_TO_ENV = {
     "app.profile": "TB_PROFILE",
+    "app.profiling": "PROFILING",
     "database.mode": "TB_DB_MODE",
     "app.debug": "TB_DEBUG",
     "app.log_level": "TB_LOG_LEVEL",
@@ -869,6 +870,18 @@ _MANIFEST_TO_ENV = {
     "database.redis.url": "DB_CONNECTION_URI",
     "nginx.server_name": "TB_NGINX_SERVER_NAME",
     "paths.data_dir": "TB_DATA_DIR",
+    "isaa.self_agent.max_iteration": "DEFAULT_MAX_ITERATIONS",
+    "isaa.self_agent.verbose_logging": "AGENT_VERBOSE",
+    "isaa.self_agent.coder_stream": "CODER_STREAM",
+    "isaa.self_agent.with_google_tools": "WITH_GOOGLE_TOOLS",
+    "isaa.self_agent.max_history": "DEFAULT_MAX_HISTORY_LENGTH",
+    "isaa.self_agent.fast_model": "FASTMODEL",
+    "isaa.self_agent.blitz_model": "BLITZMODEL",
+    "isaa.self_agent.complex_model": "COMPLEXMODEL",
+    "isaa.self_agent.summary_model": "SUMMARYMODEL",
+    "isaa.self_agent.image_model": "IMAGEMODEL",
+    "isaa.self_agent.audio_model": "AUDIOMODEL",
+    "isaa.self_agent.embedding_model": "DEFAULTMODELEMBEDDING",
 }
 
 

@@ -477,8 +477,8 @@ class BeastCLI:
 
         # History search (Ctrl+R)
         @self.bindings.add('c-r')
-        def history_search(event):
-            run_in_terminal(lambda: self._search_history())
+        async def history_search(event):
+            await run_in_terminal(self._search_history)
 
         # Module quick switch (Ctrl+Q)
         @self.bindings.add('c-q')
@@ -1328,11 +1328,14 @@ class BeastCLI:
 
     def _show_function_help(self, module: str, function: str):
         """Show help for specific function"""
-        func_data = self.app.get_function((module, function), metadata=True)
+        func_data, _ = self.app.get_function((module, function), metadata=True)
 
         if not func_data:
             print(f"❌ Function not found: {module}.{function}")
             return
+
+        if isinstance(func_data, tuple):
+            func_data, _ = func_data
 
         print(f"\n📖 Help: {module}.{function}")
         print(f"{'─' * 60}")

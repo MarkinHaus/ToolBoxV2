@@ -25,7 +25,7 @@ class DiscordKernelTools:
 
     def __init__(self, bot: "discord.discord.ext.commands.Bot", kernel, output_router):
         self.bot = bot
-        self.kernel = kernel
+        self.agent = kernel.agent if hasattr(kernel, "agent") else kernel
         self.output_router = output_router
 
     # ===== SERVER MANAGEMENT =====
@@ -1044,7 +1044,6 @@ class DiscordKernelTools:
             "users": sum(g.member_count for g in self.bot.guilds),
             "voice_connections": len(self.output_router.voice_clients),
             "uptime": "N/A",  # Would need to track start time
-            "kernel_state": str(self.kernel.state),
         }
 
     async def set_bot_status(
@@ -1104,26 +1103,6 @@ class DiscordKernelTools:
             }
         except Exception as e:
             return {"error": str(e)}
-
-    async def get_kernel_metrics(self) -> Dict[str, Any]:
-        """
-        Get kernel performance metrics.
-
-        Returns:
-            Dict with kernel metrics
-        """
-        metrics = self.kernel.metrics
-        return {
-            "total_signals": metrics.total_signals,
-            "user_inputs": metrics.user_inputs,
-            "agent_responses": metrics.agent_responses,
-            "proactive_actions": metrics.proactive_actions,
-            "scheduled_tasks": metrics.scheduled_tasks,
-            "errors": metrics.errors,
-            "avg_response_time": round(metrics.avg_response_time, 3)
-            if metrics.avg_response_time
-            else 0,
-        }
 
     # ===== SERVER SETUP & MANAGEMENT =====
 
@@ -3526,9 +3505,9 @@ class DiscordKernelTools:
 
     # ===== EXPORT TO AGENT =====
 
-    async def export_to_agent(self):
+    async def export_to_agent(self, agent=None):
         """Export all Discord tools to the agent with categories and flags"""
-        agent = self.kernel.agent
+        agent = self.agent
 
         # =================================================================
         # CATEGORY: discord_read - Read-only information gathering tools
@@ -3596,13 +3575,6 @@ class DiscordKernelTools:
             self.get_bot_status,
             "discord_get_bot_status",
             description="Get current bot status and statistics. Returns: Dict with bot info.",
-            category=read_category,
-            flags=read_flags,
-        )
-        agent.add_tool(
-            self.get_kernel_metrics,
-            "discord_get_kernel_metrics",
-            description="Get kernel performance metrics. Returns: Dict with metrics.",
             category=read_category,
             flags=read_flags,
         )

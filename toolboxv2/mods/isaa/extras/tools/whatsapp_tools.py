@@ -15,7 +15,7 @@ class WhatsAppKernelTools:
 
     def __init__(self, messenger, kernel, output_router):
         self.messenger = messenger
-        self.kernel = kernel
+        self.agent = kernel.agent if hasattr(kernel, "agent") else kernel
         self.output_router = output_router
         # Simulierter Speicher für Gruppen (Broadcast-Listen)
         # In Produktion: Datenbank nutzen!
@@ -173,7 +173,7 @@ class WhatsAppKernelTools:
 
     async def export_to_agent(self):
         """Exportiert die Tools zum Agenten"""
-        agent = self.kernel.agent
+        agent = self.agent
 
         # Buttons
         agent.add_tool(

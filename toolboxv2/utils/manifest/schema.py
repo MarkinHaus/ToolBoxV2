@@ -79,6 +79,7 @@ class AppConfig(BaseModel):
     instance_id: str = Field(default="tbv2_main", description="Unique instance identifier")
     environment: Environment = Field(default=Environment.DEVELOPMENT)
     debug: bool = Field(default=False)
+    profiling: bool = Field(default=False)
     log_level: LogLevel = Field(default=LogLevel.INFO)
     ping_interval: int = Field(default=0)
     profile: Optional[ProfileType] = Field(
@@ -338,11 +339,30 @@ class FeatureSpec(BaseModel):
     imports: List[str] = Field(default_factory=list, description="Python imports for feature")
     dependencies: List[str] = Field(default_factory=list, description="pip/uv packages to install")
     commands: List[str] = Field(default_factory=list, description="CLI commands provided")
-    requires: List[str] = Field(default_factory=list, description="Other features this depends on")
 
+    requires: List[str] = Field(default_factory=list, description="Other features this depends on")
+    auto_install: bool = Field(
+            default=False,
+            description=(
+                "If True AND a guarded import fails: auto-install missing pip/uv deps, "
+                "then retry. If still failing: abort with clear error. "
+                "Overrides the global FeaturesConfig.auto_install_deps."
+            )
+        )
 
 class FeaturesConfig(BaseModel):
     """Features configuration in manifest"""
+
+    # Globaler Auto-Install Flag
+    auto_install_deps: bool = Field(
+        default=False,
+        description=(
+            "Global: auto-install missing pip/uv deps when a guarded import fails. "
+            "Per-feature override: FeatureSpec.auto_install. "
+            "False = clear error message + abort (no silent installs)."
+        )
+    )
+
     core: FeatureSpec = Field(
         default_factory=lambda: FeatureSpec(
             name="core", version="0.1.25", enabled=True, immutable=True,
@@ -379,6 +399,12 @@ class FeaturesConfig(BaseModel):
             description="Scientific computing extras"
         )
     )
+    mini: FeatureSpec = Field(
+        default_factory=lambda: FeatureSpec(
+            name="mini", version="0.1.25", enabled=True, immutable=True,
+            description="Absolute minimal install — App + types, no CLI/web"
+        )
+    )
 
     def get_active_features(self) -> List[str]:
         """
@@ -390,6 +416,19 @@ class FeaturesConfig(BaseModel):
             name for name, spec in self
             if isinstance(spec, FeatureSpec) and spec.enabled
         ]
+
+    def should_auto_install(self, feature_name: str) -> bool:
+        """
+        Prüfe ob Auto-Install für dieses Feature aktiv ist.
+
+        Auflösung:
+          1. FeatureSpec.auto_install (per-feature override)
+          2. FeaturesConfig.auto_install_deps (global)
+        """
+        spec = getattr(self, feature_name, None)
+        if spec is None:
+            return self.auto_install_deps
+        return spec.auto_install or self.auto_install_deps
 
 # =============================================================================
 # Observability Configuration
@@ -788,6 +827,26 @@ uncertain_about_X
     stream: bool = Field(default=True)
     checkpoint: IsaaCheckpointConfig = Field(default_factory=IsaaCheckpointConfig)
     rate_limiter: IsaaRateLimiterConfig = Field(default_factory=IsaaRateLimiterConfig)
+    max_iteration: int = Field(default=30)
+    coder_stream: bool = Field(default=True)
+    with_google_tools: bool = Field(default=True)
+    max_history: int = Field(default=100)
+
+    fast_model: str = Field(default=os.getenv("FASTMODEL", "zglm/glm-4.6"))
+    blitz_model: str = Field(default=os.getenv("BLITZMODEL", "groq/moonshotai/kimi-k2-instruct"))
+    complex_model: str = Field(default=os.getenv("COMPLEXMODEL", "zglm/GLM-4.7"))
+    summary_model: str = Field(default=os.getenv("SUMMARYMODEL", "openrouter/mistralai/ministral-8b"))
+
+    audio_model: str = Field(default=os.getenv("AUDIOMODEL", "groq/whisper-large-v3-turbo"))
+    image_model: str = Field(default=os.getenv("IMAGEMODEL","openrouter/google/gemini-2.5-flash-image-preview:free"))
+    embedding_model: str = Field(default=os.getenv("DEFAULTMODELEMBEDDING","gemini/text-embedding-004"))
+
+
+
+
+
+
+
 
 
 class IsaaCodeExecutorConfig(BaseModel):

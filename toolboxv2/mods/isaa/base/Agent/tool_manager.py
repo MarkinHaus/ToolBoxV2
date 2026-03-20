@@ -816,12 +816,12 @@ class ToolManager:
     # EXECUTION
     # =========================================================================
 
-    async def execute(self, name: str, **kwargs) -> Any:
+    async def execute(self, function_name: str, **kwargs) -> Any:
         """
         Execute a tool by name.
 
         Args:
-            name: Tool name
+            function_name: Tool name
             **kwargs: Arguments to pass to the tool
 
         Returns:
@@ -831,14 +831,14 @@ class ToolManager:
             ValueError: If tool not found
             RuntimeError: If tool has no function (MCP/A2A)
         """
-        entry = self._registry.get(name)
+        entry = self._registry.get(function_name)
 
         if entry is None:
-            raise ValueError(f"Tool not found: {name}")
+            raise ValueError(f"Tool not found: {function_name}")
 
         if entry.function is None:
             raise RuntimeError(
-                f"Tool '{name}' has no local function. "
+                f"Tool '{function_name}' has no local function. "
                 f"It's a {entry.source} tool from server '{entry.server_name}'. "
                 f"Use the appropriate {entry.source} client to execute it."
             )
