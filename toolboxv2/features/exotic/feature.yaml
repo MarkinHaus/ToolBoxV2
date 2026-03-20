@@ -1,0 +1,14 @@
+name: exotic
+version: "0.1.25"
+enabled: false
+immutable: false
+description: "Scientific computing extras (scipy, matplotlib)"
+files: []
+imports: []
+dependencies:
+  - "scipy>=1.15.0"
+  - "matplotlib>=3.10.0"
+  - "pandas"
+requires:
+  - "core"
+commands: []

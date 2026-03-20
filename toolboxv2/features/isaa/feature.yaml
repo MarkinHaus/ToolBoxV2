@@ -1,0 +1,20 @@
+name: isaa
+version: "0.1.25"
+enabled: false
+immutable: false
+description: "AI/LLM integration with OpenAI, Anthropic, and local models"
+files:
+  - "mods/isaa/*"
+  - "mods_dev/*"
+  - "mcp_server/*"
+  - "utils/clis/tcm_p2p_cli.py"
+imports: []
+dependencies:
+  - "openai>=1.60.0"
+  - "litellm>=1.74.0"
+  - "langchain_core"
+  - "groq"
+requires:
+  - "core"
+commands:
+  - "mcp"

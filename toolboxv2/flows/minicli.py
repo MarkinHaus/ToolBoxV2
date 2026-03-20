@@ -2165,3 +2165,7 @@ async def run(app: App, args):
 
     await app.a_exit()
 
+if __name__ == "__main__":
+    import sys
+    from toolboxv2 import get_app
+    asyncio.run(run(get_app("icli"), sys.argv))

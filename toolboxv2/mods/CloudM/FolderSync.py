@@ -533,33 +533,32 @@ class FolderSyncManager:
 
 export = get_app(f"{Name}.Export").tb
 
-@export(mod_name=Name, api=True, version=version)
+@export(mod_name=Name, api=False, version=version)
 def check_status(app: App, request: RequestData):
     """Prüft Config und Libraries"""
     return check_environment()
 
-@export(mod_name=Name, api=True, version=version)
+@export(mod_name=Name, api=False, version=version)
 def start_sharing(local_path: str):
     """Startet das Teilen eines Ordners (Erstellt Share)"""
     mgr = _get_manager()
     return mgr.create_share(local_path)
 
-
-@export(mod_name=Name, api=True, version=version)
+@export(mod_name=Name, api=False, version=version)
 def connect_share(local_path: str, token: str):
     """Verbindet einen lokalen Ordner mit einem Share"""
     mgr = _get_manager()
     return mgr.join_share(local_path, token)
 
 
-@export(mod_name=Name, api=True, version=version)
+@export(mod_name=Name, api=False, version=version)
 def stop_share(share_id: str):
     """Stoppt die Synchronisation"""
     mgr = _get_manager()
     return mgr.stop_sync(share_id)
 
 
-@export(mod_name=Name, api=True, version=version)
+@export(mod_name=Name, api=False, version=version)
 def list_active_shares():
     """Listet aktive Synchronisationen"""
     mgr = _get_manager()

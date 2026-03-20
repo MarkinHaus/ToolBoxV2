@@ -19,6 +19,7 @@ from typing import Optional, List, Dict
 from pathlib import Path
 
 from toolboxv2 import Result, get_app, TBEF
+from toolboxv2.utils.extras.base_widget import get_user_from_request
 from toolboxv2.utils.system.types import ToolBoxInterfaces
 
 export = get_app(from_="ContainerManager.EXPORT").tb
@@ -48,6 +49,7 @@ class ContainerSpec:
     last_heartbeat: float = 0.0
     restart_count: int = 0
     env: dict = field(default_factory=dict)
+    ssh_port: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -79,7 +81,7 @@ CONTAINER_TYPES = {
     "cli_v4": {
         "image": "toolboxv2:latest",
         "internal_port": 8080,
-        "command": "python -m toolboxv2.cli",
+        "command": "python -m toolboxv2.flows.minicli",
         "environment": {"MODE": "cli_v4"},
         "memory_limit": "512m",
         "cpu_limit": "0.5",
@@ -113,7 +115,8 @@ CONTAINER_TYPES = {
 # Port-Pool für Container (exklusiv zur Toolbox)
 PORT_POOL_START = 9000
 PORT_POOL_END = 9500
-
+SSH_PORT_POOL_START = 22000
+SSH_PORT_POOL_END = 22500
 
 # ============================================================================
 # DOCKER HELPER
@@ -283,6 +286,34 @@ async def db_release_port(app, port: int) -> Result:
     return Result.ok()
 
 
+async def db_allocate_ssh_port(app) -> Optional[int]:
+    result = await app.a_run_any(TBEF.DB.GET, query="CONTAINER_SSH_PORT_POOL", get_results=True)
+    used = []
+    if not result.is_error() and result.get():
+        import json
+        data = result.get()
+        used = json.loads(data) if isinstance(data, str) else (data if isinstance(data, list) else [])
+    for port in range(SSH_PORT_POOL_START, SSH_PORT_POOL_END):
+        if port not in used:
+            used.append(port)
+            import json
+            await app.a_run_any(TBEF.DB.SET, query="CONTAINER_SSH_PORT_POOL",
+                                data=json.dumps(used), get_results=True)
+            return port
+    return None
+
+async def db_release_ssh_port(app, port: int) -> Result:
+    result = await app.a_run_any(TBEF.DB.GET, query="CONTAINER_SSH_PORT_POOL", get_results=True)
+    if result.is_error() or not result.get():
+        return Result.ok()
+    import json
+    data = result.get()
+    used = json.loads(data) if isinstance(data, str) else data
+    if port in used:
+        used.remove(port)
+        return await app.a_run_any(TBEF.DB.SET, query="CONTAINER_SSH_PORT_POOL",
+                                   data=json.dumps(used), get_results=True)
+    return Result.ok()
 
 @export(mod_name=Name, version=version)
 async def start_ui(port=8123, host="localhost", **_):
@@ -344,6 +375,7 @@ async def create_container(
     environment: dict = None,
     memory_limit: str = None,
     cpu_limit: str = None,
+    ssh_public_key: str = None,
 ) -> Result:
     """
     Erstelle einen neuen Container für einen User.
@@ -400,20 +432,37 @@ async def create_container(
     if not port:
         return err("No free port available in pool")
 
-    # Container-Name generieren
-    name = container_name or f"{user_id}_{container_type}_{secrets.token_hex(4)}"
+    port = await db_allocate_port(app)
+    if not port:
+        return err("No free port available in pool")
 
-    # Volume für Persistenz
+    ssh_port = None
+    ssh_port = await db_allocate_ssh_port(app)
+    if not ssh_port:
+        await db_release_port(app, port)
+        return err("No free SSH port available (22000-22500)")
+
+    if ssh_public_key:
+        if not ssh_public_key.startswith("ssh-"):
+            await db_release_port(app, port)
+            await db_release_ssh_port(app, ssh_port)
+            return err("ssh_public_key must start with 'ssh-'")
+        env["SSH_PUBLIC_KEY"] = ssh_public_key
+
+    name = container_name or f"{user_id}_{container_type}_{secrets.token_hex(4)}"
     volume_name = f"container_{user_id}_{container_type}_{secrets.token_hex(4)}"
 
-    # Container erstellen
+    port_bindings = {f"{internal_port}/tcp": port}
+    if ssh_port:
+        port_bindings["2222/tcp"] = ssh_port
+
     try:
         container = docker.containers.run(
             image=image,
             name=name,
             command=command or default_command,
             detach=True,
-            ports={f"{internal_port}/tcp": port},
+            ports=port_bindings,
             environment=env,
             volumes={volume_name: {"bind": "/data", "mode": "rw"}},
             mem_limit=memory_limit or default_memory,
@@ -424,11 +473,11 @@ async def create_container(
                 "user-id": user_id,
                 "container-type": container_type,
                 "port": str(port),
+                **({"ssh-port": str(ssh_port)} if ssh_port else {}),
             }
         )
         container.reload()
 
-        # Spec erstellen
         spec = ContainerSpec(
             container_id=container.id,
             container_name=name,
@@ -439,28 +488,35 @@ async def create_container(
             image=image,
             volume_name=volume_name,
             status=container.status,
-            env=env
+            env=env,
+            ssh_port=ssh_port or 0,
         )
 
-        # In DB speichern
         await db_set_container(app, spec)
         await db_add_user_container(app, user_id, container.id)
-
-        # Nginx Config erstellen (wenn verfügbar)
         await deploy_nginx_config(user_id, container_type, port)
 
-        return Result.json(data={
+        result_data = {
             "container_id": container.id[:12],
             "container_name": name,
             "port": port,
             "url": f"/container/{user_id}/{container_type}",
             "status": container.status,
-            "image": image
-        })
+            "image": image,
+        }
+        if ssh_port:
+            import socket
+            result_data["ssh_port"] = ssh_port
+            result_data["ssh_connection"] = (
+                f"ssh -i ~/.ssh/docksh_id_ed25519 -p {ssh_port} "
+                f"cli@{socket.gethostbyname(socket.gethostname())}"
+            )
+        return Result.json(data=result_data)
 
     except Exception as e:
-        # Port bei Fehler freigeben
         await db_release_port(app, port)
+        if ssh_port:
+            await db_release_ssh_port(app, ssh_port)
         return Result.default_internal_error(info=str(e))
 
 
@@ -628,6 +684,8 @@ async def delete_container(
 
     # Port freigeben
     await db_release_port(app, spec.port)
+    if spec.ssh_port:
+        await db_release_ssh_port(app, spec.ssh_port)
 
     # Aus DB löschen
     await db_delete_container(app, container_id)
@@ -1084,49 +1142,154 @@ async def add_ssh_key_to_container(
     if not spec:
         return err(f"Container {container_id} not found")
 
+    spec = await db_get_container(app, container_id)
+    if not spec:
+        return err(f"Container {container_id} not found")
+    if not spec.ssh_port:
+        return err("Container has no SSH port allocated. Re-create with ssh_public_key.")
+
     try:
         container = docker.containers.get(container_id)
+        if container.status != "running":
+            return err("Container must be running to inject SSH key via exec.")
 
-        # Prüfen ob Container SSH läuft (Port 2222)
-        if "2222/tcp" not in container.ports:
-            return err("Container does not support SSH (no port 2222 exposed)")
-
-        # SSH Key in den Container injizieren
-        # Wir schreiben den Key in /home/cli/.ssh/authorized_keys
         exec_result = container.exec_run(
-            f"bash -c 'echo \"{ssh_public_key}\" >> /home/cli/.ssh/authorized_keys && chmod 600 /home/cli/.ssh/authorized_keys'",
+            f"sh -c 'mkdir -p /home/cli/.ssh && "
+            f"echo \"{ssh_public_key}\" >> /home/cli/.ssh/authorized_keys && "
+            f"chmod 700 /home/cli/.ssh && chmod 600 /home/cli/.ssh/authorized_keys && "
+            f"chown -R cli:cli /home/cli/.ssh'",
             user="root"
         )
-
         if exec_result.exit_code != 0:
-            return err(f"Failed to add SSH key: {exec_result.output.decode()}")
+            return err(f"exec failed: {exec_result.output.decode()}")
 
-        # SSH Port vom Container holen
-        ssh_port = None
-        for port_binding in container.ports.get("2222/tcp", []):
-            if "HostPort" in port_binding:
-                ssh_port = int(port_binding["HostPort"])
-                break
-
-        if not ssh_port:
-            return err("SSH port not mapped to host")
-
-        # Server IP holen (lokal)
         import socket
         server_ip = socket.gethostbyname(socket.gethostname())
-
         return Result.json(data={
-            "message": "SSH key added successfully",
+            "message": "SSH key added",
             "container_id": container_id,
-            "ssh_connection": f"ssh -i <private_key> -p {ssh_port} cli@{server_ip}",
+            "ssh_connection": f"ssh -i ~/.ssh/docksh_id_ed25519 -p {spec.ssh_port} cli@{server_ip}",
             "server_ip": server_ip,
-            "ssh_port": ssh_port,
-            "username": "cli"
+            "ssh_port": spec.ssh_port,
+            "username": "cli",
         })
-
     except Exception as e:
         return err(f"Failed to add SSH key: {str(e)}")
 
+
+@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
+async def register_ssh_key(
+    app=None,
+    request=None,
+    ssh_public_key: str = None,
+) -> Result:
+    """
+    User-facing: registriert den eigenen SSH Public Key am zugewiesenen Container.
+    Auth über CloudM Session (kein admin_key nötig).
+    Gibt SSH-Verbindungsinfos zurück.
+    """
+    if not ssh_public_key or not ssh_public_key.startswith("ssh-"):
+        return err("ssh_public_key required and must start with 'ssh-'")
+
+    # CloudM Auth: user_id aus dem Request-Token holen
+    user_id = await get_user_from_request(app, request)
+    if not user_id:
+        return err("Not authenticated")
+
+    # Container des Users laden
+    container_ids = await db_get_user_containers(app, user_id)
+    if not container_ids:
+        return err("No container assigned to this user. Contact admin.")
+
+    # Ersten laufenden Container nehmen (oder gezielt per container_id filtern)
+    spec = None
+    for cid in container_ids:
+        s = await db_get_container(app, cid)
+        if s and s.ssh_port:
+            spec = s
+            break
+
+    if not spec:
+        return err("No SSH-enabled container found. Admin must create container with ssh_public_key support.")
+    if spec.user_id != user_id:
+        return err("Not authorized")
+
+    docker = get_docker()
+    if not docker:
+        return err("Docker not available")
+
+    try:
+        container = docker.containers.get(spec.container_id)
+        if container.status != "running":
+            return err("Container is not running")
+
+        exec_result = container.exec_run(
+            f"sh -c 'mkdir -p /home/cli/.ssh && "
+            f"echo \"{ssh_public_key}\" >> /home/cli/.ssh/authorized_keys && "
+            f"chmod 700 /home/cli/.ssh && "
+            f"chmod 600 /home/cli/.ssh/authorized_keys && "
+            f"chown -R cli:cli /home/cli/.ssh'",
+            user="root"
+        )
+        if exec_result.exit_code != 0:
+            return err(f"Key injection failed: {exec_result.output.decode()}")
+
+        import socket
+        server_ip = socket.gethostbyname(socket.gethostname())
+        return Result.json(data={
+            "message": "SSH key registered",
+            "ssh_port": spec.ssh_port,
+            "server_ip": server_ip,
+            "username": "cli",
+            "connection_string": (
+                f"ssh -i ~/.ssh/docksh_id_ed25519 -p {spec.ssh_port} cli@{server_ip}"
+            ),
+        })
+
+    except Exception as e:
+        return err(str(e))
+
+@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
+async def get_my_ssh_info(
+    app=None,
+    request=None,
+) -> Result:
+    """
+    User-facing: gibt SSH-Verbindungsinfos für den eigenen Container zurück.
+    Kein admin_key nötig — nur gültige CloudM Session.
+    """
+    user_id = await get_user_from_request(app, request)
+    if not user_id:
+        return err("Not authenticated")
+
+    container_ids = await db_get_user_containers(app, user_id)
+    if not container_ids:
+        return err("No container assigned")
+
+    results = []
+    import socket
+    server_ip = socket.gethostbyname(socket.gethostname())
+
+    for cid in container_ids:
+        spec = await db_get_container(app, cid)
+        if not spec or spec.user_id != user_id:
+            continue
+        entry = {
+            "container_id": spec.container_id[:12],
+            "container_name": spec.container_name,
+            "container_type": spec.container_type,
+            "status": spec.status,
+            "http_url": f"/container/{user_id}/{spec.container_type}",
+            "ssh_enabled": bool(spec.ssh_port),
+        }
+        if spec.ssh_port:
+            entry["ssh_port"] = spec.ssh_port
+            entry["connection_string"] = (
+                f"ssh -i ~/.ssh/docksh_id_ed25519 -p {spec.ssh_port} cli@{server_ip}"
+            )
+        results.append(entry)
+
+    return Result.json(data={"containers": results, "server_ip": server_ip})
 
 @export(mod_name=Name, version=version, api=True)
 async def get_container_ssh_info(
@@ -1156,37 +1319,27 @@ async def get_container_ssh_info(
     if not docker:
         return err("Docker not available")
 
-    try:
-        container = docker.containers.get(container_id)
+    spec = await db_get_container(app, container_id)
+    if not spec:
+        return err(f"Container {container_id} not found")
+    if not spec.ssh_port:
+        return err("Container has no SSH port. Re-create with ssh_public_key parameter.")
 
-        # SSH Port holen
-        ssh_port = None
-        for port_binding in container.ports.get("2222/tcp", []):
-            if "HostPort" in port_binding:
-                ssh_port = int(port_binding["HostPort"])
-                break
-
-        if not ssh_port:
-            return err("Container does not have SSH port mapped")
-
-        # Server IP
-        import socket
-        server_ip = socket.gethostbyname(socket.gethostname())
-
-        return Result.json(data={
-            "container_id": container_id,
-            "container_name": spec.container_name,
-            "user_id": spec.user_id,
-            "ssh_enabled": True,
-            "ssh_port": ssh_port,
-            "server_ip": server_ip,
-            "connection_string": f"ssh -i ~/.ssh/docksh_id_ed25519 -p {ssh_port} cli@{server_ip}",
-            "username": "cli"
-        })
-
-    except Exception as e:
-        return err(f"Failed to get SSH info: {str(e)}")
-
+    import socket
+    server_ip = socket.gethostbyname(socket.gethostname())
+    return Result.json(data={
+        "container_id": container_id,
+        "container_name": spec.container_name,
+        "user_id": spec.user_id,
+        "container_type": spec.container_type,
+        "ssh_enabled": True,
+        "ssh_port": spec.ssh_port,
+        "server_ip": server_ip,
+        "connection_string": (
+            f"ssh -i ~/.ssh/docksh_id_ed25519 -p {spec.ssh_port} cli@{server_ip}"
+        ),
+        "username": "cli",
+    })
 
 @export(mod_name=Name, version=version, api=True)
 async def list_ssh_containers(

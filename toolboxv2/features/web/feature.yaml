@@ -1,0 +1,24 @@
+name: web
+version: "0.1.25"
+enabled: false
+immutable: false
+description: "Web workers, HTTP/WebSocket API and Starlette integration"
+files:
+  - "utils/workers/*"
+  - "utils/daemon/*"
+  - "utils/proxy/*"
+  - "utils/clis/cli_worker_manager.py"
+  - "utils/clis/user_dashboard.py"
+  - "utils/clis/service_manager.py"
+  - "utils/clis/llm_gateway_cli.py"
+imports: []
+dependencies:
+  - "starlette>=0.47.3"
+  - "uvicorn>=0.34.0"
+  - "httpx>=0.28.1"
+requires:
+  - "core"
+commands:
+  - "workers"
+  - "http_worker"
+  - "ws_worker"

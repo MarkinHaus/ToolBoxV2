@@ -1,0 +1,46 @@
+name: core
+version: "0.1.25"
+enabled: true
+immutable: true
+description: "Core ToolBox functionality — required for all operations"
+files:
+  # ── Kern-Utils ─────────────────────────────────────────────
+  - "utils/toolbox.py"
+  - "utils/singelton_class.py"
+  - "utils/__init__.py"
+  # ── System ─────────────────────────────────────────────────
+  - "utils/system/*"
+  - "utils/manifest/*"
+  - "utils/daemon/*"
+  - "utils/security/*"
+  - "utils/proxy/*"
+  - "utils/brodcast/*"
+  - "utils/tbx/*"
+  # ── Extras (core-subset) ────────────────────────────────────
+  - "utils/extras/Style.py"
+  - "utils/extras/blobs.py"
+  - "utils/extras/mkdocs.py"
+  - "utils/extras/db/*"
+  - "utils/extras/notification.py"
+  - "utils/extras/keword_matcher.py"
+  - "utils/extras/registry_client.py"
+  - "utils/extras/reqbuilder.py"
+  - "utils/extras/gist_control.py"
+  - "utils/extras/dev_runner.py"
+  - "utils/extras/gateway_live_client.py"
+  - "utils/extras/helper_test_functions.py"
+  - "utils/extras/__init__.py"
+  # ── Flows (gehören zu core, kein eigenes Feature nötig) ─────
+  - "flows/*"
+  # ── Core-Mods (immer geladen) ───────────────────────────────
+  - "mods/CloudM/*"
+  - "mods/DB/*"
+  - "mods/__init__.py"
+imports:
+  - "toolboxv2.utils.toolbox"
+  - "toolboxv2.flows"
+  - "toolboxv2.mods.CloudM"
+  - "toolboxv2.mods.DB"
+dependencies: []
+requires: []
+commands: []

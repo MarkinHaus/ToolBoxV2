@@ -359,8 +359,9 @@ def render_footer_toolbar(
         out.append((bg + "bg:#67e8f9", " ◎ ZEN+ OPEN "))
         out.append((bg + fg_dim, " Esc=close\n"))
 
-    shown = list(task_views.items())[:5]
-    overflow = len(task_views) - len(shown)
+    main_tasks = [(tid, tv) for tid, tv in task_views.items() if "__sub__" not in tid]
+    shown = main_tasks[:5]
+    overflow = len(main_tasks) - len(shown)
 
     for tid, tv in shown:
         _append_task_line(out, tv, tid == focused_id)
@@ -471,13 +472,15 @@ class TaskOverlay:
         self._app: Optional[Application] = None
 
     def _left_items(self) -> list[tuple[str, str]]:
-        """Flache Liste aller navigierbaren Einträge: (task_id, sub_id).
-        sub_id == "" bedeutet der Task selbst ist ausgewählt."""
         items: list[tuple[str, str]] = []
         for tid, tv in self._views.items():
+            if "__sub__" in tid:
+                continue
             items.append((tid, ""))
-            for sub in tv.sub_agents:
-                items.append((tid, sub))
+            # Sub-Agents nur navigierbar solange Parent läuft
+            if tv.status == "running":
+                for sub in tv.sub_agents:
+                    items.append((tid, sub))
         return items
 
     def _effective_view(self) -> Optional[TaskView]:
@@ -2367,6 +2370,13 @@ class ISAA_Host:
             # Eltern-TV bekommt KEINEN Iterations-Eintrag mehr für Sub-Chunks
         else:
             ingest_chunk(tv, chunk)  # normale Chunks
+            # Wenn Haupt-Task terminal → Sub-TaskViews mitabschließen
+            if tv.status in ("completed", "failed", "error") and chunk.get("type") in ("done", "error", "final_answer"):
+                for sub_task_id in tv.sub_task_ids.values():
+                    sub_tv = self._task_views.get(sub_task_id)
+                    if sub_tv and sub_tv.status == "running":
+                        sub_tv.status = tv.status
+                        sub_tv.completed_at = time.time()
 
         running = any(v.status == "running" for v in self._task_views.values())
         self.set_dynamic_interval(0.5 if running else 1.5)

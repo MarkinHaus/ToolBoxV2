@@ -1,0 +1,25 @@
+name: mini
+version: "0.1.25"
+enabled: true
+immutable: true
+description: "Absolute minimal install — just App, types, logging. No CLI/web overhead."
+files:
+  - "utils/toolbox.py"
+  - "utils/singelton_class.py"
+  - "utils/__init__.py"
+  - "utils/system/types.py"
+  - "utils/system/tb_logger.py"
+  - "utils/system/file_handler.py"
+  - "utils/system/main_tool.py"
+  - "utils/system/getting_and_closing_app.py"
+  - "utils/system/state_system.py"
+  - "utils/system/cache.py"
+  - "utils/extras/Style.py"
+imports:
+  - "toolboxv2.utils.toolbox"
+dependencies:
+  - "pydantic>=2.0.0"
+  - "pyyaml>=6.0"
+  - "python-dotenv>=1.0.0"
+requires: []
+commands: []

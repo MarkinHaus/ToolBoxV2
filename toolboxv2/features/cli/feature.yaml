@@ -1,0 +1,21 @@
+name: cli
+version: "0.1.25"
+enabled: true
+immutable: false
+description: "Command line interface and IPython integration"
+files:
+  - "__main__.py"
+  - "utils/clis/*"
+  - "utils/extras/live_debugger.py"
+imports:
+  - "toolboxv2.__main__"
+dependencies:
+  - "prompt_toolkit>=3.0.52"
+  - "rich"
+  - "readchar"
+  - "ipython>=8.5.0"
+  - "python-dotenv>=1.0.0"
+requires:
+  - "core"
+commands:
+  - "tb"

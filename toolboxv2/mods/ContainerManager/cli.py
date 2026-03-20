@@ -1,23 +1,34 @@
 #!/usr/bin/env python3
 """
-ContainerManager CLI - Command Line Interface
+ContainerManager CLI
 
 Usage:
+    # Admin
     python -m toolboxv2.mods.ContainerManager.cli create <user_id> [type]
-    python -m toolboxv2.mods.ContainerManager.cli list [user_id]
-    python -m toolboxv2.mods.ContainerManager.cli delete <container_id>
-    python -m toolboxv2.mods.ContainerManager.cli logs <container_id>
+    python -m toolboxv2.mods.ContainerManager.cli list [user_id] [--all]
+    python -m toolboxv2.mods.ContainerManager.cli delete <container_id> [--force]
+    python -m toolboxv2.mods.ContainerManager.cli start|stop|restart <container_id>
+    python -m toolboxv2.mods.ContainerManager.cli logs <container_id> [--tail N]
     python -m toolboxv2.mods.ContainerManager.cli exec <container_id> <command>
+    python -m toolboxv2.mods.ContainerManager.cli add-ssh-key <container_id> <key>
+    python -m toolboxv2.mods.ContainerManager.cli list-ssh [user_id]
     python -m toolboxv2.mods.ContainerManager.cli generate-key
+
+    # User
+    python -m toolboxv2.mods.ContainerManager.cli setup
+    python -m toolboxv2.mods.ContainerManager.cli connect <container_id>
+    python -m toolboxv2.mods.ContainerManager.cli register-key <public_key>
+    python -m toolboxv2.mods.ContainerManager.cli my-ssh
 """
 
 import argparse
 import asyncio
+import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
-# Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from toolboxv2 import get_app
@@ -33,18 +44,180 @@ from . import (
     generate_admin_key,
     get_container_ssh_info,
     add_ssh_key_to_container,
-    list_ssh_containers, start_ui,
+    list_ssh_containers,
+    register_ssh_key,
+    get_my_ssh_info,
+    start_ui,
 )
 
 ADMIN_KEY = os.getenv("CONTAINER_ADMIN_KEY", "admin-change-me")
 
+# SSH key locations (ContainerManager-native, no DockSH dependency)
+SSH_DIR = Path.home() / ".ssh"
+CM_KEY_FILE = SSH_DIR / "cm_id_ed25519"
+CM_CFG_FILE = Path.home() / ".cm_client.json"
 
-async def cmd_create(args):
-    """Create a new container"""
-    if not args.user_id:
-        print("❌ Error: user_id is required")
+
+# ============================================================================
+# USER COMMANDS — SSH setup and connect live here now
+# ============================================================================
+
+async def cmd_setup(args):
+    """Generate SSH key for container access."""
+    SSH_DIR.mkdir(mode=0o700, exist_ok=True)
+
+    if CM_KEY_FILE.exists():
+        print(f"[info] Key already exists: {CM_KEY_FILE}")
+    else:
+        print("Generating SSH key for ContainerManager access...")
+        try:
+            subprocess.run(
+                ["ssh-keygen", "-t", "ed25519", "-f", str(CM_KEY_FILE), "-N", ""],
+                check=True, stdout=subprocess.DEVNULL
+            )
+            print(f"✓ Key generated: {CM_KEY_FILE}")
+        except FileNotFoundError:
+            print("Error: 'ssh-keygen' not found. Please install OpenSSH.")
+            return 1
+
+    pub_key = CM_KEY_FILE.with_suffix(".pub").read_text().strip()
+    print("\n" + "=" * 60)
+    print("YOUR PUBLIC KEY — send this to your admin or use register-key:")
+    print("=" * 60)
+    print(pub_key)
+    print("=" * 60)
+    print(f"\nPrivate key stored at: {CM_KEY_FILE}")
+    print("\nNext steps:")
+    print("  1. Send the public key above to your admin, OR")
+    print("  2. Run: cm register-key \"<paste key>\"  (if you have an auth token)")
+    return 0
+
+
+async def cmd_register_key(args):
+    """Register own SSH public key via CloudM auth — no admin needed."""
+    key = args.public_key
+    if not key:
+        # Try reading from generated key file
+        if CM_KEY_FILE.with_suffix(".pub").exists():
+            key = CM_KEY_FILE.with_suffix(".pub").read_text().strip()
+            print(f"[info] Using key from {CM_KEY_FILE.with_suffix('.pub')}")
+        else:
+            print("Error: no public key provided and no key file found. Run 'setup' first.")
+            return 1
+
+    result = await register_ssh_key(app=get_app(), ssh_public_key=key)
+    if result.is_error():
+        print(f"Error: {result.info}")
         return 1
 
+    data = result.get()
+    print(f"✓ SSH key registered")
+    print(f"  Port:    {data['ssh_port']}")
+    print(f"  Server:  {data['server_ip']}")
+    print(f"  Connect: {data['connection_string']}")
+
+    # Persist connection info
+    CM_CFG_FILE.write_text(json.dumps({
+        "host": data["server_ip"],
+        "port": data["ssh_port"]
+    }))
+    print(f"\nConnection saved. Run 'cm connect' to connect.")
+    return 0
+
+
+async def cmd_my_ssh(args):
+    """Show SSH connection info for own containers."""
+    result = await get_my_ssh_info(app=get_app())
+    if result.is_error():
+        print(f"Error: {result.info}")
+        return 1
+
+    data = result.get()
+    containers = data.get("containers", [])
+    if not containers:
+        print("No containers assigned to your account.")
+        return 0
+
+    server_ip = data.get("server_ip", "?")
+    for c in containers:
+        ssh_icon = "🔑" if c.get("ssh_enabled") else "  "
+        status_icon = "●" if c.get("status") == "running" else "○"
+        print(f"{status_icon} {ssh_icon} {c['container_id']} [{c['container_type']}]")
+        print(f"     HTTP: {c['http_url']}")
+        if c.get("ssh_enabled"):
+            print(f"     SSH:  {c['connection_string']}")
+        print()
+    return 0
+
+
+async def cmd_connect(args):
+    """SSH into a container using the stored CM key."""
+    if not CM_KEY_FILE.exists():
+        print("No SSH key found. Run 'setup' first.")
+        return 1
+
+    host, port = None, None
+
+    # If container_id given, fetch info from CM
+    if hasattr(args, "container_id") and args.container_id:
+        result = await get_container_ssh_info(
+            app=get_app(),
+            container_id=args.container_id,
+            admin_key=ADMIN_KEY
+        )
+        if result.is_error():
+            # Maybe it's a user-auth call
+            result = await get_my_ssh_info(app=get_app())
+            if result.is_error():
+                print(f"Error: {result.info}")
+                return 1
+            containers = result.get().get("containers", [])
+            match = next((c for c in containers if c["container_id"].startswith(args.container_id)), None)
+            if not match or not match.get("ssh_enabled"):
+                print(f"No SSH-enabled container found for '{args.container_id}'")
+                return 1
+            host = result.get()["server_ip"]
+            port = match["ssh_port"]
+        else:
+            info = result.get()
+            host, port = info["server_ip"], info["ssh_port"]
+        # Save for next time
+        CM_CFG_FILE.write_text(json.dumps({"host": host, "port": port}))
+
+    elif CM_CFG_FILE.exists():
+        cfg = json.loads(CM_CFG_FILE.read_text())
+        host, port = cfg.get("host"), cfg.get("port")
+
+    if not host or not port:
+        print("Usage: cm connect <container_id>")
+        print("       or run 'cm register-key' first to save connection info")
+        return 1
+
+    print(f"Connecting to {host}:{port} ...")
+    ssh_cmd = [
+        "ssh",
+        "-i", str(CM_KEY_FILE),
+        "-p", str(port),
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "UserKnownHostsFile=" + str(Path.home() / ".cm_known_hosts"),
+        "-o", "LogLevel=ERROR",
+        f"cli@{host}"
+    ]
+    try:
+        if sys.platform == "win32":
+            subprocess.run(ssh_cmd)
+        else:
+            os.execvp("ssh", ssh_cmd)
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+# ============================================================================
+# ADMIN COMMANDS
+# ============================================================================
+
+async def cmd_create(args):
     result = await create_container(
         app=get_app(),
         container_type=args.type or "cli_v4",
@@ -55,376 +228,255 @@ async def cmd_create(args):
         command=args.command or None,
         memory_limit=args.memory or None,
         cpu_limit=args.cpu or None,
+        ssh_public_key=args.ssh_key or None,
     )
-
     if result.is_error():
-        print(f"❌ Error: {result.info}")
+        print(f"Error: {result.info}")
         return 1
 
     data = result.get()
-    print(f"✅ Container created successfully!")
-    print(f"   ID: {data['container_id']}")
-    print(f"   Name: {data['container_name']}")
-    print(f"   Type: {args.type or 'cli_v4'}")
-    print(f"   Port: {data['port']}")
-    print(f"   URL: {data['url']}")
-    print(f"   Status: {data['status']}")
+    print(f"✓ Container created")
+    print(f"  ID:     {data['container_id']}")
+    print(f"  Name:   {data['container_name']}")
+    print(f"  Port:   {data['port']}")
+    print(f"  URL:    {data['url']}")
+    print(f"  Status: {data['status']}")
+    if data.get("ssh_port"):
+        print(f"  SSH:    {data['ssh_connection']}")
     return 0
 
 
 async def cmd_list(args):
-    """List containers"""
     result = await list_containers(
         app=get_app(),
         user_id=args.user_id or None,
         admin_key=ADMIN_KEY,
         all=args.all or False
     )
-
     if result.is_error():
-        print(f"❌ Error: {result.info}")
+        print(f"Error: {result.info}")
         return 1
 
     containers = result.get().get("containers", [])
-
     if not containers:
-        print("📭 No containers found")
+        print("No containers found")
         return 0
 
-    print(f"\n📋 Found {len(containers)} container(s):\n")
-
+    print(f"\n{len(containers)} container(s):\n")
     for c in containers:
-        status_icon = "🟢" if c["status"] == "running" else "⚫"
-        print(f"{status_icon} {c['container_id']}")
-        print(f"   Name: {c['container_name']}")
-        print(f"   Type: {c['container_type']}")
-        print(f"   User: {c['user_id']}")
-        print(f"   Port: {c['port']}")
-        print(f"   URL: {c['url']}")
-        print(f"   Created: {c.get('created_at', 'N/A')}")
-        print()
-
+        dot = "●" if c["status"] == "running" else "○"
+        ssh = f" [SSH:{c['port']}]" if c.get("ssh_port") else ""
+        print(f"{dot} {c['container_id']}  {c['container_name']}  ({c['container_type']}){ssh}")
+        print(f"    user={c['user_id']}  port={c['port']}  {c['url']}")
     return 0
 
 
 async def cmd_delete(args):
-    """Delete a container"""
-    if not args.container_id:
-        print("❌ Error: container_id is required")
-        return 1
-
     result = await delete_container(
-        app=get_app(),
-        container_id=args.container_id,
-        admin_key=ADMIN_KEY,
-        force=args.force or False
+        app=get_app(), container_id=args.container_id,
+        admin_key=ADMIN_KEY, force=args.force or False
     )
-
     if result.is_error():
-        print(f"❌ Error: {result.info}")
+        print(f"Error: {result.info}")
         return 1
-
-    print(f"✅ {result.get().get('message')}")
+    print(f"✓ {result.get().get('message')}")
     return 0
 
 
 async def cmd_start(args):
-    """Start a container"""
-    if not args.container_id:
-        print("❌ Error: container_id is required")
-        return 1
-
-    result = await start_container(
-        app=get_app(),
-        container_id=args.container_id,
-        admin_key=ADMIN_KEY
-    )
-
+    result = await start_container(app=get_app(), container_id=args.container_id, admin_key=ADMIN_KEY)
     if result.is_error():
-        print(f"❌ Error: {result.info}")
+        print(f"Error: {result.info}")
         return 1
-
-    print(f"✅ Container started")
-    print(f"   Status: {result.get().get('status')}")
+    print(f"✓ Started  status={result.get().get('status')}")
     return 0
 
 
 async def cmd_stop(args):
-    """Stop a container"""
-    if not args.container_id:
-        print("❌ Error: container_id is required")
-        return 1
-
-    result = await stop_container(
-        app=get_app(),
-        container_id=args.container_id,
-        admin_key=ADMIN_KEY
-    )
-
+    result = await stop_container(app=get_app(), container_id=args.container_id, admin_key=ADMIN_KEY)
     if result.is_error():
-        print(f"❌ Error: {result.info}")
+        print(f"Error: {result.info}")
         return 1
-
-    print(f"✅ Container stopped")
-    print(f"   Status: {result.get().get('status')}")
+    print(f"✓ Stopped  status={result.get().get('status')}")
     return 0
 
 
 async def cmd_restart(args):
-    """Restart a container"""
-    if not args.container_id:
-        print("❌ Error: container_id is required")
-        return 1
-
-    result = await restart_container(
-        app=get_app(),
-        container_id=args.container_id,
-        admin_key=ADMIN_KEY
-    )
-
+    result = await restart_container(app=get_app(), container_id=args.container_id, admin_key=ADMIN_KEY)
     if result.is_error():
-        print(f"❌ Error: {result.info}")
+        print(f"Error: {result.info}")
         return 1
-
-    print(f"✅ Container restarted")
-    print(f"   Status: {result.get().get('status')}")
+    print(f"✓ Restarted  status={result.get().get('status')}")
     return 0
 
 
 async def cmd_logs(args):
-    """Show container logs"""
-    if not args.container_id:
-        print("❌ Error: container_id is required")
-        return 1
-
     result = await container_logs(
-        app=get_app(),
-        container_id=args.container_id,
-        admin_key=ADMIN_KEY,
-        tail=args.tail or 100,
-        follow=False  # CLI doesn't support follow yet
+        app=get_app(), container_id=args.container_id,
+        admin_key=ADMIN_KEY, tail=args.tail or 100
     )
-
     if result.is_error():
-        print(f"❌ Error: {result.info}")
+        print(f"Error: {result.info}")
         return 1
-
-    logs = result.get().get("logs", "")
-    print(f"\n📋 Logs for {args.container_id}:\n")
-    print(logs)
+    print(result.get().get("logs", ""))
     return 0
 
 
 async def cmd_exec(args):
-    """Execute command in container"""
-    if not args.container_id or not args.command:
-        print("❌ Error: container_id and command are required")
-        return 1
-
     result = await container_exec(
-        app=get_app(),
-        container_id=args.container_id,
-        admin_key=ADMIN_KEY,
-        command=args.command,
+        app=get_app(), container_id=args.container_id,
+        admin_key=ADMIN_KEY, command=args.command,
         timeout=args.timeout or 60
     )
-
     if result.is_error():
-        print(f"❌ Error: {result.info}")
+        print(f"Error: {result.info}")
         return 1
-
     data = result.get()
-    print(f"\n🔧 Executed: {args.command}")
-    print(f"   Exit Code: {data.get('exit_code')}")
-    print(f"\nOutput:\n{data.get('output')}")
+    print(f"exit={data.get('exit_code')}\n{data.get('output')}")
     return 0
 
 
 async def cmd_generate_key(args):
-    """Generate a new admin key"""
     result = await generate_admin_key(app=get_app(), name=args.name or "admin")
     if result.is_error():
-        print(f"❌ Error: {result.info}")
+        print(f"Error: {result.info}")
         return 1
     return 0
 
 
-async def cmd_ssh(args):
-    """SSH into a container"""
+async def cmd_ssh_info(args):
+    """Show SSH info for a container (admin view)."""
     result = await get_container_ssh_info(
-        app=get_app(),
-        container_id=args.container_id,
-        admin_key=ADMIN_KEY
+        app=get_app(), container_id=args.container_id, admin_key=ADMIN_KEY
     )
     if result.is_error():
-        print(f"❌ Error: {result.info}")
+        print(f"Error: {result.info}")
         return 1
-
     info = result.get()
-    print(f"\n{'='*60}")
-    print(f"🔑 SSH ACCESS: {info['container_name']}")
-    print(f"{'='*60}")
-    print(f"Container: {info['container_id']}")
-    print(f"User: {info['user_id']}")
-    print(f"SSH Port: {info['ssh_port']}")
-    print(f"Server: {info['server_ip']}")
-    print(f"Username: {info['username']}")
-    print(f"\n📋 Connect with:")
-    print(f"   ssh -p {info['ssh_port']} cli@{info['server_ip']}")
-    print(f"{'='*60}\n")
+    print(f"\n{'='*55}")
+    print(f"SSH — {info['container_name']}")
+    print(f"{'='*55}")
+    print(f"Container:  {info['container_id']}")
+    print(f"User:       {info['user_id']}")
+    print(f"SSH port:   {info['ssh_port']}")
+    print(f"Server:     {info['server_ip']}")
+    print(f"\nConnect:    {info['connection_string']}")
+    print(f"{'='*55}\n")
 
-    # Try to open SSH directly
     import shutil
     if shutil.which("ssh"):
-        import subprocess
         try:
-            print("🔗 Opening SSH connection... (Exit with 'Ctrl+b, d' or 'exit')")
-            ssh_cmd = [
-                "ssh",
-                "-p", str(info['ssh_port']),
-                f"cli@{info['server_ip']}"
-            ]
-            subprocess.run(ssh_cmd)
+            print("Opening SSH session... (exit with 'exit' or Ctrl+D)")
+            subprocess.run(["ssh", "-p", str(info["ssh_port"]), f"cli@{info['server_ip']}"])
         except KeyboardInterrupt:
-            print("\n✋ SSH connection closed")
-    else:
-        print("⚠️  SSH client not found. Please install OpenSSH.")
-
+            pass
     return 0
 
 
 async def cmd_add_ssh_key(args):
-    """Add SSH key to a container"""
-    if not args.ssh_key:
-        print("❌ Error: ssh_key is required")
-        return 1
-
     result = await add_ssh_key_to_container(
-        app=get_app(),
-        container_id=args.container_id,
-        ssh_public_key=args.ssh_key,
-        admin_key=ADMIN_KEY
+        app=get_app(), container_id=args.container_id,
+        ssh_public_key=args.ssh_key, admin_key=ADMIN_KEY
     )
     if result.is_error():
-        print(f"❌ Error: {result.info}")
+        print(f"Error: {result.info}")
         return 1
-
     data = result.get()
-    print(f"✅ {data['message']}")
-    print(f"   Container: {data['container_id']}")
-    print(f"   Connect: {data['ssh_connection']}")
+    print(f"✓ {data['message']}")
+    print(f"  Connect: {data['ssh_connection']}")
     return 0
 
 
 async def cmd_list_ssh(args):
-    """List containers with SSH access"""
     result = await list_ssh_containers(
-        app=get_app(),
-        user_id=args.user_id or None,
-        admin_key=ADMIN_KEY
+        app=get_app(), user_id=args.user_id or None, admin_key=ADMIN_KEY
     )
     if result.is_error():
-        print(f"❌ Error: {result.info}")
+        print(f"Error: {result.info}")
         return 1
-
-    data = result.get()
-    containers = data.get("containers", [])
-
+    containers = result.get().get("containers", [])
     if not containers:
-        print("📭 No SSH-enabled containers found")
+        print("No SSH-enabled containers found")
         return 0
-
-    print(f"\n🔑 Found {len(containers)} SSH-enabled container(s):\n")
-
+    print(f"\n{len(containers)} SSH-enabled container(s):\n")
     for c in containers:
-        status_icon = "🟢" if c.get("status") == "running" else "⚫"
-        print(f"{status_icon} {c['container_id']}")
-        print(f"   Name: {c['container_name']}")
-        print(f"   User: {c['user_id']}")
-        print(f"   SSH Port: {c['ssh_port']}")
-        print(f"   Connect: {c['connection_string']}")
-        print()
-
+        dot = "●" if c.get("status") == "running" else "○"
+        print(f"{dot} {c['container_id']}  {c['container_name']}  (user={c['user_id']})")
+        print(f"    {c['connection_string']}")
     return 0
 
 
+# ============================================================================
+# MAIN
+# ============================================================================
+
 async def main():
-    parser = argparse.ArgumentParser(
-        prog="container-manager",
-        description="ContainerManager CLI - Manage Docker containers"
-    )
+    parser = argparse.ArgumentParser(prog="cm", description="ContainerManager CLI")
+    parser.add_argument("--admin-key", default=None)
+    sub = parser.add_subparsers(dest="command")
 
-    parser.add_argument("--admin-key", default=None, help="Admin key (or set CONTAINER_ADMIN_KEY env var)")
+    # --- USER COMMANDS ---
+    sub.add_parser("setup", help="Generate SSH key pair for container access")
 
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    rk = sub.add_parser("register-key", help="Register your public SSH key via auth token")
+    rk.add_argument("public_key", nargs="?", default=None, help="SSH public key string (optional, reads from file if omitted)")
 
-    # create
-    create_parser = subparsers.add_parser("create", help="Create a new container")
-    create_parser.add_argument("user_id", help="User ID from CloudM Auth")
-    create_parser.add_argument("type", nargs="?", default="cli_v4", help="Container type (cli_v4, project_dev, preview_server, custom)")
-    create_parser.add_argument("--name", help="Container name")
-    create_parser.add_argument("--image", help="Docker image")
-    create_parser.add_argument("--command", help="Container command")
-    create_parser.add_argument("--memory", help="Memory limit (e.g., 512m, 1g)")
-    create_parser.add_argument("--cpu", help="CPU limit (e.g., 0.5, 1.0)")
+    sub.add_parser("my-ssh", help="Show SSH info for your containers")
 
-    # list
-    list_parser = subparsers.add_parser("list", help="List containers")
-    list_parser.add_argument("user_id", nargs="?", help="User ID (optional, shows all if admin)")
-    list_parser.add_argument("--all", action="store_true", help="List all containers (admin only)")
+    conn = sub.add_parser("connect", help="SSH into your container")
+    conn.add_argument("container_id", nargs="?", default=None, help="Container ID (uses saved config if omitted)")
 
-    # delete
-    delete_parser = subparsers.add_parser("delete", help="Delete a container")
-    delete_parser.add_argument("container_id", help="Container ID")
-    delete_parser.add_argument("--force", action="store_true", help="Force delete running container")
+    # --- ADMIN COMMANDS ---
+    cr = sub.add_parser("create", help="Create container for a user")
+    cr.add_argument("user_id")
+    cr.add_argument("type", nargs="?", default="cli_v4")
+    cr.add_argument("--name")
+    cr.add_argument("--image")
+    cr.add_argument("--command")
+    cr.add_argument("--memory")
+    cr.add_argument("--cpu")
+    cr.add_argument("--ssh-key", dest="ssh_key", help="Optional initial SSH public key for the user")
 
-    # start
-    start_parser = subparsers.add_parser("start", help="Start a stopped container")
-    start_parser.add_argument("container_id", help="Container ID")
+    ls = sub.add_parser("list", help="List containers")
+    ls.add_argument("user_id", nargs="?")
+    ls.add_argument("--all", action="store_true")
 
-    # stop
-    stop_parser = subparsers.add_parser("stop", help="Stop a running container")
-    stop_parser.add_argument("container_id", help="Container ID")
+    dl = sub.add_parser("delete")
+    dl.add_argument("container_id")
+    dl.add_argument("--force", action="store_true")
 
-    # restart
-    restart_parser = subparsers.add_parser("restart", help="Restart a container")
-    restart_parser.add_argument("container_id", help="Container ID")
+    for cmd in ("start", "stop", "restart"):
+        p = sub.add_parser(cmd)
+        p.add_argument("container_id")
 
-    # logs
-    logs_parser = subparsers.add_parser("logs", help="Show container logs")
-    logs_parser.add_argument("container_id", help="Container ID")
-    logs_parser.add_argument("--tail", type=int, default=100, help="Number of lines to show")
+    lg = sub.add_parser("logs")
+    lg.add_argument("container_id")
+    lg.add_argument("--tail", type=int, default=100)
 
-    # exec
-    exec_parser = subparsers.add_parser("exec", help="Execute command in container")
-    exec_parser.add_argument("container_id", help="Container ID")
-    exec_parser.add_argument("command", help="Command to execute")
-    exec_parser.add_argument("--timeout", type=int, default=60, help="Command timeout")
+    ex = sub.add_parser("exec")
+    ex.add_argument("container_id")
+    ex.add_argument("command")
+    ex.add_argument("--timeout", type=int, default=60)
 
-    # generate-key
-    key_parser = subparsers.add_parser("generate-key", help="Generate a new admin key")
-    key_parser.add_argument("--name", default="admin", help="Key name")
+    gk = sub.add_parser("generate-key")
+    gk.add_argument("--name", default="admin")
 
-    # ssh
-    ssh_parser = subparsers.add_parser("ssh", help="SSH into a container")
-    ssh_parser.add_argument("container_id", help="Container ID")
+    si = sub.add_parser("ssh", help="Show SSH info for a container (admin)")
+    si.add_argument("container_id")
 
-    # add-ssh-key
-    add_ssh_parser = subparsers.add_parser("add-ssh-key", help="Add SSH key to container")
-    add_ssh_parser.add_argument("container_id", help="Container ID")
-    add_ssh_parser.add_argument("ssh_key", help="SSH Public Key (ssh-ed25519 AAAA...)")
+    ak = sub.add_parser("add-ssh-key", help="Inject SSH public key into a container (admin)")
+    ak.add_argument("container_id")
+    ak.add_argument("ssh_key")
 
-    # list-ssh
-    list_ssh_parser = subparsers.add_parser("list-ssh", help="List SSH-enabled containers")
-    list_ssh_parser.add_argument("user_id", nargs="?", help="Filter by User ID (optional)")
-    # list-ssh
-    st_ui_parser = subparsers.add_parser("ui", help="start st ui")
-    st_ui_parser.add_argument("host", nargs="?", help="host ip default=localhost", default="localhost")
-    st_ui_parser.add_argument("port", nargs="?", help="port default=8510", default=8510)
+    lss = sub.add_parser("list-ssh")
+    lss.add_argument("user_id", nargs="?")
+
+    ui_p = sub.add_parser("ui")
+    ui_p.add_argument("host", nargs="?", default="localhost")
+    ui_p.add_argument("port", nargs="?", default=8510, type=int)
 
     args = parser.parse_args()
 
-    # Override admin key from args
     global ADMIN_KEY
     if args.admin_key:
         ADMIN_KEY = args.admin_key
@@ -433,25 +485,29 @@ async def main():
         parser.print_help()
         return 0
 
-    # Execute command
-    commands = {
-        "create": cmd_create,
-        "list": cmd_list,
-        "delete": cmd_delete,
-        "start": cmd_start,
-        "ui": lambda x:start_ui(host=args.host, port=args.prot),
-        "restart": cmd_restart,
-        "logs": cmd_logs,
-        "exec": cmd_exec,
+    handlers = {
+        "setup":        cmd_setup,
+        "register-key": cmd_register_key,
+        "my-ssh":       cmd_my_ssh,
+        "connect":      cmd_connect,
+        "create":       cmd_create,
+        "list":         cmd_list,
+        "delete":       cmd_delete,
+        "start":        cmd_start,
+        "stop":         cmd_stop,
+        "restart":      cmd_restart,
+        "logs":         cmd_logs,
+        "exec":         cmd_exec,
         "generate-key": cmd_generate_key,
-        "ssh": cmd_ssh,
-        "add-ssh-key": cmd_add_ssh_key,
-        "list-ssh": cmd_list_ssh,
+        "ssh":          cmd_ssh_info,
+        "add-ssh-key":  cmd_add_ssh_key,
+        "list-ssh":     cmd_list_ssh,
+        "ui":           lambda a: start_ui(host=a.host, port=a.port),
     }
 
-    cmd_func = commands.get(args.command)
-    if cmd_func:
-        return await cmd_func(args)
+    fn = handlers.get(args.command)
+    if fn:
+        return await fn(args)
 
     parser.print_help()
     return 1
