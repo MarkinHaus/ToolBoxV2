@@ -1,0 +1,5298 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/core/logs/">
+      
+      
+        <link rel="prev" href="../../services/ref_mcp/">
+      
+      
+        <link rel="next" href="../toolboxv2/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Logging & Observability - ToolBoxV2 Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#toolboxv2-logging-system" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ToolBoxV2 Docs" class="md-header__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ToolBoxV2 Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Logging & Observability
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ToolBoxV2
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../new/analysis/installation/installation/" class="md-tabs__link">
+          
+  
+  
+  🚀 Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guides/howto_consumer/" class="md-tabs__link">
+          
+  
+  
+  📖 How-To Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../mods/CloudM/" class="md-tabs__link">
+          
+  
+  
+  ☁️ CloudM
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../mods/isaa/" class="md-tabs__link">
+          
+  
+  
+  🤖 ISAA Agent Framework
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../devdocs/dev_architecture/" class="md-tabs__link">
+          
+  
+  
+  🏗️ Module Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../workers/" class="md-tabs__link">
+          
+  
+  
+  🔧 Technical Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../toolboxv2/" class="md-tabs__link">
+          
+  
+  
+  📐 API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../tbjs/" class="md-tabs__link">
+          
+  
+  
+  🌐 Frontend & Interfaces
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../registry/" class="md-tabs__link">
+          
+  
+  
+  ⚙️ Infrastructure
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../changelog/" class="md-tabs__link">
+          
+  
+  
+  ℹ️ Misc
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ToolBoxV2 Docs" class="md-nav__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ToolBoxV2 Docs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ToolBoxV2
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    🚀 Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    🚀 Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../new/analysis/installation/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../foundations/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../foundations/first_run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run & Profile
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../new/analysis/installation/stack/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    System Stack
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../new/analysis/installation/usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../manifest/manifest_intro/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Manifest Intro
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    📖 How-To Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    📖 How-To Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/howto_consumer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Consumers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/howto_server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Server Admins
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/howto_developer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/howto_features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Feature Packs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flows/minicli/howto_minicli_macros/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MiniCLI & Macros
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flows/icli/howto/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ISAA Host CLI (icli)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ☁️ CloudM
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ☁️ CloudM
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Auth System (OAuth2 / Passkeys / JWT)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/login_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Login System (CLI + Web Sessions)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/user_data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Data API (Scoped Storage)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/mod_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mod Manager (Packages)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/folder_sync/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Folder Sync (Encrypted MinIO)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/dashboards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dashboards (Admin + User)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    🤖 ISAA Agent Framework
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    🤖 ISAA Agent Framework
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../isaa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Full Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/01_GETTING_STARTED/QUICKSTART/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/ISAAMODUL_INIT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module Init
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/AGENT_MANAGEMENT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/IMPORT_EXPORT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Import / Export
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/02_ARCHITECTURE/OVERVIEW/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agent.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FlowAgent V3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/02_ARCHITECTURE/DETAILED/AGENT_ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/02_ARCHITECTURE/DETAILED/CHAIN_ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chain Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/02_ARCHITECTURE/DETAILED/MEMORY_ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/CHAIN_SYSTEM/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chain System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Subsystems
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Subsystems
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/07_JOBS/JOBS_SYSTEM/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Job Scheduling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/06_EXTRAS/ZEN_SYSTEM/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Zen Meta-Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/09_DEEP_ANALYSIS/RL_SYSTEM/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reinforcement Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/04_CODING_AGENT/DETAILED/CODING_AGENT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coding Agent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/06_EXTRAS/WEB_HELPER/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web Helper
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/06_EXTRAS/DISCORD_INTERFACE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_6" id="__nav_5_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/03_API_REFERENCE/MODULE_API/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/MINITASK_FORMATCLASS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MiniTask FormatClass
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_7" id="__nav_5_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/08_EXAMPLES/INDEX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/08_EXAMPLES/EXAMPLES/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/08_EXAMPLES/01_BASIC_AGENT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basic Agent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/08_EXAMPLES/02_CHAIN_PIPELINE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chain Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/08_EXAMPLES/03_TOOL_INTEGRATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/08_EXAMPLES/04_MEMORY_USAGE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/08_EXAMPLES/05_ERROR_HANDLING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Error Handling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/08_EXAMPLES/06_PRODUCTION_SETUP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    🏗️ Module Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    🏗️ Module Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../devdocs/dev_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4-Layer Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../devdocs/dev_mod_creation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Creating a Mod
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../module_creation_guide.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module Creation Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../devdocs/dev_features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Feature Packs & ZIPs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../devdocs/dev_registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry & Publishing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../new/analysis/features/feature_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Feature System (Analysis)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../new/analysis/features/feature_system_next_todos/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Feature System TODOs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../toolbox_guidelines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coding Guidelines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    🔧 Technical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    🔧 Technical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../workers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Worker System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../manifest/ref_manifest/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Manifest Schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage/ref_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database Modes (LC/LR/RR/CB)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../db_usage_guide.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DB Usage Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage/ref_filehandler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FileHandler V2
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage/ref_blobdb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    BlobDB & Offline Fallback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../new/analysis/storage/blob_sharing_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blob Sharing API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage/blob_watch_api.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blob Watch API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/ref_cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/ref_mcp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logging & Observability
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logging & Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#architektur" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architektur
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick Start
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Quick Start">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-mobiledb-registrieren-einmalig-vor-set_logger" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. MobileDB registrieren (einmalig, vor set_logger)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-logger-initialisieren-unveranderte-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Logger initialisieren (unveränderte API)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-loggen-identische-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Loggen (identische API)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#audit-logger" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit Logger
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Audit Logger">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#events-loggen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Events loggen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#audit-events-abfragen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit-Events abfragen
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#log-sync-lokal-remote-minio" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Log Sync (Lokal → Remote MinIO)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Log Sync (Lokal → Remote MinIO)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setup
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#manueller-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Manueller Sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#automatischer-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automatischer Sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pending-stats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pending Stats
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#integration-in-toolboxpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integration in toolbox.py
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pfad-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pfad-Schema
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-referenz" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API-Referenz
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-entscheidungen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design-Entscheidungen
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    📐 API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    📐 API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../toolboxv2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    toolboxv2 Core
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    🌐 Frontend & Interfaces
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    🌐 Frontend & Interfaces
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tbjs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TBjs Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../TauriApp_Architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tauri App Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../p2p_rpc_protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P2P RPC Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../clis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLIs Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tb_browser/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    tb_browser Extension
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ⚙️ Infrastructure
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ⚙️ Infrastructure
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TB Registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../llm_gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM Gateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ℹ️ Misc
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ℹ️ Misc
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../new/analysis/installation/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../new/old_docs/simplecore_analysis_report.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Simplecore Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../new/old_docs/db_cli_sharing_guide.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DB CLI Sharing Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../new/old_docs/obsidian_setup.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Obsidian Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../new/old_docs/desktop_interface_plan.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Interface Plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../new/old_docs/refactor_plan.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Refactor Plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../new/old_docs/build_pipeline.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Build Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://github.com/MarkinHaus/ToolBoxV2/issues" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Report Issues
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#architektur" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architektur
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick Start
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Quick Start">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-mobiledb-registrieren-einmalig-vor-set_logger" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. MobileDB registrieren (einmalig, vor set_logger)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-logger-initialisieren-unveranderte-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Logger initialisieren (unveränderte API)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-loggen-identische-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Loggen (identische API)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#audit-logger" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit Logger
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Audit Logger">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#events-loggen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Events loggen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#audit-events-abfragen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit-Events abfragen
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#log-sync-lokal-remote-minio" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Log Sync (Lokal → Remote MinIO)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Log Sync (Lokal → Remote MinIO)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setup
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#manueller-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Manueller Sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#automatischer-sync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automatischer Sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pending-stats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pending Stats
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#integration-in-toolboxpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integration in toolbox.py
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pfad-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pfad-Schema
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-referenz" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API-Referenz
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-entscheidungen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design-Entscheidungen
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+
+
+
+                  
+
+
+  
+  
+
+
+<h1 id="toolboxv2-logging-system">ToolBoxV2 Logging System<a class="headerlink" href="#toolboxv2-logging-system" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p><code>toolboxv2/utils/system/tb_logger.py</code></p>
+</blockquote>
+<p>Strukturiertes JSON-Logging mit lokaler Verschlüsselung, Offline-First Persistenz und explizitem Cloud-Sync.</p>
+<hr />
+<h2 id="architektur">Architektur<a class="headerlink" href="#architektur" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>App Code                    RAM Queue              MobileDB (SQLite)           MinIO (Cloud)
+  │                            │                        │                          │
+  │  logger.info(&quot;…&quot;)         │                        │                          │
+  ├──────────────────────►  Queue  ──── 5s/100 ────►  logs/node/date/            │
+  │                        (non-blocking)             system_*.jsonl              │
+  │                                                   audit_*.jsonl              │
+  │  audit.log_action(…)                              (encrypted=True)           │
+  │                                                        │                     │
+  │                                                        │  sync_all()         │
+  │                                                        ├────────────────►  bucket/
+  │                                                        │  sync_time_range()  app_id/logs/…
+  │                                                        │  start_auto_sync()  │
+</code></pre></div>
+<p><strong>Formate:</strong> Alle Log-Einträge sind JSONL (eine JSON-Zeile pro Event). Kompatibel mit Grafana Loki, OpenSearch, ELK, Fluentd.</p>
+<p><strong>Keine externen Dependencies:</strong> Der <code>JsonLogFormatter</code> nutzt nur <code>json</code> + <code>datetime</code> aus der stdlib.</p>
+<hr />
+<h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
+<h3 id="1-mobiledb-registrieren-einmalig-vor-set_logger">1. MobileDB registrieren (einmalig, vor <code>set_logger</code>)<a class="headerlink" href="#1-mobiledb-registrieren-einmalig-vor-set_logger" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.system.tb_logger</span><span class="w"> </span><span class="kn">import</span> <span class="n">set_log_db</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.extras.db.mobile_db</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_mobile_db</span>
+
+<span class="n">log_db</span> <span class="o">=</span> <span class="n">create_mobile_db</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">&quot;data/system_logs.db&quot;</span><span class="p">,</span> <span class="n">max_size_mb</span><span class="o">=</span><span class="mi">200</span><span class="p">)</span>
+<span class="n">set_log_db</span><span class="p">(</span><span class="n">log_db</span><span class="p">,</span> <span class="n">node_id</span><span class="o">=</span><span class="s2">&quot;desktop-01&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="2-logger-initialisieren-unveranderte-api">2. Logger initialisieren (unveränderte API)<a class="headerlink" href="#2-logger-initialisieren-unveranderte-api" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Bestehender Code funktioniert weiterhin:</span>
+<span class="n">logger</span><span class="p">,</span> <span class="n">filename</span> <span class="o">=</span> <span class="n">setup_logging</span><span class="p">(</span>
+    <span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;toolbox-live&quot;</span><span class="p">,</span>
+    <span class="n">interminal</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">file_level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">WARNING</span><span class="p">,</span>
+    <span class="n">app_name</span><span class="o">=</span><span class="s2">&quot;myapp&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Oder über set_logger in toolbox.py (keine Änderung nötig):</span>
+<span class="n">logger_info_str</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">logging_filename</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">set_logger</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">debug</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">logger_prefix</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="3-loggen-identische-api">3. Loggen (identische API)<a class="headerlink" href="#3-loggen-identische-api" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.system.tb_logger</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_logger</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">()</span>
+
+<span class="c1"># Standard-Logging</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Server started&quot;</span><span class="p">,</span> <span class="n">extra</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;port&quot;</span><span class="p">:</span> <span class="mi">8080</span><span class="p">})</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Rate limit reached&quot;</span><span class="p">,</span> <span class="n">extra</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;user&quot;</span><span class="p">:</span> <span class="s2">&quot;u_42&quot;</span><span class="p">,</span> <span class="s2">&quot;endpoint&quot;</span><span class="p">:</span> <span class="s2">&quot;/api&quot;</span><span class="p">})</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;Connection failed&quot;</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>Output (JSONL):</strong>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">&quot;timestamp&quot;</span><span class="p">:</span><span class="s2">&quot;2026-02-23T14:30:00+00:00&quot;</span><span class="p">,</span><span class="nt">&quot;level&quot;</span><span class="p">:</span><span class="s2">&quot;INFO&quot;</span><span class="p">,</span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="s2">&quot;toolbox-live&quot;</span><span class="p">,</span><span class="nt">&quot;filename&quot;</span><span class="p">:</span><span class="s2">&quot;server.py&quot;</span><span class="p">,</span><span class="nt">&quot;lineno&quot;</span><span class="p">:</span><span class="mi">42</span><span class="p">,</span><span class="nt">&quot;funcName&quot;</span><span class="p">:</span><span class="s2">&quot;start&quot;</span><span class="p">,</span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="s2">&quot;Server started&quot;</span><span class="p">,</span><span class="nt">&quot;app_id&quot;</span><span class="p">:</span><span class="s2">&quot;myapp&quot;</span><span class="p">,</span><span class="nt">&quot;node_id&quot;</span><span class="p">:</span><span class="s2">&quot;desktop-01&quot;</span><span class="p">,</span><span class="nt">&quot;port&quot;</span><span class="p">:</span><span class="mi">8080</span><span class="p">}</span>
+</code></pre></div></p>
+<hr />
+<h2 id="audit-logger">Audit Logger<a class="headerlink" href="#audit-logger" title="Permanent link">&para;</a></h2>
+<p>Erzwingt ein striktes Schema für Compliance- und Business-Events.</p>
+<h3 id="events-loggen">Events loggen<a class="headerlink" href="#events-loggen" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.system.tb_logger</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuditLogger</span>
+
+<span class="n">audit</span> <span class="o">=</span> <span class="n">AuditLogger</span><span class="p">(</span><span class="n">logger</span><span class="p">,</span> <span class="n">db</span><span class="o">=</span><span class="n">log_db</span><span class="p">,</span> <span class="n">node_id</span><span class="o">=</span><span class="s2">&quot;desktop-01&quot;</span><span class="p">)</span>
+
+<span class="n">audit</span><span class="o">.</span><span class="n">log_action</span><span class="p">(</span>
+    <span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;user_42&quot;</span><span class="p">,</span>
+    <span class="n">action</span><span class="o">=</span><span class="s2">&quot;LOGIN&quot;</span><span class="p">,</span>
+    <span class="n">resource</span><span class="o">=</span><span class="s2">&quot;/auth/session&quot;</span><span class="p">,</span>
+    <span class="n">status</span><span class="o">=</span><span class="s2">&quot;SUCCESS&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">audit</span><span class="o">.</span><span class="n">log_action</span><span class="p">(</span>
+    <span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;user_42&quot;</span><span class="p">,</span>
+    <span class="n">action</span><span class="o">=</span><span class="s2">&quot;DELETE&quot;</span><span class="p">,</span>
+    <span class="n">resource</span><span class="o">=</span><span class="s2">&quot;/api/project/123&quot;</span><span class="p">,</span>
+    <span class="n">status</span><span class="o">=</span><span class="s2">&quot;FAILURE&quot;</span><span class="p">,</span>
+    <span class="n">details</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;reason&quot;</span><span class="p">:</span> <span class="s2">&quot;permission_denied&quot;</span><span class="p">},</span>
+<span class="p">)</span>
+</code></pre></div>
+<h3 id="audit-events-abfragen">Audit-Events abfragen<a class="headerlink" href="#audit-events-abfragen" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Letzte 20 Aktionen eines Users</span>
+<span class="n">entries</span> <span class="o">=</span> <span class="n">audit</span><span class="o">.</span><span class="n">get_user_actions</span><span class="p">(</span><span class="s2">&quot;user_42&quot;</span><span class="p">,</span> <span class="n">last_n</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
+
+<span class="c1"># Alle LOGIN-Events dieser Woche</span>
+<span class="n">entries</span> <span class="o">=</span> <span class="n">audit</span><span class="o">.</span><span class="n">query</span><span class="p">(</span>
+    <span class="n">action</span><span class="o">=</span><span class="s2">&quot;LOGIN&quot;</span><span class="p">,</span>
+    <span class="n">date_from</span><span class="o">=</span><span class="s2">&quot;2026-02-17&quot;</span><span class="p">,</span>
+    <span class="n">date_to</span><span class="o">=</span><span class="s2">&quot;2026-02-23&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Alle fehlgeschlagenen Events</span>
+<span class="n">entries</span> <span class="o">=</span> <span class="n">audit</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">status</span><span class="o">=</span><span class="s2">&quot;FAILURE&quot;</span><span class="p">,</span> <span class="n">limit</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+
+<span class="c1"># Zusammenfassung: {user_id: {action: count}}</span>
+<span class="n">summary</span> <span class="o">=</span> <span class="n">audit</span><span class="o">.</span><span class="n">get_actions_summary</span><span class="p">(</span>
+    <span class="n">date_from</span><span class="o">=</span><span class="s2">&quot;2026-02-01&quot;</span><span class="p">,</span>
+    <span class="n">date_to</span><span class="o">=</span><span class="s2">&quot;2026-02-23&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="c1"># → {&quot;user_42&quot;: {&quot;LOGIN&quot;: 15, &quot;DELETE&quot;: 3}, &quot;user_99&quot;: {&quot;LOGIN&quot;: 8}}</span>
+</code></pre></div>
+<hr />
+<h2 id="log-sync-lokal-remote-minio">Log Sync (Lokal → Remote MinIO)<a class="headerlink" href="#log-sync-lokal-remote-minio" title="Permanent link">&para;</a></h2>
+<h3 id="setup">Setup<a class="headerlink" href="#setup" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">minio</span><span class="w"> </span><span class="kn">import</span> <span class="n">Minio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.system.tb_logger</span><span class="w"> </span><span class="kn">import</span> <span class="n">LogSyncManager</span>
+
+<span class="n">minio_client</span> <span class="o">=</span> <span class="n">Minio</span><span class="p">(</span><span class="s2">&quot;ryzen.local:9000&quot;</span><span class="p">,</span> <span class="n">access_key</span><span class="o">=</span><span class="s2">&quot;…&quot;</span><span class="p">,</span> <span class="n">secret_key</span><span class="o">=</span><span class="s2">&quot;…&quot;</span><span class="p">,</span> <span class="n">secure</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+<span class="n">sync</span> <span class="o">=</span> <span class="n">LogSyncManager</span><span class="p">(</span>
+    <span class="n">db</span><span class="o">=</span><span class="n">log_db</span><span class="p">,</span>
+    <span class="n">minio_client</span><span class="o">=</span><span class="n">minio_client</span><span class="p">,</span>
+    <span class="n">bucket</span><span class="o">=</span><span class="s2">&quot;system-audit-logs&quot;</span><span class="p">,</span>
+    <span class="n">app_id</span><span class="o">=</span><span class="s2">&quot;toolbox-instance-01&quot;</span><span class="p">,</span>
+    <span class="n">node_id</span><span class="o">=</span><span class="s2">&quot;desktop-01&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">sync</span><span class="o">.</span><span class="n">ensure_bucket</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="manueller-sync">Manueller Sync<a class="headerlink" href="#manueller-sync" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Alles was DIRTY ist</span>
+<span class="n">stats</span> <span class="o">=</span> <span class="n">sync</span><span class="o">.</span><span class="n">sync_all</span><span class="p">()</span>
+
+<span class="c1"># Nur bestimmte Zeitspanne</span>
+<span class="n">stats</span> <span class="o">=</span> <span class="n">sync</span><span class="o">.</span><span class="n">sync_time_range</span><span class="p">(</span><span class="n">date_from</span><span class="o">=</span><span class="s2">&quot;2026-02-20&quot;</span><span class="p">,</span> <span class="n">date_to</span><span class="o">=</span><span class="s2">&quot;2026-02-23&quot;</span><span class="p">)</span>
+
+<span class="c1"># Nur Audit-Logs</span>
+<span class="n">stats</span> <span class="o">=</span> <span class="n">sync</span><span class="o">.</span><span class="n">sync_audit_only</span><span class="p">(</span><span class="n">date_from</span><span class="o">=</span><span class="s2">&quot;2026-02-23&quot;</span><span class="p">)</span>
+
+<span class="c1"># Nur System-Logs der letzten Woche</span>
+<span class="n">stats</span> <span class="o">=</span> <span class="n">sync</span><span class="o">.</span><span class="n">sync_system_only</span><span class="p">(</span><span class="n">date_from</span><span class="o">=</span><span class="s2">&quot;2026-02-17&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">stats</span><span class="p">)</span>
+<span class="c1"># → {&quot;uploaded&quot;: 12, &quot;skipped&quot;: 0, &quot;errors&quot;: [], &quot;bytes_transferred&quot;: 48320, &quot;status&quot;: &quot;complete&quot;}</span>
+</code></pre></div>
+<h3 id="automatischer-sync">Automatischer Sync<a class="headerlink" href="#automatischer-sync" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Alle 5 Minuten im Hintergrund</span>
+<span class="n">sync</span><span class="o">.</span><span class="n">start_auto_sync</span><span class="p">(</span><span class="n">interval_seconds</span><span class="o">=</span><span class="mi">300</span><span class="p">)</span>
+
+<span class="c1"># Status prüfen</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">sync</span><span class="o">.</span><span class="n">is_auto_syncing</span><span class="p">)</span>  <span class="c1"># True</span>
+
+<span class="c1"># Stoppen</span>
+<span class="n">sync</span><span class="o">.</span><span class="n">stop_auto_sync</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="pending-stats">Pending Stats<a class="headerlink" href="#pending-stats" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="n">stats</span> <span class="o">=</span> <span class="n">sync</span><span class="o">.</span><span class="n">get_pending_stats</span><span class="p">()</span>
+<span class="c1"># → {&quot;total_dirty&quot;: 5, &quot;by_date&quot;: {&quot;2026-02-22&quot;: 2, &quot;2026-02-23&quot;: 3}, &quot;audit&quot;: 1, &quot;system&quot;: 4}</span>
+</code></pre></div>
+<hr />
+<h2 id="integration-in-toolboxpy">Integration in <code>toolbox.py</code><a class="headerlink" href="#integration-in-toolboxpy" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="c1"># In App.__init__:</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">.system.tb_logger</span><span class="w"> </span><span class="kn">import</span> <span class="n">set_log_db</span><span class="p">,</span> <span class="n">AuditLogger</span><span class="p">,</span> <span class="n">LogSyncManager</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..extras.db.mobile_db</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_mobile_db</span>
+
+<span class="c1"># 1. Log-DB erstellen + registrieren</span>
+<span class="bp">self</span><span class="o">.</span><span class="n">log_db</span> <span class="o">=</span> <span class="n">create_mobile_db</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">data_dir</span><span class="si">}</span><span class="s2">/system_logs.db&quot;</span><span class="p">,</span> <span class="n">max_size_mb</span><span class="o">=</span><span class="mi">200</span><span class="p">)</span>
+<span class="n">set_log_db</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">log_db</span><span class="p">,</span> <span class="n">node_id</span><span class="o">=</span><span class="n">node</span><span class="p">())</span>
+
+<span class="c1"># 2. Logger (unverändert)</span>
+<span class="n">logger_info_str</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">logging_filename</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">set_logger</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">debug</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">logger_prefix</span><span class="p">)</span>
+
+<span class="c1"># 3. Audit Logger</span>
+<span class="bp">self</span><span class="o">.</span><span class="n">audit_logger</span> <span class="o">=</span> <span class="n">AuditLogger</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="p">,</span> <span class="n">db</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">log_db</span><span class="p">,</span> <span class="n">node_id</span><span class="o">=</span><span class="n">node</span><span class="p">())</span>
+
+<span class="c1"># 4. Optional: Sync zum RYZEN Server</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">setup_log_sync</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">minio_client</span><span class="p">,</span> <span class="n">auto_interval</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">log_sync</span> <span class="o">=</span> <span class="n">LogSyncManager</span><span class="p">(</span>
+        <span class="n">db</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">log_db</span><span class="p">,</span> <span class="n">minio_client</span><span class="o">=</span><span class="n">minio_client</span><span class="p">,</span>
+        <span class="n">bucket</span><span class="o">=</span><span class="s2">&quot;system-audit-logs&quot;</span><span class="p">,</span> <span class="n">app_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">id</span><span class="p">,</span> <span class="n">node_id</span><span class="o">=</span><span class="n">node</span><span class="p">(),</span>
+    <span class="p">)</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">log_sync</span><span class="o">.</span><span class="n">ensure_bucket</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">auto_interval</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">log_sync</span><span class="o">.</span><span class="n">start_auto_sync</span><span class="p">(</span><span class="n">interval_seconds</span><span class="o">=</span><span class="n">auto_interval</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="pfad-schema">Pfad-Schema<a class="headerlink" href="#pfad-schema" title="Permanent link">&para;</a></h2>
+<p>Logs werden in der MobileDB unter folgendem Pfad gespeichert:</p>
+<div class="highlight"><pre><span></span><code>logs/{node_id}/{YYYY-MM-DD}/{type}_{timestamp_ms}.jsonl
+</code></pre></div>
+<p>Beispiele:
+<div class="highlight"><pre><span></span><code>logs/desktop-01/2026-02-23/system_1740300000000.jsonl
+logs/desktop-01/2026-02-23/audit_1740300005000.jsonl
+</code></pre></div></p>
+<p>Im MinIO-Bucket:
+<div class="highlight"><pre><span></span><code>{app_id}/logs/{node_id}/{YYYY-MM-DD}/{type}_{timestamp_ms}.jsonl
+</code></pre></div></p>
+<hr />
+<h2 id="api-referenz">API-Referenz<a class="headerlink" href="#api-referenz" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Funktion / Klasse</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>setup_logging(level, name, …)</code></td>
+<td>Logger-Setup (alte Signatur, intern jetzt JSONL + MobileDB)</td>
+</tr>
+<tr>
+<td><code>setup_production_logging(level, app_id, node_id, local_db)</code></td>
+<td>Neue API ohne File-Rotation</td>
+</tr>
+<tr>
+<td><code>get_logger()</code></td>
+<td>Aktiven Logger holen</td>
+</tr>
+<tr>
+<td><code>set_log_db(db, node_id)</code></td>
+<td>MobileDB global registrieren</td>
+</tr>
+<tr>
+<td><code>get_log_db()</code></td>
+<td>Registrierte MobileDB holen</td>
+</tr>
+<tr>
+<td><code>AuditLogger(logger, db, node_id)</code></td>
+<td>Audit-Logger mit Query-API</td>
+</tr>
+<tr>
+<td><code>AuditLogger.log_action(user_id, action, resource, status, details)</code></td>
+<td>Event loggen</td>
+</tr>
+<tr>
+<td><code>AuditLogger.query(user_id, action, date_from, date_to, status, limit)</code></td>
+<td>Events filtern</td>
+</tr>
+<tr>
+<td><code>AuditLogger.get_user_actions(user_id, last_n)</code></td>
+<td>Letzte N Events eines Users</td>
+</tr>
+<tr>
+<td><code>AuditLogger.get_actions_summary(date_from, date_to)</code></td>
+<td>Aggregation pro User</td>
+</tr>
+<tr>
+<td><code>LogSyncManager(db, minio_client, bucket, app_id, node_id)</code></td>
+<td>Sync-Manager</td>
+</tr>
+<tr>
+<td><code>LogSyncManager.sync_all()</code></td>
+<td>Alle dirty Chunks pushen</td>
+</tr>
+<tr>
+<td><code>LogSyncManager.sync_time_range(date_from, date_to)</code></td>
+<td>Zeitspanne pushen</td>
+</tr>
+<tr>
+<td><code>LogSyncManager.sync_audit_only(date_from, date_to)</code></td>
+<td>Nur Audit-Chunks</td>
+</tr>
+<tr>
+<td><code>LogSyncManager.sync_system_only(date_from, date_to)</code></td>
+<td>Nur System-Chunks</td>
+</tr>
+<tr>
+<td><code>LogSyncManager.start_auto_sync(interval_seconds)</code></td>
+<td>Auto-Sync starten</td>
+</tr>
+<tr>
+<td><code>LogSyncManager.stop_auto_sync()</code></td>
+<td>Auto-Sync stoppen</td>
+</tr>
+<tr>
+<td><code>LogSyncManager.get_pending_stats()</code></td>
+<td>Offene Chunks anzeigen</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="design-entscheidungen">Design-Entscheidungen<a class="headerlink" href="#design-entscheidungen" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Kein <code>python-json-logger</code></strong> – stdlib-only Formatter, null Dependencies</li>
+<li><strong>Queue + Batch-Worker</strong> – Main-Thread wird beim Loggen nie blockiert</li>
+<li><strong>5s / 100 Einträge</strong> – Flush-Schwelle für Balance zwischen Latenz und I/O</li>
+<li><strong><code>encrypted=True</code></strong> – Logs liegen lokal und in MinIO verschlüsselt (via MobileDB)</li>
+<li><strong>Expliziter Sync</strong> – Kein automatischer Upload ohne bewusste Entscheidung</li>
+<li><strong>DIRTY-Tracking</strong> – MobileDB markiert neue Chunks automatisch als sync-pflichtig</li>
+<li><strong>Pfad-basiertes Date-Filtering</strong> – String-Vergleich auf <code>YYYY-MM-DD</code> Ordnernamen, kein SQL
+<strong>Usage in <code>toolbox.py</code>:</strong></li>
+</ul>
+<p><div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">.system.minio_helper</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_minio_client</span>
+
+<span class="c1"># Lokal (defaults)</span>
+<span class="n">client</span> <span class="o">=</span> <span class="n">create_minio_client</span><span class="p">()</span>
+
+<span class="c1"># RYZEN Server (explizit)</span>
+<span class="n">client</span> <span class="o">=</span> <span class="n">create_minio_client</span><span class="p">(</span><span class="n">endpoint</span><span class="o">=</span><span class="s2">&quot;ryzen.local:9000&quot;</span><span class="p">,</span> <span class="n">access_key</span><span class="o">=</span><span class="s2">&quot;…&quot;</span><span class="p">,</span> <span class="n">secret_key</span><span class="o">=</span><span class="s2">&quot;…&quot;</span><span class="p">)</span>
+
+<span class="c1"># Über Env-Vars (z.B. in Docker / Produktion)</span>
+<span class="c1"># MINIO_ENDPOINT=ryzen.local:9000 MINIO_ACCESS_KEY=… MINIO_SECRET_KEY=…</span>
+<span class="n">client</span> <span class="o">=</span> <span class="n">create_minio_client</span><span class="p">()</span>
+
+<span class="c1"># Direkt mit LogSyncManager</span>
+<span class="bp">self</span><span class="o">.</span><span class="n">setup_log_sync</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="n">auto_interval</span><span class="o">=</span><span class="mi">300</span><span class="p">)</span>
+</code></pre></div>
+// ─────────────────────────────────────────────────────────────────────
+// FRONTEND INTEGRATION — in your app init (e.g. tbjs/index.js or main.js)
+// ─────────────────────────────────────────────────────────────────────</p>
+<p>import Logger, { setLogConsent, AuditLogger } from './core/logger.js';</p>
+<p>// 1. Init Logger (optional: set remote endpoint for Tauri/cross-origin)
+Logger.init({
+    logLevel: 'debug',
+    // remoteEndpoint: 'http://localhost:5000/api/client-logs',  // nur nötig wenn cross-origin
+});</p>
+<p>// 2. Consent UI — binde an deinen Settings-Dialog / Cookie-Banner
+//    setLogConsent('all');       // User sagt ja zu allem
+//    setLogConsent('essential'); // Nur WARN + ERROR + AUDIT
+//    setLogConsent('errors');    // Nur ERROR + AUDIT
+//    setLogConsent('none');      // Nix (default)</p>
+<p>// 3. Audit Events im Frontend
+AuditLogger.log('PAGE_VIEW', '/dashboard');
+AuditLogger.log('FORM_SUBMIT', 'settings-form', 'SUCCESS', { changed: ['email'] });
+AuditLogger.log('LOGIN', '/auth', 'SUCCESS', { provider: 'google' });
+AuditLogger.log('API_CALL', '/api/projects', 'FAILURE', { status: 403 });</p>
+<p>// 4. Cleanup bei SPA unmount
+// Logger.destroy();</p>
+<h1 id="toolboxv2-observability-setup-guide">ToolBoxV2 Observability — Setup Guide<a class="headerlink" href="#toolboxv2-observability-setup-guide" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p><code>toolboxv2/utils/system/</code> — <code>observability_adapter.py</code> · <code>openobserve_setup.py</code> · <code>tb_logger.py</code></p>
+</blockquote>
+<p>End-to-End Anleitung für Datenanalyse und Visualisierung mit OpenObserve.
+Drei Szenarien, ein Adapter — jederzeit austauschbar.</p>
+<hr />
+<h2 id="architektur-uberblick">Architektur-Überblick<a class="headerlink" href="#architektur-uberblick" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>┌─────────────────────────────────────────────────────────────┐
+│  Dein Code                                                   │
+│  logger.info(&quot;…&quot;) / audit.log_action(…)                     │
+└──────────┬──────────────────────────────────────────────────┘
+           │
+           ├──────────────────────────────────────────────────┐
+           │                                                   │
+           ▼                                                   ▼
+┌──────────────────────┐                    ┌──────────────────────────────┐
+│  MobileDBLogHandler  │                    │  ObservabilityLogHandler     │
+│  5s batch → SQLite   │                    │  5s batch → HTTP POST        │
+│  (Offline-First)     │                    │  (Live Dashboard)            │
+└──────────┬───────────┘                    └──────────┬───────────────────┘
+           │                                           │
+           ▼                                           │
+┌──────────────────────┐                               │
+│  LogSyncManager      │──► ObservabilityAdapter ──┐   │
+│  (periodisch)        │   (nach MinIO-Upload)     │   │
+└──────────┬───────────┘                           │   │
+           │                                       │   │
+           ▼                                       ▼   ▼
+     ┌─────────┐                           ┌───────────────┐
+     │  MinIO  │                           │  OpenObserve  │
+     │  (S3)   │                           │  Dashboard    │
+     │ Backup  │                           │  Alerts, SQL  │
+     └─────────┘                           └───────────────┘
+
+  Zwei Wege zum Dashboard:
+    LIVE:   ObservabilityLogHandler → direkt (&lt; 5s Latenz)
+    SYNC:   LogSyncManager → Adapter (nach MinIO-Upload, periodisch)
+</code></pre></div>
+<p><strong>Datei-Übersicht:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Datei</th>
+<th>Aufgabe</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>observability_adapter.py</code></td>
+<td>Abstraktes Interface + OpenObserve-Implementierung</td>
+</tr>
+<tr>
+<td><code>openobserve_setup.py</code></td>
+<td>Docker-Lifecycle + historischer MinIO-Import</td>
+</tr>
+<tr>
+<td><code>observability_helper.py</code></td>
+<td>End-to-End Helper für alle 3 Szenarien</td>
+</tr>
+<tr>
+<td><code>tb_logger.py</code></td>
+<td>Logger mit Adapter-Hook (3 Zeilen geändert)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="szenario-1-lokales-debugging">Szenario 1 — Lokales Debugging<a class="headerlink" href="#szenario-1-lokales-debugging" title="Permanent link">&para;</a></h2>
+<p><strong>Ziel:</strong> Logs in einem Dashboard durchsuchen, filtern und visualisieren — direkt auf deinem Entwicklungsrechner.</p>
+<h3 id="variante-a-mit-docker-empfohlen">Variante A: Mit Docker (empfohlen)<a class="headerlink" href="#variante-a-mit-docker-empfohlen" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Einzeiler — startet OpenObserve + verbindet Logger</span>
+python<span class="w"> </span>-m<span class="w"> </span>toolboxv2.utils.system.observability_helper<span class="w"> </span>local-debug
+
+<span class="c1"># Oder mit eigenen Credentials</span>
+<span class="nv">OPENOBSERVE_PASSWORD</span><span class="o">=</span>mein-passwort<span class="w"> </span><span class="se">\</span>
+python<span class="w"> </span>-m<span class="w"> </span>toolboxv2.utils.system.observability_helper<span class="w"> </span>local-debug
+</code></pre></div>
+<p><strong>Was passiert:</strong>
+1. OpenObserve Docker-Container startet auf <code>http://localhost:5080</code>
+2. Logger-Adapter wird konfiguriert
+3. Test-Logs (System + Audit) werden gesendet
+4. Browser öffnet das Dashboard</p>
+<p><strong>Manuell Schritt für Schritt:</strong></p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.system.openobserve_setup</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenObserveManager</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.system.observability_adapter</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenObserveAdapter</span>
+
+<span class="c1"># 1. OpenObserve starten</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;OPENOBSERVE_PASSWORD&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;dev-password-123&quot;</span>
+<span class="n">mgr</span> <span class="o">=</span> <span class="n">OpenObserveManager</span><span class="p">()</span>
+<span class="n">mgr</span><span class="o">.</span><span class="n">deploy</span><span class="p">()</span>
+
+<span class="c1"># 2. Adapter an bestehenden LogSyncManager hängen</span>
+<span class="n">adapter</span> <span class="o">=</span> <span class="n">OpenObserveAdapter</span><span class="p">(</span>
+    <span class="n">endpoint</span><span class="o">=</span><span class="s2">&quot;http://localhost:5080&quot;</span><span class="p">,</span>
+    <span class="n">credentials</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;root@example.com&quot;</span><span class="p">,</span> <span class="s2">&quot;dev-password-123&quot;</span><span class="p">),</span>
+<span class="p">)</span>
+<span class="n">sync_manager</span><span class="o">.</span><span class="n">set_observability_adapter</span><span class="p">(</span><span class="n">adapter</span><span class="p">)</span>
+
+<span class="c1"># 3. Logs landen jetzt automatisch in OpenObserve nach jedem sync</span>
+<span class="n">sync_manager</span><span class="o">.</span><span class="n">sync_all</span><span class="p">()</span>
+
+<span class="c1"># Dashboard: http://localhost:5080</span>
+<span class="c1"># Stream &quot;system_logs&quot; → System-Logs</span>
+<span class="c1"># Stream &quot;audit_logs&quot;  → Audit-Events</span>
+</code></pre></div>
+<h3 id="variante-b-ohne-docker-standalone-binary">Variante B: Ohne Docker (Standalone Binary)<a class="headerlink" href="#variante-b-ohne-docker-standalone-binary" title="Permanent link">&para;</a></h3>
+<p>Für Rechner ohne Docker — OpenObserve läuft als einzelne Binary.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># 1. Binary herunterladen (einmalig)</span>
+<span class="c1"># Linux:</span>
+curl<span class="w"> </span>-L<span class="w"> </span>https://github.com/openobserve/openobserve/releases/latest/download/openobserve-linux-amd64<span class="w"> </span>-o<span class="w"> </span>openobserve
+chmod<span class="w"> </span>+x<span class="w"> </span>openobserve
+
+<span class="c1"># macOS:</span>
+curl<span class="w"> </span>-L<span class="w"> </span>https://github.com/openobserve/openobserve/releases/latest/download/openobserve-darwin-arm64<span class="w"> </span>-o<span class="w"> </span>openobserve
+chmod<span class="w"> </span>+x<span class="w"> </span>openobserve
+
+<span class="c1"># Windows (PowerShell):</span>
+Invoke-WebRequest<span class="w"> </span>-Uri<span class="w"> </span><span class="s2">&quot;https://github.com/openobserve/openobserve/releases/latest/download/openobserve-windows-amd64.exe&quot;</span><span class="w"> </span>-OutFile<span class="w"> </span>openobserve.exe
+
+<span class="c1"># 2. Starten</span>
+<span class="nv">ZO_ROOT_USER_EMAIL</span><span class="o">=</span><span class="s2">&quot;root@example.com&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="nv">ZO_ROOT_USER_PASSWORD</span><span class="o">=</span><span class="s2">&quot;dev-password-123&quot;</span><span class="w"> </span><span class="se">\</span>
+./openobserve
+
+<span class="c1"># 3. Helper verbindet sich</span>
+python<span class="w"> </span>-m<span class="w"> </span>toolboxv2.utils.system.observability_helper<span class="w"> </span>local-debug<span class="w"> </span>--no-docker
+</code></pre></div>
+<p><strong>Programmatisch ohne Docker:</strong></p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.system.observability_adapter</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenObserveAdapter</span>
+
+<span class="c1"># OpenObserve läuft schon (manuell gestartet)</span>
+<span class="n">adapter</span> <span class="o">=</span> <span class="n">OpenObserveAdapter</span><span class="p">(</span>
+    <span class="n">endpoint</span><span class="o">=</span><span class="s2">&quot;http://localhost:5080&quot;</span><span class="p">,</span>
+    <span class="n">credentials</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;root@example.com&quot;</span><span class="p">,</span> <span class="s2">&quot;dev-password-123&quot;</span><span class="p">),</span>
+<span class="p">)</span>
+
+<span class="c1"># Health-Check</span>
+<span class="k">assert</span> <span class="n">adapter</span><span class="o">.</span><span class="n">health_check</span><span class="p">(),</span> <span class="s2">&quot;OpenObserve nicht erreichbar!&quot;</span>
+
+<span class="c1"># An Sync-Manager hängen</span>
+<span class="n">sync_manager</span><span class="o">.</span><span class="n">set_observability_adapter</span><span class="p">(</span><span class="n">adapter</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="dashboard-nutzen">Dashboard nutzen<a class="headerlink" href="#dashboard-nutzen" title="Permanent link">&para;</a></h3>
+<p>Nach dem Start: <strong>http://localhost:5080</strong></p>
+<h3 id="live-logs-von-jeder-laufenden-instanz">Live-Logs von jeder laufenden Instanz<a class="headerlink" href="#live-logs-von-jeder-laufenden-instanz" title="Permanent link">&para;</a></h3>
+<p>Damit Logs innerhalb von ~5 Sekunden im Dashboard erscheinen, muss jede ToolBox-Instanz den Live-Handler aktivieren. <strong>Einmalig</strong> in <code>toolbox.py</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># In App.__init__ oder App.run_app — NACH set_logger():</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">.system.observability_adapter</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenObserveAdapter</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.system.tb_logger</span><span class="w"> </span><span class="kn">import</span> <span class="n">enable_live_observability</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">enable_observability</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Aktiviert Live-Log-Streaming zu OpenObserve (wenn erreichbar).&quot;&quot;&quot;</span>
+    <span class="n">adapter</span> <span class="o">=</span> <span class="n">OpenObserveAdapter</span><span class="p">(</span>
+        <span class="c1"># ENV-Vars: OPENOBSERVE_ENDPOINT, OPENOBSERVE_USER, OPENOBSERVE_PASSWORD</span>
+        <span class="c1"># oder explizit:</span>
+        <span class="c1"># endpoint=&quot;http://localhost:5080&quot;,</span>
+        <span class="c1"># credentials=(&quot;root@example.com&quot;, &quot;dev-password-123&quot;),</span>
+    <span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">adapter</span><span class="o">.</span><span class="n">health_check</span><span class="p">():</span>
+        <span class="n">enable_live_observability</span><span class="p">(</span><span class="n">adapter</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Live observability enabled&quot;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;OpenObserve not reachable, live observability skipped&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>Das ist alles.</strong> Ab diesem Aufruf landet jeder <code>logger.info()</code>, <code>logger.error()</code>, <code>audit.log_action()</code> — aus jedem Modul das <code>get_logger()</code> nutzt — innerhalb von 5 Sekunden im Dashboard.</p>
+<p><strong>Wie es funktioniert:</strong></p>
+<div class="highlight"><pre><span></span><code>logger.info(&quot;Server started&quot;)
+    │
+    ├── Console (sofort, wie bisher)
+    ├── File Handler (sofort, wie bisher)
+    ├── MobileDBLogHandler (5s batch → SQLite, wie bisher)
+    └── ObservabilityLogHandler (5s batch → HTTP POST → OpenObserve) ← NEU
+</code></pre></div>
+<p>Der <code>ObservabilityLogHandler</code> ist ein normaler Python <code>logging.Handler</code> der parallel zu allen bestehenden Handlern läuft. Er blockiert nicht, nutzt die gleiche Queue+Worker Architektur wie der MobileDB-Handler.</p>
+<p><strong>Mehrere Instanzen:</strong></p>
+<p>Jede Instanz die <code>enable_live_observability()</code> aufruft, erscheint automatisch im Dashboard — unterscheidbar über <code>node_id</code> und <code>app_id</code> im JSON:</p>
+<div class="highlight"><pre><span></span><code><span class="c1">-- Logs von allen Instanzen</span>
+<span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">system_logs</span><span class="w"> </span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">_timestamp</span><span class="w"> </span><span class="k">DESC</span>
+
+<span class="c1">-- Nur von einer bestimmten Instanz</span>
+<span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">system_logs</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">node_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;desktop-01&#39;</span><span class="w"> </span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">_timestamp</span><span class="w"> </span><span class="k">DESC</span>
+
+<span class="c1">-- Fehler über alle Instanzen</span>
+<span class="k">SELECT</span><span class="w"> </span><span class="n">node_id</span><span class="p">,</span><span class="w"> </span><span class="k">COUNT</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">errors</span>
+<span class="k">FROM</span><span class="w"> </span><span class="n">system_logs</span>
+<span class="k">WHERE</span><span class="w"> </span><span class="k">level</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;ERROR&#39;</span>
+<span class="k">GROUP</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">node_id</span>
+</code></pre></div>
+<p><strong>Deaktivieren:</strong></p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.system.tb_logger</span><span class="w"> </span><span class="kn">import</span> <span class="n">disable_live_observability</span>
+<span class="n">disable_live_observability</span><span class="p">()</span>
+</code></pre></div>
+<p><strong>Prüfen:</strong></p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.system.tb_logger</span><span class="w"> </span><span class="kn">import</span> <span class="n">is_live_observability_enabled</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">is_live_observability_enabled</span><span class="p">())</span>  <span class="c1"># True/False</span>
+</code></pre></div>
+<p><strong>Erste Schritte im UI:</strong>
+1. Login mit den konfigurierten Credentials
+2. Links → <strong>Logs</strong> → Stream <code>system_logs</code> auswählen
+3. Zeitfilter auf "Last 1 Hour" setzen
+4. SQL-Query für Fehler: <code>SELECT * FROM system_logs WHERE level = 'ERROR' ORDER BY _timestamp DESC</code>
+5. Audit-Events: Stream <code>audit_logs</code> → Filter auf <code>audit_action = 'LOGIN'</code></p>
+<p><strong>Nützliche Queries:</strong></p>
+<div class="highlight"><pre><span></span><code><span class="c1">-- Fehler der letzten Stunde</span>
+<span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">system_logs</span>
+<span class="k">WHERE</span><span class="w"> </span><span class="k">level</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;ERROR&#39;</span>
+<span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">_timestamp</span><span class="w"> </span><span class="k">DESC</span>
+<span class="k">LIMIT</span><span class="w"> </span><span class="mi">100</span>
+
+<span class="c1">-- Audit: Alle fehlgeschlagenen Aktionen</span>
+<span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">audit_logs</span>
+<span class="k">WHERE</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;FAILURE&#39;</span>
+<span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">_timestamp</span><span class="w"> </span><span class="k">DESC</span>
+
+<span class="c1">-- Audit: Login-Übersicht pro User</span>
+<span class="k">SELECT</span><span class="w"> </span><span class="n">user_id</span><span class="p">,</span><span class="w"> </span><span class="k">COUNT</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">login_count</span>
+<span class="k">FROM</span><span class="w"> </span><span class="n">audit_logs</span>
+<span class="k">WHERE</span><span class="w"> </span><span class="n">audit_action</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;LOGIN&#39;</span>
+<span class="k">GROUP</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">user_id</span>
+<span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">login_count</span><span class="w"> </span><span class="k">DESC</span>
+
+<span class="c1">-- Log-Volumen pro Level (letzte 24h)</span>
+<span class="k">SELECT</span><span class="w"> </span><span class="k">level</span><span class="p">,</span><span class="w"> </span><span class="k">COUNT</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="k">count</span>
+<span class="k">FROM</span><span class="w"> </span><span class="n">system_logs</span>
+<span class="k">GROUP</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="k">level</span>
+</code></pre></div>
+<hr />
+<h2 id="szenario-2-server-setup-produktion">Szenario 2 — Server Setup (Produktion)<a class="headerlink" href="#szenario-2-server-setup-produktion" title="Permanent link">&para;</a></h2>
+<p><strong>Ziel:</strong> OpenObserve auf dem RYZEN-Server deployen mit MinIO als Storage-Backend, historische Logs importieren, Auto-Sync aktivieren.</p>
+<h3 id="quick-start_1">Quick Start<a class="headerlink" href="#quick-start_1" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Auf dem RYZEN Server:</span>
+python<span class="w"> </span>-m<span class="w"> </span>toolboxv2.utils.system.observability_helper<span class="w"> </span>server-setup<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--minio-endpoint<span class="w"> </span>http://localhost:9000<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--minio-access-key<span class="w"> </span>DEIN_KEY<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--minio-secret-key<span class="w"> </span>DEIN_SECRET<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--import-bucket<span class="w"> </span>system-audit-logs<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--import-from<span class="w"> </span><span class="m">2026</span>-01-01
+</code></pre></div>
+<h3 id="schritt-fur-schritt">Schritt für Schritt<a class="headerlink" href="#schritt-fur-schritt" title="Permanent link">&para;</a></h3>
+<h4 id="1-env-datei-vorbereiten">1. ENV-Datei vorbereiten<a class="headerlink" href="#1-env-datei-vorbereiten" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><span class="c1"># /srv/toolbox/openobserve.env</span>
+<span class="nv">OPENOBSERVE_PASSWORD</span><span class="o">=</span>sicheres-produktions-passwort
+<span class="nv">OPENOBSERVE_USER</span><span class="o">=</span>admin@toolbox.local
+<span class="nv">OPENOBSERVE_PORT</span><span class="o">=</span><span class="m">5080</span>
+<span class="nv">OPENOBSERVE_DATA_DIR</span><span class="o">=</span>/srv/openobserve/data
+
+<span class="c1"># MinIO als Storage-Backend (Parquet-Daten in MinIO statt lokal)</span>
+<span class="nv">OPENOBSERVE_STORAGE</span><span class="o">=</span>s3
+<span class="nv">OPENOBSERVE_S3_ENDPOINT</span><span class="o">=</span>http://localhost:9000
+<span class="nv">OPENOBSERVE_S3_ACCESS_KEY</span><span class="o">=</span>&lt;minio-key&gt;
+<span class="nv">OPENOBSERVE_S3_SECRET_KEY</span><span class="o">=</span>&lt;minio-secret&gt;
+<span class="nv">OPENOBSERVE_S3_BUCKET</span><span class="o">=</span>openobserve-data
+
+<span class="c1"># Historischer Import</span>
+<span class="nv">OPENOBSERVE_IMPORT_ENABLED</span><span class="o">=</span><span class="nb">true</span>
+<span class="nv">OPENOBSERVE_IMPORT_BUCKET</span><span class="o">=</span>system-audit-logs
+<span class="nv">OPENOBSERVE_IMPORT_PREFIX</span><span class="o">=</span>toolbox-instance-01/
+<span class="nv">OPENOBSERVE_IMPORT_FROM</span><span class="o">=</span><span class="m">2026</span>-01-01
+
+<span class="c1"># MinIO-Verbindung für Import</span>
+<span class="nv">MINIO_ENDPOINT</span><span class="o">=</span>localhost:9000
+<span class="nv">MINIO_ACCESS_KEY</span><span class="o">=</span>&lt;minio-key&gt;
+<span class="nv">MINIO_SECRET_KEY</span><span class="o">=</span>&lt;minio-secret&gt;
+</code></pre></div>
+<h4 id="2-deploy-import">2. Deploy + Import<a class="headerlink" href="#2-deploy-import" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.system.openobserve_setup</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenObserveManager</span>
+
+<span class="c1"># Lädt Config aus ENV</span>
+<span class="n">mgr</span> <span class="o">=</span> <span class="n">OpenObserveManager</span><span class="p">()</span>
+
+<span class="c1"># Docker starten (pulled Image, wartet auf healthz)</span>
+<span class="n">mgr</span><span class="o">.</span><span class="n">deploy</span><span class="p">()</span>
+
+<span class="c1"># Historische Logs aus MinIO importieren</span>
+<span class="n">stats</span> <span class="o">=</span> <span class="n">mgr</span><span class="o">.</span><span class="n">import_historical_logs</span><span class="p">(</span>
+    <span class="n">bucket</span><span class="o">=</span><span class="s2">&quot;system-audit-logs&quot;</span><span class="p">,</span>
+    <span class="n">prefix</span><span class="o">=</span><span class="s2">&quot;toolbox-instance-01/&quot;</span><span class="p">,</span>
+    <span class="n">date_from</span><span class="o">=</span><span class="s2">&quot;2026-01-01&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">stats</span><span class="p">)</span>
+<span class="c1"># → {&quot;system_sent&quot;: 12450, &quot;audit_sent&quot;: 890, &quot;files_processed&quot;: 245, ...}</span>
+</code></pre></div>
+<h4 id="3-auto-sync-mit-adapter-aktivieren">3. Auto-Sync mit Adapter aktivieren<a class="headerlink" href="#3-auto-sync-mit-adapter-aktivieren" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><span class="c1"># In App.__init__ (toolbox.py) — nach bestehendem Sync-Setup:</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.system.observability_adapter</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenObserveAdapter</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">setup_observability</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Verbindet LogSyncManager mit OpenObserve (additiv zu MinIO).&quot;&quot;&quot;</span>
+    <span class="n">adapter</span> <span class="o">=</span> <span class="n">OpenObserveAdapter</span><span class="p">(</span>
+        <span class="n">endpoint</span><span class="o">=</span><span class="s2">&quot;http://localhost:5080&quot;</span><span class="p">,</span>
+        <span class="c1"># Credentials aus ENV oder explizit</span>
+    <span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">adapter</span><span class="o">.</span><span class="n">health_check</span><span class="p">():</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">log_sync</span><span class="o">.</span><span class="n">set_observability_adapter</span><span class="p">(</span><span class="n">adapter</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Observability adapter connected to OpenObserve&quot;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;OpenObserve not reachable, adapter not connected&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h4 id="4-nginx-reverse-proxy-optional">4. Nginx Reverse Proxy (optional)<a class="headerlink" href="#4-nginx-reverse-proxy-optional" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><span class="c1"># /etc/nginx/sites-available/openobserve</span>
+<span class="k">server</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kn">listen</span><span class="w"> </span><span class="mi">443</span><span class="w"> </span><span class="s">ssl</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">server_name</span><span class="w"> </span><span class="s">obs.toolbox.local</span><span class="p">;</span>
+
+<span class="w">    </span><span class="kn">ssl_certificate</span><span class="w">     </span><span class="s">/etc/ssl/certs/toolbox.pem</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">ssl_certificate_key</span><span class="w"> </span><span class="s">/etc/ssl/private/toolbox.key</span><span class="p">;</span>
+
+<span class="w">    </span><span class="kn">location</span><span class="w"> </span><span class="s">/</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kn">proxy_pass</span><span class="w"> </span><span class="s">http://127.0.0.1:5080</span><span class="p">;</span>
+<span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">Host</span><span class="w"> </span><span class="nv">$host</span><span class="p">;</span>
+<span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">X-Real-IP</span><span class="w"> </span><span class="nv">$remote_addr</span><span class="p">;</span>
+<span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">X-Forwarded-For</span><span class="w"> </span><span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
+<span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">X-Forwarded-Proto</span><span class="w"> </span><span class="nv">$scheme</span><span class="p">;</span>
+
+<span class="w">        </span><span class="c1"># WebSocket für Live-Tail</span>
+<span class="w">        </span><span class="kn">proxy_http_version</span><span class="w"> </span><span class="mi">1</span><span class="s">.1</span><span class="p">;</span>
+<span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">Upgrade</span><span class="w"> </span><span class="nv">$http_upgrade</span><span class="p">;</span>
+<span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">Connection</span><span class="w"> </span><span class="s">&quot;upgrade&quot;</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<h4 id="5-minio-bucket-vorbereiten">5. MinIO Bucket vorbereiten<a class="headerlink" href="#5-minio-bucket-vorbereiten" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><span class="c1"># OpenObserve-Data Bucket (für OZ internes Storage)</span>
+mc<span class="w"> </span>mb<span class="w"> </span>myminio/openobserve-data
+
+<span class="c1"># Prüfen ob Import-Bucket existiert</span>
+mc<span class="w"> </span>ls<span class="w"> </span>myminio/system-audit-logs/
+</code></pre></div>
+<hr />
+<h2 id="szenario-3-remote-live-logs-senden">Szenario 3 — Remote Live-Logs senden<a class="headerlink" href="#szenario-3-remote-live-logs-senden" title="Permanent link">&para;</a></h2>
+<p><strong>Ziel:</strong> Logs von einer lokalen Instanz, einem CI-Runner oder GitHub Action live an den RYZEN-Server senden.</p>
+<h3 id="von-einer-lokalen-instanz">Von einer lokalen Instanz<a class="headerlink" href="#von-einer-lokalen-instanz" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.system.observability_adapter</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenObserveAdapter</span>
+
+<span class="c1"># Adapter zeigt auf den RYZEN-Server</span>
+<span class="n">adapter</span> <span class="o">=</span> <span class="n">OpenObserveAdapter</span><span class="p">(</span>
+    <span class="n">endpoint</span><span class="o">=</span><span class="s2">&quot;https://obs.toolbox.local&quot;</span><span class="p">,</span>   <span class="c1"># oder http://ryzen.local:5080</span>
+    <span class="n">credentials</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;admin@toolbox.local&quot;</span><span class="p">,</span> <span class="s2">&quot;prod-password&quot;</span><span class="p">),</span>
+<span class="p">)</span>
+
+<span class="c1"># An lokalen LogSyncManager hängen</span>
+<span class="n">sync_manager</span><span class="o">.</span><span class="n">set_observability_adapter</span><span class="p">(</span><span class="n">adapter</span><span class="p">)</span>
+
+<span class="c1"># Ab jetzt: jeder sync_all() pusht auch nach OpenObserve</span>
+<span class="n">sync_manager</span><span class="o">.</span><span class="n">start_auto_sync</span><span class="p">(</span><span class="n">interval_seconds</span><span class="o">=</span><span class="mi">60</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="ohne-logsyncmanager-standalone-push">Ohne LogSyncManager (Standalone Push)<a class="headerlink" href="#ohne-logsyncmanager-standalone-push" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.system.observability_adapter</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenObserveAdapter</span>
+
+<span class="n">adapter</span> <span class="o">=</span> <span class="n">OpenObserveAdapter</span><span class="p">(</span>
+    <span class="n">endpoint</span><span class="o">=</span><span class="s2">&quot;https://obs.toolbox.local&quot;</span><span class="p">,</span>
+    <span class="n">credentials</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;ci-user@toolbox.local&quot;</span><span class="p">,</span> <span class="s2">&quot;ci-password&quot;</span><span class="p">),</span>
+<span class="p">)</span>
+
+<span class="c1"># Direkt Logs senden</span>
+<span class="n">adapter</span><span class="o">.</span><span class="n">send_batch</span><span class="p">([</span>
+    <span class="p">{</span><span class="s2">&quot;timestamp&quot;</span><span class="p">:</span> <span class="s2">&quot;2026-02-23T14:30:00Z&quot;</span><span class="p">,</span> <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;INFO&quot;</span><span class="p">,</span>
+     <span class="s2">&quot;message&quot;</span><span class="p">:</span> <span class="s2">&quot;Build started&quot;</span><span class="p">,</span> <span class="s2">&quot;app_id&quot;</span><span class="p">:</span> <span class="s2">&quot;ci&quot;</span><span class="p">,</span> <span class="s2">&quot;node_id&quot;</span><span class="p">:</span> <span class="s2">&quot;github-runner&quot;</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">&quot;timestamp&quot;</span><span class="p">:</span> <span class="s2">&quot;2026-02-23T14:31:00Z&quot;</span><span class="p">,</span> <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;ERROR&quot;</span><span class="p">,</span>
+     <span class="s2">&quot;message&quot;</span><span class="p">:</span> <span class="s2">&quot;Test failed&quot;</span><span class="p">,</span> <span class="s2">&quot;app_id&quot;</span><span class="p">:</span> <span class="s2">&quot;ci&quot;</span><span class="p">,</span> <span class="s2">&quot;test&quot;</span><span class="p">:</span> <span class="s2">&quot;test_auth&quot;</span><span class="p">},</span>
+<span class="p">],</span> <span class="n">stream</span><span class="o">=</span><span class="s2">&quot;ci_logs&quot;</span><span class="p">)</span>
+
+<span class="c1"># Audit-Events</span>
+<span class="n">adapter</span><span class="o">.</span><span class="n">send_audit_batch</span><span class="p">([</span>
+    <span class="p">{</span><span class="s2">&quot;timestamp&quot;</span><span class="p">:</span> <span class="s2">&quot;2026-02-23T14:30:00Z&quot;</span><span class="p">,</span> <span class="s2">&quot;audit_action&quot;</span><span class="p">:</span> <span class="s2">&quot;DEPLOY&quot;</span><span class="p">,</span>
+     <span class="s2">&quot;user_id&quot;</span><span class="p">:</span> <span class="s2">&quot;github-actions&quot;</span><span class="p">,</span> <span class="s2">&quot;resource&quot;</span><span class="p">:</span> <span class="s2">&quot;toolbox-v2&quot;</span><span class="p">,</span>
+     <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;SUCCESS&quot;</span><span class="p">,</span> <span class="s2">&quot;details&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;commit&quot;</span><span class="p">:</span> <span class="s2">&quot;abc1234&quot;</span><span class="p">,</span> <span class="s2">&quot;branch&quot;</span><span class="p">:</span> <span class="s2">&quot;main&quot;</span><span class="p">}},</span>
+<span class="p">])</span>
+</code></pre></div>
+<h3 id="github-action">GitHub Action<a class="headerlink" href="#github-action" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># .github/workflows/deploy.yml</span>
+<span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Deploy with Observability</span>
+
+<span class="nt">on</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">push</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">branches</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">main</span><span class="p p-Indicator">]</span>
+
+<span class="nt">jobs</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">deploy</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">runs-on</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ubuntu-latest</span>
+<span class="w">    </span><span class="nt">steps</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/checkout@v4</span>
+
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Setup Python</span>
+<span class="w">        </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/setup-python@v5</span>
+<span class="w">        </span><span class="nt">with</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">python-version</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;3.11&#39;</span>
+
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Install dependencies</span>
+<span class="w">        </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pip install -e .</span>
+
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Run tests + send logs</span>
+<span class="w">        </span><span class="nt">env</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">OPENOBSERVE_ENDPOINT</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${{ secrets.OPENOBSERVE_ENDPOINT }}</span>
+<span class="w">          </span><span class="nt">OPENOBSERVE_USER</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${{ secrets.OPENOBSERVE_USER }}</span>
+<span class="w">          </span><span class="nt">OPENOBSERVE_PASSWORD</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${{ secrets.OPENOBSERVE_PASSWORD }}</span>
+<span class="w">          </span><span class="nt">OPENOBSERVE_ORG</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="w">        </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">          </span><span class="no">python -m toolboxv2.utils.system.observability_helper ci-push \</span>
+<span class="w">            </span><span class="no">--stream ci_logs \</span>
+<span class="w">            </span><span class="no">--message &quot;Deploy started&quot; \</span>
+<span class="w">            </span><span class="no">--level INFO \</span>
+<span class="w">            </span><span class="no">--meta &#39;{&quot;commit&quot;:&quot;${{ github.sha }}&quot;,&quot;branch&quot;:&quot;${{ github.ref_name }}&quot;,&quot;run&quot;:&quot;${{ github.run_id }}&quot;}&#39;</span>
+
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Run tests</span>
+<span class="w">        </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">python -m unittest discover -s tests</span>
+
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Report result</span>
+<span class="w">        </span><span class="nt">if</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">always()</span>
+<span class="w">        </span><span class="nt">env</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">OPENOBSERVE_ENDPOINT</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${{ secrets.OPENOBSERVE_ENDPOINT }}</span>
+<span class="w">          </span><span class="nt">OPENOBSERVE_USER</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${{ secrets.OPENOBSERVE_USER }}</span>
+<span class="w">          </span><span class="nt">OPENOBSERVE_PASSWORD</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${{ secrets.OPENOBSERVE_PASSWORD }}</span>
+<span class="w">        </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">          </span><span class="no">STATUS=&quot;${{ job.status }}&quot;</span>
+<span class="w">          </span><span class="no">python -m toolboxv2.utils.system.observability_helper ci-push \</span>
+<span class="w">            </span><span class="no">--stream ci_logs \</span>
+<span class="w">            </span><span class="no">--message &quot;Deploy $STATUS&quot; \</span>
+<span class="w">            </span><span class="no">--level $([ &quot;$STATUS&quot; = &quot;success&quot; ] &amp;&amp; echo &quot;INFO&quot; || echo &quot;ERROR&quot;) \</span>
+<span class="w">            </span><span class="no">--audit-action DEPLOY \</span>
+<span class="w">            </span><span class="no">--audit-status $(echo &quot;$STATUS&quot; | tr &#39;[:lower:]&#39; &#39;[:upper:]&#39;) \</span>
+<span class="w">            </span><span class="no">--meta &#39;{&quot;commit&quot;:&quot;${{ github.sha }}&quot;,&quot;branch&quot;:&quot;${{ github.ref_name }}&quot;}&#39;</span>
+</code></pre></div>
+<p><strong>GitHub Secrets einrichten:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Secret</th>
+<th>Wert</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OPENOBSERVE_ENDPOINT</code></td>
+<td><code>https://obs.toolbox.local</code></td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_USER</code></td>
+<td><code>ci-user@toolbox.local</code></td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_PASSWORD</code></td>
+<td>CI-spezifisches Passwort</td>
+</tr>
+</tbody>
+</table>
+<h3 id="frontend-loggerjs-backend-openobserve">Frontend (logger.js) → Backend → OpenObserve<a class="headerlink" href="#frontend-loggerjs-backend-openobserve" title="Permanent link">&para;</a></h3>
+<p>Der Frontend-Logger (<code>logger.js</code>) sendet Batches an <code>/api/client-logs</code>. Im Python-Worker diesen Endpoint an OpenObserve weiterleiten:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># In deinem API-Worker (z.B. Flask/FastAPI):</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.system.observability_adapter</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenObserveAdapter</span>
+
+<span class="n">adapter</span> <span class="o">=</span> <span class="n">OpenObserveAdapter</span><span class="p">(</span><span class="n">endpoint</span><span class="o">=</span><span class="s2">&quot;http://localhost:5080&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/api/client-logs&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">receive_client_logs</span><span class="p">(</span><span class="n">request</span><span class="p">):</span>
+    <span class="n">body</span> <span class="o">=</span> <span class="k">await</span> <span class="n">request</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+    <span class="n">logs</span> <span class="o">=</span> <span class="n">body</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;logs&quot;</span><span class="p">,</span> <span class="p">[])</span>
+
+    <span class="n">system</span> <span class="o">=</span> <span class="p">[</span><span class="n">e</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">logs</span> <span class="k">if</span> <span class="n">e</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;type&quot;</span><span class="p">)</span> <span class="o">!=</span> <span class="s2">&quot;audit&quot;</span><span class="p">]</span>
+    <span class="n">audit</span>  <span class="o">=</span> <span class="p">[</span><span class="n">e</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">logs</span> <span class="k">if</span> <span class="n">e</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;type&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;audit&quot;</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">system</span><span class="p">:</span>
+        <span class="n">adapter</span><span class="o">.</span><span class="n">send_batch</span><span class="p">(</span><span class="n">system</span><span class="p">,</span> <span class="n">stream</span><span class="o">=</span><span class="s2">&quot;frontend_logs&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">audit</span><span class="p">:</span>
+        <span class="n">adapter</span><span class="o">.</span><span class="n">send_audit_batch</span><span class="p">(</span><span class="n">audit</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;ok&quot;</span><span class="p">}</span>
+</code></pre></div>
+<hr />
+<h2 id="env-referenz">ENV-Referenz<a class="headerlink" href="#env-referenz" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OPENOBSERVE_ENDPOINT</code></td>
+<td><code>http://localhost:5080</code></td>
+<td>API-Endpoint</td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_USER</code></td>
+<td><code>root@example.com</code></td>
+<td>Root-User E-Mail</td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_PASSWORD</code></td>
+<td><em>(pflicht)</em></td>
+<td>Root-User Passwort</td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_ORG</code></td>
+<td><code>default</code></td>
+<td>Organisation</td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_PORT</code></td>
+<td><code>5080</code></td>
+<td>Exposed Port</td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_DATA_DIR</code></td>
+<td><code>./openobserve-data</code></td>
+<td>Host Volume</td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_DOCKER_IMAGE</code></td>
+<td><code>public.ecr.aws/zinclabs/openobserve:latest</code></td>
+<td>Docker Image</td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_CONTAINER</code></td>
+<td><code>toolbox-openobserve</code></td>
+<td>Container-Name</td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_STORAGE</code></td>
+<td><code>disk</code></td>
+<td><code>disk</code> oder <code>s3</code></td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_S3_ENDPOINT</code></td>
+<td></td>
+<td>MinIO URL für OZ-Storage</td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_S3_ACCESS_KEY</code></td>
+<td></td>
+<td>S3 Access Key</td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_S3_SECRET_KEY</code></td>
+<td></td>
+<td>S3 Secret Key</td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_S3_BUCKET</code></td>
+<td><code>openobserve-data</code></td>
+<td>OZ-Data Bucket</td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_IMPORT_ENABLED</code></td>
+<td><code>false</code></td>
+<td>Auto-Import bei Deploy</td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_IMPORT_BUCKET</code></td>
+<td><code>system-audit-logs</code></td>
+<td>Quell-Bucket</td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_IMPORT_PREFIX</code></td>
+<td></td>
+<td>Objekt-Prefix Filter</td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_IMPORT_FROM</code></td>
+<td></td>
+<td>Start-Datum <code>YYYY-MM-DD</code></td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_IMPORT_TO</code></td>
+<td></td>
+<td>End-Datum <code>YYYY-MM-DD</code></td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_STREAM</code></td>
+<td><code>system_logs</code></td>
+<td>Default System-Stream</td>
+</tr>
+<tr>
+<td><code>OPENOBSERVE_AUDIT_STREAM</code></td>
+<td><code>audit_logs</code></td>
+<td>Default Audit-Stream</td>
+</tr>
+<tr>
+<td><code>MINIO_ENDPOINT</code></td>
+<td><code>localhost:9000</code></td>
+<td>MinIO für Import</td>
+</tr>
+<tr>
+<td><code>MINIO_ACCESS_KEY</code></td>
+<td></td>
+<td>MinIO Key</td>
+</tr>
+<tr>
+<td><code>MINIO_SECRET_KEY</code></td>
+<td></td>
+<td>MinIO Secret</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="streams">Streams<a class="headerlink" href="#streams" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Stream</th>
+<th>Inhalt</th>
+<th>Quelle</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>system_logs</code></td>
+<td>Python-Logger (INFO, WARN, ERROR, DEBUG)</td>
+<td><code>tb_logger.py</code></td>
+</tr>
+<tr>
+<td><code>audit_logs</code></td>
+<td>Audit-Events (LOGIN, DELETE, etc.)</td>
+<td><code>AuditLogger</code></td>
+</tr>
+<tr>
+<td><code>frontend_logs</code></td>
+<td>Browser-Logs aus <code>logger.js</code></td>
+<td><code>/api/client-logs</code> Worker</td>
+</tr>
+<tr>
+<td><code>ci_logs</code></td>
+<td>CI/CD Pipeline Events</td>
+<td>GitHub Actions / Helper</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="eigenen-adapter-schreiben">Eigenen Adapter schreiben<a class="headerlink" href="#eigenen-adapter-schreiben" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.system.observability_adapter</span><span class="w"> </span><span class="kn">import</span> <span class="n">ObservabilityAdapter</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MeinBackendAdapter</span><span class="p">(</span><span class="n">ObservabilityAdapter</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">url</span><span class="p">,</span> <span class="n">token</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">url</span> <span class="o">=</span> <span class="n">url</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">token</span> <span class="o">=</span> <span class="n">token</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">send_batch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entries</span><span class="p">,</span> <span class="n">stream</span><span class="o">=</span><span class="s2">&quot;default&quot;</span><span class="p">):</span>
+        <span class="c1"># Deine Logik: HTTP POST, gRPC, Datei, etc.</span>
+        <span class="o">...</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;sent&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">entries</span><span class="p">),</span> <span class="s2">&quot;failed&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;errors&quot;</span><span class="p">:</span> <span class="p">[]}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">health_check</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1"># Connectivity prüfen</span>
+        <span class="k">return</span> <span class="kc">True</span>
+
+<span class="c1"># Einhängen — fertig</span>
+<span class="n">sync_manager</span><span class="o">.</span><span class="n">set_observability_adapter</span><span class="p">(</span><span class="n">MeinBackendAdapter</span><span class="p">(</span><span class="o">...</span><span class="p">))</span>
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tabs", "navigation.sections", "navigation.expand", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
