@@ -3,16 +3,6 @@ import os
 import sys
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# PyO3 output suppression
-# ---------------------------------------------------------------------------
-_suppress_output = os.environ.get('PYTHONIOENCODING') == 'utf-8'
-if _suppress_output:
-    import io
-    _original_stdout = sys.stdout
-    _original_stderr = sys.stderr
-    sys.stdout = io.StringIO()
-    sys.stderr = io.StringIO()
 
 try:
     from .utils.system.main_tool import MainTool, get_version_from_pyproject
@@ -390,7 +380,3 @@ __all__ = [
     "show_console",
     "TBxSetup", "profile_code",
 ]
-
-if _suppress_output:
-    sys.stdout = _original_stdout
-    sys.stderr = _original_stderr

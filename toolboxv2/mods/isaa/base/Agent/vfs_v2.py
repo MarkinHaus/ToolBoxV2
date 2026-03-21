@@ -706,6 +706,50 @@ close <path>                  (entfernt Datei aus dem Kontext-Fenster)
 exec <path> [args...]
 ```
 
+```
+---
+
+## Mehrere Befehle in einem Aufruf (Batch-Syntax)
+
+`vfs_shell` versteht Shell-Operatoren um mehrere Befehle in **einem einzigen Aufruf** zu kombinieren.
+
+| Operator | Semantik | Beispiel |
+|----------|----------|---------|
+| `;` | Immer ausführen (Sequenz) | `mkdir /out; touch /out/f.txt` |
+| `&&` | Nur wenn vorheriger **erfolgreich** | `mkdir /out && write /out/f.py "x=1"` |
+| `\|\|` | Nur wenn vorheriger **fehlgeschlagen** | `cat /cfg.py \|\| write /cfg.py "DEBUG=True"` |
+| `\|` | Pipe — stdout links wird stdin rechts | `cat /f.py \| grep def \| wc -l` |
+
+**Pipe-fähige Rechts-Befehle:** `grep [-invC]`, `wc [-l\|-w\|-c]`, `head [-n N]`, `tail [-n N]`, `sort [-r]`, `uniq`
+
+```
+# Typische Workflows
+
+# Verzeichnis anlegen und Datei schreiben (nur wenn mkdir klappt)
+"mkdir -p /src/utils && write /src/utils/helper.py 'def f(): pass'"
+
+# Fallback: Datei lesen, falls nicht vorhanden anlegen
+"cat /config.py || write /config.py 'DEBUG = True'"
+
+# Drei Schritte in einem Aufruf
+"mkdir /out; write /out/app.py 'x=1'; cat /out/app.py"
+
+# Pipeline: alle Klassen zählen
+"grep -rn 'class ' /src | grep -v '#' | wc -l"
+
+# Pipeline: nur Dateinamen mit Matches
+"grep -rl 'TODO' /src | sort"
+
+# Sync nach manuellen Bulk-Schreiboperationen
+"sync"
+```
+
+> ⚠️ **Wichtig — Zeilenumbrüche (`\\n`) sind kein Separator.**
+> Echter Newline in Datei-Inhalten bleibt erhalten:
+> `write /f.py "class Foo:\\n    pass"` → eine Datei, kein Batch.
+> Für Batches immer `;` oder `&&` verwenden.
+```
+
 ---
 
 ## vfs_view Parameter
@@ -1359,15 +1403,23 @@ Session: {self.session_id}
             if self._is_directory(path):
                 return {"success": False, "error": f"Path is a directory: {path}"}
 
-        # Ensure parent exists
-        error = self._ensure_parent_exists(path)
-        if error:
-            return error
-
         filename = self._get_basename(path)
 
-        # Check if under a mount
+        # Check mount first (needed for readonly-check before any side effects)
         mount = self._get_mount_for_path(path)
+
+        # Readonly-Check — FIX: war komplett fehlend
+        if mount and mount.readonly:
+            return {"success": False, "error": f"Mount is read-only: {mount.vfs_path}"}
+
+        # Ensure parent exists — FIX: auto-create mit parents=True
+        # (vorher: _ensure_parent_exists ohne parents → Subdir-Erstellung schlug fehl)
+        parent = self._get_parent_path(path)
+        if parent != "/" and not self._is_directory(parent):
+            mkdir_result = self.mkdir(parent, parents=True)
+            if not mkdir_result["success"]:
+                return mkdir_result
+
         local_path = None
         backing_type = FileBackingType.MEMORY
 
@@ -1384,7 +1436,7 @@ Session: {self.session_id}
             backing_type=backing_type,
         )
 
-        # If mount: create local file
+        # If mount: create local file + shadow_index eintragen
         if mount and local_path:
             try:
                 os.makedirs(os.path.dirname(local_path), exist_ok=True)
@@ -1392,6 +1444,9 @@ Session: {self.session_id}
                     f.write(content)
             except OSError as e:
                 return {"success": False, "error": f"Cannot create local file: {e}"}
+
+            # BUG #5 FIX: shadow_index NUR für mount-Dateien, NUR wenn local_path gesetzt
+            self._shadow_index[path] = local_path
 
         self._dirty = True
 
@@ -1470,14 +1525,19 @@ Session: {self.session_id}
                 mount = self._get_mount_for_path(path)
                 if mount and mount.auto_sync and f.local_path:
                     sync_result = self._sync_to_local(path)
+
+                    f.updated_at = datetime.now().isoformat()
+                    self._dirty = True
+
                     if sync_result["success"]:
                         return {
                             "success": True,
                             "message": f"Updated and synced '{path}'",
                             "synced_to": f.local_path,
-                            "is_dirty": True
+                            "is_dirty": False
                         }
             else:
+                f.is_dirty = True
                 f.content = content
 
             f.updated_at = datetime.now().isoformat()
@@ -1497,7 +1557,7 @@ Session: {self.session_id}
         if not isinstance(f, VFSFile) or not f.local_path:
             return {"success": False, "error": "Not a shadow file"}
 
-        if not f._content:
+        if f._content is None:
             return {"success": False, "error": "No content to sync"}
 
         try:
@@ -1568,10 +1628,12 @@ Session: {self.session_id}
             if f.backing_type == FileBackingType.SHADOW:
                 f.backing_type = FileBackingType.MODIFIED
 
-            # Auto-sync
+            # Auto-sync — BUG #4 FIX: Rückgabe prüfen und Fehler weitergeben
             mount = self._get_mount_for_path(path)
             if mount and mount.auto_sync and f.local_path:
-                self._sync_to_local(path)
+                sync_result = self._sync_to_local(path)
+                if not sync_result["success"]:
+                    return {"success": False, "error": f"Sync failed: {sync_result['error']}"}
         else:
             f.content += content
 
@@ -1618,10 +1680,12 @@ Session: {self.session_id}
             if f.backing_type == FileBackingType.SHADOW:
                 f.backing_type = FileBackingType.MODIFIED
 
-            # Auto-sync
+            # Auto-sync — BUG #4 FIX: Rückgabe prüfen und Fehler weitergeben
             mount = self._get_mount_for_path(path)
             if mount and mount.auto_sync and f.local_path:
-                self._sync_to_local(path)
+                sync_result = self._sync_to_local(path)
+                if not sync_result["success"]:
+                    return {"success": False, "error": f"Sync failed: {sync_result['error']}"}
         else:
             f.content = new_full_content
 
@@ -1925,6 +1989,20 @@ Session: {self.session_id}
             return {"success": False, "error": f"Path not found: {path}"}
 
         f = self.files[path]
+
+        # Guard: shadow files that are not yet loaded have no content.
+        # Use size_bytes directly and report lines as -1 (unknown).
+        if isinstance(f, VFSFile) and not f.is_loaded:
+            lines_count = -1
+            file_size = f.size_bytes
+        else:
+            try:
+                lines_count = len(f.content.splitlines())
+                file_size = f.size
+            except Exception:
+                lines_count = -1
+                file_size = f.size_bytes
+
         return {
             "success": True,
             "path": path,
@@ -1932,8 +2010,8 @@ Session: {self.session_id}
             "filename": f.filename,
             "state": f.state,
             "readonly": f.readonly,
-            "size": f.size,
-            "lines": len(f.content.splitlines()),
+            "size": file_size,
+            "lines": lines_count,
             "summary": f.mini_summary if f.state == "closed" else None,
             "created_at": f.created_at,
             "updated_at": f.updated_at,

@@ -29,6 +29,14 @@ class ToolBoxPopup {
             'ko-KR': 'Korean',
             'zh-CN': 'Chinese (Simplified)'
         };
+        this.gestureSettings = {
+            enabled: true,
+            enableMouse: true,
+            enableTouch: true,
+            enableNav: true,
+            enableScroll: true,
+            minSwipeDistance: 100
+        };
 
         this.settings = {
             backend: 'local',
@@ -224,6 +232,15 @@ showPageStatus(message, duration = 2000) {
     } catch (error) {
         console.warn('Failed to load settings:', error);
     }
+    try {
+        const gestureStored = await chrome.storage.sync.get(['gestureSettings']);
+        if (gestureStored.gestureSettings) {
+            this.gestureSettings = { ...this.gestureSettings, ...gestureStored.gestureSettings };
+        }
+        this.applyGestureSettingsUI();
+    } catch (error) {
+        console.warn('Failed to load settings:', error);
+    }
 }
 
 async saveSettings() {
@@ -291,6 +308,42 @@ applySettings() {
 
     this.updateAuthUI();
 }
+
+applyGestureSettingsUI() {
+        const masterToggle = document.getElementById('gesture-master-toggle');
+        const mouseToggle = document.getElementById('gesture-mouse-toggle');
+        const touchToggle = document.getElementById('gesture-touch-toggle');
+        const navToggle = document.getElementById('gesture-nav-toggle');
+        const scrollToggle = document.getElementById('gesture-scroll-toggle');
+        const sensSlider = document.getElementById('gesture-sensitivity-slider');
+        const sensValue = document.getElementById('gesture-sens-value');
+        const optionsContainer = document.getElementById('gesture-options-container');
+
+        if (masterToggle) masterToggle.checked = this.gestureSettings.enabled;
+        if (mouseToggle) mouseToggle.checked = this.gestureSettings.enableMouse;
+        if (touchToggle) touchToggle.checked = this.gestureSettings.enableTouch;
+        if (navToggle) navToggle.checked = this.gestureSettings.enableNav;
+        if (scrollToggle) scrollToggle.checked = this.gestureSettings.enableScroll;
+
+        if (sensSlider && sensValue) {
+            sensSlider.value = this.gestureSettings.minSwipeDistance;
+            sensValue.textContent = this.gestureSettings.minSwipeDistance;
+        }
+
+        if (optionsContainer) {
+            optionsContainer.style.opacity = this.gestureSettings.enabled ? '1' : '0.5';
+            optionsContainer.style.pointerEvents = this.gestureSettings.enabled ? 'auto' : 'none';
+        }
+    }
+
+    async saveGestureSettings() {
+        try {
+            await chrome.storage.sync.set({ gestureSettings: this.gestureSettings });
+            this.applyGestureSettingsUI();
+        } catch (error) {
+            console.warn('Failed to save gesture settings:', error);
+        }
+    }
 
 async loadAvailableAgents() {
     try {
@@ -548,6 +601,24 @@ updateAuthUI() {
             if (wasActive) {
                 setTimeout(() => this.startVoice(), 100);
             }
+        });
+
+        const updateGestureConfig = (key, value) => {
+            this.gestureSettings[key] = value;
+            this.saveGestureSettings();
+        };
+
+        document.getElementById('gesture-master-toggle')?.addEventListener('change', (e) => updateGestureConfig('enabled', e.target.checked));
+        document.getElementById('gesture-mouse-toggle')?.addEventListener('change', (e) => updateGestureConfig('enableMouse', e.target.checked));
+        document.getElementById('gesture-touch-toggle')?.addEventListener('change', (e) => updateGestureConfig('enableTouch', e.target.checked));
+        document.getElementById('gesture-nav-toggle')?.addEventListener('change', (e) => updateGestureConfig('enableNav', e.target.checked));
+        document.getElementById('gesture-scroll-toggle')?.addEventListener('change', (e) => updateGestureConfig('enableScroll', e.target.checked));
+
+        document.getElementById('gesture-sensitivity-slider')?.addEventListener('input', (e) => {
+            document.getElementById('gesture-sens-value').textContent = e.target.value;
+        });
+        document.getElementById('gesture-sensitivity-slider')?.addEventListener('change', (e) => {
+            updateGestureConfig('minSwipeDistance', parseInt(e.target.value));
         });
 
         // Search input

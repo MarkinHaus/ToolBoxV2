@@ -14,6 +14,9 @@ class TBGestureDetector {
 
         // Gesture settings
         this.settings = {
+            enabled: true,
+            enableNav: true,
+            enableScroll: true,
             minSwipeDistance: 100,
             maxSwipeTime: 800,
             minSwipeVelocity: 0.3,
@@ -47,8 +50,16 @@ class TBGestureDetector {
         try {
             await this.loadSettings();
             this.setupEventListeners();
+            chrome.storage.onChanged.addListener((changes, areaName) => {
+                if (areaName === 'sync' && changes.gestureSettings) {
+                    this.settings = { ...this.settings, ...changes.gestureSettings.newValue };
+                    this.isEnabled = this.settings.enabled;
+                    console.log('🎯 Gesten-Settings live aktualisiert', this.settings);
+                }
+            });
+
+            this.isEnabled = this.settings.enabled;
             console.log('🎯 Gesture detector initialized');
-            // play sound
         } catch (error) {
             console.error('Gesture detector initialization failed:', error);
         }
@@ -66,83 +77,55 @@ class TBGestureDetector {
     }
 
     setupEventListeners() {
-        // Touch events for mobile/tablet
-        if (this.settings.enableTouch) {
-            document.addEventListener('touchstart', (e) => {
-                // Only handle if exactly 2 fingers are touching
-                if (e.touches.length === 2) {
-                    this.handleTouchStart(e);
+        // Touch events
+        document.addEventListener('touchstart', (e) => {
+            if (!this.settings.enableTouch || !this.settings.enabled) return;
+            if (e.touches.length === 2) this.handleTouchStart(e);
+        }, { passive: false });
+
+        document.addEventListener('touchmove', (e) => {
+            if (!this.settings.enableTouch || !this.settings.enabled) return;
+            if (e.touches.length === 2) this.handleTouchMove(e);
+        }, { passive: false });
+
+        document.addEventListener('touchend', (e) => {
+            if (!this.settings.enableTouch || !this.settings.enabled) return;
+            if (e.touches.length + e.changedTouches.length >= 2) this.handleTouchEnd(e);
+        }, { passive: false });
+
+        // Mouse events
+        document.addEventListener('mousedown', (e) => {
+            if (!this.settings.enableMouse || !this.settings.enabled) return;
+            if (e.button === 2) {
+                if (this.mouseMovedCounter > 2) {
+                    this.mouseMovedCounter = 0;
+                    this.mouseMoved = false;
                 }
-            }, { passive: false });
+                this.mouseMovedCounter++;
+                this.handleMouseDown(e);
+            }
+        });
 
-            document.addEventListener('touchmove', (e) => {
-                // Only handle if exactly 2 fingers are touching
-                if (e.touches.length === 2) {
-                    this.handleTouchMove(e);
-                }
-            }, { passive: false });
+        document.addEventListener('mousemove', (e) => {
+            if (!this.settings.enableMouse || !this.settings.enabled) return;
+            if (this.isTracking) {
+                this.mouseMoved = true;
+                this.handleMouseMove(e);
+            }
+        });
 
-            document.addEventListener('touchend', (e) => {
-                // Handle touch end if we were tracking a 2-finger gesture
-                // Check if we had 2 fingers before (touches + changedTouches)
-                if (e.touches.length + e.changedTouches.length >= 2) {
-                    this.handleTouchEnd(e);
-                }
-            }, { passive: false });
-        }
+        document.addEventListener('mouseup', (e) => {
+            if (!this.settings.enableMouse || !this.settings.enabled) return;
+            if (e.button === 2) this.handleMouseUp(e);
+        });
 
-        // Mouse events for desktop - RIGHT BUTTON ONLY
-        if (this.settings.enableMouse) {
-           document.addEventListener('mousedown', (e) => {
-                if (e.button === 2) {
-                    // Setzen Sie mouseMoved zurück, wenn die rechte Maustaste gedrückt wird.
-                    if (this.mouseMovedCounter > 2) {
-                        this.mouseMovedCounter = 0;
-                        this.mouseMoved = false;
-                    }
-                    this.mouseMovedCounter ++;
-                    console.log('mousedown', e.button, this.mouseMoved);
-                    this.handleMouseDown(e);
-                }
-            });
+        document.addEventListener('contextmenu', (e) => {
+            if (!this.settings.enableMouse || !this.settings.enabled) return;
+            if (this.mouseMoved) e.preventDefault();
+            this.mouseMoved = false;
+        });
 
-            document.addEventListener('mousemove', (e) => {
-                // Wenn die rechte Maustaste gedrückt ist und sich die Maus bewegt,
-                // setzen Sie mouseMoved auf true.
-                if (this.isTracking) { // isTracking sollte in handleMouseDown gesetzt werden
-                    this.mouseMoved = true;
-                    console.log('mousemove', e.button, this.mouseMoved);
-                    this.handleMouseMove(e);
-                }
-            });
-
-            document.addEventListener('mouseup', (e) => {
-                if (e.button === 2) {
-                    this.handleMouseUp(e);
-                }
-            });
-
-            // Verhindern Sie das Kontextmenü nur, wenn eine Geste ausgeführt wurde.
-            document.addEventListener('contextmenu', (e) => {
-                console.log('contextmenu', e.button, this.mouseMoved);
-                if (this.mouseMoved) {
-                   e.preventDefault();
-                }
-                // Setzen Sie mouseMoved nach dem Ereignis zurück.
-                this.mouseMoved = false;
-            });
-
-
-            // Remove click handler or filter for right button if needed
-            document.addEventListener('click', (e) => {
-                // Note: right-click typically fires 'contextmenu' event, not 'click'
-                // You may want to use 'contextmenu' event instead
-                this.handleClick(e);
-            });
-
-        }
-
-        // Keyboard shortcuts
+        document.addEventListener('click', (e) => this.handleClick(e));
         document.addEventListener('keydown', (e) => this.handleKeyboard(e));
     }
 
@@ -335,25 +318,29 @@ class TBGestureDetector {
     }
 
     executeGesture(gesture) {
+        if (!this.settings.enabled) return;
         console.log(`🎯 Executing gesture: ${gesture}`);
+
+        let gestureExecuted = false;
 
         switch (gesture) {
             case 'swipe-left':
-                this.navigateBack();
+                if (this.settings.enableNav) { this.navigateBack(); gestureExecuted = true; }
                 break;
             case 'swipe-right':
-                this.navigateForward();
+                if (this.settings.enableNav) { this.navigateForward(); gestureExecuted = true; }
                 break;
             case 'swipe-up':
-                this.scrollUp();
+                if (this.settings.enableScroll) { this.scrollUp(); gestureExecuted = true; }
                 break;
             case 'swipe-down':
-                this.scrollDown();
+                if (this.settings.enableScroll) { this.scrollDown(); gestureExecuted = true; }
                 break;
         }
 
-        // Send to background script
-        this._safeSend({ type: 'GESTURE_DETECTED', gesture, timestamp: Date.now() });
+        if (gestureExecuted) {
+            this._safeSend({ type: 'GESTURE_DETECTED', gesture, timestamp: Date.now() });
+        }
     }
 
     handleTripleClick(e) {

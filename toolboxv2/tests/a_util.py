@@ -1,6 +1,8 @@
 import asyncio
+import logging
+import os
 import unittest
-from unittest.mock import MagicMock, Mock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 
 def async_test(coro):
@@ -11,102 +13,67 @@ def async_test(coro):
             return loop.run_until_complete(coro(*args, **kwargs))
         finally:
             loop.close()
-
     return wrapper
 
 
-class IsolatedTestCase(unittest.TestCase):
+# ---------------------------------------------------------------------------
+# Internal helper — must be called BEFORE app.exit()
+# ---------------------------------------------------------------------------
+
+def _detach_all_logging_handlers():
     """
-    Base test class that provides automatic App/Singleton isolation.
+    Redirect every logging handler's stream to devnull and remove it.
 
-    This class ensures that each test starts with a clean slate by resetting
-    all singletons and global state in setUp and tearDown.
+    This prevents app.exit() (which calls logging.shutdown() internally)
+    from closing pytest's FDCapture temporary files, which would corrupt
+    pytest's stdout/stderr capture and cause
+    "ValueError: I/O operation on closed file" for every subsequent test.
 
-    Works with both pytest and unittest runners.
-
-    Usage:
-        class MyTests(IsolatedTestCase):
-            def test_something(self):
-                app = get_app(from_="test", name="test")
-                # ... test code ...
-
-    For tests that need a persistent App across all tests in the class,
-    use PersistentAppTestCase instead.
+    Safe to call multiple times — already-removed handlers are skipped.
     """
+    try:
+        _devnull = open(os.devnull, "w")
 
-    @classmethod
-    def setUpClass(cls):
-        """Reset singletons before any tests in this class run."""
-        super().setUpClass()
-        reset_app_singleton(force_exit=True)
+        # All named loggers
+        for logger in list(logging.Logger.manager.loggerDict.values()):
+            if not isinstance(logger, logging.Logger):
+                continue
+            for handler in logger.handlers[:]:
+                try:
+                    if hasattr(handler, "stream"):
+                        handler.stream = _devnull
+                    logger.removeHandler(handler)
+                except Exception:
+                    pass
 
-    def setUp(self):
-        """Reset singletons before each test."""
-        super().setUp()
-        reset_app_singleton(force_exit=True)
+        # Root logger
+        root = logging.getLogger()
+        for handler in root.handlers[:]:
+            try:
+                if hasattr(handler, "stream"):
+                    handler.stream = _devnull
+                root.removeHandler(handler)
+            except Exception:
+                pass
 
-    def tearDown(self):
-        """Reset singletons after each test."""
-        super().tearDown()
-        reset_app_singleton(force_exit=True)
+        # Prevent logging.shutdown() (called inside app.exit()) from
+        # touching any remaining handler streams
+        logging.root.manager.loggerDict.clear()
 
-    @classmethod
-    def tearDownClass(cls):
-        """Final cleanup after all tests in this class."""
-        reset_app_singleton(force_exit=True)
-        super().tearDownClass()
+    except Exception:
+        pass
 
 
-class PersistentAppTestCase(unittest.TestCase):
-    """
-    Base test class for tests that need a persistent App across all tests.
-
-    Use this when:
-    - Tests share expensive setup (loading mods, etc.)
-    - Tests need to verify state changes across multiple operations
-    - Performance is critical and App creation is slow
-
-    The App is created once in setUpClass and cleaned up in tearDownClass.
-    Individual tests do NOT reset the App between runs.
-
-    Usage:
-        class MyModTests(PersistentAppTestCase):
-            @classmethod
-            def setUpClass(cls):
-                super().setUpClass()
-                cls.app = get_app(from_="test", name="test")
-                cls.app.load_mod("my_mod")
-
-            @classmethod
-            def tearDownClass(cls):
-                if hasattr(cls, 'app') and cls.app:
-                    cls.app.exit()
-                super().tearDownClass()
-
-            def test_something(self):
-                result = self.app.run_any(...)
-    """
-
-    @classmethod
-    def setUpClass(cls):
-        """Reset singletons before creating the persistent App."""
-        super().setUpClass()
-        reset_app_singleton(force_exit=True)
-
-    @classmethod
-    def tearDownClass(cls):
-        """Clean up the persistent App."""
-        reset_app_singleton(force_exit=True)
-        super().tearDownClass()
-
+# ---------------------------------------------------------------------------
+# Internal helper
+# ---------------------------------------------------------------------------
 
 def _is_mock(obj) -> bool:
-    """Check if object is a Mock or has mock attributes."""
+    """Check if object is a Mock or has mock-contaminated attributes."""
     if isinstance(obj, (MagicMock, Mock)):
         return True
-    # Check for contaminated objects (real objects with mock attributes)
     for attr_name in dir(obj):
-        if attr_name.startswith('_'):
+        if attr_name.startswith("_"):
             continue
         try:
             attr = getattr(obj, attr_name)
@@ -117,37 +84,46 @@ def _is_mock(obj) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Core reset function
+# ---------------------------------------------------------------------------
+
 def reset_app_singleton(force_exit: bool = False):
     """
     Reset ALL singletons and global state to ensure test isolation.
 
-    This function cleans up:
+    Cleans up:
     - registered_apps global list
-    - Singleton._instances for App, Session, ProxyApp, DaemonApp
-    - Any mock-contaminated instances
+    - Singleton._instances (App, Session, ProxyApp, DaemonApp, …)
+    - Mock-contaminated instances
+
+    IMPORTANT: always detaches logging handlers before calling app.exit()
+    to avoid corrupting pytest's FDCapture temporary files on Windows.
 
     Args:
         force_exit: If True, exit real App instances and clear ALL singletons.
-                   Use True for full test isolation (recommended).
-                   Use False to only clear mocks (legacy behavior).
-
-    Example:
-        @classmethod
-        def setUpClass(cls):
-            reset_app_singleton(force_exit=True)  # Clean slate
-            cls.app = get_app(from_="test", name="test")
+                    Recommended for full test isolation.
     """
-    # 1. Reset registered_apps global
+    # 1. Reset registered_apps
     try:
         from toolboxv2.utils.system.getting_and_closing_app import registered_apps
+
         if registered_apps[0] is not None:
             app = registered_apps[0]
             is_mock = _is_mock(app)
 
             if is_mock or force_exit:
-                # Exit real apps properly
-                if not isinstance(app, (MagicMock, Mock)) and hasattr(app, 'exit'):
+                if not isinstance(app, (MagicMock, Mock)) and hasattr(app, "exit"):
                     try:
+                        # ── CRITICAL ────────────────────────────────────────
+                        # Detach logging handlers BEFORE app.exit().
+                        # app.exit() triggers logging.shutdown() which closes
+                        # every handler's stream.  On Windows, pytest's
+                        # FDCapture redirects FD 1/2 to NamedTemporaryFiles;
+                        # if those streams are closed here, every later
+                        # tmpfile.seek(0) raises ValueError.
+                        # ─────────────────────────────────────────────────────
+                        _detach_all_logging_handlers()
                         app.exit()
                     except Exception:
                         pass
@@ -160,12 +136,10 @@ def reset_app_singleton(force_exit: bool = False):
         from toolboxv2.utils.singelton_class import Singleton
 
         if force_exit:
-            # Clear ALL singletons for full isolation
             Singleton._instances.clear()
             Singleton._args.clear()
             Singleton._kwargs.clear()
         else:
-            # Only clear mocks (legacy behavior)
             for cls in list(Singleton._instances.keys()):
                 if _is_mock(Singleton._instances[cls]):
                     del Singleton._instances[cls]
@@ -174,72 +148,114 @@ def reset_app_singleton(force_exit: bool = False):
     except ImportError:
         pass
 
-    # 3. Reset Session singleton explicitly (it may have open connections)
+    # 3. Reset Session singleton explicitly (may hold open aiohttp connections)
     try:
-        from toolboxv2.utils.system.session import Session
         from toolboxv2.utils.singelton_class import Singleton
+        from toolboxv2.utils.system.session import Session
+
         if Session in Singleton._instances and force_exit:
-            session = Singleton._instances[Session]
-            # Close aiohttp session if open
-            if hasattr(session, '_session') and session._session is not None:
-                try:
-                    if not session._session.closed:
-                        # Can't await here, just mark for cleanup
-                        pass
-                except Exception:
-                    pass
             del Singleton._instances[Session]
             Singleton._args.pop(Session, None)
             Singleton._kwargs.pop(Session, None)
     except (ImportError, KeyError):
         pass
 
-    # 4. Reload modules if they've been contaminated by mocks
+    # 4. Reload mock-contaminated modules
     if force_exit:
         try:
             import importlib
 
-            # Check if Result is a mock
-            from toolboxv2.utils.system import types as types_module
-            if hasattr(types_module, 'Result'):
-                result_cls = types_module.Result
-                if isinstance(result_cls, (MagicMock, Mock, AsyncMock)):
-                    # Reload the module to get the real Result class
-                    importlib.reload(types_module)
-
-            # Also check toolboxv2 package level
             import toolboxv2
-            if hasattr(toolboxv2, 'Result'):
-                result_cls = toolboxv2.Result
-                if isinstance(result_cls, (MagicMock, Mock, AsyncMock)):
-                    # Reload to restore real Result
-                    importlib.reload(types_module)
-                    # Update the reference in toolboxv2
-                    toolboxv2.Result = types_module.Result
+            from toolboxv2.utils.system import types as types_module
 
-            # Check if App is a mock
-            if hasattr(toolboxv2, 'App'):
-                app_cls = toolboxv2.App
-                if isinstance(app_cls, (MagicMock, Mock, AsyncMock)):
-                    # Reload the app module to get the real App class
-                    from toolboxv2.utils import toolbox
-                    importlib.reload(toolbox)
-                    toolboxv2.App = toolbox.App
+            if isinstance(getattr(types_module, "Result", None), (MagicMock, Mock, AsyncMock)):
+                importlib.reload(types_module)
 
-            if hasattr(toolboxv2, 'MainTool'):
-                mt_cls = toolboxv2.MainTool
-                if isinstance(mt_cls, (MagicMock, Mock, AsyncMock)):
-                    # Reload the app module to get the real App class
-                    from toolboxv2.utils.system import main_tool
-                    importlib.reload(main_tool)
-                    toolboxv2.MainTool = main_tool.MainTool
+            if isinstance(getattr(toolboxv2, "Result", None), (MagicMock, Mock, AsyncMock)):
+                importlib.reload(types_module)
+                toolboxv2.Result = types_module.Result
 
-            if hasattr(toolboxv2, 'FileHandler'):
-                fh_cls = toolboxv2.FileHandler
-                if isinstance(fh_cls, (MagicMock, Mock, AsyncMock)):
-                    # Reload the app module to get the real App class
-                    from toolboxv2.utils.system import file_handler
-                    importlib.reload(file_handler)
-                    toolboxv2.FileHandler = file_handler.FileHandler
+            if isinstance(getattr(toolboxv2, "App", None), (MagicMock, Mock, AsyncMock)):
+                from toolboxv2.utils import toolbox
+                importlib.reload(toolbox)
+                toolboxv2.App = toolbox.App
+
+            if isinstance(getattr(toolboxv2, "MainTool", None), (MagicMock, Mock, AsyncMock)):
+                from toolboxv2.utils.system import main_tool
+                importlib.reload(main_tool)
+                toolboxv2.MainTool = main_tool.MainTool
+
+            if isinstance(getattr(toolboxv2, "FileHandler", None), (MagicMock, Mock, AsyncMock)):
+                from toolboxv2.utils.system import file_handler
+                importlib.reload(file_handler)
+                toolboxv2.FileHandler = file_handler.FileHandler
+
         except (ImportError, AttributeError):
             pass
+
+
+# ---------------------------------------------------------------------------
+# Base test classes
+# ---------------------------------------------------------------------------
+
+class IsolatedTestCase(unittest.TestCase):
+    """
+    Base test class with automatic App/Singleton isolation per test.
+
+    Usage:
+        class MyTests(IsolatedTestCase):
+            def test_something(self):
+                app = get_app(from_="test", name="test")
+                ...
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        reset_app_singleton(force_exit=True)
+
+    def setUp(self):
+        super().setUp()
+        reset_app_singleton(force_exit=True)
+
+    def tearDown(self):
+        super().tearDown()
+        reset_app_singleton(force_exit=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        reset_app_singleton(force_exit=True)
+        super().tearDownClass()
+
+
+class PersistentAppTestCase(unittest.TestCase):
+    """
+    Base test class for tests that share one App across all tests in the class.
+
+    Use when App creation is expensive (loading mods, etc.) and tests are
+    designed to run sequentially against the same instance.
+
+    Usage:
+        class MyModTests(PersistentAppTestCase):
+            @classmethod
+            def setUpClass(cls):
+                super().setUpClass()
+                cls.app = get_app(from_="test", name="test")
+                cls.app.load_mod("my_mod")
+
+            @classmethod
+            def tearDownClass(cls):
+                if hasattr(cls, "app") and cls.app:
+                    cls.app.exit()
+                super().tearDownClass()
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        reset_app_singleton(force_exit=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        reset_app_singleton(force_exit=True)
+        super().tearDownClass()

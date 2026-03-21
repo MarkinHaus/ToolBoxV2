@@ -7,64 +7,42 @@ import pprint
 # Import default Pages
 import textwrap
 import time
+from contextlib import redirect_stdout
 from functools import wraps
 from pathlib import Path
 from platform import node, system
 from typing import List, Tuple
 
 from dotenv import load_dotenv
-
-# from toolboxv2 import tb_root_dir, profile_code
-# from toolboxv2.utils.system.feature_manager import FeatureManager
-#
-# from toolboxv2.flows import flows_dict as flows_dict_func
-# from toolboxv2.setup_helper import run_command
-# from toolboxv2.tests.a_util import async_test
-# from toolboxv2.utils import get_app
-# from toolboxv2.utils.clis.cli_worker_manager import main as cli_worker_manager
-# from toolboxv2.utils.clis.db_cli_manager import cli_db_runner
-# from toolboxv2.utils.clis.user_manager import main as user_manager_main
-# from toolboxv2.utils.clis.tb_lang_cli import cli_tbx_main
-# from toolboxv2.utils.clis.tcm_p2p_cli import cli_tcm_runner
-#
-# # TEMPORARY FIX: Disabled user_dashboard import due to pywintypes dependency issue
-# from toolboxv2.utils.clis.user_dashboard import interactive_user_dashboard
-# from toolboxv2.utils.daemon import DaemonApp
-# from toolboxv2.utils.extras.Style import Spinner, Style
-# from toolboxv2.utils.proxy import ProxyApp
-# from toolboxv2.utils.system import CallingObject, get_state_from_app
-# from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
-# from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
-# from toolboxv2.utils.workers import cli_event, cli_http_worker, cli_session, cli_ws_worker
-#
-# from .utils.toolbox import App as TbApp
-
-# try:
-#     from .mcp_server.__main__ import main as cli_mcp_server
-# except ImportError:
-#     cli_mcp_server = lambda: None
-
-
 load_dotenv()
 
 import os
 import sys
+import io
 
-from toolboxv2 import tb_root_dir, profile_code, _feature_enabled
-from toolboxv2.utils.system.feature_manager import FeatureManager
-from toolboxv2.flows import flows_dict as flows_dict_func
-from toolboxv2.setup_helper import run_command
-from toolboxv2.tests.a_util import async_test
-from toolboxv2.utils import get_app
-from toolboxv2.utils.clis.db_cli_manager import cli_db_runner
-from toolboxv2.utils.clis.user_manager import main as user_manager_main
-from toolboxv2.utils.clis.tb_lang_cli import cli_tbx_main
-from toolboxv2.utils.clis.tcm_p2p_cli import cli_tcm_runner
-from toolboxv2.utils.extras.Style import Spinner, Style
-from toolboxv2.utils.system import CallingObject, get_state_from_app
-from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
-from .utils.toolbox import App as TbApp
+# Nur da anwenden, wo es wirklich gebraucht wird:
+try:
+    with redirect_stdout(io.StringIO()):
 
+        from toolboxv2 import tb_root_dir, profile_code, _feature_enabled
+        from toolboxv2.utils.system.feature_manager import FeatureManager
+        from toolboxv2.flows import flows_dict as flows_dict_func
+        from toolboxv2.setup_helper import run_command
+        from toolboxv2.tests.a_util import async_test
+        from toolboxv2.utils import get_app
+        from toolboxv2.utils.clis.db_cli_manager import cli_db_runner
+        from toolboxv2.utils.clis.user_manager import main as user_manager_main
+        from toolboxv2.utils.clis.tb_lang_cli import cli_tbx_main
+        from toolboxv2.utils.clis.tcm_p2p_cli import cli_tcm_runner
+        from toolboxv2.utils.extras.Style import Spinner, Style
+        from toolboxv2.utils.system import CallingObject, get_state_from_app
+        from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
+        from toolboxv2.utils.system.getting_and_closing_app import a_save_closing_app
+        from .utils.toolbox import App as TbApp
+
+except ImportError as e:
+    print(e)
+    sys.exit(1)
 # ── WEB-Feature: workers, proxy, dashboard ────────────────────────────────────
 _WEB_AVAILABLE = False
 cli_worker_manager = None
@@ -1476,18 +1454,18 @@ async def main(App=TbApp, do_exit=True):
         from .utils.clis.config_wizard import run_config_wizard
 
         exit_code = run_config_wizard()
-        await tb_app.a_exit()
+        await a_save_closing_app()
         exit(exit_code)
     elif args.init is not None:
         tb_app.print(
             "No init action specified valid options are ['main', 'config', 'manifest']"
         )
-        await tb_app.a_exit()
+        await a_save_closing_app()
         exit(1)
 
     if args.lm:
         edit_logs()
-        await tb_app.a_exit()
+        await a_save_closing_app()
         exit(0)
 
     if (
@@ -1500,7 +1478,7 @@ async def main(App=TbApp, do_exit=True):
     ):
         if args.save_function_enums_in_file:
             tb_app.save_registry_as_enums("utils\\system", "all_functions_enums.py")
-            await tb_app.a_exit()
+            await a_save_closing_app()
             return tb_app
         if args.get_version:
             print(
@@ -1523,7 +1501,7 @@ async def main(App=TbApp, do_exit=True):
                         v = "unknown"
                     print(f"{mod_name:^35}:{v:^10}")
             print("\n")
-            await tb_app.a_exit()
+            await a_save_closing_app()
             return tb_app
 
     if _hook[0]:
@@ -1534,7 +1512,7 @@ async def main(App=TbApp, do_exit=True):
 
     if args.profiler:
         profile_execute_all_functions(tb_app)
-        await tb_app.a_exit()
+        await a_save_closing_app()
         return tb_app
 
     if (
@@ -1633,7 +1611,7 @@ async def main(App=TbApp, do_exit=True):
         os.remove(pid_file)
 
     if do_exit and not tb_app.called_exit[0]:
-        await tb_app.a_exit()
+        await a_save_closing_app()
         return tb_app
     return tb_app
 

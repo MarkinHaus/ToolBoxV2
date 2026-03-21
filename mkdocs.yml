@@ -1,37 +1,37 @@
 site_name: ToolBoxV2 Docs
-
 site_url: https://MarkinHaus.github.io/ToolBoxV2
 repo_url: https://github.com/MarkinHaus/ToolBoxV2
-
 repo_name: ToolBoxV2
 
 theme:
-    palette:
-        scheme: slate
-    name: material
-    icon:
-        repo: fontawesome/brands/github
-    features:
-        - navigation.instant
-        - search.highlight
-        # - navigation.expand
-        # - navigation.tabs
-    custom_dir: "docs/overrides"
+  name: material
+  palette:
+    scheme: slate
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - search.highlight
+    - content.code.copy
+  custom_dir: "docs/overrides"
 
-    extra_css:
-        - assets/stylesheets/extra.css
+extra_css:
+  - assets/stylesheets/extra.css
 
 markdown_extensions:
-    - attr_list
-    - pymdownx.superfences
-    - pymdownx.highlight:
-        linenums: false   # keine störenden Zeilennummern
-    - toc:
-        permalink: true
-    - codehilite:
-        use_pygments: true
-        pygments_style: monokai  # alternativ: 'gruvbox-dark'
-        noclasses: true
+  - attr_list
+  - admonition
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      linenums: false
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - toc:
+      permalink: true
 
 plugins:
   - search
@@ -40,26 +40,164 @@ plugins:
         python:
           paths: ["toolboxv2"]
 
+# ---------------------------------------------------------------------------
+# PATH CONVENTION (Stand: 2026-03-20)
+#
+#  docs/index.md                            <- Homepage (neu)
+#  docs/foundations/*                       <- Getting Started (neu)
+#  docs/devdocs/*                           <- Architektur (neu)
+#  docs/guides/*                            <- How-To Guides (neu)
+#  docs/manifest/*                          <- Manifest Referenz (neu)
+#  docs/storage/*                           <- Storage Referenz (neu)
+#  docs/services/*                          <- CLI / MCP Referenz (neu)
+#  docs/flows/**                            <- CLI Flow Guides (neu)
+#  docs/mods/isaa/**                        <- ISAA Framework (neu)
+#  docs/mods/CloudM/*                       <- CloudM Modul (neu)
+#  docs/tb_browser/*                        <- Browser Extension (neu)
+#  docs/registry/*                          <- TB Registry (neu)
+#  docs/llm_gateway/*                       <- LLM Gateway (neu)
+#  docs/workers/*                           <- Worker System (neu)
+#  docs/new/analysis/**                     <- Analyse-Docs (neu)
+#
+# AENDERUNGEN gegenueber vorheriger Version:
+#  - ALLE new/old_docs/ Eintraege haben jetzt korrekte Pfade mit Prefix
+#  - 05_KERNEL/KERNEL_SYSTEM.md entfernt (Verzeichnis existiert nicht)
+#  - agent.md -> ISAA-Sektion promoted (FlowAgent V3 Referenz)
+#  - db_usage_guide.md -> Technical Reference promoted (akkurate DB-Referenz)
+#  - module_creation_guide.md -> Module Development promoted
+#  - toolboxv2.md -> eigene API Reference Sektion promoted
+#  - isaa.md -> ISAA-Sektion promoted auf docs/mods/isaa
+#  - utils.md -> ENTFERNT (veraltet)
+#  - account_management.md -> ENTFERNT (ersetzt durch CloudM/auth.md)
+#  - faq.md -> ENTFERNT (515 Bytes, kein Inhalt)
+#  - EXAMPLES.md -> in nav ergaenzt (war vorhanden, fehlte)
+#  - MiniTask FormatClass -> in nav ergaenzt
+# ---------------------------------------------------------------------------
 
 nav:
-    -   Home: index.md
-    -   Installation: installation.md
-    -   Usage: usage.md
-    -   Contributing: contributing.md
-    -   FAQ: module_creation_guide.md
-    -   TBjs: tbjs.md
-    -   CLIS: clis.md
-    -   Report Issues: https://github.com/MarkinHaus/ToolBoxV2/issues
-    -   API Reference:
-            -   toolboxv2: toolboxv2.md
-            -   utils: utils.md
-            -   isaa: isaa.md
-            -   agent: agent.md
-            -   isaa_help: faq.md
+  - Home: index.md
 
-    - etc:
-          - account_management: account_management.md
-          - changelog: changelog.md
-          - db_usage_guide: db_usage_guide.md
-          - p2p_rpc_protocol: p2p_rpc_protocol.md
-          - stack: stack.md
+  # ── GETTING STARTED ───────────────────────────────────────────────────────
+  - "🚀 Getting Started":
+      - Installation: new/analysis/installation/installation.md
+      - Quickstart: foundations/quickstart.md
+      - First Run & Profile: foundations/first_run.md
+      - System Stack: new/analysis/installation/stack.md
+      - Usage Overview: new/analysis/installation/usage.md
+      - Manifest Intro: manifest/manifest_intro.md
+      - Onboarding: core/onboarding.md
+
+  # ── HOW-TO GUIDES ─────────────────────────────────────────────────────────
+  - "📖 How-To Guides":
+      - For Consumers: guides/howto_consumer.md
+      - For Server Admins: guides/howto_server.md
+      - For Developers: guides/howto_developer.md
+      - Feature Packs: guides/howto_features.md
+      - MiniCLI & Macros: flows/minicli/howto_minicli_macros.md
+      - ISAA Host CLI (icli): flows/icli/howto.md
+
+  # ── CLOUDM ────────────────────────────────────────────────────────────────
+  - "☁️ CloudM":
+      - Overview: mods/CloudM/index.md
+      - Auth System (OAuth2 / Passkeys / JWT): mods/CloudM/auth.md
+      - Login System (CLI + Web Sessions): mods/CloudM/login_system.md
+      - User Data API (Scoped Storage): mods/CloudM/user_data.md
+      - Mod Manager (Packages): mods/CloudM/mod_manager.md
+      - Folder Sync (Encrypted MinIO): mods/CloudM/folder_sync.md
+      - Dashboards (Admin + User): mods/CloudM/dashboards.md
+
+  # ── ISAA AGENT FRAMEWORK ──────────────────────────────────────────────────
+  - "🤖 ISAA Agent Framework":
+      - Overview: mods/isaa/README.md
+      - Full Reference: core/isaa.md              # TODO: Update nach Quelldatei-Upload
+      - "Getting Started":
+          - Quickstart: mods/isaa/01_GETTING_STARTED/QUICKSTART.md
+          - Module Init: mods/isaa/ISAAMODUL_INIT.md
+          - Agent Management: mods/isaa/AGENT_MANAGEMENT.md
+          - Import / Export: mods/isaa/IMPORT_EXPORT.md
+      - "Architecture":
+          - Overview: mods/isaa/02_ARCHITECTURE/OVERVIEW.md
+          - FlowAgent V3: core/agent.md            # Promoted: FlowAgent V3 Referenz
+          - Agent Architecture: mods/isaa/02_ARCHITECTURE/DETAILED/AGENT_ARCHITECTURE.md
+          - Chain Architecture: mods/isaa/02_ARCHITECTURE/DETAILED/CHAIN_ARCHITECTURE.md
+          - Memory Architecture: mods/isaa/02_ARCHITECTURE/DETAILED/MEMORY_ARCHITECTURE.md
+          - Chain System: mods/isaa/CHAIN_SYSTEM.md
+      - "Subsystems":
+          - Job Scheduling: mods/isaa/07_JOBS/JOBS_SYSTEM.md
+          - Zen Meta-Learning: mods/isaa/06_EXTRAS/ZEN_SYSTEM.md
+          - Reinforcement Learning: mods/isaa/09_DEEP_ANALYSIS/RL_SYSTEM.md
+          - Coding Agent: mods/isaa/04_CODING_AGENT/DETAILED/CODING_AGENT.md
+          - Web Helper: mods/isaa/06_EXTRAS/WEB_HELPER.md
+          - Discord Interface: mods/isaa/06_EXTRAS/DISCORD_INTERFACE.md
+      - "API Reference":
+          - Module API: mods/isaa/03_API_REFERENCE/MODULE_API.md
+          - MiniTask FormatClass: mods/isaa/MINITASK_FORMATCLASS.md
+      - "Examples":
+          - Index: mods/isaa/08_EXAMPLES/INDEX.md
+          - Examples Overview: mods/isaa/08_EXAMPLES/EXAMPLES.md
+          - Basic Agent: mods/isaa/08_EXAMPLES/01_BASIC_AGENT.md
+          - Chain Pipeline: mods/isaa/08_EXAMPLES/02_CHAIN_PIPELINE.md
+          - Tool Integration: mods/isaa/08_EXAMPLES/03_TOOL_INTEGRATION.md
+          - Memory Usage: mods/isaa/08_EXAMPLES/04_MEMORY_USAGE.md
+          - Error Handling: mods/isaa/08_EXAMPLES/05_ERROR_HANDLING.md
+          - Production Setup: mods/isaa/08_EXAMPLES/06_PRODUCTION_SETUP.md
+
+  # ── MODULE DEVELOPMENT ────────────────────────────────────────────────────
+  - "🏗️ Module Development":
+      - 4-Layer Architecture: devdocs/dev_architecture.md
+      - Creating a Mod: devdocs/dev_mod_creation.md
+      - Module Creation Guide: core/module_creation_guide.md   # Promoted: aktuell und vollstaendig
+      - Feature Packs & ZIPs: devdocs/dev_features.md
+      - Registry & Publishing: devdocs/dev_registry.md
+      - Feature System (Analysis): new/analysis/features/feature_system.md
+      - Feature System TODOs: new/analysis/features/feature_system_next_todos.md
+      - Coding Guidelines: core/toolbox_guidelines.md
+
+  # ── TECHNICAL REFERENCE ───────────────────────────────────────────────────
+  - "🔧 Technical Reference":
+      - Worker System: workers/index.md
+      - Manifest Schema: manifest/ref_manifest.md
+      - Database Modes (LC/LR/RR/CB): storage/ref_database.md
+      - DB Usage Guide: core/db_usage_guide.md                 # Promoted: akkurate DB-Referenz
+      - FileHandler V2: storage/ref_filehandler.md
+      - BlobDB & Offline Fallback: storage/ref_blobdb.md
+      - Blob Sharing API: new/analysis/storage/blob_sharing_api.md
+      - Blob Watch API: storage/blob_watch_api.md
+      - CLI Reference: services/ref_cli.md
+      - MCP HTTP API: services/ref_mcp.md
+      - Logging & Observability: core/logs.md
+
+  # ── API REFERENCE ─────────────────────────────────────────────────────────
+  - "📐 API Reference":
+      - toolboxv2 Core: core/toolboxv2.md                      # Promoted: mkdocstrings, valide
+
+  # ── FRONTEND & INTERFACES ─────────────────────────────────────────────────
+  - "🌐 Frontend & Interfaces":
+      - TBjs Framework: core/tbjs.md
+      - Tauri App Architecture: core/TauriApp_Architecture.md
+      - P2P RPC Protocol: core/p2p_rpc_protocol.md
+      - CLIs Overview: core/clis.md
+      - tb_browser Extension: tb_browser/index.md
+
+  # ── INFRASTRUCTURE ────────────────────────────────────────────────────────
+  - "⚙️ Infrastructure":
+      - TB Registry: registry/index.md
+      - LLM Gateway: llm_gateway/index.md
+
+  # ── MISCELLANEOUS ─────────────────────────────────────────────────────────
+  - "ℹ️ Misc":
+      - Changelog: core/changelog.md
+      - Contributing: new/analysis/installation/contributing.md
+      - Simplecore Analysis: new/old_docs/simplecore_analysis_report.md
+      - DB CLI Sharing Guide: new/old_docs/db_cli_sharing_guide.md
+      - Obsidian Setup: new/old_docs/obsidian_setup.md
+      - Desktop Interface Plan: new/old_docs/desktop_interface_plan.md
+      - Refactor Plan: new/old_docs/refactor_plan.md
+      - Build Pipeline: new/old_docs/build_pipeline.md
+      - Report Issues: https://github.com/MarkinHaus/ToolBoxV2/issues
+
+  # ── ENTFERNT ──────────────────────────────────────────────────────────────
+  # utils.md             -> ENTFERNT (veraltet, toolboxv2.md + mkdocstrings reichen)
+  # account_management.md -> ENTFERNT (ersetzt durch mods/CloudM/auth.md + login_system.md)
+  # faq.md               -> ENTFERNT (515 Bytes Inhalt, nichts Relevantes)
+  # 05_KERNEL/KERNEL_SYSTEM.md -> ENTFERNT (Verzeichnis existiert nicht im Dateisystem)

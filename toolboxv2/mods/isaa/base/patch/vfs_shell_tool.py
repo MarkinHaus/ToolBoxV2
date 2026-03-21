@@ -71,6 +71,278 @@ def _parse_n_flag(args: list[str], default: int = 10) -> tuple[int, list[str]]:
 # VFS SHELL FACTORY
 # =============================================================================
 
+def _split_compound(command: str) -> list[tuple[str, str]]:
+    """
+    Tokenise a compound shell command into (operator, cmd_text) pairs.
+
+    Operators (longest match first, quoting respected):
+        '&&'  AND  — next runs only if previous SUCCEEDED
+        '||'  OR   — next runs only if previous FAILED
+        '|'   PIPE — always runs, previous stdout becomes stdin
+        ';'   SEQ  — always runs
+
+    NOTE: Newline is intentionally NOT an operator.
+    Agents send multi-line content via write/echo as actual newlines,
+    e.g.  write /f.py "line1\nline2"  — treating \n as a separator
+    would silently truncate content or produce 'command not found'.
+    Use ';' or '&&' to batch multiple commands.
+    """
+    segments: list[tuple[str, str]] = []
+    buf: list[str] = []
+    pending_op = 'seq'
+    in_single = False
+    in_double = False
+    i = 0
+    n = len(command)
+
+    while i < n:
+        c = command[i]
+
+        if in_single:
+            buf.append(c)
+            if c == "'":
+                in_single = False
+            i += 1
+            continue
+
+        if in_double:
+            buf.append(c)
+            if c == '"':
+                in_double = False
+            i += 1
+            continue
+
+        if c == "'":
+            in_single = True
+            buf.append(c)
+            i += 1
+            continue
+
+        if c == '"':
+            in_double = True
+            buf.append(c)
+            i += 1
+            continue
+
+        two = command[i:i + 2]
+
+        if two == '&&':
+            seg = ''.join(buf).strip()
+            if seg:
+                segments.append((pending_op, seg))
+            buf = []
+            pending_op = '&&'
+            i += 2
+            continue
+
+        if two == '||':
+            seg = ''.join(buf).strip()
+            if seg:
+                segments.append((pending_op, seg))
+            buf = []
+            pending_op = '||'
+            i += 2
+            continue
+
+        if c == '|':
+            seg = ''.join(buf).strip()
+            if seg:
+                segments.append((pending_op, seg))
+            buf = []
+            pending_op = '|'
+            i += 1
+            continue
+
+        if c == ';':
+            seg = ''.join(buf).strip()
+            if seg:
+                segments.append((pending_op, seg))
+            buf = []
+            pending_op = 'seq'
+            i += 1
+            continue
+
+        buf.append(c)
+        i += 1
+
+    seg = ''.join(buf).strip()
+    if seg:
+        segments.append((pending_op, seg))
+
+    return segments
+
+def _pipe_exec(cmd: str, stdin_text: str) -> dict:
+    """
+    Execute *cmd* against *stdin_text* (piped input).
+
+    Pipe-aware: grep, wc, head, tail, sort, uniq, cat (no args).
+    Everything else returns __needs_dispatch so _run_compound can
+    forward it to the full vfs_shell dispatcher.
+    """
+    import re as _re
+    try:
+        args = shlex.split(cmd)
+    except ValueError as e:
+        return {"success": False, "stdout": "", "stderr": f"pipe parse error: {e}", "returncode": 1}
+
+    if not args:
+        return {"success": False, "stdout": "", "stderr": "empty piped command", "returncode": 1}
+
+    cmd_name = args[0].lower()
+    rest = args[1:]
+
+    # ── grep ──────────────────────────────────────────────────────────────
+    if cmd_name == 'grep':
+        flag_args = [a for a in rest if a.startswith('-')]
+        non_flags = [a for a in rest if not a.startswith('-')]
+        if not non_flags:
+            return {"success": False, "stdout": "", "stderr": "grep: missing pattern", "returncode": 1}
+
+        pattern      = non_flags[0]
+        case_i       = any('i' in f for f in flag_args)
+        show_n       = any('n' in f for f in flag_args)
+        invert       = any('v' in f for f in flag_args)
+        context_n    = 0
+
+        for j, a in enumerate(flag_args):
+            if 'C' in a:
+                tail = a[a.index('C') + 1:]
+                if tail.isdigit():
+                    context_n = int(tail)
+                elif j + 1 < len(flag_args) and flag_args[j + 1].isdigit():
+                    context_n = int(flag_args[j + 1])
+
+        try:
+            rx = _re.compile(f"(?i){pattern}" if case_i else pattern)
+        except _re.error:
+            rx = _re.compile(_re.escape(pattern))
+
+        lines = stdin_text.splitlines()
+        matches: list[str] = []
+        for lineno, line in enumerate(lines, 1):
+            hit = bool(rx.search(line))
+            if invert:
+                hit = not hit
+            if hit:
+                prefix = f"{lineno}:" if show_n else ""
+                matches.append(f"{prefix}{line}")
+                if context_n:
+                    start = max(0, lineno - 1 - context_n)
+                    end   = min(len(lines), lineno + context_n)
+                    ctx   = [f"  {lines[k]}" for k in range(start, end) if k != lineno - 1]
+                    matches.extend(ctx)
+                    matches.append("--")
+
+        if matches:
+            return {"success": True, "stdout": '\n'.join(matches), "stderr": "", "returncode": 0}
+        return {"success": False, "stdout": "(no matches)", "stderr": "", "returncode": 1}
+
+    # ── wc ────────────────────────────────────────────────────────────────
+    if cmd_name == 'wc':
+        flag_args = [a for a in rest if a.startswith('-')]
+        lc = len(stdin_text.splitlines())
+        wc = len(stdin_text.split())
+        cc = len(stdin_text)
+        if '-l' in flag_args:
+            return {"success": True, "stdout": str(lc), "stderr": "", "returncode": 0}
+        if '-w' in flag_args:
+            return {"success": True, "stdout": str(wc), "stderr": "", "returncode": 0}
+        if '-c' in flag_args:
+            return {"success": True, "stdout": str(cc), "stderr": "", "returncode": 0}
+        return {"success": True, "stdout": f"{lc:>8} {wc:>8} {cc:>8}", "stderr": "", "returncode": 0}
+
+    # ── head ──────────────────────────────────────────────────────────────
+    if cmd_name == 'head':
+        n_lines, _ = _parse_n_flag(rest, default=10)
+        out = '\n'.join(stdin_text.splitlines()[:n_lines])
+        return {"success": True, "stdout": out, "stderr": "", "returncode": 0}
+
+    # ── tail ──────────────────────────────────────────────────────────────
+    if cmd_name == 'tail':
+        n_lines, _ = _parse_n_flag(rest, default=10)
+        out = '\n'.join(stdin_text.splitlines()[-n_lines:])
+        return {"success": True, "stdout": out, "stderr": "", "returncode": 0}
+
+    # ── sort ──────────────────────────────────────────────────────────────
+    if cmd_name == 'sort':
+        reverse = '-r' in rest
+        sorted_lines = sorted(stdin_text.splitlines(), reverse=reverse)
+        return {"success": True, "stdout": '\n'.join(sorted_lines), "stderr": "", "returncode": 0}
+
+    # ── uniq ──────────────────────────────────────────────────────────────
+    if cmd_name == 'uniq':
+        seen: list[str] = []
+        for line in stdin_text.splitlines():
+            if not seen or seen[-1] != line:
+                seen.append(line)
+        return {"success": True, "stdout": '\n'.join(seen), "stderr": "", "returncode": 0}
+
+    # ── cat passthrough ───────────────────────────────────────────────────
+    if cmd_name == 'cat' and not rest:
+        return {"success": True, "stdout": stdin_text, "stderr": "", "returncode": 0}
+
+    # ── Unknown: dispatch normally via vfs_shell ──────────────────────────
+    return {"success": None, "__needs_dispatch": True, "__cmd": cmd}
+
+def _run_compound(command: str, single_fn) -> dict:
+    """
+    Execute a compound command string, handling all batch operators.
+
+    Operator semantics
+    ------------------
+    seq / ;  : always execute, stdout appended to accumulated output
+    &&       : execute ONLY if previous succeeded (returncode == 0)
+    ||       : execute ONLY if previous failed   (returncode != 0)
+    |        : always execute; previous stdout becomes this cmd's stdin.
+               Intermediate pipe stages are NOT added to accumulated output —
+               only the final stage of each pipe chain contributes to stdout.
+    """
+    segments = _split_compound(command)
+
+    if not segments:
+        return {"success": False, "stdout": "", "stderr": "empty command", "returncode": 1}
+
+    if len(segments) == 1:
+        return single_fn(segments[0][1])
+
+    all_stdouts: list[str] = []
+    last: dict = {"success": True, "stdout": "", "stderr": "", "returncode": 0}
+
+    for idx, (op, cmd) in enumerate(segments):
+
+        if op == '&&' and not last.get('success', False):
+            continue
+
+        if op == '||' and last.get('success', True):
+            continue
+
+        if op == '|':
+            pipe_stdin = last.get('stdout') or ''
+            result = _pipe_exec(cmd, pipe_stdin)
+            if result.get('success') is None and result.get('__needs_dispatch'):
+                result = single_fn(result['__cmd'])
+        else:
+            result = single_fn(cmd)
+
+        last = result
+
+        # Only accumulate stdout when this segment does NOT feed into a pipe.
+        # If the NEXT segment's operator is '|', this segment's output is
+        # stdin for the next stage — do not add it to the visible output.
+        is_last = (idx == len(segments) - 1)
+        next_op = segments[idx + 1][0] if not is_last else None
+        if next_op != '|':
+            stdout = result.get('stdout', '')
+            if stdout:
+                all_stdouts.append(stdout)
+
+    return {
+        'success':    last.get('success', False),
+        'stdout':     '\n'.join(s for s in all_stdouts if s),
+        'stderr':     last.get('stderr', ''),
+        'returncode': last.get('returncode', 0),
+    }
+
 def make_vfs_shell(session: "AgentSessionV2"):
     """
     Factory — returns a vfs_shell closure bound to *session*.
@@ -117,6 +389,11 @@ def make_vfs_shell(session: "AgentSessionV2"):
         command = command.strip()
         if not command:
             return _err("empty command")
+
+        # ── Multi-command batch dispatch ──────────────────────────────────────
+        # Operators: && || | ;   (newline is NOT a separator — content safety)
+        if len(_split_compound(command)) > 1:
+            return _run_compound(command, vfs_shell)
 
         # ── Special-case: echo with shell redirection ──────────────────────
         # Matches:  echo "..." > path   OR   echo "..." >> path
@@ -219,13 +496,19 @@ def make_vfs_shell(session: "AgentSessionV2"):
             if not rest:
                 return _err("cat: missing file operand")
             parts: list[str] = []
+            any_error = False
             for p in rest:
                 r = vfs.read(p)
                 if not r.get("success"):
-                    parts.append(f"cat: {p}: {r.get('error', 'no such file')}")
+                    parts.append(f"cat: {p}: no such file or directory")
+                    any_error = True
                 else:
                     parts.append(r["content"])
-            return _ok("\n".join(parts))
+            stdout = "\n".join(parts)
+            if any_error and len(rest) == 1:
+                # single missing file → failure (enables || fallback)
+                return {"success": False, "stdout": stdout, "stderr": "", "returncode": 1}
+            return _ok(stdout)
 
         # ═══════════════════════════════════════════════════════════════════
         # head [-n N] <path>
@@ -564,6 +847,15 @@ def make_vfs_shell(session: "AgentSessionV2"):
                 vfs._dirty = True
                 msgs.append(f"closed: {p}")
             return _ok("\n".join(msgs))
+
+        elif cmd == "sync":
+            result = vfs.sync_all()
+            if result["success"]:
+                n_synced = len(result.get("synced", []))
+                return _ok(f"synced {n_synced} file(s) to disk")
+            else:
+                errors = "; ".join(result.get("errors", ["unknown error"]))
+                return _err(f"sync errors: {errors}")
 
         # ═══════════════════════════════════════════════════════════════════
         # exec <path> [args...]

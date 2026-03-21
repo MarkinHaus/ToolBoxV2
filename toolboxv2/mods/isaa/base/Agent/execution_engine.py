@@ -1119,7 +1119,7 @@ BEISPIELE:
         if ctx is None:
             ctx = ExecutionContext()
 
-        if hasattr(self.agent, 'amd') and hasattr(self.agent.amd, 'context_config'):
+        if not is_resume and hasattr(self.agent, 'amd') and hasattr(self.agent.amd, 'context_config'):
             ctx.context_config = self.agent.amd.context_config
 
         # Track active execution

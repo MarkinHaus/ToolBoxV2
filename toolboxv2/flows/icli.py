@@ -67,10 +67,15 @@ from toolboxv2 import init_cwd, tb_root_dir
 from prompt_toolkit import print_formatted_text, HTML
 from toolboxv2.mods.isaa.CodingAgent.coder import CoderAgent
 import sys
-if sys.platform == "win32":
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    # sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+import sys
+
+def ensure_utf8_stdout():
+    if sys.platform == "win32" and "pytest" not in sys.modules:
+        try:
+            # Reconfigure existiert ab Python 3.7 und ist 100% sicher!
+            sys.stdout.reconfigure(encoding='utf-8')
+        except AttributeError:
+            pass
 
 
 """
@@ -170,10 +175,13 @@ def _tool_result_info(name: str, result_raw: str) -> tuple[bool, str]:
     for key in ("message", "info", "path", "error"):
         if key in r:
             return success, _short(str(r[key]), 35)
-    return success, ""
+
+    if not r:
+        return True, ""
+    return success, _short(str(r), 38)
 
 
-# ── Data model ────────────────────────────────────────────────────────────────
+    # ── Data model ────────────────────────────────────────────────────────────────
 
 @dataclass
 class IterView:

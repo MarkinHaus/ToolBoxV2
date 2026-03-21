@@ -199,7 +199,7 @@ class ManifestLoader:
             raise ValueError("No manifest to save. Load or create one first.")
 
         # Convert to dict, excluding None values
-        data = manifest.model_dump(exclude_none=True, exclude_unset=False)
+        data = manifest.model_dump(mode="json", exclude_none=True, exclude_unset=False)
 
         # Add header comment
         yaml_content = self._generate_yaml_with_comments(data)
@@ -233,7 +233,7 @@ class ManifestLoader:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 '''
-        yaml_str = yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        yaml_str = yaml.safe_dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
         return header + yaml_str
 
     def validate(self) -> tuple[bool, list[str]]:

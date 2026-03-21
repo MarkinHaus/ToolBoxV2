@@ -29,20 +29,25 @@ import sys
 import os
 
 # ─── Windows: Binary-Modus auf stdin/stdout ───────────────────────────────────
-if sys.platform == "win32":
-    import msvcrt
-    msvcrt.setmode(sys.stdin.fileno(),  os.O_BINARY)
-    msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
+# ✅ RICHTIG: In eine Setup-Funktion packen
+_PROTOCOL_STDOUT = None
 
-# ─── Protokoll-Pipe sichern VOR toolboxv2-Imports ────────────────────────────
-# toolboxv2.get_app() ruft print() auf → "System$main-...: Infos:" landet auf
-# fd 1 → Node.js/Chrome liest 'S' (0x53) als Length-Header → 1,4 Mrd. Bytes erwartet → Timeout
-_proto_fd = os.dup(sys.stdout.fileno())
-_PROTOCOL_STDOUT = os.fdopen(_proto_fd, 'wb', buffering=0)
 
-# fd 1 auf OS-Ebene auf stderr umleiten (auch C-Extensions/urllib3/litellm)
-os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
-sys.stdout = sys.stderr
+def setup_native_messaging_streams():
+    global _PROTOCOL_STDOUT
+    if _PROTOCOL_STDOUT is not None:
+        return  # Bereits initialisiert
+
+    if sys.platform == "win32":
+        import msvcrt
+        msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
+        msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
+
+    _proto_fd = os.dup(sys.stdout.fileno())
+    _PROTOCOL_STDOUT = os.fdopen(_proto_fd, 'wb', buffering=0)
+
+    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    sys.stdout = sys.stderr
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
 from pathlib import Path
@@ -76,7 +81,10 @@ def read_message() -> Optional[Dict]:
 
 def send_message(data: Dict) -> None:
     """Sendet eine Native-Messaging-Antwort über den gesicherten Protokoll-fd."""
+    global _PROTOCOL_STDOUT
     encoded = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    if _PROTOCOL_STDOUT is None:
+        setup_native_messaging_streams()
     _PROTOCOL_STDOUT.write(struct.pack("@I", len(encoded)))
     _PROTOCOL_STDOUT.write(encoded)
     _PROTOCOL_STDOUT.flush()

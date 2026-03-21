@@ -1,73 +1,61 @@
-# Welcome to ToolBoxV2 🧰
+# ToolBoxV2
+
+A flexible modular framework for tools, functions, and complete applications — deployable locally, on the web, or as a desktop/mobile app.
 
 [![PyPI Version](https://img.shields.io/pypi/v/ToolBoxV2.svg)](https://pypi.python.org/pypi/ToolBoxV2)
-[![PyUp](https://pyup.io/repos/github/MarkinHaus/ToolBoxV2/shield.svg)](https://pyup.io/repos/github/MarkinHaus/ToolBoxV2)
-[![Donate](https://img.shields.io/badge/Donate-Buy%20me%20a%20coffee-yellowgreen.svg)](https://www.buymeacoffee.com/markinhaus) <!-- Added donate badge for consistency -->
-
-**ToolBoxV2 is a flexible, modular framework designed for creating and managing a wide range of tools, functions, and complete applications. It supports deployment locally, on the web, or as cross-platform desktop/mobile applications.**
-
-At its core, ToolBoxV2 integrates a Python backend with a Rust server and a Tauri-based UI, offering a powerful and versatile development experience.
-
--   **Free software:** Custom License
--   **Officel Web page:** <https://simplecore.app/>
--   **GitHub Repository:** <https://github.com/MarkinHaus/ToolBoxV2>
+[![GitHub](https://img.shields.io/badge/GitHub-ToolBoxV2-181717?logo=github)](https://github.com/MarkinHaus/ToolBoxV2)
 
 ---
 
-## Key Goals & Features
+## Architecture
 
-ToolBoxV2 aims to simplify the development and usage of digital tools by:
+```
+                    ┌─────────────┐
+                    │    Nginx    │
+                    │ (Load Bal., │
+                    │ Rate Limit) │
+                    └──────┬──────┘
+                           │
+         ┌─────────────────┼─────────────────┐
+         │                 │                 │
+         ▼                 ▼                 ▼
+  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+  │ HTTP Worker │   │ HTTP Worker │   │ WS Worker   │
+  │  (WSGI)     │   │  (WSGI)     │   │ (asyncio)   │
+  └──────┬──────┘   └──────┬──────┘   └──────┬──────┘
+         └────────────┬────┴─────────────────┘
+                      │
+               ┌──────▼──────┐
+               │  ZeroMQ     │
+               │ Event Broker│
+               └──────┬──────┘
+                      │
+               ┌──────▼──────┐
+               │ ToolBoxV2   │
+               │ App Instance│
+               └─────────────┘
+```
 
-*   **🔌 Modularity:** Build applications from reusable Python modules (`mods`) and utilities (`utils`).
-*   **⚙️ Automation:** Facilitate automation of tasks through CLI interactions and programmable APIs.
-*   **🌐 Cross-Platform Interfaces:**
-    *   Develop **Desktop Applications** using Tauri (Rust + Web UI).
-    *   Create **Web Applications** with the `tbjs` frontend framework.
-    *   Interact via a robust **Command Line Interface (CLI)**.
-*   **🚀 Performance & Safety:** Leverage Rust for backend server components (Actix) and Python for scripting and application logic.
-*   **🧩 Extensibility:** Easily create and integrate new functions, tools, or full mini-applications.
-*   **System Independence:** Strives to make applications and tools runnable across different operating systems.
-*   **Unified Development:** Provides a cohesive environment for Python, Rust, and web technologies.
+## Key Components
+
+| Component | Description |
+|-----------|-------------|
+| **Python Backend** | Core library with modular 4-layer architecture |
+| **Worker System** | WSGI/async workers via ZeroMQ IPC |
+| **CloudM** | Auth, user data, mod management, folder sync |
+| **ISAA** | Multi-agent AI framework (FlowAgent, ExecutionEngine) |
+| **tbjs + Tauri** | Cross-platform web/desktop UI |
+| **TB Registry** | Package registry for mods and artifacts |
+| **LLM Gateway** | OpenAI-compatible self-hosted gateway (Ollama) |
+
+## Quick Navigation
+
+- **New here?** → [Getting Started](foundations/quickstart.md)
+- **Developer?** → [4-Layer Architecture](devdocs/dev_architecture.md) · [Creating a Mod](devdocs/dev_mod_creation.md)
+- **Auth & Users?** → [CloudM Overview](mods/CloudM/index.md)
+- **AI Agents?** → [ISAA Framework](mods/isaa/README.md)
+- **Self-hosting?** → [Server Guide](guides/howto_server.md)
 
 ---
 
-## Getting Started
-
-*   **Installation:**
-    For detailed instructions on how to install the core Python library or set up the full-stack development environment, please see the **[Installation Guide](./installation.md)**.
-    ```bash
-    # Quick install for the Python package
-    pip install ToolBoxV2
-    ```
-
-*   **Developer Guide:**
-    To learn how to create modules, use the `App` class, and interact with the CLI, explore the full **[Developer Documentation](https://markinhaus.github.io/ToolBoxV2/)**. <!-- Link to your main docs site -->
-
-*   **Explore the Code:**
-    Dive into the **[GitHub Repository](https://github.com/MarkinHaus/ToolBoxV2)** to see the project structure and contribute.
-
----
-
-## Example Use Cases
-
-ToolBoxV2 can be used for:
-*   Personal productivity tools (calendars, note-takers).
-*   Development utilities and automation scripts.
-*   Custom internal business applications.
-*   Interactive data processing and visualization tools.
-*   And much more!
-
----
-
-## Account Management
-
-For detailed information on how to manage user accounts, please see the [Account Management](account_management.md) documentation.
-## p2p [p2p_rpc_protocol.md](p2p_rpc_protocol.md)
-
-## Credits
-
-This package was created with inspiration from project structures like those generated by [Cookiecutter](https://github.com/cookiecutter/cookiecutter) and templates such as [giswqs/pypackage](https://github.com/giswqs/pypackage).
-
-# The stack [stack.md](stack.md)
----
-© 2022–2025 Markin Hausmanns – All rights reserved.
+© 2022–2025 Markin Hausmanns — [GitHub](https://github.com/MarkinHaus/ToolBoxV2) · [Issues](https://github.com/MarkinHaus/ToolBoxV2/issues) · [PyPI](https://pypi.org/project/ToolBoxV2)

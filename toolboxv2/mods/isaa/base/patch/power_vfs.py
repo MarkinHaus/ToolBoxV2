@@ -642,6 +642,10 @@ def search_vfs(
 
     def should_include(file_path: str, filename: str) -> bool:
         """Prüft ob Datei durchsucht werden soll"""
+
+        if filename in ["vfs_guide.md"]:
+            return False
+
         # Extension filter
         if file_extensions:
             ext = os.path.splitext(filename)[1].lower()
@@ -798,6 +802,9 @@ def grep_vfs(
             continue
 
         if not fnmatch.fnmatch(vfs_file.filename, file_pattern):
+            continue
+
+        if vfs_file.filename in ["vfs_guide.md"]:
             continue
 
         try:

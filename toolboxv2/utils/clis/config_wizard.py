@@ -329,12 +329,15 @@ def wizard_workers_settings(manifest_data: Dict[str, Any]) -> Dict[str, Any]:
     workers = manifest_data.get("workers", {})
 
     # HTTP Worker
-    http = workers.get("http", {})
-    http["enabled"] = prompt_bool("Enable HTTP worker?", http.get("enabled", True))
-    if http["enabled"]:
-        http["instances"] = int(prompt_input("HTTP worker instances", str(http.get("instances", 2))))
-        http["port"] = int(prompt_input("HTTP port", str(http.get("port", 5000))))
-    workers["http"] = http
+    http_s = workers.get("http", [{}])
+    w = []
+    for http in http_s:
+        http["enabled"] = prompt_bool("Enable HTTP worker?", http.get("enabled", True))
+        if http["enabled"]:
+            http["instances"] = int(prompt_input("HTTP worker instances", str(http.get("instances", 2))))
+            http["port"] = int(prompt_input("HTTP port", str(http.get("port", 5000))))
+        w.append(http)
+    workers["http"] = w
 
     # WebSocket Worker
     ws = workers.get("ws", {})
@@ -681,5 +684,7 @@ def run_config_wizard(root_dir: Optional[Path] = None) -> int:
         return 1
     except Exception as e:
         print()
+        import traceback
+        traceback.print_exc()
         print_status(f"Error: {e}", "error")
         return 1

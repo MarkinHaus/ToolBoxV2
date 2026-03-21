@@ -478,6 +478,34 @@
             </div>
 
             <div class="settings-section">
+                <h4>Gesten-Steuerung (Maus & Touch)</h4>
+                <div style="margin-bottom: 10px;">
+                    <label style="display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer;">
+                        <input type="checkbox" id="gesture-master-toggle" class="toggle-checkbox" style="display: block;">
+                        Gesten-Engine aktivieren
+                    </label>
+                </div>
+
+                <div id="gesture-options-container" style="padding-left: 24px; border-left: 2px solid rgba(255,255,255,0.1);">
+                    <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
+                        <label><input type="checkbox" id="gesture-mouse-toggle"> 🖱️ Maus (Rechtsklick + Ziehen)</label>
+                        <label><input type="checkbox" id="gesture-touch-toggle"> 👆 Touch (2 Finger)</label>
+                    </div>
+
+                    <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
+                        <label><input type="checkbox" id="gesture-nav-toggle"> ⬅️/➡️ Wischen für Zurück/Vor</label>
+                        <label><input type="checkbox" id="gesture-scroll-toggle"> ⬆️/⬇️ Wischen zum Scrollen</label>
+                    </div>
+
+                    <div style="margin-top: 10px;">
+                        <label style="display: block; margin-bottom: 4px;">Empfindlichkeit (Distanz): <span id="gesture-sens-value">100</span>px</label>
+                        <input type="range" id="gesture-sensitivity-slider" min="30" max="250" value="100" style="width: 100%;">
+                        <small style="color: #aaa;">(Geringerer Wert = reagiert schneller/empfindlicher)</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-section">
                 <h4>Authentication</h4>
                 <div id="authStatus" class="auth-status">
                     <span class="status-dot"></span>
