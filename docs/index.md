@@ -1,6 +1,6 @@
 # ToolBoxV2
 
-A flexible modular framework for tools, functions, and complete applications — deployable locally, on the web, or as a desktop/mobile app.
+A flexible modular framework for tools, functions, and complete applications, deployable locally, on the web, or as a desktop/mobile app.
 
 [![PyPI Version](https://img.shields.io/pypi/v/ToolBoxV2.svg)](https://pypi.python.org/pypi/ToolBoxV2)
 [![GitHub](https://img.shields.io/badge/GitHub-ToolBoxV2-181717?logo=github)](https://github.com/MarkinHaus/ToolBoxV2)
@@ -9,31 +9,17 @@ A flexible modular framework for tools, functions, and complete applications —
 
 ## Architecture
 
-```
-                    ┌─────────────┐
-                    │    Nginx    │
-                    │ (Load Bal., │
-                    │ Rate Limit) │
-                    └──────┬──────┘
-                           │
-         ┌─────────────────┼─────────────────┐
-         │                 │                 │
-         ▼                 ▼                 ▼
-  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
-  │ HTTP Worker │   │ HTTP Worker │   │ WS Worker   │
-  │  (WSGI)     │   │  (WSGI)     │   │ (asyncio)   │
-  └──────┬──────┘   └──────┬──────┘   └──────┬──────┘
-         └────────────┬────┴─────────────────┘
-                      │
-               ┌──────▼──────┐
-               │  ZeroMQ     │
-               │ Event Broker│
-               └──────┬──────┘
-                      │
-               ┌──────▼──────┐
-               │ ToolBoxV2   │
-               │ App Instance│
-               └─────────────┘
+```mermaid
+flowchart TD
+    Nginx["Nginx\n(Load Bal., Rate Limit)"]
+
+    Nginx --> W1["HTTP Worker\n(WSGI)"]
+    Nginx --> W2["HTTP Worker\n(WSGI)"]
+    Nginx --> W3["WS Worker\n(asyncio)"]
+
+    W1 & W2 & W3 --> ZMQ["ZeroMQ\nEvent Broker"]
+
+    ZMQ --> TB["ToolBoxV2\nApp Instance"]
 ```
 
 ## Key Components

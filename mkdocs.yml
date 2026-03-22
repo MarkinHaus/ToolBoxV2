@@ -75,10 +75,21 @@ plugins:
 # ---------------------------------------------------------------------------
 
 nav:
-  - Home: index.md
+  - Home:
+    - start : index.md
+    - Getting Started : new/analysis/installation/installation.md
+    - How-To Guides : guides/howto_consumer.md
+    - CloudM : mods/CloudM/index.md
+    - ISAA : mods/isaa/README.md
+    - Module Development : devdocs/dev_architecture.md
+    - Technical Reference : workers/index.md
+    - API Reference : core/toolboxv2.md
+    - Frontend & Interfaces : core/tbjs.md
+    - Infrastructure : registry/index.md
+    - Misc : new/old_docs/obsidian_setup.md
 
   # ── GETTING STARTED ───────────────────────────────────────────────────────
-  - "🚀 Getting Started":
+  - "Getting Started":
       - Installation: new/analysis/installation/installation.md
       - Quickstart: foundations/quickstart.md
       - First Run & Profile: foundations/first_run.md
@@ -88,7 +99,7 @@ nav:
       - Onboarding: core/onboarding.md
 
   # ── HOW-TO GUIDES ─────────────────────────────────────────────────────────
-  - "📖 How-To Guides":
+  - "How-To Guides":
       - For Consumers: guides/howto_consumer.md
       - For Server Admins: guides/howto_server.md
       - For Developers: guides/howto_developer.md
@@ -97,7 +108,7 @@ nav:
       - ISAA Host CLI (icli): flows/icli/howto.md
 
   # ── CLOUDM ────────────────────────────────────────────────────────────────
-  - "☁️ CloudM":
+  - "CloudM":
       - Overview: mods/CloudM/index.md
       - Auth System (OAuth2 / Passkeys / JWT): mods/CloudM/auth.md
       - Login System (CLI + Web Sessions): mods/CloudM/login_system.md
@@ -107,7 +118,7 @@ nav:
       - Dashboards (Admin + User): mods/CloudM/dashboards.md
 
   # ── ISAA AGENT FRAMEWORK ──────────────────────────────────────────────────
-  - "🤖 ISAA Agent Framework":
+  - "ISAA Agent Framework":
       - Overview: mods/isaa/README.md
       - Full Reference: core/isaa.md              # TODO: Update nach Quelldatei-Upload
       - "Getting Started":
@@ -143,7 +154,7 @@ nav:
           - Production Setup: mods/isaa/08_EXAMPLES/06_PRODUCTION_SETUP.md
 
   # ── MODULE DEVELOPMENT ────────────────────────────────────────────────────
-  - "🏗️ Module Development":
+  - "Module Development":
       - 4-Layer Architecture: devdocs/dev_architecture.md
       - Creating a Mod: devdocs/dev_mod_creation.md
       - Module Creation Guide: core/module_creation_guide.md   # Promoted: aktuell und vollstaendig
@@ -154,7 +165,7 @@ nav:
       - Coding Guidelines: core/toolbox_guidelines.md
 
   # ── TECHNICAL REFERENCE ───────────────────────────────────────────────────
-  - "🔧 Technical Reference":
+  - "Technical Reference":
       - Worker System: workers/index.md
       - Manifest Schema: manifest/ref_manifest.md
       - Database Modes (LC/LR/RR/CB): storage/ref_database.md
@@ -168,11 +179,11 @@ nav:
       - Logging & Observability: core/logs.md
 
   # ── API REFERENCE ─────────────────────────────────────────────────────────
-  - "📐 API Reference":
+  - "API Reference":
       - toolboxv2 Core: core/toolboxv2.md                      # Promoted: mkdocstrings, valide
 
   # ── FRONTEND & INTERFACES ─────────────────────────────────────────────────
-  - "🌐 Frontend & Interfaces":
+  - "Frontend & Interfaces":
       - TBjs Framework: core/tbjs.md
       - Tauri App Architecture: core/TauriApp_Architecture.md
       - P2P RPC Protocol: core/p2p_rpc_protocol.md
@@ -180,12 +191,12 @@ nav:
       - tb_browser Extension: tb_browser/index.md
 
   # ── INFRASTRUCTURE ────────────────────────────────────────────────────────
-  - "⚙️ Infrastructure":
+  - "Infrastructure":
       - TB Registry: registry/index.md
       - LLM Gateway: llm_gateway/index.md
 
   # ── MISCELLANEOUS ─────────────────────────────────────────────────────────
-  - "ℹ️ Misc":
+  - "Misc":
       - Changelog: core/changelog.md
       - Contributing: new/analysis/installation/contributing.md
       - Simplecore Analysis: new/old_docs/simplecore_analysis_report.md

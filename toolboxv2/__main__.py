@@ -18,31 +18,22 @@ load_dotenv()
 
 import os
 import sys
-import io
 
-# Nur da anwenden, wo es wirklich gebraucht wird:
-try:
-    with redirect_stdout(io.StringIO()):
+from toolboxv2 import tb_root_dir, profile_code, _feature_enabled
+from toolboxv2.utils.system.feature_manager import FeatureManager
+from toolboxv2.flows import flows_dict as flows_dict_func
+from toolboxv2.setup_helper import run_command
+from toolboxv2.utils import get_app
+from toolboxv2.utils.clis.db_cli_manager import cli_db_runner
+from toolboxv2.utils.clis.user_manager import main as user_manager_main
+from toolboxv2.utils.clis.tb_lang_cli import cli_tbx_main
+from toolboxv2.utils.clis.tcm_p2p_cli import cli_tcm_runner
+from toolboxv2.utils.extras.Style import Spinner, Style
+from toolboxv2.utils.system import CallingObject, get_state_from_app
+from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
+from toolboxv2.utils.system.getting_and_closing_app import a_save_closing_app
+from .utils.toolbox import App as TbApp
 
-        from toolboxv2 import tb_root_dir, profile_code, _feature_enabled
-        from toolboxv2.utils.system.feature_manager import FeatureManager
-        from toolboxv2.flows import flows_dict as flows_dict_func
-        from toolboxv2.setup_helper import run_command
-        from toolboxv2.tests.a_util import async_test
-        from toolboxv2.utils import get_app
-        from toolboxv2.utils.clis.db_cli_manager import cli_db_runner
-        from toolboxv2.utils.clis.user_manager import main as user_manager_main
-        from toolboxv2.utils.clis.tb_lang_cli import cli_tbx_main
-        from toolboxv2.utils.clis.tcm_p2p_cli import cli_tcm_runner
-        from toolboxv2.utils.extras.Style import Spinner, Style
-        from toolboxv2.utils.system import CallingObject, get_state_from_app
-        from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
-        from toolboxv2.utils.system.getting_and_closing_app import a_save_closing_app
-        from .utils.toolbox import App as TbApp
-
-except ImportError as e:
-    print(e)
-    sys.exit(1)
 # ── WEB-Feature: workers, proxy, dashboard ────────────────────────────────────
 _WEB_AVAILABLE = False
 cli_worker_manager = None
@@ -1194,7 +1185,7 @@ def run_tests(test_path, args=None, cwd=None, venv=None):
     else:
         python = sys.executable
 
-    command = [python, "-m", "pytest", test_path, "--import-mode=importlib"] + args
+    command = [python, "-m", "pytest", test_path] + args
 
     try:
         result = subprocess.run(

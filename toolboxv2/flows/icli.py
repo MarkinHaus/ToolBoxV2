@@ -1700,6 +1700,914 @@ def load_docs_feature(fm):
 
     fm.add_feature("docs", activation_f=enable, deactivation_f=disable)
 
+def load_autodoc_feature(fm):
+    """AutoDoc: findet getesteten, undokumentierten Code → schreibt 2-Part Docs."""
+    from toolboxv2.mods.isaa.base.chain.chain_tools import ChainStore, StoredChain
+    from toolboxv2 import get_app, tb_root_dir
+    import ast, re
+
+    tools_set = [None]
+
+    def enable(agent):
+
+        async def tb_find_tested_symbols(query: str = "") -> dict:
+            """
+            Findet Code-Elemente die getestet sind und noch keine/schlechte Doku haben.
+            Filtert: hat test_* Funktion irgendwo im Repo.
+            Gibt zurück: {candidates: [{name, file, type, signature, has_doc}]}
+            """
+            from toolboxv2.utils.extras.mkdocs import DocsSystem
+            try:
+                system: DocsSystem = agent._autodoc_system
+            except AttributeError:
+                return {"error": "docs feature not enabled — run /feature enable docs first"}
+
+            # 1. Suggestions holen (undokumentiert)
+            raw = await system.get_suggestions(max_suggestions=60)
+            undoc = {s["element"]: s for s in raw.get("suggestions", [])
+                     if s.get("type") == "missing_docs"}
+
+            # 2. Test-Dateien scannen — welche Namen tauchen in test_* auf
+            test_names: set[str] = set()
+            test_roots = list(tb_root_dir.rglob("test_*.py")) + list(tb_root_dir.rglob("*_test.py"))
+            for tf in test_roots[:40]:
+                try:
+                    src = tf.read_text(encoding="utf-8", errors="ignore")
+                    # Alle Identifier die getestet werden (call-Namen)
+                    for m in re.finditer(r'\b([A-Za-z_][A-Za-z0-9_]+)\s*\(', src):
+                        test_names.add(m.group(1))
+                except Exception:
+                    pass
+
+            # 3. Schnittmenge: undokumentiert UND getestet
+            candidates = []
+            for name, meta in undoc.items():
+                if name in test_names or (query and query.lower() in name.lower()):
+                    candidates.append({
+                        "name": name,
+                        "file": meta.get("file", ""),
+                        "type": meta.get("element_type", ""),
+                    })
+
+            # Optional: query filtert zusätzlich
+            if query and not candidates:
+                # Fallback: alle undokumentierten die query enthalten
+                for name, meta in undoc.items():
+                    if query.lower() in name.lower():
+                        candidates.append({
+                            "name": name,
+                            "file": meta.get("file", ""),
+                            "type": meta.get("element_type", ""),
+                        })
+
+            return {"candidates": candidates[:20], "total_undoc": len(undoc),
+                    "total_tested": len(test_names)}
+
+        async def tb_fetch_code_for_doc(query: str) -> dict:
+            """
+            Holt Code-Element + Kontext für die Dokumentation.
+            Input: name oder 'name::file'.
+            Gibt zurück: {name, signature, code, docstring, file, related_elements}
+            """
+            from toolboxv2.utils.extras.mkdocs import DocsSystem
+            try:
+                system: DocsSystem = agent._autodoc_system
+            except AttributeError:
+                return {"error": "docs feature not enabled"}
+
+            # Parse input
+            if "::" in query:
+                name, file_hint = query.split("::", 1)
+            else:
+                name, file_hint = query.strip(), None
+
+            result = await system.lookup_code(
+                name=name.strip(),
+                file_path=file_hint,
+                include_code=True,
+                max_results=3,
+            )
+            elements = result.get("results", [])
+            if not elements:
+                return {"error": f"Element '{name}' not found in index"}
+
+            best = elements[0]
+            ctx = await system.get_task_context(
+                files=[best["file"]],
+                intent=f"document {best['name']} {best['type']}"
+            )
+            deps = ctx.get("result", {}).get("context_graph", {})
+
+            return {
+                "name": best["name"],
+                "type": best["type"],
+                "signature": best["signature"],
+                "code": best.get("code", "")[:3000],
+                "docstring": best.get("docstring", ""),
+                "file": best["file"],
+                "upstream": deps.get("upstream_dependencies", [])[:5],
+                "downstream": deps.get("downstream_usages", [])[:5],
+            }
+
+        async def tb_write_doc(query: str) -> dict:
+            """
+            Schreibt eine fertige 2-Part Dokumentation ins Docs-System.
+            Input-Format (JSON-String):
+            {
+              "name": "FunctionName",
+              "file_path": "api/my_module.md",  (relativ zu docs_root)
+              "part1": "## How to Use\\n...examples...",
+              "part2": "## How it Works\\n...internals..."
+            }
+            Gibt zurück: {status, path}
+            """
+            from toolboxv2.utils.extras.mkdocs import DocsSystem
+            try:
+                system: DocsSystem = agent._autodoc_system
+            except AttributeError:
+                return {"error": "docs feature not enabled"}
+
+            try:
+                import json as _json
+                # Robustes Parsing: JSON direkt oder aus Markdown-Codeblock
+                raw = query.strip()
+                if raw.startswith("```"):
+                    raw = raw.split("```")[1]
+                    if raw.startswith("json"):
+                        raw = raw[4:]
+                data = _json.loads(raw.strip())
+            except Exception as e:
+                return {"error": f"Invalid JSON input: {e}. Provide {{name, file_path, part1, part2}}"}
+
+            name      = data.get("name", "unknown")
+            file_path = data.get("file_path") or f"api/{name.lower()}.md"
+            part1     = data.get("part1", "")
+            part2     = data.get("part2", "")
+
+            if not part1 or not part2:
+                return {"error": "Both part1 (How to Use) and part2 (How it Works) are required"}
+
+            content = (
+                f"# {name}\n\n"
+                f"{part1.strip()}\n\n"
+                "---\n\n"
+                f"{part2.strip()}\n"
+            )
+
+            result = await system.write(
+                action="create_file",
+                file_path=file_path,
+                content=content,
+            )
+            if result.get("error"):
+                # File exists → update via add_section
+                result = await system.write(
+                    action="update_section",
+                    section_id=f"{Path(file_path).name}#{name}",
+                    content=content,
+                )
+            return {"status": result.get("status", "done"), "path": file_path, "name": name}
+
+        async def tb_doc_attach_system(query: str = "") -> dict:
+            """Intern: hängt DocsSystem an den Agent (lazy init). Gibt Status zurück."""
+            from toolboxv2.utils.extras.mkdocs import DocsSystem
+            from toolboxv2 import tb_root_dir
+            if hasattr(agent, "_autodoc_system"):
+                return {"status": "already_attached"}
+            try:
+                docs_dir = tb_root_dir.parent / "docs"
+                docs_dir.mkdir(exist_ok=True)
+                system = DocsSystem(
+                    project_root=tb_root_dir,
+                    docs_root=docs_dir,
+                    include_dirs=["toolboxv2", "flows", "mods", "utils", "docs", "src"],
+                )
+                await system.initialize()
+                agent._autodoc_system = system
+                return {"status": "ok", "docs_root": str(docs_dir)}
+            except Exception as e:
+                return {"status": "error", "error": str(e)}
+
+        tools = [
+            {"tool_func": tb_doc_attach_system,   "name": "tb_doc_attach_system",
+             "description": "Initialisiert das DocsSystem für AutoDoc (einmalig nötig). Gibt {status} zurück.",
+             "category": ["autodoc", "docs"]},
+            {"tool_func": tb_find_tested_symbols,  "name": "tb_find_tested_symbols",
+             "description": (
+                 "Findet getesteten, undokumentierten Code. "
+                 "Input: optionaler Suchbegriff. "
+                 "Gibt {candidates:[{name,file,type}], total_undoc, total_tested} zurück."
+             ),
+             "category": ["autodoc", "docs"]},
+            {"tool_func": tb_fetch_code_for_doc,   "name": "tb_fetch_code_for_doc",
+             "description": (
+                 "Holt Code + Kontext für ein Element. Input: 'Name' oder 'Name::file.py'. "
+                 "Gibt {name, signature, code, upstream, downstream, file} zurück."
+             ),
+             "category": ["autodoc", "docs"]},
+            {"tool_func": tb_write_doc,             "name": "tb_write_doc",
+             "description": (
+                 "Schreibt 2-Part Dokumentation ins Docs-System. "
+                 'Input: JSON-String mit {name, file_path, part1, part2}. '
+                 "part1 = How to Use (mit Beispielen), part2 = How it Works (Internals). "
+                 "Gibt {status, path} zurück."
+             ),
+             "category": ["autodoc", "docs"]},
+        ]
+        agent.add_tools(tools)
+        tools_set[0] = tools
+
+        # Chains registrieren
+        store = ChainStore(Path(get_app().data_dir) / "chains")
+
+        # ── Chain 1: Unguided ─────────────────────────────────────────────
+        if not store.get("autodoc_unguided"):
+            dsl_unguided = (
+                'tool:tb_doc_attach_system() >> '
+                'tool:tb_find_tested_symbols() >> '
+                '@self("You have a list of undocumented but tested code elements in the \'candidates\' field. '
+                'For each candidate (process ALL of them): '
+                '1. Call tb_fetch_code_for_doc with the element name to get full code + context. '
+                '2. Analyze: signature, code body, upstream dependencies, downstream usages. '
+                '3. Write part1 (## How to Use\\n- clear description\\n- 2-3 concrete usage examples with code). '
+                '4. Write part2 (## How it Works Internally\\n- data flow\\n- key decisions\\n- dependencies). '
+                '5. Call tb_write_doc with JSON: {name, file_path: api/<name_lower>.md, part1, part2}. '
+                'Only document code you fully understand from the source. No speculation. '
+                'After all candidates: summarize what was documented.") '
+            )
+            store.save(StoredChain(
+                id="autodoc_unguided",
+                name="autodoc_unguided",
+                dsl=dsl_unguided,
+                description="Scannt das Repo, findet getesteten undokumentierten Code, schreibt 2-Part Docs.",
+                tags=["autodoc", "docs", "unguided", "batch"],
+                accepted=False,
+                is_valid=True,
+            ))
+
+        # ── Chain 2: Guided ───────────────────────────────────────────────
+        if not store.get("autodoc_guided"):
+            dsl_guided = (
+                'tool:tb_doc_attach_system() >> '
+                'tool:tb_fetch_code_for_doc() >> '
+                '@self("You have the full code + context for one element. '
+                'Write precise 2-part documentation: '
+                'part1 = \'## How to Use\\n\' with: what it does (1 sentence), parameters, return value, '
+                'and 2-3 runnable code examples that cover the main use cases. '
+                'part2 = \'## How it Works Internally\\n\' with: step-by-step data flow, '
+                'key algorithms or design decisions, upstream dependencies called, '
+                'and any important edge cases in the implementation. '
+                'Then call tb_write_doc with JSON {name, file_path, part1, part2}. '
+                'The file_path should be api/<module_name>/<element_name_lower>.md. '
+                'Be precise and factual — only describe what the code actually does.") '
+            )
+            store.save(StoredChain(
+                id="autodoc_guided",
+                name="autodoc_guided",
+                dsl=dsl_guided,
+                description="Dokumentiert ein spezifisches Element (per Name als input). 2-Part Docs: How to Use + Internals.",
+                tags=["autodoc", "docs", "guided", "single"],
+                accepted=False,
+                is_valid=True,
+            ))
+
+        print_status(
+            "AutoDoc enabled.\n"
+            "  Unguided (batch): /chain accept autodoc_unguided  →  /chain run autodoc_unguided\n"
+            "  Guided (single):  /chain accept autodoc_guided   →  /chain run autodoc_guided MyFunctionName",
+            "success",
+        )
+
+    def disable(agent):
+        if tools_set[0]:
+            agent.remove_tools(tools_set[0])
+        if hasattr(agent, "_autodoc_system"):
+            del agent._autodoc_system
+        print_status("AutoDoc disabled.", "success")
+
+    fm.add_feature("autodoc", activation_f=enable, deactivation_f=disable)
+
+def load_autotest_feature(fm):
+    """
+    AutoTest: Versteht Codebase-Semantik (Flows, Side-Effects, Datenfluss)
+    → erstellt präzise Unit-Tests ODER TDD-Zukunftstests.
+    """
+    from toolboxv2.mods.isaa.base.chain.chain_tools import ChainStore, StoredChain
+    from toolboxv2 import get_app, tb_root_dir
+    import ast, re, textwrap
+
+    tools_set = [None]
+
+    def enable(agent):
+
+        # ── Tool 1: Semantik-Analyse ──────────────────────────────────────
+        async def tb_analyze_semantics(query: str) -> dict:
+            """
+            Tiefe Semantik-Analyse eines Code-Elements oder einer Datei.
+            Input: 'Name' oder 'Name::file.py' oder '/pfad/zu/datei.py'
+            Gibt zurück:
+            {
+              name, file, signature, code,
+              side_effects: [str],       # I/O, state mutations, network, fs
+              data_flow: [str],          # Input → Transformation → Output
+              dependencies: [str],       # was wird aufgerufen
+              callers: [str],            # wer ruft es auf
+              existing_tests: [str],     # gefundene test_* Funktionen
+              testable_units: [str],     # was sich gut testen lässt
+              edge_cases: [str],         # None, empty, error paths
+            }
+            """
+            # DocsSystem lazy attach
+            if not hasattr(agent, "_autotest_system"):
+                from toolboxv2.utils.extras.mkdocs import DocsSystem
+                docs_dir = tb_root_dir.parent / "docs"
+                docs_dir.mkdir(exist_ok=True)
+                system = DocsSystem(
+                    project_root=tb_root_dir,
+                    docs_root=docs_dir,
+                    include_dirs=["toolboxv2", "flows", "mods", "utils", "docs", "src"],
+                )
+                await system.initialize()
+                agent._autotest_system = system
+
+            system = agent._autotest_system
+
+            # Parse query
+            if "::" in query:
+                name, file_hint = query.split("::", 1)
+                name = name.strip()
+            elif query.strip().endswith(".py"):
+                name, file_hint = "", query.strip()
+            else:
+                name, file_hint = query.strip(), None
+
+            # Code-Element holen
+            lookup = await system.lookup_code(
+                name=name or None,
+                file_path=file_hint,
+                include_code=True,
+                max_results=1,
+            )
+            elements = lookup.get("results", [])
+            if not elements:
+                return {"error": f"Element '{query}' not found. Check name or add ::file.py"}
+            elem = elements[0]
+
+            code = elem.get("code", "")[:4000]
+            file_path = elem.get("file", "")
+
+            # Kontext-Graph
+            ctx = await system.get_task_context(
+                files=[file_path],
+                intent=f"understand data flow side effects and testable units of {elem['name']}",
+            )
+            graph = ctx.get("result", {}).get("context_graph", {})
+            upstream   = [f"{u['name']} ({u['type']}) in {u['file']}"
+                          for u in graph.get("upstream_dependencies", [])[:8]]
+            downstream = [f"{d['name']} in {d['file']}"
+                          for d in graph.get("downstream_usages", [])[:8]]
+
+            # Statische Analyse: Side-Effects
+            side_effects: list[str] = []
+            se_patterns = [
+                (r'\bopen\s*\(',            "file I/O"),
+                (r'\brequests\.\w+\s*\(',   "HTTP request"),
+                (r'\baiohttp\.',            "async HTTP"),
+                (r'\bsubprocess\.',         "subprocess"),
+                (r'\bos\.(remove|rename|mkdir|makedirs|write)', "filesystem mutation"),
+                (r'\bself\.\w+\s*=',        "instance state mutation"),
+                (r'(?<!\w)print\s*\(',      "stdout side-effect"),
+                (r'\blogging\.\w+\(',       "logging"),
+                (r'\basyncio\.create_task', "async task spawn"),
+                (r'\bsocket\.',             "network socket"),
+                (r'\.execute\s*\(',         "DB/shell execute"),
+                (r'\bjson\.(dump|dumps)\s*\(', "serialization"),
+            ]
+            for pattern, label in se_patterns:
+                if re.search(pattern, code):
+                    side_effects.append(label)
+
+            # Edge-Case Erkennung
+            edge_cases: list[str] = []
+            if re.search(r'\bif\s+not\b|\bif\s+\w+\s+is\s+None', code):
+                edge_cases.append("None / empty guard present")
+            if re.search(r'\bexcept\b', code):
+                edge_cases.append("exception handling present")
+            if re.search(r'\braise\b', code):
+                edge_cases.append("explicit raise — test error path")
+            if re.search(r'\bfor\b.*\bin\b', code):
+                edge_cases.append("iteration — test empty collection")
+            if re.search(r':\s*list\[|:\s*List\[|:\s*dict\[|:\s*Dict\[', code):
+                edge_cases.append("typed collection param — test with wrong type")
+            if re.search(r'\blen\s*\(', code):
+                edge_cases.append("length check — test zero-length input")
+            if re.search(r'\basync\b', code):
+                edge_cases.append("async — needs asyncio.run or pytest-asyncio")
+
+            # Existing tests
+            existing_tests: list[str] = []
+            for tf in list(tb_root_dir.rglob("test_*.py"))[:30]:
+                try:
+                    src = tf.read_text(encoding="utf-8", errors="ignore")
+                    for m in re.finditer(
+                        rf'\bdef\s+(test_\w*{re.escape(elem["name"])}\w*)\s*\(',
+                        src, re.IGNORECASE
+                    ):
+                        existing_tests.append(f"{m.group(1)} in {tf.name}")
+                except Exception:
+                    pass
+
+            # Testable units (public methods/branches)
+            testable_units: list[str] = []
+            try:
+                tree = ast.parse(code)
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        if not node.name.startswith("_"):
+                            args = [a.arg for a in node.args.args if a.arg != "self"]
+                            testable_units.append(
+                                f"{node.name}({', '.join(args[:4])})"
+                            )
+            except SyntaxError:
+                pass
+            if not testable_units:
+                testable_units.append(elem["name"])
+
+            return {
+                "name":           elem["name"],
+                "type":           elem["type"],
+                "file":           file_path,
+                "signature":      elem["signature"],
+                "code":           code,
+                "side_effects":   side_effects or ["none detected"],
+                "data_flow":      [
+                    f"Input: {elem['signature']}",
+                    f"Dependencies called: {', '.join(upstream[:4]) or 'none'}",
+                    f"Used by: {', '.join(downstream[:3]) or 'none known'}",
+                ],
+                "dependencies":   upstream,
+                "callers":        downstream,
+                "existing_tests": existing_tests or ["none found"],
+                "testable_units": testable_units,
+                "edge_cases":     edge_cases or ["no obvious edge cases"],
+            }
+
+        # ── Tool 2: Test-Datei schreiben ──────────────────────────────────
+        async def tb_write_tests(query: str) -> dict:
+            """
+            Schreibt generierte Tests in die korrekte test_*.py Datei.
+            Input: JSON-String mit:
+            {
+              "target_file": "toolboxv2/mods/isaa/base/chain/chain_tools.py",
+              "test_file":   "toolboxv2/tests/test_mods/test_isaa/test_base/test_chain/test_chain_tools.py",  (optional, wird auto-berechnet)
+              "test_code":   "import unittest\\nclass Test...\\n",
+              "mode":        "append" | "create"   (default: append wenn Datei existiert)
+            }
+            Gibt zurück: {status, test_file, tests_added}
+            """
+            import json as _json
+            raw = query.strip()
+            if raw.startswith("```"):
+                raw = "\n".join(raw.split("\n")[1:])
+                if raw.endswith("```"):
+                    raw = raw[:-3]
+            try:
+                data = _json.loads(raw.strip())
+            except Exception as e:
+                return {"error": f"Invalid JSON: {e}"}
+
+            target  = data.get("target_file", "")
+            test_code = data.get("test_code", "").strip()
+            mode    = data.get("mode", "auto")
+
+            if not test_code:
+                return {"error": "test_code is required"}
+
+            # Auto-berechne test_file wenn nicht angegeben
+            if data.get("test_file"):
+                test_path = tb_root_dir / data["test_file"]
+            elif target:
+                # toolboxv2/mods/x/y.py → toolboxv2/tests/mods/test_x_y.py
+                rel = Path(target)
+                parts = [p for p in rel.parts if p not in ("toolboxv2",)]
+                stem  = "_".join(parts).replace(".py", "").replace("/", "_").replace("\\", "_")
+                test_path = tb_root_dir / "tests" / f"test_{stem}.py"
+            else:
+                return {"error": "Either target_file or test_file required"}
+
+            test_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if test_path.exists() and mode != "create":
+                # Append: füge neue Testklassen/Methoden ein, kein Duplikat
+                existing = test_path.read_text(encoding="utf-8")
+                # Extrahiere nur neue class/def Blöcke
+                new_classes = re.findall(
+                    r'^(class\s+Test\w+.*?)(?=^class\s+Test|\Z)',
+                    test_code, re.MULTILINE | re.DOTALL
+                )
+                added = 0
+                for block in new_classes:
+                    class_name = re.match(r'class\s+(\w+)', block)
+                    if class_name and class_name.group(1) not in existing:
+                        existing += "\n\n" + textwrap.dedent(block).strip()
+                        added += 1
+                if added:
+                    test_path.write_text(existing, encoding="utf-8")
+                    status = f"appended {added} new class(es)"
+                else:
+                    status = "no new classes to add (already exists)"
+            else:
+                # Create
+                header = (
+                    f"# Auto-generated by AutoTest Chain\n"
+                    f"# Target: {target}\n"
+                    f"import unittest\n"
+                    f"import asyncio\n\n"
+                )
+                if not test_code.startswith("import"):
+                    test_code = header + test_code
+                test_path.write_text(test_code, encoding="utf-8")
+                status = "created"
+
+            # Zähle test_ Methoden
+            tests_added = len(re.findall(r'^\s+def\s+test_', test_path.read_text(), re.MULTILINE))
+
+            return {
+                "status":      status,
+                "test_file":   str(test_path.relative_to(tb_root_dir)),
+                "tests_added": tests_added,
+            }
+
+        # ── Tool 3: Test-Run ──────────────────────────────────────────────
+        async def tb_run_single_test(query: str) -> dict:
+            """
+            Führt eine einzelne Test-Datei aus (unittest, -x).
+            Input: relativer Pfad zur test_*.py
+            Gibt zurück: {status, passed, failed, output}
+            """
+            import subprocess
+            test_path = tb_root_dir / query.strip()
+            if not test_path.exists():
+                return {"error": f"Test file not found: {query}"}
+            r = subprocess.run(
+                [sys.executable, "-m", "pytest", str(test_path),
+                 "-x", "--tb=short", "-q"],
+                capture_output=True, text=True, timeout=120,
+                cwd=str(tb_root_dir),
+            )
+            out = (r.stdout + r.stderr)[:3000]
+            passed = r.returncode == 0
+            # Zähle passed/failed
+            m_pass = re.search(r'(\d+)\s+passed', out)
+            m_fail = re.search(r'(\d+)\s+failed', out)
+            return {
+                "status":  "pass" if passed else "fail",
+                "passed":  int(m_pass.group(1)) if m_pass else (1 if passed else 0),
+                "failed":  int(m_fail.group(1)) if m_fail else (0 if passed else 1),
+                "output":  out,
+            }
+
+        tools = [
+            {"tool_func": tb_analyze_semantics, "name": "tb_analyze_semantics",
+             "description": (
+                 "Tiefe Semantik-Analyse: Datenfluss, Side-Effects, Abhängigkeiten, "
+                 "Edge-Cases, bestehende Tests, testbare Einheiten. "
+                 "Input: 'Name' oder 'Name::file.py' oder '/pfad/datei.py'."
+             ),
+             "category": ["autotest", "analysis"]},
+            {"tool_func": tb_write_tests,       "name": "tb_write_tests",
+             "description": (
+                 "Schreibt Test-Code in die korrekte test_*.py. "
+                 "Input: JSON {target_file, test_file?, test_code, mode?}. "
+                 "Appended neue Klassen wenn Datei existiert, erstellt sonst neu."
+             ),
+             "category": ["autotest", "write"]},
+            {"tool_func": tb_run_single_test,   "name": "tb_run_single_test",
+             "description": (
+                 "Führt eine test_*.py aus (pytest -x --tb=short). "
+                 "Input: relativer Pfad zur Testdatei. "
+                 "Gibt {status, passed, failed, output} zurück."
+             ),
+             "category": ["autotest", "run"]},
+        ]
+        agent.add_tools(tools)
+        tools_set[0] = tools
+
+        store = ChainStore(Path(get_app().data_dir) / "chains")
+
+        # ── Chain 1: Logic Tests (bestehender Code) ───────────────────────
+        if not store.get("autotest_logic"):
+            dsl_logic = (
+                'tool:tb_analyze_semantics() >> '
+                '@self("You have a deep semantic analysis of a code element. '
+                'Your job: write comprehensive unittest-based tests. '
+                'Rules: '
+                '(1) Use ONLY Python unittest — no pytest fixtures, no pytest.mark. '
+                '(2) Test EVERY testable_unit listed. '
+                '(3) Cover EVERY edge_case listed. '
+                '(4) For each side_effect: use unittest.mock.patch or MagicMock. '
+                '(5) Async functions: use asyncio.run() in setUp or a helper. '
+                '(6) Tests must be deterministic — no random, no sleep, no network. '
+                '(7) Each test method: Arrange → Act → Assert. One assertion focus per test. '
+                '(8) Class name: Test<ElementName>. File: auto-calculated from target file. '
+                'Output ONLY valid JSON: '
+                '{"target_file":"<file>","test_code":"<full python test code>","mode":"auto"} '
+                'No markdown, no explanation outside the JSON.") >> '
+                'tool:tb_write_tests() >> '
+                'tool:tb_run_single_test() >> '
+                '(IS(status==pass) >> '
+                '@self("Tests pass. Summarize: what was tested, coverage areas, any gaps.") % '
+                '@self("Tests FAILED. Analyze: output field. Fix the test code — '
+                'common issues: wrong import path, missing mock, async not awaited. '
+                'Output fixed JSON {target_file, test_code, mode:create} and call tb_write_tests again.") >> '
+                'tool:tb_write_tests() >> '
+                'tool:tb_run_single_test())'
+            )
+            store.save(StoredChain(
+                id="autotest_logic",
+                name="autotest_logic",
+                dsl=dsl_logic,
+                description=(
+                    "Analysiert Datenfluss + Side-Effects → schreibt präzise unittest-Tests "
+                    "→ führt aus → fixt bei Fehler. Input: 'Name' oder 'Name::file.py'."
+                ),
+                tags=["autotest", "unittest", "logic", "existing-code"],
+                accepted=False,
+                is_valid=True,
+            ))
+
+        # ── Chain 2: TDD Future Tests ─────────────────────────────────────
+        if not store.get("autotest_tdd"):
+            dsl_tdd = (
+                'tool:tb_analyze_semantics() >> '
+                '@self("You have a semantic analysis. '
+                'Your job: write TDD tests for PLANNED / NOT-YET-IMPLEMENTED behavior. '
+                'These tests must FAIL NOW and PASS once the feature is implemented. '
+                'Rules: '
+                '(1) Use Python unittest only. '
+                '(2) Read the existing code carefully — identify what is MISSING or INCOMPLETE. '
+                '  Look for: TODOs, NotImplementedError, empty branches, stub returns, '
+                '  missing error handling, undocumented behavior. '
+                '(3) Write tests that describe the INTENDED contract, not the current (broken) state. '
+                '(4) Test method names: test_<feature>_<scenario>_should_<expected>. '
+                '(5) Add a docstring to each test: one sentence describing the intended behavior. '
+                '(6) Mark tests with: self.skipTest(\"TDD: not implemented yet\") '
+                '  ONLY if you cannot even construct the call (missing class/function). '
+                '  Otherwise let them fail naturally. '
+                '(7) Group by behavior area, not by method. '
+                'Output ONLY valid JSON: '
+                '{"target_file":"<file>","test_code":"<full python code>","mode":"auto"} '
+                'No markdown outside JSON.") >> '
+                'tool:tb_write_tests() >> '
+                'tool:tb_run_single_test() >> '
+                '@self("TDD run complete. Report: '
+                'How many tests fail (expected)? '
+                'How many accidentally pass (check if they actually test something meaningful)? '
+                'What exact behaviors do the failing tests define? '
+                'This is the implementation contract.")'
+            )
+            store.save(StoredChain(
+                id="autotest_tdd",
+                name="autotest_tdd",
+                dsl=dsl_tdd,
+                description=(
+                    "TDD: schreibt Zukunfts-Tests für geplantes/fehlendes Verhalten. "
+                    "Tests sollen JETZT FEHLSCHLAGEN und nach Implementierung grün werden. "
+                    "Input: 'Name' oder 'Name::file.py'."
+                ),
+                tags=["autotest", "tdd", "future", "contract"],
+                accepted=False,
+                is_valid=True,
+            ))
+
+        # ── Chain 3: Full-File Coverage ───────────────────────────────────
+        if not store.get("autotest_coverage"):
+            dsl_coverage = (
+                'tool:tb_analyze_semantics() >> '
+                '@self("You have the full semantic picture of a module/file. '
+                'Scan ALL testable_units. For EACH one: '
+                '1. Call tb_analyze_semantics with \'<unit_name>::<file>\' to get granular detail. '
+                '2. Determine: is this unit already tested (check existing_tests)? '
+                '   If yes: check if coverage is complete — are edge_cases covered? '
+                '   If no: write full unittest class for it. '
+                '3. After analyzing all units: '
+                '   Write ONE unified test file covering the entire module. '
+                '   Include: happy path, all edge_cases, all side_effect mocks. '
+                'Output JSON {target_file, test_code, mode:create}.") >> '
+                'tool:tb_write_tests() >> '
+                'tool:tb_run_single_test() >> '
+                '(IS(status==pass) >> '
+                '@self("Coverage complete. List: files created, test count, what is covered.") % '
+                '@self("Some tests fail. Fix imports and mocks. Output corrected JSON.") >> '
+                'tool:tb_write_tests() >> '
+                'tool:tb_run_single_test())'
+            )
+            store.save(StoredChain(
+                id="autotest_coverage",
+                name="autotest_coverage",
+                dsl=dsl_coverage,
+                description=(
+                    "Full-File Coverage: analysiert jede testbare Einheit einer Datei, "
+                    "schreibt ein unified Test-File, führt aus. Input: 'file.py' oder 'Name::file.py'."
+                ),
+                tags=["autotest", "coverage", "full-file"],
+                accepted=False,
+                is_valid=True,
+            ))
+
+        print_status(
+            "AutoTest enabled.\n"
+            "  Logic tests:    /chain accept autotest_logic     →  /chain run autotest_logic MyClass::path/file.py\n"
+            "  TDD future:     /chain accept autotest_tdd       →  /chain run autotest_tdd MyFunction\n"
+            "  Full coverage:  /chain accept autotest_coverage  →  /chain run autotest_coverage path/to/module.py",
+            "success",
+        )
+
+    def disable(agent):
+        if tools_set[0]:
+            agent.remove_tools(tools_set[0])
+        if hasattr(agent, "_autotest_system"):
+            del agent._autotest_system
+        print_status("AutoTest disabled.", "success")
+
+    fm.add_feature("autotest", activation_f=enable, deactivation_f=disable)
+
+def load_autofix_feature(fm):
+    """AutoFix: tb --test -x → self analysiert → 2x CoderAgent parallel → bester Fix → PR."""
+    from toolboxv2.mods.isaa.base.chain.chain_tools import ChainStore, StoredChain
+    from toolboxv2.mods.isaa.CodingAgent.coder import CoderAgent
+    from toolboxv2 import get_app, init_cwd
+    import subprocess, datetime, shutil
+
+    tools_set = [None]
+    _state: dict = {"coder_a": None, "coder_b": None, "project_path": str(init_cwd)}
+
+    def enable(agent):
+        project_path = _state["project_path"]
+
+        async def tb_run_tests(query: str = "") -> dict:
+            """Run tb --test -x. Returns {status, output, error_summary}."""
+            path = query.strip() if query.strip() and Path(query.strip()).is_dir() else project_path
+            try:
+                r = subprocess.run(
+                    [sys.executable, "-m", "toolboxv2", "--test", "--kwargs", "0=-x"],
+                    cwd=path, capture_output=True, text=True, timeout=300,
+                )
+                out = (r.stdout + r.stderr)[:6000]
+                passed = r.returncode == 0
+                summary = ""
+                if not passed:
+                    for line in out.splitlines():
+                        if any(k in line for k in ("FAILED", "ERROR", "assert", "Traceback", "Exception")):
+                            summary += line + "\n"
+                            if len(summary) > 2000:
+                                break
+                return {"status": "pass" if passed else "fail", "output": out, "error_summary": summary}
+            except Exception as e:
+                return {"status": "fail", "output": str(e), "error_summary": str(e)}
+
+        async def tb_coder_fix_a(query: str) -> str:
+            """Fix attempt A: conservative, minimal, targeted change."""
+            coder = CoderAgent(agent, project_path)
+            _state["coder_a"] = coder
+            result = await coder.execute(
+                f"Fix the failing test. Strategy: CONSERVATIVE — smallest possible change, "
+                f"touch only the directly broken code.\n\nAnalysis:\n{query}"
+            )
+            return (
+                f"FIX_A:{'SUCCESS' if result.success else 'FAILED'}\n"
+                f"Files: {result.changed_files}\n{result.message[:800]}"
+            )
+
+        async def tb_coder_fix_b(query: str) -> str:
+            """Fix attempt B: thorough, addresses root cause with full data flow understanding."""
+            coder = CoderAgent(agent, project_path)
+            _state["coder_b"] = coder
+            result = await coder.execute(
+                f"Fix the failing test. Strategy: THOROUGH — trace the full data flow, "
+                f"fix the actual root cause, ensure no regressions.\n\nAnalysis:\n{query}"
+            )
+            return (
+                f"FIX_B:{'SUCCESS' if result.success else 'FAILED'}\n"
+                f"Files: {result.changed_files}\n{result.message[:800]}"
+            )
+
+        async def tb_apply_best_fix(query: str) -> str:
+            """Apply the chosen fix. Input must contain APPLY:A or APPLY:B."""
+            choice = "B" if "APPLY:B" in query.upper() else "A"
+            winner = _state.get(f"coder_{choice.lower()}")
+            loser  = _state.get("coder_b" if choice == "A" else "coder_a")
+            if loser:
+                try: loser.worktree.cleanup()
+                except Exception: pass
+            if not winner:
+                return "ERROR: no coder fix available"
+            try:
+                n = await winner.worktree.apply_back()
+                winner.worktree.cleanup()
+                return f"Applied Fix {choice} ({'git merge' if n == -1 else f'{n} files'}). Repo updated."
+            except Exception as e:
+                return f"Apply failed: {e}"
+
+        async def tb_create_pr(query: str = "") -> str:
+            """Create git branch + commit + PR (gh if available, else push)."""
+            ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            branch = f"autofix/test-fix-{ts}"
+            try:
+                for cmd in [
+                    ["git", "checkout", "-b", branch],
+                    ["git", "add", "-A"],
+                    ["git", "commit", "-m", f"autofix: fix failing tests ({ts})"],
+                ]:
+                    subprocess.run(cmd, cwd=project_path, check=True, capture_output=True)
+                if shutil.which("gh"):
+                    r = subprocess.run(
+                        ["gh", "pr", "create", "--repo", "MarkinHaus/ToolBoxV2",
+                         "--title", f"AutoFix: failing tests {ts}",
+                         "--body", "Automated fix by ISAA AutoFix Chain.",
+                         "--head", branch],
+                        cwd=project_path, capture_output=True, text=True,
+                    )
+                    return f"PR created: {(r.stdout + r.stderr).strip()}"
+                subprocess.run(["git", "push", "origin", branch], cwd=project_path, capture_output=True)
+                return (
+                    f"Branch pushed: {branch}\n"
+                    f"Create PR: https://github.com/MarkinHaus/ToolBoxV2/compare/{branch}"
+                )
+            except subprocess.CalledProcessError as e:
+                stderr = e.stderr.decode() if isinstance(e.stderr, bytes) else str(e.stderr or e)
+                return f"Git error: {stderr}"
+
+        async def tb_report_failure(query: str = "") -> str:
+            """Report that autofix failed after retry — manual intervention needed."""
+            return f"AutoFix FAILED after retry.\nDetails: {str(query)[:600]}\nManual fix required."
+
+        tools = [
+            {"tool_func": tb_run_tests,      "name": "tb_run_tests",
+             "description": "Run tb --test -x in project. Returns dict {status, output, error_summary}.",
+             "category": ["autofix", "testing"]},
+            {"tool_func": tb_coder_fix_a,     "name": "tb_coder_fix_a",
+             "description": "Conservative coder fix (minimal change). Input: analysis text. Output: FIX_A result.",
+             "category": ["autofix", "coder"]},
+            {"tool_func": tb_coder_fix_b,     "name": "tb_coder_fix_b",
+             "description": "Thorough coder fix (root cause). Input: analysis text. Output: FIX_B result.",
+             "category": ["autofix", "coder"]},
+            {"tool_func": tb_apply_best_fix,  "name": "tb_apply_best_fix",
+             "description": "Apply best fix. Input must contain APPLY:A or APPLY:B. Merges to repo, cleans worktrees.",
+             "category": ["autofix", "coder"]},
+            {"tool_func": tb_create_pr,       "name": "tb_create_pr",
+             "description": "Create git branch+commit+PR on MarkinHaus/ToolBoxV2.",
+             "category": ["autofix", "git"]},
+            {"tool_func": tb_report_failure,  "name": "tb_report_failure",
+             "description": "Report autofix failure after re-test. Returns human-readable summary.",
+             "category": ["autofix"]},
+        ]
+        agent.add_tools(tools)
+        tools_set[0] = tools
+
+        # Chain in ChainStore registrieren (idempotent)
+        store = ChainStore(Path(get_app().data_dir) / "chains")
+        chain_id = "autofix_test_fixer"
+        if not store.get(chain_id):
+            dsl = (
+                'tool:tb_run_tests() >> '
+                '(IS(status==pass) >> tool:tb_create_pr() % '
+                '(@self("Analyze this test failure with full depth: examine traceback, '
+                'source of failing assertion, all called functions and their implementations, '
+                'complete data flow end-to-end. Output: 1) Exact root cause  '
+                '2) Affected components  3) Fix strategy A (conservative)  '
+                '4) Fix strategy B (thorough root cause fix)") >> '
+                '(tool:tb_coder_fix_a() + tool:tb_coder_fix_b()) >> '
+                '@self("You have two fix proposals. Evaluate: correctness, invasiveness, '
+                'architectural fit, risk of regression. '
+                'Output exactly: APPLY:A or APPLY:B — then justify in one sentence.") >> '
+                'tool:tb_apply_best_fix() >> '
+                'tool:tb_run_tests() >> '
+                '(IS(status==pass) >> tool:tb_create_pr() % tool:tb_report_failure())))'
+            )
+            store.save(StoredChain(
+                id=chain_id,
+                name="autofix_test_fixer",
+                dsl=dsl,
+                description=(
+                    "Run tb --test -x, deep-analyze failure, generate 2 parallel coder fixes "
+                    "(conservative + thorough), self picks best, re-test, create PR."
+                ),
+                tags=["autofix", "testing", "ci", "coder"],
+                accepted=False,
+                is_valid=True,
+            ))
+        print_status(
+            "AutoFix enabled. Accept + run: /chain accept autofix_test_fixer  then  /chain run autofix_test_fixer",
+            "success",
+        )
+
+    def disable(agent):
+        if tools_set[0]:
+            agent.remove_tools(tools_set[0])
+        print_status("AutoFix disabled.", "success")
+
+    fm.add_feature("autofix", activation_f=enable, deactivation_f=disable)
 
 ALL_FEATURES = {
     "desktop_auto": load_desktop_auto_feature,
@@ -1708,6 +2616,9 @@ ALL_FEATURES = {
     "coder": load_coder_toolkit,
     "chain": load_chain_toolkit,
     "execute": load_execute,
+    "autofix": load_autofix_feature,
+    "autodoc": load_autodoc_feature,
+    "autotest":      load_autotest_feature,
 }
 
 
@@ -2213,6 +3124,111 @@ _help_text = {
 /audio backend <b>       - Set backend (groq/piper/elevenlabs)
 /audio stop              - Stop current playback
     Tip: Add #audio to any message for one‑time audio response
+    """,
+
+    "chain": """/chain list               - Alle gespeicherten Chains auflisten
+/chain show <id|name>    - DSL + Metadaten einer Chain anzeigen
+/chain accept <id|name>  - Chain als sicher markieren (nötig vor erstem Run)
+/chain run <id|name> [input] - Chain direkt ausführen
+/chain edit <id|name>    - DSL interaktiv bearbeiten (setzt accepted zurück)
+/chain delete <id|name>  - Chain löschen
+/chain export <id> <file.json> - Chain als JSON exportieren
+/chain import <file.json> - Chain aus JSON importieren
+
+  Aktivierung:  /feature enable chain
+  Agent-Tools (für LLM):
+    create_validate_chain  - Chain aus DSL erstellen & validieren
+    run_chain              - Gespeicherte Chain ausführen
+    list_auto_get_fitting  - Chains auflisten & passende für Task finden
+
+  DSL-Kurzreferenz:
+    step >> step           - Sequentiell
+    (a + b)                - Parallel
+    (a | fallback)         - Fehlerbehandlung
+    IS(key==val) >> t % f  - Konditional
+    tool:name(arg="val")   - Tool-Step
+    @agent("fokus")        - Agent-Step
+    CF(Model) - "key"      - Pydantic-Format + Extraktion
+    def:fn(x) -> expr      - Custom-Funktion
+    model:Name(f: type)    - Inline Pydantic-Klasse
+    """,
+
+    "autofix": """/feature enable autofix   - AutoFix aktivieren
+/chain accept autofix_test_fixer - Einmalig akzeptieren
+/chain run autofix_test_fixer    - Ausführen (optional: Pfad als input)
+
+  Flow:
+    1. tb --test -x im Projektverzeichnis
+    2. Bei Fehler: self analysiert Traceback + Source tief
+    3. 2x CoderAgent parallel: Fix A (konservativ) + Fix B (Root-Cause)
+    4. self wählt den besseren Fix (APPLY:A / APPLY:B)
+    5. Fix anwenden, re-test
+    6. Bei Erfolg: git branch + commit + PR (gh oder push)
+    7. Bei erneutem Fehler: Report für manuellen Eingriff
+
+  Voraussetzungen:
+    /feature enable chain
+    /feature enable autofix
+    git repo mit remote 'origin'
+    optional: gh CLI für direkten PR
+    """,
+
+    "autodoc": """/feature enable autodoc           - AutoDoc aktivieren (docs feature NICHT nötig)
+/chain accept autodoc_unguided    - Unguided batch einmalig freigeben
+/chain accept autodoc_guided      - Guided single einmalig freigeben
+
+  Unguided (batch — scannt ganzes Repo):
+    /chain run autodoc_unguided
+    → findet getesteten, undokumentierten Code
+    → schreibt für jeden: 2-Part Docs
+
+  Guided (single — du gibst das Target vor):
+    /chain run autodoc_guided MyClassName
+    /chain run autodoc_guided my_function::path/to/file.py
+
+  Docs-Format (immer 2 Parts):
+    Part 1 — How to Use:
+      - Was macht es (1 Satz)
+      - Parameter + Rückgabe
+      - 2-3 konkrete Code-Beispiele
+    Part 2 — How it Works Internally:
+      - Datenfluss Schritt für Schritt
+      - Designentscheidungen
+      - Upstream-Abhängigkeiten
+      - Edge Cases
+
+  Regel: Nur getesteter Code wird dokumentiert.
+         Keine Spekulation — nur was der Code tatsächlich tut.
+    """,
+
+    "autotest": """/feature enable autotest           - AutoTest aktivieren
+
+  3 Chains — alle brauchen Input: 'Name' oder 'Name::path/to/file.py'
+
+  Logic Tests (bestehender Code):
+    /chain accept autotest_logic
+    /chain run autotest_logic ChainStore::toolboxv2/mods/isaa/base/chain/chain_tools.py
+    → Analysiert Datenfluss, Side-Effects, Edge-Cases
+    → Schreibt unittest-Tests, führt aus, fixt bei Fehler
+
+  TDD Future Tests (geplantes Verhalten):
+    /chain accept autotest_tdd
+    /chain run autotest_tdd MyNewFeature::path/module.py
+    → Findet TODOs, Stubs, fehlende Branches
+    → Schreibt Tests die JETZT FEHLSCHLAGEN
+    → Definiert den Implementierungs-Vertrag
+
+  Full-File Coverage:
+    /chain accept autotest_coverage
+    /chain run autotest_coverage path/to/module.py
+    → Analysiert JEDE testbare Einheit der Datei
+    → Schreibt unified Test-File für das gesamte Modul
+
+  Regeln:
+    - Nur Python unittest (kein pytest-spezifisch)
+    - Mocks für alle Side-Effects (I/O, HTTP, subprocess, state)
+    - Async: asyncio.run() oder eigener Event-Loop-Helper
+    - Tests: Arrange → Act → Assert, eine Assertion pro Test
     """,
 }
 
@@ -3849,7 +4865,7 @@ class ISAA_Host:
         d = {
             "/agent": None, "/audio": None, "/coder": None, "/job": None,
             "/mcp": None, "/session": None, "/skill": None, "/task": None,
-            "/tools": None, "/vfs": None, "/feature": None
+            "/tools": None, "/vfs": None, "/feature": None, "/chain": None
         }
 
         # Die spezifischen Hilfe-Kategorien
@@ -3860,6 +4876,10 @@ class ISAA_Host:
             "discord": None,  # Discord Extension Guide
             "keys": None,  # F-Key Referenz
             "shortcuts": None,
+            "chain": None,
+            "autofix": None,
+            "autodoc": None,
+            "autotest": None,
             **{cmd.lstrip("/"): None for cmd in d.keys()}  # Erlaubt /help agent etc.
         }
 
@@ -3951,7 +4971,20 @@ class ISAA_Host:
                 "autowake": {"install": None, "remove": None, "status": None},
                 "dream": {"create": None,"status": None, "live": None},
             },
-
+            "/chain": (lambda _chains: {
+                "list": None,
+                "show": {c.id: None for c in _chains},
+                "accept": {c.id: None for c in _chains if not c.accepted},
+                "delete": {c.id: None for c in _chains},
+                "edit": {c.id: None for c in _chains},
+                "export": {c.id: PathCompleter() for c in _chains},
+                "import": PathCompleter(),
+                "run": {c.id: None for c in _chains if c.accepted and c.is_valid},
+            })((lambda: (lambda store: store.list_all() if store else [])(
+                __import__("toolboxv2.mods.isaa.base.chain.chain_tools", fromlist=["ChainStore"])
+                .ChainStore(Path(self.app.data_dir) / "chains")
+                if (Path(self.app.data_dir) / "chains").exists() else None
+            ))()),
             "/context": {
                 "stats": None,
             },
@@ -4277,6 +5310,9 @@ class ISAA_Host:
         print_box_content("/status          - Dashboard (F5)", "")
         print_box_content("/agent switch    - Agent wechseln", "")
         print_box_content("/tools list      - Tools verwalten", "")
+        print_box_content("/chain list      - Gespeicherte Chains", "")
+        print_box_content("/chain run <id>  - Chain ausführen", "")
+
         print_box_content("F4               - Voice Recording Start/Stop", "")
         print_box_content("F2               - toggel the Live View Overlay.", "")
         print_box_content("F6/F7/F8         - Minimize/Focus/Cancel Agent Tasks", "")
@@ -4284,6 +5320,8 @@ class ISAA_Host:
         print_separator()
         print_box_content("Erweiterte Hilfe:", "info")
         print_box_content("/help all        - Alle Befehle (Referenz)", "")
+        print_box_content("/help chain      - Chain DSL Referenz", "")  # ← NEU
+        print_box_content("/help autofix    - AutoFix CI Pipeline", "")  # ← NEU
         print_box_content("/help guide      - Beispiele & Start-Prompts", "")
         print_box_content("/help discord    - Discord Integration Guide", "")
         print_box_footer()
@@ -4458,6 +5496,36 @@ class ISAA_Host:
         print_box_content("/tools disable-all                           - Disable all non-system tools", "")
 
         print_separator()
+        print_status("Chain Management", "info")
+        print_box_content("/chain list                                  - Alle Chains auflisten", "")
+        print_box_content("/chain show <id|name>                        - DSL + Metadaten anzeigen", "")
+        print_box_content("/chain accept <id|name>                      - Chain einmalig akzeptieren", "")
+        print_box_content("/chain run <id|name> [input]                 - Chain ausführen", "")
+        print_box_content("/chain edit <id|name>                        - DSL interaktiv bearbeiten", "")
+        print_box_content("/chain delete <id|name>                      - Chain löschen", "")
+        print_box_content("/chain export <id> <file.json>               - Als JSON exportieren", "")
+        print_box_content("/chain import <file.json>                    - Aus JSON importieren", "")
+        print_separator()
+        print_box_content("Agent-Tools (via LLM nutzbar):", "bold")
+        print_box_content("  create_validate_chain  name dsl [desc] [tags]", "")
+        print_box_content("  run_chain  name_or_id [input] [accept=true]", "")
+        print_box_content("  list_auto_get_fitting  [task_description]", "")
+        print_separator()
+
+        print_status("AutoFix CI Pipeline", "info")
+        print_box_content("/feature enable autofix                      - AutoFix + Tools aktivieren", "")
+        print_box_content("/chain accept autofix_test_fixer             - Einmalig freigeben", "")
+        print_box_content("/chain run autofix_test_fixer [/pfad]        - Pipeline starten", "")
+        print_box_content("  Flow: tb -x → analyse → 2x fix parallel → best pick → re-test → PR", "")
+        print_separator()
+        print_status("AutoTest — Test Generator", "info")
+        print_box_content("/feature enable autotest                     - Tools + Chains aktivieren", "")
+        print_box_content("/chain run autotest_logic   <optional_class_Name[::file]>   - Logic Tests (bestehender Code)", "")
+        print_box_content("/chain run autotest_tdd     <optional_class_Name[::file]>   - TDD Future Tests (Vertrag)", "")
+        print_box_content("/chain run autotest_coverage <file.py>       - Full-File Coverage", "")
+        print_box_content("  Analyse: Datenfluss, Side-Effects, Edge-Cases → unittest → run → fix", "")
+
+        print_separator()
         print_status("Additional Features", "info")
         print_box_content("/feature list                                - List all features", "")
         print_box_content("/feature disable <feature>                   - Disable a feature", "")
@@ -4465,6 +5533,13 @@ class ISAA_Host:
         print_box_content("/feature enable desktop                      - Enable Desktop Automation", "")
         print_box_content("/feature enable web <headless>               - Enable Desktop Web Automation", "")
         print_separator()
+
+        print_separator()
+        print_status("AutoDoc — Docs Generator", "info")
+        print_box_content("/feature enable autodoc                      - Tools + Chains aktivieren", "")
+        print_box_content("/chain run autodoc_unguided                  - Batch: ganzes Repo scannen", "")
+        print_box_content("/chain run autodoc_guided <Name[::file]>     - Single: gezielt dokumentieren", "")
+        print_box_content("  Regel: nur getesteter Code. Format: Part1=How to Use, Part2=Internals.", "")
 
         print_status("Audio Settings", "info")
         print_box_content("/audio on                                    - Enable verbose audio", "")
@@ -4623,6 +5698,9 @@ class ISAA_Host:
             await self._cmd_context(args)
         elif cmd == "/feature":
             await self._cmd_feature(args)
+
+        elif cmd == "/chain":
+            await self._cmd_chain(args)
 
         elif cmd == "/bind":
             if len(args) >= 2:
@@ -7191,6 +8269,178 @@ class ISAA_Host:
             print_status(f"Feature '{feature}' disabled.", "success")
         else:
             print_status(f"Unknown feature action: {action}", "error")
+
+    async def _cmd_chain(self, args: list[str]):
+        """Handle /chain commands — human-facing chain store management."""
+        from toolboxv2.mods.isaa.base.chain.chain_tools import (
+            ChainStore, StoredChain, ChainDSLParser, generate_chain_id,
+        )
+        store = ChainStore(Path(self.app.data_dir) / "chains")
+
+        if not args or args[0] == "list":
+            chains = store.list_all()
+            if not chains:
+                print_status("No chains. Enable 'chain' feature, then use create_validate_chain tool.", "info")
+                return
+            print_box_header(f"Chains ({len(chains)})", "⛓")
+            widths = [14, 22, 6, 8, 5]
+            print_table_header([("ID", 14), ("Name", 22), ("Valid", 6), ("Accepted", 8), ("Runs", 5)], widths)
+            for c in chains:
+                print_table_row(
+                    [c.id[:14], c.name[:22],
+                     "YES" if c.is_valid else "NO",
+                     "YES" if c.accepted else "NO",
+                     str(c.run_count)],
+                    widths,
+                    ["cyan", "white",
+                     "green" if c.is_valid else "red",
+                     "green" if c.accepted else "amber",
+                     "grey"],
+                )
+            print_box_footer()
+            return
+
+        action = args[0].lower()
+
+        def _resolve(key: str):
+            return store.get(key) or store.get_by_name(key)
+
+        if action == "show":
+            if len(args) < 2:
+                print_status("Usage: /chain show <id|name>", "warning");
+                return
+            c = _resolve(args[1])
+            if not c:
+                print_status(f"Not found: {args[1]}", "error");
+                return
+            print_box_header(f"Chain: {c.name}", "⛓")
+            print_box_content(
+                f"ID: {c.id}  Valid: {c.is_valid}  Accepted: {c.accepted}  Runs: {c.run_count}", "info"
+            )
+            if c.description:
+                print_box_content(c.description, "")
+            if c.tags:
+                print_box_content(f"Tags: {', '.join(c.tags)}", "")
+            if c.validation_errors:
+                print_box_content(f"Errors: {'; '.join(c.validation_errors)}", "error")
+            print_separator()
+            print_code_block(c.dsl, "text")
+            print_box_footer()
+
+        elif action == "accept":
+            if len(args) < 2:
+                print_status("Usage: /chain accept <id|name>", "warning");
+                return
+            c = _resolve(args[1])
+            if not c:
+                print_status(f"Not found: {args[1]}", "error");
+                return
+            store.accept(c.id)
+            print_status(f"Chain '{c.name}' accepted — ready to run.", "success")
+
+        elif action == "delete":
+            if len(args) < 2:
+                print_status("Usage: /chain delete <id|name>", "warning");
+                return
+            c = _resolve(args[1])
+            if not c:
+                print_status(f"Not found: {args[1]}", "error");
+                return
+            confirm = input(f"Delete '{c.name}'? (y/N): ").strip().lower()
+            if confirm == "y":
+                store.delete(c.id)
+                print_status(f"Chain '{c.name}' deleted.", "success")
+
+        elif action == "edit":
+            if len(args) < 2:
+                print_status("Usage: /chain edit <id|name>", "warning");
+                return
+            c = _resolve(args[1])
+            if not c:
+                print_status(f"Not found: {args[1]}", "error");
+                return
+            print_box_content("Current DSL:", "info")
+            print_code_block(c.dsl, "text")
+            print_status("Enter new DSL (empty line = done, CANCEL = abort):", "configure")
+            lines: list[str] = []
+            if self.prompt_session:
+                while True:
+                    line = await self.prompt_session.prompt_async(
+                        HTML("<style fg='grey'>dsl> </style>")
+                    )
+                    if not line.strip():
+                        break
+                    if line.strip().upper() == "CANCEL":
+                        print_status("Edit cancelled.", "warning");
+                        return
+                    lines.append(line)
+            new_dsl = "\n".join(lines).strip()
+            if not new_dsl:
+                print_status("Nothing entered — edit cancelled.", "warning");
+                return
+            parser = ChainDSLParser()
+            _, errors = parser.parse(new_dsl)
+            c.dsl = new_dsl
+            c.is_valid = not errors
+            c.validation_errors = errors
+            c.accepted = False  # nach Edit neu akzeptieren
+            c.id = generate_chain_id(c.name, new_dsl)
+            store.save(c)
+            status_txt = "valid" if c.is_valid else f"INVALID: {'; '.join(errors)}"
+            print_status(f"Chain updated ({status_txt}). New ID: {c.id}", "success" if c.is_valid else "warning")
+
+        elif action == "export":
+            if len(args) < 3:
+                print_status("Usage: /chain export <id|name> <file.json>", "warning");
+                return
+            c = _resolve(args[1])
+            if not c:
+                print_status(f"Not found: {args[1]}", "error");
+                return
+            out_path = Path(args[2])
+            out_path.write_text(json.dumps(c.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+            print_status(f"Exported '{c.name}' → {out_path}", "success")
+
+        elif action == "import":
+            if len(args) < 2:
+                print_status("Usage: /chain import <file.json>", "warning");
+                return
+            in_path = Path(args[1])
+            if not in_path.exists():
+                print_status(f"File not found: {in_path}", "error");
+                return
+            data = json.loads(in_path.read_text(encoding="utf-8"))
+            c = StoredChain.from_dict(data)
+            c.accepted = False  # Sicherheit: nach Import neu akzeptieren
+            store.save(c)
+            print_status(
+                f"Imported '{c.name}' (ID: {c.id}). Use '/chain accept {c.id}' before running.",
+                "success",
+            )
+
+        elif action == "run":
+            if len(args) < 2:
+                print_status("Usage: /chain run <id|name> [input_data]", "warning");
+                return
+            name_or_id = args[1]
+            input_data = " ".join(args[2:]) if len(args) > 2 else ""
+            try:
+                agent = await self.isaa_tools.get_agent(self.active_agent_name)
+                tool = agent.tool_manager.get("run_chain")
+                if not tool:
+                    print_status("Chain feature not enabled. Run: /feature enable chain", "error");
+                    return
+                print_status(f"Running chain '{name_or_id}'...", "progress")
+                result = await tool.func(name_or_id, input_data, False)
+                c_print(result)
+            except Exception as e:
+                print_status(f"Error: {e}", "error")
+
+        else:
+            print_status(
+                f"Unknown: {action}. Commands: list show accept delete edit export import run",
+                "error",
+            )
 
     async def _cmd_tools(self, args: list[str]):
         """Intelligentes Tool-Management: Erkennt automatisch Namen oder Kategorien."""

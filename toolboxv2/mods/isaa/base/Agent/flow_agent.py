@@ -2093,8 +2093,14 @@ class FlowAgent:
 
         # ── Optional: Google Tools ────────────────────────────────────────
         if os.getenv("WITH_GOOGLE_TOOLS", "false") == "true":
-            tools.extend(gmail_toolkit.get_tools(session.session_id))
-            tools.extend(calendar_toolkit.get_tools(session.session_id))
+            if gmail_toolkit:
+                tools.extend(gmail_toolkit.get_tools(session.session_id))
+            else:
+                print("No gmail_toolkit")
+            if calendar_toolkit:
+                tools.extend(calendar_toolkit.get_tools(session.session_id))
+            else:
+                print("No calendar_toolkit")
 
         # ── Optional: Local Code Execution ────────────────────────────────
         if os.getenv("WITH_CODE_TOOLS", "true") == "true":

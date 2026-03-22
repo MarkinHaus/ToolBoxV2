@@ -1647,6 +1647,8 @@ uncertain_about_X
                     self.shell_tool_function,
                     "shell",
                     f"Run shell command in {detect_shell()}",
+                    category=["local", "shell", "commands"],
+                    flags={"shell": True, "detect_shell": True, "dangerous":True}
                 )
 
         builder.with_budget_manager(max_cost=100.0)

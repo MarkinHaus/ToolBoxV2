@@ -40,6 +40,8 @@ import os
 # Ensure AsyncIterator is imported correctly depending on Python version
 from collections.abc import AsyncIterator
 
+import tenacity
+
 if not hasattr(logging, 'NONE'):
     logging.NONE = 100
 
@@ -202,13 +204,19 @@ async def litellm_embed(
     """
     sto = litellm.drop_params
     litellm.drop_params = True
-    res = await embed(
-        model=model,
-        texts=texts,
-        dimensions=dimensions,
-        api_key=api_key,
-        input_type=input_type,
-    )
+    try:
+        res = await embed(
+            model=model,
+            texts=texts,
+            dimensions=dimensions,
+            api_key=api_key,
+            input_type=input_type,
+        )
+    except tenacity.RetryError as e:
+        if "ollama" in model:
+            raise f"Ollama is not running!"
+        raise e
+
     litellm.drop_params = sto
     return res
 

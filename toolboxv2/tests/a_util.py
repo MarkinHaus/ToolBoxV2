@@ -1,6 +1,8 @@
 import asyncio
+import contextlib
 import logging
 import os
+import sys
 import unittest
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -16,50 +18,40 @@ def async_test(coro):
     return wrapper
 
 
+# --- PYTEST STDOUT SCHUTZ ---
+# Verhindert, dass prompt_toolkit Pytests Capture-System zerstört
+if "pytest" in sys.modules:
+    try:
+        import prompt_toolkit.patch_stdout
+
+
+        @contextlib.contextmanager
+        def dummy_patch_stdout(*args, **kwargs):
+            yield  # Tut einfach gar nichts und lässt sys.stdout in Ruhe
+
+
+        prompt_toolkit.patch_stdout.patch_stdout = dummy_patch_stdout
+    except ImportError:
+        pass
+
 # ---------------------------------------------------------------------------
 # Internal helper — must be called BEFORE app.exit()
 # ---------------------------------------------------------------------------
 
 def _detach_all_logging_handlers():
-    """
-    Redirect every logging handler's stream to devnull and remove it.
-
-    This prevents app.exit() (which calls logging.shutdown() internally)
-    from closing pytest's FDCapture temporary files, which would corrupt
-    pytest's stdout/stderr capture and cause
-    "ValueError: I/O operation on closed file" for every subsequent test.
-
-    Safe to call multiple times — already-removed handlers are skipped.
-    """
+    """Trennt alle Logger sicher ab, ohne Dateien zu öffnen."""
     try:
-        _devnull = open(os.devnull, "w")
+        import logging
+        null_handler = logging.NullHandler()
 
-        # All named loggers
-        for logger in list(logging.Logger.manager.loggerDict.values()):
-            if not isinstance(logger, logging.Logger):
-                continue
-            for handler in logger.handlers[:]:
-                try:
-                    if hasattr(handler, "stream"):
-                        handler.stream = _devnull
-                    logger.removeHandler(handler)
-                except Exception:
-                    pass
-
-        # Root logger
+        # Root Logger bereinigen
         root = logging.getLogger()
-        for handler in root.handlers[:]:
-            try:
-                if hasattr(handler, "stream"):
-                    handler.stream = _devnull
-                root.removeHandler(handler)
-            except Exception:
-                pass
+        root.handlers = [null_handler]
 
-        # Prevent logging.shutdown() (called inside app.exit()) from
-        # touching any remaining handler streams
-        logging.root.manager.loggerDict.clear()
-
+        # Alle anderen Logger bereinigen
+        for logger in logging.Logger.manager.loggerDict.values():
+            if isinstance(logger, logging.Logger):
+                logger.handlers = [null_handler]
     except Exception:
         pass
 

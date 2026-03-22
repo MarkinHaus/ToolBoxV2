@@ -6,8 +6,11 @@ Provides automatic App singleton isolation between tests.
 Tests that manage their own App lifecycle (e.g. via setUpClass) are
 exempted via PERSISTENT_APP_TEST_FILES.
 """
+import contextlib
 
 import pytest
+
+import sys
 
 # These files create one real App for ALL their tests in setUpClass.
 # The reset fixture must not interfere with them.
@@ -35,3 +38,4 @@ def reset_app_state_before_test(request):
     reset_app_singleton(force_exit=True)
     yield
     reset_app_singleton(force_exit=True)
+

@@ -2583,9 +2583,35 @@ BEISPIELE:
                     categories.add(t.category)
 
         cat_list = ", ".join(sorted(categories)) if categories else "keine"
-        active_str = (
-            ", ".join(ctx.get_dynamic_tool_names()) if ctx.dynamic_tools else "keine"
-        )
+
+        # --- NEU: Detaillierte Darstellung der dynamischen Tool-Slots ---
+        loaded_tool_names = ctx.get_dynamic_tool_names()
+        slots_lines = [
+            f"--- DYNAMIC TOOL SLOTS ({len(loaded_tool_names)}/{ctx.max_dynamic_tools} used) ---"
+        ]
+
+        if not loaded_tool_names:
+            slots_lines.append("No dynamic tools currently loaded.")
+        else:
+            for i, t_name in enumerate(loaded_tool_names, 1):
+                t_entry = self.agent.tool_manager.get(t_name)
+                if t_entry:
+                    # Fügt den Namen und die fertigen Argumente ein, z.B. "[1] read_file(path: str)"
+                    slots_lines.append(f"[{i}] {t_name}{t_entry.args_schema}:")
+                    # Eingerückte Beschreibung für bessere Lesbarkeit
+                    for line in t_entry.description.strip().split('\n'):
+                        slots_lines.append(f"    {line}")
+                    slots_lines.append(" ---\n")
+                else:
+                    slots_lines.append(f"[{i}] {t_name}()\n    (Description unavailable)")
+
+        empty_slots = ctx.max_dynamic_tools - len(loaded_tool_names)
+        if empty_slots > 0:
+            slots_lines.append(f"[+] {empty_slots} empty slots available. Use load_tools() to equip more.")
+
+        dynamic_slots_prompt = "\n".join(slots_lines)
+        # ----------------------------------------------------------------
+
         prompt_parts = [self.agent.amd.system_message]
         # Base prompt - different for sub-agents
         if self.is_sub_agent:
@@ -2603,7 +2629,7 @@ BEISPIELE:
                 "Write your result to result.md in your output directory.",
                 "",
                 "STATUS:",
-                f"- Loaded tools ({len(ctx.dynamic_tools)}/{ctx.max_dynamic_tools}): [{active_str}]",
+                dynamic_slots_prompt,
                 "(if no fitting tool is loaded, discover it with list_tools and load it with load_tools!)",
                 "",
                 "RULES:",
@@ -2624,7 +2650,7 @@ BEISPIELE:
                 "4. ITERATION: If a step fails, analyze the error in `think()`, then try a different approach. Do not give up immediately.",
                 "",
                 "CAPABILITIES:",
-                f"- Loaded Tools: ({len(ctx.dynamic_tools)}/{ctx.max_dynamic_tools}): [{active_str}]",
+                dynamic_slots_prompt,
                 f"- Context Access: {cat_list}",
                 "- Sub-Agent Management: spawn_sub_agent, wait_for, resume_sub_agent",
                 "  → If a sub-agent hits max_iterations but made progress, resume it with more iterations",

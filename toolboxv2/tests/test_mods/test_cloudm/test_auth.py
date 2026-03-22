@@ -20,7 +20,9 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from dataclasses import asdict
 
 from toolboxv2.tests.a_util import IsolatedTestCase
-
+import os
+os.environ["TB_JWT_SECRET"] = "test_jwt_secret_for_testing_1234567890"
+os.environ["TB_COOKIE_SECRET"] = "test_cookie_secret_for_testing_12"
 
 # ---------------------------------------------------------------------------
 # Helpers – import Auth internals lazily so mocks can be set up first

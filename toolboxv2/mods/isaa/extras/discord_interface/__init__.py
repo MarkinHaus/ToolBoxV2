@@ -124,5 +124,5 @@ try:
     ]
 
     from .integration_example import run_standalone_discord_bot
-except ImportError:
-    print("⚠️ integration_example not found. Make sure discord_interface.py is available.")
+except ImportError as e :
+    print("⚠️ integration_example not found. Make sure discord_interface.py is available.", e)
