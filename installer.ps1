@@ -1,62 +1,15 @@
 #!/usr/bin/env pwsh
 
-<#
-    .SYNOPSIS
-    ToolBoxV2 Zero Installer - PowerShell Version
-    .DESCRIPTION
-    Installs ToolBoxV2 Core, sets up the virtual environment, and configures the 'tb' command.
-    .PARAMETER Version
-    Specify ToolBoxV2 version (default: latest).
-    .PARAMETER Source
-    Installation source: 'pip' or 'git' (default: pip).
-    .PARAMETER Manager
-    Package manager: 'pip', 'uv', 'poetry' (default: pip).
-    .PARAMETER Python
-    Target Python version (default: 3.11).
-    .PARAMETER Isaa
-    Install with 'isaa' extra.
-    .PARAMETER Dev
-    Install with 'dev' extra.
-    .PARAMETER AutoInstallDeps
-    Attempt to auto-install system dependencies (Python, Git).
-#>
-
-param(
-    [string]$Version = "",
-    [string]$Source = "",
-    [string]$Manager = "",
-    [string]$Python = "",
-    [switch]$Isaa,
-    [switch]$Dev,
-    [switch]$AutoInstallDeps
-)
-
-# -----------------------------------------------------------------------------
-# METADATA & DEFAULTS
-# -----------------------------------------------------------------------------
- $AUTHOR = "Markin Hausmanns"
- $WEBPAGE = "Simplecore.app"
- $SCRIPT_VERSION = "2.1.0"
- $TOOLBOX_REPO = "https://github.com/MarkinHaus/ToolBoxV2.git"
- $TOOLBOX_PYPI_NAME = "ToolBoxV2"
- $TOOLBOX_REPO_NAME = "ToolBoxV2"
-
-# --- Configuration Defaults ---
- $DEFAULT_TB_VERSION = "latest"
- $DEFAULT_INSTALL_SOURCE = "pip"
- $DEFAULT_PKG_MANAGER = "pip"
- $DEFAULT_PYTHON_VERSION_TARGET = "3.11"
- $DEFAULT_ISAA_EXTRA = "false"
- $DEFAULT_DEV_EXTRA = "false"
- $DEFAULT_AUTO_INSTALL_DEPS = "false"
- $DEFAULT_INSTALL_DIR_BASE_LINUX_MAC = "$HOME/.local/share"
-# Use [Environment]::GetFolderPath for reliable cross-version compatibility
- $DEFAULT_INSTALL_DIR_BASE_WINDOWS = [Environment]::GetFolderPath("LocalApplicationData")
- $DEFAULT_TB_APP_NAME = "ToolBoxV2"
- $DEFAULT_BIN_DIR_LINUX_MAC = "$HOME/.local/bin"
-# On Windows, we usually put a .bat wrapper in a folder that is in PATH, or add it.
-# The script tries to detect a suitable bin dir. For Windows users, creating a folder in USERPROFILE and adding it to PATH is common.
- $DEFAULT_BIN_DIR_WINDOWS = "$HOME/.local/bin"
+# ============================================================
+# ToolBoxV2 Installer v1.0.0 — Windows (PowerShell 5+)
+# https://github.com/MarkinHaus/ToolBoxV2
+#
+# Usage:
+#   irm https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.ps1 | iex
+#   .\installer.ps1 [-Mode native|uv|docker|source] [-Path <dir>] [-Config <file>]
+#   .\installer.ps1 -Uninstall
+#   .\installer.ps1 -Update
+# ============================================================
 
 # -----------------------------------------------------------------------------
 # DISPLAY HEADER
@@ -71,800 +24,714 @@ Write-Host "******╚═╝****╚═════╝***╚═════╝**�
 Write-Host "**************************************************************************" -ForegroundColor DarkCyan
 Write-Host "Zero the Hero - ToolBoxV2 Core Installer" -ForegroundColor Cyan
 
-# -----------------------------------------------------------------------------
-# LOGGING FUNCTIONS
-# -----------------------------------------------------------------------------
-function Log-Info {
-    param([string]$Message)
-    Write-Host "ℹ️  INFO: $Message" -ForegroundColor Cyan
-}
+[CmdletBinding()]
+param(
+    [string]$Mode       = "",
+    [string]$Path       = "",
+    [string]$Config     = "",
+    [string]$Branch     = "main",
+    [switch]$Uninstall,
+    [switch]$Update,
+    [switch]$Help
+)
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
 
-function Log-Success {
-    param([string]$Message)
-    Write-Host "✅ SUCCESS: $Message" -ForegroundColor Green
-}
+# ── Constants ────────────────────────────────────────────────
+$INSTALLER_VERSION    = "1.0.0"
+$TB_ARTIFACT_NAME     = "ToolBoxV2"
+$REGISTRY_API         = "https://registry.simplecore.app/api/v1"
+$GITHUB_REPO          = "MarkinHaus/ToolBoxV2"
+$GITHUB_RAW           = "https://raw.githubusercontent.com/$GITHUB_REPO/main"
+$MIN_DISK_MB          = 300
+$FEATURES_IMMUTABLE   = "mini core"
+$FEATURES_OPTIONAL    = @("cli","web","desktop","isaa","exotic")
 
-function Log-Warning {
-    param([string]$Message)
-    Write-Host "⚠️  WARNING: $Message" -ForegroundColor Yellow
-}
+# ── Colors ───────────────────────────────────────────────────
+function Log   { param($m) Write-Host "[✓] $m" -ForegroundColor Green }
+function Info  { param($m) Write-Host "[→] $m" -ForegroundColor Cyan }
+function Warn  { param($m) Write-Host "[!] $m" -ForegroundColor Yellow }
+function Fail  { param($m) Write-Host "[✗] $m" -ForegroundColor Red; exit 1 }
+function Ask   { param($m) Write-Host "[?] $m" -ForegroundColor Magenta -NoNewline }
+function Step  { param($m) Write-Host "`n── $m ──────────────────────────────────" -ForegroundColor Blue }
 
-function Log-Error {
-    param([string]$Message)
-    Write-Host "❌ ERROR: $Message" -ForegroundColor Red
-    exit 1
-}
+# ── Global State ─────────────────────────────────────────────
+$ARCH             = if ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -eq "Arm64") { "arm64" } else { "x86_64" }
+$INSTALL_MODE     = $Mode
+$SOURCE_FROM      = "git"
+$SOURCE_BRANCH    = $Branch
+$INSTALL_PATH     = $Path
+$ENVIRONMENT      = "development"
+$INSTANCE_ID      = "tbv2_main"
+$FEATURES         = "core cli"
+$OPT_NGINX        = $false
+$OPT_DOCKER       = $false
+$OPT_OLLAMA       = $false
+$OPT_MINIO        = $false
+$OPT_REGISTRY     = $false
+$REGISTRY_URL     = $REGISTRY_API -replace "/api/v1", ""
+$RUNTIME          = ""
+$UV_BIN           = ""
+$PYTHON_BIN       = ""
+$REGISTRY_REACHABLE = $false
+$ACTION           = "install"
 
-function Log-Title {
-    param([string]$Message)
-    Write-Host "`n--- $Message ---" -ForegroundColor Magenta -BackgroundColor Black
-}
-
-function Log-Debug {
-    param([string]$Message)
-    if ($env:DEBUG -eq "true") {
-        Write-Host "DEBUG: $Message" -ForegroundColor DarkCyan
-    }
-}
-
-# -----------------------------------------------------------------------------
-# OS DETECTION & PLATFORM SPECIFICS
-# -----------------------------------------------------------------------------
-$global:OS_TYPE = "Unknown"
-$global:PYTHON_EXEC_NAME = "python3"
-$global:USER_BIN_DIR = ""
-$global:SYSTEM_PKG_INSTALLER_CMD = ""
-$global:IS_WINDOWS = $false
-$global:IS_LINUX = $false
-$global:IS_MAC = $false
-
-if ($IsWindows) { $global:OS_TYPE = "Windows"; $global:IS_WINDOWS = $true }
-elseif ($IsLinux) { $global:OS_TYPE = "Linux"; $global:IS_LINUX = $true }
-elseif ($IsMacOS) { $global:OS_TYPE = "Mac"; $global:IS_MAC = $true }
-else {
-    if ($env:OS -eq "Windows_NT") { $global:OS_TYPE = "Windows"; $global:IS_WINDOWS = $true }
-}
-
-if ($global:IS_WINDOWS) {
-    $global:PYTHON_EXEC_NAME = "python"
-    $global:USER_BIN_DIR = $DEFAULT_BIN_DIR_WINDOWS
-    if (Get-Command winget -ErrorAction SilentlyContinue) { $global:SYSTEM_PKG_INSTALLER_CMD = "winget" }
-    elseif (Get-Command choco -ErrorAction SilentlyContinue) { $global:SYSTEM_PKG_INSTALLER_CMD = "choco" }
-} else {
-    $global:USER_BIN_DIR = $DEFAULT_BIN_DIR_LINUX_MAC
-    if (Get-Command apt-get -ErrorAction SilentlyContinue) { $global:SYSTEM_PKG_INSTALLER_CMD = "apt-get" }
-    elseif (Get-Command yum -ErrorAction SilentlyContinue) { $global:SYSTEM_PKG_INSTALLER_CMD = "yum" }
-    elseif (Get-Command dnf -ErrorAction SilentlyContinue) { $global:SYSTEM_PKG_INSTALLER_CMD = "dnf" }
-    elseif (Get-Command pacman -ErrorAction SilentlyContinue) { $global:SYSTEM_PKG_INSTALLER_CMD = "pacman" }
-    elseif (Get-Command brew -ErrorAction SilentlyContinue) { $global:SYSTEM_PKG_INSTALLER_CMD = "brew" }
-}
-
-Log-Debug "Detected OS: $OS_TYPE, User Bin: $USER_BIN_DIR, Pkg Installer: $SYSTEM_PKG_INSTALLER_CMD"
-
-# -----------------------------------------------------------------------------
-# INSTALLATION DISCOVERY & MODE SELECTION
-# -----------------------------------------------------------------------------
-$global:EXISTING_TB_DIR = ""
-$global:EXISTING_VENV_PATH = ""
-$global:INSTALL_MODE = "enduser"
-
-function Find-ExistingToolbox {
-    $candidates = @(
-        "$HOME\.local\share\ToolBoxV2",
-        "$HOME\.toolboxv2",
-        "C:\opt\toolboxv2",
-        "$env:LOCALAPPDATA\ToolBoxV2"
-    )
-
-    # Versuche über importiertes Paket
-    try {
-        $pyRoot = & python -c "import toolboxv2; print(str(toolboxv2.tb_root_dir.parent))" 2>$null
-        if ($pyRoot -and (Test-Path $pyRoot)) {
-            $candidates = @($pyRoot) + $candidates
-        }
-    } catch {}
-
-    foreach ($dir in $candidates) {
-        if ((Test-Path "$dir\.toolbox_version") -or (Test-Path "$dir\toolboxv2\__init__.py")) {
-            $global:EXISTING_TB_DIR = $dir
-            foreach ($vd in @("$dir\.venv", "$dir\venv", "$dir\.toolbox_venv")) {
-                if (Test-Path "$vd\Scripts\activate") {
-                    $global:EXISTING_VENV_PATH = $vd
-                    break
-                }
-            }
-            Log-Info "Found existing install: $global:EXISTING_TB_DIR (venv: $($global:EXISTING_VENV_PATH -ne '' ? $global:EXISTING_VENV_PATH : 'none'))"
-            return
-        }
-    }
-    Log-Info "No existing installation found."
-}
-
-function Select-InstallMode {
-    Log-Title "Installation Mode"
-    Write-Host "  1) End-User   -> $HOME\.local\share\ToolBoxV2" -ForegroundColor Cyan
-    Write-Host "  2) Server     -> C:\opt\toolboxv2  (nginx write)" -ForegroundColor Cyan
-    Write-Host "  3) Developer  -> $(Get-Location)\ToolBoxV2  (git, editable)" -ForegroundColor Cyan
-    Write-Host "  4) Custom path" -ForegroundColor Cyan
-
-    $choice = Read-Host "Choice [1]"
-    switch ($choice) {
-        "2" {
-            $global:INSTALL_MODE = "server"
-            $global:INSTALL_DIR = "C:\opt\toolboxv2"
-            $global:INSTALL_SOURCE = "git"
-        }
-        "3" {
-            $global:INSTALL_MODE = "dev"
-            $global:INSTALL_DIR = "$(Get-Location)\ToolBoxV2"
-            $global:INSTALL_SOURCE = "git"
-        }
-        "4" {
-            $global:INSTALL_DIR = Read-Host "Path"
-            $global:INSTALL_MODE = "custom"
-        }
-        default {
-            $global:INSTALL_MODE = "enduser"
-            $global:INSTALL_DIR = "$HOME\.local\share\ToolBoxV2"
-        }
-    }
-    $global:VENV_PATH = "$global:INSTALL_DIR\.venv"
-    Log-Info "Mode: $global:INSTALL_MODE -> $global:INSTALL_DIR"
-}
-
-# -----------------------------------------------------------------------------
-# PYTHON HELPER SCRIPT (Embedded)
-# -----------------------------------------------------------------------------
- $PYTHON_HELPER_SCRIPT = @"
-import os
-import sys
-import shutil
-import subprocess
-import platform
-import json
-from pathlib import Path
-
-def log_py(level, message):
-    print(f"PY_{level.upper()}: {message}", file=sys.stderr if level == "error" else sys.stdout)
-
-def get_platform_details():
-    details = {
-        "os_type": platform.system(),
-        "python_executable": sys.executable,
-        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
-        "venv_scripts_path_name": "Scripts" if platform.system() == "Windows" else "bin",
-    }
-    return details
-
-def find_python_executable(target_version_str):
-    target_major, target_minor = map(int, target_version_str.split('.'))
-    if platform.system() == "Windows":
-        try:
-            res = subprocess.run(["py", f"-{target_version_str}", "-c", "import sys; print(sys.executable)"], capture_output=True, text=True, check=True, timeout=5)
-            py_exec_path = res.stdout.strip()
-            res_verify = subprocess.run([py_exec_path, "-c", f"import sys; assert sys.version_info >= ({target_major}, {target_minor}); print(f'{{sys.version_info.major}}.{{sys.version_info.minor}}')"], capture_output=True, text=True, check=True, timeout=5)
-            if res_verify.stdout.strip().startswith(target_version_str):
-                return py_exec_path
-        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-        exec_names = [f"python{target_version_str}.exe", f"python{target_major}.exe", "python.exe"]
-    else:
-        exec_names = [f"python{target_version_str}", f"python{str(target_major)}.{str(target_minor)}", f"python{target_major}", "python3", "python"]
-
-    for name in exec_names:
-        py_exec = shutil.which(name)
-        if py_exec:
-            try:
-                res = subprocess.run([py_exec, "-c", f"import sys; assert sys.version_info >= ({target_major}, {target_minor}); print(f'{{sys.version_info.major}}.{{sys.version_info.minor}}')"], capture_output=True, text=True, check=True, timeout=5)
-                if res.stdout.strip().startswith(target_version_str):
-                    return py_exec
-            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
-                continue
-    return None
-
-def create_venv(venv_dir, python_exec):
-    try:
-        subprocess.run([python_exec, "-m", "venv", venv_dir], check=True, capture_output=True, timeout=120)
-        venv_python = Path(venv_dir) / get_platform_details()["venv_scripts_path_name"] / ("python.exe" if platform.system() == "Windows" else "python")
-        subprocess.run([str(venv_python), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], check=True, capture_output=True, timeout=120)
-        return True
-    except Exception as e:
-        log_py("error", f"Venv creation failed: {e}")
-        return False
-
-def get_executable_path(venv_dir, exec_name):
-    base_path = Path(venv_dir) / get_platform_details()["venv_scripts_path_name"]
-    if platform.system() == "Windows":
-        for suffix in [".exe", "", ".cmd", ".bat"]:
-             p = base_path / f"{exec_name}{suffix}"
-             if p.is_file() and os.access(p, os.X_OK): return str(p)
-    else:
-        p = base_path / exec_name
-        if p.is_file() and os.access(p, os.X_OK): return str(p)
-    return None
-
-def create_user_executable_link(target_script_path, link_name, user_bin_dir_str):
-    target = Path(target_script_path)
-    user_bin_dir = Path(user_bin_dir_str)
-    user_bin_dir.mkdir(parents=True, exist_ok=True)
-    if platform.system() == "Windows":
-        link_path_bat = user_bin_dir / f"{link_name}.bat"
-        log_py("info", f"Creating Windows .bat wrapper: {link_path_bat} -> {target}")
-        try:
-            with open(link_path_bat, "w") as f:
-                f.write(f'@echo off\n"{target}" %*\n')
-            return str(link_path_bat)
-        except IOError as e:
-            log_py("error", f"Failed to create .bat wrapper: {e}")
-    else:
-        link_path = user_bin_dir / link_name
-        log_py("info", f"Creating symlink: {link_path} -> {target}")
-        if link_path.exists() or link_path.is_symlink():
-            try:
-                link_path.unlink()
-            except OSError: pass
-        try:
-            os.symlink(target, link_path)
-            os.chmod(link_path, 0o755)
-            return str(link_path)
-        except OSError as e:
-            log_py("error", f"Failed to create symlink: {e}.")
-    return None
-
-if __name__ == "__main__":
-    action = sys.argv[1]
-    args = sys.argv[2:]
-    result = {}
-    try:
-        if action == "get_platform_details":
-            result = get_platform_details()
-        elif action == "find_python":
-            result["path"] = find_python_executable(args[0])
-        elif action == "create_venv":
-            result["success"] = create_venv(args[0], args[1])
-        elif action == "get_executable_path":
-            result["path"] = get_executable_path(args[0], args[1])
-        elif action == "create_user_executable_link":
-            result["path"] = create_user_executable_link(args[0], args[1], args[2])
-        else:
-            raise ValueError(f"Unknown Python helper action: {action}")
-        print(json.dumps(result))
-    except Exception as e:
-        log_py("error", f"Helper failed: {e}")
-        print(json.dumps({"error": str(e)}))
-        sys.exit(1)
+if ($Uninstall) { $ACTION = "uninstall" }
+if ($Update)    { $ACTION = "update" }
+if ($Help) {
+    Write-Host @"
+Usage: .\installer.ps1 [options]
+  -Mode <mode>      native | uv | docker | source
+  -Path <dir>       Custom install directory
+  -Config <file>    Load install config from YAML
+  -Branch <branch>  Git branch (source mode only, default: main)
+  -Update           Update existing installation
+  -Uninstall        Remove ToolBoxV2
 "@
+    exit 0
+}
 
-# -----------------------------------------------------------------------------
-# HELPER FUNCTIONS
-# -----------------------------------------------------------------------------
+# ============================================================
+# HELPERS
+# ============================================================
+function Get-DefaultPath {
+    return "$env:LOCALAPPDATA\toolboxv2"
+}
 
-function Invoke-PythonHelper {
-    param(
-        [string]$Action,
-        [string[]]$Arguments
-    )
+function Get-BinDir {
+    return "$env:LOCALAPPDATA\Microsoft\WindowsApps"
+}
 
-    $bootstrapPy = $PYTHON_EXEC_NAME
-    # Try to find a valid python if the default name isn't found
-    if (-not (Get-Command $bootstrapPy -ErrorAction SilentlyContinue)) {
-        if (Get-Command python3 -ErrorAction SilentlyContinue) { $bootstrapPy = "python3" }
-        elseif (Get-Command python -ErrorAction SilentlyContinue) { $bootstrapPy = "python" }
-        else { Log-Error "No suitable Python interpreter found to run helper script." }
+function Get-YamlField {
+    param([string]$File, [string]$Key, [string]$Default = "")
+    if (-not (Test-Path $File)) { return $Default }
+    $line = Select-String -Path $File -Pattern "^${Key}:" | Select-Object -First 1
+    if ($line) {
+        $val = ($line.Line -split ":", 2)[1].Trim().Trim('"').Trim("'")
+        return $val
     }
+    return $Default
+}
 
-    # Create temp file for the script
-    $tempScriptPath = Join-Path $env:TEMP "toolbox_helper_py.py"
-    Set-Content -Path $tempScriptPath -Value $PYTHON_HELPER_SCRIPT -Encoding UTF8
+function Confirm-User {
+    param([string]$Msg, [string]$Default = "y")
+    $prompt = if ($Default -eq "y") { "[Y/n]" } else { "[y/N]" }
+    Ask "$Msg $prompt : "
+    $reply = Read-Host
+    if ([string]::IsNullOrEmpty($reply)) { $reply = $Default }
+    return $reply -match "^[Yy]"
+}
 
+function Prompt-Default {
+    param([string]$Msg, [string]$Default)
+    Ask "$Msg (default: $Default) : "
+    $reply = Read-Host
+    if ([string]::IsNullOrEmpty($reply)) { return $Default }
+    return $reply
+}
+
+function Check-DiskSpace {
+    param([string]$DirPath)
+    $drive = [System.IO.Path]::GetPathRoot($DirPath)
+    $disk = Get-PSDrive -Name ($drive.TrimEnd(":\")) -ErrorAction SilentlyContinue
+    if ($disk -and ($disk.Free / 1MB) -lt $MIN_DISK_MB) {
+        Fail "Not enough disk space (need ${MIN_DISK_MB}MB)"
+    }
+}
+
+function Download-File {
+    param([string]$Url, [string]$Dest)
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $wc = New-Object System.Net.WebClient
+    $wc.DownloadFile($Url, $Dest)
+}
+
+function Invoke-RegistryGet {
+    param([string]$Path)
     try {
-        $argList = @($tempScriptPath, $Action) + $Arguments
-        $output = & $bootstrapPy @argList 2>&1
-        # Filter out pure stderr lines if necessary, but helper prints JSON to stdout
-        $jsonOutput = $output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }
+        return Invoke-RestMethod -Uri "${REGISTRY_API}${Path}" -TimeoutSec 5 -ErrorAction Stop | ConvertTo-Json -Depth 5
+    } catch { return "" }
+}
 
-        # Convert JSON
-        $result = $jsonOutput | ConvertFrom-Json
+# ============================================================
+# PHASE 0 — DISCOVERY
+# ============================================================
+function Phase-Discovery {
+    Step "Phase 0 — Discovery"
+    Info "Platform: windows/$ARCH"
 
-        if ($result.error) {
-            Log-Warning "Python helper reported an error: $($result.error)"
-            return $null
+    $scanPaths = @(
+        "$env:LOCALAPPDATA\toolboxv2",
+        "$env:APPDATA\toolboxv2",
+        "C:\toolboxv2",
+        $env:TOOLBOX_HOME,
+        $env:TB_INSTALL_DIR
+    ) | Where-Object { $_ -and $_ -ne "" }
+
+    $foundInstalls = @()
+    foreach ($p in $scanPaths) {
+        if (Test-Path "$p\install.manifest") { $foundInstalls += $p }
+    }
+
+    # Check PATH for tb binary
+    $tbCmd = Get-Command tb -ErrorAction SilentlyContinue
+    if ($tbCmd) {
+        Info "Existing 'tb' binary found: $($tbCmd.Source)"
+        $foundInstalls += [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetDirectoryName($tbCmd.Source))
+    }
+
+    # Check Docker
+    if (Get-Command docker -ErrorAction SilentlyContinue) {
+        $imgs = docker images --format "{{.Repository}}:{{.Tag}}" 2>$null | Select-String "toolboxv2"
+        if ($imgs) { Info "Docker TB image(s): $imgs" }
+    }
+
+    if ($foundInstalls.Count -gt 0) {
+        Write-Host ""
+        Warn "Existing ToolBoxV2 installation(s) found:"
+        foreach ($p in $foundInstalls) {
+            $ver  = Get-YamlField "$p\install.manifest" "tb_version" "unknown"
+            $mode = Get-YamlField "$p\install.manifest" "install_mode" "unknown"
+            Write-Host "  $p  ($mode, v$ver)"
         }
-        return $result
-    }
-    catch {
-        Log-Error "Failed to execute Python helper: $_"
-    }
-    finally {
-        if (Test-Path $tempScriptPath) { Remove-Item $tempScriptPath -Force }
-    }
-}
-
-function Test-Command {
-    param([string]$Cmd)
-    return [bool](Get-Command $Cmd -ErrorAction SilentlyContinue)
-}
-
-function Read-YesNo {
-    param(
-        [string]$Prompt,
-        [string]$Default = "N"
-    )
-    $choice = ""
-    while ($choice -notmatch "^[YN]$") {
-        $promptStr = "❓ ${Prompt} (Y/N, default: $Default): "
-        $inputRaw = Read-Host $promptStr
-        if ([string]::IsNullOrWhiteSpace($inputRaw)) { $choice = $Default.ToUpper() }
-        else { $choice = $inputRaw.ToUpper().Substring(0,1) }
-    }
-    return $choice -eq "Y"
-}
-
-# -----------------------------------------------------------------------------
-# CONFIGURATION
-# -----------------------------------------------------------------------------
- $global:TB_VERSION = $DEFAULT_TB_VERSION
- $global:INSTALL_SOURCE = $DEFAULT_INSTALL_SOURCE
- $global:PKG_MANAGER = $DEFAULT_PKG_MANAGER
- $global:PYTHON_VERSION_TARGET = $DEFAULT_PYTHON_VERSION_TARGET
- $global:ISAA_EXTRA = $DEFAULT_ISAA_EXTRA
- $global:DEV_EXTRA = $DEFAULT_DEV_EXTRA
- $global:AUTO_INSTALL_DEPS = $DEFAULT_AUTO_INSTALL_DEPS
- $global:INSTALL_DIR = ""
- $global:TOOLBOX_SRC_DIR = ""
- $global:PYTHON_EXEC_PATH = ""
- $global:VENV_PATH = ""
-
-function Initialize-Defaults {
-    if ($global:IS_WINDOWS) {
-        $global:INSTALL_DIR_BASE = $DEFAULT_INSTALL_DIR_BASE_WINDOWS
+        Write-Host ""
+        if ($ACTION -eq "install") {
+            if (Confirm-User "Update existing installation?") {
+                $script:ACTION       = "update"
+                $script:INSTALL_PATH = $foundInstalls[0]
+            } else {
+                if (-not (Confirm-User "Install fresh alongside?")) { Fail "Aborted." }
+            }
+        }
     } else {
-        $global:INSTALL_DIR_BASE = $DEFAULT_INSTALL_DIR_LINUX_MAC
-    }
-    $global:INSTALL_DIR = Join-Path $global:INSTALL_DIR_BASE $DEFAULT_TB_APP_NAME
-    $global:VENV_PATH = Join-Path $global:INSTALL_DIR ".venv"
-    if ($global:INSTALL_SOURCE -eq "git") {
-        $global:TOOLBOX_SRC_DIR = Join-Path $global:INSTALL_DIR "src\$TOOLBOX_REPO_NAME"
+        Info "No existing installation found — fresh install"
     }
 }
 
-function Load-ConfigFile {
-    $configPath = "init.config"
-    if (Test-Path $configPath) {
-        Log-Info "Loading configuration from $configPath..."
-        Get-Content $configPath | ForEach-Object {
-            if ($_ -match "^([^#].+?)=(.+)$") {
-                $key = $matches[1].Trim()
-                $value = $matches[2].Trim().Trim('"').Trim("'")
-                switch ($key) {
-                    "TB_VERSION" { $global:TB_VERSION = $value }
-                    "INSTALL_SOURCE" { $global:INSTALL_SOURCE = $value }
-                    "PKG_MANAGER" { $global:PKG_MANAGER = $value }
-                    "PYTHON_VERSION_TARGET" { $global:PYTHON_VERSION_TARGET = $value }
-                    "ISAA_EXTRA" { $global:ISAA_EXTRA = $value }
-                    "DEV_EXTRA" { $global:DEV_EXTRA = $value }
-                    "AUTO_INSTALL_DEPS" { $global:AUTO_INSTALL_DEPS = $value }
+# ============================================================
+# PHASE 1 — CONFIG
+# ============================================================
+function Phase-Config {
+    Step "Phase 1 — Configuration"
+
+    if (-not $Config -and (Test-Path "tb-install.yaml")) {
+        $script:Config = "tb-install.yaml"
+        Info "Found tb-install.yaml in current directory"
+    }
+
+    if ($Config) {
+        if (-not (Test-Path $Config)) { Fail "Config file not found: $Config" }
+        Info "Loading config: $Config"
+        if (-not $INSTALL_MODE)  { $script:INSTALL_MODE  = Get-YamlField $Config "install_mode" "" }
+        if (-not $INSTALL_PATH)  { $script:INSTALL_PATH  = Get-YamlField $Config "install_path" "" }
+        $script:SOURCE_FROM   = Get-YamlField $Config "source_from"   "git"
+        $script:SOURCE_BRANCH = Get-YamlField $Config "source_branch" "main"
+        $script:ENVIRONMENT   = Get-YamlField $Config "environment"   "development"
+        $script:INSTANCE_ID   = Get-YamlField $Config "instance_id"   "tbv2_main"
+        $script:OPT_NGINX     = (Get-YamlField $Config "optional.nginx"           "false") -eq "true"
+        $script:OPT_DOCKER    = (Get-YamlField $Config "optional.docker_runtime"  "false") -eq "true"
+        $script:OPT_OLLAMA    = (Get-YamlField $Config "optional.ollama"          "false") -eq "true"
+        $script:OPT_MINIO     = (Get-YamlField $Config "optional.minio"           "false") -eq "true"
+        $script:OPT_REGISTRY  = (Get-YamlField $Config "optional.registry"        "false") -eq "true"
+    }
+
+    # Install mode
+    if (-not $INSTALL_MODE) {
+        Write-Host ""
+        Write-Host "  Select install mode:"
+        Write-Host "  1) native   — Single binary, no Python required (recommended)"
+        Write-Host "  2) uv       — Python package via uv tool"
+        Write-Host "  3) docker   — Containerized, isolated"
+        Write-Host "  4) source   — Full source from Git or Registry"
+        Ask "Mode [1-4] (default: 1) : "
+        $choice = Read-Host
+        $script:INSTALL_MODE = switch ($choice) {
+            "2" { "uv" }; "3" { "docker" }; "4" { "source" }; default { "native" }
+        }
+    }
+
+    if ($INSTALL_MODE -eq "source" -and -not $SOURCE_FROM) {
+        Write-Host "  1) git      — Clone from GitHub"
+        Write-Host "  2) registry — Download release tarball"
+        Ask "Source [1-2] (default: 1) : "
+        $sc = Read-Host
+        $script:SOURCE_FROM = if ($sc -eq "2") { "registry" } else { "git" }
+    }
+
+    # Features
+    Write-Host ""
+    Write-Host "  Included (always): mini core"
+    $selFeatures = $FEATURES
+    foreach ($feat in $FEATURES_OPTIONAL) {
+        $currently = if ($selFeatures -match "\b$feat\b") { "yes" } else { "no" }
+        $def = if ($currently -eq "yes") { "y" } else { "n" }
+        if (Confirm-User "  Enable $feat? [currently: $currently]" $def) {
+            if ($selFeatures -notmatch "\b$feat\b") { $selFeatures += " $feat" }
+        } else {
+            $selFeatures = ($selFeatures -split " " | Where-Object { $_ -ne $feat }) -join " "
+        }
+    }
+    $script:FEATURES = $selFeatures.Trim()
+
+    $script:ENVIRONMENT = Prompt-Default "Environment (development|production|staging)" $ENVIRONMENT
+
+    if (-not $INSTALL_PATH) {
+        $default = Get-DefaultPath
+        Ask "Custom install path? Leave empty for default ($default) : "
+        $cp = Read-Host
+        $script:INSTALL_PATH = if ($cp) { $cp } else { $default }
+    }
+
+    Log "Mode: $INSTALL_MODE$(if ($SOURCE_FROM) { " ($SOURCE_FROM)" })"
+    Log "Path: $INSTALL_PATH"
+    Log "Env:  $ENVIRONMENT"
+    Log "Features: $FEATURES_IMMUTABLE $FEATURES"
+}
+
+# ============================================================
+# PHASE 2 — PRE-FLIGHT
+# ============================================================
+function Phase-Preflight {
+    Step "Phase 2 — Pre-flight Checks"
+
+    # 1. Install path
+    Info "Checking install path: $INSTALL_PATH"
+    Check-DiskSpace $INSTALL_PATH
+    try {
+        New-Item -ItemType Directory -Path $INSTALL_PATH -Force | Out-Null
+        $testFile = "$INSTALL_PATH\.tb_write_test"
+        [System.IO.File]::WriteAllText($testFile, "test")
+        Remove-Item $testFile -Force
+    } catch {
+        $script:INSTALL_PATH = Prompt-Default "Path not writable. Enter writable path" "$env:LOCALAPPDATA\toolboxv2"
+        New-Item -ItemType Directory -Path $INSTALL_PATH -Force | Out-Null
+    }
+    Log "Install path OK: $INSTALL_PATH"
+
+    # 2. Network
+    Info "Checking network..."
+    try {
+        Invoke-WebRequest -Uri "https://1.1.1.1" -TimeoutSec 3 -UseBasicParsing | Out-Null
+    } catch {
+        try { Invoke-WebRequest -Uri "https://github.com" -TimeoutSec 3 -UseBasicParsing | Out-Null }
+        catch { Fail "No network connectivity. Installer requires internet access." }
+    }
+    Log "Network OK"
+
+    # 3. Registry
+    Info "Checking registry..."
+    try {
+        $health = Invoke-RestMethod -Uri "$REGISTRY_API/health" -TimeoutSec 5 -ErrorAction Stop
+        if ($health.status -eq "healthy") {
+            $script:REGISTRY_REACHABLE = $true
+            Log "Registry OK"
+        }
+    } catch {
+        Warn "Registry unreachable — using GitHub Releases as fallback"
+    }
+
+    # 4. Runtime
+    if ($INSTALL_MODE -eq "native" -or $INSTALL_MODE -eq "docker") {
+        $script:RUNTIME = "none"
+        Log "Runtime: none required for $INSTALL_MODE mode"
+    } else {
+        $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
+        if ($uvCmd) {
+            $script:UV_BIN  = $uvCmd.Source
+            $script:RUNTIME = "uv"
+            Log "Runtime: uv found at $UV_BIN"
+        } else {
+            # Try Python 3.11+
+            foreach ($py in @("python3.13","python3.12","python3.11","python3","python")) {
+                $pyCmd = Get-Command $py -ErrorAction SilentlyContinue
+                if ($pyCmd) {
+                    $pyver = & $py -c "import sys; print(sys.version_info >= (3,11))" 2>$null
+                    if ($pyver -eq "True") {
+                        $script:PYTHON_BIN = $pyCmd.Source
+                        $script:RUNTIME    = "venv"
+                        Log "Runtime: Python found at $PYTHON_BIN (venv fallback)"
+                        break
+                    }
                 }
             }
-        }
-    } else {
-        Log-Info "No init.config found. Using defaults or arguments."
-    }
-}
 
-function Set-Configuration {
-    # Override with CLI params if set
-    if ($Version) { $global:TB_VERSION = $Version }
-    if ($Source) { $global:INSTALL_SOURCE = $Source }
-    if ($Manager) { $global:PKG_MANAGER = $Manager }
-    if ($Python) { $global:PYTHON_VERSION_TARGET = $Python }
-    if ($Isaa) { $global:ISAA_EXTRA = "true" }
-    if ($Dev) { $global:DEV_EXTRA = "true" }
-    if ($AutoInstallDeps) { $global:AUTO_INSTALL_DEPS = "true" }
-
-    Initialize-Defaults
-
-    Log-Title "Final Configuration"
-    Log-Info "ToolBoxV2 Version: $global:TB_VERSION"
-    Log-Info "Install Source:    $global:INSTALL_SOURCE"
-    Log-Info "Package Manager:   $global:PKG_MANAGER"
-    Log-Info "Target Python:     $global:PYTHON_VERSION_TARGET"
-    Log-Info "Install ISAA:      $global:ISAA_EXTRA"
-    Log-Info "Install DEV:       $global:DEV_EXTRA"
-    Log-Info "Install Dir:       $global:INSTALL_DIR"
-    Log-Info "OS:                $global:OS_TYPE"
-    Log-Info "Auto Install Deps: $global:AUTO_INSTALL_DEPS"
-}
-
-# -----------------------------------------------------------------------------
-# AUTO-INSTALLER FUNCTIONS
-# -----------------------------------------------------------------------------
-function Install-SystemPython {
-    Log-Info "Attempting to install Python $global:PYTHON_VERSION_TARGET using $SYSTEM_PKG_INSTALLER_CMD..."
-    $success = $false
-
-    switch ($SYSTEM_PKG_INSTALLER_CMD) {
-        "winget" {
-            $cmd = @("winget", "install", "--accept-source-agreements", "--accept-package-agreements", "-e", "--id", "Python.Python.3")
-        }
-        "choco" {
-            $cmd = @("choco", "install", "python3", "-y")
-        }
-        "apt-get" {
-            $pkg = "python$($global:PYTHON_VERSION_TARGET.Split('.')[0]).$($global:PYTHON_VERSION_TARGET.Split('.')[1])"
-            $cmd = @("sudo", "apt-get", "update", "-y"); & $cmd @cmd | Out-Null
-            $cmd = @("sudo", "apt-get", "install", "-y", $pkg, "${pkg}-venv", "python3-pip")
-        }
-        "brew" {
-            $cmd = @("brew", "install", "python@$global:PYTHON_VERSION_TARGET")
-        }
-        Default {
-            Log-Warning "No known install command for Python with $SYSTEM_PKG_INSTALLER_CMD."
-            return $false
-        }
-    }
-
-    Log-Info "Executing: $($cmd -join ' ')"
-    if (Read-YesNo "Proceed with Python installation?" "Y") {
-        $process = Start-Process -FilePath $cmd[0] -ArgumentList $cmd[1..$cmd.Length] -Wait -PassThru -NoNewWindow
-        if ($process.ExitCode -eq 0) {
-            $success = $true
-            # Refresh environment variables (path) in current session if possible, mostly effective in new shells
-            if ($global:IS_WINDOWS) { $env:Path = [System.Environment]::GetEnvironmentVariable("Path","User") + ";" + [System.Environment]::GetEnvironmentVariable("Path","Machine") }
-        }
-    }
-
-    if ($success) {
-        Log-Success "Python installation command executed. Verifying..."
-        $result = Invoke-PythonHelper -Action "find_python" -Arguments @($global:PYTHON_VERSION_TARGET)
-        if ($result -and $result.path) {
-            $global:PYTHON_EXEC_PATH = $result.path
-            Log-Success "Python found at: $global:PYTHON_EXEC_PATH"
-            return $true
-        }
-    }
-    Log-Warning "Python installation/verification failed."
-    return $false
-}
-
-function Install-SystemGit {
-    Log-Info "Attempting to install Git using $SYSTEM_PKG_INSTALLER_CMD..."
-    $success = $false
-
-    switch ($SYSTEM_PKG_INSTALLER_CMD) {
-        "winget" { $cmd = @("winget", "install", "--accept-source-agreements", "--accept-package-agreements", "-e", "--id", "Git.Git") }
-        "choco" { $cmd = @("choco", "install", "git", "-y") }
-        "apt-get" { $cmd = @("sudo", "apt-get", "install", "-y", "git") }
-        "brew" { $cmd = @("brew", "install", "git") }
-        Default { Log-Warning "No known install command for Git."; return $false }
-    }
-
-    Log-Info "Executing: $($cmd -join ' ')"
-    if (Read-YesNo "Proceed with Git installation?" "Y") {
-        $process = Start-Process -FilePath $cmd[0] -ArgumentList $cmd[1..$cmd.Length] -Wait -PassThru -NoNewWindow
-        if ($process.ExitCode -eq 0) { $success = $true }
-    }
-
-    if ($success -and (Test-Command "git")) {
-        Log-Success "Git successfully installed."
-        return $true
-    }
-    Log-Warning "Git installation/verification failed."
-    return $false
-}
-
-# -----------------------------------------------------------------------------
-# CORE INSTALLATION STEPS
-# -----------------------------------------------------------------------------
-function Step-01_CheckPython {
-    Log-Title "Step 1: Verifying Python $global:PYTHON_VERSION_TARGET"
-
-    $result = Invoke-PythonHelper -Action "find_python" -Arguments @($global:PYTHON_VERSION_TARGET)
-
-    if (-not $result -or -not $result.path) {
-        Log-Warning "Python $global:PYTHON_VERSION_TARGET not found."
-        if ($global:AUTO_INSTALL_DEPS -eq "true" -and $SYSTEM_PKG_INSTALLER_CMD) {
-            if (-not (Install-SystemPython)) {
-                Log-Error "Automatic Python installation failed. Please install manually."
+            if (-not $RUNTIME) {
+                Info "No runtime found — bootstrapping uv..."
+                Invoke-RestMethod "https://astral.sh/uv/install.ps1" | Invoke-Expression
+                $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
+                if (-not $uvCmd) { Fail "uv bootstrap failed. Install manually: https://docs.astral.sh/uv/" }
+                $script:UV_BIN  = $uvCmd.Source
+                $script:RUNTIME = "uv"
+                Log "Runtime: uv bootstrapped"
             }
+        }
+    }
+
+    # 5. Optional tools
+    Check-Optional "docker"  $OPT_DOCKER  "Docker runtime"
+    Check-Optional "nginx"   $OPT_NGINX   "nginx"
+    Check-Optional "ollama"  $OPT_OLLAMA  "Ollama (LLM)"
+}
+
+function Check-Optional {
+    param([string]$Name, [bool]$CfgVal, [string]$Label)
+    $present = [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+    if ($CfgVal) {
+        if ($present) { Log "$Label already installed" }
+        else { Install-Optional $Name }
+    } elseif (-not $present) {
+        if (Confirm-User "$Label not found. Install it?") { Install-Optional $Name }
+    } else {
+        Log "$Label found"
+    }
+}
+
+function Install-Optional {
+    param([string]$Name)
+    switch ($Name) {
+        "docker"  { Start-Process "https://www.docker.com/products/docker-desktop" }
+        "ollama"  { Invoke-RestMethod "https://ollama.ai/install.ps1" | Invoke-Expression }
+        default   { Warn "Please install $Name manually" }
+    }
+}
+
+# ============================================================
+# PHASE 3 — INSTALL
+# ============================================================
+function Phase-Install {
+    Step "Phase 3 — Install ($INSTALL_MODE)"
+    foreach ($d in @("bin",".data",".config","logs")) {
+        New-Item -ItemType Directory -Path "$INSTALL_PATH\$d" -Force | Out-Null
+    }
+
+    switch ($INSTALL_MODE) {
+        "native"  { return Install-Native }
+        "uv"      { return Install-Uv }
+        "docker"  { return Install-Docker }
+        "source"  { return Install-Source }
+    }
+}
+
+function Get-VersionAndUrl {
+    $platform = "windows"
+    $archTag  = if ($ARCH -eq "x86_64") { "x64" } else { "arm64" }
+
+    if ($REGISTRY_REACHABLE) {
+        try {
+            $resp = Invoke-RestMethod "$REGISTRY_API/artifacts/$TB_ARTIFACT_NAME/latest?platform=$platform&architecture=$ARCH" -ErrorAction Stop
+            if ($resp.url) { return @{ Version=$resp.version; Url=$resp.url; Checksum=$resp.checksum } }
+        } catch {}
+    }
+
+    # GitHub fallback
+    Info "Using GitHub Releases..."
+    $rel   = Invoke-RestMethod "https://api.github.com/repos/$GITHUB_REPO/releases/latest"
+    $tag   = $rel.tag_name
+    $fname = "toolbox-windows-$archTag.exe"
+    $url   = "https://github.com/$GITHUB_REPO/releases/download/$tag/$fname"
+    return @{ Version=($tag -replace "^v",""); Url=$url; Checksum="" }
+}
+
+function Install-Native {
+    Info "Fetching latest binary..."
+    $info = Get-VersionAndUrl
+    if (-not $info.Url) { Fail "Could not determine download URL" }
+    Info "Downloading ToolBoxV2 v$($info.Version)..."
+    $dest = "$INSTALL_PATH\bin\tb.exe"
+    Download-File $info.Url $dest
+
+    if ($info.Checksum) {
+        $actual = (Get-FileHash $dest -Algorithm SHA256).Hash.ToLower()
+        if ($actual -ne $info.Checksum.ToLower()) { Fail "Checksum mismatch — download may be corrupted" }
+        Log "Checksum verified"
+    }
+
+    # Add to PATH via user environment
+    $currentPath = [System.Environment]::GetEnvironmentVariable("PATH", "User")
+    $binDir = "$INSTALL_PATH\bin"
+    if ($currentPath -notlike "*$binDir*") {
+        [System.Environment]::SetEnvironmentVariable("PATH", "$binDir;$currentPath", "User")
+        $env:PATH = "$binDir;$env:PATH"
+        Log "Added $binDir to user PATH"
+    }
+
+    Log "Binary installed: $dest"
+    return $info.Version
+}
+
+function Install-Uv {
+    Info "Installing via uv tool..."
+    $extras = ($FEATURES -split " " | Where-Object { $_ -notmatch "^(core|mini)$" }) -join ","
+    $pkg = if ($extras) { "ToolBoxV2[$extras]" } else { "ToolBoxV2" }
+    & $UV_BIN tool install $pkg --force
+    Log "Installed: $pkg"
+    $ver = (& tb --version 2>$null) -replace "[^\d\.]","" | Select-Object -First 1
+    return if ($ver) { $ver } else { "unknown" }
+}
+
+function Install-Venv {
+    Info "Installing via pip/venv..."
+    $venvPath = "$INSTALL_PATH\.venv"
+    & $PYTHON_BIN -m venv $venvPath
+    $pip = "$venvPath\Scripts\pip.exe"
+    & $pip install --upgrade pip -q
+    $extras = ($FEATURES -split " " | Where-Object { $_ -notmatch "^(core|mini)$" }) -join ","
+    $pkg = if ($extras) { "ToolBoxV2[$extras]" } else { "ToolBoxV2" }
+    & $pip install $pkg -q
+
+    # Write wrapper
+    $wrapper = "$INSTALL_PATH\bin\tb.cmd"
+    "@echo off`n`"$venvPath\Scripts\tb.exe`" %*" | Set-Content $wrapper
+    Log "Installed: $pkg via venv"
+    return "unknown"
+}
+
+function Install-Docker {
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { Fail "Docker not found" }
+    $image = "ghcr.io/markinhaus/toolboxv2:latest"
+    Info "Pulling Docker image: $image"
+    docker pull $image
+    $wrapper = "$INSTALL_PATH\bin\tb.cmd"
+    "@echo off`ndocker run --rm -it -v `"$INSTALL_PATH\.data:/data`" -e TB_DATA_DIR=/data $image %*" | Set-Content $wrapper
+    Log "Docker wrapper installed"
+    return "latest"
+}
+
+function Install-Source {
+    Info "Installing from source ($SOURCE_FROM)..."
+    $srcDir = "$INSTALL_PATH\src"
+
+    if ($SOURCE_FROM -eq "git") {
+        if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Fail "git not found" }
+        if (Test-Path "$srcDir\.git") {
+            git -C $srcDir fetch origin
+            git -C $srcDir checkout $SOURCE_BRANCH
+            git -C $srcDir pull origin $SOURCE_BRANCH
         } else {
-            Log-Error "Python not found and auto-install disabled."
-        }
-    }
-
-    # Re-verify
-    $result = Invoke-PythonHelper -Action "find_python" -Arguments @($global:PYTHON_VERSION_TARGET)
-    if (-not $result -or -not $result.path) {
-        Log-Error "Python still not usable."
-    }
-
-    $global:PYTHON_EXEC_PATH = $result.path
-    Log-Success "Using Python: $global:PYTHON_EXEC_PATH"
-}
-
-function Step-02_CheckGit {
-    if ($global:INSTALL_SOURCE -eq "git") {
-        Log-Title "Step 2: Verifying Git"
-        if (-not (Test-Command "git")) {
-            Log-Warning "Git not found."
-            if ($global:AUTO_INSTALL_DEPS -eq "true" -and $SYSTEM_PKG_INSTALLER_CMD) {
-                if (-not (Install-SystemGit)) {
-                    Log-Error "Automatic Git installation failed."
-                }
-            } else {
-                Log-Error "Git not found and auto-install disabled."
-            }
-        }
-        Log-Success "Git found: $(git --version)"
-    } else {
-        Log-Info "Skipping Git check."
-    }
-}
-
-function Step-03_SetupEnvironment {
-    Log-Title "Step 3: Setting up Environment"
-
-    if (Test-Path $global:INSTALL_DIR) {
-        Log-Warning "Directory exists: $global:INSTALL_DIR"
-        if (Test-Path $global:VENV_PATH) {
-            if (Read-YesNo "Remove existing venv?" "Y") {
-                Remove-Item $global:VENV_PATH -Recurse -Force
-            }
-        }
-    }
-
-    if (-not (Test-Path $global:INSTALL_DIR)) { New-Item -ItemType Directory -Path $global:INSTALL_DIR -Force | Out-Null }
-
-    Log-Info "Creating venv at $global:VENV_PATH..."
-    $result = Invoke-PythonHelper -Action "create_venv" -Arguments @($global:VENV_PATH, $global:PYTHON_EXEC_PATH)
-
-    if (-not $result -or $result.success -ne $true) {
-        Log-Error "Venv creation failed."
-    }
-    Log-Success "Venv created."
-
-    # Install extra managers if needed
-    $pipPathRes = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($global:VENV_PATH, "pip")
-    $pipExe = $pipPathRes.path
-
-    if ($global:PKG_MANAGER -eq "uv") {
-        $uvCheck = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($global:VENV_PATH, "uv")
-        if (-not $uvCheck.path) {
-            Log-Info "Installing UV..."
-            & $pipExe install uv
-        }
-    } elseif ($global:PKG_MANAGER -eq "poetry") {
-        $poetryCheck = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($global:VENV_PATH, "poetry")
-        if (-not $poetryCheck.path) {
-            Log-Info "Installing Poetry..."
-            & $pipExe install poetry
-        }
-    }
-}
-
-function Step-04_PrepareSource {
-    if ($global:INSTALL_SOURCE -ne "git") { return }
-
-    Log-Title "Step 4: Preparing Git Source"
-
-    if (Test-Path $global:TOOLBOX_SRC_DIR) {
-        Log-Info "Updating existing repo..."
-        Push-Location $global:TOOLBOX_SRC_DIR
-        git fetch --all --prune --tags -q
-        git checkout -q $global:TB_VERSION
-        # If it's a branch, pull. If it's a tag/hash, checkout is enough.
-        $ref = git symbolic-ref -q --short HEAD
-        if ($ref -and $ref -eq $global:TB_VERSION) {
-            git pull -q origin $global:TB_VERSION
-        }
-        Pop-Location
-    } else {
-        Log-Info "Cloning repo..."
-        New-Item -ItemType Directory -Path (Split-Path $global:TOOLBOX_SRC_DIR) -Force | Out-Null
-        $branchArg = if ($global:TB_VERSION -ne "latest") { "--branch", $global:TB_VERSION } else { @() }
-        git clone $branchArg $TOOLBOX_REPO $global:TOOLBOX_SRC_DIR
-    }
-    Log-Success "Source ready."
-}
-
-function Step-05_InstallToolBox {
-    Log-Title "Step 5: Installing ToolBoxV2"
-
-    $extras = @()
-    if ($global:ISAA_EXTRA -eq "true") { $extras += "isaa" }
-    if ($global:DEV_EXTRA -eq "true") { $extras += "dev" }
-
-    $extrasSuffix = ""
-    if ($extras.Count -gt 0) { $extrasSuffix = "[$($extras -join ',')]" }
-
-    $mgrRes = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($global:VENV_PATH, $global:PKG_MANAGER)
-    $mgrExe = $mgrRes.path
-
-    if (-not $mgrExe) { Log-Error "Package manager $global:PKG_MANAGER not found in venv." }
-
-    $installCmd = @()
-
-    if ($global:INSTALL_SOURCE -eq "git") {
-        $target = "$global:TOOLBOX_SRC_DIR$extrasSuffix"
-        if ($global:PKG_MANAGER -eq "pip") { $installCmd = @($mgrExe, "install", "--upgrade", $target) }
-        elseif ($global:PKG_MANAGER -eq "uv") { $installCmd = @($mgrExe, "pip", "install", "--system", "--upgrade", $target) }
-        elseif ($global:PKG_MANAGER -eq "poetry") {
-            Push-Location $global:TOOLBOX_SRC_DIR
-            $installCmd = @($mgrExe, "install")
-            if ($extras.Count -gt 0) { foreach ($e in $extras) { $installCmd += "--extras"; $installCmd += $e } }
+            git clone --branch $SOURCE_BRANCH --depth 1 "https://github.com/$GITHUB_REPO.git" $srcDir
         }
     } else {
-        $pkg = $TOOLBOX_PYPI_NAME
-        if ($global:TB_VERSION -ne "latest") { $pkg += "==$global:TB_VERSION" }
-        $target = "$pkg$extrasSuffix"
-
-        if ($global:PKG_MANAGER -eq "pip") { $installCmd = @($mgrExe, "install", "--upgrade", $target) }
-        elseif ($global:PKG_MANAGER -eq "uv") { $installCmd = @($mgrExe, "pip", "install", "--system", "--upgrade", $target) }
-        elseif ($global:PKG_MANAGER -eq "poetry") {
-             # Dummy project for poetry to add dependencies
-             $pyproject = @"
-[tool.poetry]
-name = "tb-runtime"
-version = "0.1.0"
-description = ""
-authors = []
-
-[tool.poetry.dependencies]
-python = "^$global:PYTHON_VERSION_TARGET"
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
-"@
-             Set-Content (Join-Path $global:INSTALL_DIR "pyproject.toml") $pyproject
-             Push-Location $global:INSTALL_DIR
-             $installCmd = @($mgrExe, "add", $pkg)
-             foreach ($e in $extras) { $installCmd += "--extras"; $installCmd += $e }
-        }
+        $resp = Invoke-RestMethod "$REGISTRY_API/packages/ToolBoxV2/versions/latest/download" -ErrorAction Stop
+        if (-not $resp.url) { Fail "Could not get tarball URL" }
+        $tmp = "$env:TEMP\tbv2_src.zip"
+        Download-File $resp.url $tmp
+        Expand-Archive $tmp $srcDir -Force
+        Remove-Item $tmp
     }
 
-    Log-Info "Installing using $global:PKG_MANAGER..."
-    & $installCmd[0] $installCmd[1..$installCmd.Length]
-    if ($LASTEXITCODE -ne 0) { Log-Error "Installation failed." }
+    Push-Location $srcDir
+    if ($RUNTIME -eq "uv") {
+        $extras = ($FEATURES -split " " | Where-Object { $_ -notmatch "^(core|mini)$" }) -join ","
+        if ($extras) { & $UV_BIN sync --extra $extras } else { & $UV_BIN sync }
+        "@echo off`ncd /d `"$srcDir`" && `"$UV_BIN`" run tb %*" | Set-Content "$INSTALL_PATH\bin\tb.cmd"
+    } else {
+        & $PYTHON_BIN -m venv "$srcDir\.venv"
+        & "$srcDir\.venv\Scripts\pip.exe" install -e ".[$(($FEATURES -replace ' ',','))]" -q
+        "@echo off`n`"$srcDir\.venv\Scripts\tb.exe`" %*" | Set-Content "$INSTALL_PATH\bin\tb.cmd"
+    }
+    Pop-Location
 
-    if ($global:PKG_MANAGER -eq "poetry") { Pop-Location }
-    Log-Success "ToolBoxV2 installed."
+    $ver = (& "$INSTALL_PATH\bin\tb.cmd" --version 2>$null) -replace "[^\d\.]","" | Select-Object -First 1
+    return if ($ver) { $ver } else { "dev" }
 }
 
-function Step-06_CreateCommand {
-    Log-Title "Step 6: Creating 'tb' command"
+# ============================================================
+# PHASE 4 — MANIFESTS & ENV
+# ============================================================
+function Phase-WriteManifests {
+    param([string]$TbVersion)
+    Step "Phase 4 — Writing Manifests & Env"
 
-    $tbRes = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($global:VENV_PATH, "tb")
-    $tbPath = $tbRes.path
+    $timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    $optInstalled = @()
+    if ($OPT_NGINX)    { $optInstalled += "nginx" }
+    if ($OPT_DOCKER)   { $optInstalled += "docker" }
+    if ($OPT_OLLAMA)   { $optInstalled += "ollama" }
+    if ($OPT_MINIO)    { $optInstalled += "minio" }
+    if ($OPT_REGISTRY) { $optInstalled += "registry" }
 
-    if (-not $tbPath) { Log-Warning "Could not find 'tb' executable in venv."; return }
+    @"
+installer_version: "$INSTALLER_VERSION"
+installed_at: "$timestamp"
+install_mode: "$INSTALL_MODE"
+source_from: "$SOURCE_FROM"
+source_branch: "$SOURCE_BRANCH"
+tb_version: "$TbVersion"
+toolbox_home: "$INSTALL_PATH"
+bin_path: "$INSTALL_PATH\bin\tb.exe"
+src_path: "$INSTALL_PATH\src"
+venv_path: "$INSTALL_PATH\.venv"
+runtime: "$RUNTIME"
+python_path: "$PYTHON_BIN"
+uv_path: "$UV_BIN"
+features: "$FEATURES_IMMUTABLE $FEATURES"
+optional_installed: "$($optInstalled -join ' ')"
+"@ | Set-Content "$INSTALL_PATH\install.manifest"
+    Log "Written: $INSTALL_PATH\install.manifest"
 
-    # Ensure user bin dir exists
-    if (-not (Test-Path $USER_BIN_DIR)) { New-Item -ItemType Directory -Path $USER_BIN_DIR -Force | Out-Null }
-
-    $linkRes = Invoke-PythonHelper -Action "create_user_executable_link" -Arguments @($tbPath, "tb", $USER_BIN_DIR)
-    $linkPath = $linkRes.path
-
-    if ($linkPath) {
-        Log-Success "Command link created at: $linkPath"
-        if ($env:PATH -notlike "*$USER_BIN_DIR*") {
-            Log-Warning "$USER_BIN_DIR is not in your PATH."
-            if ($global:IS_WINDOWS) {
-                Write-Host "Add '$USER_BIN_DIR' to your User Path variables." -ForegroundColor Yellow
-            } else {
-                Write-Host 'Add to shell config: export PATH="$USER_BIN_DIR:$PATH"' -ForegroundColor Yellow
-            }
-        }
+    $manifestFile = "$INSTALL_PATH\tb-manifest.yaml"
+    if (-not (Test-Path $manifestFile)) {
+        @"
+manifest_version: "1.0.0"
+app:
+  name: ToolBoxV2
+  version: "$TbVersion"
+  instance_id: "$INSTANCE_ID"
+  environment: $ENVIRONMENT
+  debug: false
+  log_level: INFO
+paths:
+  data_dir: "$INSTALL_PATH\.data"
+  config_dir: "$INSTALL_PATH\.config"
+  logs_dir: "$INSTALL_PATH\logs"
+  mods_dir: "$INSTALL_PATH\mods"
+  dist_dir: "$INSTALL_PATH\dist"
+registry:
+  url: "$REGISTRY_URL"
+  auto_update: false
+"@ | Set-Content $manifestFile
+        Log "Written: $manifestFile"
     } else {
-        Log-Warning "Could not create automatic link."
-        Log-Info "Run directly: $tbPath"
+        Info "tb-manifest.yaml exists — skipping (run 'tb manifest apply' to update)"
     }
+
+    $envFile = "$INSTALL_PATH\.env"
+    if (-not (Test-Path $envFile)) {
+        @"
+# ToolBoxV2 Environment — generated by installer
+TOOLBOX_HOME=$INSTALL_PATH
+TB_INSTALL_DIR=$INSTALL_PATH
+TB_DATA_DIR=$INSTALL_PATH\.data
+TB_DIST_DIR=$INSTALL_PATH\dist
+TB_ENV=$ENVIRONMENT
+TB_JWT_SECRET=                    # REQUIRED: set before production use
+TB_COOKIE_SECRET=                 # REQUIRED: set before production use
+TOOLBOXV2_BASE=localhost
+TOOLBOXV2_BASE_PORT=8000
+MINIO_ENDPOINT=
+MINIO_ACCESS_KEY=
+MINIO_SECRET_KEY=
+"@ | Set-Content $envFile
+        Log "Written: $envFile"
+        Warn "Edit $envFile to set TB_JWT_SECRET and TB_COOKIE_SECRET before production use"
+    }
+
+    # Write TOOLBOX_HOME to user environment
+    [System.Environment]::SetEnvironmentVariable("TOOLBOX_HOME", $INSTALL_PATH, "User")
+    $env:TOOLBOX_HOME = $INSTALL_PATH
+    Log "TOOLBOX_HOME set in user environment"
 }
 
-function Step-07_Finalize {
-    Log-Title "Step 7: Onboarding"
+# ============================================================
+# UPDATE
+# ============================================================
+function Action-Update {
+    Step "Update"
+    $manifest = "$INSTALL_PATH\install.manifest"
+    if (-not (Test-Path $manifest)) { Fail "No install.manifest found at $INSTALL_PATH" }
+    $script:INSTALL_MODE  = Get-YamlField $manifest "install_mode"
+    $script:RUNTIME       = Get-YamlField $manifest "runtime"
+    $script:UV_BIN        = Get-YamlField $manifest "uv_path"
+    $script:PYTHON_BIN    = Get-YamlField $manifest "python_path"
 
-    $tbCmd = ""
-    if (Test-Command "tb") {
-        $tbCmd = "tb"
-    } else {
-        $res = Invoke-PythonHelper -Action "get_executable_path" -Arguments @($global:VENV_PATH, "tb")
-        $tbCmd = $res.path
-    }
-    if (-not $tbCmd) { Log-Warning "Cannot find tb executable — run '$global:VENV_PATH\Scripts\tb' manually."; return }
-
-    # Core init
-    & $tbCmd "-init" "main" 2>$null
-    if ($LASTEXITCODE -ne 0) { Log-Warning "Init exited non-zero, continuing." }
-
-    # --- PATH permanent setzen (User-Scope, kein Admin nötig) ---
-    $currentPath = [Environment]::GetEnvironmentVariable("PATH", "User")
-    if ($currentPath -notlike "*$global:USER_BIN_DIR*") {
-        [Environment]::SetEnvironmentVariable(
-            "PATH",
-            "$global:USER_BIN_DIR;$currentPath",
-            "User"
-        )
-        Log-Success "PATH updated (User scope): $global:USER_BIN_DIR"
-        Log-Info "Restart your terminal for PATH to take effect."
-    } else {
-        Log-Info "PATH already contains $global:USER_BIN_DIR"
-    }
-
-    # --- Optionaler Alias via PowerShell-Profil ---
-    $addAlias = Read-YesNo "Add 'toolbox' alias to PowerShell profile?" "N"
-    if ($addAlias) {
-        $profileDir = Split-Path $PROFILE
-        if (-not (Test-Path $profileDir)) { New-Item -ItemType Directory -Path $profileDir -Force | Out-Null }
-        if (-not (Test-Path $PROFILE)) { New-Item -ItemType File -Path $PROFILE -Force | Out-Null }
-        $aliasLine = "Set-Alias toolbox tb"
-        if (-not (Select-String -Path $PROFILE -Pattern "Set-Alias toolbox" -Quiet)) {
-            Add-Content $PROFILE "`n# ToolBoxV2`n$aliasLine"
-            Log-Success "Alias added to $PROFILE"
-        } else {
-            Log-Info "Alias already in profile."
-        }
-    }
-
-    # --- Feature Selection ---
-    Log-Title "Features"
-    $feats = @("web", "isaa", "desktop", "exotic")
-    foreach ($feat in $feats) {
-        $install = Read-YesNo "Install feature '$feat'?" "N"
-        if ($install) {
-            & $tbCmd "fl" "unpack" $feat
-            if ($LASTEXITCODE -eq 0) { Log-Success "$feat loaded." }
-            else { Log-Warning "$feat download failed (network or registry unavailable)." }
-        }
-    }
-
-    # --- Manifest Wizard ---
-    $runWiz = Read-YesNo "Run config wizard now?" "Y"
-    if ($runWiz) {
-        & $tbCmd "manifest" "init"
-        if ($LASTEXITCODE -ne 0) { Log-Warning "Wizard exited early." }
-    }
-
-    # --- Windows Task Scheduler (nur Server-Mode) ---
-    if ($global:INSTALL_MODE -eq "server") {
-        $setupSvc = Read-YesNo "Setup Windows Task Scheduler autostart?" "Y"
-        if ($setupSvc) {
-            & $tbCmd "--sm" "init"
+    switch ($INSTALL_MODE) {
+        "native"  { $v = Install-Native; Phase-WriteManifests $v }
+        "uv"      { & $UV_BIN tool upgrade ToolBoxV2; Log "Updated via uv" }
+        "docker"  { docker pull ghcr.io/markinhaus/toolboxv2:latest; Log "Updated Docker image" }
+        "source"  {
+            $script:SOURCE_FROM   = Get-YamlField $manifest "source_from" "git"
+            $script:SOURCE_BRANCH = Get-YamlField $manifest "source_branch" "main"
+            $script:FEATURES      = Get-YamlField $manifest "features" "core cli"
+            Install-Source
+            Log "Updated from source"
         }
     }
 }
 
-# -----------------------------------------------------------------------------
+# ============================================================
+# UNINSTALL
+# ============================================================
+function Action-Uninstall {
+    Step "Uninstall"
+    $manifest = "$INSTALL_PATH\install.manifest"
+    if (-not (Test-Path $manifest)) { Fail "No install.manifest found" }
+
+    $mode     = Get-YamlField $manifest "install_mode"
+    $homePath = Get-YamlField $manifest "toolbox_home"
+
+    Warn "This will remove ToolBoxV2 from: $homePath"
+    if (-not (Confirm-User "Continue with uninstall?")) { Fail "Aborted." }
+
+    switch ($mode) {
+        "docker" {
+            docker rm -f toolboxv2 2>$null
+            docker rmi ghcr.io/markinhaus/toolboxv2:latest 2>$null
+        }
+        "uv"     { & $UV_BIN tool uninstall ToolBoxV2 2>$null }
+    }
+
+    # Remove from PATH
+    $currentPath = [System.Environment]::GetEnvironmentVariable("PATH", "User")
+    $binDir = "$homePath\bin"
+    $newPath = ($currentPath -split ";" | Where-Object { $_ -ne $binDir }) -join ";"
+    [System.Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
+    [System.Environment]::SetEnvironmentVariable("TOOLBOX_HOME", $null, "User")
+
+    if (Confirm-User "Remove all data and config in ${homePath}? (IRREVERSIBLE)" "n") {
+        Remove-Item -Path $homePath -Recurse -Force
+    }
+    Log "Uninstall complete"
+}
+
+# ============================================================
+# SUMMARY
+# ============================================================
+function Print-Summary {
+    param([string]$TbVersion)
+    Write-Host ""
+    Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Green
+    Write-Host "║   ToolBoxV2 v$TbVersion installed successfully" -ForegroundColor Green
+    Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  Home:     $INSTALL_PATH"
+    Write-Host "  Mode:     $INSTALL_MODE"
+    Write-Host "  Runtime:  $RUNTIME"
+    Write-Host "  Features: $FEATURES_IMMUTABLE $FEATURES"
+    Write-Host ""
+    Write-Host "  Next steps:" -ForegroundColor Cyan
+    Write-Host "  1. Restart terminal (PATH updated)"
+    Write-Host "  2. First run:    tb"
+    Write-Host "  3. Check status: tb status"
+    if (Select-String -Path "$INSTALL_PATH\.env" -Pattern "TB_JWT_SECRET=$" -ErrorAction SilentlyContinue) {
+        Write-Host ""
+        Write-Host "  [!] Set secrets before production:" -ForegroundColor Yellow
+        Write-Host "      $INSTALL_PATH\.env"
+    }
+    Write-Host ""
+}
+
+# ============================================================
 # MAIN
-# -----------------------------------------------------------------------------
-Find-ExistingToolbox
+# ============================================================
+Write-Host ""
+Write-Host "  ╔════════════════════════════════════════╗" -ForegroundColor Cyan
+Write-Host "  ║     ToolBoxV2 Installer v$INSTALLER_VERSION       ║" -ForegroundColor Cyan
+Write-Host "  ╚════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host ""
 
-if ($global:EXISTING_TB_DIR -ne "") {
-    Write-Host "`nExisting installation found: $global:EXISTING_TB_DIR" -ForegroundColor Yellow
-    if (Read-YesNo "Update it?" "Y") {
-        $global:INSTALL_DIR = $global:EXISTING_TB_DIR
-        $global:VENV_PATH = if ($global:EXISTING_VENV_PATH -ne "") { $global:EXISTING_VENV_PATH } else { "$global:INSTALL_DIR\.venv" }
-        Log-Info "Updating existing install at $global:INSTALL_DIR"
-        Load-ConfigFile
-        Set-Configuration
-    } else {
-        Load-ConfigFile
-        Select-InstallMode
-        Set-Configuration
+switch ($ACTION) {
+    "install" {
+        Phase-Discovery
+        Phase-Config
+        Phase-Preflight
+        $tbVersion = if ($INSTALL_MODE -eq "uv" -and $RUNTIME -eq "venv") {
+            Install-Venv
+        } else {
+            Phase-Install
+        }
+        Phase-WriteManifests $tbVersion
+        Print-Summary $tbVersion
     }
-} else {
-    Load-ConfigFile
-    Select-InstallMode
-    Set-Configuration
+    "update"    { Phase-Discovery; Action-Update }
+    "uninstall" { Phase-Discovery; Action-Uninstall }
 }
-
-Step-01_CheckPython
-Step-02_CheckGit
-Step-03_SetupEnvironment
-Step-04_PrepareSource
-Step-05_InstallToolBox
-Step-06_CreateCommand
-Step-07_Finalize
-
-Log-Title "Installation Complete!"
-Write-Host "ToolBoxV2 is ready. Try 'tb' in a new terminal." -ForegroundColor Green

@@ -347,20 +347,22 @@ def render_footer_toolbar(
     out: list[tuple[str, str]] = []
     bg     = "fg:#111827 "   # konsistent dunkel, kein terminal-default
     fg_dim = "bg:#6b7280"
-
+    import shutil as _shutil
+    term_width = _shutil.get_terminal_size().columns
+    pad = " " * max(0, term_width)
     if audio_recording:
         out.append((bg + "fg:#dc2626 bg:#ffffff", " ● REC  F4=stop "))
-        out.append((bg + fg_dim, " " * 260))
+        out.append((bg + fg_dim, pad))
         return out
 
     if audio_processing:
         out.append((bg + "fg:#7c3aed bg:#ffffff", " ⚙ PROC  processing... "))
-        out.append((bg + fg_dim, " " * 250))
+        out.append((bg + fg_dim, pad))
         return out
 
     if not task_views:
         out.append((bg + fg_dim, f" ◦ idle   F2=overview  F4=audio  F5=status "))
-        out.append((bg + fg_dim, " " * 230))
+        out.append((bg + fg_dim, pad))
         return out
 
     if overlay_open:
@@ -372,14 +374,14 @@ def render_footer_toolbar(
     overflow = len(main_tasks) - len(shown)
 
     for tid, tv in shown:
-        _append_task_line(out, tv, tid == focused_id)
+        _append_task_line(out, tv, tid == focused_id, pad)
 
         # Finale Antwort / letzte Nachricht für abgeschlossene Tasks
         if tv.status in ("completed", "done") and tv.final_answer:
             # Erste Zeile der Antwort, kurz
             first_line = tv.final_answer.split("\n")[0].strip()
             out.append(("fg:#111827 bg:#4ade80", f"  ↳ {_short(first_line, 90)} "))
-            out.append(("fg:#111827 " + fg_dim, " " * 240))
+            out.append(("fg:#111827 " + fg_dim, pad))
 
         out.append(("fg:#111827 " + fg_dim, "\n"))
 
@@ -393,7 +395,7 @@ def render_footer_toolbar(
     return out
 
 
-def _append_task_line(out: list, tv: TaskView, focused: bool) -> None:
+def _append_task_line(out: list, tv: TaskView, focused: bool, pad: str = " " * 120) -> None:
     # Basis: dunkler Hintergrund, Text hell — alles explizit gesetzt
     bg      = "fg:#111827 "   # dunkelgrau, kein ansiblack (vermeidet terminal-default weiß)
     fg_dim  = "bg:#6b7280"
@@ -455,7 +457,7 @@ def _append_task_line(out: list, tv: TaskView, focused: bool) -> None:
         out.append((bg + "bg:#f472b6", f"✦{len(tv.sub_agents)} "))
 
     # Padding-Block bis Zeilenende — verhindert weißen Rest
-    out.append((bg + fg_dim, " " * 260))
+    out.append((bg + fg_dim, pad))
 
 
 # ── B: Fullscreen overlay ─────────────────────────────────────────────────────
@@ -3666,6 +3668,11 @@ class ISAA_Host:
                     def _on_exit():
                         self.zen_plus_mode = False
                         self._overlay = None
+                        if self.prompt_session and self.prompt_session.app:
+                            try:
+                                self.prompt_session.app.invalidate()
+                            except Exception:
+                                pass
 
                     await overlay.run(on_exit=_on_exit)
 
@@ -5054,7 +5061,9 @@ class ISAA_Host:
         )
 
     def _get_bottom_toolbar(self):
-        return [] if self.zen_plus_mode else render_footer_toolbar(
+        if self.zen_plus_mode or self._overlay is not None:
+            return []
+        return render_footer_toolbar(
             task_views=self._task_views,
             focused_id=self._focused_task_id,
             audio_recording=self._audio_recording,

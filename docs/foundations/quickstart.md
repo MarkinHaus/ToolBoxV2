@@ -1,24 +1,22 @@
 # Quickstart — ToolBoxV2
 
-> Get started with ToolBoxV2 in under 5 minutes.
+> Up and running in under 5 minutes.
 
-## Install
+---
+
+## 1 — Install
 
 ### Linux / macOS
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.sh | bash
 ```
-
-<!-- verified: installer.sh::main -->
 
 ### Windows
 
 ```powershell
-irm https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/main/install.ps1 | iex
+irm "https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.ps1" | tee tbInstaller.ps1 | % { & ([scriptblock]::Create($_)) }
 ```
-
-<!-- verified: installer.ps1::main -->
 
 ### pip (all platforms)
 
@@ -26,49 +24,56 @@ irm https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/main/install.ps1 | ie
 pip install ToolBoxV2
 ```
 
-### git (developer mode)
+### Source (developer mode)
 
 ```bash
 git clone https://github.com/MarkinHaus/ToolBoxV2.git
 cd ToolBoxV2
-pip install -e .
+uv sync        # or: pip install -e .
 ```
 
 ---
 
-## First Run
+## 2 — First Run
 
-On first `tb` call you will be prompted to choose a **profile**:
+```bash
+tb
+```
 
-| Profile | Behavior | Use Case |
-|---------|----------|----------|
-| `consumer` | Launches GUI | App/Mod users |
-| `homelab` | Interactive dashboard | Local multi-mod setup |
-| `server` | ASCII status overview, then exit | Infrastructure management |
-| `business` | 3-line health summary, then exit | Quick health checks |
-| `developer` | Interactive dashboard + dev hints | Core/Mod development |
+On first launch, choose your **profile**:
 
-Profile defaults: `homelab` (index 2).
+| # | Profile     | Behavior                              | Use Case                    |
+|---|-------------|---------------------------------------|-----------------------------|
+| 1 | `consumer`  | Launches GUI                          | App / Mod users             |
+| 2 | `homelab`   | Interactive dashboard                 | Local multi-mod setup       |
+| 3 | `server`    | ASCII status overview, then exit      | Infrastructure management   |
+| 4 | `business`  | 3-line health summary, then exit      | Quick health checks         |
+| 5 | `developer` | Interactive dashboard + dev hints     | Core / Mod development      |
 
-<!-- verified: schema.py::ProfileType -->
-<!-- verified: first_run.py::PROFILES -->
+Default: `homelab` (press Enter to confirm).
 
 ---
 
-## Verify Installation
+## 3 — Verify
 
 ```bash
 tb --version
+tb status
 tb manifest validate
 ```
-
-<!-- verified: __init__.py::__version__ -->
 
 ---
 
 ## Next Steps
 
-- [Configuration Guide](../docs/configuration.md)
-- [Module Management](../docs/mods.md)
-- [Feature System](../docs/feature_system.md)
-- [ISAA Integration](../docs/isaa.md)
+| Goal | Command |
+|------|---------|
+| Configure TB | `tb manifest init` |
+| Install a module | `tb install <mod>` |
+| Start web workers | `tb workers start` |
+| View all commands | `tb --help` |
+
+- [Full Installation Guide](installation.md)
+- [Configuration Guide](../configuration.md)
+- [Module Management](../mods.md)
+- [ISAA Integration](../isaa.md)

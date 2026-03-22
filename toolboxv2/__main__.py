@@ -412,6 +412,7 @@ RUNNER_KEYS = [
     "session",
     "event",
     "broker",
+    "build",
     "http_worker",
     "obs",
     "ws_worker",
@@ -846,6 +847,13 @@ def parse_args():
     extensions.add_argument(
         "broker",
         help="ZMQ event broker (use: tb broker -h)",
+        nargs="?",
+        const=True,
+        default=False,
+    )
+    extensions.add_argument(
+        "build",
+        help="Build tb and features + uploader (use: tb build -h)",
         nargs="?",
         const=True,
         default=False,
@@ -1859,6 +1867,9 @@ def runner_setup():
         "workers": cli_worker_manager,
         "session": cli_session,
         "broker": cli_event,
+        "build": lambda: __import__(
+            "toolboxv2.utils.system.Build", fromlist=["run"]
+        ).run(get_app("app.build")),
         "http_worker": cli_http_worker,
         "obs": lambda: __import__(
             "toolboxv2.utils.clis.observability_helper", fromlist=["main"]

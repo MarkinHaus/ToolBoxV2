@@ -95,51 +95,29 @@ Deploy ToolBoxV2 as a customizable internal management system for:
 *   Modular, API-ready, and easily extensible.
 
 ---
-
 ## 🚀 Installation
 
-We offer several ways to install ToolBoxV2, choose the one that best suits your needs!
-
-### 🥇 Recommended: Zero the Hero Universal Installer (Easiest)
-
-This is the recommended method for most users on **Linux, macOS, and Windows (via WSL or Git Bash)**. The "Zero the Hero" script intelligently handles Python installation (if needed), sets up a dedicated virtual environment, installs ToolBoxV2 Core, and makes the `tb` command available.
-
-1.  **Download the installer:**
-    ```bash
-    # Using curl
-    curl -sSL -o install_toolbox.sh https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.sh
-    # Or using wget
-    wget -qO install_toolbox.sh https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.sh
-    ```
-2.  **Make it executable:**
-    ```bash
-    chmod +x install_toolbox.sh
-    ```
-
-3.  **Run the installer:**
-    ```bash
-    ./install_toolbox.sh
-    ```
-
-4.  **Follow on-screen instructions.** The script will:
-    *   ✅ Check for and offer to install required Python version (default: 3.11).
-    *   ✅ Create an isolated environment for ToolBoxV2 (usually in `~/.local/share/ToolBoxV2` or `~/Applications/ToolBoxV2`).
-    *   ✅ Install ToolBoxV2 Core using `pip` by default.
-    *   ✅ Expose the `tb` command (usually via a symlink in `~/.local/bin/`).
-    *   🎉 Run `tb -init main` to finalize setup.
-
-    **Customization:**
-    The script accepts optional arguments (e.g., `--version=0.5.0`, `--source=git`, `--manager=uv`, `--isaa`, `--dev`). If no arguments are given, it looks for an `init.config` file in the same directory. For details, run:
-    ```bash
-
-    ./install_toolbox.sh --help
-    ```
-
-or Windows onliner
+### Linux / macOS
 
 ```bash
-    & ([scriptblock]::Create((irm "https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.ps1")))
+curl -fsSL https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.sh | bash
 ```
+
+### Windows
+
+```powershell
+irm "https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.ps1" | tee tbInstaller.ps1 | % { & ([scriptblock]::Create($_)) }
+```
+
+### pip
+
+```bash
+pip install ToolBoxV2
+```
+
+The installer auto-detects your platform, selects a runtime (`uv` → `venv` → bootstrap), and guides you through feature selection. Supports four install modes: `native` (single binary), `uv`, `docker`, and `source`.
+
+→ [Full Installation Guide](docs/new/analysis/installation/installation.md) · [Quickstart](docs/foundations/quickstart.md)
 
 ---
 
