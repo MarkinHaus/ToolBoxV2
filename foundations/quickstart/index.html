@@ -979,15 +979,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#install" class="md-nav__link">
+  <a href="#1-install" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Install
+        1 — Install
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Install">
+    <nav class="md-nav" aria-label="1 — Install">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1024,10 +1024,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#git-developer-mode" class="md-nav__link">
+  <a href="#source-developer-mode" class="md-nav__link">
     <span class="md-ellipsis">
       
-        git (developer mode)
+        Source (developer mode)
       
     </span>
   </a>
@@ -1040,10 +1040,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#first-run" class="md-nav__link">
+  <a href="#2-first-run" class="md-nav__link">
     <span class="md-ellipsis">
       
-        First Run
+        2 — First Run
       
     </span>
   </a>
@@ -1051,10 +1051,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#verify-installation" class="md-nav__link">
+  <a href="#3-verify" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Verify Installation
+        3 — Verify
       
     </span>
   </a>
@@ -4270,15 +4270,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#install" class="md-nav__link">
+  <a href="#1-install" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Install
+        1 — Install
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Install">
+    <nav class="md-nav" aria-label="1 — Install">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4315,10 +4315,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#git-developer-mode" class="md-nav__link">
+  <a href="#source-developer-mode" class="md-nav__link">
     <span class="md-ellipsis">
       
-        git (developer mode)
+        Source (developer mode)
       
     </span>
   </a>
@@ -4331,10 +4331,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#first-run" class="md-nav__link">
+  <a href="#2-first-run" class="md-nav__link">
     <span class="md-ellipsis">
       
-        First Run
+        2 — First Run
       
     </span>
   </a>
@@ -4342,10 +4342,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#verify-installation" class="md-nav__link">
+  <a href="#3-verify" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Verify Installation
+        3 — Verify
       
     </span>
   </a>
@@ -4388,33 +4388,33 @@
 
 <h1 id="quickstart-toolboxv2">Quickstart — ToolBoxV2<a class="headerlink" href="#quickstart-toolboxv2" title="Permanent link">&para;</a></h1>
 <blockquote>
-<p>Get started with ToolBoxV2 in under 5 minutes.</p>
+<p>Up and running in under 5 minutes.</p>
 </blockquote>
-<h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
+<hr />
+<h2 id="1-install">1 — Install<a class="headerlink" href="#1-install" title="Permanent link">&para;</a></h2>
 <h3 id="linux-macos">Linux / macOS<a class="headerlink" href="#linux-macos" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sSL<span class="w"> </span>https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
 </code></pre></div>
-<!-- verified: installer.sh::main -->
-
 <h3 id="windows">Windows<a class="headerlink" href="#windows" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><span class="nb">irm </span><span class="n">https</span><span class="p">://</span><span class="n">raw</span><span class="p">.</span><span class="n">githubusercontent</span><span class="p">.</span><span class="n">com</span><span class="p">/</span><span class="n">MarkinHaus</span><span class="p">/</span><span class="n">ToolBoxV2</span><span class="p">/</span><span class="n">main</span><span class="p">/</span><span class="n">install</span><span class="p">.</span><span class="n">ps1</span> <span class="p">|</span> <span class="nb">iex</span>
+<div class="highlight"><pre><span></span><code><span class="nb">irm </span><span class="s2">&quot;https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.ps1&quot;</span> <span class="p">|</span> <span class="nb">tee </span><span class="n">tbInstaller</span><span class="p">.</span><span class="n">ps1</span> <span class="p">|</span> <span class="p">%</span> <span class="p">{</span> <span class="p">&amp;</span> <span class="p">(</span><span class="no">[scriptblock]</span><span class="p">::</span><span class="n">Create</span><span class="p">(</span><span class="nv">$_</span><span class="p">))</span> <span class="p">}</span>
 </code></pre></div>
-<!-- verified: installer.ps1::main -->
-
 <h3 id="pip-all-platforms">pip (all platforms)<a class="headerlink" href="#pip-all-platforms" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>ToolBoxV2
 </code></pre></div>
-<h3 id="git-developer-mode">git (developer mode)<a class="headerlink" href="#git-developer-mode" title="Permanent link">&para;</a></h3>
+<h3 id="source-developer-mode">Source (developer mode)<a class="headerlink" href="#source-developer-mode" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/MarkinHaus/ToolBoxV2.git
 <span class="nb">cd</span><span class="w"> </span>ToolBoxV2
-pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.
+uv<span class="w"> </span>sync<span class="w">        </span><span class="c1"># or: pip install -e .</span>
 </code></pre></div>
 <hr />
-<h2 id="first-run">First Run<a class="headerlink" href="#first-run" title="Permanent link">&para;</a></h2>
-<p>On first <code>tb</code> call you will be prompted to choose a <strong>profile</strong>:</p>
+<h2 id="2-first-run">2 — First Run<a class="headerlink" href="#2-first-run" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>tb
+</code></pre></div>
+<p>On first launch, choose your <strong>profile</strong>:</p>
 <table>
 <thead>
 <tr>
+<th>#</th>
 <th>Profile</th>
 <th>Behavior</th>
 <th>Use Case</th>
@@ -4422,50 +4422,77 @@ pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </s
 </thead>
 <tbody>
 <tr>
+<td>1</td>
 <td><code>consumer</code></td>
 <td>Launches GUI</td>
-<td>App/Mod users</td>
+<td>App / Mod users</td>
 </tr>
 <tr>
+<td>2</td>
 <td><code>homelab</code></td>
 <td>Interactive dashboard</td>
 <td>Local multi-mod setup</td>
 </tr>
 <tr>
+<td>3</td>
 <td><code>server</code></td>
 <td>ASCII status overview, then exit</td>
 <td>Infrastructure management</td>
 </tr>
 <tr>
+<td>4</td>
 <td><code>business</code></td>
 <td>3-line health summary, then exit</td>
 <td>Quick health checks</td>
 </tr>
 <tr>
+<td>5</td>
 <td><code>developer</code></td>
 <td>Interactive dashboard + dev hints</td>
-<td>Core/Mod development</td>
+<td>Core / Mod development</td>
 </tr>
 </tbody>
 </table>
-<p>Profile defaults: <code>homelab</code> (index 2).</p>
-<!-- verified: schema.py::ProfileType -->
-<!-- verified: first_run.py::PROFILES -->
-
+<p>Default: <code>homelab</code> (press Enter to confirm).</p>
 <hr />
-<h2 id="verify-installation">Verify Installation<a class="headerlink" href="#verify-installation" title="Permanent link">&para;</a></h2>
+<h2 id="3-verify">3 — Verify<a class="headerlink" href="#3-verify" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>tb<span class="w"> </span>--version
+tb<span class="w"> </span>status
 tb<span class="w"> </span>manifest<span class="w"> </span>validate
 </code></pre></div>
-<!-- verified: __init__.py::__version__ -->
-
 <hr />
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Goal</th>
+<th>Command</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Configure TB</td>
+<td><code>tb manifest init</code></td>
+</tr>
+<tr>
+<td>Install a module</td>
+<td><code>tb install &lt;mod&gt;</code></td>
+</tr>
+<tr>
+<td>Start web workers</td>
+<td><code>tb workers start</code></td>
+</tr>
+<tr>
+<td>View all commands</td>
+<td><code>tb --help</code></td>
+</tr>
+</tbody>
+</table>
 <ul>
-<li><a href="../docs/configuration.md">Configuration Guide</a></li>
-<li><a href="../docs/mods.md">Module Management</a></li>
-<li><a href="../docs/feature_system.md">Feature System</a></li>
-<li><a href="../docs/isaa.md">ISAA Integration</a></li>
+<li><a href="installation.md">Full Installation Guide</a></li>
+<li><a href="../configuration.md">Configuration Guide</a></li>
+<li><a href="../mods.md">Module Management</a></li>
+<li><a href="../isaa.md">ISAA Integration</a></li>
 </ul>
 
 
