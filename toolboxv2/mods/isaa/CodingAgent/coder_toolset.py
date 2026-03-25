@@ -375,16 +375,85 @@ def _make_tools(pool: CoderPool, agent: Any, project_root: str, config: dict | N
         slot = CoderSlot(coder_id=cid, coder=coder, task=task_str)
         pool.slots[cid] = slot
 
+        # --- iCLI INTEGRATION ---
+        import inspect
+        host = None
+        # Finde den aktiven iCLI Host dynamisch im Call-Stack
+        for frame in inspect.stack():
+            obj = frame.frame.f_locals.get('self')
+            if obj and obj.__class__.__name__ == 'ISAA_Host':
+                host = obj
+                break
+
+        _tid_holder = [None]
+
+        if host:
+            def coder_log_handler(section: str, content: str):
+                tid = _tid_holder[0]
+                if not tid: return
+                if section == "LOOP":
+                    try:
+                        iter_str = content.split("/")[0].strip()
+                        host._ingest_chunk(tid, {"iter": int(iter_str), "max_iter": getattr(coder, 'max_iters', 25)})
+                    except:
+                        pass
+                elif section == "THOUGHT":
+                    host._ingest_chunk(tid, {"type": "reasoning", "chunk": content + "\n"})
+                elif section == "TOOL CALL":
+                    name = content.split("(")[0] if "(" in content else "coder_tool"
+                    host._ingest_chunk(tid, {"type": "tool_start", "name": name, "args": content})
+                elif section == "TOOL RESULT":
+                    host._ingest_chunk(tid, {"type": "tool_result", "name": "coder_tool", "result": content})
+                elif section in ["IO-CALC", "IO-COMMIT", "IO-ERR", "IO"]:
+                    host._ingest_chunk(tid, {"type": "content", "chunk": f"\n[{section}] {content}\n"})
+                elif section in ["ERROR", "TOOL ERROR", "BASH-FAIL"]:
+                    host._ingest_chunk(tid, {"type": "error", "chunk": content})
+
+            async def coder_stream_handler(chunk_text: str):
+                tid = _tid_holder[0]
+                if tid:
+                    host._ingest_chunk(tid, {"type": "content", "chunk": chunk_text})
+
+            coder.log_handler = coder_log_handler
+            coder.stream_callback = coder_stream_handler
+            coder.stream_enabled = True
+
+        # ------------------------
+
         async def _run():
             try:
                 slot.result = await coder.execute(task_str)
                 slot.status = "done" if slot.result.success else "error"
+
+                if host and _tid_holder[0]:
+                    host._ingest_chunk(_tid_holder[0], {"type": "done", "success": slot.result.success})
+                    host._ingest_chunk(_tid_holder[0], {"type": "final_answer", "answer": slot.result.message})
             except Exception as e:
                 slot.status = "error"
                 slot.result = str(e)
                 logger.error(f"{cid} failed: {e}")
+                if host and _tid_holder[0]:
+                    host._ingest_chunk(_tid_holder[0], {"type": "error", "chunk": str(e)})
 
-        slot._future = asyncio.create_task(_run())
+        async_task = asyncio.create_task(_run())
+        slot._future = async_task
+
+        if host:
+            # Coder als offiziellen Background-Task in die iCLI einhängen
+            exc = host._create_execution(
+                kind="coder",
+                agent_name=f"{getattr(agent, 'name', 'agent')}_{cid}",
+                query=f"[spawned] {task_str}",
+                async_task=async_task,
+                take_focus=False  # Coder läuft im Hintergrund, stört den Main-Agent nicht
+            )
+            _tid_holder[0] = exc.task_id
+
+            def _on_done(fut):
+                host._on_agent_task_done(exc.task_id, fut)
+
+            async_task.add_done_callback(_on_done)
+
         return cid
 
     # ─── 4. interact ──────────────────────────────────────────

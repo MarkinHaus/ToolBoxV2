@@ -648,6 +648,7 @@ class FlowAgent:
 
             # Final fallback
             return str(obj)
+
         prompt_content = json.dumps(llm_kwargs["messages"], sort_keys=True, default=safe_serializer)
         prompt_hash = hashlib.sha256(prompt_content.encode()).hexdigest()[:16]
         start_time = time.time()
@@ -1415,7 +1416,7 @@ class FlowAgent:
         session_id: str = "default",
         execution_id: str | None = None,
         human_online: bool = False,
-        max_iterations: int = 15,
+        max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30),
         user_lightning_model: bool | None = None,
         **kwargs,
     ) -> AsyncGenerator[dict, None]:

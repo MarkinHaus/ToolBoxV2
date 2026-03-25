@@ -32,6 +32,74 @@ def _ensure_imports():
         CoderAgent, CoderPool, MessageBuffer = _CA, _CP, _MB
 
 
+def _attach_icli_to_coder(coder, task_str, sub_id=None):
+    """Bindet einen CoderAgent an die iCLI (falls aktiv), um Logs und Status im UI anzuzeigen."""
+    import inspect
+    host = None
+    for frame in inspect.stack():
+        obj = frame.frame.f_locals.get('self')
+        if obj and obj.__class__.__name__ == 'ISAA_Host':
+            host = obj
+            break
+
+    if not host:
+        return None, None
+
+    _tid_holder = [None]
+
+    def coder_log_handler(section: str, content: str):
+        tid = _tid_holder[0]
+        if not tid: return
+        if section == "LOOP":
+            try:
+                iter_str = content.split("/")[0].strip()
+                host._ingest_chunk(tid, {"iter": int(iter_str), "max_iter": getattr(coder, 'max_iters', 25)})
+            except:
+                pass
+        elif section == "THOUGHT":
+            host._ingest_chunk(tid, {"type": "reasoning", "chunk": content + "\n"})
+        elif section == "TOOL CALL":
+            name = content.split("(")[0] if "(" in content else "coder_tool"
+            host._ingest_chunk(tid, {"type": "tool_start", "name": name, "args": content})
+        elif section == "TOOL RESULT":
+            host._ingest_chunk(tid, {"type": "tool_result", "name": "coder_tool", "result": content})
+        elif section in ["IO-CALC", "IO-COMMIT", "IO-ERR", "IO"]:
+            host._ingest_chunk(tid, {"type": "content", "chunk": f"\n[{section}] {content}\n"})
+        elif section in ["ERROR", "TOOL ERROR", "BASH-FAIL"]:
+            host._ingest_chunk(tid, {"type": "error", "chunk": content})
+
+    async def coder_stream_handler(chunk_text: str):
+        tid = _tid_holder[0]
+        if tid:
+            host._ingest_chunk(tid, {"type": "content", "chunk": chunk_text})
+
+    coder.log_handler = coder_log_handler
+    coder.stream_callback = coder_stream_handler
+    coder.stream_enabled = True
+
+    agent_name = getattr(coder.agent, 'name', 'agent')
+    if sub_id:
+        agent_name = f"{agent_name}_{sub_id}"
+
+    def register_task(async_task):
+        exc = host._create_execution(
+            kind="coder",
+            agent_name=agent_name,
+            query=f"[mgr] {task_str[:60]}",
+            async_task=async_task,
+            take_focus=False  # Sub-Coders bleiben im Hintergrund
+        )
+        _tid_holder[0] = exc.task_id
+        async_task.add_done_callback(lambda fut: host._on_agent_task_done(exc.task_id, fut))
+
+    def finish_task(success: bool, message: str):
+        if _tid_holder[0]:
+            host._ingest_chunk(_tid_holder[0], {"type": "done", "success": success})
+            host._ingest_chunk(_tid_holder[0], {"type": "final_answer", "answer": message})
+
+    return register_task, finish_task
+
+
 # ═══════════════════════════════════════════════════════════════
 #  SHARED TYPES
 # ═══════════════════════════════════════════════════════════════
@@ -250,7 +318,18 @@ class SequentialManager:
         # Step 3: Execute with retries
         for attempt in range(1 + self.max_retries):
             coder = CoderAgent(self.agent, self.root, self.config)
-            result = await coder.execute(refined_task)
+
+            # --- iCLI Integration ---
+            reg_task, fin_task = _attach_icli_to_coder(coder, refined_task, f"seq_{attempt + 1}")
+            if reg_task:
+                exec_task = asyncio.create_task(coder.execute(refined_task))
+                reg_task(exec_task)
+                result = await exec_task
+                fin_task(result.success, result.message)
+            else:
+                result = await coder.execute(refined_task)
+            # ------------------------
+
             total_tokens += result.tokens_used
 
             if not result.success:
@@ -447,7 +526,28 @@ class ParallelManager:
             for st in batch:
                 coder = CoderAgent(self.agent, self.root, self.config)
                 coder.worktree.setup()
-                tasks[st.id] = (coder, st, asyncio.create_task(coder.execute(st.description)))
+
+                # --- iCLI Integration ---
+                reg_task, fin_task = _attach_icli_to_coder(coder, st.description, st.id)
+                exec_task = asyncio.create_task(coder.execute(st.description))
+
+                if reg_task:
+                    reg_task(exec_task)
+
+                    def _make_fin(ft_func):
+                        def _cb(f):
+                            try:
+                                res = f.result()
+                                ft_func(res.success, res.message)
+                            except Exception as e:
+                                ft_func(False, str(e))
+
+                        return _cb
+
+                    exec_task.add_done_callback(_make_fin(fin_task))
+                # ------------------------
+
+                tasks[st.id] = (coder, st, exec_task)
             return tasks
 
         # Step 3: Process in waves
@@ -784,10 +884,20 @@ class SwarmManager:
         cid = self.pool.next_id()
         coder = CoderAgent(self.agent, self.root, self.config)
 
+        # --- iCLI Integration ---
+        reg_task, fin_task = _attach_icli_to_coder(coder, task_desc, cid)
+
         async def _run():
-            return await coder.execute(task_desc)
+            res = await coder.execute(task_desc)
+            if fin_task:
+                fin_task(res.success, res.message)
+            return res
 
         future = asyncio.create_task(_run())
+        if reg_task:
+            reg_task(future)
+        # ------------------------
+
         st = SubTask(id=cid, description=task_desc, scope=args.get("scope", []))
         self._active_coders[cid] = (coder, st, future)
         return {"coder_id": cid, "task": task_desc[:200], "status": "spawned"}

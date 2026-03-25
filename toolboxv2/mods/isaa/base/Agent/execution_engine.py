@@ -370,7 +370,7 @@ class PersonaProfile:
     source: str = "default"             # "default" | "matched" | "dreamer"
 
     def apply_max_iterations(self, base: int) -> int:
-        return int(base * self.max_iterations_factor)
+        return min(base*0.6 ,int(base * self.max_iterations_factor))
 
 from toolboxv2.mods.isaa.base.Agent.default_personas import _BUILTIN_PERSONAS, _PERSONA_KEYWORDS
 
@@ -1071,6 +1071,7 @@ BEISPIELE:
         except Exception as e:
             self.live.log(f"Failed to auto-group tools: {e}", logging.WARNING)
 
+
     # =========================================================================
     # MAIN EXECUTION LOOP
     # =========================================================================
@@ -1231,6 +1232,7 @@ BEISPIELE:
 
             # Inject AutoFocus before LLM call
             messages = self._inject_auto_focus(ctx)
+            messages = self._sanitize_history_for_api(messages)
 
             # LLM Call
             try:
@@ -1337,7 +1339,7 @@ BEISPIELE:
         self,
         query: str,
         session_id: str,
-        max_iterations: int = 25,
+        max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30),
         ctx: "ExecutionContext | None" = None,
         model=None,
     ) -> tuple[Callable, ExecutionContext]:
@@ -2698,6 +2700,24 @@ BEISPIELE:
 
         return messages
 
+    def _sanitize_history_for_api(self, messages: List[dict]) -> List[dict]:
+        """Fixes invalid JSON in assistant tool_calls to prevent API 400 errors."""
+        for msg in messages:
+            if msg.get("role") == "assistant" and "tool_calls" in msg:
+                for tc in msg["tool_calls"]:
+                    args = tc["function"].get("arguments", "")
+                    try:
+                        json.loads(args)
+                    except json.JSONDecodeError:
+                        # ADMIN DEBUG: Hier siehst du im Terminal, was das Modell vermurkst hat
+
+                        print(f"⚠️ ADMIN WARNUNG: Modell hat ungültiges JSON generiert!")
+                        print(f"   Tool: {tc['function'].get('name')}")
+                        print(f"   Kaputter String: {args}")
+
+                        # Die "Safe-Box": Kaputtes JSON als String kapseln, um API 400 zu verhindern
+                        tc["function"]["arguments"] = json.dumps({"_raw_error": args})
+        return messages
     # =========================================================================
     # RUN COMPLETION
     # =========================================================================

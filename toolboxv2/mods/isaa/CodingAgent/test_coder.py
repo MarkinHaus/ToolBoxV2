@@ -388,6 +388,7 @@ class TestGitWorktreeReal(unittest.TestCase):
 # CoderAgent Core
 # =============================================================================
 
+
 class TestCoderAgentParseEdits(unittest.TestCase):
     def setUp(self):
         self.agent = MockAgent()
@@ -437,7 +438,7 @@ class TestCoderAgentParseEdits(unittest.TestCase):
         self.assertIn("line2", blocks[0].search)
 
     def test_parse_no_edits(self):
-        self.assertEqual(self.coder._parse_edits("just some text"), [])
+        self.assertEqual(self.coder._parse_edits("just some text"), ([], []))
 
     def test_parse_new_file(self):
         text = (
@@ -449,8 +450,100 @@ class TestCoderAgentParseEdits(unittest.TestCase):
             ">>>>>>> REPLACE\n"
             "~~~end~~~"
         )
-        blocks = self.coder._parse_edits(text)
+        blocks, incomplete = self.coder._parse_edits(text)
         self.assertEqual(len(blocks), 1)
+        self.assertEqual(len(incomplete), 0)
+
+    def test_parse_extended_syntax_ellipsis(self):
+        text = (
+            "~~~edit:foo.py~~~\n"
+            "<<<<<<< SEARCH\n"
+            "def test():\n"
+            "...\n"
+            "    return True\n"
+            "=======\n"
+            "def test():\n"
+            "    return False\n"
+            ">>>>>>> REPLACE\n"
+            "~~~end~~~"
+        )
+        blocks, _ = self.coder._parse_edits(text)
+        self.assertEqual(len(blocks), 1)
+        self.assertIn("...", blocks[0].search)
+
+
+class TestCoderAgentApplyEdits(unittest.TestCase):
+    def setUp(self):
+        self.agent = MockAgent()
+        self.tmp = tempfile.mkdtemp()
+        self.coder = CoderAgent(self.agent, self.tmp)
+        self.coder.worktree = GitWorktree(self.tmp)
+        self.coder.worktree.setup()
+
+    def tearDown(self):
+        self.coder.worktree.cleanup()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_new_file(self):
+        edits = [EditBlock("sub/new.py", "", "content")]
+        results = self.coder._apply_edits(edits)
+        self.assertTrue(results[0]["success"])
+        self.assertEqual((self.coder.worktree.path / "sub" / "new.py").read_text(), "content")
+
+    def test_replace_existing(self):
+        target = self.coder.worktree.path / "existing.py"
+        target.write_text("hello world")
+        edits = [EditBlock("existing.py", "hello", "goodbye")]
+        results = self.coder._apply_edits(edits)
+        self.assertTrue(results[0]["success"])
+        self.assertEqual(target.read_text(), "goodbye world")
+
+    def test_search_not_found(self):
+        target = self.coder.worktree.path / "existing.py"
+        target.write_text("hello world")
+        edits = [EditBlock("existing.py", "NONEXISTENT", "new")]
+        results = self.coder._apply_edits(edits)
+        self.assertFalse(results[0]["success"])
+        self.assertIn("not found", results[0]["error"])
+
+    def test_file_missing(self):
+        edits = [EditBlock("missing.py", "old", "new")]
+        results = self.coder._apply_edits(edits)
+        self.assertFalse(results[0]["success"])
+        self.assertIn("File missing", results[0]["error"])
+
+    def test_extended_search_syntax_full(self):
+        """Testet das Ersetzen eines Blocks mithilfe von `...`"""
+        target = self.coder.worktree.path / "large.py"
+        target.write_text("line1\nline2\nline3\nline4\nline5\n")
+        # Alles von line1 bis line5 wird ersetzt
+        edits = [EditBlock("large.py", "line1\n...\nline5", "new_content")]
+        results = self.coder._apply_edits(edits)
+        self.assertTrue(results[0]["success"])
+        self.assertEqual(target.read_text(), "new_content\n")
+
+    def test_extended_search_syntax_partial(self):
+        """Testet das teilweise Ersetzen in einer Datei mithilfe von `...`"""
+        target = self.coder.worktree.path / "partial.py"
+        target.write_text("keep_start\nmatch_start\nskip1\nskip2\nmatch_end\nkeep_end\n")
+
+        # Ersetze nur den Mittelteil
+        edits = [EditBlock("partial.py", "match_start\n...\nmatch_end", "replaced")]
+        results = self.coder._apply_edits(edits)
+
+        self.assertTrue(results[0]["success"])
+        self.assertEqual(target.read_text(), "keep_start\nreplaced\nkeep_end\n")
+
+    def test_extended_search_syntax_not_found(self):
+        """Testet Fehlerbehandlung, wenn Start oder Ende der erweiterten Syntax fehlt"""
+        target = self.coder.worktree.path / "partial.py"
+        target.write_text("keep_start\nmatch_start\nskip1\nskip2\n")
+
+        edits = [EditBlock("partial.py", "match_start\n...\nmissing_end", "replaced")]
+        results = self.coder._apply_edits(edits)
+
+        self.assertFalse(results[0]["success"])
+        self.assertIn("EXTENDED SEARCH limits", results[0]["error"])
 
 
 class TestCoderAgentApplyEdits(unittest.TestCase):
@@ -677,6 +770,7 @@ class TestCoderAgentConfig(unittest.TestCase):
         self.assertEqual(coder.bash_timeout, 60)
 
 
+
 class TestParserSelfEdit(unittest.TestCase):
     """Parser must survive content containing its own markers."""
 
@@ -703,7 +797,7 @@ class TestParserSelfEdit(unittest.TestCase):
             '>>>>>>> REPLACE\n'
             '~~~end~~~'
         )
-        blocks = self.coder._parse_edits(text)
+        blocks, _ = self.coder._parse_edits(text)
         self.assertEqual(len(blocks), 1)
         self.assertIn("=======", blocks[0].search)
         self.assertIn("~~~end~~~", blocks[0].search)
@@ -717,14 +811,14 @@ class TestParserSelfEdit(unittest.TestCase):
             "More text between blocks\n"
             "~~~edit:b.py~~~\n<<<<<<< SEARCH\nold_b\n=======\nnew_b\n>>>>>>> REPLACE\n~~~end~~~"
         )
-        blocks = self.coder._parse_edits(text)
+        blocks, _ = self.coder._parse_edits(text)
         self.assertEqual(len(blocks), 2)
         self.assertEqual(blocks[0].search, "old_a")
         self.assertEqual(blocks[1].replace, "new_b")
 
     def test_empty_search_means_new_file(self):
         text = "~~~edit:new.py~~~\n<<<<<<< SEARCH\n=======\nprint('hi')\n>>>>>>> REPLACE\n~~~end~~~"
-        blocks = self.coder._parse_edits(text)
+        blocks, _ = self.coder._parse_edits(text)
         self.assertEqual(len(blocks), 1)
         self.assertEqual(blocks[0].search, "")
         self.assertEqual(blocks[0].replace, "print('hi')")
@@ -741,7 +835,7 @@ class TestParserSelfEdit(unittest.TestCase):
             ">>>>>>> REPLACE\n"
             "~~~end~~~"
         )
-        blocks = self.coder._parse_edits(text)
+        blocks, _ = self.coder._parse_edits(text)
         self.assertEqual(len(blocks), 1)
         self.assertIn("    def method", blocks[0].search)
         self.assertIn("        return 42", blocks[0].replace)
@@ -781,11 +875,20 @@ class TestApplyEditsSafety(unittest.TestCase):
         target = self.coder.worktree.path / "coder.py"
         original = "def good():\n    return True\n"
         target.write_text(original)
+
         # Monkey-patch __file__ to point at worktree coder.py for self-detection
-        import coder as coder_mod
-        old_file = coder_mod.__file__
-        coder_mod.__file__ = str(target)
+        import sys
+
+        # Mock des my_module Verhaltens für den Test
+        class MockCoderModule:
+            __file__ = str(target)
+
+        sys.modules['coder'] = MockCoderModule()
+
         try:
+            # Wir müssen sicherstellen, dass is_self True wird
+            self.coder._apply_edits.__globals__['__file__'] = str(target)
+
             edits = [EditBlock("coder.py", "def good():\n    return True",
                                "def broken(\n    return True")]
             results = self.coder._apply_edits(edits)
@@ -793,7 +896,8 @@ class TestApplyEditsSafety(unittest.TestCase):
             self.assertIn("SyntaxError", results[0]["error"])
             self.assertEqual(target.read_text(), original)  # unchanged!
         finally:
-            coder_mod.__file__ = old_file
+            if 'coder' in sys.modules:
+                del sys.modules['coder']
 
     def test_exact_match_preferred_over_fuzzy(self):
         target = self.coder.worktree.path / "exact.py"

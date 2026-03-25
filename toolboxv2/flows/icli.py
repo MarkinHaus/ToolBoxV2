@@ -475,6 +475,8 @@ class TaskOverlay:
         self._focus: str = "left"  # "left" | "right"
         self._left_scroll: int = 0  # scroll in linker Liste (für viele tasks)
         self._right_scroll: int = 0  # scroll im rechten Panel
+        self._input_scroll: int = 0  # Scroll-Position für Input
+        self._scroll_focus: str = "result"  # Fokus ("input" oder "result")
         self._selected_iter: Optional[int] = None  # None = liste; int = drill-down
         self._right_iter_cursor: int = 0  # Index in reversed(tv.iterations) — welche Iter ist im Cursor
         self._selected_tool_idx: int = 0  # Welches Tool ist im Drill-Down ausgewählt
@@ -684,26 +686,53 @@ class TaskOverlay:
 
                 if raw_input:
                     import textwrap as _tw
-                    out.append((bg + "fg:#a78bfa bold", "   → Input / Arguments:\n"))
+                    marker = " [Fokus]" if self._scroll_focus == "input" else ""
+                    out.append((bg + "fg:#a78bfa bold", f"   → Input / Arguments{marker}:\n"))
+
+                    display_lines = []
                     for line in raw_input.split("\n"):
-                        for sub in (_tw.wrap(line, width=72) or [""]):
-                            out.append((bg + "fg:#d1d5db", f"     {sub}\n"))
+                        display_lines.extend(_tw.wrap(line, width=72) or [""])
+
+                    skip = self._input_scroll
+                    # Input auf max. 15 Zeilen begrenzen, damit Result sichtbar bleibt
+                    visible_lines = display_lines[skip: skip + 15]
+
+                    for line in visible_lines:
+                        out.append((bg + "fg:#d1d5db", f"     {line}\n"))
+
+                    if len(display_lines) > 15:
+                        out.append((bg + "fg:#6b7280",
+                                    f"     ... ({min(skip + 15, len(display_lines))}/{len(display_lines)} lines)\n"))
+
                     out.append((bg + "fg:#374151", "   " + "─" * 64 + "\n"))
 
                 import textwrap as _tw
 
                 if raw_result:
-                    out.append((bg + "fg:#4ade80 bold", "   ← Result:\n"))
-                    skip = self._right_scroll
+                    marker = " [Fokus]" if self._scroll_focus == "result" else ""
+                    out.append((bg + "fg:#4ade80 bold", f"   ← Result{marker}:\n"))
+
                     display_lines: list[str] = []
                     for line in raw_result.split("\n"):
-                        # wrap each logical line to 72 chars so it fits the panel
-                        wrapped = _tw.wrap(line, width=72) or [""]
-                        display_lines.extend(wrapped)
-                    for i, line in enumerate(display_lines):
-                        if i < skip:
-                            continue
+                        display_lines.extend(_tw.wrap(line, width=72) or [""])
+
+                    skip = self._right_scroll
+                    # Result auf max. 20 Zeilen begrenzen
+                    visible_lines = display_lines[skip: skip + 20]
+
+                    for line in visible_lines:
                         out.append((bg + "fg:#e5e7eb", f"     {line}\n"))
+
+                    if len(display_lines) > 20:
+                        out.append((bg + "fg:#6b7280",
+                                    f"     ... ({min(skip + 20, len(display_lines))}/{len(display_lines)} lines)\n"))
+                    else:
+                        out.append((bg + "fg:#6b7280", "   (no result data)\n"))
+
+                    out.append((bg + "fg:#374151", "\n   " + "─" * 64 + "\n"))
+                    out.append((bg + "fg:#6b7280",
+                                "   ←/→=prev/next  Backspace=list  j/k=scroll  o/l=focus input/result\n"))
+                    return FormattedText(out)
                 else:
                     out.append((bg + "fg:#6b7280", "   (no result data)\n"))
 
@@ -876,7 +905,10 @@ class TaskOverlay:
             if ov._focus == "right":
                 if ov._selected_iter is not None:
                     if ov._tool_view == "detail":
-                        ov._right_scroll = max(0, ov._right_scroll - 1)
+                        if ov._scroll_focus == "input":
+                            ov._input_scroll = max(0, ov._input_scroll - 1)
+                        else:
+                            ov._right_scroll = max(0, ov._right_scroll - 1)
                     else:
                         # Tool-Cursor hoch
                         ov._selected_tool_idx = max(0, ov._selected_tool_idx - 1)
@@ -902,7 +934,10 @@ class TaskOverlay:
             if ov._focus == "right":
                 if ov._selected_iter is not None:
                     if ov._tool_view == "detail":
-                        ov._right_scroll += 1
+                        if ov._scroll_focus == "input":
+                            ov._input_scroll += 1
+                        else:
+                            ov._right_scroll += 1
                     else:
                         # Tool-Cursor runter
                         tv = ov._effective_view()
@@ -979,6 +1014,7 @@ class TaskOverlay:
                 if iv and iv.tools:
                     ov._selected_tool_idx = (ov._selected_tool_idx + 1) % len(iv.tools)
                     ov._right_scroll = 0
+                    ov._input_scroll = 0
 
         @kb.add("c-left")
         def _prev_tool(event):
@@ -993,12 +1029,32 @@ class TaskOverlay:
         @kb.add("j")
         @kb.add("pagedown")
         def _sd(event):
-            ov._right_scroll += 5
+            if ov._tool_view == "detail" and ov._scroll_focus == "input":
+                ov._input_scroll += 5
+            else:
+                ov._right_scroll += 5
 
         @kb.add("k")
         @kb.add("pageup")
         def _su(event):
-            ov._right_scroll = max(0, ov._right_scroll - 5)
+            if ov._tool_view == "detail" and ov._scroll_focus == "input":
+                ov._input_scroll = max(0, ov._input_scroll - 5)
+            else:
+                ov._right_scroll = max(0, ov._right_scroll - 5)
+
+        @kb.add("o")
+        @kb.add("s-up")
+        @kb.add("s-left")
+        def _focus_input(event):
+            if ov._tool_view == "detail":
+                ov._scroll_focus = "input"
+
+        @kb.add("l")
+        @kb.add("s-down")
+        @kb.add("s-right")
+        def _focus_result(event):
+            if ov._tool_view == "detail":
+                ov._scroll_focus = "result"
 
         # ── Direkt zu Iter 1-9 springen ─────────────────────────────────────
         for n in range(1, 10):
@@ -2470,7 +2526,8 @@ def load_autofix_feature(fm):
 
         async def tb_coder_fix_a(query: str) -> str:
             """Fix attempt A: conservative, minimal, targeted change."""
-            coder = CoderAgent(agent, project_path)
+            coder = CoderAgent(agent, project_path, config={"ask_enabled": False})
+            coder.print = ansi_c_print
             _state["coder_a"] = coder
             result = await coder.execute(
                 f"Fix the failing test. Strategy: CONSERVATIVE — smallest possible change, "
@@ -2483,7 +2540,8 @@ def load_autofix_feature(fm):
 
         async def tb_coder_fix_b(query: str) -> str:
             """Fix attempt B: thorough, addresses root cause with full data flow understanding."""
-            coder = CoderAgent(agent, project_path)
+            coder = CoderAgent(agent, project_path, config={"ask_enabled": False})
+            coder.print = ansi_c_print
             _state["coder_b"] = coder
             result = await coder.execute(
                 f"Fix the failing test. Strategy: THOROUGH — trace the full data flow, "
@@ -4872,7 +4930,8 @@ class ISAA_Host:
         d = {
             "/agent": None, "/audio": None, "/coder": None, "/job": None,
             "/mcp": None, "/session": None, "/skill": None, "/task": None,
-            "/tools": None, "/vfs": None, "/feature": None, "/chain": None
+            "/tools": None, "/vfs": None, "/feature": None, "/chain": None,
+            "/set_max_iterations": None
         }
 
         # Die spezifischen Hilfe-Kategorien
@@ -5009,6 +5068,7 @@ class ISAA_Host:
                     "path": PathCompleter(only_directories=True, expanduser=True)
             },
             "/bind": {a: None for a in agents},
+            "/set_max_iterations": None,
             "/teach": {a: None for a in agents},
             "/feature": {
                 "list": None,
@@ -5380,6 +5440,7 @@ class ISAA_Host:
         print_box_content("/help                                        - Show this help", "")
         print_box_content("/status                                      - Show status dashboard (or F5)", "")
         print_box_content("/clear                                       - Clear screen", "")
+        print_box_content("/set_max_iterations", "")
         print_box_content("/quit, /exit - Exit CLI", "")
         print_box_content("F2                                           - Switch between ZEN and ZEN+ interaction mode",
                           "")
@@ -5669,6 +5730,15 @@ class ISAA_Host:
 
         elif cmd == "/help":
             self._print_help(args)
+
+        elif cmd == "/set_max_iterations":
+            if len(args) < 1:
+                print_status(f"is {self.max_iteration}", "success")
+            else:
+                try:
+                    self.max_iteration = int(args[0])
+                except ValueError:
+                    print_status(f"must be a number u passed {args[0]}", "error")
 
         elif cmd == "/status":
             await self._print_status_dashboard()
@@ -6499,7 +6569,7 @@ class ISAA_Host:
             print_box_header(f"Job: {job.name}", "◎")
             print_box_content(f"ID: {job.job_id}", "")
             print_box_content(f"Agent: {job.agent_name}", "")
-            print_box_content(f"Query: {job.query[:80]}", "")
+            print_box_content(f"Query: {job.query[:180]}", "")
             print_box_content(f"Trigger: {job.trigger.trigger_type}", "info")
             if job.trigger.at_datetime:
                 print_box_content(f"  At: {job.trigger.at_datetime}", "")
@@ -7717,7 +7787,18 @@ class ISAA_Host:
                 agent = await self.isaa_tools.get_agent(self.active_agent_name)
                 print_status(f"Initializing Coder on {target_path}...", "progress")
                 agent.verbose = True
-                self.active_coder = CoderAgent(agent, target_path)
+                async def custom_ask_callback(question: str) -> str:
+                    with patch_stdout():
+                        if self.zen_plus_mode:
+                            self._overlay = None
+                            self.zen_plus_mode = False
+                            await asyncio.sleep(1)
+                        c_print(HTML(f"\n<style fg='ansicyan'>🤖 Coder fragt:</style> <style fg='ansiyellow'>{html.escape(question)}</style>"))
+                        answer = await self.prompt_session.prompt_async(HTML("<style fg='ansicyan'>❯ Antwort: </style>"))
+                        return answer
+
+                self.active_coder = CoderAgent(agent, target_path, config={"ask_callback": custom_ask_callback})
+                self.active_coder.print = ansi_c_print
                 self.active_coder_path = target_path
 
                 print_box_header("Coder Mode Activated", "👨‍💻")
@@ -7835,24 +7916,99 @@ class ISAA_Host:
                 except UnicodeEncodeError:
                     task_prompt = task_prompt.encode('utf-8').decode('utf-8', errors="replace")
 
-                c_print(HTML("<style fg='ansimagenta'>⚡ Code Generation Loop...</style>"))
-                try:
-                    result = await self.active_coder.execute(task_prompt)
-                    if result.success:
-                        print_box_header("Done", "✅")
-                        print_box_content(result.message, "success")
-                        if result.changed_files:
-                            print_status("Modified:", "info")
-                            for f in result.changed_files:
-                                c_print(f"  → {f}")
-                        print_separator()
-                        print_box_content("'/coder diff' to review, '/coder accept' to apply.", "warning")
-                        print_box_footer()
-                    else:
-                        print_status(f"Failed: {result.message}", "error")
-                except Exception as e:
-                    print_status(f"Critical: {e}", "error")
-                    import traceback; c_print(traceback.format_exc())
+                # State-Halter für die Task ID
+                _tid_holder = [None]
+
+                # 1. Eigener Log-Handler: Übersetzt Coder-Logs in UI-Chunks für Zen+
+                coder_state = {"current_tool": "unknown"}
+
+                # 1. Eigener Log-Handler: Übersetzt Coder-Logs in UI-Chunks für Zen+
+                def coder_log_handler(section: str, content: str):
+                    tid = _tid_holder[0]
+                    if not tid: return
+
+                    if section == "LOOP":
+                        try:
+                            iter_str = content.split("/")[0].strip()
+                            self._ingest_chunk(tid, {"iter": int(iter_str), "max_iter": self.active_coder.max_iters})
+                        except:
+                            pass
+                    elif section == "THOUGHT":
+                        self._ingest_chunk(tid, {"type": "reasoning", "chunk": content + "\n"})
+                    elif section == "TOOL CALL":
+                        # FIX 2: Name und Args sauber trennen (Bsp: "read_file({"path": "x"})")
+                        parts = content.split("(", 1)
+                        name = parts[0].strip()
+                        args_str = parts[1].rsplit(")", 1)[0] if len(parts) > 1 else ""
+                        coder_state["current_tool"] = name
+                        self._ingest_chunk(tid, {"type": "tool_start", "name": name, "args": args_str})
+                    elif section == "TOOL RESULT":
+                        # FIX 2: Den korrekten, gemerkten Namen verwenden
+                        self._ingest_chunk(tid, {"type": "tool_result", "name": coder_state["current_tool"],
+                                                 "result": content})
+                        coder_state["current_tool"] = "unknown"
+                    elif section in ["IO-CALC", "IO-COMMIT", "IO-ERR", "IO"]:
+                        # Datei-Operationen als Content in den Stream geben
+                        self._ingest_chunk(tid, {"type": "content", "chunk": f"\n[{section}] {content}\n"})
+                    elif section in ["ERROR", "TOOL ERROR", "BASH-FAIL"]:
+                        self._ingest_chunk(tid, {"type": "error", "chunk": content})
+
+                # 2. Eigener Stream-Handler: Gibt den echten LLM-Text an das UI weiter
+                async def coder_stream_handler(chunk_text: str):
+                    tid = _tid_holder[0]
+                    if tid:
+                        self._ingest_chunk(tid, {"type": "content", "chunk": chunk_text})
+
+                # Handler in den Coder injizieren und Streaming erzwingen
+                self.active_coder.log_handler = coder_log_handler
+                self.active_coder.stream_callback = coder_stream_handler
+                self.active_coder.stream_enabled = True
+
+                # 3. Hintergrund-Task Wrapper für den Coder
+                async def _run_coder_bg():
+                    try:
+                        result = await self.active_coder.execute(task_prompt)
+
+                        # Task abschließen
+                        self._ingest_chunk(_tid_holder[0], {"type": "done", "success": result.success})
+                        self._ingest_chunk(_tid_holder[0], {"type": "final_answer", "answer": result.message})
+
+                        # Kleine Zusammenfassung fürs Terminal
+                        with patch_stdout():
+                            if result.success and result.changed_files:
+                                c_print(HTML(
+                                    f"<style fg='ansicyan'>Modified files: {', '.join(result.changed_files)}</style>"))
+                                c_print(HTML(
+                                    "<style fg='ansiyellow'>Use '/coder diff' to review, '/coder accept' to apply.</style>"))
+
+                        if not result.success:
+                            raise Exception(result.message)
+                        return result.message
+                    finally:
+                        # Handler aufräumen
+                        self.active_coder.log_handler = None
+                        self.active_coder.stream_callback = self.active_coder._default_stream_handler
+
+                c_print(HTML("<style fg='ansimagenta'>⚡ Starting Code Generation Task...</style>"))
+
+                # 4. Als offiziellen Background-Task registrieren
+                async_task = asyncio.create_task(_run_coder_bg())
+                exc = self._create_execution(
+                    kind="coder",
+                    agent_name=f"{self.active_agent_name}_coder",
+                    query=task_prompt,
+                    async_task=async_task,
+                    take_focus=True
+                )
+                _tid_holder[0] = exc.task_id
+
+                # 5. Standard ISAA Task-Lifecycle anhängen (verarbeitet Focus & UI Updates bei Abschluss)
+                async_task.add_done_callback(
+                    lambda fut: self._on_agent_task_done(exc.task_id, fut)
+                )
+
+                # Sofort zurückkehren, damit der Prompt sofort wieder frei ist
+                return
 
             elif action == "diff":
                 try:
@@ -8869,6 +9025,7 @@ class ISAA_Host:
             stream = agent.a_stream(
                 query=user_input,
                 session_id=self.active_session_id,
+                max_iterations=self.max_iteration
             )
 
             # Consumer-Task (task_id assigned by _create_execution below)
@@ -8921,9 +9078,9 @@ class ISAA_Host:
             with patch_stdout():
                 c_print(HTML(
                     f"\n<style fg='{PTColors.ZEN_GREEN}'>"
-                    f"  ✓ {task_id} complete</style>"
+                    f"  ✓ {task_id} complete</style>\n"
                     f"  <style fg='{PTColors.ZEN_DIM}'>"
-                    f"{_esc(str(result)[:80])}</style>\n"
+                    f"{_esc(str(result))}</style>\n"
                 ))
         except asyncio.CancelledError:
             if exc:
@@ -9414,6 +9571,36 @@ class ISAA_Host:
     async def _interrupt_resume_with_context(self, task_id: str):
         task = self.all_executions.get(task_id)
         if not task:
+            return
+
+        if task.kind == "coder":
+            with patch_stdout():
+                c_print(HTML(f"<style fg='#fbbf24'>  Stoppe aktuellen Coder-Loop...</style>"))
+
+            task.async_task.cancel()
+            try:
+                done, pending = await asyncio.wait({task.async_task}, timeout=2.0)
+                for t in pending: t.cancel()
+            except BaseException:
+                pass
+
+            with patch_stdout():
+                c_print(HTML(f"<style fg='{PTColors.ZEN_CYAN}'>  Korrektur / Neuer Context für Coder:</style>"))
+            try:
+                with patch_stdout():
+                    new_context = await self.prompt_session.prompt_async(
+                        HTML(f"<style fg='{PTColors.ZEN_CYAN}'>  > </style>"))
+                new_context = new_context.strip()
+            except (KeyboardInterrupt, EOFError):
+                if self._focused_task_id == task_id: self._focused_task_id = None
+                return
+
+            if new_context:
+                self.all_executions.pop(task_id, None)
+                self._task_views.pop(task_id, None)
+                await self._cmd_coder(["task", f"[Korrektur/Resume]: {new_context}"])
+            else:
+                if self._focused_task_id == task_id: self._focused_task_id = None
             return
 
         with patch_stdout():

@@ -11,7 +11,8 @@ import traceback
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import List, Optional, Tuple
-import sys  # <--- Hinzufügen falls fehlt
+import sys
+
 
 from toolboxv2.utils.extras.Style import print_prompt
 
@@ -37,6 +38,7 @@ except ImportError:
 try: import litellm
 except ImportError: litellm = None
 
+from toolboxv2.mods.isaa.base.Agent.lsp_manager import LSPManager, DiagnosticSeverity
 # --- Data ---
 
 @dataclass
@@ -247,7 +249,7 @@ def _safe_run(cmd: list, cwd=None, capture_output=True, check=False, timeout=Non
 
 async def smart_read_file(
     path: str, start: Optional[int], end: Optional[int],
-    worktree: Path, agent=None, messages: list = None, model: str = "", query: str = ""
+    worktree: Path, agent=None, messages: list = None, model: str = "", query: str = "", lsp_manager: LSPManager = None
 ) -> str:
     messages = messages or []
     target = (worktree / path).resolve()
@@ -258,6 +260,17 @@ async def smart_read_file(
     content = await asyncio.to_thread(target.read_text, encoding="utf-8", errors="replace")
     lines = text_to_block(content)
     total = len(lines)
+
+    if lsp_manager:
+        ext = Path(path).suffix.lower().replace(".", "")
+        lang_id = {"py": "python", "js": "javascript", "ts": "typescript", "tsx": "typescriptreact"}.get(ext, ext)
+        if lang_id:
+            diags = await lsp_manager.get_diagnostics(path, content, lang_id)
+            if diags:
+                diag_strs = [d.to_display_string(lines) for d in diags
+                             if d.severity in [DiagnosticSeverity.ERROR, DiagnosticSeverity.WARNING]][:5]
+                if diag_strs:
+                    lines += "\n\n### LSP Diagnostics (Vorab-Check):\n" + "\n".join(diag_strs)
 
     if start is not None or end is not None:
         return _fmt(path, lines, start if start is not None else 1, end if end is not None else total)
@@ -674,6 +687,7 @@ class GitWorktree:
             except OSError:
                 # Rename fehlgeschlagen (cross-device etc.) → tracked files einzeln
                 shutil.rmtree(self._wt_root, ignore_errors=True)
+
         self.path = None
         self._wt_root = None
 
@@ -835,6 +849,12 @@ def text_to_block(text: str, max_chars: int = 300) -> list[str]:
             result.append(current_line)
     return result
 # --- Core Agent ---
+class InputManager:
+    def __init__(self):
+        pass
+
+    async def ask(self, text):
+        return input(text)
 
 class CoderAgent:
     SYSTEM_PROMPT = (
@@ -846,13 +866,16 @@ class CoderAgent:
         " du must Edit-Blöcke verwenden für (Datein erstellen, Datein schriben, Datein berabeiten)\n"
         "   VERBOTEN: Nutze NIEMALS 'bash', 'cat', 'echo' oder 'printf' um Dateien zu erstellen oder zu ändern!\n"
         "   Das System erkennt Änderungen nur über Edit-Blöcke.\n"
-        "4. Beende mit [DONE] wenn fertig.\n"
+        "4. BEENDEN: Wenn du alle Aufgaben erledigt hast, rufe ZWINGEND das Tool 'done' auf (oder schreibe [DONE]).\n"
         "5. Schreibe VOR jedem Edit einen <thought>...</thought> Block, der Folgendes enthält:\n"
         "   - Was du in der Datei gesehen hast und wie es zur Architektur passt.\n"
         "   - Warum du diese Änderung machst.\n"
         "   - (Optional aber empfohlen) Deinen Plan als Checkliste, damit das System deinen Status tracken kann:\n"
         "     - [ ] Offener Teilschritt\n"
         "     - [x] Erledigter Teilschritt\n"
+        "6. ISOLIERTER WORKSPACE: Du arbeitest in einer sicheren, isolierten Arbeitskopie (Worktree). Alle Pfade müssen immer RELATIV zu deinem aktuellen Hauptordner sein!\n"
+        "7. CODE AUSFÜHREN: Nutze IMMER das Tool 'run_file', um Skripte oder Tests (z.B. Python) auszuführen. Nutze das generische 'bash' Tool NUR, wenn 'run_file' nicht ausreicht (z.B. pip install).\n"
+        "8. WICHTIG ZUR TECHNIK: Das Bearbeiten von Dateien ist KEIN JSON-Tool (wie read_file oder bash)! Du musst die ~~~edit Blöcke als einfachen, direkten Text in deiner Antwort (content) ausgeben. Versuche NIEMALS, Dateien über das JSON-Tool bash zu schreiben!"
         "FORMAT:\n"
         "<thought>\n"
         "Ich passe das Login an.\n"
@@ -861,13 +884,22 @@ class CoderAgent:
         "- [ ] auth.py ändern\n"
         "- [ ] test_auth.py updaten\n"
         "</thought>\n"
-        "~~~edit:pfad/datei.py~~~\n<<<<<<< SEARCH\nalter code\n=======\nneuer code\n>>>>>>> REPLACE\n~~~end~~~"
+        "FORMAT FÜR ÄNDERUNGEN (SEARCH enthält den alten Code):\n"
+        "~~~edit:pfad/datei.py~~~\n<<<<<<< SEARCH\nalter code\n=======\nneuer code\n>>>>>>> REPLACE\n~~~end~~~\n\n"
+        "FORMAT FÜR GROßE ÄNDERUNGEN (ERWEITERTE SYNTAX):\n"
+        "Verwende `...` (alleinstehend auf einer Zeile) im SEARCH-Block, um große, unveränderte Teile zu überspringen. Alles von den Startzeilen bis zu den Endzeilen wird vollständig durch den REPLACE-Block ersetzt! Dies ist extrem effizient für große Klassen oder Funktionen.\n"
+        "~~~edit:pfad/datei.py~~~\n<<<<<<< SEARCH\nerste Zeilen des zu ersetzenden Blocks\n...\nletzte Zeilen des zu ersetzenden Blocks\n=======\nkompletter neuer Code\n>>>>>>> REPLACE\n~~~end~~~\n\n"
+        "FORMAT FÜR NEUE DATEIEN (SEARCH bleibt komplett leer!):\n"
+        "~~~edit:pfad/neue_datei.py~~~\n<<<<<<< SEARCH\n=======\nkompletter neuer inhalt\n>>>>>>> REPLACE\n~~~end~~~"
     )
 
     def __init__(self, agent, project_root: str, config: dict = None):
         self.agent = agent
         self.root = project_root
         self.config = config or {}
+        self.p_input = InputManager()
+        self.lsp = LSPManager(auto_install=True)
+        self.use_root_env = self.config.get("use_root_env", True)
         self.model = self.config.get("model", agent.amd.complex_llm_model)
         self.run_tests = self.config.get("run_tests", False)
         self.bash_timeout = self.config.get("bash_timeout", 300)
@@ -879,8 +911,14 @@ class CoderAgent:
         self.stream_callback = self.config.get("stream_callback", self._default_stream_handler)
         self.debug_mode = (
             os.getenv("CODER_DEBUG", "false").lower() == "true" or
+            os.getenv("CODER_VERBOSE", "false").lower() == "true" or
             os.getenv("AGENT_VERBOSE", "false").lower() == "true" or self.config.get("debug", False)
         )
+        self.ask_enabled = self.config.get(
+            "ask_enabled", os.getenv("CODER_ASK_ENABLED", "false").lower() == "true" and self.config.get("ask_callback", False)
+        )
+
+        self.print = print
 
         self.memory = ExecutionMemory(project_root)
         self.tracker = TokenTracker(self.model, agent, limit=self.config.get("compression_limit", 0.7))
@@ -903,7 +941,7 @@ class CoderAgent:
 
         try:
             root = self.worktree.path
-            lines = [f"# Projektstruktur (max {max_depth} Ebenen):"]
+            lines = [f"# Projektstruktur (Worktree:{self.worktree.path}) (max {max_depth} Ebenen):"]
             lines.append(f"# Root: {root}")
             lines.append("")
 
@@ -946,9 +984,8 @@ class CoderAgent:
         except Exception as e:
             return f"# Fehler beim Lesen der Struktur: {e}"
 
-    @staticmethod
-    def _default_stream_handler(chunk: str):
-        print(chunk, end="", flush=True)
+    def _default_stream_handler(self, chunk: str):
+        self.print(chunk, end="", flush=True)
 
     def _log(self, section: str, content: str, color: str = "white"):
         if not self.debug_mode: return
@@ -961,11 +998,11 @@ class CoderAgent:
 
         # === FIX: Safe Print für Windows ===
         try:
-            print(f"{c_code}{header} {content}{C['reset']}", flush=True)
+            self.print(f"{c_code}{header} {content}{C['reset']}", flush=True)
         except UnicodeEncodeError:
             # Fallback: Wenn UTF-8 fehlschlägt, ersetze Emojis durch '?' oder Ascii
             clean_content = content.encode('ascii', 'replace').decode('ascii')
-            print(f"{c_code}{header} {clean_content}{C['reset']}", flush=True)
+            self.print(f"{c_code}{header} {clean_content}{C['reset']}", flush=True)
         # ===================================
 
         if self.log_handler:
@@ -986,6 +1023,10 @@ class CoderAgent:
         # FIX: Ordnerstruktur automatisch einfügen (2-level)
         folder_structure = self._get_folder_structure(max_depth=2)
         sys_msg += f"\n\n{folder_structure}\n"
+
+        if getattr(self, "ask_enabled", False):
+            sys_msg += "\n\n### WICHTIG: Das Tool 'ask' ist AKTIVIERT.\n"
+            sys_msg += "Wenn du dir bei einer Änderung unsicher bist, eine Entscheidung des Nutzers brauchst oder blockiert bist, nutze zwingend das 'ask' Tool, anstatt zu raten!"
 
         if prev := self.memory.get_context():
             sys_msg += f"\n\n## VERLAUF:\n{prev}"
@@ -1010,6 +1051,24 @@ class CoderAgent:
         try:
             edits, thought = await self._loop(messages)
             results = self._apply_edits(edits)
+
+            changed_files = [r["file_path"] for r in results if r["success"]]
+
+            for fp in changed_files:
+                target = self.worktree.path / fp
+                if target.exists():
+                    content = target.read_text(encoding="utf-8")
+                    lang_id = self._get_lang_id(fp)
+                    diags = await self.lsp.get_diagnostics(fp, content, lang_id)
+
+                    # Nur ERRORs, die der Agent gerade erzeugt hat
+                    errors = [d for d in diags if d.severity == DiagnosticSeverity.ERROR]
+                    if errors:
+                        err_strs = [d.to_display_string(content.splitlines()) for d in errors]
+                        feedback = f"⚠️ LSP-FEHLER in {fp} nach deinem letzten Edit:\n" + "\n".join(err_strs)
+                        self._log("LSP-REVIEW", "Fehler entdeckt, injiziere Feedback.", "red")
+                        messages.append({"role": "user", "content": feedback})
+
             all_changed_files.extend(r["file_path"] for r in results if r["success"])
 
             errors = await self._validate([r["file_path"] for r in results if r["success"]])
@@ -1042,6 +1101,9 @@ class CoderAgent:
                            memory_saved=True, tokens_used=self.tracker.total_tokens,
                            compressions_done=self.tracker.compressions_done)
 
+    def _get_lang_id(self, file_path: str) -> str:
+        ext = Path(file_path).suffix.lower().replace(".", "")
+        return {"py": "python", "js": "javascript", "ts": "typescript", "tsx": "typescriptreact", "html": "html"}.get(ext, "plaintext")
     async def _loop(self, messages: list) -> Tuple[List[EditBlock], str]:
         """Core execution loop with Anti-Loop protection and Enhanced Debugging."""
         tools = self._tools()
@@ -1237,7 +1299,43 @@ class CoderAgent:
                             tc_fn_args = getattr(fn_obj, "arguments", "")
                         # ==================================================================================
 
-                        args_data = json.loads(tc_fn_args)
+                        try:
+                            args_data = json.loads(tc_fn_args)
+                        except Exception as json_err:
+                            # Auto-Healing für kaputtes JSON (oft Single Quotes)
+                            import ast
+                            try:
+                                args_data = ast.literal_eval(tc_fn_args)
+                                if not isinstance(args_data, dict):
+                                    raise ValueError("Not a dict")
+                            except Exception:
+                                raise ValueError(
+                                    f"JSON Decode Error: {json_err}. Dein JSON war ungültig: {tc_fn_args}. Nutze exaktes JSON mit double quotes!")
+
+                            # History-Patch: Verhindert MiniMax 400 Fehler im nächsten Loop
+                        if messages and messages[-1]["role"] == "assistant" and messages[-1].get("tool_calls"):
+                            for h_tc in messages[-1]["tool_calls"]:
+                                if h_tc.get("id") == tc_id:
+                                    h_tc["function"]["arguments"] = json.dumps(args_data)
+
+                        if tc_fn_name == "done":
+                            if len(tool_calls) > 1:
+                                res = "FEHLER: Das 'done' Tool darf NICHT zusammen mit anderen Tools aufgerufen werden. Betrachte erst die Ergebnisse der anderen Tools und rufe 'done' im nächsten Schritt als EINZIGES Tool auf."
+                                self._log("TOOL GUARD", "Blocked 'done' call because it was mixed with other tools.",
+                                          "yellow")
+                                messages.append({"role": "tool", "tool_call_id": tc_id, "content": res})
+                                continue
+                            else:
+                                summary = args_data.get("summary", "")
+                                self._log("DONE", f"Agent called 'done' tool. Summary: {summary}", "green")
+
+                                # Noch im selben Output enthaltene Edit-Blöcke parsen und retten
+                                blocks, _ = self._parse_edits(content)
+                                all_blocks = accumulated_edits + blocks
+                                final_thought = thought + (f"\n[Zusammenfassung] {summary}" if summary else "")
+
+                                return all_blocks, final_thought
+
                         sig = f"{tc_fn_name}:{json.dumps(args_data, sort_keys=True)}"
 
                         self._log("TOOL CALL", f"{tc_fn_name}({json.dumps(args_data, indent=None)})", "green")
@@ -1272,9 +1370,16 @@ class CoderAgent:
                         if not err_id:
                             err_id = f"call_{uuid.uuid4().hex[:8]}"
 
+                            # Hard-Fallback: API 400 verhindern bei komplett unlesbarem Tool-Call
+                        if messages and messages[-1]["role"] == "assistant" and messages[-1].get("tool_calls"):
+                            for h_tc in messages[-1]["tool_calls"]:
+                                if h_tc.get("id") == err_id or h_tc.get("id") == tc_id:
+                                    # Überschreibe kaputtes Argument mit leerem JSON, damit MiniMax nicht abstürzt
+                                    h_tc["function"]["arguments"] = '{"error": "repaired_invalid_json (if repetition us ask tool)"}'
+
                         self._log("TOOL ERROR", err_msg, "red")
                         messages.append({"role": "tool", "tool_call_id": err_id, "content": err_msg})
-                continue
+                    continue
             else:
                 messages.append({"role": "system",
                                  "content": "If you are done with the task or need more information, write the final msg and [DONE] to exit!"})
@@ -1404,7 +1509,36 @@ class CoderAgent:
                 txt = target.read_text(encoding="utf-8", errors="replace")
                 original_bytes = len(txt.encode('utf-8'))
 
-                if e.search in txt:
+                # --- NEUE LOGIK FÜR ERWEITERTE SUCH-SYNTAX (ELLIPSIS ...) ---
+                search_lines_raw = e.search.splitlines()
+                ellipsis_indices = [i for i, line in enumerate(search_lines_raw) if line.strip() == "..."]
+
+                if ellipsis_indices:
+                    # Teile den Search-Block am ersten "..."
+                    e_idx = ellipsis_indices[0]
+                    start_part = "\n".join(search_lines_raw[:e_idx]).strip()
+                    end_part = "\n".join(search_lines_raw[e_idx + 1:]).strip()
+
+                    start_idx = txt.find(start_part) if start_part else 0
+                    end_idx = -1
+
+                    if start_idx != -1:
+                        search_offset = start_idx + len(start_part)
+                        end_idx = txt.find(end_part, search_offset) if end_part else len(txt)
+
+                    if start_idx != -1 and end_idx != -1:
+                        match_type = "EXTENDED"
+                        replace_end = end_idx + len(end_part)
+                        # Ersetze den gesamten Bereich (Start bis inkl. Ende)
+                        new_txt = txt[:start_idx] + e.replace + txt[replace_end:]
+                    else:
+                        self._log("IO-ERR", f"EXTENDED SEARCH block limits not found in {e.file_path}", "red")
+                        results.append({"file_path": e.file_path, "success": False,
+                                        "error": "EXTENDED SEARCH limits (start/end) not found"})
+                        continue
+
+                # --- ALTE LOGIK FÜR NORMALE SUCHE ---
+                elif e.search in txt:
                     match_type = "EXACT"
                     new_txt = txt.replace(e.search, e.replace, 1)
                 elif (idx := self._fuzzy_find(txt, e.search)) is not None:
@@ -1416,7 +1550,7 @@ class CoderAgent:
                 else:
                     self._log("IO-ERR", f"SEARCH block not found in {e.file_path}", "red")
                     results.append({"file_path": e.file_path, "success": False,
-                                    "error": "SEARCH not found (exact + fuzzy)"})
+                                    "error": "SEARCH not found (exact + fuzzy + extended)"})
                     continue
 
                 new_bytes = len(new_txt.encode('utf-8'))
@@ -1506,23 +1640,67 @@ class CoderAgent:
         if name == "read_file":
             return await smart_read_file(
                 args["path"], args.get("start_line"), args.get("end_line"),
-                self.worktree.path, self.agent, messages, self.model, args.get("query", ""))
-        if name == "bash": return await self._smart_bash(args["command"], messages)
+                self.worktree.path, self.agent, messages, self.model, args.get("query", ""), lsp_manager=self.lsp)
+        if name == "bash": return await self._smart_bash(args["command"], messages, no_file_op=True)
         if name == "grep": return await self._smart_grep(args["pattern"], messages)
+        if name == "run_file": return await self._run_file(args["file_path"], args.get("args", ""), messages)
         if name == "memory_recall":
             if self.agent and hasattr(self.agent, "arun_function"):
                 return await self.agent.arun_function("memory_recall", query=args["query"],
                                                       search_type=args.get("search_type", "auto"))
             return "Fehler: Memory-System nicht verfügbar."
+        if name == "ask":
+            return await self._ask_user(args.get("question", "Brauche Input:"))
         return f"Unknown tool: {name}"
 
-    async def _smart_bash(self, cmd: str, messages: list) -> str:
+    async def _ask_user(self, question: str) -> str:
+        if not getattr(self, "ask_enabled", False):
+            return "ERROR: 'ask' tool is globally disabled in this session. Proceed autonomously."
+
+        # Optional: Custom ask callback via Config übergeben (z.B. für GUI oder externe CLI)
+        custom_ask = self.config.get("ask_callback")
+        if custom_ask:
+            try:
+                if asyncio.iscoroutinefunction(custom_ask):
+                    return await custom_ask(question)
+                else:
+                    return await asyncio.to_thread(custom_ask, question)
+            except Exception as e:
+                self._log("ASK-ERROR", f"Custom ask callback failed: {e}", "red")
+
+        # Fallback Standard CLI Input
+        try:
+            from prompt_toolkit import prompt_async
+            from prompt_toolkit.formatted_text import HTML
+            input_manager = self.p_input
+            self.print()  # Leerzeile für Übersichtlichkeit
+            return await input_manager.ask(HTML(
+                f"<b><ansicyan>Agent fragt:</ansicyan></b> {question}\n<b><ansiyellow>❯ Antwort:</ansiyellow></b> "))
+        except Exception:
+            self.print(f"\n\033[96mAgent fragt:\033[0m {question}")
+            return input("\033[93m❯ Antwort:\033")
+
+
+    async def _smart_bash(self, cmd: str, messages: list, no_file_op: bool = False) -> str:
         """
         Smart Bash Execution:
         1. Führt Befehl aus (via _run_bash).
         2. Guard: Schneidet massive Outputs (>1600 Zeilen) hart ab.
         3. Rank: Lässt mittlere Outputs (800-1600 Zeilen) vom Agenten filtern.
         """
+        if no_file_op:
+            cmd_check = cmd.strip().lower()
+            forbidden_starts = ("cat ", "echo ", "printf ", "vi ", "vim ", "nano ", "tail ", "head ", "less ", "more ",
+                                "touch ")
+            if cmd_check.startswith(forbidden_starts) or " >" in cmd_check or ">>" in cmd_check:
+                self._log("BASH-GUARD", f"Blocked forbidden file operation: {cmd}", "red")
+                return (
+                    "⚠️ FEHLER: Direkte Dateizugriffe (Lesen/Schreiben) über 'bash' sind verboten!\n"
+                    "• Nutze das Tool 'read_file' um Dateiinhalte zu lesen.\n"
+                    "• Nutze das Tool 'run_file' um Skripte oder Tests auszuführen.\n"
+                    "• Nutze ausschließlich Edit-Blöcke (~~~edit:pfad~~~) um Dateien zu bearbeiten oder neu zu erstellen.\n"
+                    "Befehl abgebrochen."
+                )
         # 1. Execute Raw
         raw_output = await self._run_bash(cmd)
 
@@ -1586,6 +1764,59 @@ class CoderAgent:
 
         # 4. Small Output (< 40 Zeilen): Passthrough
         return raw_output
+
+    async def _run_file(self, file_path: str, args_str: str, messages: list) -> str:
+        """Sicheres Ausführen von Dateien im Worktree mit Environment-Detection."""
+        target = (self.worktree.path / file_path).resolve()
+        if not target.exists():
+            return f"FEHLER: Datei {file_path} existiert nicht im aktuellen Workspace."
+
+        quoted_path = shlex.quote(file_path) if platform.system() != "Windows" else f'"{file_path}"'
+        ext = target.suffix.lower()
+
+        if ext == ".py":
+            # --- START: Smart Python Environment Detection ---
+            root = self.worktree.origin_root if self.use_root_env else self.worktree.path
+            is_win = platform.system() == "Windows"
+
+            # Pfade für venv/binaries
+            python_subpath = "Scripts/python.exe" if is_win else "bin/python"
+
+            # 1. Check for 'uv' (Präferenz, falls uv.lock existiert)
+            if (root / "uv.lock").exists() and shutil.which("uv"):
+                python_bin = f"uv run python"
+                self._log("ENV", "Detected 'uv', using 'uv run python'", "cyan")
+
+            # 2. Check for local .venv
+            elif (root / ".venv" / python_subpath).exists():
+                venv_exe = (root / ".venv" / python_subpath).absolute()
+                python_bin = f'"{venv_exe}"'
+                self._log("ENV", "Detected local .venv", "cyan")
+
+            # 3. Check for local venv
+            elif (root / "venv" / python_subpath).exists():
+                venv_exe = (root / "venv" / python_subpath).absolute()
+                python_bin = f'"{venv_exe}"'
+                self._log("ENV", "Detected local venv", "cyan")
+
+            # 4. Fallback: Aktueller Interpreter
+            else:
+                python_bin = f'"{sys.executable}"'
+                self._log("ENV", "No local venv found, using system/agent python", "grey")
+
+            cmd = f"{python_bin} {quoted_path} {args_str}"
+            # --- END: Smart Python Environment Detection ---
+
+        elif ext in [".sh", ".bash"]:
+            cmd = f"bash {quoted_path} {args_str}"
+        elif ext in [".bat", ".cmd", ".ps1"]:
+            cmd = f"{quoted_path} {args_str}"
+        else:
+            prefix = "./" if platform.system() != "Windows" and not file_path.startswith("/") else ""
+            cmd = f"{prefix}{quoted_path} {args_str}"
+
+        self._log("RUN FILE", cmd, "cyan")
+        return await self._smart_bash(cmd.strip(), messages)
 
     async def _smart_grep(self, pattern: str, messages: list) -> str:
         """
@@ -1693,7 +1924,13 @@ class CoderAgent:
         return await self._run_bash(f"grep -rn {quoted} .")
 
     def _tools(self) -> list:
-        return [
+        tools = [
+            {"type": "function", "function": {"name": "done",
+                                              "description": "Beendet die aktuelle Aufgabe erfolgreich. Rufe dieses Tool auf, wenn du alle Anforderungen erfüllt hast und keine weiteren Aktionen nötig sind.",
+                                              "parameters": {"type": "object", "properties": {
+                                                  "summary": {"type": "string",
+                                                              "description": "Kurze Zusammenfassung der erledigten Arbeit"}},
+                                                             "required": ["summary"]}}},
             {"type": "function", "function": {"name": "read_file", "description": "Read file content",
                                               "parameters": {"type": "object", "properties": {
                                                   "path": {"type": "string", "description": "Relative file path"},
@@ -1703,12 +1940,20 @@ class CoderAgent:
                                                                "description": "End line (inclusive)"},
                                                   "query": {"type": "string",
                                                             "description": "Search context for smart extraction"}},
-                                                             "required": ["path"]}}},
-            {"type": "function", "function": {"name": "bash", "description": "Run shell command in worktree",
-                                              "parameters": {"type": "object", "properties": {
-                                                  "command": {"type": "string",
-                                                              "description": "Shell command to execute"}},
-                                                             "required": ["command"]}}},
+                                                             "required": ["path"]}}}
+        ,{"type": "function", "function": {"name": "run_file",
+                                          "description": "Sicheres Ausführen einer Datei (Tests, Python Skripte, Binaries) im isolierten Workspace. Bevorzuge dies gegenüber 'bash'.",
+                                          "parameters": {"type": "object", "properties": {
+                                              "file_path": {"type": "string",
+                                                            "description": "Relativer Pfad zur auszuführenden Datei (z.B. 'tests/test_app.py')"},
+                                              "args": {"type": "string",
+                                                       "description": "Optionale CLI Argumente (z.B. '-v --debug')"}},
+                                                         "required": ["file_path"]}}},
+        {"type": "function", "function": {"name": "bash",
+                                          "description": "Run shell command in worktree (Benutze für Skripte und Tests lieber 'run_file')",
+                                          "parameters": {"type": "object", "properties": {
+                                              "command": {"type": "string", "description": "Shell command to execute"}},
+                                                         "required": ["command"]}}},
             {"type": "function", "function": {"name": "grep", "description":
                 "Search pattern in codebase (uses rg/git-grep/findstr). Install ripgrep for best speed: "
                 "winget install BurntSushi.ripgrep.MSVC",
@@ -1727,9 +1972,19 @@ class CoderAgent:
                                               }, "required": ["query"]}}}
         ]
 
-    # ===================================================================
-    # FIX 2: _parse_edits() — Rettet unvollständige Blöcke
-    # ===================================================================
+        if self.ask_enabled:
+            tools.append({
+                "type": "function", "function": {
+                    "name": "ask",
+                    "description": "Stelle dem Benutzer eine direkte Frage, falls du blockiert bist, eine Entscheidung brauchst oder Input forderst.",
+                    "parameters": {"type": "object", "properties": {
+                        "question": {"type": "string", "description": "Die Frage an den User"}
+                    }, "required": ["question"]}
+                }
+            })
+
+        return tools
+
     def _parse_edits(self, text: str) -> Tuple[List[EditBlock], List[EditBlock]]:
         """State-machine parser. Returns (complete_blocks, incomplete_blocks)."""
         IDLE, IN_SEARCH, IN_REPLACE = 0, 1, 2
