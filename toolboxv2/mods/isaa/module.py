@@ -1215,7 +1215,7 @@ class Tools(MainTool):
             complex_llm_model=self.config.get(
                 f"{name.upper()}MODEL", self.config["COMPLEXMODEL"]
             ),
-            system_message= self.app.manifest.isaa.self_agent.system_message if self.app.manifest.isaa and self.app.manifest.isaa.self_agent.system_messageelse else ("""# ISAA Agent System Prompt v2.1
+            system_message= self.app.manifest.isaa.self_agent.system_message if self.app.manifest.isaa and self.app.manifest.isaa.self_agent.system_message else ("""# ISAA Agent System Prompt v2.1
 
 ---
 
