@@ -1738,7 +1738,7 @@ class HTTPWorker:
         """Initialize session manager."""
         from ..workers.session import SessionManager
 
-        secret = self.config.session.cookie_secret
+        secret = self.config.session.cookie_secret or os.getenv("TOKEN_SECRET", os.getenv("TB_COOKIE_SECRET"))
         if not secret:
             if self.config.environment == "production":
                 raise ValueError("Cookie secret required in production!")

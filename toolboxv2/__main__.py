@@ -2033,11 +2033,11 @@ def main_runner():
                         runner_name = "gui"
                     elif profile == "server":
                         _run_server_overview()
-                        if len(sys.argv) < 1:
+                        if len(sys.argv) < 2:
                             return
                     elif profile == "business":
                         _run_business_overview()
-                        if len(sys.argv) < 1:
+                        if len(sys.argv) < 2:
                             return
                     else:
                         # homelab, developer → interactive dashboard

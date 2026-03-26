@@ -61,7 +61,7 @@ class ConfigConverter:
 
         # Generate each config
         self._generate_worker_config()
-        self._generate_rust_config()
+        # self._generate_rust_config() # no rust server !
         self._generate_services_json()
 
         # Generate ISAA agent config if enabled
@@ -166,7 +166,7 @@ class ConfigConverter:
         }
 
         # Write file
-        output_path = self.base_dir / ".config.yaml"
+        output_path = self.base_dir / "config.yaml"
 
         header = "# AUTO-GENERATED from tb-manifest.yaml - DO NOT EDIT DIRECTLY\n"
         header += "# Regenerate with: tb manifest apply\n\n"
