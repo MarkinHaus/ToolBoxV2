@@ -392,7 +392,7 @@ def make_vfs_shell(session: "AgentSessionV2"):
 
         # Strip unsupported shell redirections before any parsing
         # Handles: 2>/dev/null  2>&1  >/dev/null  1>/dev/null  >file
-        command = re.sub(r'\s*\d*>[&>]?\S*', '', command).strip()
+        command = re.sub(r'\s+\d+>[&>]?\S*', '', command).strip()
 
         # ── Multi-command batch dispatch ──────────────────────────────────────
         # Operators: && || | ;   (newline is NOT a separator — content safety)
@@ -402,7 +402,7 @@ def make_vfs_shell(session: "AgentSessionV2"):
         # ── Special-case: echo with shell redirection ──────────────────────
         # Matches:  echo "..." > path   OR   echo "..." >> path
         echo_m = re.match(
-            r"^echo\s+(.*?)\s*(>>|>)\s*(\S+)\s*$", command, re.DOTALL
+            r"^echo\s+(.*)\s*(>>|>)\s*(\S+)\s*$", command, re.DOTALL
         )
         if echo_m:
             raw_content, op, path = echo_m.groups()
