@@ -327,7 +327,6 @@ class ZAIProvider(CustomLLM):
                           custom_llm_provider: Optional[str] = None, **kwargs) -> ModelResponse:
         actual_model = self._extract_model(model)
         request_kwargs = self._prepare_openai_kwargs(kwargs)
-
         response = await self.async_client.chat.completions.create(
             model=actual_model,
             messages=messages,
@@ -355,7 +354,6 @@ class ZAIProvider(CustomLLM):
         GenericStreamingChunk]:
         actual_model = self._extract_model(model)
         request_kwargs = self._prepare_openai_kwargs(kwargs)
-
         stream = await self.async_client.chat.completions.create(
             model=actual_model,
             messages=messages,

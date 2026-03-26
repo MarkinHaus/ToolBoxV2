@@ -1513,11 +1513,13 @@ class SimpleFeatureManager:
     def list_features(self):
         return list(self.features.keys())
 
-    def enable(self, feature):
+    async def enable(self, feature):
         if feature in self.features:
             self.features[feature]["is_enabled"] = True
             if self.features[feature]["activation_f"]:
-                self.features[feature]["activation_f"](self.agent_ref)
+                res = self.features[feature]["activation_f"](self.agent_ref)
+                if asyncio.iscoroutine(res):
+                    await res
 
     def is_enabled(self, feature):
         return self.features.get(feature, {"is_enabled": False})["is_enabled"]
@@ -1653,7 +1655,7 @@ def load_docs_feature(fm):
     docs_system = [None]  # Mutable container for the docs system instance
     docs_tools = [None]   # Mutable container for the tool list
 
-    def enable(agent):
+    async def enable(agent):
         """Enable documentation system and add tools to agent."""
         try:
             # Determine docs directory based on current working directory
@@ -1670,8 +1672,8 @@ def load_docs_feature(fm):
                 docs_dir = Path(docs_input).expanduser().resolve()
 
             if not docs_dir.exists():
-                c_print(f"<style fg='ansired'>⚠️ Docs directory not found: {docs_dir}</style>")
-                c_print("<style fg='ansiyellow'>Creating minimal docs structure...</style>")
+                c_print(HTML(f"<style fg='ansired'>⚠️ Docs directory not found: {docs_dir}</style>"))
+                c_print(HTML("<style fg='ansiyellow'>Creating minimal docs structure...</style>"))
                 docs_dir.mkdir(parents=True, exist_ok=True)
 
             # Create docs system instance
@@ -1682,10 +1684,8 @@ def load_docs_feature(fm):
             )
 
             # Initialize (load existing index or build new one)
-            import asyncio
-            loop = asyncio.get_event_loop()
-            result = loop.run_until_complete(system.initialize())
-            c_print(f"<style fg='ansigreen'>✓ Docs initialized:</style> {result['sections']} sections, {result['elements']} elements")
+            result = await system.initialize()
+            c_print(HTML(f"<style fg='ansigreen'>✓ Docs initialized:</style> {result['sections']} sections, {result['elements']} elements"))
 
             docs_system[0] = system
 
@@ -2676,9 +2676,10 @@ ALL_FEATURES = {
     "coder": load_coder_toolkit,
     "chain": load_chain_toolkit,
     "execute": load_execute,
-    "autofix": load_autofix_feature,
+    "docs": load_docs_feature,
     "autodoc": load_autodoc_feature,
-    "autotest":      load_autotest_feature,
+    "autotest": load_autotest_feature,
+    "autofix": load_autofix_feature,
 }
 
 
@@ -4536,20 +4537,21 @@ class ISAA_Host:
             # ── STREAM starten (statt a_run) ──────────────────────────────────
             stream = agent.a_stream(query=task, session_id=session_id)
 
-            async_task = asyncio.create_task(
-                self._drain_agent_stream("__pending__", stream, False)
-            )
-
             exc = self._create_execution(
                 kind="delegate",
                 agent_name=agent_name,
                 query=task,
-                async_task=async_task,
+                async_task=None,
                 run_id=run_id,
                 stream=stream,
                 take_focus=False,
             )
             task_id = exc.task_id
+
+            async_task = asyncio.create_task(
+                self._drain_agent_stream(task_id, stream, False)
+            )
+            exc.async_task = async_task
 
             async_task.add_done_callback(
                 lambda fut: self._on_agent_task_done(task_id, fut)
@@ -8416,7 +8418,7 @@ class ISAA_Host:
             if feature not in self.feature_manager.list_features():
                 print_status(f"Feature '{feature}' not found.", "error")
                 return
-            self.feature_manager.enable(feature)
+            await self.feature_manager.enable(feature)
             print_status(f"Feature '{feature}' enabled.", "success")
         elif action == "disable":
             if len(args) < 2:
@@ -8892,116 +8894,6 @@ class ISAA_Host:
 
         return exc
 
-    def _launch_agent_bg(self, stream, agent, query: str, should_speak: bool = False) -> str:
-        """Startet Agent-Stream als Background-Task"""
-        run_id = uuid.uuid4().hex[:8]
-        agent_name = self.active_agent_name
-        host_ref = self
-
-        async def bg_agent_drain():
-            final_response_text = ""
-            current_sentence = ""
-            stop_for_speech = False
-            try:
-                while True:
-                    try:
-                        raw = await stream.__anext__()
-                    except StopAsyncIteration:
-                        break
-                    chunk = dict(raw)  # mutable copy — litellm objects are NOT safe to mutate
-                    self._ingest_chunk(_tid_holder[0], chunk)
-                    is_focused = (host_ref._focused_task_id == _tid_holder[0])
-
-                    if chunk.get("type") == "content":
-                        text = chunk.get("chunk", "")
-                        final_response_text += text
-                        if should_speak and hasattr(host_ref, 'audio_player'):
-                            if '```' in text:
-                                stop_for_speech = not stop_for_speech
-                            if not stop_for_speech:
-                                current_sentence += text
-                                if any(current_sentence.rstrip().endswith(p)
-                                       for p in ['.', '!', '?', ':', '\n\n']):
-                                    clean_text = remove_styles(current_sentence.strip())
-                                    if clean_text:
-                                        get_app("ci.audio.bg.task").run_bg_task_advanced(
-                                            host_ref.audio_player.queue_text, clean_text
-                                        )
-                                    current_sentence = ""
-                    elif chunk.get("type") == "final_answer":
-                        final_response_text = chunk.get("answer", final_response_text)
-
-                exc = host_ref.all_executions.get(_tid_holder[0])
-                if exc:
-                    exc.status = "completed"
-                    exc.result_text = final_response_text
-
-                try:
-                    if "```json" in final_response_text:
-                        json_str = final_response_text.split("```json")[1].split("```")[0].strip()
-                        data = json.loads(json_str)
-                        if isinstance(data, list) and len(data) == 1:
-                            data = data[0]
-                        if isinstance(data, dict):
-                            print_separator()
-                            await visualize_data_terminal(
-                                data, agent, max_preview_chars=max(len(final_response_text), 8000)
-                            )
-                except Exception:
-                    pass
-                return final_response_text
-
-            except asyncio.CancelledError:
-                try:
-                    await stream.aclose()
-                except Exception:
-                    pass
-                exc = host_ref.all_executions.get(_tid_holder[0])
-                if exc:
-                    exc.status = "cancelled"
-                # Isolated cancel — must NOT propagate to the event loop / CLI
-                return ""
-
-            except Exception as e:
-                exc = host_ref.all_executions.get(_tid_holder[0])
-                if exc:
-                    exc.status = "failed"
-                return ""
-
-        async_task = asyncio.create_task(bg_agent_drain())
-
-        exc = self._create_execution(
-            kind="task",
-            agent_name=agent_name,
-            query=query,
-            async_task=async_task,
-            run_id=run_id,
-            stream=stream,
-            agent_ref=agent,
-            take_focus=False,
-        )
-        _tid_holder = [exc.task_id]  # mutable cell shared with the coroutine's closure
-
-        def _on_done(fut):
-            _tid = _tid_holder[0]
-            try:
-                fut.result()
-                tv = host_ref._task_views.get(_tid)
-                if tv: tv.status = "completed"
-                with patch_stdout():
-                    c_print(HTML(f"\n<style fg='{PTColors.ZEN_GREEN}'>✓ {_tid} complete</style>\n"))
-            except asyncio.CancelledError:
-                tv = host_ref._task_views.get(_tid)
-                if tv: tv.status = "cancelled"
-            except Exception as e:
-                tv = host_ref._task_views.get(_tid)
-                if tv: tv.status = "failed"
-                with patch_stdout():
-                    c_print(HTML(f"\n<style fg='{PTColors.ZEN_RED}'>✗ {_tid} failed: {_esc(str(e)[:60])}</style>\n"))
-
-        async_task.add_done_callback(_on_done)
-        return exc.task_id
-
     async def _handle_agent_interaction(self, user_input: str):
         if self.active_coder and not user_input.startswith("@"):
             await self._cmd_coder(["task", user_input])
@@ -9029,21 +8921,22 @@ class ISAA_Host:
             )
 
             # Consumer-Task (task_id assigned by _create_execution below)
-            async_task = asyncio.create_task(
-                self._drain_agent_stream("__pending__", stream, should_speak)
-            )
+
 
             # _create_execution: registers, sets focus, notifies ZenPlus
             exc = self._create_execution(
                 kind="chat",
                 agent_name=agent_name,
                 query=user_input,
-                async_task=async_task,
+                async_task=None,
                 stream=stream,
                 take_focus=True,
             )
             task_id = exc.task_id  # now the canonical ID
-
+            async_task = asyncio.create_task(
+                self._drain_agent_stream(task_id, stream, should_speak)
+            )
+            exc.async_task = async_task
             # Notification bei Completion
             async_task.add_done_callback(
                 lambda fut: self._on_agent_task_done(task_id, fut)
@@ -9712,9 +9605,7 @@ class ISAA_Host:
             stream = resume_result  # unexpected but handle gracefully
 
         # ── Step 6: Register new drain task ──────────────────────────────────
-        async_task = asyncio.create_task(
-            self._drain_agent_stream("__pending__", stream, False)
-        )
+
 
         query_text = (
             f"[resumed] {new_context[:80]}"
@@ -9726,11 +9617,17 @@ class ISAA_Host:
             kind="chat",
             agent_name=task.agent_name,
             query=query_text,
-            async_task=async_task,
+            async_task=None,
             stream=stream,
             take_focus=True,
         )
+
         new_task_id = exc.task_id
+        async_task = asyncio.create_task(
+            self._drain_agent_stream(new_task_id, stream, False)
+        )
+        exc.async_task = async_task
+
 
         # Clean up old task from SSOT
         self.all_executions.pop(task_id, None)
@@ -9806,7 +9703,7 @@ if __name__ == "__main__":
         if args.feature:
             host.feature_manager.set_agent(agent)
             for feat in args.feature:
-                host.feature_manager.enable(feat)
+                await host.feature_manager.enable(feat)
 
         # Modell-Override
         if args.model and args.model in MODEL_MAPPING:

@@ -777,7 +777,6 @@ class HistoryCompressor:
         return {
             "role": "system",
             "content": "\n".join(lines),
-            "metadata": {"type": "semantic_ledger", "run_id": run_id},
         }
 
     @staticmethod
@@ -1222,7 +1221,7 @@ BEISPIELE:
                 ctx.working_history.append(
                     {
                         "role": "system",
-                        "content": ctx.loop_detector.get_intervention_message(),
+                        "content": ctx.loop_detector.get_intervention_message() + '\nThis is the last iteration! must finalize task immediately and return an final answer with the current status!' if ctx.current_iteration >= max_iterations-1 else '',
                     }
                 )
                 ctx.loop_warning_given = True
@@ -2827,7 +2826,6 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         summary_msg = {
             "role": "system",
             "content": f"⚡ RUN SUMMARY [{ctx.run_id}]: {summary_text}\n(Full Log: {log_file})",
-            "metadata": {"type": "run_summary", "log_file": log_file},
         }
 
         await session.add_message(

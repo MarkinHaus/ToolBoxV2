@@ -390,6 +390,10 @@ def make_vfs_shell(session: "AgentSessionV2"):
         if not command:
             return _err("empty command")
 
+        # Strip unsupported shell redirections before any parsing
+        # Handles: 2>/dev/null  2>&1  >/dev/null  1>/dev/null  >file
+        command = re.sub(r'\s*\d*>[&>]?\S*', '', command).strip()
+
         # ── Multi-command batch dispatch ──────────────────────────────────────
         # Operators: && || | ;   (newline is NOT a separator — content safety)
         if len(_split_compound(command)) > 1:
