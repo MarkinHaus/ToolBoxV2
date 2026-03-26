@@ -716,7 +716,7 @@ function Print-Summary {
 # ============================================================
 Write-Host ""
 Write-Host "  ╔════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "  ║     ToolBoxV2 Installer v$INSTALLER_VERSION       ║" -ForegroundColor Cyan
+Write-Host "  ║     ToolBoxV2 Installer v$INSTALLER_VERSION         ║" -ForegroundColor Cyan
 Write-Host "  ╚════════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 
