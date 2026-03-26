@@ -11,19 +11,6 @@
 #   .\installer.ps1 -Update
 # ============================================================
 
-# -----------------------------------------------------------------------------
-# DISPLAY HEADER
-# -----------------------------------------------------------------------------
-Write-Host "**************************************************************************" -ForegroundColor DarkCyan
-Write-Host "***████████╗*██████╗***██████╗**██╗*********██████╗***██████╗*██╗***██╗***" -ForegroundColor DarkCyan
-Write-Host "***╚══██╔══╝██╔═══██╗*██╔═══██╗*██║*********██╔══██╗*██╔═══██╗*╚██╗██╔╝***" -ForegroundColor DarkCyan
-Write-Host "******██║***██║***██║*██║***██║*██║*********██████╔╝*██║***██║**╚███╔╝****" -ForegroundColor DarkCyan
-Write-Host "******██║***██║***██║*██║***██║*██║*********██╔══██╗*██║***██║**██╔██╗****" -ForegroundColor DarkCyan
-Write-Host "******██║***╚██████╔╝*╚██████╔╝*███████╗****██████╔╝*╚██████╔╝*██╔╝*██╗***" -ForegroundColor DarkCyan
-Write-Host "******╚═╝****╚═════╝***╚═════╝**╚══════╝****╚═════╝***╚═════╝**╚═╝**╚═╝***" -ForegroundColor DarkCyan
-Write-Host "**************************************************************************" -ForegroundColor DarkCyan
-Write-Host "Zero the Hero - ToolBoxV2 Core Installer" -ForegroundColor Cyan
-
 [CmdletBinding()]
 param(
     [string]$Mode       = "",
@@ -36,6 +23,20 @@ param(
 )
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+
+# -----------------------------------------------------------------------------
+# DISPLAY HEADER
+# -----------------------------------------------------------------------------
+Write-Host "**************************************************************************" -ForegroundColor DarkCyan
+Write-Host "***████████╗*██████╗***██████╗**██╗*********██████╗***██████╗*██╗***██╗***" -ForegroundColor DarkCyan
+Write-Host "***╚══██╔══╝██╔═══██╗*██╔═══██╗*██║*********██╔══██╗*██╔═══██╗*╚██╗██╔╝***" -ForegroundColor DarkCyan
+Write-Host "******██║***██║***██║*██║***██║*██║*********██████╔╝*██║***██║**╚███╔╝****" -ForegroundColor DarkCyan
+Write-Host "******██║***██║***██║*██║***██║*██║*********██╔══██╗*██║***██║**██╔██╗****" -ForegroundColor DarkCyan
+Write-Host "******██║***╚██████╔╝*╚██████╔╝*███████╗****██████╔╝*╚██████╔╝*██╔╝*██╗***" -ForegroundColor DarkCyan
+Write-Host "******╚═╝****╚═════╝***╚═════╝**╚══════╝****╚═════╝***╚═════╝**╚═╝**╚═╝***" -ForegroundColor DarkCyan
+Write-Host "**************************************************************************" -ForegroundColor DarkCyan
+Write-Host "Zero the Hero - ToolBoxV2 Core Installer" -ForegroundColor Cyan
 
 # ── Constants ────────────────────────────────────────────────
 $INSTALLER_VERSION    = "1.0.0"
