@@ -416,6 +416,7 @@ RUNNER_KEYS = [
     "http_worker",
     "obs",
     "ws_worker",
+    "access",
     "services",
     "registry",
     "manifest",
@@ -517,6 +518,7 @@ def show_interactive_guide():
     │    $ tb workers [start|stop|status]   # Manage worker system               │
     │    $ tb session [generate-secret|test]# Session management                 │
     │    $ tb event                         # Event broker management            │
+    │    $ tb access                        # global cli access [install|status] │
     │    $ tb broker                        # ZMQ event broker                   │
     │    $ tb http_worker                   # HTTP worker                        │
     │    $ tb ws_worker                     # WebSocket worker                   │
@@ -866,6 +868,10 @@ def parse_args():
     )
     extensions.add_argument(
         "docksh", help="Start docker cli", nargs="?", const=True, default=False
+    )
+
+    extensions.add_argument(
+        "access", help="Access the tb cli from anywhere", nargs="?", const=True, default=False
     )
 
     # =================== CORE OPTIONS ===================
@@ -1873,6 +1879,9 @@ def runner_setup():
         "http_worker": cli_http_worker,
         "obs": lambda: __import__(
             "toolboxv2.utils.clis.observability_helper", fromlist=["main"]
+        ).main(),
+        "access": lambda: __import__(
+            "toolboxv2.__genv__", fromlist=["main"]
         ).main(),
         "ws_worker": cli_ws_worker,
         "services": lambda: __import__(

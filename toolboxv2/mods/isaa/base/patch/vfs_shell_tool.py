@@ -402,11 +402,11 @@ def make_vfs_shell(session: "AgentSessionV2"):
         # ── Special-case: echo with shell redirection ──────────────────────
         # Matches:  echo "..." > path   OR   echo "..." >> path
         echo_m = re.match(
-            r"^echo\s+(.*)\s*(>>|>)\s*(\S+)\s*$", command, re.DOTALL
+            r"^echo\s+(.*\S)\s+(>>|>)\s+(\S+)\s*$", command, re.DOTALL
         )
         if echo_m:
             raw_content, op, path = echo_m.groups()
-            # Strip a single surrounding quote layer
+            raw_content = raw_content.strip()  # ← NEU: trailing spaces weg
             if len(raw_content) >= 2 and raw_content[0] == raw_content[-1] and raw_content[0] in ('"', "'"):
                 raw_content = raw_content[1:-1]
             content = raw_content.replace("\\n", "\n").replace("\\t", "\t")
