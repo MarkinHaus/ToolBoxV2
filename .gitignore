@@ -129,3 +129,6 @@ ENV/
 /toolboxv2/src-core/config.toml
 
 .qodo
+
+/llm-gateway/data/*
+/toolboxv2/.config.yaml

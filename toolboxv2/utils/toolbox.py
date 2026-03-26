@@ -56,6 +56,7 @@ class App(AppType, metaclass=Singleton):
             self.logger_prefix = self.REFIX = "test"
         super().__init__(prefix, args)
         self._web_context = None
+        self._debug = args.debug
         self.loop = None
         t0 = time.perf_counter()
         abspath = os.path.abspath(__file__)
@@ -196,7 +197,6 @@ class App(AppType, metaclass=Singleton):
             self.config_fh.load_file_handler()
         except Exception as e:
             print(e)
-        self._debug = args.debug
         self.flows = {}
         self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])
         if self.config_fh.get_file_handler("provider::") is None:
