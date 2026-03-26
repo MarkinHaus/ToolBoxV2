@@ -160,7 +160,7 @@ class App(AppType, metaclass=Singleton):
             manifest = loader.load()
             self.manifest = manifest
         except Exception as e:
-            print(e)
+            print("Error loading manifest",e)
 
 
         get_logger().info(Style.GREEN("Starting Application instance"))
@@ -218,7 +218,9 @@ class App(AppType, metaclass=Singleton):
         from .system.session import Session
         self.session: Session = Session(self.get_username())
 
-        self._ping_interval = self.manifest.app.ping_interval
+        self._ping_interval = None
+        if self.manifest:
+            self._ping_interval = self.manifest.app.ping_interval
 
         #self._initialize_network() #+ 3.2s   7.4 s start up time Total
 
