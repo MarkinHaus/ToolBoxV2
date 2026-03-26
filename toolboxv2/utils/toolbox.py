@@ -160,7 +160,7 @@ class App(AppType, metaclass=Singleton):
             manifest = loader.load()
             self.manifest = manifest
         except Exception as e:
-            self.debug_rains(e)
+            print(e)
 
 
         get_logger().info(Style.GREEN("Starting Application instance"))
