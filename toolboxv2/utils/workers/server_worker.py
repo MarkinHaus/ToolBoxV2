@@ -32,6 +32,8 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Set
 from urllib.parse import parse_qs, unquote
+from dotenv import load_dotenv
+load_dotenv()
 
 import requests
 
