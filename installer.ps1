@@ -264,10 +264,10 @@ function Phase-Config {
     Write-Host "  Included (always): mini core"
     $selFeatures = $FEATURES
     foreach ($feat in $FEATURES_OPTIONAL) {
-        $currently = if ($selFeatures -match "\b$feat\b") { "yes" } else { "no" }
+        $currently = if ($selFeatures -match "\b${feat}\b") { "yes" } else { "no" }
         $def = if ($currently -eq "yes") { "y" } else { "n" }
         if (Confirm-User "  Enable $feat? [currently: $currently]" $def) {
-            if ($selFeatures -notmatch "\b$feat\b") { $selFeatures += " $feat" }
+            if ($selFeatures -notmatch "\b${feat}\b") { $selFeatures += " $feat" }
         } else {
             $selFeatures = ($selFeatures -split " " | Where-Object { $_ -ne $feat }) -join " "
         }
