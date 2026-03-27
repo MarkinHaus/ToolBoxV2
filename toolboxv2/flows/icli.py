@@ -193,6 +193,7 @@ class IterView:
     _tool_start_inputs: dict[str, str] = field(default_factory=dict)
     pending_tool: str = ""   # currently running tool name
     tools_raw: list[tuple[str, str, str]] = field(default_factory=list)
+    _in_reasoning: bool = False
 
 
 @dataclass
@@ -259,15 +260,22 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
     t = chunk.get("type", "")
     iv = tv._get_iter(tv.iteration) if tv.iteration > 0 else None
 
+
+
     if t == "reasoning":
         thought = chunk.get("chunk", "")
         tv.phase = "thinking"
         tv.last_thought = thought
         if iv and thought:
-            iv.thoughts.append(thought)
+            if not iv._in_reasoning or not iv.thoughts:
+                iv.thoughts.append(thought)
+                iv._in_reasoning = True
+            else:
+                iv.thoughts[-1] += thought
 
     elif t == "content":
         tv.phase = "content"
+        if iv: iv._in_reasoning = False
 
     elif t == "tool_start":
         name = chunk.get("name", "?")
@@ -278,6 +286,7 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
         tv.last_tool = name
         tv.phase = "tool"
         if iv:
+            iv._in_reasoning = False
             iv.pending_tool = name
             iv._tool_start_times[name] = time.time()
             if raw_args:
@@ -297,6 +306,7 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
         if iv:
             iv.tools.append((name, success, elapsed, info))
             iv.pending_tool = ""
+            iv._in_reasoning = False
             # Rohdaten für späteren Drill-Down sichern
             raw_result = chunk.get("result", "")
             raw_input = chunk.get("args", chunk.get("input", chunk.get("arguments", "")))
@@ -318,6 +328,7 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
             tv.status = "completed" if chunk.get("success", True) else "failed"
         tv.phase = "done"
         tv.completed_at = time.time()
+        if iv: iv._in_reasoning = False
 
 
     elif t == "error":
@@ -325,12 +336,14 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
             tv.status = "error"
         tv.phase = "error"
         tv.completed_at = time.time()
+        if iv: iv._in_reasoning = False
 
     elif t == "final_answer":
         tv.phase = "done"
         tv.status = "completed"
         tv.completed_at = time.time()
         answer = chunk.get("answer", chunk.get("content", chunk.get("chunk", "")))
+        if iv: iv._in_reasoning = False
         if answer:
             tv.final_answer = str(answer)
 
@@ -748,14 +761,23 @@ class TaskOverlay:
 
             if iv.thoughts:
                 out.append((bg + "fg:#a78bfa bold", "   ◎ Thoughts:\n"))
-                skip = self._right_scroll
-                for i, thought in enumerate(iv.thoughts):
+                # Flatten: alle Thought-Zeilen + Separator in eine Liste
+                all_lines: list[tuple[bool, str]] = []  # (is_sep, text)
+                for thought in iv.thoughts:
                     for line in thought.split("\n"):
-                        if skip > 0:
-                            skip -= 1
-                            continue
+                        all_lines.append((False, line))
+                    all_lines.append((True, "·"))
+
+                skip = self._right_scroll
+                visible = all_lines[skip: skip + 20]
+                for is_sep, line in visible:
+                    if is_sep:
+                        out.append((bg + "fg:#374151", "     ·\n"))
+                    else:
                         out.append((bg + "fg:#d1d5db", f"     {line}\n"))
-                    out.append((bg + "fg:#374151", "     ·\n"))
+                if len(all_lines) > 20:
+                    out.append((bg + "fg:#6b7280",
+                                f"     ... ({min(skip + 20, len(all_lines))}/{len(all_lines)} lines)\n"))
 
             if iv.tools:
                 out.append((bg + "fg:#60a5fa bold", f"   ◇ Tools ({len(iv.tools)}):\n"))
@@ -797,11 +819,28 @@ class TaskOverlay:
 
         # ── Iterations-Liste (kein Drill-Down) ──────────────────────────────
         iters = list(reversed(tv.iterations))
+
+        # Berechne die Gesamthöhe des Inhalts (Iterationen + Final Answer)
+        # Wir brauchen das, um zu wissen, wie weit wir scrollen können.
+        total_content_height = 0
+        for iv in iters:
+            total_content_height += (1 + len(iv.thoughts) + len(iv.tools) + (1 if iv.pending_tool else 0))
+        if tv.final_answer:
+            total_content_height += (3 + len(tv.final_answer.split("\n")))
+
+        # Auto-Scroll-Logik: Wenn Cursor sich dem Ende nähert, Scroll-Offset anpassen
+        # Wir wollen, dass der Cursor (und bei Ende die Final Answer) immer im Blick bleibt
+        max_scroll = max(0, total_content_height - 15)  # 15 ist die sichtbare Höhe ca.
+        self._right_scroll = min(self._right_scroll, max_scroll)
+
+        # Rendering
         skip = self._right_scroll
-        cursor_abs = self._right_iter_cursor  # Index in iters-Liste
+        cursor_abs = self._right_iter_cursor
 
         for list_idx, iv in enumerate(iters):
             iter_lines = 1 + len(iv.thoughts) + len(iv.tools) + (1 if iv.pending_tool else 0)
+
+            # Rendering Logik beibehalten
             if skip >= iter_lines:
                 skip -= iter_lines
                 continue
@@ -810,7 +849,6 @@ class TaskOverlay:
             is_cursor_sel = (self._focus == "right" and list_idx == cursor_abs)
             hint = " ▸ running" if is_cur else ""
 
-            # Cursor-Highlight: farbige Hintergrundzeile für die markierte Iter
             iter_bg = sel_bg if is_cursor_sel else bg
             cursor_sym = "▸ " if is_cursor_sel else "  "
             iter_label = f"   {cursor_sym}── iter {iv.n}{hint} " + "─" * 28 + "\n"
@@ -818,9 +856,8 @@ class TaskOverlay:
             out.append((iter_bg + f"fg:{label_col}", iter_label))
 
             for thought in iv.thoughts:
-                clean = thought.replace("\n", " ")
                 out.append((bg + "fg:#6b7280", "      ◎ "))
-                out.append((bg + "fg:#e5e7eb", _short(clean, 68) + "\n"))
+                out.append((bg + "fg:#e5e7eb", _short(thought.replace("\n", " "), 68) + "\n"))
 
             for tname, tok, elapsed, info in iv.tools:
                 ok_col = C["green"] if tok else C["red"]
@@ -836,16 +873,19 @@ class TaskOverlay:
 
             if iv.pending_tool:
                 out.append((bg + "fg:#60a5fa", "      ◇ "))
-                out.append((bg + "fg:#fbbf24",
-                            f"{_short(iv.pending_tool, 16):<16} ⋯ running...\n"))
+                out.append((bg + "fg:#fbbf24", f"{_short(iv.pending_tool, 16):<16} ⋯ running...\n"))
 
+        # Final Answer Rendering (wird erst ausgegeben, wenn wir durch die Iterationen durch sind)
         if tv.final_answer:
+            # Hier prüfen wir den 'skip' für die Final Answer
+            final_lines = tv.final_answer.split("\n")
+
             out.append((bg + "fg:#374151", "\n   " + "─" * 64 + "\n"))
             out.append((bg + "fg:#4ade80 bold", "   ● Final Answer:\n\n"))
-            for line in tv.final_answer.split("\n"):
+            for line in final_lines:
                 out.append((bg + "fg:#e5e7eb", f"   {line}\n"))
 
-        if not tv.iterations:
+        if not tv.iterations and not tv.final_answer:
             out.append((bg + "fg:#6b7280", "   waiting for first iteration...\n"))
 
         return FormattedText(out)
@@ -1386,6 +1426,43 @@ def print_table_row(values: list, widths: list, styles: list = None):
     sep = f" <style fg='{PTColors.GREY}'>│</style> "
     c_print(HTML(f"  {sep.join(row_parts)}"))
 
+def json_to_md(data: dict):
+    def _(d, t=0):
+        indent = "  " * t
+        md = ""
+
+        if isinstance(d, dict):
+            for k, v in d.items():
+                if k == "system_message":
+                    continue
+                if isinstance(v, (dict, list)):
+                    md += f"{indent}- {k}:\n"
+                    md += _(v, t + 1)
+                else:
+                    md += f"{indent}- {k}: {v}\n"   # inline
+
+        elif isinstance(d, list):
+            for item in d:
+                if isinstance(item, (dict, list)):
+                    md += _(item, t)
+                else:
+                    md += f"{indent}- {item}\n"
+
+        else:
+            md += f"{indent}{d}\n"
+
+        return md
+
+    final_md = ""
+    for k, v in data.items():
+        if k == "system_message":
+            continue
+        if not v:
+            continue
+        if v is None:
+            continue
+        final_md += f"# {k}\n" + _(v, 1)  # war 1
+    return final_md
 
 def print_code_block(code: str, language: str = "text", width: int = 76, show_line_numbers: bool = False):
     """8. Code Block mit Basic Syntax Highlighting"""
@@ -1423,9 +1500,177 @@ def print_code_block(code: str, language: str = "text", width: int = 76, show_li
             else:
                 lines.append(safe_line)
 
-    # Fallback / Markdown
+    # Fallback / Markdown (improved)
     else:
-        lines = [esc(l) for l in code.split('\n')]
+        in_code_block = False
+        import re as _re
+
+        def render_inline(text: str) -> str:
+            result = ""
+            i = 0
+            while i < len(text):
+                if text[i:i + 2] == '**':
+                    end = text.find('**', i + 2)
+                    if end != -1:
+                        result += f"<style fg='{PTColors.YELLOW}'><b>{esc(text[i + 2:end])}</b></style>"
+                        i = end + 2;
+                        continue
+                if text[i] == '*' and text[i:i + 2] != '**':
+                    end = text.find('*', i + 1)
+                    if end != -1:
+                        result += f"<style fg='{PTColors.MAGENTA}'><i>{esc(text[i + 1:end])}</i></style>"
+                        i = end + 1;
+                        continue
+                if text[i] == '`':
+                    end = text.find('`', i + 1)
+                    if end != -1:
+                        result += f"<style fg='{PTColors.GREEN}'>{esc(text[i + 1:end])}</style>"
+                        i = end + 1;
+                        continue
+                if text[i] == '[':
+                    m = _re.match(r'\[([^\]]+)\]\(([^)]+)\)', text[i:])
+                    if m:
+                        result += (
+                            f"<style fg='{PTColors.CYAN}'>{esc(m.group(1))}</style>"
+                            f"<style fg='{PTColors.GREY}'> ↗ {esc(m.group(2))}</style>"
+                        )
+                        i += m.end();
+                        continue
+                result += esc(text[i])
+                i += 1
+            return result
+
+        def _flush_lines():
+            """Accumulated lines sofort ausgeben und leeren."""
+            for ln in lines:
+                if show_line_numbers:
+                    c_print(HTML(f"  <style fg='{PTColors.GREY}'>{len(lines):3d}</style> {ln}"))
+                else:
+                    c_print(HTML(f"  {ln}"))
+            lines.clear()
+
+        def _render_table(buf: list):
+            if len(buf) < 2:
+                return
+            parse = lambda row: [c.strip() for c in row.strip('|').split('|') if c.strip() != '']
+            headers = parse(buf[0])
+            n = len(headers)
+
+            data_rows = []
+            for row in buf[2:]:  # buf[1] = Separator-Zeile überspringen
+                sep_line = _re.fullmatch(r'[\|\s\-:]+', row)
+                if sep_line:
+                    continue
+                cells = parse(row)
+                cells = (cells + [''] * n)[:n]
+                data_rows.append(cells)
+
+            all_cells = [headers] + data_rows
+            widths = [
+                max((len(all_cells[r][c]) for r in range(len(all_cells)) if c < len(all_cells[r])), default=4) + 2
+                for c in range(n)
+            ]
+
+            _flush_lines()  # Pending-Lines vor Tabelle ausgeben
+            print_separator()
+            print_table_header([(h, '') for h in headers], widths)
+            for row in data_rows:
+                print_table_row(row, widths)
+            print_separator()
+
+        table_buf: list[str] = []
+
+        for line in code.split('\n'):
+            stripped = line.strip()
+
+            # ─── Tabellenerkennung ────────────────────────────────────────────
+            is_table_row = (
+                stripped.startswith('|') and stripped.endswith('|')
+                and stripped.count('|') >= 2
+            )
+            if is_table_row:
+                table_buf.append(stripped)
+                continue
+            if table_buf:
+                _render_table(table_buf)
+                table_buf = []
+
+            # ─── Code-Block ───────────────────────────────────────────────────
+            if stripped.startswith("```"):
+                in_code_block = not in_code_block
+                lang = stripped[3:].strip()
+                if in_code_block:
+                    label = f" {lang} " if lang else ""
+                    bar = '─' * max(0, 34 - len(label))
+                    lines.append(f"<style fg='{PTColors.YELLOW}'>┌─{label}{bar}┐</style>")
+                else:
+                    lines.append(f"<style fg='{PTColors.YELLOW}'>└{'─' * 35}┘</style>")
+                continue
+
+            if in_code_block:
+                lines.append(
+                    f"<style fg='{PTColors.YELLOW}'>│ </style><style fg='{PTColors.GREEN}'>{esc(line)}</style>")
+                continue
+
+            if not stripped:
+                lines.append("")
+                continue
+
+            if _re.match(r'^[-*_]{3,}$', stripped):
+                lines.append(f"<style fg='{PTColors.GREY}'>{'─' * 50}</style>")
+                continue
+
+            # ─── Headers ──────────────────────────────────────────────────────
+            if stripped.startswith('#'):
+                level = len(stripped) - len(stripped.lstrip('#'))
+                content = stripped[level:].strip()
+                colors = [PTColors.MAGENTA, PTColors.CYAN, PTColors.BLUE,
+                          PTColors.WHITE, PTColors.WHITE, PTColors.WHITE]
+                underlines = ['═', '─', '·', '', '', '']
+                color = colors[min(level - 1, 5)]
+                ul = underlines[min(level - 1, 5)]
+                lines.append(f"<style fg='{color}'><b>{render_inline(content)}</b></style>")
+                if ul:
+                    lines.append(f"<style fg='{color}'>{ul * (len(content) + 1)}</style>")
+                continue
+
+            # ─── Blockquote ───────────────────────────────────────────────────
+            if stripped.startswith('>'):
+                lines.append(
+                    f"<style fg='{PTColors.GREY}'>▌ </style>"
+                    f"<style fg='{PTColors.WHITE}'><i>{render_inline(stripped[1:].strip())}</i></style>"
+                )
+                continue
+
+            # ─── Bullet list ──────────────────────────────────────────────────
+            if _re.match(r'^[-*+] ', stripped):
+                indent = (len(line) - len(line.lstrip())) // 2
+                bullet = ['•', '◦', '▸', '▹'][min(indent, 3)]
+                lines.append(
+                    f"<style fg='{PTColors.CYAN}'>{'  ' * indent}{bullet} </style>"
+                    f"{render_inline(stripped[2:])}"
+                )
+                continue
+
+            # ─── Numbered list ────────────────────────────────────────────────
+            m = _re.match(r'^(\d+)\.\s+(.*)', stripped)
+            if m:
+                lines.append(
+                    f"<style fg='{PTColors.CYAN}'>{m.group(1)}. </style>"
+                    f"{render_inline(m.group(2))}"
+                )
+                continue
+
+            lines.append(render_inline(stripped))
+
+        # Rest-Tabelle + Rest-Lines
+        if table_buf:
+            _render_table(table_buf)
+        for ln in lines:
+            if show_line_numbers:
+                c_print(HTML(f"<style fg='{PTColors.GREY}'>{lines.index(ln) + 1:3d}</style> {ln}"))
+            else:
+                c_print(HTML(f"{ln}"))
 
     # Ausgabe
     for i, line in enumerate(lines, 1):
@@ -3092,7 +3337,8 @@ _help_text = {
 /task view [id]           - Live view of task (auto‑selects if 1)
 /task cancel <id>         - Cancel a running task
 /task clean               - Remove finished tasks
-    F6 during execution       - Move agent to background
+/task log                 - Vew Task internal execution
+F6 during execution       - Move agent to background
     """,
 
     # Job Scheduler
@@ -3641,10 +3887,7 @@ class ISAA_Host:
             """Show status dashboard with F5."""
             async def __():
                 await self._print_status_dashboard()
-                await self._cmd_vfs(["list"])
-                await self._cmd_skill(["list"])
-                await self._cmd_mcp(["list"])
-                await self._cmd_session(["list"])
+                await self._cmd_vfs([])
                 await self._cmd_session(["show"])
             asyncio.create_task(__())
 
@@ -5027,6 +5270,7 @@ class ISAA_Host:
                 "cancel": {t: None for t in self.all_executions.keys()},
                 "clean": None,
                 "status": {t: None for t in self.all_executions.keys()},
+                "log": {t: None for t in self._task_views.keys()},
             },
             "/job": {
                 "list": None,
@@ -5494,6 +5738,7 @@ class ISAA_Host:
         print_box_content("/task view [id]                              - Live view of task (auto-selects if 1)", "")
         print_box_content("/task cancel <id>                            - Cancel a running task", "")
         print_box_content("/task clean                                  - Remove finished tasks", "")
+        print_box_content("/task log                                    - Vew tasks internal execution hisotry", "")
         print_box_content("F6 during execution                          - Move agent to background", "")
 
         print_separator()
@@ -6128,7 +6373,11 @@ class ISAA_Host:
             agent_path = Path(self.app.data_dir) / "Agents" / target / "agent.json"
             if agent_path.exists():
                 with open(agent_path, 'r', encoding='utf-8') as f:
-                    print_code_block(f.read(), "json")
+                    data = f.read()
+
+                data_dict = json.loads(data)
+
+                print_code_block(json_to_md(data_dict), "md")
             else:
                 print_status("Config not found on disk", "error")
 
@@ -6187,7 +6436,7 @@ class ISAA_Host:
                 # Format based on role
                 if role == "user":
                     c_print(HTML(f"  <style font-weight='bold' fg='ansigreen'>User 👤</style>"))
-                    c_print(HTML(f"  {esc(content)}"))
+                    print_code_block(f"  {esc(content)}")
                     c_print(HTML(""))  # Spacing
 
                 elif role == "assistant":
@@ -6201,7 +6450,7 @@ class ISAA_Host:
                             c_print(HTML(f"  <style fg='ansiyellow'>🔧 Calls: {name}(...)</style>"))
 
                     if content:
-                        c_print(HTML(f"  {esc(content)}"))
+                        print_code_block(f"  {esc(content)}")
                     c_print(HTML(""))  # Spacing
 
                 elif role == "tool":
@@ -6214,7 +6463,7 @@ class ISAA_Host:
 
                 elif role == "system":
                     c_print(HTML(f"  <style fg='ansired'>System ⚠️</style>"))
-                    c_print(HTML(f"  <style fg='gray'>{esc(content[:10000])}...</style>"))
+                    print_code_block(f"  {esc(content)}")
                     c_print(HTML(""))
 
             print_box_footer()
@@ -6247,6 +6496,56 @@ class ISAA_Host:
 
         else:
             print_status(f"Unknown session action: {action}", "error")
+
+    async def _task_log_detailed(self, task_id: str, show_raw: bool = False):
+        """Detaillierte Historie mit optionalem Tool I/O Dump."""
+        tv = self._task_views.get(task_id)
+        if not tv:
+            print_status(f"Task {task_id} nicht gefunden.", "error")
+            return
+
+        print_box_header(f"Execution Log: {tv.task_id}", "📜")
+        print_box_content(f"Agent: {tv.agent_name} | Persona: {tv.persona}", "info")
+        print_separator()
+
+        for iv in tv.iterations:
+            # Iterations-Header
+            c_print(HTML(f"<style fg='{PTColors.ZEN_CYAN}' font-weight='bold'>── Iteration {iv.n} ──</style>"))
+
+            # Thoughts
+            if iv.thoughts:
+                c_print(HTML(f"<style fg='{PTColors.ZEN_DIM}'>◎ Thoughts:</style>"))
+                for thought in iv.thoughts:
+                    c_print(HTML(f"  <style fg='{PTColors.WHITE}'>{thought.strip()}</style>"))
+
+            # Tool History
+            if iv.tools:
+                c_print(HTML(f"\n<style fg='{PTColors.ZEN_AMBER}'>◇ Tool History:</style>"))
+
+                # Wir gehen durch iv.tools (Summary) UND iv.tools_raw (für die Details)
+                for idx, (name, success, elapsed, info) in enumerate(iv.tools):
+                    # Zusammenfassung
+                    col = PTColors.ZEN_GREEN if success else PTColors.ZEN_RED
+                    c_print(HTML(f"  <style fg='{col}'>● {name}</style> ({elapsed:.3f}s) - {info}"))
+
+                    # RAW I/O Dump (wenn -d aktiv)
+                    if show_raw and idx < len(iv.tools_raw):
+                        tname, raw_res, raw_in = iv.tools_raw[idx]
+
+                        # Versuchen zu parsen für schönes Markdown
+                        io_data = {
+                            "Tool": tname,
+                            "Input": json.loads(raw_in) if raw_in.startswith('{') else raw_in,
+                            "Result": json.loads(raw_res) if raw_res.startswith('{') else raw_res
+                        }
+
+                        c_print(HTML(f"    <style fg='{PTColors.ZEN_DIM}'>    ↳ Raw I/O:</style>"))
+                        # Hier nutzen wir deine json_to_md + print_code_block Logik
+                        print_code_block(json_to_md(io_data), "md")
+
+            c_print()  # Abstand zwischen Iterationen
+
+        print_box_footer()
 
     async def _cmd_task(self, args: list[str]):
         """Handle /task commands — all from SSOT all_executions."""
@@ -6303,6 +6602,15 @@ class ISAA_Host:
                 if tid in self._task_views:
                     del self._task_views[tid]
             print_status(f"Cleaned {len(to_remove)} finished tasks", "success")
+
+        elif action == "log":
+            if len(args) < 2: return print_status("Usage: /task log <id>", "warning")
+            if len(args) < 2:
+                print_status("Usage: /task log <id> [-d]", "warning")
+                return
+            task_id = args[1]
+            show_raw = "-d" in args
+            await self._task_log_detailed(task_id, show_raw=show_raw)
 
         else:
             print_status(f"Unknown task action: {action}. Use: list, view, cancel, clean", "error")
@@ -7636,7 +7944,7 @@ class ISAA_Host:
         print_box_header(
             f"VFS Structure: {self.active_agent_name}@{self.active_session_id}", "📂"
         )
-        print_code_block(session.vfs.build_context_string(), "markdown")
+        print_code_block(session.vfs.file_tree_string(), "markdown")
 
 
     async def _vfs_show_file(self, session, filename: str):
@@ -7682,23 +7990,7 @@ class ISAA_Host:
             elif file_type == "env":
                 print_code_block(content, "env", show_line_numbers=False)
             elif file_type == "markdown":
-                for line in content.split("\n"):
-                    safe_line = html.escape(line)
-                    if line.startswith("# "):
-                        c_print(HTML(f"<style font-weight='bold' fg='{PTColors.CYAN}'>{safe_line}</style>"))
-                    elif line.startswith("## "):
-                        c_print(HTML(f"<style font-weight='bold' fg='{PTColors.BLUE}'>{safe_line}</style>"))
-                    elif line.startswith("### "):
-                        c_print(HTML(f"<style font-weight='bold'>{safe_line}</style>"))
-                    elif line.startswith("```"):
-                        c_print(HTML(f"<style fg='{PTColors.GREY}'>{safe_line}</style>"))
-                    elif line.startswith("- ") or line.startswith("* "):
-                        c_print(HTML(f"  <style fg='{PTColors.CYAN}'>•</style> {safe_line[2:]}"))
-                    elif line.startswith("> "):
-                        c_print(HTML(
-                            f"  <style fg='{PTColors.GREY}'>│</style> <style italic='true'>{safe_line[2:]}</style>"))
-                    else:
-                        c_print(HTML(f"  {safe_line}"))
+                print_code_block(content, "md", show_line_numbers=False)
             else:
                 print_code_block(content, "text", show_line_numbers=True)
 
@@ -8972,9 +9264,8 @@ class ISAA_Host:
                 c_print(HTML(
                     f"\n<style fg='{PTColors.ZEN_GREEN}'>"
                     f"  ✓ {task_id} complete</style>\n"
-                    f"  <style fg='{PTColors.ZEN_DIM}'>"
-                    f"{_esc(str(result))}</style>\n"
                 ))
+                print_code_block(result, "text", show_line_numbers=False)
         except asyncio.CancelledError:
             if exc:
                 exc.status = "cancelled"

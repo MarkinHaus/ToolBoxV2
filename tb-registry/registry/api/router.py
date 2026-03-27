@@ -10,7 +10,7 @@ from registry.api.routes import (
     packages,
     publishers,
     resolve,
-    search,
+    search, versions,
 )
 
 
@@ -76,6 +76,8 @@ def create_router() -> APIRouter:
         prefix="/api/v1",
         tags=["diff"],
     )
+
+    router.include_router(versions.router, prefix="/versions", tags=["versions"])
 
     return router
 

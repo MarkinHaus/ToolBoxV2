@@ -400,245 +400,175 @@ http {{
     # =========================================================================
     def generate_site_config(
         self,
-        http_ports: List[int],
-        ws_ports: List[int],
-        http_sockets: List[str] = None,
-        ws_sockets: List[str] = None,
+        max_http_workers: int,
+        max_ws_workers: int,
+        base_http_port: int,
+        base_ws_port: int,
         remote_nodes: List[Tuple[str, int]] = None,
     ) -> str:
-        """
-        Generate site-specific Nginx configuration for ToolBoxV2.
-        This goes to /etc/nginx/sites-available/toolbox (or box-available/)
-
-        Does NOT include worker_processes, events, http block wrapper.
-        Designed to be included by main nginx.conf.
-
-        Features:
-        - HTTP/WS upstream load balancing
-        - Auth endpoint routing (secured)
-        - API endpoint routing with access control
-        - Unix socket support (Linux/macOS)
-        - Rate limiting (references zones from nginx.conf)
-        - Static file serving from dist/
-        - SSL/TLS support (auto-detected or via certbot)
-        - WebSocket proxying with session auth
-        - SSE streaming support
-        """
         cfg = self.config
         remote_nodes = remote_nodes or []
-        http_sockets = http_sockets or []
-        ws_sockets = ws_sockets or []
 
-        http_servers, ws_server_list = [], []
-
-        # Build upstream server lists
-        for port in http_ports:
-            http_servers.append(
-                f"server 127.0.0.1:{port} weight=1 max_fails=3 fail_timeout=80s;"
-            )
-        for port in ws_ports:
-            ws_server_list.append(f"server 127.0.0.1:{port};")
-
-        # Remote nodes (backup servers)
+        http_servers = "\n        ".join(
+            f"server 127.0.0.1:{base_http_port + i} max_fails=1 fail_timeout=5s;"
+            for i in range(max_http_workers)
+        )
+        ws_servers = "\n        ".join(
+            f"server 127.0.0.1:{base_ws_port + i} max_fails=1 fail_timeout=5s;"
+            for i in range(max_ws_workers)
+        )
         for host, port in remote_nodes:
-            http_servers.append(f"server {host}:{port} backup;")
+            http_servers += f"\n        server {host}:{port} backup;"
 
-        http_upstream = (
-            "\n        ".join(http_servers) if http_servers else "server 127.0.0.1:8000;"
-        )
-        ws_upstream = (
-            "\n        ".join(ws_server_list)
-            if ws_server_list
-            else "server 127.0.0.1:8100;"
-        )
-
-        # Config values
-        listen_port = getattr(cfg, "listen_port", 80)
         upstream_http = getattr(cfg, "upstream_http", "toolbox_http")
         upstream_ws = getattr(cfg, "upstream_ws", "toolbox_ws")
         server_name = getattr(cfg, "server_name", "_")
-
-        # Rate limiting (references zones defined in nginx.conf)
-        rate_limit_enabled = getattr(cfg, "rate_limit_enabled", True)
-        rate_limit_zone = getattr(cfg, "rate_limit_zone", "tb_limit")
-        rate_limit_burst = getattr(cfg, "rate_limit_burst", 20)
-        auth_rate_limit_burst = getattr(cfg, "auth_rate_limit_burst", 10)
-
-        rate_limit_api_block = ""
-        rate_limit_auth_block = ""
-        if rate_limit_enabled:
-            rate_limit_api_block = f"""
-                limit_req zone={rate_limit_zone} burst={rate_limit_burst} nodelay;"""
-            rate_limit_auth_block = f"""
-                limit_req zone=tb_auth_limit burst={auth_rate_limit_burst} nodelay;"""
-
-        # Static files configuration
-        static_enabled = getattr(cfg, "static_enabled", True)
+        listen_port = getattr(cfg, "listen_port", 80)
         static_root = getattr(cfg, "static_root", "./dist")
+        rate_zone = getattr(cfg, "rate_limit_zone", "tb_limit")
+        rate_burst = getattr(cfg, "rate_limit_burst", 20)
+        auth_burst = getattr(cfg, "auth_rate_limit_burst", 10)
+        admin_port = getattr(self._manager, "web_ui_port", 9005)
 
-        static_block = ""
-        if static_enabled:
-            static_block = f"""
-        # Static files (SPA frontend)
+        return f"""# ToolBoxV2 Site Config — DO NOT EDIT MANUALLY
+    # Certbot manages SSL. HTTP block regenerate: tb manager nginx-config --force
+    # Pre-allocated: {max_http_workers} HTTP ports ({base_http_port}-{base_http_port + max_http_workers - 1}), {max_ws_workers} WS ports ({base_ws_port}-{base_ws_port + max_ws_workers - 1})
+    # Offline workers are skipped automatically via passive health check (max_fails=1 fail_timeout=5s)
+
+    upstream {upstream_http} {{
+        least_conn;
+        {http_servers}
+        keepalive 128;
+        keepalive_requests 10000;
+        keepalive_timeout 60s;
+    }}
+
+    upstream {upstream_ws} {{
+        hash $request_uri consistent;
+        {ws_servers}
+    }}
+
+    server {{
+        listen {listen_port};
+        listen [::]:{listen_port};
+        server_name {server_name};
+
+        access_log /var/log/nginx/toolbox_access.log;
+        error_log  /var/log/nginx/toolbox_error.log warn;
+
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+        proxy_connect_timeout 60s;
+        proxy_send_timeout    300s;
+        proxy_read_timeout    300s;
+
         location / {{
             root {static_root};
             try_files $uri $uri/ /index.html;
-
-            # Cache static assets
-            location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {{
+            location ~* \\.(js|css|png|jpg|ico|svg|woff2|ttf|eot)$ {{
                 expires 1h;
                 add_header Cache-Control "public, immutable";
                 access_log off;
             }}
-
-            # Don't cache HTML
             location ~* \\.html$ {{
                 expires -1;
                 add_header Cache-Control "no-store, no-cache, must-revalidate";
             }}
-        }}"""
+        }}
 
-        # SSL configuration - check if certbot has set up certs
-        use_ssl = self._ssl.available and getattr(cfg, "ssl_enabled", False)
-        ssl_server_block = ""
+        location /api/ {{
+            proxy_pass http://{upstream_http};
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Cookie $http_cookie;
+            proxy_set_header Authorization $http_authorization;
+            proxy_pass_header Set-Cookie;
+            limit_req zone={rate_zone} burst={rate_burst} nodelay;
+        }}
 
-        if use_ssl:
-            ssl_port = getattr(cfg, "listen_ssl_port", 443)
-            ssl_server_block = self._generate_ssl_server_block(
-                ssl_port, upstream_http, upstream_ws, server_name,
-                static_block, rate_limit_api_block, rate_limit_auth_block
-            )
+        location /sse/ {{
+            proxy_pass http://{upstream_http};
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_buffering off;
+            proxy_cache off;
+            chunked_transfer_encoding on;
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+        }}
 
-        # Auth endpoints block
-        auth_endpoints_block = self._generate_auth_endpoints_block(
-            upstream_http, rate_limit_auth_block
-        )
+        location /ws {{
+            proxy_pass http://{upstream_ws};
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header Cookie $http_cookie;
+            proxy_buffering off;
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+        }}
 
-        # API endpoints block with security
-        api_endpoints_block = self._generate_api_endpoints_block(
-            upstream_http, rate_limit_api_block
-        )
+        location = /validateSession {{
+            limit_except POST {{ deny all; }}
+            limit_req zone=tb_auth_limit burst={auth_burst} nodelay;
+            proxy_pass http://{upstream_http}/validateSession;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_connect_timeout 10s;
+            proxy_read_timeout 30s;
+        }}
 
-        # WebSocket block with session validation
-        ws_endpoints_block = self._generate_ws_endpoints_block(
-            upstream_ws, upstream_http
-        )
+        location = /IsValidSession {{
+            limit_except GET {{ deny all; }}
+            proxy_pass http://{upstream_http}/IsValidSession;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header Cookie $http_cookie;
+            proxy_connect_timeout 5s;
+            proxy_read_timeout 10s;
+        }}
 
-        # Admin UI block
-        admin_ui_port = getattr(self._manager, "web_ui_port", 9002)
-        admin_block = self._generate_admin_ui_block(admin_ui_port)
+        location /health {{
+            proxy_pass http://{upstream_http}/health;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            access_log off;
+        }}
 
-        return f"""# ToolBoxV2 Site Configuration
-# Generated automatically - regenerate with: tb manager nginx-config
-# Place in /etc/nginx/sites-available/toolbox or /etc/nginx/box-available/toolbox
-# Enable with: ln -s ../sites-available/toolbox /etc/nginx/sites-enabled/
+        location ^~ /admin/manager/ {{
+            proxy_pass http://127.0.0.1:{admin_port}/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+        }}
 
-# HTTP Backend Upstream
-upstream {upstream_http} {{
-    least_conn;
-    {http_upstream}
-    keepalive 128;
-    keepalive_requests 10000;
-    keepalive_timeout 60s;
-}}
+        error_page 429 @rate_limited;
+        location @rate_limited {{
+            default_type application/json;
+            return 429 '{{"error":"TooManyRequests","message":"Rate limit exceeded"}}';
+        }}
 
-# WebSocket Backend Upstream
-upstream {upstream_ws} {{
-    # Consistent hashing for sticky sessions
-    hash $request_uri consistent;
-    {ws_upstream}
-}}
-
-# HTTP Server (certbot will modify this for HTTPS redirect)
-server {{
-    listen {listen_port};
-    listen [::]:{listen_port};
-    server_name {server_name};
-
-    # Logging
-    access_log /var/log/nginx/toolboxv2_access.log;
-    error_log /var/log/nginx/toolboxv2_error.log warn;
-
-    # Security headers
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-
-    # Timeouts for LLM/long requests
-    proxy_connect_timeout 60s;
-    proxy_send_timeout 300s;
-    proxy_read_timeout 300s;
-{static_block}
-{auth_endpoints_block}
-{api_endpoints_block}
-
-    # SSE / Streaming endpoints
-    location /sse/ {{
-        proxy_pass http://{upstream_http};
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-
-        # Disable buffering for streaming
-        proxy_buffering off;
-        proxy_cache off;
-        chunked_transfer_encoding on;
-
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
+        error_page 500 502 503 504 /50x.html;
+        location = /50x.html {{
+            root {static_root};
+            internal;
+        }}
     }}
-{ws_endpoints_block}
-
-    # Health check endpoint (no rate limit)
-    location /health {{
-        proxy_pass http://{upstream_http}/health;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        access_log off;
-    }}
-
-    # Metrics endpoint (restricted access recommended)
-    location /metrics {{
-        proxy_pass http://{upstream_http}/metrics;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        # Uncomment to restrict access:
-        # allow 127.0.0.1;
-        # deny all;
-    }}
-
-    {admin_block}
-
-    # Error pages
-    error_page 500 502 503 504 /50x.html;
-    location = /50x.html {{
-        root {static_root if static_enabled else "/usr/share/nginx/html"};
-        internal;
-    }}
-
-    error_page 429 /429.html;
-    location = /429.html {{
-        default_type application/json;
-        return 429 '{{"error": "TooManyRequests", "message": "Rate limit exceeded"}}';
-    }}
-
-    error_page 401 /401.html;
-    location = /401.html {{
-        default_type application/json;
-        return 401 '{{"error": "Unauthorized", "message": "Authentication required"}}';
-    }}
-
-    error_page 403 /403.html;
-    location = /403.html {{
-        default_type application/json;
-        return 403 '{{"error": "Forbidden", "message": "Access denied"}}';
-    }}
-}}
-{ssl_server_block}
-"""
+    # certbot managed SSL block appears below — DO NOT REMOVE THIS LINE
+    """
 
     def _generate_ssl_server_block(
         self, ssl_port: int, upstream_http: str, upstream_ws: str,
@@ -1305,34 +1235,47 @@ http {{
 
     def write_site_config(
         self,
-        http_ports: List[int],
-        ws_ports: List[int],
-        http_sockets: List[str] = None,
-        ws_sockets: List[str] = None,
+        max_http_workers: int,
+        max_ws_workers: int,
+        base_http_port: int,
+        base_ws_port: int,
         remote_nodes: List[Tuple[str, int]] = None,
-        site_name: str = "toolbox"
+        site_name: str = "toolbox",
+        force: bool = False,
     ) -> bool:
-        """Write site config to sites-available or box-available"""
+        available_dir = Path(DEFAULT_BOX_AVAILABLE)
+        enabled_dir = Path(DEFAULT_BOX_ENABLED)
+        config_path = available_dir / site_name
+        symlink_path = enabled_dir / site_name
+
+        if config_path.exists() and not force:
+            logger.info(f"Site config exists at {config_path} — skipping (use force=True to overwrite)")
+            self._ensure_symlink(config_path, symlink_path)
+            return True
+
         content = self.generate_site_config(
-            http_ports, ws_ports, http_sockets, ws_sockets, remote_nodes
+            max_http_workers, max_ws_workers,
+            base_http_port, base_ws_port, remote_nodes,
         )
-
-        # Determine path
-        sites_dir = getattr(self.config, 'sites_enabled_path', DEFAULT_BOX_ENABLED)
-        config_path = os.path.join(sites_dir, site_name)
-
         try:
-            Path(sites_dir).mkdir(parents=True, exist_ok=True)
-            with open(config_path, "w") as f:
-                f.write(content)
-            logger.info(f"Site config written to {config_path}")
+            available_dir.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(content)
+            self._ensure_symlink(config_path, symlink_path)
+            logger.info(f"Site config written → {config_path}")
             return True
         except PermissionError:
-            logger.error(f"Permission denied. Try with sudo.")
+            logger.error("Permission denied — run with sudo")
             return False
         except Exception as e:
             logger.error(f"Failed to write site config: {e}")
             return False
+
+    def _ensure_symlink(self, src: Path, dst: Path) -> None:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if dst.is_symlink() or dst.exists():
+            return
+        os.symlink(src, dst)
+        logger.info(f"Symlink created: {dst} → {src}")
 
     def enable_site(self, site_name: str = "toolbox") -> bool:
         """Create symlink in sites-enabled or box-enabled"""
@@ -1963,16 +1906,25 @@ class WorkerManager:
     def _get_http_sockets(self) -> List[str]:
         return [w.socket_path for w in self._workers.values() if w.worker_type == WorkerType.HTTP and w.state == WorkerState.RUNNING and w.socket_path]
 
-    def _update_nginx_config(self):
+    def _write_initial_nginx_config(self, force: bool = False) -> None:
+        """Write nginx site config ONCE. Certbot owns the file after that."""
+        cfg = self.config
         self._nginx.write_site_config(
-            self._get_http_ports(),
-            self._get_ws_ports(),
-            self._get_http_sockets(),
-            [],
-            self._cluster.get_remote_addresses(),
-            site_name="toolbox"
+            max_http_workers=cfg.http_worker.workers,
+            max_ws_workers=getattr(cfg.ws_worker, 'max_workers', 4),
+            base_http_port=cfg.http_worker.port,
+            base_ws_port=cfg.ws_worker.port,
+            remote_nodes=self._cluster.get_remote_addresses(),
+            site_name="toolbox",
+            force=force,
         )
-        self._nginx.enable_site("toolbox")
+
+    def _update_nginx_config(self) -> None:
+        """Reload nginx — never rewrites the config file."""
+        if self._nginx.test_config():
+            self._nginx.reload()
+        else:
+            logger.error("Nginx config test failed — reload skipped")
 
     def start_all(self) -> bool:
         logger.info("Starting all services...")
@@ -1992,7 +1944,7 @@ class WorkerManager:
         self._cluster.start()
 
         if self.config.nginx.enabled:
-            self._update_nginx_config()
+            self._write_initial_nginx_config(force=False)  # no-op wenn file existiert
             if not self._nginx.is_installed():
                 self._nginx.install()
             if self._nginx.test_config():
@@ -2120,7 +2072,10 @@ class ManagerWebUI(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        path = urlparse(self.path).path.rstrip("/") or "/"
+        path = urlparse(self.path).path
+        if path.startswith("/admin/manager"):
+            path = path[len("/admin/manager"):]  # exakt 14 chars
+        path = path.rstrip("/") or "/"
         if path.startswith("/admin/manager"):
             path = path[14:]
         if path == "/":
@@ -2145,7 +2100,10 @@ class ManagerWebUI(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
-        path = urlparse(self.path).path.rstrip("/")
+        path = urlparse(self.path).path
+        if path.startswith("/admin/manager"):
+            path = path[len("/admin/manager"):]  # exakt 14 chars
+        path = path.rstrip("/") or "/"
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length) if length else b""
         try:
@@ -2285,6 +2243,7 @@ def main():
     parser = argparse.ArgumentParser(description="ToolBoxV2 Worker Manager", prog="tb workers")
     parser.add_argument("command", nargs="?", default="start", choices=["start", "stop", "restart", "status", "update", "nginx-config", "nginx-reload", "worker-start", "worker-stop", "cluster-join", "debug"])
     parser.add_argument("-c", "--config", help="Config file")
+    parser.add_argument("--force", action="store_true", help="Overwrite existing nginx config")
     parser.add_argument("-w", "--worker-id")
     parser.add_argument("-t", "--type", choices=["http", "ws"], default="http")
     parser.add_argument("--host")
@@ -2331,10 +2290,22 @@ def main():
         else:
             print(f"not dist path found at {str(path)}")
     elif args.command == "nginx-config":
-        print(manager._nginx.generate_config([config.http_worker.port + i for i in range(config.http_worker.workers)], [config.ws_worker.port]))
+        force = getattr(args, 'force', False)
+        ok = manager._nginx.write_site_config(
+            max_http_workers=config.http_worker.workers,
+            max_ws_workers=getattr(config.ws_worker, 'max_workers', 4),
+            base_http_port=config.http_worker.port,
+            base_ws_port=config.ws_worker.port,
+            site_name="toolbox",
+            force=force,
+        )
+        if ok:
+            print(f"✓ Config written (force={force})")
+        else:
+            print("✗ Failed — check logs")
+            sys.exit(1)
     elif args.command == "nginx-reload":
-        manager._update_nginx_config()
-        manager._nginx.reload()
+        manager._nginx.test_config() and manager._nginx.reload()
     elif args.command == "worker-start":
         info = manager.start_http_worker(args.worker_id) if args.type == "http" else manager.start_ws_worker(args.worker_id)
         print(json.dumps(info.to_dict() if info else {"error": "failed"}, indent=2))

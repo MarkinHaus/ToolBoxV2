@@ -136,7 +136,6 @@ class WSWorkerConfig:
     compression: bool = True
     instance_prefix: str = "ws"
 
-
 @dataclass
 class NginxConfig:
     """Nginx configuration."""
@@ -154,18 +153,16 @@ class NginxConfig:
     ssl_certificate_key: str = ""
     static_root: str = "./dist"
     static_enabled: bool = True
-    # Rate limiting
     rate_limit_enabled: bool = True
     rate_limit_zone: str = "tb_limit"
     rate_limit_rate: str = "10r/s"
     rate_limit_burst: int = 20
-    # Auth endpoint rate limiting (stricter)
     auth_rate_limit_rate: str = "5r/s"
     auth_rate_limit_burst: int = 10
-    # Upstreams
     upstream_http: str = "tb_http_backend"
     upstream_ws: str = "tb_ws_backend"
-
+    max_http_workers: int = 8
+    max_ws_workers: int = 4
 
 @dataclass
 class ManagerConfig:

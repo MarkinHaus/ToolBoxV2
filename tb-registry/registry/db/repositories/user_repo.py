@@ -110,7 +110,7 @@ class UserRepository:
             return None
 
         return User(
-            cloudm_user_id=row.get("cloudm_user_id") or row["cloudm_user_id"],
+            cloudm_user_id=row["cloudm_user_id"],
             email=row["email"],
             username=row["username"],
             publisher_id=row["publisher_id"],
@@ -209,7 +209,7 @@ class UserRepository:
         """
         return Publisher(
             id=row["id"],
-            cloudm_user_id=row.get("cloudm_user_id") or row["cloudm_user_id"],
+            cloudm_user_id=row["cloudm_user_id"],
             name=row["name"],
             slug=row["slug"],
             email=row["email"],

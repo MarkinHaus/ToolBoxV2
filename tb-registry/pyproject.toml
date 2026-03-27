@@ -22,12 +22,13 @@ dependencies = [
     "pyjwt>=2.9.0",
 ]
 
+
 [project.optional-dependencies]
 dev = [
     "ruff>=0.8.0",
     "pytest>=7.4.0",
     "pytest-asyncio>=0.23.0",
-    "pytest-cov>=4.1.0",
+    "pytest-cov>=5.0.0",
     "mypy>=1.8.0",
 ]
 
@@ -64,6 +65,29 @@ warn_unused_ignores = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Unit tests only — E2E are run separately via: python -m unittest tests/test_e2e.py
 testpaths = ["tests"]
-addopts = "-v"
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+ignore = ["tests/test_e2e.py"]
+addopts = "-v --cov=registry --cov-report=term-missing --cov-report=html"
 
+[tool.coverage.run]
+source = ["registry"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+fail_under = 0

@@ -574,6 +574,28 @@ class VFSFile:
 # VIRTUAL FILE SYSTEM V2
 # =============================================================================
 
+def unescape_string(text: str) -> str:
+    """
+    Entfernt Backslash-Escape-Sequenzen für Anführungszeichen,
+    Apostrophe und Backslashes selbst.
+    """
+    if not text:
+        return text
+
+    # Mapping der zu ersetzenden Sequenzen
+    replacements = {
+        r'\"': '"',
+        r"\'": "'",
+        r"\´": "´",
+        r"\`": "`",
+        r"\\": "\\"
+    }
+
+    # Wir iterieren durch das Mapping und ersetzen die Sequenzen
+    for escaped, original in replacements.items():
+        text = text.replace(escaped, original)
+
+    return text
 
 class VirtualFileSystemV2:
     """
@@ -621,7 +643,7 @@ class VirtualFileSystemV2:
 
     def _build_vfs_guide(self) -> str:
         """Build the VFS usage guide that is injected as /vfs_guide.md."""
-        return """# VFS — Schnellreferenz
+        return r"""# VFS — Schnellreferenz
 
 ## Die zwei Kern-Tools
 
@@ -717,10 +739,10 @@ exec <path> [args...]
 |----------|----------|---------|
 | `;` | Immer ausführen (Sequenz) | `mkdir /out; touch /out/f.txt` |
 | `&&` | Nur wenn vorheriger **erfolgreich** | `mkdir /out && write /out/f.py "x=1"` |
-| `\|\|` | Nur wenn vorheriger **fehlgeschlagen** | `cat /cfg.py \|\| write /cfg.py "DEBUG=True"` |
-| `\|` | Pipe — stdout links wird stdin rechts | `cat /f.py \| grep def \| wc -l` |
+| `||` | Nur wenn vorheriger **fehlgeschlagen** | `cat /cfg.py || write /cfg.py "DEBUG=True"` |
+| `|` | Pipe — stdout links wird stdin rechts | `cat /f.py | grep def | wc -l` |
 
-**Pipe-fähige Rechts-Befehle:** `grep [-invC]`, `wc [-l\|-w\|-c]`, `head [-n N]`, `tail [-n N]`, `sort [-r]`, `uniq`
+**Pipe-fähige Rechts-Befehle:** `grep [-invC]`, `wc [-l|-w|-c]`, `head [-n N]`, `tail [-n N]`, `sort [-r]`, `uniq`
 
 ```
 # Typische Workflows
@@ -1441,7 +1463,7 @@ Session: {self.session_id}
             try:
                 os.makedirs(os.path.dirname(local_path), exist_ok=True)
                 with open(local_path, "w", encoding="utf-8") as f:
-                    f.write(content)
+                    f.write(unescape_string(content))
             except OSError as e:
                 return {"success": False, "error": f"Cannot create local file: {e}"}
 
@@ -1565,7 +1587,7 @@ Session: {self.session_id}
             os.makedirs(os.path.dirname(f.local_path), exist_ok=True)
 
             with open(f.local_path, "w", encoding="utf-8") as file:
-                file.write(f._content)
+                file.write(unescape_string(f._content))
 
             f.local_mtime = os.path.getmtime(f.local_path)
             f.is_dirty = False
@@ -2143,7 +2165,7 @@ Session: {self.session_id}
 
         try:
             with open(resolved_path, "w", encoding="utf-8") as f:
-                f.write(vfs_file.content)
+                f.write(unescape_string(vfs_file.content))
         except Exception as e:
             return {"success": False, "error": f"Write error: {e}"}
 
@@ -2159,9 +2181,7 @@ Session: {self.session_id}
     # CONTEXT BUILDING
     # =========================================================================
 
-    def build_context_string(self) -> str:
-        """Build VFS context string for LLM"""
-        self.update_system_context()
+    def file_tree_string(self, as_list=False):
 
         parts = ["=== VFS (Virtual File System) ==="]
 
@@ -2174,6 +2194,14 @@ Session: {self.session_id}
         if dir_tree:
             parts.append("\n📁 Structure:")
             parts.append(dir_tree)
+
+        return "\n".join(parts) if not as_list else parts
+
+    def build_context_string(self) -> str:
+        """Build VFS context string for LLM"""
+        self.update_system_context()
+
+        parts = self.file_tree_string(as_list=True)
 
         # Order: system_context, active_rules, then others
         ordered = []

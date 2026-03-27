@@ -9,8 +9,8 @@ Erkennt & verwaltet:
     • Eigener Marker-Block (# >>> ToolBoxV2 PATH >>>)
     • Symlinks in /usr/local/bin/tb, ~/.local/bin/tb
   Windows:
-    • PATH-Eintrag  (HKCU\Environment\PATH)  — installer.ps1 & eigener
-    • TOOLBOX_HOME  (HKCU\Environment\TOOLBOX_HOME)  — installer.ps1
+    • PATH-Eintrag  (HKCU\\Environment\\PATH)  — installer.ps1 & eigener
+    • TOOLBOX_HOME  (HKCU\\Environment\\TOOLBOX_HOME)  — installer.ps1
 
 Usage:
     python tb_env.py install

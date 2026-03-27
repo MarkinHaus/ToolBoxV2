@@ -18,13 +18,9 @@ from unittest.mock import MagicMock, patch
 
 
 def _make_nginx_manager():
-    """Create a NginxManager with mock config for testing."""
     from toolboxv2.utils.clis.cli_worker_manager import NginxManager
+    from unittest.mock import MagicMock, patch
 
-    # Build minimal mock config
-    mock_config = MagicMock()
-
-    # Nginx sub-config
     nginx_cfg = MagicMock()
     nginx_cfg.listen_port = 80
     nginx_cfg.upstream_http = "toolbox_http"
@@ -39,27 +35,77 @@ def _make_nginx_manager():
     nginx_cfg.static_enabled = True
     nginx_cfg.static_root = "./dist"
     nginx_cfg.ssl_enabled = False
+    nginx_cfg.max_http_workers = 4   # NEU
+    nginx_cfg.max_ws_workers = 2     # NEU
 
-    mock_config.nginx = nginx_cfg
-
-    # Manager sub-config
     mock_manager = MagicMock()
     mock_manager.web_ui_port = 9002
-    mock_config.manager = mock_manager
 
-    # Patch _find_nginx + SSLManager to avoid filesystem access
     with patch.object(NginxManager, '__init__', lambda self, cfg: None):
         mgr = NginxManager.__new__(NginxManager)
         mgr.config = nginx_cfg
         mgr._manager = mock_manager
         mgr._nginx_path = "/usr/sbin/nginx"
-
-        # SSL not available
         ssl_mock = MagicMock()
         ssl_mock.available = False
         mgr._ssl = ssl_mock
 
     return mgr
+
+
+class TestNginxSiteConfigStructure(unittest.TestCase):
+
+    def test_has_upstream_blocks(self):
+        mgr = _make_nginx_manager()
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
+        self.assertIn("upstream toolbox_http", cfg)
+        self.assertIn("upstream toolbox_ws", cfg)
+
+    def test_has_server_block(self):
+        mgr = _make_nginx_manager()
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
+        self.assertIn("server {", cfg)
+
+    def test_has_health_endpoint(self):
+        mgr = _make_nginx_manager()
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
+        self.assertIn("/health", cfg)
+
+    def test_has_api_block(self):
+        mgr = _make_nginx_manager()
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
+        self.assertIn("location /api/", cfg)
+
+    def test_has_websocket_block(self):
+        mgr = _make_nginx_manager()
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
+        self.assertIn("location /ws", cfg)
+        self.assertIn("upgrade", cfg.lower())
+
+    def test_pre_allocates_all_ports(self):
+        mgr = _make_nginx_manager()
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
+        for port in [8000, 8001, 8002, 8003]:
+            self.assertIn(f"127.0.0.1:{port}", cfg)
+        for port in [8100, 8101]:
+            self.assertIn(f"127.0.0.1:{port}", cfg)
+
+    def test_passive_health_check_present(self):
+        mgr = _make_nginx_manager()
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
+        self.assertIn("max_fails=1", cfg)
+        self.assertIn("fail_timeout=5s", cfg)
+
+    def test_no_ssl_block_when_ssl_unavailable(self):
+        mgr = _make_nginx_manager()
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
+        self.assertNotIn("ssl_certificate", cfg)
+        self.assertNotIn("listen 443", cfg)
+
+    def test_certbot_marker_present(self):
+        mgr = _make_nginx_manager()
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
+        self.assertIn("certbot managed SSL block", cfg)
 
 
 class TestNginxAuthEndpointsBlockComplete(unittest.TestCase):
@@ -202,36 +248,60 @@ class TestNginxRateLimiting(unittest.TestCase):
         self.assertIn("tb_limit", main_conf)
 
 
+
 class TestNginxSiteConfigStructure(unittest.TestCase):
-    """Basic structural checks for the generated site config."""
 
     def test_has_upstream_blocks(self):
         mgr = _make_nginx_manager()
-        cfg = mgr.generate_site_config([8000], [8100])
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
         self.assertIn("upstream toolbox_http", cfg)
         self.assertIn("upstream toolbox_ws", cfg)
 
     def test_has_server_block(self):
         mgr = _make_nginx_manager()
-        cfg = mgr.generate_site_config([8000], [8100])
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
         self.assertIn("server {", cfg)
 
     def test_has_health_endpoint(self):
         mgr = _make_nginx_manager()
-        cfg = mgr.generate_site_config([8000], [8100])
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
         self.assertIn("/health", cfg)
 
     def test_has_api_block(self):
         mgr = _make_nginx_manager()
-        cfg = mgr.generate_site_config([8000], [8100])
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
         self.assertIn("location /api/", cfg)
 
     def test_has_websocket_block(self):
         mgr = _make_nginx_manager()
-        cfg = mgr.generate_site_config([8000], [8100])
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
         self.assertIn("location /ws", cfg)
         self.assertIn("upgrade", cfg.lower())
 
+    def test_pre_allocates_all_ports(self):
+        mgr = _make_nginx_manager()
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
+        for port in [8000, 8001, 8002, 8003]:
+            self.assertIn(f"127.0.0.1:{port}", cfg)
+        for port in [8100, 8101]:
+            self.assertIn(f"127.0.0.1:{port}", cfg)
+
+    def test_passive_health_check_present(self):
+        mgr = _make_nginx_manager()
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
+        self.assertIn("max_fails=1", cfg)
+        self.assertIn("fail_timeout=5s", cfg)
+
+    def test_no_ssl_block_when_ssl_unavailable(self):
+        mgr = _make_nginx_manager()
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
+        self.assertNotIn("ssl_certificate", cfg)
+        self.assertNotIn("listen 443", cfg)
+
+    def test_certbot_marker_present(self):
+        mgr = _make_nginx_manager()
+        cfg = mgr.generate_site_config(4, 2, 8000, 8100)
+        self.assertIn("certbot managed SSL block", cfg)
 
 if __name__ == "__main__":
     unittest.main()

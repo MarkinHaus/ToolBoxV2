@@ -263,6 +263,8 @@ class NginxConfig(BaseModel):
     rate_limit_zone: str = Field(default="tb_limit")
     rate_limit_rate: str = Field(default="10r/s")
     rate_limit_burst: int = Field(default=20)
+    max_http_workers: int = Field(default=8)
+    max_ws_workers: int = Field(default=4)
 
 
 class SessionConfig(BaseModel):
@@ -840,13 +842,6 @@ uncertain_about_X
     audio_model: str = Field(default=os.getenv("AUDIOMODEL", "groq/whisper-large-v3-turbo"))
     image_model: str = Field(default=os.getenv("IMAGEMODEL","openrouter/google/gemini-2.5-flash-image-preview:free"))
     embedding_model: str = Field(default=os.getenv("DEFAULTMODELEMBEDDING","gemini/text-embedding-004"))
-
-
-
-
-
-
-
 
 
 class IsaaCodeExecutorConfig(BaseModel):

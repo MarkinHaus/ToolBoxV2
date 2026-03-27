@@ -145,6 +145,8 @@ class ConfigConverter:
             "rate_limit_zone": m.nginx.rate_limit_zone,
             "rate_limit_rate": m.nginx.rate_limit_rate,
             "rate_limit_burst": m.nginx.rate_limit_burst,
+            "max_http_workers": m.nginx.max_http_workers,
+            "max_ws_workers": m.nginx.max_ws_workers,
         }
 
         # Manager config

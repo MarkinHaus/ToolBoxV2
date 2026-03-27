@@ -33,6 +33,39 @@ class PackageRepository:
         """
         self.db = db
 
+    async def get_latest_versions(
+        self,
+        names: list[str] | None = None,
+    ) -> dict[str, str | None]:
+        """Return latest version string per package.
+
+        Args:
+            names: Package names to query. None → all packages.
+
+        Returns:
+            Dict of package name → latest version or None.
+        """
+        if names is not None and len(names) == 0:
+            return {}
+
+        if names is None:
+            rows = await self.db.fetch_all(
+                "SELECT name, latest_version FROM packages ORDER BY name"
+            )
+        else:
+            placeholders = ",".join("?" * len(names))
+            rows = await self.db.fetch_all(
+                f"SELECT name, latest_version FROM packages WHERE name IN ({placeholders})"
+                " ORDER BY name",
+                tuple(names),
+            )
+
+        result = {row["name"]: row["latest_version"] for row in rows}
+
+        # Names that were requested but not found → empty dict (not included)
+        # Only include packages that actually exist
+        return result
+
     async def create(self, package: Package) -> Package:
         """Create a new package.
 
@@ -82,24 +115,24 @@ class PackageRepository:
         Args:
             package_name: Name of the package to index.
         """
-        # Delete existing FTS entry
-        await self.db.execute(
-            "DELETE FROM packages_fts WHERE name = ?",
-            (package_name,),
-        )
-
-        # Get package data
-        row = await self.db.fetch_one(
-            "SELECT name, display_name, description, keywords FROM packages WHERE name = ?",
-            (package_name,),
-        )
-
-        if row:
+        try:
             await self.db.execute(
-                "INSERT INTO packages_fts (name, display_name, description, keywords) VALUES (?, ?, ?, ?)",
-                (row["name"], row["display_name"], row["description"], row["keywords"]),
+                "DELETE FROM packages_fts WHERE name = ?",
+                (package_name,),
             )
-            await self.db.commit()
+            row = await self.db.fetch_one(
+                "SELECT name, display_name, description, keywords FROM packages WHERE name = ?",
+                (package_name,),
+            )
+            if row:
+                await self.db.execute(
+                    "INSERT INTO packages_fts (name, display_name, description, keywords)"
+                    " VALUES (?, ?, ?, ?)",
+                    (row["name"], row["display_name"], row["description"], row["keywords"]),
+                )
+                await self.db.commit()
+        except Exception as e:
+            logger.warning(f"FTS index update failed for {package_name} (non-fatal): {e}")
 
     async def get_by_name(self, name: str) -> Optional[Package]:
         """Get a package by name.

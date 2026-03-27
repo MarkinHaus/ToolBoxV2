@@ -27,7 +27,7 @@ class TestVerifyCloudmToken(unittest.IsolatedAsyncioTestCase):
 
     def _get_test_settings(
         self,
-        cloudm_jwt_secret: str = "test_jwt_secret",
+        cloudm_jwt_secret: str = "test_jwt_secret_for_cloudm_auth0",
         debug: bool = False
     ) -> Settings:
         """Create test settings."""
@@ -54,7 +54,7 @@ class TestVerifyCloudmToken(unittest.IsolatedAsyncioTestCase):
 
     def _make_valid_token(
         self,
-        secret: str = "test_jwt_secret",
+        secret: str = "test_jwt_secret_for_cloudm_auth0",
         user_id: str = "usr_test123",
         exp_hours: int = 1
     ) -> str:
@@ -137,7 +137,7 @@ class TestVerifyCloudmToken(unittest.IsolatedAsyncioTestCase):
             "iat": int(time.time()) - 7200,
             "jti": "jti_expired",
         }
-        expired_token = jwt.encode(payload, "test_jwt_secret", algorithm="HS256")
+        expired_token = jwt.encode(payload, "test_jwt_secret_for_cloudm_auth0", algorithm="HS256")
         creds = self._make_credentials(expired_token)
 
         result = await verify_cloudm_token(credentials=creds, settings=settings)
@@ -158,7 +158,7 @@ class TestVerifyCloudmToken(unittest.IsolatedAsyncioTestCase):
             "iat": int(time.time()),
             "jti": "jti_wrong",
         }
-        token = jwt.encode(payload, "wrong_secret", algorithm="HS256")
+        token = jwt.encode(payload, "wrong_secret_for_testing_purposes!", algorithm="HS256")
         creds = self._make_credentials(token)
 
         result = await verify_cloudm_token(credentials=creds, settings=settings)

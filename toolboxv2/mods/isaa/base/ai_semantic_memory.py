@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from toolboxv2 import Singleton
+from toolboxv2 import Singleton, get_app
 
 from .hybrid_memory import HybridMemoryStore
 
@@ -73,7 +73,7 @@ class AISemanticMemory(metaclass=Singleton):
         if default_embedding_model is None:
             default_embedding_model = os.getenv("DEFAULTMODELEMBEDDING", "")
         from toolboxv2 import tb_root_dir
-        self.base_path: str = os.path.join(str(tb_root_dir), ".data", base_path)
+        self.base_path: str = os.path.join(get_app().data_dir, base_path.lstrip('/'))
         os.makedirs(self.base_path, exist_ok=True)
 
         self.memories: dict[str, HybridMemoryStore] = {}

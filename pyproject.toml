@@ -162,7 +162,7 @@ isaa = [
     "opentelemetry-api>=1.36.0",
     "opentelemetry-sdk>=1.36.0",
     "jinja2>=3.1.6",
-    "playwright>=1.55.0",
+    "playwright",
     "markdown2>=2.5.3",
     "beautifulsoup4>=4.13.3",
     "html2text>=2025.4.15",
@@ -276,9 +276,32 @@ ignore = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+addopts = "--cov=toolboxv2 --cov-report=term-missing --cov-report=html"
 
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
+    "pytest-cov>=5.0.0",
 ]
+# Coverage configuration
+[tool.coverage.run]
+source = ["toolboxv2"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__pycache__/*",
+    "*/.venv/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+fail_under = 0

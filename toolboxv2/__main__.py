@@ -1259,11 +1259,20 @@ async def setup_app(ov_name=None, App=TbApp):
         if args.name == "test":
             args_.append('-x')
 
+        registry = False
+        if "registry" in args_:
+            registry = True
+            args_.remove("registry")
+
+        if registry:
+            exit(0 if run_tests("tests", args = args_.extend(["--cov=registry","--cov-report=html"]),cwd=tb_root_dir.parent/"tb-registry",
+                            venv=tb_root_dir.parent/"tb-registry"/".venv") else 1)
+
         exit(0
              if
              all([
-                run_tests('tests', args = args_, cwd=tb_root_dir),
-                run_tests("tests", args = args_,cwd=tb_root_dir.parent/"tb-registry",
+                run_tests('tests', args = args_.extend(["--cov=toolboxv2", "--cov-report=term-missing", "--cov-report=html"]), cwd=tb_root_dir),
+                run_tests("tests", args = args_.extend(["--cov=registry", "--cov-report=term-missing", "--cov-report=html"]),cwd=tb_root_dir.parent/"tb-registry",
                             venv=tb_root_dir.parent/"tb-registry"/".venv")
             ])
             else 1
