@@ -47,4 +47,3 @@ docker build -t tb-registry .
 ## License
 
 MIT
-

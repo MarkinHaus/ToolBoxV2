@@ -1672,6 +1672,8 @@ def print_code_block(code: str, language: str = "text", width: int = 76, show_li
             else:
                 c_print(HTML(f"{ln}"))
 
+        return
+
     # Ausgabe
     for i, line in enumerate(lines, 1):
         if show_line_numbers:
