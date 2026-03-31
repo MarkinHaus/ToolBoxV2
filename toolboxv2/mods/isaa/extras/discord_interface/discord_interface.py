@@ -45,7 +45,7 @@ try:
     import discord
     from discord.ext import commands
 except ImportError:
-    raise ImportError("pip install discord.py>=2.6.4")
+    raise ImportError("pip install discord.py[voice]")
 
 if TYPE_CHECKING:
     from toolboxv2.mods.isaa.base.Agent.flow_agent import FlowAgent

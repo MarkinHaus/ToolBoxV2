@@ -16,6 +16,7 @@ Version: 4.0.0
 """
 
 import asyncio
+import dataclasses
 import logging
 import os
 import shutil
@@ -27,8 +28,10 @@ from typing import Any
 
 import requests
 from prompt_toolkit.document import Document
+from prompt_toolkit.filters import is_done
 
-from toolboxv2.mods.isaa.extras.isaa_branding import get_greeting
+from toolboxv2.utils.workers import get_registry
+from toolboxv2.utils.extras.Style import SpinnerManager
 
 # Suppress noisy loggers
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
@@ -346,6 +349,13 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
         if iv: iv._in_reasoning = False
         if answer:
             tv.final_answer = str(answer)
+
+    # === INTERFACE REGISTRY HOOK ===
+    get_registry().publish_sync(
+        id=f"icli.task.{tv.task_id}",
+        data=dataclasses.asdict(tv)
+    )
+    # === END HOOK ===
 
 
 # ── A: Footer toolbar renderer ────────────────────────────────────────────────
@@ -1462,7 +1472,7 @@ def json_to_md(data: dict):
         if v is None:
             continue
         final_md += f"# {k}\n" + _(v, 1)  # war 1
-    return final_md
+    return esc(final_md)
 
 def print_code_block(code: str, language: str = "text", width: int = 76, show_line_numbers: bool = False):
     """8. Code Block mit Basic Syntax Highlighting"""
@@ -3267,7 +3277,78 @@ class SmartCompleter(Completer):
 # HOTKEY POLLER (active during agent streaming, when prompt_toolkit is idle)
 # =============================================================================
 
-import re as _re
+
+
+def apply_prompt_toolkit_patch_safe() -> bool:
+    """
+    Wie apply_prompt_toolkit_patch(), aber erkennt zusätzlich ob
+    gerade eine PT-Application läuft und nutzt dann run_in_terminal
+    statt direktem stdout-Write — für embedded PT apps (z.B. icli/ZenPlus).
+    """
+    try:
+        from prompt_toolkit.patch_stdout import patch_stdout
+        from prompt_toolkit.application import get_app_or_none
+    except ImportError:
+        return False
+
+    if getattr(SpinnerManager, "_pt_patched", False):
+        return True
+
+    _original_render_loop = SpinnerManager._render_loop
+
+    def _pt_render_loop_safe(self):
+        app = get_app_or_none()
+
+        if app is not None:
+            # PT-App läuft (z.B. ZenPlus TUI) → run_in_terminal für safe writes
+            _run_with_app(self, app)
+        else:
+            # Kein aktiver PT-App-Context → normaler patch_stdout reicht
+            with patch_stdout(raw=True):
+                _original_render_loop(self)
+
+    def _run_with_app(self, app):
+        """Render-Loop der run_in_terminal für jeden Frame nutzt."""
+        import time
+
+        while self._should_run:
+            if not self._spinners:
+                self._should_run = False
+                break
+
+            with self._lock:
+                primary = next(
+                    (s for s in self._spinners if s._is_primary), None
+                )
+
+                if primary and primary.running:
+                    line = primary._generate_render_line()
+
+                    if len(self._spinners) > 1:
+                        secondary = " | ".join(
+                            s._generate_secondary_info()
+                            for s in self._spinners
+                            if s is not primary and s.running
+                        )
+                        line += f" [{secondary}]"
+
+                    # run_in_terminal ist thread-safe gegenüber PT
+                    def _write(captured_line=line):
+                        sys.stdout.write("\r" + captured_line + "\033[K")
+                        sys.stdout.flush()
+
+                    try:
+                        app.loop.call_soon_threadsafe(
+                            lambda fn=_write: app.run_in_terminal(fn)
+                        )
+                    except Exception:
+                        self._should_run = False
+
+            time.sleep(0.1)
+
+    SpinnerManager._render_loop = _pt_render_loop_safe
+    SpinnerManager._pt_patched = True
+    return True
 
 _MEDIA_EXTENSIONS = {
     "image": {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".svg"},
@@ -3563,6 +3644,7 @@ class ISAA_Host:
     def __init__(self, app_instance: Any = None):
         """Initialize the ISAA Host system."""
 
+        self.auto_paste_text = False
         self.dynamic_interval = [1]
         from toolboxv2.mods.isaa.extras.isaa_branding import FlowMatrixAnimation, print_isaa_header
 
@@ -3672,6 +3754,8 @@ class ISAA_Host:
         for feature in ALL_FEATURES.values():
             feature(self.feature_manager)
 
+        apply_prompt_toolkit_patch_safe()
+
     def _ingest_chunk(self, task_id: str, chunk: dict) -> None:
         """Forward one stream chunk. Sub-agent chunks go to their own TaskView."""
         tv = self._task_views.get(task_id)
@@ -3727,16 +3811,19 @@ class ISAA_Host:
 
     def _load_rate_limiter_config(self):
         """Load rate limiter config from file if exists."""
+        data = None
+        loaded = None
         if self.rate_limiter_config_file.exists():
             try:
                 with open(self.rate_limiter_config_file, encoding="utf-8") as f:
                     loaded = json.load(f)
+                    data = f.read()
                     for key in DEFAULT_RATE_LIMITER_CONFIG:
                         if key not in loaded:
                             loaded[key] = DEFAULT_RATE_LIMITER_CONFIG[key]
                     self._rate_limiter_config = loaded
             except Exception as e:
-                print_status(f"Failed to load rate limiter config: {e}", "warning")
+                print_status(f"Failed to load rate limiter config: {e} | {data=} | {loaded=}", "warning")
 
     def _save_rate_limiter_config(self):
         """Save rate limiter config to file."""
@@ -3841,7 +3928,8 @@ class ISAA_Host:
                 return
 
             # ── Textdatei-Pfad → Dateiinhalt inline einfügen ─────────────
-            if "\n" not in stripped and len(stripped.split()) == 1:
+
+            if self.auto_paste_text and "\n" not in stripped and len(stripped.split()) == 1:
                 candidate = Path(stripped.strip('"').strip("'"))
                 if candidate.is_file() and candidate.suffix.lower() in (
                         ".txt", ".md", ".py", ".js", ".ts", ".json", ".yaml",
@@ -3856,6 +3944,14 @@ class ISAA_Host:
 
             # ── Normaler Text: safe einfügen ─────────────────────────────
             buf.insert_text(safe)
+
+        @kb.add("c-j")  # Ctrl+J → Newline (einzige echte Option)
+        def _newline(event):
+            event.app.current_buffer.insert_text("\n")
+
+        @kb.add("c-m")  # Enter → Submit
+        def _submit(event):
+            event.app.current_buffer.validate_and_handle()
 
         # ── Ctrl+V Fallback (terminals ohne bracketed-paste support) ──────
         @kb.add("c-v")
@@ -6507,7 +6603,7 @@ class ISAA_Host:
             return
 
         print_box_header(f"Execution Log: {tv.task_id}", "📜")
-        print_box_content(f"Agent: {tv.agent_name} | Persona: {tv.persona}", "info")
+        print_box_content(f"Agent: {esc(tv.agent_name)} | Persona: {esc(tv.persona)}", "info")
         print_separator()
 
         for iv in tv.iterations:
@@ -6528,7 +6624,7 @@ class ISAA_Host:
                 for idx, (name, success, elapsed, info) in enumerate(iv.tools):
                     # Zusammenfassung
                     col = PTColors.ZEN_GREEN if success else PTColors.ZEN_RED
-                    c_print(HTML(f"  <style fg='{col}'>● {name}</style> ({elapsed:.3f}s) - {info}"))
+                    c_print(HTML(f"  <style fg='{esc(col)}'>● {esc(name)}</style> ({esc(elapsed):.3f}s) - {esc(info)}"))
 
                     # RAW I/O Dump (wenn -d aktiv)
                     if show_raw and idx < len(iv.tools_raw):
@@ -6543,7 +6639,7 @@ class ISAA_Host:
 
                         c_print(HTML(f"    <style fg='{PTColors.ZEN_DIM}'>    ↳ Raw I/O:</style>"))
                         # Hier nutzen wir deine json_to_md + print_code_block Logik
-                        print_code_block(json_to_md(io_data), "md")
+                        print_code_block(json_to_md(io_data), "md", show_line_numbers=True)
 
             c_print()  # Abstand zwischen Iterationen
 
@@ -6658,24 +6754,24 @@ class ISAA_Host:
         )
         print_box_content(f"Query: {t.query}", "")
 
-        if t.status == "running":
-            try:
-                agent = await self.isaa_tools.get_agent(t.agent_name)
-                engine = agent._get_execution_engine()
-                live = engine.live
-                it, mx = live.iteration, live.max_iterations
-                bar = f"{'━' * int(20*it/mx) if mx else 0}{'─' * (20 - int(20*it/mx) if mx else 20)} {it}/{'?' if not mx else mx}"
-                print_box_content(f"Progress: {bar}", "")
-                if live.phase:
-                    print_box_content(f"Phase: {live.phase.value}", "info")
-                if live.thought:
-                    print_box_content(f"Thought: {live.thought[:80]}", "")
-                if live.tool.name:
-                    print_box_content(f"Tool: {live.tool.name} {live.tool.args_summary[:40]}", "")
-            except Exception:
-                print_box_content("(live state unavailable)", "warning")
+        try:
+            agent = await self.isaa_tools.get_agent(t.agent_name)
+            engine = agent._get_execution_engine()
+            live = engine.live
+            it, mx = live.iteration, live.max_iterations
+            bar = f"{'━' * int(20*it/mx) if mx else 0}{'─' * (20 - int(20*it/mx) if mx else 20)} {it}/{'?' if not mx else mx}"
+            print_box_content(f"Progress: {bar}", "")
+            if live.phase:
+                print_box_content(f"Phase: {live.phase.value}", "info")
+            if live.thought:
+                print_box_content(f"Thought: {live.thought}", "")
+            if live.tool.name:
+                print_box_content(f"Tool: {live.tool.name}", "")
+                print_code_block(json_to_md(json.loads(live.tool.args_summary)))
+        except Exception:
+            print_box_content("(live state unavailable)", "warning")
 
-        elif t.status == "completed":
+        if t.status == "completed":
             if t.result_text:
                 result_str = t.result_text
                 if len(result_str) > 500:
@@ -6693,7 +6789,7 @@ class ISAA_Host:
                 except Exception:
                     pass
 
-        elif t.status == "failed":
+        if t.status == "failed":
             try:
                 t.async_task.result()
             except Exception as e:
@@ -9459,6 +9555,7 @@ class ISAA_Host:
                 nested_dict=dict_coplet, vfs_completer=vfs_cplet
             ),
             complete_while_typing=True,
+            multiline=False,
             key_bindings=self.key_bindings,
             bottom_toolbar=self._get_bottom_toolbar,  # Dynamische Zuweisung
             style=PtStyle.from_dict({
@@ -9966,58 +10063,138 @@ def main():
 
 if __name__ == "__main__":
     import argparse
+    import asyncio
     import sys
 
-
     async def main_cli():
-        parser = argparse.ArgumentParser(description="ISAA iCLI Single Run Mode")
-        parser.add_argument("query", nargs="?", help="Die Anfrage an den Agenten")
-        parser.add_argument("--agent", default="self", help="Name des Agenten")
-        parser.add_argument("--session", default="direct_run", help="Session ID")
-        parser.add_argument("--remember", default="direct_run", help="Save Execution history unther Session ID")
-        parser.add_argument("--feature", action="append", help="Feature aktivieren (z.B. coder, desktop_auto)")
-        parser.add_argument("--mcp", action="append", help="MCP Server Config als JSON String")
-        parser.add_argument("--model", help="Modell-Override (z.B. gemini-3-flash)")
+        parser = argparse.ArgumentParser(description="ISAA iCLI")
+        parser.add_argument("query", nargs="?", help="Anfrage an den Agenten")
+        parser.add_argument("--agent", default="self")
+        parser.add_argument("--session", default="direct_run")
+        parser.add_argument("--remember", default="direct_run")
+        parser.add_argument("--feature", action="append")
+        parser.add_argument("--mcp", action="append")
+        parser.add_argument("--model")
+        # --- NEU ---
+        parser.add_argument(
+            "--gui",
+            action="store_true",
+            help="GUI mode: kein TUI, ZMQ I/O, wartet auf follow-up queries"
+        )
+        parser.add_argument(
+            "--gui-session",
+            default=None,
+            help="Session ID für ZMQ input channel (gui.input.<id>)"
+        )
 
         args = parser.parse_args()
         app = get_app("isaa-host")
         host = ISAA_Host(app)
 
-        # Wenn kein Query da ist -> Starte normalen interaktiven Host
-        if not args.query:
+        # ── Normaler interaktiver Modus ────────────────────────────────
+        if not args.query and not args.gui:
             await host.run()
             return
 
-        # --- Single Run Logik ---
+        # ── Shared setup für single-run UND gui-mode ──────────────────
         await host._init_self_agent()
         agent = await host.isaa_tools.get_agent(args.agent)
 
-        # Features aktivieren
         if args.feature:
             host.feature_manager.set_agent(agent)
             for feat in args.feature:
                 await host.feature_manager.enable(feat)
 
-        # Modell-Override
         if args.model and args.model in MODEL_MAPPING:
             agent.amd.complex_llm_model = MODEL_MAPPING[args.model]
 
-        # MCP Server dynamisch hinzufügen
         if args.mcp:
             for mcp_json in args.mcp:
                 import json
                 m_cfg = json.loads(mcp_json)
-                await host._tool_mcp_connect(m_cfg['name'], m_cfg['command'], m_cfg.get('args', []), args.agent)
+                await host._tool_mcp_connect(
+                    m_cfg['name'], m_cfg['command'],
+                    m_cfg.get('args', []), args.agent
+                )
 
-        # Ausführung
-        print(f"[*] Agent {args.agent} denkt nach...")
+        # ── GUI Mode ───────────────────────────────────────────────────
+        if args.gui:
+            from toolboxv2.utils.workers.interface_registry import get_registry
+
+            gui_session = args.gui_session or args.session
+            reg = get_registry()
+            connected = await reg.start()
+
+            if not connected:
+                print("[icli --gui] ZMQ offline — running without stream", flush=True)
+                # Kein return — einfach single-run oder interaktiv ohne ZMQ
+                if args.query:
+                    result = await agent.a_run(args.query, session_id=gui_session)
+                    print(f"\n[RESULT]:\n{result}", flush=True)
+                else:
+                    await host.run()  # ← normaler interaktiver modus als fallback
+                await app.a_exit()
+                return
+
+            # Initial query ausführen falls mitgegeben
+            if args.query:
+                await agent.a_run(args.query, session_id=gui_session)
+
+            # Follow-up loop via ZMQ
+            input_channel = f"gui.input.{gui_session}"
+            follow_up_queue: asyncio.Queue = asyncio.Queue()
+
+            def _on_gui_input(payload: dict) -> None:
+                follow_up_queue.put_nowait(payload)
+
+            reg.register_sub(
+                id=input_channel,
+                callback=_on_gui_input,
+                filter_prefix=False  # exact match auf diese session
+            )
+
+            print(f"[icli --gui] Listening on {input_channel}", flush=True)
+
+            # Warte auf follow-up oder exit signal
+            while True:
+                try:
+                    msg = await asyncio.wait_for(follow_up_queue.get(), timeout=300.0)
+                except asyncio.TimeoutError:
+                    print("[icli --gui] Timeout — keine GUI activity, exit", flush=True)
+                    break
+
+                action = msg.get("action", "query")
+
+                if action == "exit":
+                    break
+
+                if action == "query":
+                    query_text = msg.get("query", "").strip()
+                    if not query_text:
+                        continue
+                    override_agent = msg.get("agent")
+                    if override_agent and override_agent != args.agent:
+                        agent = await host.isaa_tools.get_agent(override_agent)
+                    await agent.a_run(query_text, session_id=gui_session)
+
+            await reg.stop()
+            if not args.remember:
+                agent.clear_session_history(gui_session)
+            await app.a_exit()
+            return
+
+        # ── Single Run Modus (unveränderter bestehender Pfad) ──────────
+        print(f"[*] Agent {args.agent} denkt nach...", flush=True)
         result = await agent.a_run(args.query, session_id=args.session)
 
         if not args.remember:
             agent.clear_session_history(args.session)
         await app.a_exit()
-        print(f"\n[RESULT]:\n{result}")
-
+        print(f"\n[RESULT]:\n{result}", flush=True)
+    # ZMQ benötigt SelectorEventLoop auf Windows
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
     asyncio.run(main_cli())
+

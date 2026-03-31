@@ -934,7 +934,7 @@ def cmd_set(args) -> int:
         # Sync to .env if mapping exists
         env_key = _MANIFEST_TO_ENV.get(args.key)
         if env_key:
-            env_path = tb_root_dir / ".env"
+            env_path = tb_root_dir.parent / ".env"
             lines, found = [], False
             if env_path.exists():
                 for line in env_path.read_text(encoding="utf-8").splitlines():

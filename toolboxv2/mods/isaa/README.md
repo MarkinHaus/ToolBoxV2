@@ -1,4 +1,4 @@
-# ISAA Mod - Intelligent Semantic Agent Architecture
+# ISAA Mod - Intelligent Self-Adapting Agent
 
 > **Version:** 0.3.0 | **Status:** Production Ready | **Python:** 3.10+
 
@@ -71,13 +71,13 @@ async def main():
     # App initialisieren
     app = get_app()
     isaa = app.get_mod("isaa")
-    
+
     # ISAA starten
     await isaa.init_isaa()
-    
+
     # Agent erstellen
     agent = await isaa.get_agent("my_agent")
-    
+
     # Task ausführen
     response = await agent.a_run("Erkläre mir das ISAA System")
     print(response)
@@ -261,7 +261,7 @@ try:
         max_retries=3,
         auto_research=True
     )
-    
+
     if success:
         print(f"✅ {len(files)} Dateien generiert")
 finally:
@@ -399,7 +399,7 @@ agent, manifest, warnings = await isaa.load_agent(
 
 if agent:
     print(f"✅ Agent '{agent.amd.name}' geladen")
-    
+
 for warning in warnings:
     print(f"⚠️  {warning}")
 ```

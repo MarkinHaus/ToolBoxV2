@@ -1043,7 +1043,7 @@ def print_isaa_header(
     task_count: int = 0,
     show_system_bar: bool = True,
     show_flows: bool = True,
-    subtitle: str = "Intelligent Semantic Agent Architecture",
+    subtitle: str = "Intelligent Self-Adapting Agent",
 ):
     """Print static branded ISAA header."""
     if uptime is None:

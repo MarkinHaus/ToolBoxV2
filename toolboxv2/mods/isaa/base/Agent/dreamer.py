@@ -199,12 +199,12 @@ class Dreamer:
     # ─── Phase 1: Log Harvesting ────────────────────────────────────
 
     async def _phase_harvest(self, state: dict) -> dict:
-        """Scan /.memory/logs/ and parse RunRecords."""
+        """Scan /global/.memory/logs/ and parse RunRecords."""
         config: DreamConfig = state["config"]
         report: DreamReport = state["report"]
 
         session = await self._get_session()
-        log_dir = "/.memory/logs"
+        log_dir = "/global/.memory/logs"
 
         cutoff = self._get_cutoff(config)
         _log.info(f"[Dreamer] Harvest cutoff={cutoff}")
@@ -550,8 +550,8 @@ class Dreamer:
 
         session = await self._get_session()
         try:
-            session.vfs.mkdir("/.memory/dreamer", parents=True)
-            session.vfs.write("/.memory/dreamer/last_run", datetime.now().isoformat())
+            session.vfs.mkdir("/global/.memory/dreamer", parents=True)
+            session.vfs.write("/global/.memory/dreamer/last_run", datetime.now().isoformat())
         except Exception:
             pass
 
@@ -949,7 +949,7 @@ class Dreamer:
     # PERSONA EVOLUTION
     # =========================================================================
 
-    _VFS_PERSONAS = "/.memory/dreamer/personas.json"
+    _VFS_PERSONAS = "/global/.memory/dreamer/personas.json"
 
     async def _evolve_persona_from_analysis(
         self, analysis: ClusterAnalysis, records: list[RunRecord], report: DreamReport
@@ -1079,7 +1079,7 @@ Antworte NUR mit dem JSON-Objekt, kein Markdown."""
             report.personas_evolved.extend(f"pruned:{k}" for k in pruned)
 
     async def _load_persona_store(self) -> dict:
-        """Read /.memory/dreamer/personas.json from VFS."""
+        """Read /global/.memory/dreamer/personas.json from VFS."""
         try:
             session = await self._get_session()
             result = session.vfs_read(self._VFS_PERSONAS)
@@ -1093,7 +1093,7 @@ Antworte NUR mit dem JSON-Objekt, kein Markdown."""
         """Write personas.json to VFS (persistent)."""
         try:
             session = await self._get_session()
-            session.vfs.mkdir("/.memory/dreamer", parents=True)
+            session.vfs.mkdir("/global/.memory/dreamer", parents=True)
             session.vfs.write(self._VFS_PERSONAS, json.dumps(store, indent=2))
         except Exception as e:
             _log.warning(f"[Dreamer] Failed to persist personas: {e}")
@@ -1124,7 +1124,7 @@ Antworte NUR mit dem JSON-Objekt, kein Markdown."""
                 self.agent.active_session or "default"
             )
             if session:
-                result = session.vfs_read("/.memory/dreamer/last_run")
+                result = session.vfs_read("/global/.memory/dreamer/last_run")
                 if result.get("success"):
                     return datetime.fromisoformat(result["content"].strip())
         except Exception:
@@ -1396,8 +1396,8 @@ Antworte NUR mit dem JSON."""
         """Write dream report to VFS."""
         try:
             session = await self._get_session()
-            session.vfs.mkdir("/.memory/dreamer", parents=True)
-            path = f"/.memory/dreamer/{report.dream_id}.json"
+            session.vfs.mkdir("/global/.memory/dreamer", parents=True)
+            path = f"/global/.memory/dreamer/{report.dream_id}.json"
             session.vfs.write(path, report.model_dump_json(indent=2))
         except Exception as e:
             _log.warning(f"[Dreamer] Failed to persist report: {e}")

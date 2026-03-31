@@ -8,7 +8,7 @@ from ..system.main_tool import get_version_from_pyproject
 from .cli_worker_manager import main as cli_worker_runner
 from .db_cli_manager import cli_db_runner
 from .tcm_p2p_cli import cli_tcm_runner
-from ... import Style
+from ... import Style, tb_root_dir
 
 # --- CLI Printing Utilities ---
 from toolboxv2.utils.clis.cli_printing import (
@@ -19,8 +19,6 @@ from toolboxv2.utils.clis.cli_printing import (
     print_separator,
     print_code_block
 )
-
-
 
 
 async def interactive_user_dashboard():
@@ -1579,7 +1577,7 @@ async def interactive_user_dashboard():
             print_box_header("Save to .env File", "💾")
             print_box_footer()
 
-            env_file = Path(".env")
+            env_file = Path(tb_root_dir.parent / ".env")
 
             print()
             print(f"  File: {env_file.absolute()}")
@@ -1626,7 +1624,7 @@ async def interactive_user_dashboard():
             print_box_header("Reload from .env", "🔄")
             print_box_footer()
 
-            env_file = Path(".env")
+            env_file = Path(tb_root_dir.parent / ".env")
 
             print()
             if not env_file.exists():

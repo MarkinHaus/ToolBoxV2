@@ -268,7 +268,11 @@ class SubAgentManager:
             Dict mapping sub_agent_id to SubAgentResult
         """
         if isinstance(sub_agent_ids, str):
-            ids = [sub_agent_ids]
+            if '[' in sub_agent_ids:
+                import json
+                ids = json.loads(sub_agent_ids)
+            else:
+                ids = [sub_agent_ids]
         else:
             ids = list(sub_agent_ids)
 

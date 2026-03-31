@@ -23,6 +23,7 @@ from .session import SessionData, SessionManager, SignedCookieSession, main as c
 from .event_manager import ZMQEventManager, Event, EventType, main as cli_event
 from .server_worker import HTTPWorker, ParsedRequest, json_response, html_response, main as cli_http_worker
 from .ws_worker import WSWorker, ConnectionManager, main as cli_ws_worker
+from .interface_registry import get_registry
 
 __all__ = [
     # Config
@@ -51,4 +52,6 @@ __all__ = [
     "cli_event",
     "cli_http_worker",
     "cli_ws_worker",
+    # InterfaceRegistry
+    "get_registry",
 ]

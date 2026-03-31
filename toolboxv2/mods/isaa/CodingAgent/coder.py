@@ -512,14 +512,14 @@ class GitWorktree:
                 self._copy_filtered(self.origin_root, self.path)
         else:
             # IMMER gefilterte Kopie - nur den spezifischen Projektordner
+            # FIX: _is_git VOR _copy_filtered setzen, sonst läuft git ls-files
+            # und Unterordner-Dateien die nicht git-tracked sind werden nicht kopiert
+            self._is_subfolder_mode = True
+            self._is_git = False
+
             self._wt_root = Path(tempfile.mkdtemp(prefix="coder_cp_"))
             self.path = self._wt_root
             count = self._copy_filtered(self.origin_root, self.path)
-
-            # FIX: Merke dass wir im "subfolder mode" sind für apply_back
-            self._is_subfolder_mode = True
-            # FIX: WICHTIG - Setze _is_git=False damit commit() nicht versucht git commands zu nutzen
-            self._is_git = False
 
             logger.info(f"[SETUP] filtered copy = {self.path}")
             logger.info(f"[SETUP] origin        = {self.origin_root}")
@@ -862,10 +862,9 @@ class CoderAgent:
         "REGELN:\n"
         "1. ARCHITEKTUR ZUERST: Nutze 'memory_recall', um Zusammenhänge zu verstehen, BEVOR du Code schreibst.\n"
         "2. LIES Dateien (read_file) BEVOR du editierst. Niemals blind raten!\n"
-        "3. Änderungen NUR via Edit-Blöcke. BENUTZE NIEMALS 'bash' mit 'cat' oder 'echo' um Code zu schreiben!"
-        " du must Edit-Blöcke verwenden für (Datein erstellen, Datein schriben, Datein berabeiten)\n"
-        "   VERBOTEN: Nutze NIEMALS 'bash', 'cat', 'echo' oder 'printf' um Dateien zu erstellen oder zu ändern!\n"
-        "   Das System erkennt Änderungen nur über Edit-Blöcke.\n"
+        "3. Änderungen NUR via XML Edit-Blöcke. BENUTZE NIEMALS 'bash' mit 'cat' oder 'echo' um Code zu schreiben!\n"
+        "   VERBOTEN: 'bash', 'cat', 'echo', 'printf' zum Schreiben von Dateien!\n"
+        "   Das System erkennt Änderungen NUR über die unten beschriebenen <edit>-Blöcke.\n"
         "4. BEENDEN: Wenn du alle Aufgaben erledigt hast, rufe ZWINGEND das Tool 'done' auf (oder schreibe [DONE]).\n"
         "5. Schreibe VOR jedem Edit einen <thought>...</thought> Block, der Folgendes enthält:\n"
         "   - Was du in der Datei gesehen hast und wie es zur Architektur passt.\n"
@@ -875,22 +874,41 @@ class CoderAgent:
         "     - [x] Erledigter Teilschritt\n"
         "6. ISOLIERTER WORKSPACE: Du arbeitest in einer sicheren, isolierten Arbeitskopie (Worktree). Alle Pfade müssen immer RELATIV zu deinem aktuellen Hauptordner sein!\n"
         "7. CODE AUSFÜHREN: Nutze IMMER das Tool 'run_file', um Skripte oder Tests (z.B. Python) auszuführen. Nutze das generische 'bash' Tool NUR, wenn 'run_file' nicht ausreicht (z.B. pip install).\n"
-        "8. WICHTIG ZUR TECHNIK: Das Bearbeiten von Dateien ist KEIN JSON-Tool (wie read_file oder bash)! Du musst die ~~~edit Blöcke als einfachen, direkten Text in deiner Antwort (content) ausgeben. Versuche NIEMALS, Dateien über das JSON-Tool bash zu schreiben!"
-        "FORMAT:\n"
-        "<thought>\n"
-        "Ich passe das Login an.\n"
-        "Plan:\n"
-        "- [x] config.py lesen\n"
-        "- [ ] auth.py ändern\n"
-        "- [ ] test_auth.py updaten\n"
-        "</thought>\n"
-        "FORMAT FÜR ÄNDERUNGEN (SEARCH enthält den alten Code):\n"
-        "~~~edit:pfad/datei.py~~~\n<<<<<<< SEARCH\nalter code\n=======\nneuer code\n>>>>>>> REPLACE\n~~~end~~~\n\n"
-        "FORMAT FÜR GROßE ÄNDERUNGEN (ERWEITERTE SYNTAX):\n"
-        "Verwende `...` (alleinstehend auf einer Zeile) im SEARCH-Block, um große, unveränderte Teile zu überspringen. Alles von den Startzeilen bis zu den Endzeilen wird vollständig durch den REPLACE-Block ersetzt! Dies ist extrem effizient für große Klassen oder Funktionen.\n"
-        "~~~edit:pfad/datei.py~~~\n<<<<<<< SEARCH\nerste Zeilen des zu ersetzenden Blocks\n...\nletzte Zeilen des zu ersetzenden Blocks\n=======\nkompletter neuer Code\n>>>>>>> REPLACE\n~~~end~~~\n\n"
-        "FORMAT FÜR NEUE DATEIEN (SEARCH bleibt komplett leer!):\n"
-        "~~~edit:pfad/neue_datei.py~~~\n<<<<<<< SEARCH\n=======\nkompletter neuer inhalt\n>>>>>>> REPLACE\n~~~end~~~"
+        "8. WICHTIG ZUR TECHNIK: <edit>-Blöcke sind KEIN JSON-Tool! Gib sie als plain Text in deiner Antwort aus.\n"
+        "   Versuche NIEMALS, Dateien über das Tool 'bash' zu schreiben!\n\n"
+        "FORMAT FÜR ÄNDERUNGEN:\n"
+        "<edit path=\"pfad/datei.py\">\n"
+        "<search>\n"
+        "exakter alter code\n"
+        "</search>\n"
+        "<replace>\n"
+        "neuer code\n"
+        "</replace>\n"
+        "</edit>\n\n"
+        "FORMAT FÜR NEUE DATEIEN (search komplett leer lassen):\n"
+        "<edit path=\"pfad/neue_datei.py\">\n"
+        "<search>\n"
+        "</search>\n"
+        "<replace>\n"
+        "kompletter neuer Inhalt\n"
+        "</replace>\n"
+        "</edit>\n\n"
+        "FORMAT FÜR GROßE BLÖCKE (Ellipsis-Syntax):\n"
+        "Verwende `...` (allein auf einer Zeile) im <search>-Block um große unveränderte Teile zu überspringen.\n"
+        "Alles zwischen Start und Ende wird komplett durch <replace> ersetzt.\n"
+        "<edit path=\"pfad/datei.py\">\n"
+        "<search>\n"
+        "erste Zeilen des zu ersetzenden Bereichs\n"
+        "...\n"
+        "letzte Zeilen des zu ersetzenden Bereichs\n"
+        "</search>\n"
+        "<replace>\n"
+        "kompletter neuer Code\n"
+        "</replace>\n"
+        "</edit>\n\n"
+        "WICHTIG: </search>, </replace>, </edit> auf einer eigenen Zeile sind die Trennmarker.\n"
+        "Schreibe HTML/JS/XML-Code normal — diese Tags kommen im echten Code nie allein auf einer Zeile vor.\n"
+        "Das Attribut 'path' ist bevorzugt, 'file' wird ebenfalls akzeptiert.\n"
     )
 
     def __init__(self, agent, project_root: str, config: dict = None):
@@ -1397,19 +1415,43 @@ class CoderAgent:
                 self._apply_edits(incomplete)
                 accumulated_edits.extend(incomplete)
 
-                truncated_files = [b.file_path for b in incomplete]
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        f"⚠️ WARNUNG: {len(incomplete)} Edit-Block(s) waren unvollständig "
-                        f"(dein Output wurde abgeschnitten)!\n"
-                        f"Betroffene Dateien: {', '.join(truncated_files)}\n"
-                        f"Der bisherige Content wurde gespeichert. Bitte:\n"
-                        f"1. Lies die Datei(en) mit read_file\n"
-                        f"2. Vervollständige den fehlenden Content mit einem neuen Edit-Block\n"
-                        f"3. Benutze den SEARCH-Block mit den letzten ~5 Zeilen des bisherigen Contents"
+                # Für jeden incomplete Block: aktuellen Stand der Datei lesen
+                # und die letzten Zeilen als Kontext mitgeben → Agent kann präzise ansetzen
+                recovery_parts = []
+                for b in incomplete:
+                    target = self.worktree.path / b.file_path
+                    if target.exists():
+                        try:
+                            current_content = target.read_text(encoding="utf-8", errors="replace")
+                            current_lines = current_content.splitlines()
+                            line_count = len(current_lines)
+                            # Letzten 8 Zeilen als Anker für den SEARCH-Block
+                            anchor_lines = current_lines[-8:] if line_count >= 8 else current_lines
+                            anchor_text = "\n".join(anchor_lines)
+                        except OSError:
+                            line_count = 0
+                            anchor_text = "(Datei nicht lesbar)"
+                    else:
+                        line_count = 0
+                        anchor_text = "(Datei existiert noch nicht)"
+
+                    recovery_parts.append(
+                        f"**{b.file_path}** ({line_count} Zeilen aktuell)\n"
+                        f"Letzte 8 Zeilen (dein <search>-Block soll HIER ansetzen):\n"
+                        f"```\n{anchor_text}\n```"
                     )
-                })
+
+                recovery_msg = (
+                    f"⚠️ {len(incomplete)} Edit-Block(s) wurden abgeschnitten — "
+                    f"Output-Limit erreicht!\n\n"
+                    + "\n\n".join(recovery_parts) +
+                    f"\n\nANWEISUNG:\n"
+                    f"1. Schreibe KEINEN neuen vollständigen Block — nur den FEHLENDEN Rest.\n"
+                    f"2. Nutze die letzten Zeilen oben als <search>-Anker.\n"
+                    f"3. <replace> enthält: diese letzten Zeilen + der fehlende Rest.\n"
+                    f"4. Kein read_file nötig — der aktuelle Stand ist oben angegeben."
+                )
+                messages.append({"role": "user", "content": recovery_msg})
 
                 if blocks:
                     # Vollständige Blöcke auch anwenden
@@ -1476,7 +1518,9 @@ class CoderAgent:
 
         if force_read_files:
             lines.append(f"\nPflicht: Rufe read_file auf für: {', '.join(force_read_files)}")
-            lines.append("Dann korrigiere den SEARCH-Block basierend auf dem ECHTEN Dateiinhalt.")
+            lines.append("Dann korrigiere den <search>-Block basierend auf dem ECHTEN Dateiinhalt.")
+            lines.append(
+                "Format: <edit path=\"datei\"><search>exakter text</search><replace>neuer text</replace></edit>")
 
         messages.append({"role": "user", "content": "\n".join(lines)})
         return await self._loop(messages)
@@ -1532,9 +1576,9 @@ class CoderAgent:
                         # Ersetze den gesamten Bereich (Start bis inkl. Ende)
                         new_txt = txt[:start_idx] + e.replace + txt[replace_end:]
                     else:
-                        self._log("IO-ERR", f"EXTENDED SEARCH block limits not found in {e.file_path}", "red")
+                        self._log("IO-ERR", f"EXTENDED <search> limits not found in {e.file_path}", "red")
                         results.append({"file_path": e.file_path, "success": False,
-                                        "error": "EXTENDED SEARCH limits (start/end) not found"})
+                                        "error": "EXTENDED <search> limits (start/end) not found. Prüfe ob start_part und end_part exakt im File stehen."})
                         continue
 
                 # --- ALTE LOGIK FÜR NORMALE SUCHE ---
@@ -1548,9 +1592,11 @@ class CoderAgent:
                     new_lines = src_lines[:idx] + [e.replace + "\n"] + src_lines[idx + len(s_lines):]
                     new_txt = "".join(new_lines)
                 else:
-                    self._log("IO-ERR", f"SEARCH block not found in {e.file_path}", "red")
+                    self._log("IO-ERR", f"<search>-Inhalt nicht gefunden in {e.file_path}", "red")
                     results.append({"file_path": e.file_path, "success": False,
-                                    "error": "SEARCH not found (exact + fuzzy + extended)"})
+                                    "error": "SEARCH not found (exact + fuzzy + extended). "
+                                             "Lies die Datei mit read_file und passe den <search>-Block "
+                                             "an den ECHTEN aktuellen Dateiinhalt an."})
                     continue
 
                 new_bytes = len(new_txt.encode('utf-8'))
@@ -1986,7 +2032,11 @@ class CoderAgent:
         return tools
 
     def _parse_edits(self, text: str) -> Tuple[List[EditBlock], List[EditBlock]]:
-        """State-machine parser. Returns (complete_blocks, incomplete_blocks)."""
+        """XML state-machine parser. Robust gegen HTML/JS/XML im Code-Content.
+        Delimiter-Sicherheit: </search>, </replace>, </edit> kommen in realem Code
+        nie allein auf einer Zeile vor — der Parser prüft stripped lines.
+        Returns: (complete_blocks, incomplete_blocks)
+        """
         IDLE, IN_SEARCH, IN_REPLACE = 0, 1, 2
         state = IDLE
         path = ""
@@ -1995,14 +2045,17 @@ class CoderAgent:
         blocks: list[EditBlock] = []
         incomplete: list[EditBlock] = []
 
-        if self.debug_mode and "~~~edit:" in text:
-            self._log("PARSER", f"Scanning {len(text)} chars for edit blocks...", "grey")
+        # Akzeptiert: path="..." oder file="..." (path bevorzugt, beide supported)
+        _open_re = re.compile(r'<edit\s+(?:path|file)="([^"]+)"[^>]*>', re.IGNORECASE)
+
+        if self.debug_mode and "<edit " in text:
+            self._log("PARSER", f"Scanning {len(text)} chars for <edit> blocks...", "grey")
 
         for raw_line in text.split("\n"):
             stripped = raw_line.strip()
 
             if state == IDLE:
-                m = re.match(r"^~~~edit:(.+?)~~~$", stripped)
+                m = _open_re.search(stripped)
                 if m:
                     path = m.group(1).strip()
                     search_lines, replace_lines = [], []
@@ -2011,58 +2064,27 @@ class CoderAgent:
                 continue
 
             if state == IN_SEARCH:
-                if stripped == "<<<<<<< SEARCH":
+                if stripped == "<search>":
                     continue
-                if stripped == "=======":
+                # Transition zu IN_REPLACE bei </search> ODER direkt <replace>
+                if stripped in ("</search>", "<replace>"):
                     state = IN_REPLACE
-                    continue
-                if stripped.endswith("=======") and len(stripped) > 7:
-                    # Zeile VOR dem Separator gehört noch zum SEARCH
-                    prefix = raw_line.split("=======")[0]
-                    if prefix.strip():
-                        search_lines.append(prefix)
-                    state = IN_REPLACE
-                    self._log("PARSER", f"⚠ Inline separator detected in SEARCH block", "yellow")
                     continue
                 search_lines.append(raw_line)
 
             elif state == IN_REPLACE:
-                if stripped == ">>>>>>> REPLACE":
+                if stripped == "<replace>":
+                    # Doppeltes <replace> ignorieren (z.B. nach leerem </search><replace>)
                     continue
-                if stripped == "~~~end~~~":
+                if stripped == "</replace>":
+                    # Optional — ignorieren, auf </edit> warten
+                    continue
+                if stripped == "</edit>":
                     s_count = len(search_lines)
                     r_count = len(replace_lines)
                     diff = r_count - s_count
-                    diff_sign = "+" if diff > 0 else ""
-
                     self._log("PARSER",
-                              f"End Block: {path} | Search: {s_count} lines | Replace: {r_count} lines | Delta: {diff_sign}{diff}",
-                              "yellow")
-
-                    blocks.append(EditBlock(
-                        file_path=path,
-                        search="\n".join(search_lines),
-                        replace="\n".join(replace_lines),
-                    ))
-                    state = IDLE
-                    continue
-                if ">>>>>>> REPLACE" in stripped:
-                    prefix = raw_line.split(">>>>>>> REPLACE")[0]
-                    if prefix.strip():
-                        replace_lines.append(prefix)
-                    continue
-                    # FIX: Inline ~~~end~~~
-                if stripped.endswith("~~~end~~~") and len(stripped) > 9:
-                    prefix = raw_line.split("~~~end~~~")[0]
-                    if prefix.strip():
-                        replace_lines.append(prefix)
-                    # Block fertig
-                    s_count = len(search_lines)
-                    r_count = len(replace_lines)
-                    diff = r_count - s_count
-                    diff_sign = "+" if diff > 0 else ""
-                    self._log("PARSER",
-                              f"End Block: {path} | Search: {s_count} lines | Replace: {r_count} lines | Delta: {diff_sign}{diff}",
+                              f"End Block: {path} | S:{s_count} R:{r_count} Δ:{'+' if diff>=0 else ''}{diff}",
                               "yellow")
                     blocks.append(EditBlock(
                         file_path=path,
@@ -2073,34 +2095,39 @@ class CoderAgent:
                     continue
                 replace_lines.append(raw_line)
 
-        # === FIX: Unvollständigen Block retten statt still droppen ===
+        # === Truncation Recovery: Unvollständigen Block retten ===
         if state != IDLE and path:
             is_new_file = not "\n".join(search_lines).strip()
-            has_content = bool(replace_lines)
+            has_replace  = bool(replace_lines)
+            has_search   = bool(search_lines)
 
-            if is_new_file and has_content:
-                # Neuer File mit Content → retten (häufigstes Truncation-Szenario)
+            if is_new_file and has_replace:
+                # Neue Datei, Content vorhanden aber </edit> fehlt → retten
                 self._log("PARSER",
-                          f"⚠ INCOMPLETE new-file block rescued: {path} | {len(replace_lines)} lines (truncated by LLM)",
+                          f"⚠ INCOMPLETE new-file rescued: {path} ({len(replace_lines)} lines, truncated)",
                           "yellow")
                 incomplete.append(EditBlock(
-                    file_path=path,
-                    search="",
-                    replace="\n".join(replace_lines),
-                ))
-            elif state == IN_REPLACE and has_content:
-                # Edit mit SEARCH+REPLACE aber abgebrochen → auch retten
+                    file_path=path, search="", replace="\n".join(replace_lines)))
+
+            elif state == IN_REPLACE and has_replace:
+                # Edit mit SEARCH+REPLACE aber abgeschnitten → retten
                 self._log("PARSER",
-                          f"⚠ INCOMPLETE edit block rescued: {path} | Search: {len(search_lines)} | Replace: {len(replace_lines)} (truncated)",
+                          f"⚠ INCOMPLETE edit rescued: {path} | S:{len(search_lines)} R:{len(replace_lines)} (truncated)",
                           "yellow")
                 incomplete.append(EditBlock(
                     file_path=path,
                     search="\n".join(search_lines),
                     replace="\n".join(replace_lines),
                 ))
+
+            elif state == IN_SEARCH and has_search:
+                # Nur SEARCH vorhanden, kein REPLACE → zu früh abgeschnitten, droppen
+                self._log("PARSER",
+                          f"✗ DROPPED: {path} — nur <search> ohne <replace> (state={state})",
+                          "red")
             else:
                 self._log("PARSER",
-                          f"✗ DROPPED incomplete block: {path} (state={state}, no usable content)",
+                          f"✗ DROPPED: {path} (state={state}, kein verwertbarer Content)",
                           "red")
 
         return blocks, incomplete

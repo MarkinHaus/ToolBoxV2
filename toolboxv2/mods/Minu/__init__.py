@@ -860,6 +860,24 @@ async def stream_updates(
     return Result.sse(stream_generator=event_generator())
 
 
+@export(mod_name=Name, websocket_handler="task_stream")
+def register_task_stream_websocket(app: App, request: RequestData = None):
+    from toolboxv2.utils.workers.interface_registry import get_registry
+    registry = get_registry()
+
+    async def on_message(websocket, data: dict):
+        action = data.get("action")
+        task_id = data.get("task_id")
+
+        if action == "subscribe" and task_id:
+            async def forward(payload: dict):
+                await websocket.send_json({"type": "task_update", "data": payload})
+
+            registry.register_sub(id=f"icli.task.{task_id}", callback=forward)
+            await websocket.send_json({"status": "subscribed", "task_id": task_id})
+
+    return {"on_message": on_message}
+
 # ============================================================================
 # HELPER EXPORTS
 # ============================================================================
