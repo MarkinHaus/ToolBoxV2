@@ -469,7 +469,7 @@ class PersonaRouter:
         Called once per ExecutionEngine lifecycle (lazy, on first execute).
         Only loads entries with confidence >= 0.30.
         """
-        _VFS_PERSONAS = "/.memory/dreamer/personas.json"
+        _VFS_PERSONAS = "/global/.memory/dreamer/personas.json"
         try:
             result = session.vfs_read(_VFS_PERSONAS)
             if not result.get("success"):
@@ -2171,9 +2171,9 @@ BEISPIELE:
         raw_result: str, tool_call_id: str, content_hash: str
     ) -> dict:
         """Szenario C: Sofort ins VFS schreiben, nur Pointer + Preview in History."""
-        path = f"/.memory/overflow/{ctx.run_id}_{ctx.current_iteration}_{tool_name}.txt"
+        path = f"/.overflow/{ctx.run_id}_{ctx.current_iteration}_{tool_name}.txt"
         try:
-            session.vfs.mkdir("/.memory/overflow", parents=True)
+            session.vfs.mkdir("/.overflow", parents=True)
             session.vfs.write(path, raw_result)
         except Exception as e:
             # Fallback: Truncate wenn VFS fehlschlägt
@@ -2252,9 +2252,9 @@ BEISPIELE:
 
             # Neu offloaden
             step = ctx.working_history[idx].get("tool_call_id", str(idx))
-            path = f"/.memory/archive/{ctx.run_id}_{step}_{name}.txt"
+            path = f"/global/.memory/archive/{ctx.run_id}_{step}_{name}.txt"
             try:
-                session.vfs.mkdir("/.memory/archive", parents=True)
+                session.vfs.mkdir("/global/.memory/archive", parents=True)
                 session.vfs.write(path, content)
                 ctx.offload_hashes[content_hash] = path
                 ctx.working_history[idx]["content"] = (
@@ -2756,7 +2756,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
 
         # 1. Archivierung: Speichere den vollen Verlauf im VFS
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_dir = "/.memory/logs"
+        log_dir = "/global/.memory/logs"
         log_file = f"{log_dir}/{timestamp}_{ctx.run_id}.md"
 
         summary = HistoryCompressor.compress_to_summary(ctx.working_history, ctx.run_id)

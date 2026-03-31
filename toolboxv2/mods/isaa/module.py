@@ -280,6 +280,9 @@ class Tools(MainTool):
             "rget_mode": lambda mode: self.controller.rget(mode),
             # Chain helpers
             "create_chain": self.create_chain,
+            "start_caht": lambda: __import__(
+            "toolboxv2.mods.isaa.isaa_chat", fromlist=["main"]
+        ).main(),
             "run_chain": self.run_chain,
             # Agent export/import
             "save_agent": self.save_agent,
