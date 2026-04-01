@@ -1,0 +1,18 @@
+# /etc/systemd/system/tb-workers.service
+[Unit]
+Description=ToolBoxV2 Worker Manager
+After=network.target nginx.service
+
+[Service]
+Type=simple
+User=www-data
+Environment=ADMIN_UI_PASSWORD=dein_passwort
+Environment=CLUSTER_SECRET=dein_cluster_secret
+ExecStartPre=tb workers nginx-check
+ExecStart=tb workers start --no-ui
+ExecStop=tb workers stop
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

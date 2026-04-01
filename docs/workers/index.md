@@ -36,6 +36,8 @@ cd toolboxv2/utils/workers
 python cli_worker_manager.py start
 ```
 
+[USAGE INFOS](../core/workers.md)
+
 ### Development Mode (no Nginx)
 
 ```bash
