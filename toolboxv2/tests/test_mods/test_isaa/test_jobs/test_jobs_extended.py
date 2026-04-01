@@ -135,7 +135,7 @@ class TestFromDictDoesNotMutate(unittest.TestCase):
     def test_from_dict_called_twice_same_dict(self):
         raw = {
             "job_id": "j2", "name": "N", "agent_name": "a", "query": "q",
-            "trigger": {"at_datetime": "2030-01-01T00:00:00Z"},"trigger_type": "on_time",
+            "trigger": {"at_datetime": "2030-01-01T00:00:00Z","trigger_type": "on_time"},
         }
         j1 = JobDefinition.from_dict(raw)
         j2 = JobDefinition.from_dict(raw)  # must not raise or lose trigger data
@@ -257,43 +257,39 @@ class TestOnAgentIdleEvaluator(AsyncTestCase):
         """No activity recorded → _last_activity is empty → no baseline → False."""
         ev = OnAgentIdleEvaluator()
         job = self._idle_job()
-        # Force the check interval to pass
-        ev._last_check = 0.0
+        ev._last_check = {}
         result = self.async_run(ev.evaluate(job))
-        # Without activity record the evaluator should return False
-        # (agent hasn't had *any* runs, so we can't say it went idle)
         self.assertFalse(result)
 
     def test_fires_when_agent_idle_long_enough(self):
         ev = OnAgentIdleEvaluator()
         job = self._idle_job(idle_seconds=30)
-        ev._last_check = 0.0
-        # Simulate last activity 120 seconds ago
+        ev._last_check = {}
         ev._last_activity["agent_x"] = time.time() - 120
         self.assertTrue(self.async_run(ev.evaluate(job)))
 
     def test_does_not_fire_when_active_recently(self):
         ev = OnAgentIdleEvaluator()
         job = self._idle_job(idle_seconds=300)
-        ev._last_check = 0.0
-        ev._last_activity["agent_x"] = time.time() - 10  # only 10s ago
+        ev._last_check = {}
+        ev._last_activity["agent_x"] = time.time() - 10
         self.assertFalse(self.async_run(ev.evaluate(job)))
 
     def test_throttle_prevents_rapid_checks(self):
         ev = OnAgentIdleEvaluator()
         job = self._idle_job(idle_seconds=0)
         ev._last_activity["agent_x"] = time.time() - 9999
-        # First call resets _last_check
-        ev._last_check = 0.0
+        # First call consumes the free slot for this job_id
+        ev._last_check = {}
         self.async_run(ev.evaluate(job))
-        # Immediately again — throttle should block re-evaluation
+        # Immediately again — per-job throttle blocks re-evaluation
         result2 = self.async_run(ev.evaluate(job))
         self.assertFalse(result2)
 
     def test_mark_activity_updates_timestamp(self):
         ev = OnAgentIdleEvaluator()
         before = time.time()
-        ev.mark_activity("agent_x")
+        ev.record_activity("agent_x")
         after = time.time()
         ts = ev._last_activity.get("agent_x", 0)
         self.assertGreaterEqual(ts, before)
@@ -302,14 +298,13 @@ class TestOnAgentIdleEvaluator(AsyncTestCase):
     def test_mark_activity_resets_idle_state(self):
         ev = OnAgentIdleEvaluator()
         job = self._idle_job(idle_seconds=10)
-        ev._last_check = 0.0
-        # Set old activity → should fire
+        ev._last_check = {}
         ev._last_activity["agent_x"] = time.time() - 9999
         self.assertTrue(self.async_run(ev.evaluate(job)))
 
-        # Now mark fresh activity → should no longer fire
-        ev.mark_activity("agent_x")
-        ev._last_check = 0.0
+        # Now record fresh activity → should no longer fire
+        ev.record_activity("agent_x")
+        ev._last_check = {}
         self.assertFalse(self.async_run(ev.evaluate(job)))
 
     def test_setup_and_teardown_do_not_raise(self):
@@ -319,11 +314,22 @@ class TestOnAgentIdleEvaluator(AsyncTestCase):
         self.async_run(ev.setup(job, s))
         self.async_run(ev.teardown(job))
 
+    def test_teardown_clears_per_job_check_entry(self):
+        """teardown() muss den job_id-Key aus _last_check entfernen."""
+        ev = OnAgentIdleEvaluator()
+        s = _make_scheduler()
+        job = self._idle_job("ji_td")
+        self.async_run(ev.setup(job, s))
+        # Einen Check-Timestamp eintragen
+        ev._last_check["ji_td"] = time.time()
+        self.async_run(ev.teardown(job))
+        self.assertNotIn("ji_td", ev._last_check)
+
     def test_multiple_agents_tracked_independently(self):
         """
-        BUG-PROBE: _last_check is instance-level. If two jobs with different
-        agents are evaluated in the same 30s window, only the first gets a
-        real check.  This test documents the current behavior.
+        Nach BUG-D Fix: _last_check ist pro Job-ID.
+        Beide Jobs mit verschiedenen Agenten werden im selben Tick
+        korrekt ausgewertet — keiner blockiert den anderen.
         """
         ev = OnAgentIdleEvaluator()
         job_a = JobDefinition(
@@ -336,20 +342,38 @@ class TestOnAgentIdleEvaluator(AsyncTestCase):
         )
         ev._last_activity["agent_a"] = time.time() - 9999
         ev._last_activity["agent_b"] = time.time() - 9999
-        ev._last_check = 0.0
+        ev._last_check = {}
 
         result_a = self.async_run(ev.evaluate(job_a))
-        # _last_check is now recent → job_b check will be throttled
         result_b = self.async_run(ev.evaluate(job_b))
 
-        # Document: at least job_a should fire; job_b depends on throttle
+        # Nach BUG-D Fix: beide Jobs haben eigene _last_check-Einträge
+        # → kein gegenseitiges Blockieren mehr
         self.assertTrue(result_a)
-        # NOTE: result_b is False due to shared _last_check throttle — this is
-        # the documented behavior (potential starvation for multi-agent setups).
-        self.assertFalse(result_b,
-            "Shared _last_check causes second agent to be skipped — known limitation")
+        self.assertTrue(result_b, "BUG-D gefixt: job_b hat eigenen Throttle-Slot")
 
+    def test_same_agent_two_jobs_throttled_independently(self):
+        """
+        Zwei Jobs die denselben Agenten überwachen haben trotzdem
+        getrennte Throttles — kein Job blockiert den anderen.
+        """
+        ev = OnAgentIdleEvaluator()
+        job_1 = JobDefinition(
+            job_id="j1", name="J1", agent_name="shared_agent", query="q",
+            trigger=TriggerConfig(trigger_type="on_agent_idle", agent_idle_seconds=10),
+        )
+        job_2 = JobDefinition(
+            job_id="j2", name="J2", agent_name="shared_agent", query="q",
+            trigger=TriggerConfig(trigger_type="on_agent_idle", agent_idle_seconds=10),
+        )
+        ev._last_activity["shared_agent"] = time.time() - 9999
+        ev._last_check = {}
 
+        result_1 = self.async_run(ev.evaluate(job_1))
+        result_2 = self.async_run(ev.evaluate(job_2))
+
+        self.assertTrue(result_1)
+        self.assertTrue(result_2)
 # =============================================================================
 # OnWebhookEvaluator — zero existing coverage
 # =============================================================================

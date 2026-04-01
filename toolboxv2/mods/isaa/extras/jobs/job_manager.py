@@ -112,9 +112,9 @@ class JobDefinition:
 
     @classmethod
     def from_dict(cls, d: dict) -> JobDefinition:
+        d = dict(d)
         trigger_data = d.pop("trigger", {})
         d.pop("_last_fired_ts", None)
-        # Filter unknown fields
         valid = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
         valid["trigger"] = TriggerConfig.from_dict(trigger_data)
         return cls(**valid)
@@ -233,7 +233,11 @@ class OnCronEvaluator:
             return False
         try:
             now = datetime.now(timezone.utc)
-            base = datetime.fromisoformat(job.last_run_at) if job.last_run_at else now.replace(hour=0, minute=0, second=0)
+            base = (
+                datetime.fromisoformat(job.last_run_at)
+                if job.last_run_at
+                else now.replace(hour=0, minute=0, second=0, microsecond=0)  # FIX BUG-C
+            )
             if base.tzinfo is None:
                 base = base.replace(tzinfo=timezone.utc)
             cron = croniter(job.trigger.cron_expression, base)
@@ -317,7 +321,7 @@ class OnNetworkEvaluator:
             return False
         self._last_check = now
 
-        is_online = await asyncio.get_event_loop().run_in_executor(None, self._check_network)
+        is_online = await asyncio.get_running_loop().run_in_executor(None, self._check_network)
 
         if self._was_online is not None and not self._was_online and is_online:
             self._was_online = is_online
@@ -418,7 +422,7 @@ class OnSystemIdleEvaluator:
         self._last_check = now
 
         threshold = job.trigger.idle_seconds or 300
-        idle_time = await asyncio.get_event_loop().run_in_executor(None, self._get_idle_time)
+        idle_time = await asyncio.get_running_loop().run_in_executor(None, self._get_idle_time)
         return idle_time >= threshold
 
     async def teardown(self, job: JobDefinition) -> None:
@@ -483,6 +487,11 @@ class OnSystemShutdownEvaluator:
         self._registered = False
 
     async def setup(self, job: JobDefinition, scheduler: JobScheduler) -> None:
+        if not hasattr(self, '_job_ids'):
+            self._job_ids: set[str] = set()
+
+        self._job_ids.add(job.job_id)
+
         if not self._registered:
             self._registered = True
             evaluator_ref = self
@@ -493,7 +502,6 @@ class OnSystemShutdownEvaluator:
 
             atexit.register(_on_shutdown)
 
-            # SIGTERM / SIGINT
             for sig in (signal.SIGTERM, signal.SIGINT):
                 try:
                     original = signal.getsignal(sig)
@@ -506,10 +514,6 @@ class OnSystemShutdownEvaluator:
                     signal.signal(sig, _handler)
                 except (OSError, ValueError):
                     pass
-
-        if not hasattr(self, '_job_ids'):
-            self._job_ids: set[str] = set()
-        self._job_ids.add(job.job_id)
 
     async def evaluate(self, job: JobDefinition) -> bool:
         if job.job_id in self._pending:
@@ -545,6 +549,31 @@ class OnWebhookEvaluator:
         """Called externally when a webhook is received."""
         self._pending.add(job_id)
 
+
+class OnSystemBootEvaluator:
+    """
+    Fires once when the scheduler starts (i.e., the system just booted or
+    the CLI was relaunched after the OS scheduler woke it).
+    For persistent/headless jobs the headless_runner handles it directly;
+    this evaluator handles the in-process case by firing on the first tick.
+    """
+
+    def __init__(self):
+        self._fired: set[str] = set()
+
+    async def setup(self, job: JobDefinition, scheduler: JobScheduler) -> None:
+        pass
+
+    async def evaluate(self, job: JobDefinition) -> bool:
+        # FIX BUG-B: Fire once per scheduler start, not based on at_datetime
+        if job.job_id not in self._fired:
+            self._fired.add(job.job_id)
+            return True
+        return False
+
+    async def teardown(self, job: JobDefinition) -> None:
+        self._fired.discard(job.job_id)
+
 class OnDreamEventEvaluator:
     """Fires on dream lifecycle events. Triggered programmatically by Dreamer."""
 
@@ -574,18 +603,23 @@ class OnDreamEventEvaluator:
 
     def notify(self, event_type: str, all_jobs: list[JobDefinition]):
         """Called by Dreamer when a dream event occurs."""
+        if event_type not in self._pending:
+            _log.debug("OnDreamEventEvaluator.notify: unknown event_type %r — ignored", event_type)
+            return
         for job in all_jobs:
             if job.status == "active" and job.trigger.trigger_type == event_type:
-                self._pending.setdefault(event_type, set()).add(job.job_id)
+                self._pending[event_type].add(job.job_id)
 
 
 class OnAgentIdleEvaluator:
     """Fires when agent has had no execution runs for N seconds.
     Perfect trigger for auto-dreaming."""
 
+    _CHECK_INTERVAL: float = 30.0
+
     def __init__(self):
         self._last_activity: dict[str, float] = {}  # agent_name -> epoch
-        self._last_check: float = 0.0
+        self._last_check: dict[str, float] = {}  # job_id -> epoch
 
     async def setup(self, job: JobDefinition, scheduler: JobScheduler) -> None:
         pass
@@ -593,10 +627,10 @@ class OnAgentIdleEvaluator:
     async def evaluate(self, job: JobDefinition) -> bool:
         import time
         now = time.time()
-        # Throttle checks to every 30s
-        if now - self._last_check < 30.0:
+        # FIX BUG-D: Throttle pro Job-ID, nicht global
+        if now - self._last_check.get(job.job_id, 0.0) < self._CHECK_INTERVAL:
             return False
-        self._last_check = now
+        self._last_check[job.job_id] = now
 
         threshold = job.trigger.agent_idle_seconds or job.trigger.idle_seconds or 600
         last = self._last_activity.get(job.agent_name, 0.0)
@@ -605,7 +639,7 @@ class OnAgentIdleEvaluator:
         return False
 
     async def teardown(self, job: JobDefinition) -> None:
-        pass
+        self._last_check.pop(job.job_id, None)
 
     def record_activity(self, agent_name: str):
         """Called by ExecutionEngine after every run to reset idle timer."""
@@ -677,7 +711,9 @@ class JobScheduler:
         self.trigger_registry.register("on_file_changed", self._file_eval)
         self.trigger_registry.register("on_system_idle", self._idle_eval)
         self.trigger_registry.register("on_system_shutdown", self._shutdown_eval)
-        self.trigger_registry.register("on_system_boot", OnTimeEvaluator())  # handled by OS scheduler
+
+        self._boot_eval = OnSystemBootEvaluator()
+        self.trigger_registry.register("on_system_boot", self._boot_eval)
         self.trigger_registry.register("on_webhook_received", self._webhook_eval)
 
         # Dream triggers
@@ -724,6 +760,15 @@ class JobScheduler:
                 for jd in data:
                     try:
                         job = JobDefinition.from_dict(jd)
+                        if job.last_run_at:
+                            try:
+                                dt = datetime.fromisoformat(job.last_run_at)
+                                if dt.tzinfo is None:
+                                    dt = dt.replace(tzinfo=timezone.utc)
+                                import calendar
+                                job._last_fired_ts = calendar.timegm(dt.timetuple())
+                            except (ValueError, TypeError):
+                                pass
                         self._jobs[job.job_id] = job
                     except Exception as e:
                         _log.warning("Failed to load job: %s", e)

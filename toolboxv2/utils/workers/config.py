@@ -167,7 +167,7 @@ class NginxConfig:
     def __post_init__(self):
         if self.static_root == "./dist":
             from toolboxv2 import tb_root_dir
-            self.static_root = os.path.join(str(tb_root_dir), self.static_root)
+            self.static_root = os.path.join(str(tb_root_dir), self.static_root[2:])
 
 @dataclass
 class ManagerConfig:

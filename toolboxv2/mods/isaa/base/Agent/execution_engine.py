@@ -1118,7 +1118,7 @@ class ExecutionEngine(SubAgentResumeExtension):
 
         # Active executions for pause/resume
         self._active_executions: Dict[str, ExecutionContext] = {}
-        self._current_session = None
+        self._current_session: 'AgentSessionV2' = None
 
         # Get or create SkillsManager
         if (
@@ -2062,7 +2062,10 @@ BEISPIELE:
         # === STATIC TOOLS ===
         if f_name == "think":
             thought = f_args.get("thought", "")
-            working_history = str(ctx.working_history[-20:])
+            working_history = str(ctx.working_history[-25:])
+            vfs_content = ""
+            if self._current_session is not None:
+                vfs_content = self._current_session.vfs.build_context_string()
             current_user_task = ctx.query
             current_focus = ctx.auto_focus.get_focus_message()
             if current_focus and isinstance(current_focus, dict):
@@ -2085,10 +2088,11 @@ BEISPIELE:
                 {
                     "role": "user",
                     "content": (
-                        f"## Original User Task\n{current_user_task}\n---\n\n"
-                        f"## Current Focus\n{current_focus}\n---\n\n"
-                        f"## Agent's Working History\n{working_history}\n---\n\n"
-                        f"## Agent's Current Thought\n{thought}\n---\n\n"
+                        f"## Original User Task:\n{current_user_task}\n---\n\n"
+                        f"## Current Focus:\n{current_focus}\n---\n\n"
+                        f"## Vfs Content:\n{vfs_content}\n---\n\n"
+                        f"## Agent's Working History:\n{working_history}\n---\n\n"
+                        f"## Agent's Current Thought:\n{thought}\n---\n\n"
                         "Based on the above, provide your situation assessment, tips, hints, and partial solutions."
                     ),
                 },
