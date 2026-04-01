@@ -151,7 +151,7 @@ class NginxConfig:
     ssl_enabled: bool = False
     ssl_certificate: str = ""
     ssl_certificate_key: str = ""
-    static_root: str = "./dist"
+    static_root: str = "./tb_dist"
     static_enabled: bool = True
     rate_limit_enabled: bool = True
     rate_limit_zone: str = "tb_limit"
@@ -163,11 +163,6 @@ class NginxConfig:
     upstream_ws: str = "tb_ws_backend"
     max_http_workers: int = 8
     max_ws_workers: int = 4
-
-    def __post_init__(self):
-        if self.static_root == "./dist":
-            from toolboxv2 import tb_root_dir
-            self.static_root = os.path.join(str(tb_root_dir), self.static_root[2:])
 
 @dataclass
 class ManagerConfig:

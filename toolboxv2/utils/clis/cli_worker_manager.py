@@ -25,6 +25,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import textwrap
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -210,6 +211,14 @@ class SSLManager:
 
 
 class NginxManager:
+    _PROXY_COMMON = (
+        "proxy_http_version 1.1;\n"
+        "            proxy_set_header Connection \"\";\n"
+        "            proxy_set_header Host $host;\n"
+        "            proxy_set_header X-Real-IP $remote_addr;\n"
+        "            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+        "            proxy_set_header X-Forwarded-Proto $scheme;"
+    )
     def __init__(self, config):
         self.config = config.nginx
         self._manager = config.manager
@@ -270,7 +279,7 @@ class NginxManager:
     # =========================================================================
     # NEW: Generate nginx.conf (main config) - minimal, just loads sites
     # =========================================================================
-    def generate_nginx_conf(self) -> str:
+    def __generate_nginx_conf(self) -> str:
         """
         Generate minimal nginx.conf that includes sites-enabled and box-enabled.
         This goes to /etc/nginx/nginx.conf
@@ -424,16 +433,18 @@ http {{
         upstream_ws = getattr(cfg, "upstream_ws", "toolbox_ws")
         server_name = getattr(cfg, "server_name", "_")
         listen_port = getattr(cfg, "listen_port", 80)
-        static_root = getattr(cfg, "static_root", "./dist")
+        static_root = getattr(cfg, "static_root", "/tb_dist")
         rate_zone = getattr(cfg, "rate_limit_zone", "tb_limit")
         rate_burst = getattr(cfg, "rate_limit_burst", 20)
         auth_burst = getattr(cfg, "auth_rate_limit_burst", 10)
         admin_port = getattr(self._manager, "web_ui_port", 9005)
 
-        return f"""# ToolBoxV2 Site Config — DO NOT EDIT MANUALLY
-    # Certbot manages SSL. HTTP block regenerate: tb manager nginx-config --force
-    # Pre-allocated: {max_http_workers} HTTP ports ({base_http_port}-{base_http_port + max_http_workers - 1}), {max_ws_workers} WS ports ({base_ws_port}-{base_ws_port + max_ws_workers - 1})
-    # Offline workers are skipped automatically via passive health check (max_fails=1 fail_timeout=5s)
+        admin_block = self._generate_admin_ui_block(admin_port)
+
+        return f"""# ToolBoxV2 Site Config
+    # Ports pre-allocated: HTTP {base_http_port}-{base_http_port + max_http_workers - 1} | WS {base_ws_port}-{base_ws_port + max_ws_workers - 1}
+    # Offline workers skipped via passive health check (max_fails=1 fail_timeout=5s)
+    # Certbot manages SSL below — DO NOT REMOVE last comment line
 
     upstream {upstream_http} {{
         least_conn;
@@ -456,6 +467,7 @@ http {{
         access_log /var/log/nginx/toolbox_access.log;
         error_log  /var/log/nginx/toolbox_error.log warn;
 
+        proxy_hide_header Server;
         add_header X-Frame-Options "SAMEORIGIN" always;
         add_header X-Content-Type-Options "nosniff" always;
         add_header X-XSS-Protection "1; mode=block" always;
@@ -468,6 +480,7 @@ http {{
         location / {{
             root {static_root};
             try_files $uri $uri/ /index.html;
+
             location ~* \\.(js|css|png|jpg|ico|svg|woff2|ttf|eot)$ {{
                 expires 1h;
                 add_header Cache-Control "public, immutable";
@@ -481,12 +494,7 @@ http {{
 
         location /api/ {{
             proxy_pass http://{upstream_http};
-            proxy_http_version 1.1;
-            proxy_set_header Connection "";
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
+            {self._PROXY_COMMON}
             proxy_set_header Cookie $http_cookie;
             proxy_set_header Authorization $http_authorization;
             proxy_pass_header Set-Cookie;
@@ -518,17 +526,24 @@ http {{
             proxy_send_timeout 3600s;
         }}
 
+        location ~ ^/ws/([^/]+)/([^/]+)$ {{
+            proxy_pass http://{upstream_ws};
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header Cookie $http_cookie;
+            proxy_buffering off;
+            proxy_read_timeout 3600s;
+        }}
+
         location = /validateSession {{
             limit_except POST {{ deny all; }}
             limit_req zone=tb_auth_limit burst={auth_burst} nodelay;
             proxy_pass http://{upstream_http}/validateSession;
-            proxy_http_version 1.1;
-            proxy_set_header Connection "";
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-Proto $scheme;
+            {self._PROXY_COMMON}
             proxy_connect_timeout 10s;
-            proxy_read_timeout 30s;
+            proxy_read_timeout    30s;
         }}
 
         location = /IsValidSession {{
@@ -539,7 +554,36 @@ http {{
             proxy_set_header Host $host;
             proxy_set_header Cookie $http_cookie;
             proxy_connect_timeout 5s;
-            proxy_read_timeout 10s;
+            proxy_read_timeout    10s;
+        }}
+
+        location = /web/logoutS {{
+            limit_except POST {{ deny all; }}
+            limit_req zone=tb_auth_limit burst={auth_burst} nodelay;
+            proxy_pass http://{upstream_http}/web/logoutS;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header Cookie $http_cookie;
+        }}
+
+        location ~ ^/auth/(discord|google)/(url|callback)$ {{
+            limit_req zone=tb_auth_limit burst={auth_burst} nodelay;
+            proxy_pass http://{upstream_http};
+            {self._PROXY_COMMON}
+            proxy_set_header Cookie $http_cookie;
+            proxy_pass_header Set-Cookie;
+            proxy_connect_timeout 15s;
+            proxy_read_timeout    30s;
+        }}
+
+        location = /auth/magic/verify {{
+            limit_except GET {{ deny all; }}
+            limit_req zone=tb_auth_limit burst={auth_burst} nodelay;
+            proxy_pass http://{upstream_http}/auth/magic/verify;
+            {self._PROXY_COMMON}
+            proxy_connect_timeout 10s;
+            proxy_read_timeout    30s;
         }}
 
         location /health {{
@@ -548,12 +592,7 @@ http {{
             proxy_set_header Connection "";
             access_log off;
         }}
-
-        location ^~ /admin/manager/ {{
-            proxy_pass http://127.0.0.1:{admin_port}/;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-        }}
+        {admin_block}
 
         error_page 429 @rate_limited;
         location @rate_limited {{
@@ -563,14 +602,14 @@ http {{
 
         error_page 500 502 503 504 /50x.html;
         location = /50x.html {{
-            root {static_root};
+            root {static_root}/web/assets;
             internal;
         }}
     }}
     # certbot managed SSL block appears below — DO NOT REMOVE THIS LINE
     """
 
-    def _generate_ssl_server_block(
+    def ___generate_ssl_server_block(
         self, ssl_port: int, upstream_http: str, upstream_ws: str,
         server_name: str, static_block: str,
         rate_limit_api_block: str, rate_limit_auth_block: str
@@ -648,7 +687,7 @@ server {{
     # LEGACY: generate_config - now calls generate_site_config
     # Kept for backward compatibility
     # =========================================================================
-    def generate_config(
+    def __generate_config(
         self,
         http_ports: List[int],
         ws_ports: List[int],
@@ -672,18 +711,16 @@ server {{
         Returns:
             Nginx configuration content as string
         """
-        if full_config:
-            # Legacy behavior - full nginx.conf
-            return self._generate_full_config(
-                http_ports, ws_ports, http_sockets, ws_sockets, remote_nodes
-            )
-        else:
-            # New behavior - site config only
-            return self.generate_site_config(
-                http_ports, ws_ports, http_sockets, ws_sockets, remote_nodes
-            )
+        base_http = min(http_ports) if http_ports else self.config.http_worker.port
+        base_ws = min(ws_ports) if ws_ports else self.config.ws_worker.port
+        return self.generate_site_config(
+            max_http_workers=len(http_ports),
+            max_ws_workers=len(ws_ports),
+            base_http_port=base_http,
+            base_ws_port=base_ws,
+        )
 
-    def _generate_full_config(
+    def ___generate_full_config(
         self,
         http_ports: List[int],
         ws_ports: List[int],
@@ -803,7 +840,7 @@ server {{
                 limit_req zone=tb_auth_limit burst={auth_rate_limit_burst} nodelay;"""
 
         static_enabled = getattr(cfg, "static_enabled", True)
-        static_root = getattr(cfg, "static_root", "./dist")
+        static_root = getattr(cfg, "static_root", "/tb_dist")
 
         static_block = ""
         if static_enabled:
@@ -922,7 +959,7 @@ http {{
 }}
 """
 
-    def _generate_auth_endpoints_block(
+    def ___generate_auth_endpoints_block(
         self, upstream_http: str, rate_limit_block: str
     ) -> str:
         """Generate auth endpoint configuration for Custom Auth."""
@@ -1049,7 +1086,7 @@ http {{
             try_files $uri /index.html;
         }}"""
 
-    def _generate_api_endpoints_block(
+    def ___generate_api_endpoints_block(
         self, upstream_http: str, rate_limit_block: str
     ) -> str:
         """Generate API endpoint configuration."""
@@ -1077,7 +1114,7 @@ http {{
 {rate_limit_block}
         }}"""
 
-    def _generate_ws_endpoints_block(
+    def ___generate_ws_endpoints_block(
         self, upstream_ws: str, upstream_http: str
     ) -> str:
         """Generate WebSocket endpoint configuration."""
@@ -1120,68 +1157,32 @@ http {{
         }}"""
 
     def _generate_admin_ui_block(self, web_port: int) -> str:
-        """Generate admin UI block with basic auth."""
-        import os
-
-        pwd = os.environ.get("ADMIN_UI_PASSWORD", "")
-        if not pwd:
-            # Return empty block if no password set
-            return "# Admin UI disabled - set ADMIN_UI_PASSWORD env var"
-
+        """Nur Config-Text — kein I/O, kein Seiteneffekt."""
         if IS_WINDOWS:
-            import bcrypt
-            try:
-                import toolboxv2
-                hashed = bcrypt.hashpw(pwd.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode()
-                admin_htpasswd = toolboxv2.get_app().appdata + "/admin_htpasswd"
-                admin_root = toolboxv2.get_app().appdata + "/admin_ui"
-            except ImportError:
-                return "# Admin UI disabled - toolboxv2 not available"
-            auth_basic = ""
-        else:
-            import crypt
-            hashed = crypt.crypt(pwd, crypt.mksalt(crypt.METHOD_BLOWFISH))
-            admin_htpasswd = "/etc/nginx/admin_htpasswd"
-            admin_root = "/var/lib/toolboxv2/admin_ui"
-            auth_basic = f'auth_basic "Restricted Admin UI";\n            auth_basic_user_file {admin_htpasswd};'
+            return f"""
+            location ^~ /admin/manager/ {{
+                proxy_pass http://127.0.0.1:{web_port}/;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_hide_header Server;
+            }}"""
 
-        # Write htpasswd
-        try:
-            os.makedirs(os.path.dirname(admin_htpasswd), exist_ok=True)
-            with open(admin_htpasswd, "w") as f:
-                f.write(f"admin:{hashed}\n")
-        except Exception as e:
-            logger.warning(f"Could not write htpasswd: {e}")
-
-        os.makedirs(admin_root, exist_ok=True)
-        self._populate_admin_ui(admin_root, manager_port=web_port)
+        htpasswd_path = "/etc/nginx/admin_htpasswd"
+        if not os.path.exists(htpasswd_path):
+            logger.warning(f"htpasswd missing at {htpasswd_path} — call write_htpasswd() first")
+            return f"# Admin UI disabled — htpasswd missing (run: tb workers nginx-config --write-htpasswd)"
 
         return f"""
+            location ^~ /admin/manager/ {{
+                auth_basic "Restricted Admin";
+                auth_basic_user_file {htpasswd_path};
+                proxy_pass http://127.0.0.1:{web_port}/;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_hide_header Server;
+            }}"""
 
-        location ^~ /admin/db/ {{
-            {auth_basic}
-            proxy_pass http://127.0.0.1:9000/;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-        }}
-
-        location ^~ /admin/manager/ {{
-            {auth_basic}
-            proxy_pass http://127.0.0.1:{web_port}/;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-        }}
-
-
-        # Admin UI (Basic Auth protected)
-        location /admin/ {{
-            {auth_basic}
-            root {admin_root};
-            try_files $uri $uri/ /admin/index.html;
-        }}
-"""
-
-    def _populate_admin_ui(
+    def ___populate_admin_ui(
         self,
         admin_root: str,
         minio_port: int = 9000,
@@ -1229,9 +1230,160 @@ http {{
             f.write(html_content)
         print(f"✓ Admin UI created at {admin_index}")
 
+
+    def _check_nginx_includes(self) -> Dict[str, bool]:
+        """
+        Liest nginx.conf readonly — prüft ob box-enabled include vorhanden.
+        Schreibt NICHTS. Gibt zurück was fehlt.
+        """
+        conf_path = Path(DEFAULT_CONF_PATH)
+        if not conf_path.exists():
+            return {"conf_exists": False, "box_enabled": False}
+        try:
+            content = conf_path.read_text()
+            return {
+                "conf_exists": True,
+                "box_enabled": "box-enabled" in content,
+            }
+        except PermissionError:
+            logger.warning(f"Cannot read {conf_path} — permission denied")
+            return {"conf_exists": True, "box_enabled": False}
+
+    def patch_nginx_conf_include(self) -> bool:
+        """
+        NON-INVASIV: Fügt NUR die fehlende include-Zeile in den http-Block ein.
+        Schreibt nie die gesamte nginx.conf neu.
+        Bricht ab wenn http-Block nicht eindeutig erkennbar.
+        """
+        if IS_WINDOWS:
+            logger.warning("patch_nginx_conf_include not supported on Windows")
+            return False
+
+        conf_path = Path(DEFAULT_CONF_PATH)
+        if not conf_path.exists():
+            logger.error(f"nginx.conf not found at {conf_path}")
+            return False
+
+        try:
+            content = conf_path.read_text()
+        except PermissionError:
+            logger.error(f"Cannot read {conf_path} — run with sudo")
+            return False
+
+        if "box-enabled" in content:
+            logger.info("include box-enabled already present — nothing to do")
+            return True
+
+        # Suche das letzte '}' im http-Block — hänge include davor
+        # Strategie: letztes '}' das auf eigener Zeile steht
+        lines = content.splitlines()
+        insert_at = None
+        for i in range(len(lines) - 1, -1, -1):
+            if lines[i].strip() == "}":
+                insert_at = i
+                break
+
+        if insert_at is None:
+            logger.error("Could not locate closing brace of http block — aborting patch")
+            return False
+
+        include_lines = [
+            "",
+            "    # ToolBoxV2 box configs — managed by cli_worker_manager",
+            "    include /etc/nginx/box-enabled/*;",
+        ]
+        for j, line in enumerate(include_lines):
+            lines.insert(insert_at + j, line)
+
+        new_content = "\n".join(lines) + "\n"
+
+        # Backup vor dem Schreiben
+        backup_path = conf_path.with_suffix(".conf.bak")
+        try:
+            backup_path.write_text(content)
+            logger.info(f"nginx.conf backup → {backup_path}")
+        except Exception as e:
+            logger.warning(f"Could not write backup: {e}")
+
+        try:
+            conf_path.write_text(new_content)
+            logger.info(f"Patched {conf_path} — include box-enabled added")
+            return True
+        except PermissionError:
+            logger.error("Cannot write nginx.conf — run with sudo")
+            return False
+        except Exception as e:
+            logger.error(f"Patch failed: {e}")
+            return False
+
+    def ensure_nginx_ready(self) -> bool:
+        """
+        Einmalig beim Start: prüft Include, warnt oder patcht.
+        Aufgerufen von start_all() und nginx-init CLI.
+        Gibt False zurück wenn nginx nicht bereit ist.
+        """
+        checks = self._check_nginx_includes()
+
+        if not checks["conf_exists"]:
+            logger.error(
+                f"nginx.conf not found at {DEFAULT_CONF_PATH}. "
+                "Install nginx first: sudo apt install nginx"
+            )
+            return False
+
+        if not checks["box_enabled"]:
+            logger.warning(
+                "nginx.conf missing: include /etc/nginx/box-enabled/*\n"
+                "  Auto-patching... (backup saved as nginx.conf.bak)\n"
+                "  To do this manually run: tb workers nginx-init"
+            )
+            if not self.patch_nginx_conf_include():
+                logger.error(
+                    "Auto-patch failed. Add manually to http block in nginx.conf:\n"
+                    "    include /etc/nginx/box-enabled/*;"
+                )
+                return False
+
+        return True
+
     # =========================================================================
     # Write methods
     # =========================================================================
+    def write_htpasswd(self) -> Optional[str]:
+        """Schreibt htpasswd-Datei. Kein Seiteneffekt in Config-Generatoren."""
+        pwd = os.environ.get("ADMIN_UI_PASSWORD", "")
+        if not pwd:
+            logger.warning("ADMIN_UI_PASSWORD not set — admin UI will be disabled")
+            return None
+        htpasswd_path = "/etc/nginx/admin_htpasswd"
+        if IS_WINDOWS:
+            return None
+        try:
+            result = subprocess.run(
+                ["htpasswd", "-cb", htpasswd_path, "admin", pwd],
+                capture_output=True, check=True
+            )
+            logger.info(f"htpasswd written to {htpasswd_path}")
+            return htpasswd_path
+        except FileNotFoundError:
+            # htpasswd not available — manual fallback via openssl
+            try:
+                r = subprocess.run(
+                    ["openssl", "passwd", "-apr1", pwd],
+                    capture_output=True, text=True, check=True
+                )
+                hashed = r.stdout.strip()
+                os.makedirs(os.path.dirname(htpasswd_path), exist_ok=True)
+                with open(htpasswd_path, "w") as f:
+                    f.write(f"admin:{hashed}\n")
+                logger.info(f"htpasswd written via openssl to {htpasswd_path}")
+                return htpasswd_path
+            except Exception as e:
+                logger.error(f"write_htpasswd failed: {e}")
+                return None
+        except subprocess.CalledProcessError as e:
+            logger.error(f"htpasswd error: {e.stderr}")
+            return None
 
     def write_site_config(
         self,
@@ -1242,6 +1394,7 @@ http {{
         remote_nodes: List[Tuple[str, int]] = None,
         site_name: str = "toolbox",
         force: bool = False,
+        write_htpasswd: bool = True,
     ) -> bool:
         available_dir = Path(DEFAULT_BOX_AVAILABLE)
         enabled_dir = Path(DEFAULT_BOX_ENABLED)
@@ -1249,9 +1402,12 @@ http {{
         symlink_path = enabled_dir / site_name
 
         if config_path.exists() and not force:
-            logger.info(f"Site config exists at {config_path} — skipping (use force=True to overwrite)")
+            logger.info(f"Site config exists at {config_path} — skipping (use force=True)")
             self._ensure_symlink(config_path, symlink_path)
             return True
+
+        if write_htpasswd and not IS_WINDOWS:
+            self.write_htpasswd()
 
         content = self.generate_site_config(
             max_http_workers, max_ws_workers,
@@ -1277,7 +1433,7 @@ http {{
         os.symlink(src, dst)
         logger.info(f"Symlink created: {dst} → {src}")
 
-    def enable_site(self, site_name: str = "toolbox") -> bool:
+    def __enable_site(self, site_name: str = "toolbox") -> bool:
         """Create symlink in sites-enabled or box-enabled"""
         sites_available = getattr(self.config, 'sites_available_path', DEFAULT_BOX_AVAILABLE)
         sites_enabled = getattr(self.config, 'sites_enabled_path', DEFAULT_BOX_ENABLED)
@@ -1346,46 +1502,6 @@ http {{
         if IS_WINDOWS:
             return "Nginx on Windows uses select() - expect ~10x slower than Linux"
         return None
-
-
-# =============================================================================
-# Usage Example
-# =============================================================================
-if __name__ == "__main__":
-    # Example config object
-    class Config:
-        class Nginx:
-            server_name = "simplecore.app"
-            listen_port = 80
-            ssl_enabled = False
-            rate_limit_enabled = True
-            static_enabled = True
-            static_root = "/var/www/simplecore/dist"
-
-        class Manager:
-            web_ui_port = 9002
-
-        nginx = Nginx()
-        manager = Manager()
-
-
-    config = Config()
-    manager = NginxManager(config)
-
-    # Generate and print site config
-    site_config = manager.generate_site_config(
-        http_ports=[8000, 8001, 8002],
-        ws_ports=[8100, 8101]
-    )
-    print("=== Site Config (for /etc/nginx/box-available/toolbox) ===")
-    print(site_config)
-
-    print("\n" + "=" * 60 + "\n")
-
-    # Generate and print main nginx.conf
-    nginx_conf = manager.generate_nginx_conf()
-    print("=== Main nginx.conf ===")
-    print(nginx_conf)
 
 # ============================================================================
 # Metrics Collector - HTTP + ZMQ based
@@ -1928,8 +2044,6 @@ class WorkerManager:
 
     def start_all(self) -> bool:
         logger.info("Starting all services...")
-        if IS_WINDOWS:
-            logger.warning("Windows: Nginx performance limited (~10x slower than Linux)")
 
         if not self.start_broker():
             return False
@@ -1938,16 +2052,18 @@ class WorkerManager:
             self.start_http_worker()
         self.start_ws_worker()
 
-        # Start metrics collector and health checker AFTER workers are created
         self._metrics_collector.start(self._workers)
         self._health_checker.start(self._workers)
         self._cluster.start()
 
         if self.config.nginx.enabled:
-            self._write_initial_nginx_config(force=False)  # no-op wenn file existiert
+            self._write_initial_nginx_config(force=False)
             if not self._nginx.is_installed():
                 self._nginx.install()
-            if self._nginx.test_config():
+            # NEU: include-Check vor reload
+            if not self._nginx.ensure_nginx_ready():
+                logger.warning("nginx not fully configured — workers running but nginx may not route traffic")
+            elif self._nginx.test_config():
                 self._nginx.reload()
 
         self._running = True
@@ -2009,7 +2125,8 @@ class WorkerManager:
 
         if target > len(current):
             for _ in range(target - len(current)):
-                info = self.start_http_worker() if wtype == WorkerType.HTTP else self.start_ws_worker()
+                info = (self.start_http_worker() if wtype == WorkerType.HTTP
+                        else self.start_ws_worker())
                 if info:
                     started.append(info.worker_id)
         elif target < len(current):
@@ -2018,10 +2135,9 @@ class WorkerManager:
                 stopped.append(w.worker_id)
 
         if started or stopped:
-            self._update_nginx_config()
             self._health_checker.update_workers(self._workers)
             self._metrics_collector.update_workers(self._workers)
-            self._nginx.reload()
+            self._update_nginx_config()  # enthält reload — kein zweites reload mehr
 
         return {"status": "ok", "started": started, "stopped": stopped}
 
@@ -2145,7 +2261,16 @@ class ManagerWebUI(BaseHTTPRequestHandler):
     def _json(self, data: Any, status: int = 200):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = self.headers.get("Origin", "")
+        allowed = {
+            "http://localhost",
+            f"http://127.0.0.1",
+            f"https://simplecore.app",
+            f"http://127.0.0.1:{self.server.server_address[1]}",
+        }
+        if origin in allowed:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.end_headers()
         self.wfile.write(json.dumps(data, default=str).encode())
 
@@ -2240,82 +2365,275 @@ def main():
         from multiprocessing import freeze_support
         freeze_support()
 
-    parser = argparse.ArgumentParser(description="ToolBoxV2 Worker Manager", prog="tb workers")
-    parser.add_argument("command", nargs="?", default="start", choices=["start", "stop", "restart", "status", "update", "nginx-config", "nginx-reload", "worker-start", "worker-stop", "cluster-join", "debug"])
-    parser.add_argument("-c", "--config", help="Config file")
-    parser.add_argument("--force", action="store_true", help="Overwrite existing nginx config")
-    parser.add_argument("-w", "--worker-id")
-    parser.add_argument("-t", "--type", choices=["http", "ws"], default="http")
-    parser.add_argument("--host")
-    parser.add_argument("--port", type=int)
-    parser.add_argument("--secret")
-    parser.add_argument("--no-ui", action="store_true")
-    parser.add_argument("-v", "--verbose", action="store_true")
+    parser = argparse.ArgumentParser(
+        description="ToolBoxV2 Worker Manager",
+        prog="tb workers",
+        epilog=textwrap.dedent("""tb workers start             Startet alle Services + Web UI
+tb workers stop              Stoppt alles
+tb workers restart           stop + start
+tb workers status            JSON Status-Dump
+tb workers update            Rolling Update aller HTTP Worker
+
+tb workers nginx-init        Patcht nginx.conf include (einmalig, non-invasiv)
+tb workers nginx-check       Readonly Status aller nginx Pfade
+tb workers nginx-check --patch   ... + patcht include wenn fehlend
+tb workers nginx-config      Schreibt box-available/toolbox
+tb workers nginx-config --force          Überschreibt existierende Config
+tb workers nginx-config --write-htpasswd Schreibt htpasswd neu (ADMIN_UI_PASSWORD)
+tb workers nginx-reload      test + reload
+
+tb workers worker-start -t http   Startet einzelnen HTTP Worker
+tb workers worker-start -t ws     Startet einzelnen WS Worker
+tb workers worker-stop -w <id>    Stoppt Worker by ID
+
+tb workers cluster-join --host H --port P --secret S
+
+tb workers debug             Startet Debug-Server auf dist/""")
+    )
+    parser.add_argument(
+        "command",
+        nargs="?",
+        default="start",
+        choices=[
+            "start",
+            "stop",
+            "restart",
+            "status",
+            "update",
+            "nginx-init",       # NEU: prüft/patcht nginx.conf include
+            "nginx-config",
+            "nginx-reload",
+            "nginx-check",      # NEU: readonly status-check, kein schreiben
+            "worker-start",
+            "worker-stop",
+            "cluster-join",
+            "debug",
+        ],
+    )
+    parser.add_argument("-c", "--config",     help="Config file path")
+    parser.add_argument("--force",            action="store_true",
+                        help="nginx-config: Overwrite existing site config")
+    parser.add_argument("--write-htpasswd",   action="store_true",
+                        help="nginx-config: (Re)write htpasswd from ADMIN_UI_PASSWORD")
+    parser.add_argument("--patch",            action="store_true",
+                        help="nginx-check: Patch nginx.conf include if missing")
+    parser.add_argument("-w", "--worker-id",  help="worker-start/stop: Worker ID")
+    parser.add_argument("-t", "--type",       choices=["http", "ws"], default="http",
+                        help="worker-start: Worker type")
+    parser.add_argument("--host",             help="cluster-join: Remote host")
+    parser.add_argument("--port",             type=int,
+                        help="cluster-join: Remote port")
+    parser.add_argument("--secret",           help="cluster-join: Cluster secret")
+    parser.add_argument("--no-ui",            action="store_true",
+                        help="start: Disable web UI")
+    parser.add_argument("-v", "--verbose",    action="store_true")
 
     args = parser.parse_args()
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 
     from toolboxv2.utils.workers.config import load_config
-    config = load_config(args.config)
-    print(config.nginx.static_root)
+    config  = load_config(args.config)
     manager = WorkerManager(config)
 
+    # -------------------------------------------------------------------------
     if args.command == "start":
         if not manager.start_all():
             sys.exit(1)
         if config.manager.web_ui_enabled and not args.no_ui:
-            Thread(target=run_web_ui, args=(manager, config.manager.web_ui_host, config.manager.web_ui_port), daemon=True).start()
+            Thread(
+                target=run_web_ui,
+                args=(manager, config.manager.web_ui_host, config.manager.web_ui_port),
+                daemon=True,
+            ).start()
         try:
             while manager._running:
                 time.sleep(1)
         except KeyboardInterrupt:
             manager.stop_all()
+
+    # -------------------------------------------------------------------------
     elif args.command == "stop":
         manager.stop_all()
+
+    # -------------------------------------------------------------------------
     elif args.command == "restart":
         manager.stop_all()
         time.sleep(2)
         manager.start_all()
+
+    # -------------------------------------------------------------------------
     elif args.command == "status":
         print(json.dumps(manager.get_status(), indent=2))
+
+    # -------------------------------------------------------------------------
     elif args.command == "update":
         manager.rolling_update()
+
+    # -------------------------------------------------------------------------
+    elif args.command == "nginx-init":
+        """
+        Prüft ob nginx.conf das box-enabled include enthält.
+        Patcht minimal wenn nicht — schreibt NIEMALS die gesamte nginx.conf neu.
+        """
+        checks = manager._nginx._check_nginx_includes()
+        if not checks["conf_exists"]:
+            print(f"✗ nginx.conf not found at {DEFAULT_CONF_PATH}")
+            sys.exit(1)
+        if checks["box_enabled"]:
+            print("✓ nginx.conf already contains include box-enabled — nothing to do")
+            sys.exit(0)
+        print(f"  nginx.conf at {DEFAULT_CONF_PATH} missing include box-enabled")
+        print("  Patching (backup → nginx.conf.bak)...")
+        if manager._nginx.patch_nginx_conf_include():
+            print("✓ Patched successfully")
+            if manager._nginx.test_config():
+                manager._nginx.reload()
+                print("✓ nginx reloaded")
+            else:
+                print("✗ nginx config test failed after patch — check manually")
+                sys.exit(1)
+        else:
+            print("✗ Patch failed — add manually to http block in nginx.conf:")
+            print("      include /etc/nginx/box-enabled/*;")
+            sys.exit(1)
+
+    # -------------------------------------------------------------------------
+    elif args.command == "nginx-check":
+        """
+        Readonly status-check — schreibt nichts.
+        Mit --patch: patcht include falls fehlend.
+        """
+        checks = manager._nginx._check_nginx_includes()
+        print(f"nginx.conf path:     {DEFAULT_CONF_PATH}")
+        print(f"conf exists:         {'✓' if checks['conf_exists'] else '✗'}")
+        print(f"box-enabled include: {'✓' if checks['box_enabled'] else '✗ MISSING'}")
+        print(f"box-available dir:   {'✓' if Path(DEFAULT_BOX_AVAILABLE).exists() else '✗'}")
+        print(f"box-enabled dir:     {'✓' if Path(DEFAULT_BOX_ENABLED).exists() else '✗'}")
+        site_path = Path(DEFAULT_BOX_AVAILABLE) / "toolbox"
+        symlink_path = Path(DEFAULT_BOX_ENABLED) / "toolbox"
+        print(f"toolbox config:      {'✓' if site_path.exists() else '✗'}")
+        print(f"toolbox symlink:     {'✓' if symlink_path.exists() else '✗'}")
+        print(f"nginx installed:     {'✓' if manager._nginx.is_installed() else '✗'}")
+        print(f"nginx version:       {manager._nginx.get_version() or 'n/a'}")
+        htpasswd = Path("/etc/nginx/admin_htpasswd")
+        print(f"htpasswd:            {'✓' if htpasswd.exists() else '✗ (run nginx-config --write-htpasswd)'}")
+
+        if not checks["box_enabled"] and getattr(args, "patch", False):
+            print("\n  --patch set: patching nginx.conf...")
+            if manager._nginx.patch_nginx_conf_include():
+                print("✓ Done")
+            else:
+                sys.exit(1)
+        elif not checks["box_enabled"]:
+            print("\n  Run: tb workers nginx-init   to patch automatically")
+            sys.exit(1)
+
+    # -------------------------------------------------------------------------
+    elif args.command == "nginx-config":
+        if getattr(args, "write_htpasswd", False):
+            path = manager._nginx.write_htpasswd()
+            if path:
+                print(f"✓ htpasswd written to {path}")
+            else:
+                print("✗ htpasswd failed — is ADMIN_UI_PASSWORD set?")
+                sys.exit(1)
+        ok = manager._nginx.write_site_config(
+            max_http_workers=config.http_worker.workers,
+            max_ws_workers=getattr(config.ws_worker, "max_workers", 4),
+            base_http_port=config.http_worker.port,
+            base_ws_port=config.ws_worker.port,
+            site_name="toolbox",
+            force=getattr(args, "force", False),
+            write_htpasswd=False,  # bereits oben erledigt wenn --write-htpasswd
+        )
+        if ok:
+            print(f"✓ Site config written (force={args.force})")
+            if manager._nginx.test_config():
+                print("✓ nginx config test passed")
+            else:
+                print("✗ nginx config test failed")
+                sys.exit(1)
+        else:
+            print("✗ Failed — check logs")
+            sys.exit(1)
+
+    # -------------------------------------------------------------------------
+    elif args.command == "nginx-reload":
+        if manager._nginx.test_config():
+            if manager._nginx.reload():
+                print("✓ nginx reloaded")
+            else:
+                print("✗ reload failed")
+                sys.exit(1)
+        else:
+            print("✗ config test failed — reload aborted")
+            sys.exit(1)
+
+    # -------------------------------------------------------------------------
+    elif args.command == "worker-start":
+        info = (
+            manager.start_http_worker(args.worker_id)
+            if args.type == "http"
+            else manager.start_ws_worker(args.worker_id)
+        )
+        print(json.dumps(info.to_dict() if info else {"error": "failed"}, indent=2))
+
+    # -------------------------------------------------------------------------
+    elif args.command == "worker-stop":
+        manager.stop_worker(args.worker_id)
+
+    # -------------------------------------------------------------------------
+    elif args.command == "cluster-join":
+        if not args.host:
+            print("✗ --host required")
+            sys.exit(1)
+        if manager.add_cluster_node(args.host, args.port or 9000, args.secret):
+            print(f"✓ Joined {args.host}:{args.port or 9000}")
+        else:
+            print("✗ Join failed")
+            sys.exit(1)
+
+    # -------------------------------------------------------------------------
     elif args.command == "debug":
         path = tb_root_dir / "dist"
         if not path.exists():
             os.system("npm run build")
-
         if path.exists():
-            run_debug_server(args.dist, args.port)
+            run_debug_server(path, args.port or 8080)
         else:
-            print(f"not dist path found at {str(path)}")
-    elif args.command == "nginx-config":
-        force = getattr(args, 'force', False)
-        ok = manager._nginx.write_site_config(
-            max_http_workers=config.http_worker.workers,
-            max_ws_workers=getattr(config.ws_worker, 'max_workers', 4),
-            base_http_port=config.http_worker.port,
-            base_ws_port=config.ws_worker.port,
-            site_name="toolbox",
-            force=force,
-        )
-        if ok:
-            print(f"✓ Config written (force={force})")
-        else:
-            print("✗ Failed — check logs")
+            print(f"✗ dist not found at {path}")
             sys.exit(1)
-    elif args.command == "nginx-reload":
-        manager._nginx.test_config() and manager._nginx.reload()
-    elif args.command == "worker-start":
-        info = manager.start_http_worker(args.worker_id) if args.type == "http" else manager.start_ws_worker(args.worker_id)
-        print(json.dumps(info.to_dict() if info else {"error": "failed"}, indent=2))
-    elif args.command == "worker-stop":
-        manager.stop_worker(args.worker_id)
-    elif args.command == "cluster-join":
-        if manager.add_cluster_node(args.host, args.port or 9000, args.secret):
-            print(f"Joined {args.host}:{args.port or 9000}")
-        else:
-            sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+
+"""
+tb workers start             Startet alle Services + Web UI
+tb workers stop              Stoppt alles
+tb workers restart           stop + start
+tb workers status            JSON Status-Dump
+tb workers update            Rolling Update aller HTTP Worker
+
+tb workers nginx-init        Patcht nginx.conf include (einmalig, non-invasiv)
+tb workers nginx-check       Readonly Status aller nginx Pfade
+tb workers nginx-check --patch   ... + patcht include wenn fehlend
+tb workers nginx-config      Schreibt box-available/toolbox
+tb workers nginx-config --force          Überschreibt existierende Config
+tb workers nginx-config --write-htpasswd Schreibt htpasswd neu (ADMIN_UI_PASSWORD)
+tb workers nginx-reload      test + reload
+
+tb workers worker-start -t http   Startet einzelnen HTTP Worker
+tb workers worker-start -t ws     Startet einzelnen WS Worker
+tb workers worker-stop -w <id>    Stoppt Worker by ID
+
+tb workers cluster-join --host H --port P --secret S
+
+tb workers debug             Startet Debug-Server auf dist/"""
 
 
 if __name__ == "__main__":
