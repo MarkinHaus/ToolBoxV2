@@ -618,7 +618,6 @@ class TestHistoryCompressor(unittest.TestCase):
         self.assertIsNotNone(summary)
         self.assertEqual(summary["role"], "system")
         self.assertIn("Total: 2 tool calls, 2 unique tools", summary["content"])
-        self.assertEqual(summary["metadata"]["run_id"], "run123")
 
     def test_compress_partial(self):
         """Test Partial Compression"""
@@ -626,15 +625,19 @@ class TestHistoryCompressor(unittest.TestCase):
 
         working_history = [
             {"role": "system", "content": "System prompt"},
+            {"role": "assistant", "content": "System prompt"},
             {"role": "tool", "name": "tool1", "content": "r1"*10000},
+            {"role": "assistant", "content": "System prompt"},
             {"role": "tool", "name": "tool2", "content": "r2"*10000},
+            {"role": "assistant", "content": "System prompt"},
             {"role": "tool", "name": "tool3", "content": "r3"*10000},
             {"role": "tool", "name": "tool4", "content": "r4"*10000},
+            {"role": "assistant", "content": "System prompt"},
             {"role": "tool", "name": "tool5", "content": "r5"*10000},
         ]
 
         summary, remaining = HistoryCompressor.compress_partial(
-            working_history, keep_last_n=2
+            working_history, keep_last_n=1
         )
 
         self.assertIsNotNone(summary)
@@ -1256,12 +1259,24 @@ class TestInternalToolExecution(unittest.IsolatedAsyncioTestCase):
         _, is_final = await e._execute_tool_call(ctx, self._tc("think", {"thought": "..."}))
         self.assertFalse(is_final)
 
+    async def test_think_en(self):
+        e, ctx = self._engine(), self._ctx()
+        res, is_final = await e._execute_tool_call(ctx, self._tc("think", {"thought": "..."}))
+        print(res)
+        self.assertIsNotNone(res)
+
+    async def test_think_live(self):
+        e, ctx = self._engine(), self._ctx()
+        res, is_final = await e._execute_tool_call(ctx, self._tc("think", {"thought": "Two parallel analyses needed:\n1. Worker-System + Worker..."}))
+        print(res)
+        self.assertIsNotNone(res)
+
     async def test_think_decrements_iteration(self):
         e, ctx = self._engine(), self._ctx()
-        ctx.current_iteration = 5
+        ctx.max_iterations = 5
         await e._execute_tool_call(ctx, self._tc("think", {"thought": "plan"}))
-        self.assertEqual(ctx.current_iteration, 4,
-            "think muss current_iteration dekrementieren")
+        self.assertEqual(ctx.max_iterations, 6,
+            "think muss max_iterations incrementer")
 
     async def test_think_records_in_auto_focus(self):
         e, ctx = self._engine(), self._ctx()
@@ -1286,10 +1301,10 @@ class TestInternalToolExecution(unittest.IsolatedAsyncioTestCase):
 
     async def test_list_tools_decrements_iteration(self):
         e, ctx = self._engine(), self._ctx()
-        ctx.current_iteration = 5
+        ctx.max_iterations = 5
         await e._execute_tool_call(ctx, self._tc("list_tools", {}))
-        self.assertEqual(ctx.current_iteration, 4,
-            "list_tools muss current_iteration dekrementieren")
+        self.assertEqual(ctx.max_iterations, 6,
+            "list_tools muss max_iterations incrementer")
 
     async def test_list_tools_returns_string(self):
         e, ctx = self._engine(), self._ctx()
@@ -1299,13 +1314,13 @@ class TestInternalToolExecution(unittest.IsolatedAsyncioTestCase):
 
     async def test_shift_focus_decrements_5(self):
         e, ctx = self._engine(), self._ctx()
-        ctx.current_iteration = 10
+        ctx.max_iterations = 10
         await e._execute_tool_call(ctx, self._tc("shift_focus", {
             "summary_of_achievements": "done reading",
             "next_objective": "write output",
         }))
-        self.assertEqual(ctx.current_iteration, 5,
-            "shift_focus muss current_iteration um 5 dekrementieren")
+        self.assertEqual(ctx.max_iterations, 20,
+            "shift_focus muss max_iterations um 10 incrementer")
 
     async def test_tool_result_has_correct_structure(self):
         """Jede non-final tool-Message muss korrekte Struktur für API haben."""

@@ -164,6 +164,11 @@ class NginxConfig:
     max_http_workers: int = 8
     max_ws_workers: int = 4
 
+    def __post_init__(self):
+        if self.static_root == "./dist":
+            from toolboxv2 import tb_root_dir
+            self.static_root = os.path.join(str(tb_root_dir), self.static_root)
+
 @dataclass
 class ManagerConfig:
     """Worker manager configuration."""

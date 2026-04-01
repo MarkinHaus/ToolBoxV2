@@ -1416,6 +1416,8 @@ Session: {self.session_id}
         """
         path = self._normalize_path(path)
 
+        content = unescape_string(content)
+
         if self._path_exists(path):
             if self._is_file(path) and self.files[path].readonly:
                 return {
@@ -1463,7 +1465,7 @@ Session: {self.session_id}
             try:
                 os.makedirs(os.path.dirname(local_path), exist_ok=True)
                 with open(local_path, "w", encoding="utf-8") as f:
-                    f.write(unescape_string(content))
+                    f.write(content)
             except OSError as e:
                 return {"success": False, "error": f"Cannot create local file: {e}"}
 
@@ -1587,7 +1589,7 @@ Session: {self.session_id}
             os.makedirs(os.path.dirname(f.local_path), exist_ok=True)
 
             with open(f.local_path, "w", encoding="utf-8") as file:
-                file.write(unescape_string(f._content))
+                file.write(f._content)
 
             f.local_mtime = os.path.getmtime(f.local_path)
             f.is_dirty = False
@@ -2165,7 +2167,7 @@ Session: {self.session_id}
 
         try:
             with open(resolved_path, "w", encoding="utf-8") as f:
-                f.write(unescape_string(vfs_file.content))
+                f.write(vfs_file.content)
         except Exception as e:
             return {"success": False, "error": f"Write error: {e}"}
 

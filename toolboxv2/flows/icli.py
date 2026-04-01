@@ -32,6 +32,7 @@ from prompt_toolkit.filters import is_done
 
 from toolboxv2.utils.workers import get_registry
 from toolboxv2.utils.extras.Style import SpinnerManager
+from utils.extras.pt_spinner_patch import apply_prompt_toolkit_patch_safe, get_spinner_toolbar_fragment
 
 # Suppress noisy loggers
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
@@ -69,6 +70,14 @@ from toolboxv2.utils.extras.mkdocs import DocsSystem
 from toolboxv2 import init_cwd, tb_root_dir
 from prompt_toolkit import print_formatted_text, HTML
 from toolboxv2.mods.isaa.CodingAgent.coder import CoderAgent
+from toolboxv2.mods.isaa.base.audio_io.audioIo import (
+    AudioStreamPlayer, LocalPlayer, WebPlayer, NullPlayer,
+)
+from toolboxv2.mods.isaa.base.audio_io.Tts import TTSConfig, TTSBackend, TTSEmotion
+from toolboxv2.mods.isaa.base.audio_io.audio_live import (
+    LiveModeEngine, LiveModeConfig, EndMode,
+    SpeakerProfileStore,
+)
 import sys
 import sys
 
@@ -380,6 +389,13 @@ def render_footer_toolbar(
 
     if audio_processing:
         out.append((bg + "fg:#7c3aed bg:#ffffff", " ⚙ PROC  processing... "))
+        out.append((bg + fg_dim, pad))
+        return out
+
+    # ── Spinner ──────────────────────────────────────────────────────────────
+    spinner_text = get_spinner_toolbar_fragment()
+    if spinner_text:
+        out.append(("fg:#fbbf24 bg:#1f2937", f" {spinner_text} "))
         out.append((bg + fg_dim, pad))
         return out
 
@@ -1308,7 +1324,7 @@ class Colors:
 
 def esc(text: Any) -> str:
     """Escaped Text für HTML-Tags, verhindert Crash bei < oder > im Text"""
-    return html.escape(str(text).encode().decode(encoding="utf-8", errors="replace"))
+    return html.escape(str(text).encode().decode(encoding="utf-8", errors="replace"), quote=False)
 
 def c_print(*args, **kwargs):
     """Drop-in Replacement für print, nutzt prompt_toolkit"""
@@ -1324,7 +1340,7 @@ def c_print(*args, **kwargs):
         print_formatted_text(*args, **kwargs)
     else:
         try:
-            print_formatted_text(HTML(esc(text)), **kwargs)
+            print_formatted_text(text, **kwargs)
         except:
             print(text)
 
@@ -1922,7 +1938,7 @@ def load_docs_feature(fm):
             # Check if we're in toolboxv2 or its parent
             if current_dir == project_root or current_dir == project_root.parent or project_root in current_dir.parents:
                 docs_dir = project_root.parent / "docs"
-                c_print(f"<style fg='ansicyan'>📚 Auto-detected docs dir:</style> <style fg='ansigreen'>{docs_dir}</style>")
+                c_print(HTML(f"<style fg='ansicyan'>📚 Auto-detected docs dir:</style> <style fg='ansigreen'>{docs_dir}</style>"))
             else:
                 # Prompt user for docs directory
                 docs_input = input("Enter documentation directory path: ")
@@ -1998,7 +2014,7 @@ def load_docs_feature(fm):
             print_status("Documentation feature enabled.", "success")
 
         except Exception as e:
-            c_print(f"<style fg='ansired'>✗ Failed to enable docs: {e}</style>")
+            c_print(HTML(f"<style fg='ansired'>✗ Failed to enable docs: {e}</style>"))
             import traceback
             c_print(traceback.format_exc())
 
@@ -2011,7 +2027,7 @@ def load_docs_feature(fm):
             docs_tools[0] = None
             print_status("Documentation feature disabled.", "success")
         except Exception as e:
-            c_print(f"<style fg='ansired'>✗ Failed to disable docs: {e}</style>")
+            c_print(HTML(f"<style fg='ansired'>✗ Failed to disable docs: {e}</style>"))
 
     fm.add_feature("docs", activation_f=enable, deactivation_f=disable)
 
@@ -3278,78 +3294,6 @@ class SmartCompleter(Completer):
 # =============================================================================
 
 
-
-def apply_prompt_toolkit_patch_safe() -> bool:
-    """
-    Wie apply_prompt_toolkit_patch(), aber erkennt zusätzlich ob
-    gerade eine PT-Application läuft und nutzt dann run_in_terminal
-    statt direktem stdout-Write — für embedded PT apps (z.B. icli/ZenPlus).
-    """
-    try:
-        from prompt_toolkit.patch_stdout import patch_stdout
-        from prompt_toolkit.application import get_app_or_none
-    except ImportError:
-        return False
-
-    if getattr(SpinnerManager, "_pt_patched", False):
-        return True
-
-    _original_render_loop = SpinnerManager._render_loop
-
-    def _pt_render_loop_safe(self):
-        app = get_app_or_none()
-
-        if app is not None:
-            # PT-App läuft (z.B. ZenPlus TUI) → run_in_terminal für safe writes
-            _run_with_app(self, app)
-        else:
-            # Kein aktiver PT-App-Context → normaler patch_stdout reicht
-            with patch_stdout(raw=True):
-                _original_render_loop(self)
-
-    def _run_with_app(self, app):
-        """Render-Loop der run_in_terminal für jeden Frame nutzt."""
-        import time
-
-        while self._should_run:
-            if not self._spinners:
-                self._should_run = False
-                break
-
-            with self._lock:
-                primary = next(
-                    (s for s in self._spinners if s._is_primary), None
-                )
-
-                if primary and primary.running:
-                    line = primary._generate_render_line()
-
-                    if len(self._spinners) > 1:
-                        secondary = " | ".join(
-                            s._generate_secondary_info()
-                            for s in self._spinners
-                            if s is not primary and s.running
-                        )
-                        line += f" [{secondary}]"
-
-                    # run_in_terminal ist thread-safe gegenüber PT
-                    def _write(captured_line=line):
-                        sys.stdout.write("\r" + captured_line + "\033[K")
-                        sys.stdout.flush()
-
-                    try:
-                        app.loop.call_soon_threadsafe(
-                            lambda fn=_write: app.run_in_terminal(fn)
-                        )
-                    except Exception:
-                        self._should_run = False
-
-            time.sleep(0.1)
-
-    SpinnerManager._render_loop = _pt_render_loop_safe
-    SpinnerManager._pt_patched = True
-    return True
-
 _MEDIA_EXTENSIONS = {
     "image": {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".svg"},
     "pdf":   {".pdf"},
@@ -3508,12 +3452,35 @@ F6 during execution       - Move agent to background
     """,
 
     # Audio Settings
-    "audio": """/audio on                - Enable verbose audio
-/audio off               - Disable verbose audio
-/audio voice <v>         - Set voice
-/audio backend <b>       - Set backend (groq/piper/elevenlabs)
-/audio stop              - Stop current playback
-    Tip: Add #audio to any message for one‑time audio response
+    # ─── HELP SECTION UPDATE ─────────────────────────────────────────────────────
+    "audio": """/audio on                    - Enable verbose audio (all responses spoken)
+    /audio off                   - Disable verbose audio
+    /audio voice <v>             - Set TTS voice
+    /audio backend <b>           - groq_tts / piper / elevenlabs / index_tts
+    /audio lang <l>              - de / en / fr / ...
+    /audio device                - Interactive output device picker
+    /audio device <idx>          - Set output device by index
+    /audio device default        - Reset to system default
+    /audio devices               - List all output devices
+    /audio stop                  - Stop current playback
+    /audio restart               - Rebuild player with current settings
+
+    /audio live                  - Start hands-free live mode (VAD + wake word)
+    /audio live stop             - Stop live mode
+    /audio live status           - Show live mode state
+    /audio live keyword <word>   - Set wake word (default: "hey computer")
+    /audio live sensitivity <f>  - Wake word sensitivity 0.0–1.0 (default: 0.5)
+    /audio live end <mode>       - End-detection: silence / keyword / intent / auto
+    /audio live silence <ms>     - Silence timeout before send (default: 800ms)
+
+    /audio speaker               - Speaker profile menu
+    /audio speaker list          - List registered speaker profiles
+    /audio speaker add <name>    - Register your voice as <name> (5s sample)
+    /audio speaker remove <name> - Remove a speaker profile
+    /audio speaker who           - Show who is currently detected
+
+    Tip: Append  #audio  to any message for one-time spoken response.
+    Tip: In live mode — say wake word, speak, then stop talking or say "fertig".
     """,
 
     "chain": """/chain list               - Alle gespeicherten Chains auflisten
@@ -3622,6 +3589,25 @@ F6 during execution       - Move agent to background
     """,
 }
 
+
+
+def _infer_emotion(text: str) -> TTSEmotion:
+    """
+    Heuristik: leitet Emotion aus Textinhalt ab.
+    Kein LLM-Call — rein regelbasiert für minimale Latenz.
+    """
+    t = text.lower()
+    if any(w in t for w in ("error", "fehler", "achtung", "warning", "kritisch")):
+        return TTSEmotion.SERIOUS
+    if any(w in t for w in ("!", "super", "excellent", "perfekt", "great")):
+        return TTSEmotion.EXCITED
+    if any(w in t for w in ("sorry", "entschuldigung", "leider", "unfortunately")):
+        return TTSEmotion.EMPATHETIC
+    if any(w in t for w in ("dringend", "urgent", "sofort", "immediately")):
+        return TTSEmotion.URGENT
+    return TTSEmotion.NEUTRAL
+
+
 # =============================================================================
 # ISAA HOST - MAIN CLASS
 # =============================================================================
@@ -3721,9 +3707,16 @@ class ISAA_Host:
         self._was_recording_is_prossesing_audio = False
         self._audio_buffer: list[bytes] = []
         self._last_transcription: str | None = None
+        self._live_engine: Optional[LiveModeEngine] = None
+        self._speaker_store: SpeakerProfileStore = SpeakerProfileStore()
+        self._live_config: LiveModeConfig = LiveModeConfig()
 
-        self.audio_player = AudioStreamPlayer()
-        self.verbose_audio = False  # /audio on aktiviert das
+        self._audio_backend = "groq_tts"  # TTSBackend value string
+        self._audio_voice = "autumn"
+        self._audio_language = "de"
+        self._audio_device = None  # None = system default
+        self.verbose_audio = False
+        self.audio_player = self._build_audio_player()
 
         self.active_coder: CoderAgent | None = None
         from toolboxv2 import init_cwd
@@ -3750,11 +3743,25 @@ class ISAA_Host:
         self._load_state()
 
 
+
         self.feature_manager = SimpleFeatureManager()
         for feature in ALL_FEATURES.values():
             feature(self.feature_manager)
 
-        apply_prompt_toolkit_patch_safe()
+    def _build_audio_player(self) -> AudioStreamPlayer:
+        """(Re)baut den AudioStreamPlayer aus den aktuellen icli-Einstellungen."""
+        cfg = TTSConfig(
+            backend=TTSBackend(getattr(self, "_audio_backend", "groq_tts")),
+            voice=getattr(self, "_audio_voice", "autumn"),
+            language=getattr(self, "_audio_language", "de"),
+        )
+        device = getattr(self, "_audio_device", None)
+        backend = LocalPlayer(device=device)
+        return AudioStreamPlayer(
+            player_backend=backend,
+            tts_config=cfg,
+            session_id=getattr(self, "active_session_id", "default"),
+        )
 
     def _ingest_chunk(self, task_id: str, chunk: dict) -> None:
         """Forward one stream chunk. Sub-agent chunks go to their own TaskView."""
@@ -5956,14 +5963,20 @@ class ISAA_Host:
         print_box_content("/chain run autodoc_guided <Name[::file]>     - Single: gezielt dokumentieren", "")
         print_box_content("  Regel: nur getesteter Code. Format: Part1=How to Use, Part2=Internals.", "")
 
-        print_status("Audio Settings", "info")
-        print_box_content("/audio on                                    - Enable verbose audio", "")
-        print_box_content("/audio off                                   - Disable verbose audio", "")
-        print_box_content("/audio voice <v>                             - Set voice", "")
-        print_box_content("/audio backend <b>                           - Set backend (groq/piper/elevenlabs)", "")
-        print_box_content("/audio stop                                  - Stop current playback", "")
+        print_status("Audio Commands", "info")
+        print_box_content("/audio on                    - All responses spoken", "")
+        print_box_content("/audio off                   - Disable verbose audio", "")
+        print_box_content("/audio voice <v>             - Set voice", "")
+        print_box_content("/audio backend <b>           - groq_tts / piper / elevenlabs / index_tts", "")
+        print_box_content("/audio lang <l>              - de / en / ...", "")
+        print_box_content("/audio device                - Interactive device picker", "")
+        print_box_content("/audio device <idx>          - Set by index", "")
+        print_box_content("/audio device default        - Reset to system default", "")
+        print_box_content("/audio devices               - List all output devices", "")
+        print_box_content("/audio stop                  - Stop current playback", "")
+        print_box_content("/audio restart               - Rebuild player with current settings", "")
         print_box_content("", "")
-        print_box_content("Tip: Add #audio to any message for one-time audio response", "info")
+        print_box_content("Tip: append  #audio  to any message for one-time spoken response", "info")
         print_separator()
 
         print_status("Shortcuts", "info")
@@ -6624,7 +6637,7 @@ class ISAA_Host:
                 for idx, (name, success, elapsed, info) in enumerate(iv.tools):
                     # Zusammenfassung
                     col = PTColors.ZEN_GREEN if success else PTColors.ZEN_RED
-                    c_print(HTML(f"  <style fg='{esc(col)}'>● {esc(name)}</style> ({esc(elapsed):.3f}s) - {esc(info)}"))
+                    c_print(HTML(f"  <style fg='{esc(col)}'>● {esc(name)}</style> ({elapsed:.3f}s) - {esc(info)}"))
 
                     # RAW I/O Dump (wenn -d aktiv)
                     if show_raw and idx < len(iv.tools_raw):
@@ -8097,69 +8110,418 @@ class ISAA_Host:
         except Exception as e:
             print_status(f"Error reading file '{filename}': {e}", "error")
 
+    def _enqueue_speech(self, text: str):
+        """
+        Bereinigt Text und stellt ihn in die TTS-Queue.
+        Non-blocking — gibt sofort zurück.
+        """
+        clean = remove_styles(text.strip())
+        if not clean:
+            return
+        # Emotion aus Content-Hinweisen ableiten (optional, heuristisch)
+        emotion = _infer_emotion(clean)
+        get_app("ci.audio.bg.task").run_bg_task_advanced(
+            self.audio_player.queue_text, clean, emotion
+        )
+
+    # ─── /audio COMMAND ──────────────────────────────────────────────────────────
     async def _handle_audio_command(self, args: list[str]):
-        """Handle /audio commands"""
+        """Handle /audio commands."""
+        import sounddevice as sd
 
         if not args:
-            # Status zeigen
-            verbose = getattr(self, 'verbose_audio', False)
+            ap = self.audio_player
+            cfg = ap.tts_config
+            dev = getattr(self, "_audio_device", None)
+            dev_name = "system default" if dev is None else str(dev)
+            playing = "▶ playing" if ap.is_busy else "⏹ idle"
+
             print_box_header("Audio Settings", "🔊")
-            print_box_content(f"Verbose Audio: {'ON' if verbose else 'OFF'}", "")
-            print_box_content(f"TTS Backend: {self.audio_player.tts_backend}", "")
-            print_box_content(f"Voice: {self.audio_player.tts_voice}", "")
-            print_box_content(f"Language: {self.audio_player.language}", "")
+            print_box_content(f"Status:   {playing}  |  queue: {ap.pending_texts}", "")
+            print_box_content(f"Verbose:  {'ON' if self.verbose_audio else 'OFF'}", "")
+            print_box_content(f"Backend:  {cfg.backend.value}", "")
+            print_box_content(f"Voice:    {cfg.voice}", "")
+            print_box_content(f"Language: {cfg.language}", "")
+            print_box_content(f"Device:   {dev_name}", "")
             print_separator()
             print_box_content("Commands:", "bold")
-            print_box_content("/audio on           - Enable verbose audio", "")
-            print_box_content("/audio off          - Disable verbose audio", "")
-            print_box_content("/audio voice <v>    - Set voice", "")
-            print_box_content("/audio backend <b>  - Set backend (groq/piper/elevenlabs)", "")
-            print_box_content("/audio stop         - Stop current playback", "")
-            print_box_content("/audio device <d>   - Set audio input device", "")
+            print_box_content("/audio on                    - All responses spoken", "")
+            print_box_content("/audio off                   - Disable verbose audio", "")
+            print_box_content("/audio voice <v>             - Set voice", "")
+            print_box_content("/audio backend <b>           - groq_tts / piper / elevenlabs / index_tts", "")
+            print_box_content("/audio lang <l>              - de / en / ...", "")
+            print_box_content("/audio device                - Interactive device picker", "")
+            print_box_content("/audio device <idx>          - Set by index", "")
+            print_box_content("/audio device default        - Reset to system default", "")
+            print_box_content("/audio devices               - List all output devices", "")
+            print_box_content("/audio stop                  - Stop current playback", "")
+            print_box_content("/audio restart               - Rebuild player with current settings", "")
             print_box_content("", "")
-            print_box_content("Tip: Add #audio to any message for one-time audio response", "info")
+            print_box_content("Tip: append  #audio  to any message for one-time spoken response", "info")
             print_box_footer()
             return
 
         cmd = args[0].lower()
 
+        # ── on / off ──────────────────────────────────────────────────────────────
         if cmd == "on":
             self.verbose_audio = True
-            print_status("Verbose audio enabled - all responses will be spoken", "success")
+            if not self.audio_player._task or self.audio_player._task.done():
+                await self.audio_player.start()
+            print_status("Verbose audio ON — all responses will be spoken", "success")
 
         elif cmd == "off":
             self.verbose_audio = False
-            print_status("Verbose audio disabled", "success")
+            print_status("Verbose audio OFF", "success")
 
+        # ── stop ──────────────────────────────────────────────────────────────────
         elif cmd == "stop":
-            if hasattr(self, 'audio_player'):
-                await self.audio_player.stop()
-                print_status("Audio stopped", "success")
+            await self.audio_player.stop()
+            # Rebuild so it can be started again later
+            self.audio_player = self._build_audio_player()
+            print_status("Audio stopped and player reset", "success")
 
+        # ── voice ─────────────────────────────────────────────────────────────────
         elif cmd == "voice" and len(args) > 1:
-            self.audio_player.tts_voice = args[1]
-            print_status(f"Voice set to: {args[1]}", "success")
+            self._audio_voice = args[1]
+            await self._restart_audio_player()
+            print_status(f"Voice → {args[1]}", "success")
 
+        # ── backend ───────────────────────────────────────────────────────────────
         elif cmd == "backend" and len(args) > 1:
-            backend = args[1].lower()
-            if backend in ["groq", "piper", "elevenlabs"]:
-                self.audio_player.tts_backend = backend
-                print_status(f"Backend set to: {backend}", "success")
-            else:
-                print_status("Valid backends: groq, piper, elevenlabs", "error")
+            b = args[1].lower()
+            valid = [e.value for e in TTSBackend]
+            if b not in valid:
+                print_status(f"Valid backends: {', '.join(valid)}", "error")
+                return
+            self._audio_backend = b
+            await self._restart_audio_player()
+            print_status(f"Backend → {b}", "success")
 
+        # ── lang ──────────────────────────────────────────────────────────────────
         elif cmd == "lang" and len(args) > 1:
-            self.audio_player.language = args[1]
-            print_status(f"Language set to: {args[1]}", "success")
+            self._audio_language = args[1]
+            await self._restart_audio_player()
+            print_status(f"Language → {args[1]}", "success")
 
+        # ── devices (list) ────────────────────────────────────────────────────────
+        elif cmd == "devices":
+            print_box_header("Output Devices", "🔊")
+            current = getattr(self, "_audio_device", None)
+            for i, dev in enumerate(sd.query_devices()):
+                if dev["max_output_channels"] > 0:
+                    marker = " ◀ current" if i == current else ""
+                    sr = int(dev["default_samplerate"])
+                    print_box_content(
+                        f"[{i:2d}] {dev['name'][:50]:<50}  {sr}Hz{marker}", ""
+                    )
+            print_box_footer()
+
+        # ── device (set) ──────────────────────────────────────────────────────────
         elif cmd == "device":
-            if len(args) > 1:
-                self.audio_device_index = int(args[1])
+            if len(args) == 1:
+                await self._select_audio_device_interactive()
+            elif args[1].lower() == "default":
+                self._audio_device = None
+                await self._restart_audio_player()
+                print_status("Audio device → system default", "success")
             else:
-                self._select_audio_device()
+                try:
+                    idx = int(args[1])
+                    devs = sd.query_devices()
+                    if idx < 0 or idx >= len(devs):
+                        print_status(f"Device index out of range (0–{len(devs) - 1})", "error")
+                        return
+                    dev = devs[idx]
+                    if dev["max_output_channels"] == 0:
+                        print_status(f"Device [{idx}] has no output channels", "error")
+                        return
+                    self._audio_device = idx
+                    await self._restart_audio_player()
+                    print_status(f"Audio device → [{idx}] {dev['name']}", "success")
+                except ValueError:
+                    print_status("Usage: /audio device <index>  or  /audio device default", "error")
+
+        # ── restart ───────────────────────────────────────────────────────────────
+        elif cmd == "restart":
+            await self._restart_audio_player()
+            print_status("Audio player rebuilt with current settings", "success")
+
+
+        elif cmd == "live":
+            sub = args[1].lower() if len(args) > 1 else ""
+
+            if sub == "stop":
+                if self._live_engine:
+                    await self._live_engine.stop()
+                    self._live_engine = None
+                    print_status("Live mode stopped", "success")
+                else:
+                    print_status("Live mode not running", "error")
+
+            elif sub == "status":
+                if self._live_engine:
+                    print_status(self._live_engine.status_line(), "info")
+                else:
+                    print_status("Live mode not running", "error")
+
+            elif sub == "keyword" and len(args) > 2:
+                self._live_config.wake_word_model = args[2]
+                print_status(f"Wake word model → {args[2]}", "success")
+
+            elif sub == "sensitivity" and len(args) > 2:
+                try:
+                    v = float(args[2])
+                    self._live_config.wake_sensitivity = max(0.0, min(1.0, v))
+                    print_status(f"Wake sensitivity → {self._live_config.wake_sensitivity:.2f}", "success")
+                except ValueError:
+                    print_status("Usage: /audio live sensitivity 0.0–1.0", "error")
+
+            elif sub == "end" and len(args) > 2:
+                mode_map = {
+                    "silence": EndMode.SILENCE,
+                    "keyword": EndMode.KEYWORD,
+                    "intent": EndMode.INTENT,
+                    "auto": EndMode.AUTO,
+                }
+                m = mode_map.get(args[2].lower())
+                if m:
+                    self._live_config.end_mode = m
+                    print_status(f"End mode → {m.value}", "success")
+                else:
+                    print_status(f"Valid modes: {', '.join(mode_map)}", "error")
+
+            elif sub == "silence" and len(args) > 2:
+                try:
+                    self._live_config.silence_ms = int(args[2])
+                    print_status(f"Silence timeout → {self._live_config.silence_ms}ms", "success")
+                except ValueError:
+                    print_status("Usage: /audio live silence <ms>", "error")
+
+            else:
+                # No sub-arg or unknown → START live mode
+                if self._live_engine is not None:
+                    print_status("Live mode already running. /audio live stop to stop.", "info")
+                    return
+
+                # Sicherstellen dass player läuft
+                if self.audio_player._task is None or self.audio_player._task.done():
+                    await self.audio_player.start()
+
+                async def on_utterance(wav_bytes: bytes, speaker: Optional[str]):
+                    """Called when a complete utterance is captured."""
+                    # Speaker-Tag für den Agent
+                    speaker_tag = f"[{speaker}]: " if speaker else ""
+
+                    # STT → agent (reuse existing pipeline)
+                    try:
+                        from toolboxv2.mods.isaa.base.audio_io.Stt import (
+                            transcribe, STTConfig, STTBackend,
+                        )
+                        stt_result = await asyncio.get_event_loop().run_in_executor(
+                            None,
+                            lambda: transcribe(
+                                wav_bytes,
+                                config=STTConfig(
+                                    backend=STTBackend.FASTER_WHISPER,
+                                    model="small",
+                                    device="cpu",
+                                    compute_type="int8",
+                                    language=None,
+                                ),
+                            )
+                        )
+                        text = stt_result.text.strip()
+                        if not text:
+                            return
+
+                        # Stop keyword check
+                        if self._live_engine and self._live_engine._end_detector.check_keyword(text):
+                            # Keyword was the entire utterance → ignore, just acknowledged
+                            return
+
+                        full_query = speaker_tag + text
+                        print(f"\n🎤 {full_query}")
+
+                        # In die normale Agent-Pipeline einspeisen
+                        await self._handle_agent_interaction(full_query)
+
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        print_status(f"Live STT error: {e}", "error")
+
+                self._live_engine = LiveModeEngine(
+                    config=self._live_config,
+                    on_utterance=on_utterance,
+                    speaker_store=self._speaker_store,
+                )
+                await self._live_engine.start()
+                cfg = self._live_config
+                print_status(
+                    f"Live mode active | wake: {cfg.wake_word_model} "
+                    f"| end: {cfg.end_mode.value} "
+                    f"| silence: {cfg.silence_ms}ms",
+                    "success",
+                )
+                print_status("Say the wake word to start speaking.", "info")
+
+        # ── /audio speaker ────────────────────────────────────────────────────────────
+
+        elif cmd == "speaker":
+            sub = args[1].lower() if len(args) > 1 else ""
+
+            if sub == "list" or not sub:
+                names = self._speaker_store.list_names()
+                if names:
+                    print_box_header("Speaker Profiles", "🎙")
+                    for n in names:
+                        marker = " ◀ you" if n == getattr(self, "_my_speaker_name", None) else ""
+                        print_box_content(f"  {n}{marker}", "")
+                    print_box_footer()
+                else:
+                    print_status("No speaker profiles registered yet.", "info")
+                    print_status("  /audio speaker add <name>  to register your voice.", "info")
+
+            elif sub == "add" and len(args) > 2:
+                name = args[2]
+                await self._record_speaker_profile(name)
+
+            elif sub == "remove" and len(args) > 2:
+                name = args[2]
+                if self._speaker_store.remove(name):
+                    print_status(f"Removed profile: {name}", "success")
+                else:
+                    print_status(f"Profile not found: {name}", "error")
+
+            elif sub == "who":
+                if self._live_engine:
+                    spk = self._live_engine.current_speaker
+                    print_status(f"Current speaker: {spk or 'unknown'}", "info")
+                else:
+                    print_status("Live mode not running", "error")
+
+            else:
+                print_status("Usage: /audio speaker [list|add <name>|remove <name>|who]", "error")
 
         else:
-            print_status(f"Unknown audio command: {cmd} add args", "error")
+            print_status(f"Unknown audio command: {cmd}", "error")
+
+    async def _record_speaker_profile(self, name: str):
+        """Record 5s of mic audio, extract embedding, store as speaker profile."""
+        try:
+            import sounddevice as sd
+            import numpy as np
+            import wave
+            import io
+        except ImportError:
+            print_status("sounddevice required: pip install sounddevice", "error")
+            return
+
+        try:
+            from pyannote.audio import Model
+            from pyannote.audio.pipelines.speaker_verification import PretrainedSpeakerEmbedding
+            import torch, torchaudio
+        except ImportError:
+            print_status(
+                "pyannote.audio required for speaker profiles:\n"
+                "  pip install pyannote.audio\n"
+                "  Also needs a HuggingFace token: export HF_TOKEN=hf_...",
+                "error",
+            )
+            return
+
+        DURATION = 5
+        SR = 16000
+        print_status(f"Recording {DURATION}s for '{name}' — speak now...", "info")
+        await asyncio.sleep(0.3)
+
+        loop = asyncio.get_event_loop()
+        recording = await loop.run_in_executor(
+            None,
+            lambda: sd.rec(
+                int(DURATION * SR), samplerate=SR, channels=1,
+                dtype="float32",
+                device=getattr(self, "_audio_device", None),
+            )
+        )
+        await loop.run_in_executor(None, sd.wait)
+        print_status("Recording done. Extracting embedding...", "info")
+
+        # Build WAV
+        pcm = (recording[:, 0] * 32767).astype(np.int16).tobytes()
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1);
+            w.setsampwidth(2);
+            w.setframerate(SR)
+            w.writeframes(pcm)
+        wav_bytes = buf.getvalue()
+
+        # Extract embedding
+        try:
+            hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+            embed_model = PretrainedSpeakerEmbedding(
+                "pyannote/embedding",
+                use_auth_token=hf_token,
+                device=torch.device("cpu"),
+            )
+            waveform, sr = torchaudio.load(io.BytesIO(wav_bytes))
+            with torch.no_grad():
+                emb = embed_model({"waveform": waveform, "sample_rate": sr})
+            embedding = emb.squeeze().numpy()
+
+            self._speaker_store.add(name, embedding)
+            print_status(f"Speaker profile '{name}' saved.", "success")
+
+        except Exception as e:
+            print_status(f"Embedding extraction failed: {e}", "error")
+
+    async def _restart_audio_player(self):
+        """Stop current player, rebuild from settings, restart if was active."""
+        was_running = (
+            self.audio_player._task is not None
+            and not self.audio_player._task.done()
+            and self.audio_player._stop_event is not None
+            and not self.audio_player._stop_event.is_set()
+        )
+        await self.audio_player.stop()
+        self.audio_player = self._build_audio_player()
+        if was_running or self.verbose_audio:
+            await self.audio_player.start()
+
+    async def _select_audio_device_interactive(self):
+        """Print output devices, prompt for index."""
+        import sounddevice as sd
+        output_devs = [
+            (i, dev) for i, dev in enumerate(sd.query_devices())
+            if dev["max_output_channels"] > 0
+        ]
+        print_box_header("Select Output Device", "🔊")
+        for i, dev in output_devs:
+            print_box_content(f"[{i:2d}] {dev['name']}", "")
+        print_box_footer()
+
+        raw = await self._async_input("Device index (Enter = default): ")
+        raw = raw.strip()
+        if not raw:
+            self._audio_device = None
+            await self._restart_audio_player()
+            print_status("Audio device → system default", "success")
+            return
+
+        try:
+            idx = int(raw)
+            valid_ids = [i for i, _ in output_devs]
+            if idx not in valid_ids:
+                print_status(f"Invalid index", "error")
+                return
+            self._audio_device = idx
+            await self._restart_audio_player()
+            dev_name = sd.query_devices()[idx]["name"]
+            print_status(f"Audio device → [{idx}] {dev_name}", "success")
+        except ValueError:
+            print_status("Not a number", "error")
 
     async def _cmd_coder(self, args: list[str]):
         """Handle /coder commands for native code generation."""
@@ -9299,7 +9661,20 @@ class ISAA_Host:
             wants_audio = user_input.strip().endswith("#audio")
             if wants_audio:
                 user_input = user_input.rsplit("#audio", 1)[0].strip()
-            should_speak = wants_audio or getattr(self, 'verbose_audio', False)
+            should_speak = wants_audio or getattr(self, "verbose_audio", False)
+
+            # Player starten falls noch nicht aktiv
+            if should_speak:
+                player_running = (
+                    self.audio_player._task is not None
+                    and not self.audio_player._task.done()
+                )
+                if not player_running:
+                    # Nur neu bauen/starten wenn session gewechselt hat
+                    if self.audio_player.session_id != self.active_session_id:
+                        await self._restart_audio_player()
+                        self.audio_player.session_id = self.active_session_id
+                    await self.audio_player.start()
 
             agent_name = self.active_agent_name
 
@@ -9402,15 +9777,15 @@ class ISAA_Host:
     async def _drain_agent_stream(
         self, task_id: str, stream, should_speak: bool = False
     ):
-        """Consume an agent stream.
-        Cancelled/failed executions are fully isolated: errors do NOT propagate
-        to the event loop or the main CLI prompt.
-        """
         result_text = ""
-        current_sentence = ""
+        sentence_buffer = ""  # ← der einzige Buffer
         stop_for_speech = False
 
-        def _get_exc() -> "ExecutionTask | None":
+        if should_speak:
+            if self.audio_player._task is None or self.audio_player._task.done():
+                await self.audio_player.start()
+
+        def _get_exc():
             return self.all_executions.get(task_id) or next(
                 (t for t in self.all_executions.values() if t.stream is stream), None
             )
@@ -9422,30 +9797,42 @@ class ISAA_Host:
                         raw = await stream.__anext__()
                     except StopAsyncIteration:
                         break
-                    chunk = dict(raw)  # mutable copy — litellm chunks are not safe to mutate
+                    chunk = dict(raw)
 
                     exc = _get_exc()
                     real_id = exc.task_id if exc else task_id
                     self._ingest_chunk(real_id, chunk)
+                    chunk_type = chunk.get("type", "")
 
-                    if chunk.get("type") == "content":
+                    if chunk_type == "content":
                         text = chunk.get("chunk", "")
                         result_text += text
-                        if should_speak and hasattr(self, 'audio_player'):
-                            if '```' in text:
+
+                        if should_speak:
+                            if "```" in text:
                                 stop_for_speech = not stop_for_speech
+                                # Flush buffer wenn wir in Code-Block wechseln
+                                if stop_for_speech and sentence_buffer.strip():
+                                    self._enqueue_speech(sentence_buffer)
+                                    sentence_buffer = ""
+                                continue
+
                             if not stop_for_speech:
-                                current_sentence += text
-                                if any(current_sentence.rstrip().endswith(p)
-                                       for p in ['.', '!', '?', ':', '\n\n']):
-                                    clean = remove_styles(current_sentence.strip())
-                                    if clean:
-                                        get_app("ci.audio.bg.task").run_bg_task_advanced(
-                                            self.audio_player.queue_text, clean
-                                        )
-                                    current_sentence = ""
-                    elif chunk.get("type") == "final_answer":
+                                sentence_buffer += text
+                                if (
+                                    any(sentence_buffer.rstrip().endswith(p)
+                                        for p in (".", "!", "?", ":", "\n\n"))
+                                    and len(sentence_buffer.strip()) >= 30
+                                ):
+                                    self._enqueue_speech(sentence_buffer)
+                                    sentence_buffer = ""
+
+                    elif chunk_type == "final_answer":
                         result_text = chunk.get("answer", result_text)
+
+            # Restlichen Buffer nach Stream-Ende sprechen
+            if should_speak and sentence_buffer.strip():
+                self._enqueue_speech(sentence_buffer)
 
             try:
                 await stream.aclose()
@@ -9466,18 +9853,16 @@ class ISAA_Host:
             exc = _get_exc()
             if exc:
                 exc.status = "cancelled"
-            # Isolated cancel — must NOT kill the CLI event loop
             return ""
 
         except Exception as e:
             try:
                 await asyncio.shield(stream.aclose())
-            except BaseException:  # ← FIX A2: was "except Exception"
+            except BaseException:
                 pass
             exc = _get_exc()
             if exc:
                 exc.status = "failed"
-            # Isolated failure — log but do not re-raise
             with patch_stdout():
                 c_print(HTML(
                     f"<style fg='{PTColors.ZEN_RED}'>  ✗ stream error ({type(e).__name__}): "
@@ -9557,13 +9942,15 @@ class ISAA_Host:
             complete_while_typing=True,
             multiline=False,
             key_bindings=self.key_bindings,
-            bottom_toolbar=self._get_bottom_toolbar,  # Dynamische Zuweisung
+            bottom_toolbar=self._get_bottom_toolbar,
             style=PtStyle.from_dict({
                 'bottom-toolbar': 'bg:ansiblack fg:ansigray',
                 'bottom-toolbar.text': 'fg:ansigray',
             })
         )
         self.app.run_bg_task_advanced(self.active_refresher)
+
+        apply_prompt_toolkit_patch_safe()
 
         # Main loop
         while True:
@@ -9636,6 +10023,7 @@ class ISAA_Host:
             if bg_task.status == "running":
                 bg_task.async_task.cancel()
 
+        await self.app.a_exit()
         print_status("Goodbye!", "success")
 
     # ─── Interrupt-Menü ───────────────────────────────────────────────

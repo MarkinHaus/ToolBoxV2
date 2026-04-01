@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, Coroutine
 
+from litellm import max_tokens
 
 from toolboxv2 import get_app, get_logger
 
@@ -174,7 +175,7 @@ DISCOVERY_TOOLS = [
 
 # VFS Tools - always available for file navigation (part of static)
 VFS_TOOL_NAMES = ["vfs_read", "vfs_write", "vfs_list", "vfs_navigate", "vfs_control"]
-
+_VFS_PERSONAS = "/global/.memory/dreamer/personas.json"
 
 # =============================================================================
 # HELPER COMPONENTS
@@ -357,6 +358,146 @@ class ToolSlot:
 # =========================================================================
 # PERSONA ROUTING
 # =========================================================================
+from dataclasses import dataclass, field
+from datetime import datetime
+
+
+@dataclass
+class PersonaStats:
+    """Tracks usage, routing reasons, and effectiveness of a PersonaProfile."""
+
+    # Usage counters
+    total_uses: int = 0
+    uses_by_source: dict[str, int] = field(default_factory=lambda: {
+        "default": 0, "matched": 0, "dreamer": 0, "dreamer_learned": 0
+    })
+
+    # Effectiveness
+    successful_runs: int = 0
+    failed_runs: int = 0
+    total_iterations_used: int = 0
+    total_iterations_budget: int = 0   # sum of apply_max_iterations outputs
+
+    # Temporal
+    first_used_at: datetime | None = None
+    last_used_at: datetime | None = None
+    last_success_at: datetime | None = None
+
+    # Routing reasons — which keywords/skills triggered this persona
+    trigger_keywords: dict[str, int] = field(default_factory=dict)   # keyword -> hit count
+    trigger_skills: dict[str, int] = field(default_factory=dict)     # skill name -> hit count
+
+    # Per-query log (capped to last N entries)
+    recent_queries: list[dict] = field(default_factory=list)
+    _recent_queries_max: int = field(default=20, repr=False, compare=False)
+
+    # ── derived ──────────────────────────────────────────────────────────────
+
+    @property
+    def success_ratio(self) -> float:
+        total = self.successful_runs + self.failed_runs
+        return self.successful_runs / total if total else 0.0
+
+    @property
+    def avg_iterations(self) -> float:
+        return self.total_iterations_used / self.total_uses if self.total_uses else 0.0
+
+    @property
+    def budget_efficiency(self) -> float:
+        """How much of the iteration budget was actually consumed (lower = leaner)."""
+        return (
+            self.total_iterations_used / self.total_iterations_budget
+            if self.total_iterations_budget
+            else 0.0
+        )
+
+    # ── mutation helpers ──────────────────────────────────────────────────────
+
+    def record_use(
+        self,
+        *,
+        source: str,
+        query: str,
+        success: bool,
+        iterations_used: int,
+        iterations_budget: int,
+        trigger_keyword: str | None = None,
+        trigger_skill: str | None = None,
+    ) -> None:
+        now = datetime.utcnow()
+
+        self.total_uses += 1
+        self.uses_by_source[source] = self.uses_by_source.get(source, 0) + 1
+
+        if success:
+            self.successful_runs += 1
+            self.last_success_at = now
+        else:
+            self.failed_runs += 1
+
+        self.total_iterations_used += iterations_used
+        self.total_iterations_budget += iterations_budget
+
+        if self.first_used_at is None:
+            self.first_used_at = now
+        self.last_used_at = now
+
+        if trigger_keyword:
+            self.trigger_keywords[trigger_keyword] = (
+                self.trigger_keywords.get(trigger_keyword, 0) + 1
+            )
+        if trigger_skill:
+            self.trigger_skills[trigger_skill] = (
+                self.trigger_skills.get(trigger_skill, 0) + 1
+            )
+
+        entry = {
+            "ts": now.isoformat(),
+            "query": query[:120],
+            "source": source,
+            "success": success,
+            "iters": iterations_used,
+            "budget": iterations_budget,
+        }
+        self.recent_queries.append(entry)
+        if len(self.recent_queries) > self._recent_queries_max:
+            self.recent_queries.pop(0)
+
+    def to_dict(self) -> dict:
+        return {
+            "total_uses": self.total_uses,
+            "uses_by_source": self.uses_by_source,
+            "success_ratio": round(self.success_ratio, 3),
+            "avg_iterations": round(self.avg_iterations, 2),
+            "budget_efficiency": round(self.budget_efficiency, 3),
+            "first_used_at": self.first_used_at.isoformat() if self.first_used_at else None,
+            "last_used_at": self.last_used_at.isoformat() if self.last_used_at else None,
+            "last_success_at": self.last_success_at.isoformat() if self.last_success_at else None,
+            "top_trigger_keywords": sorted(
+                self.trigger_keywords.items(), key=lambda x: x[1], reverse=True
+            )[:10],
+            "top_trigger_skills": sorted(
+                self.trigger_skills.items(), key=lambda x: x[1], reverse=True
+            )[:10],
+            "recent_queries": self.recent_queries,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PersonaStats":
+        obj = cls()
+        obj.total_uses = data.get("total_uses", 0)
+        obj.uses_by_source = data.get("uses_by_source", {})
+        obj.successful_runs = data.get("successful_runs", 0)
+        obj.failed_runs = data.get("failed_runs", 0)
+        obj.total_iterations_used = data.get("total_iterations_used", 0)
+        obj.total_iterations_budget = data.get("total_iterations_budget", 0)
+        obj.trigger_keywords = dict(data.get("trigger_keywords", {}))
+        obj.trigger_skills = dict(data.get("trigger_skills", {}))
+        obj.recent_queries = data.get("recent_queries", [])
+        for attr in ("first_used_at", "last_used_at", "last_success_at"):
+            raw = data.get(attr)
+            setattr(obj, attr, datetime.fromisoformat(raw) if raw else None)
+        return obj
 
 @dataclass
 class PersonaProfile:
@@ -368,6 +509,7 @@ class PersonaProfile:
     max_iterations_factor: float = 1.0  # multiplied with base max_iterations
     verification_level: str = "basic"   # "none" | "basic" | "strict"
     source: str = "default"             # "default" | "matched" | "dreamer"
+    stats: PersonaStats = field(default_factory=PersonaStats)
 
     def apply_max_iterations(self, base: int) -> int:
         return min(base*0.6 ,int(base * self.max_iterations_factor))
@@ -388,70 +530,72 @@ class PersonaRouter:
         query: str,
         matched_skills: list | None = None,
         dreamer_insights: dict | None = None,
-    ) -> PersonaProfile:
+    ) -> tuple[PersonaProfile, str | None, str | None]:
         """
-        Classify task and return matching persona.
-
-        Priority:
-        1. Dreamer insights (if available and confident)
-        2. Skill-based classification
-        3. Keyword-based classification
-        4. Default persona
+        Returns:
+            (persona, trigger_keyword, trigger_skill)
         """
         query_lower = query.lower()
 
-        # 1. Dreamer insights (from persona._dream_insights)
+        # 1. Dreamer insights
         if dreamer_insights:
             best_key, best_ratio = None, 0.0
             for intent_key, insight in dreamer_insights.items():
                 ratio = insight.get("success_ratio", 0)
                 if ratio > best_ratio and ratio > 0.6:
-                    # Check if this intent matches our query
                     if any(w in query_lower for w in intent_key.lower().split()[:2]):
                         best_key = intent_key
                         best_ratio = ratio
             if best_key:
-                # Map intent to persona via keyword overlap
                 persona = self._match_intent_to_persona(best_key)
                 if persona:
                     persona.source = "dreamer"
-                    return persona
+                    return persona, best_key, None
 
-        # 1.5 Learned personas (dreamer-generated, loaded from VFS)
+        # 1.5 Learned personas
         for _pk, _pp in list(self.personas.items()):
             if _pp.source != "dreamer_learned":
                 continue
             _words = [w for w in _pk.replace("learned_", "").split("_") if len(w) > 3]
             if _words and sum(1 for w in _words if w in query_lower) >= min(2, len(_words)):
                 import dataclasses as _dc
-                return _dc.replace(_pp)
+                matched_word = next((w for w in _words if w in query_lower), None)
+                return _dc.replace(_pp), matched_word, None
 
-        # 2. Skill-based: use skill tool_groups / names as hints
+        # 2. Skill-based
         if matched_skills:
             for skill in matched_skills:
                 name_lower = skill.name.lower()
                 for persona_key, keywords in _PERSONA_KEYWORDS.items():
-                    if any(kw in name_lower for kw in keywords):
-                        return dataclasses.replace(
-                            self.personas[persona_key], source="matched"
+                    hit_kw = next((kw for kw in keywords if kw in name_lower), None)
+                    if hit_kw:
+                        return (
+                            dataclasses.replace(self.personas[persona_key], source="matched"),
+                            hit_kw,
+                            skill.name,
                         )
 
         # 3. Keyword classification
         scores: dict[str, int] = {}
+        best_kw_per_persona: dict[str, str] = {}
         for persona_key, keywords in _PERSONA_KEYWORDS.items():
-            score = sum(1 for kw in keywords if kw in query_lower)
-            if score > 0:
-                scores[persona_key] = score
+            for kw in keywords:
+                if kw in query_lower:
+                    scores[persona_key] = scores.get(persona_key, 0) + 1
+                    if persona_key not in best_kw_per_persona:
+                        best_kw_per_persona[persona_key] = kw
 
         if scores:
             best = max(scores, key=scores.get)
             if scores[best] >= 1 and best in self.personas:
-                return dataclasses.replace(
-                    self.personas[best], source="matched"
+                return (
+                    dataclasses.replace(self.personas[best], source="matched"),
+                    best_kw_per_persona.get(best),
+                    None,
                 )
 
         # 4. Default
-        return PersonaProfile()
+        return PersonaProfile(), None, None
 
     def _match_intent_to_persona(self, intent_key: str) -> PersonaProfile | None:
         intent_lower = intent_key.lower()
@@ -485,7 +629,7 @@ class PersonaRouter:
                 continue
             pd_ = entry.get("profile", {})
             try:
-                self.personas[key] = PersonaProfile(
+                p = PersonaProfile(
                     name=pd_.get("name", key),
                     prompt_modifier=pd_.get("prompt_modifier", ""),
                     model_preference=pd_.get("model_preference", "fast"),
@@ -494,6 +638,11 @@ class PersonaRouter:
                     verification_level=pd_.get("verification_level", "basic"),
                     source="dreamer_learned",
                 )
+                # ── Stats restore ──
+                if "stats" in entry:
+                    p.stats = PersonaStats.from_dict(entry["stats"])
+
+                self.personas[key] = p
                 loaded += 1
             except Exception:
                 pass
@@ -536,6 +685,7 @@ class ExecutionContext:
     # Run State
     tools_used: List[str] = field(default_factory=list)
     current_iteration: int = 0
+    max_iterations: int = 0
     matched_skills: List[Skill] = field(default_factory=list)
     active_persona: PersonaProfile = field(default_factory=PersonaProfile)
     loop_warning_given: bool = False
@@ -1141,6 +1291,7 @@ BEISPIELE:
         self._current_session = session
 
         # Only initialize if not resuming
+        trigger_kw, trigger_skill = None, None
         if not is_resume:
             # 1. Match skills (hybrid: keyword + embedding)
             try:
@@ -1167,7 +1318,7 @@ BEISPIELE:
             # 3b. Route persona based on query + skills + dreamer insights
             dreamer_insights = getattr(
                       getattr(self.agent.amd, 'persona', None), '_dream_insights', None)
-            ctx.active_persona = self._persona_router.route(
+            ctx.active_persona, trigger_kw, trigger_skill = self._persona_router.route(
                       query, ctx.matched_skills, dreamer_insights)
 
             # Apply persona overrides
@@ -1208,9 +1359,10 @@ BEISPIELE:
 
         final_response = None
         success = True
-
+        ctx.max_iterations = max_iterations
         # 5. Main loop
-        while ctx.current_iteration < max_iterations:
+        while ctx.current_iteration < ctx.max_iterations:
+            self.live.max_iterations = ctx.max_iterations
             ctx.current_iteration += 1
 
             self.live.iteration = ctx.current_iteration
@@ -1307,7 +1459,15 @@ BEISPIELE:
                 # Main agent: Existing handling
                 final_response = self._handle_max_iterations(ctx, query)
                 success = False
-
+        ctx.active_persona.stats.record_use(
+            source=ctx.active_persona.source,
+            query=query,
+            success=success,
+            iterations_used=ctx.current_iteration,
+            iterations_budget=max_iterations,
+            trigger_keyword=trigger_kw,
+            trigger_skill=trigger_skill,
+        )
         # 7. Compress and commit to permanent history
         await self._commit_run(ctx, session, query, final_response, success)
 
@@ -1322,6 +1482,8 @@ BEISPIELE:
                 success=success,
                 matched_skills=ctx.matched_skills,
             )
+
+
 
         # Remove from active executions
         self._active_executions.pop(ctx.run_id, None)
@@ -1368,7 +1530,7 @@ BEISPIELE:
                 session.vfs = RestrictedVFSWrapper(session.vfs, self.sub_agent_output_dir)
 
         self._current_session = session
-
+        trigger_kw, trigger_skill = None, None
         if not is_resume:
             try:
                 ctx.matched_skills = await self.skills_manager.match_skills_async(
@@ -1390,7 +1552,7 @@ BEISPIELE:
                 self._personas_loaded = True
             dreamer_insights = getattr(
                 getattr(self.agent.amd, 'persona', None), '_dream_insights', None)
-            ctx.active_persona = self._persona_router.route(
+            ctx.active_persona, trigger_kw, trigger_skill = self._persona_router.route(
                 query, ctx.matched_skills, dreamer_insights)
 
             # Apply persona overrides
@@ -1440,11 +1602,13 @@ BEISPIELE:
             # Determine depth/type (simple heuristic or passed param)
             is_sub = self.is_sub_agent
 
+            ctx.max_iterations = max_iterations
+
             # Helper to enrich chunks
             def enrich(chunk):
                 chunk["agent"] = agent_name
                 chunk["iter"] = ctx.current_iteration
-                chunk["max_iter"] = max_iterations
+                chunk["max_iter"] = ctx.max_iterations
                 chunk["is_sub"] = is_sub
                 # Token budget info
                 chunk["tokens_used"] = self._calculate_context_load(ctx)
@@ -1457,8 +1621,9 @@ BEISPIELE:
                 chunk["persona_iterations_factor"] = ctx.active_persona.max_iterations_factor
                 return chunk
 
-            while ctx.current_iteration < max_iterations:
+            while ctx.current_iteration < ctx.max_iterations:
                 ctx.current_iteration += 1
+                self.live.max_iterations = ctx.max_iterations
                 self.live.iteration = ctx.current_iteration
                 self.live.enter(AgentPhase.LLM_CALL, f"iter {ctx.current_iteration}/{max_iterations}")
 
@@ -1791,6 +1956,15 @@ BEISPIELE:
                 success = False
                 yield enrich({"type": "max_iterations", "answer": final_response})
 
+            ctx.active_persona.stats.record_use(
+                source=ctx.active_persona.source,
+                query=query,
+                success=success,
+                iterations_used=ctx.current_iteration,
+                iterations_budget=max_iterations,
+                trigger_keyword=trigger_kw,
+                trigger_skill=trigger_skill,
+            )
                 # Commit
             await self._commit_run(ctx, session, query, final_response, success)
 
@@ -1805,6 +1979,7 @@ BEISPIELE:
                     success=success,
                     matched_skills=ctx.matched_skills,
                 )
+
 
             self._active_executions.pop(ctx.run_id, None)
 
@@ -1887,11 +2062,53 @@ BEISPIELE:
         # === STATIC TOOLS ===
         if f_name == "think":
             thought = f_args.get("thought", "")
-            result = f"Thought recorded."
+            working_history = str(ctx.working_history[-20:])
+            current_user_task = ctx.query
+            current_focus = ctx.auto_focus.get_focus_message()
+            if current_focus and isinstance(current_focus, dict):
+                current_focus = current_focus.get("content", "")
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a strategic reasoning assistant embedded inside an AI agent execution loop.\n"
+                        "Your role is NOT to execute tasks — you analyze the current situation and guide the agent.\n\n"
+                        "## Your output must include:\n"
+                        "1. **Situation Assessment** — What has happened so far? Where is the agent stuck or making progress?\n"
+                        "2. **Key Insights** — Patterns, risks, or opportunities visible in the history.\n"
+                        "3. **Concrete Tips** — Actionable next steps the agent can directly attempt.\n"
+                        "4. **Partial Solutions / Hints** — Sketch approaches, pseudo-steps, or known-good patterns relevant to the task.\n"
+                        "5. **Pitfalls to Avoid** — Common mistakes or dead ends visible from the current trajectory.\n\n"
+                        "Be direct and dense. No filler. The agent will act on your output."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"## Original User Task\n{current_user_task}\n---\n\n"
+                        f"## Current Focus\n{current_focus}\n---\n\n"
+                        f"## Agent's Working History\n{working_history}\n---\n\n"
+                        f"## Agent's Current Thought\n{thought}\n---\n\n"
+                        "Based on the above, provide your situation assessment, tips, hints, and partial solutions."
+                    ),
+                },
+            ]
+            try:
+                response = await self.agent.a_run_llm_completion(
+                    messages=messages,
+                    model_preference="complex",
+                    max_tokens=450,
+                    get_response_message=True,
+                    with_context=False,
+                )
+                thought = response.content
+                result = thought
+            except Exception as e:
+                result = str(e)
             self.live.thought = thought  # visible to renderer
             # Record in AutoFocus
-            ctx.auto_focus.record(f_name, f_args, thought[:200])
-            ctx.current_iteration -= 1
+            ctx.auto_focus.record(f_name, f_args, thought)
+            ctx.max_iterations += 1
 
         elif f_name == "final_answer":
             answer = f_args.get("answer", "")
@@ -1904,13 +2121,13 @@ BEISPIELE:
         elif f_name == "list_tools":
             result = self._tool_list_tools(f_args.get("category"))
             ctx.auto_focus.record(f_name, f_args, result[:200])
-            ctx.current_iteration -= 1
+            ctx.max_iterations += 1
 
         elif f_name == "load_tools":
             tools_input = f_args.get("tools") or f_args.get("names")
             result = await self._tool_load_tools(ctx, tools_input)
             ctx.auto_focus.record(f_name, f_args, result[:200])
-            ctx.current_iteration -= 1
+            ctx.max_iterations += 1
 
         elif f_name == "shift_focus":
             result = await self._tool_shift_focus(
@@ -1918,7 +2135,6 @@ BEISPIELE:
                 f_args.get("summary_of_achievements", ""),
                 f_args.get("next_objective", ""),
             )
-            ctx.current_iteration -= 5
 
         # === SUB-AGENT TOOLS ===
         elif f_name == "spawn_sub_agent":
@@ -2390,7 +2606,7 @@ BEISPIELE:
         # 2. Iterations-Bonus statt komplettem Reset
         # Wir setzen nicht auf 1, sondern geben ihm z.B. 10 neue Versuche,
         # aber überschreiten niemals das ursprüngliche Limit.
-        ctx.current_iteration = max(1, ctx.current_iteration - 10)
+        ctx.max_iterations += 10
 
         # Optional: Tool-Relevanz für neues Ziel neu berechnen
         self._calculate_tool_relevance(ctx, next_objective)
@@ -2818,6 +3034,19 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                 auto_sum["content"] if auto_sum else "Fehler bei Zusammenfassung."
             )
 
+        # Persist persona stats
+        if ctx.active_persona:
+            ctx.active_persona.stats.record_use(
+                source=ctx.active_persona.source,
+                query=query,
+                success=success,
+                iterations_used=ctx.current_iteration,
+                iterations_budget=ctx.max_iterations,
+                trigger_keyword=getattr(ctx, "persona_trigger_kw", None),
+                trigger_skill=getattr(ctx, "persona_trigger_skill", None),
+            )
+        await self._persist_persona_stats(session, ctx.active_persona)
+
         # 3. Permanent Speichern
         # User message
         await session.add_message({"role": "user", "content": query})
@@ -2834,12 +3063,14 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
             type="action_summary",
             run_id=ctx.run_id,
             success=success,
+
         )
 
         # Final response
         await session.add_message({"role": "assistant", "content": final_response})
 
         self.live.log(f"Run {ctx.run_id} archived to {log_file}")
+
 
         # ── Notify idle tracker ──
         try:
@@ -2849,6 +3080,40 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                 sched._agent_idle_eval.record_activity(self.agent.amd.name)
         except Exception:
             pass
+
+    async def _persist_persona_stats(self, session, persona: PersonaProfile) -> None:
+        """Merge updated stats back into the VFS personas store."""
+        if persona.name == "default":
+            return
+
+        try:
+            # Load existing store
+            result = session.vfs_read(_VFS_PERSONAS)
+            store: dict = json.loads(result["content"]) if result.get("success") else {}
+        except Exception:
+            store = {}
+
+        key = next(
+            (k for k, p in self._persona_router.personas.items() if p.name == persona.name),
+            persona.name,
+        )
+
+        entry = store.setdefault(key, {})
+        entry["profile"] = {
+            "name": persona.name,
+            "prompt_modifier": persona.prompt_modifier,
+            "model_preference": persona.model_preference,
+            "temperature": persona.temperature,
+            "max_iterations_factor": persona.max_iterations_factor,
+            "verification_level": persona.verification_level,
+        }
+        entry["confidence"] = entry.get("confidence", 1.0)  # builtin personas = 1.0
+        entry["stats"] = persona.stats.to_dict()
+
+        try:
+            session.vfs_write(_VFS_PERSONAS, json.dumps(store, indent=2))
+        except Exception as e:
+            get_logger().warning(f"[PersonaStats] persist failed: {e}")
 
     # =========================================================================
     # STATISTICS

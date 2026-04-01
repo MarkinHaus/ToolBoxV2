@@ -77,9 +77,9 @@ from .audioIo import (
     AudioIOResult,
     AudioQuality,
     ProcessingMode,
-    process_audio_native,
+    # process_audio_native,
     # Convenience functions
-    process_audio_pipeline,
+    # process_audio_pipeline,
     # Main functions
     process_audio_raw,
     process_audio_stream,
@@ -160,8 +160,8 @@ __all__ = [
     # Audio I/O
     "process_audio_raw",
     "process_audio_stream",
-    "process_audio_pipeline",
-    "process_audio_native",
+    #"process_audio_pipeline",
+    #"process_audio_native",
     "AudioIOConfig",
     "AudioIOResult",
     "ProcessingMode",

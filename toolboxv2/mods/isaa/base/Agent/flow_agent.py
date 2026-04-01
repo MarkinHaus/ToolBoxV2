@@ -33,7 +33,10 @@ from toolboxv2.mods.isaa.base.Agent.types import (
     DreamConfig,
 )
 from toolboxv2.mods.isaa.base.patch.power_vfs import grep_vfs, search_vfs, find_files
-
+from toolboxv2.mods.isaa.base.audio_io.audioIo import (
+    setup_isaa_audio, LocalPlayer, WebPlayer, NullPlayer, AudioStreamPlayer
+)
+from toolboxv2.mods.isaa.base.audio_io.Tts import TTSConfig, TTSBackend
 AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
 # Framework imports
 try:
@@ -1561,6 +1564,81 @@ class FlowAgent:
     # =========================================================================
     # audio processing
     # =========================================================================
+    def setup_audio(
+        self,
+        tts_config: TTSConfig | None = None,
+        player: str = "null",  # "local" | "web" | "null"
+        web_queue_size: int = 50,
+        enable_enhancement: bool = False,
+    ) -> AudioStreamPlayer:
+        """
+        Aktiviert Audio-Output für diesen Agent.
+
+        Nach dem Call:
+          - speak() Tool ist registriert
+          - System-Prompt hat den Audio-Contract
+          - self._audio_player ist gesetzt
+
+        Args:
+            tts_config:  TTSConfig, default = GROQ_TTS "autumn"
+            player:      "local"  → sounddevice Hardware
+                         "web"    → WebPlayer relay für WS-Streaming
+                         "null"   → NullPlayer (testing / headless)
+            web_queue_size: Max queue depth für WebPlayer
+
+        Returns:
+            AudioStreamPlayer — `await player.start()` muss danach gecallt werden.
+
+        Example (lokal):
+            player = agent.setup_audio(player="local")
+            await player.start()
+
+        Example (WebSocket relay):
+            web = WebPlayer(max_queue=50)
+            player = agent.setup_audio(player="web")
+            # player.player ist der WebPlayer
+            await player.start()
+            async for chunk, meta in web.iter_chunks():
+                await ws.send_bytes(chunk)
+        """
+        backend_map = {
+            "local": LocalPlayer(),
+            "web": WebPlayer(max_queue=web_queue_size),
+            "null": NullPlayer(),
+        }
+        player_backend = backend_map.get(player, NullPlayer())
+
+        self._audio_player = setup_isaa_audio(
+            agent=self,
+            tts_config=tts_config,
+            player_backend=player_backend,
+            enable_enhancement=enable_enhancement,
+            session_id=self.active_session or "default",
+        )
+        return self._audio_player
+
+    @property
+    def audio_player(self) -> AudioStreamPlayer | None:
+        return getattr(self, "_audio_player", None)
+
+    def set_audio_player_device(self, device=-1):
+        if device == -1:
+            import sounddevice as sd
+            for i, dev in enumerate(sd.query_devices()):
+                if dev["max_output_channels"] > 0:
+                    print(f"[{i}] {dev['name']}  ({dev['default_samplerate']}Hz)")
+        else:
+            player = self.audio_player
+            if player is None:
+                if AGENT_VERBOSE:
+                    print("first run setup_audio")
+                    return
+            if hasattr(player.player, "device"):
+                player.player.device = device
+            else:
+                print(f"not local player player is {player.player.__class__.__name__}")
+
+
 
     async def a_stream_audio(
         self,
@@ -1586,6 +1664,7 @@ class FlowAgent:
         """
         from toolboxv2.mods.isaa.base.audio_io.audioIo import process_audio_stream
 
+        # futool wrp wit arg log user_lightning_model=True for self.a_stream_verbose
         self.active_session = session_id
         async for chunk in process_audio_stream(
             audio_chunks, self.a_stream_verbose, language=language, **kwargs
