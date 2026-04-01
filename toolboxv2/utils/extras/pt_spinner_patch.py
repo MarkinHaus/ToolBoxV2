@@ -2,18 +2,20 @@
 
 import threading
 import time
-from prompt_toolkit.application import get_app
+from typing import Optional
+from prompt_toolkit.application import Application
 
-# ── Shared state ─────────────────────────────────────────────────────────────
-_PT_SPINNER_STATE: dict = {
-    "active": False,
-    "line":   "",
-}
+_PT_SPINNER_STATE: dict = {"active": False, "line": ""}
 _STATE_LOCK = threading.Lock()
+_APP_REF: Optional[Application] = None
+
+
+def register_app(app: Application) -> None:
+    global _APP_REF
+    _APP_REF = app
 
 
 def get_spinner_toolbar_fragment() -> str:
-    """Gibt den aktuellen Spinner-Text zurück (leer wenn kein Spinner aktiv)."""
     with _STATE_LOCK:
         if _PT_SPINNER_STATE["active"]:
             return _PT_SPINNER_STATE["line"]
@@ -23,38 +25,31 @@ def get_spinner_toolbar_fragment() -> str:
 def _set_state(active: bool, line: str = "") -> None:
     with _STATE_LOCK:
         _PT_SPINNER_STATE["active"] = active
-        _PT_SPINNER_STATE["line"] = line
+        _PT_SPINNER_STATE["line"]   = line
     _try_invalidate()
 
 
 def _try_invalidate() -> None:
-    """Trigger prompt_toolkit re-render ohne Exception wenn kein App aktiv."""
-    try:
-        get_app().invalidate()
-    except Exception:
-        pass
+    app = _APP_REF
+    if app is not None:
+        try:
+            app.invalidate()
+        except Exception:
+            pass
 
 
-# ── Patch ─────────────────────────────────────────────────────────────────────
 def apply_prompt_toolkit_patch_safe() -> None:
-    """
-    Patcht SpinnerManager + Spinner so dass:
-      - kein direktes stdout-Writing mehr passiert
-      - Spinner-State in _PT_SPINNER_STATE landet
-      - prompt_toolkit via invalidate() neu rendert
-    Idempotent – mehrfaches Aufrufen ist safe.
-    """
     try:
-        from toolboxv2.utils.extras.Style import Spinner, SpinnerManager
-    except ImportError:
+        from toolboxv2.utils.extras.spinner import Spinner, SpinnerManager
+    except ImportError as e:
+        print(f"[pt_spinner_patch] Import failed: {e}")
         return
 
-    # Bereits gepatcht?
     if getattr(SpinnerManager, "_pt_patched", False):
         return
 
-    # ── SpinnerManager._render_loop ──────────────────────────────────────────
-    def _pt_render_loop(self: SpinnerManager) -> None:  # type: ignore[override]
+    # ── _render_loop: kein stdout mehr ───────────────────────────────────────
+    def _pt_render_loop(self: SpinnerManager) -> None:
         while self._should_run:
             with self._lock:
                 if not self._spinners:
@@ -76,22 +71,41 @@ def apply_prompt_toolkit_patch_safe() -> None:
                         line += f"  [{secondary}]"
                     _set_state(True, line)
 
-            time.sleep(0.08)  # etwas flüssiger als original 0.1
+            time.sleep(0.08)
 
         _set_state(False)
 
-    # ── Spinner.__exit__ ─────────────────────────────────────────────────────
-    def _pt_spinner_exit(
-        self: Spinner,  # type: ignore[override]
-        exc_type,
-        exc_value,
-        exc_traceback,
-    ) -> None:
+    # ── _signal_handler: kein stdout mehr ────────────────────────────────────
+    import sys, signal as _signal
+
+    def _pt_signal_handler(self: SpinnerManager, signum, frame) -> None:
+        with self._lock:
+            for spinner in self._spinners:
+                spinner.running = False
+            self._spinners.clear()
+        self._should_run = False
+        _set_state(False)   # Toolbar leeren statt \r\033[K
+        sys.exit(0)
+
+    # ── __exit__: kein stdout mehr ───────────────────────────────────────────
+    def _pt_spinner_exit(self: Spinner, exc_type, exc_val, exc_tb) -> None:
         self.running = False
         self.manager.unregister_spinner(self)
         if self._is_primary:
-            _set_state(False)   # kein \r\033[K mehr
+            _set_state(False)   # statt \r\033[K
 
-    SpinnerManager._render_loop = _pt_render_loop   # type: ignore[method-assign]
-    Spinner.__exit__ = _pt_spinner_exit              # type: ignore[method-assign]
-    SpinnerManager._pt_patched = True                # type: ignore[attr-defined]
+    # ── __aenter__ / __aexit__ für async with ────────────────────────────────
+    async def _pt_spinner_aenter(self: Spinner):
+        return self.__enter__()
+
+    async def _pt_spinner_aexit(self: Spinner, exc_type, exc_val, exc_tb) -> None:
+        _pt_spinner_exit(self, exc_type, exc_val, exc_tb)
+
+    # ── Patch anwenden ────────────────────────────────────────────────────────
+    SpinnerManager._render_loop    = _pt_render_loop
+    SpinnerManager._signal_handler = _pt_signal_handler
+    Spinner.__exit__               = _pt_spinner_exit
+    Spinner.__aenter__             = _pt_spinner_aenter
+    Spinner.__aexit__              = _pt_spinner_aexit
+    SpinnerManager._pt_patched     = True
+    print("[pt_spinner_patch] Patch applied.")

@@ -31,8 +31,8 @@ from prompt_toolkit.document import Document
 from prompt_toolkit.filters import is_done
 
 from toolboxv2.utils.workers import get_registry
-from toolboxv2.utils.extras.Style import SpinnerManager
-from utils.extras.pt_spinner_patch import apply_prompt_toolkit_patch_safe, get_spinner_toolbar_fragment
+from toolboxv2.utils.extras.Style import SpinnerManager, Spinner
+from utils.extras.pt_spinner_patch import apply_prompt_toolkit_patch_safe, get_spinner_toolbar_fragment, register_app
 
 # Suppress noisy loggers
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
@@ -59,7 +59,6 @@ from toolboxv2.mods.isaa.base.Agent.instant_data_vis import (
 )
 from toolboxv2.mods.isaa.base.Agent.vfs_v2 import FileBackingType, VFSFile
 from toolboxv2.mods.isaa.base.AgentUtils import detect_shell
-from toolboxv2.mods.isaa.base.audio_io.audioIo import AudioStreamPlayer
 
 from toolboxv2.mods.isaa.extras.zen.zen_renderer import  _esc, C
 from toolboxv2.mods.isaa.extras.jobs import JobDefinition, TriggerConfig, JobScheduler
@@ -3710,6 +3709,7 @@ class ISAA_Host:
         self._live_engine: Optional[LiveModeEngine] = None
         self._speaker_store: SpeakerProfileStore = SpeakerProfileStore()
         self._live_config: LiveModeConfig = LiveModeConfig()
+        self._audio_setup_agents: set[str] = set()
 
         self._audio_backend = "groq_tts"  # TTSBackend value string
         self._audio_voice = "autumn"
@@ -3762,6 +3762,62 @@ class ISAA_Host:
             tts_config=cfg,
             session_id=getattr(self, "active_session_id", "default"),
         )
+
+    async def _ensure_audio_setup(self, agent_name: str | None = None) -> bool:
+        """
+        Lazy audio setup: registriert speak-Tool + System-Prompt auf dem Agent.
+
+        Wird aufgerufen:
+          - Bei /audio on
+          - Bei _handle_agent_interaction wenn should_speak=True
+          - Nach _restart_audio_player (invalidiert via _audio_setup_agents.discard)
+
+        Returns True wenn setup erfolgreich, False bei Fehler (Audio bleibt optional).
+        """
+        name = agent_name or self.active_agent_name
+
+        # Session-ID immer aktuell halten (kein Re-Register nötig)
+        self.audio_player.session_id = self.active_session_id
+
+        if name in self._audio_setup_agents:
+            return True
+
+        try:
+            from toolboxv2.mods.isaa.base.audio_io.audioIo import (
+                create_speak_tool, SPEAK_TOOL_SYSTEM_PROMPT
+            )
+            agent = await self.isaa_tools.get_agent(name)
+
+            # Alten speak-Tool entfernen falls vorhanden (z.B. nach player rebuild)
+            try:
+                agent.remove_tool("speak")
+            except Exception:
+                pass
+
+            # Speak-Tool an aktuellen Player binden
+            speak_fn = create_speak_tool(self.audio_player)
+            agent.add_tool(
+                speak_fn,
+                name="speak",
+                description=(
+                    "Speak text aloud to the user. MUST be called for every response "
+                    "in audio mode. Call early, call per paragraph. Set emotion."
+                ),
+                category=["audio", "output"],
+            )
+
+            # System-Prompt nur einmal anhängen
+            attr = "system_message" if hasattr(agent.amd, "system_message") else "system_prompt"
+            existing = getattr(agent.amd, attr, "") or ""
+            if "AUDIO MODE" not in existing:
+                setattr(agent.amd, attr, existing + "\n\n" + SPEAK_TOOL_SYSTEM_PROMPT)
+
+            self._audio_setup_agents.add(name)
+            return True
+
+        except Exception as e:
+            print_status(f"Audio setup für '{name}' fehlgeschlagen: {e}", "warning")
+            return False
 
     def _ingest_chunk(self, task_id: str, chunk: dict) -> None:
         """Forward one stream chunk. Sub-agent chunks go to their own TaskView."""
@@ -6202,6 +6258,8 @@ class ISAA_Host:
                 self.active_session_id = "default"
                 self._save_state()
                 print_status(f"Switched to agent: {target}", "success")
+                if self.verbose_audio:
+                    await self._ensure_audio_setup(target)
             else:
                 print_status(f"Agent '{target}' not found", "error")
 
@@ -8168,6 +8226,7 @@ class ISAA_Host:
             self.verbose_audio = True
             if not self.audio_player._task or self.audio_player._task.done():
                 await self.audio_player.start()
+            await self._ensure_audio_setup()
             print_status("Verbose audio ON — all responses will be spoken", "success")
 
         elif cmd == "off":
@@ -8487,8 +8546,14 @@ class ISAA_Host:
         )
         await self.audio_player.stop()
         self.audio_player = self._build_audio_player()
+
+        # Speak-Tool-Bindings sind jetzt stale → alle Agents re-registrieren lassen
+        self._audio_setup_agents.clear()
+
         if was_running or self.verbose_audio:
             await self.audio_player.start()
+            # Sofort re-setup für aktiven Agent
+            await self._ensure_audio_setup()
 
     async def _select_audio_device_interactive(self):
         """Print output devices, prompt for index."""
@@ -9669,6 +9734,7 @@ class ISAA_Host:
                     self.audio_player._task is not None
                     and not self.audio_player._task.done()
                 )
+                await self._ensure_audio_setup(self.active_agent_name)
                 if not player_running:
                     # Nur neu bauen/starten wenn session gewechselt hat
                     if self.audio_player.session_id != self.active_session_id:
@@ -9951,6 +10017,7 @@ class ISAA_Host:
         self.app.run_bg_task_advanced(self.active_refresher)
 
         apply_prompt_toolkit_patch_safe()
+        register_app(self.prompt_session.app)
 
         # Main loop
         while True:
@@ -9980,12 +10047,13 @@ class ISAA_Host:
                     continue
 
                 # Route input
-                if user_input.startswith("!"):
-                    await self._handle_shell(user_input[1:])
-                elif user_input.startswith("/"):
-                    await self._handle_command(user_input)
-                else:
-                    await self._handle_agent_interaction(user_input)
+                with Spinner("Starting command"):
+                    if user_input.startswith("!"):
+                        await self._handle_shell(user_input[1:])
+                    elif user_input.startswith("/"):
+                        await self._handle_command(user_input)
+                    else:
+                        await self._handle_agent_interaction(user_input)
 
             except KeyboardInterrupt:
                 continue
