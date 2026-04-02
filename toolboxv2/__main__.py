@@ -419,6 +419,7 @@ RUNNER_KEYS = [
     "access",
     "services",
     "registry",
+    "rs"
     "manifest",
     "llm-gateway",
     "docksh",
@@ -1848,7 +1849,7 @@ def runner_setup():
             module_name=args.module_name,
             **clean_kwargs
         )
-    async def registry():
+    async def registry_server():
         app = get_app("CloudM.RegistryServer")
         await app.a_run_any("CloudM.RegistryServer", "start")
 
@@ -1873,6 +1874,7 @@ def runner_setup():
         "logout": logout,
         "flow": run_c,
         "mods": mods_manager,
+        "rs": registry_server,
         "registry": lambda: __import__(
             "toolboxv2.utils.clis.cli_registry", fromlist=["registry"]
         ).registry(),

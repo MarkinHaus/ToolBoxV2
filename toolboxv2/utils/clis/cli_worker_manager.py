@@ -2633,7 +2633,11 @@ tb workers worker-stop -w <id>    Stoppt Worker by ID
 
 tb workers cluster-join --host H --port P --secret S
 
-tb workers debug             Startet Debug-Server auf dist/"""
+tb workers debug             Startet Debug-Server auf dist/
+
+certbot install --cert-name simplecore.app
+
+"""
 
 
 if __name__ == "__main__":
