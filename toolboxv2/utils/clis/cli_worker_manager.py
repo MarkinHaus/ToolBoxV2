@@ -209,6 +209,32 @@ class SSLManager:
                 self.key_path = key_path
                 self.available = True
 
+def _hash_password_for_nginx(pwd: str) -> Optional[str]:
+    """
+    Versucht in Reihenfolge: passlib → bcrypt → sha1-fallback.
+    Alle drei werden von nginx auth_basic akzeptiert.
+    """
+    # Beste Option: passlib APR1-MD5 (identisch mit htpasswd-Tool)
+    try:
+        from passlib.hash import apr_md5_crypt
+        return apr_md5_crypt.hash(pwd)
+    except ImportError:
+        pass
+
+    # Zweite Option: bcrypt
+    try:
+        import bcrypt
+        return bcrypt.hashpw(
+            pwd.encode("utf-8"),
+            bcrypt.gensalt(rounds=12, prefix=b"2y")  # nginx erwartet $2y$
+        ).decode("utf-8")
+    except ImportError:
+        pass
+
+    # Fallback: SHA1 — von nginx unterstützt, schwächer aber funktional
+    import hashlib, base64
+    digest = hashlib.sha1(pwd.encode("utf-8")).digest()
+    return "{SHA}" + base64.b64encode(digest).decode("utf-8")
 
 class NginxManager:
     _PROXY_COMMON = (
@@ -638,40 +664,35 @@ class NginxManager:
     # =========================================================================
     # Write methods
     # =========================================================================
+
+
     def write_htpasswd(self) -> Optional[str]:
-        """Schreibt htpasswd-Datei. Kein Seiteneffekt in Config-Generatoren."""
-        pwd = os.getenv("ADMIN_UI_PASSWORD", "")
+        pwd = os.environ.get("ADMIN_UI_PASSWORD", "")
         if not pwd:
-            logger.warning("ADMIN_UI_PASSWORD not set — admin UI will be disabled")
+            logger.warning("ADMIN_UI_PASSWORD not set — admin UI disabled")
             return None
-        htpasswd_path = "/etc/nginx/admin_htpasswd"
         if IS_WINDOWS:
+            logger.warning("htpasswd not supported on Windows")
             return None
+
+        htpasswd_path = "/etc/nginx/admin_htpasswd"
+        hashed = _hash_password_for_nginx(pwd)
+        if not hashed:
+            logger.error("No password hashing backend available — pip install passlib")
+            return None
+
         try:
-            result = subprocess.run(
-                ["htpasswd", "-cb", htpasswd_path, "admin", pwd],
-                capture_output=True, check=True
-            )
-            logger.info(f"htpasswd written to {htpasswd_path}")
+            os.makedirs(os.path.dirname(htpasswd_path), exist_ok=True)
+            with open(htpasswd_path, "w") as f:
+                f.write(f"admin:{hashed}\n")
+            os.chmod(htpasswd_path, 0o640)  # nginx-readable, nicht world-readable
+            logger.info(f"htpasswd written → {htpasswd_path}")
             return htpasswd_path
-        except FileNotFoundError:
-            # htpasswd not available — manual fallback via openssl
-            try:
-                r = subprocess.run(
-                    ["openssl", "passwd", "-apr1", pwd],
-                    capture_output=True, text=True, check=True
-                )
-                hashed = r.stdout.strip()
-                os.makedirs(os.path.dirname(htpasswd_path), exist_ok=True)
-                with open(htpasswd_path, "w") as f:
-                    f.write(f"admin:{hashed}\n")
-                logger.info(f"htpasswd written via openssl to {htpasswd_path}")
-                return htpasswd_path
-            except Exception as e:
-                logger.error(f"write_htpasswd failed: {e}")
-                return None
-        except subprocess.CalledProcessError as e:
-            logger.error(f"htpasswd error: {e.stderr}")
+        except PermissionError:
+            logger.error("Cannot write htpasswd — run with sudo")
+            return None
+        except Exception as e:
+            logger.error(f"write_htpasswd failed: {e}")
             return None
 
     def write_site_config(
