@@ -1351,7 +1351,7 @@ http {{
     # =========================================================================
     def write_htpasswd(self) -> Optional[str]:
         """Schreibt htpasswd-Datei. Kein Seiteneffekt in Config-Generatoren."""
-        pwd = os.environ.get("ADMIN_UI_PASSWORD", "")
+        pwd = os.getenv("ADMIN_UI_PASSWORD", "")
         if not pwd:
             logger.warning("ADMIN_UI_PASSWORD not set — admin UI will be disabled")
             return None

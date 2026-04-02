@@ -1292,11 +1292,6 @@ class WebSocketMessageHandler:
                     pass
                 return
 
-        # Handle internal HUD messages
-        if handler_id == "__hud_internal__":
-            await self._handle_hud_message(event, payload, conn_id, user_id, session_id)
-            return
-
         handler = self.app.websocket_handlers.get(handler_id, {}).get("on_message")
         if handler:
             try:
@@ -1375,187 +1370,6 @@ class WebSocketMessageHandler:
                 except Exception as e:
                     self._logger.error(f"on_disconnect handler error: {e}", exc_info=True)
 
-    async def _handle_hud_message(self, event: Event, payload: dict, conn_id: str, user_id: str, session_id: str):
-        """Handle HUD-specific WebSocket messages (widget_action, get_widget, etc.)."""
-        msg_type = payload.get("type")
-        self._logger.info(f"[HUD] Handling message type: {msg_type}")
-
-        try:
-            # Build request object with session data for access control
-            user_level = int(event.payload.get("level", AccessLevel.NOT_LOGGED_IN))
-            authenticated = event.payload.get("authenticated", False)
-            provider_user_id = event.payload.get("user_id", event.payload.get("cloudm_user_id", ""))
-
-            request_dict = {
-                "request": {
-                    "content_type": "application/json",
-                    "headers": {},
-                    "method": "WEBSOCKET",
-                    "path": "/ws/hud",
-                    "query_params": {},
-                    "form_data": None,
-                    "body": None,
-                },
-                "session": {
-                    "SiID": session_id,
-                    "level": user_level,
-                    "spec": "ws",
-                    "user_name": user_id or "anonymous",
-                    "user_id": user_id,
-                    "session_id": session_id,
-                    "provider_user_id": provider_user_id,
-                    "validated": authenticated,
-                    "anonymous": not authenticated,
-                },
-                "session_id": session_id,
-            }
-            request = RequestData.from_dict(request_dict)
-
-            if msg_type == "widget_action":
-                await self._handle_widget_action(payload, conn_id, request)
-            elif msg_type == "get_widget":
-                await self._handle_get_widget(payload, conn_id, request)
-            elif msg_type == "get_widgets":
-                await self._handle_get_widgets(conn_id, request)
-            elif msg_type == "get_status":
-                await self._handle_get_status(conn_id)
-            else:
-                self._logger.warning(f"[HUD] Unknown message type: {msg_type}")
-
-        except Exception as e:
-            self._logger.error(f"[HUD] Error handling message: {e}", exc_info=True)
-            await self.app.ws_send(conn_id, {
-                "type": "error",
-                "message": str(e),
-            })
-
-    async def _handle_widget_action(self, payload: dict, conn_id: str, request: RequestData):
-        """Handle widget action from HUD."""
-        widget_id = payload.get("widget_id")
-        action = payload.get("action")
-        action_payload = payload.get("payload", {})
-        action_id = payload.get("action_id")
-
-        self._logger.info(f"[HUD] Widget action: {widget_id}.{action}")
-
-        if not widget_id or not action:
-            await self.app.ws_send(conn_id, {
-                "type": "widget_response",
-                "action_id": action_id,
-                "widget_id": widget_id,
-                "error": "Missing widget_id or action",
-            })
-            return
-
-        # Try to find and call the widget action handler
-        # Convention: Module has a function named hud_action or hud_{widget_id}_action
-        # The function receives: action, payload, conn_id, request
-        try:
-            # First try: {widget_id}.hud_action
-            result = await self.app.a_run_any(
-                (widget_id, "hud_action"),
-                action=action,
-                payload=action_payload,
-                conn_id=conn_id,
-                request=request,
-            )
-
-            # Send response back
-            response = {
-                "type": "widget_response",
-                "action_id": action_id,
-                "widget_id": widget_id,
-                "action": action,
-                "result": result if isinstance(result, dict) else {"data": result},
-            }
-            await self.app.ws_send(conn_id, response)
-
-        except Exception as e:
-            self._logger.error(f"[HUD] Widget action error: {e}", exc_info=True)
-            await self.app.ws_send(conn_id, {
-                "type": "widget_response",
-                "action_id": action_id,
-                "widget_id": widget_id,
-                "error": str(e),
-            })
-
-    async def _handle_get_widget(self, payload: dict, conn_id: str, request: RequestData):
-        """Handle request for a single widget."""
-        widget_id = payload.get("widget_id")
-
-        if not widget_id:
-            return
-
-        self._logger.info(f"[HUD] Get widget: {widget_id}")
-
-        try:
-            # Try to call the widget's render function
-            # Convention: hud_{widget_name} function returns HTML
-            result = await self.app.a_run_any(
-                (widget_id, f"hud_{widget_id}"),
-                request=request,
-            )
-
-            html = result if isinstance(result, str) else str(result)
-
-            await self.app.ws_send(conn_id, {
-                "type": "single_widget_update",
-                "widget_id": widget_id,
-                "html": html,
-            })
-
-        except Exception as e:
-            self._logger.error(f"[HUD] Get widget error: {e}", exc_info=True)
-
-    async def _handle_get_widgets(self, conn_id: str, request: RequestData):
-        """Handle request for all widgets."""
-        self._logger.info(f"[HUD] Get all widgets")
-
-        try:
-            # Get HUD functions from CloudM
-            result = await self.app.a_run_any(
-                ("CloudM", "get_hud_functions"),
-                request=request,
-            )
-
-            widgets = []
-            if isinstance(result, list):
-                for func in result:
-                    widgets.append({
-                        "widget_id": func.get("func_name", ""),
-                        "title": func.get("display_name", "Widget"),
-                        "mod_name": func.get("mod_name", ""),
-                        "path": func.get("path", ""),
-                    })
-
-            await self.app.ws_send(conn_id, {
-                "type": "widgets",
-                "widgets": widgets,
-            })
-
-        except Exception as e:
-            self._logger.error(f"[HUD] Get widgets error: {e}", exc_info=True)
-            await self.app.ws_send(conn_id, {
-                "type": "widgets",
-                "widgets": [],
-            })
-
-    async def _handle_get_status(self, conn_id: str):
-        """Handle status request."""
-        self._logger.info(f"[HUD] Get status")
-
-        try:
-            status = {
-                "type": "status",
-                "running": True,
-                "worker_running": True,
-                "active_mods": len(self.app.functions) if hasattr(self.app, 'functions') else 0,
-                "is_remote": False,
-            }
-            await self.app.ws_send(conn_id, status)
-
-        except Exception as e:
-            self._logger.error(f"[HUD] Get status error: {e}", exc_info=True)
 
     def _get_handler_from_path(self, path: str) -> str | None:
         """Extract handler ID from WebSocket path.
@@ -1930,11 +1744,6 @@ class HTTPWorker:
                 status, headers, body = self._run_async(
                     self._handle_auth_endpoint(request)
                 )
-            elif self._toolbox_handler and self._toolbox_handler.is_api_request(request.path):
-                # API endpoints
-                status, headers, body = self._run_async(
-                    self._toolbox_handler.handle_api_call(request)
-                )
             elif request.path == "/health":
                 status, headers, body = self._handle_health()
             elif request.path == "/metrics":
@@ -1947,6 +1756,11 @@ class HTTPWorker:
                 status, headers, body = self._handle_geo_request(request)
             elif request.path == "/api/client-logs":
                 status, headers, body = self._handle_client_logs(request)
+            elif self._toolbox_handler and self._toolbox_handler.is_api_request(request.path):
+                # API endpoints
+                status, headers, body = self._run_async(
+                    self._toolbox_handler.handle_api_call(request)
+                )
             else:
                 status, headers, body = error_response("Not Found", 404, "NotFound")
 
