@@ -35,3 +35,5 @@ def make_known(name: str, get_flag: bytes = b"R", port=44667) -> Any | None:
         server.close()
 
     return json.loads(data.decode())
+
+# ssh -L 8221:localhost:9001 -L 8222:localhost:9000 name@ip -N

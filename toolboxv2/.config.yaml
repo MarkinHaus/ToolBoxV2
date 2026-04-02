@@ -1,172 +1,133 @@
-# ToolBoxV2 Worker System Configuration
-# Environment variables can be used: ${VAR_NAME} or ${VAR_NAME:default}
-
-# Runtime environment: development, production, tauri
-environment: "${TB_ENV:development}"
+environment: ${TB_ENV:development}
 debug: false
-log_level: "INFO"
-data_dir: "${TB_DATA_DIR:}"
-
-# ZeroMQ IPC Configuration
-# WICHTIG: Jeder Socket braucht einen eigenen Port!
+log_level: INFO
+data_dir: ${TB_DATA_DIR:}
 zmq:
-  pub_endpoint: "tcp://127.0.0.1:5555"   # Broker XPUB -> Worker SUB
-  sub_endpoint: "tcp://127.0.0.1:5556"   # Worker PUB -> Broker XSUB
-  req_endpoint: "tcp://127.0.0.1:5557"   # RPC (ROUTER/DEALER)
-  rep_endpoint: "tcp://127.0.0.1:5557"   # Same as req for RPC
-  http_to_ws_endpoint: "tcp://127.0.0.1:5558"  # HTTP->WS PUSH/PULL
+  pub_endpoint: tcp://127.0.0.1:5555
+  sub_endpoint: tcp://127.0.0.1:5556
+  req_endpoint: tcp://127.0.0.1:5557
+  rep_endpoint: tcp://127.0.0.1:5557
+  http_to_ws_endpoint: tcp://127.0.0.1:5558
   hwm_send: 10000
   hwm_recv: 10000
   reconnect_interval: 1000
   heartbeat_interval: 5000
-
-# Session Configuration (Signed Cookies - Stateless)
 session:
-  cookie_name: "tb_session"
-  cookie_secret: "${TB_COOKIE_SECRET:}"  # Required in production!
-  cookie_max_age: 604800  # 7 days
+  cookie_name: tb_session
+  cookie_secret: ${TB_COOKIE_SECRET:}
+  cookie_max_age: 604800
   cookie_secure: true
   cookie_httponly: true
-  cookie_samesite: "Lax"
+  cookie_samesite: Lax
   payload_fields:
-    - "user_id"
-    - "session_id"
-    - "level"
-    - "spec"
-    - "user_name"
-    - "exp"
-
-# Authentication (Custom Auth - replaces Clerk)
+  - user_id
+  - session_id
+  - level
+  - spec
+  - user_name
+  - exp
 auth:
-  jwt_algorithm: "HS256"
-  jwt_access_expiry: 900       # 15 minutes
-  jwt_refresh_expiry: 604800   # 7 days
-  jwt_secret: "${TB_JWT_SECRET:}"
-  api_key_header: "X-API-Key"
-  bearer_header: "Authorization"
-
-# HTTP Worker Configuration
+  jwt_algorithm: HS256
+  jwt_access_expiry: 900
+  jwt_refresh_expiry: 604800
+  jwt_secret: ${TB_JWT_SECRET:}
+  api_key_header: X-API-Key
+  bearer_header: Authorization
 http_worker:
-  host: "127.0.0.1"
+  host: 127.0.0.1
   port: 8000
-  workers: 4  # Number of worker processes
-  max_concurrent: 100  # Max concurrent requests per worker
+  workers: 4
+  max_concurrent: 100
   timeout: 30
   keepalive: 65
   backlog: 2048
-  instance_prefix: "http"
-
-# WebSocket Worker Configuration
+  instance_prefix: http
 ws_worker:
-  host: "127.0.0.1"
+  host: 127.0.0.1
   port: 8001
   max_connections: 10000
   ping_interval: 30
   ping_timeout: 10
-  max_message_size: 1048576  # 1MB
+  max_message_size: 1048576
   compression: true
-  instance_prefix: "ws"
-
+  instance_prefix: ws
 database:
-  mode: CB  # LC | LR | RR | CB
-
+  mode: CB
   local:
-    path: ".data/MiniDictDB.json"
-
+    path: .data/MiniDictDB.json
   redis:
-    url: "${DB_CONNECTION_URI:redis://localhost:6379}"
-    username: "${DB_USERNAME:}"
-    password: "${DB_PASSWORD:}"
+    url: ${DB_CONNECTION_URI:redis://localhost:6379}
+    username: ${DB_USERNAME:}
+    password: ${DB_PASSWORD:}
     db_index: 0
     max_connections: 10
-
   minio:
-    endpoint: "${MINIO_ENDPOINT:localhost:9000}"
-    access_key: "${MINIO_ACCESS_KEY:minioadmin}"
-    secret_key: "${MINIO_SECRET_KEY:minioadmin}"
+    endpoint: ${MINIO_ENDPOINT:localhost:9000}
+    access_key: ${MINIO_ACCESS_KEY:minioadmin}
+    secret_key: ${MINIO_SECRET_KEY:minioadmin}
     bucket: user-data-enc
     use_ssl: false
-
-# Nginx Configuration
 nginx:
   enabled: true
-  config_path: "/etc/nginx/sites-available/toolboxv2"
-  symlink_path: "/etc/nginx/sites-enabled/toolboxv2"
-  pid_file: "/run/nginx.pid"
-  access_log: "/var/log/nginx/toolboxv2_access.log"
-  error_log: "/var/log/nginx/toolboxv2_error.log"
-  server_name: "${TB_NGINX_SERVER_NAME:localhost}"
+  config_path: /etc/nginx/sites-available/toolboxv2
+  symlink_path: /etc/nginx/sites-enabled/toolboxv2
+  pid_file: /run/nginx.pid
+  access_log: /var/log/nginx/toolboxv2_access.log
+  error_log: /var/log/nginx/toolboxv2_error.log
+  server_name: ${TB_NGINX_SERVER_NAME:localhost}
   listen_port: 80
   listen_ssl_port: 443
   ssl_enabled: false
-  ssl_certificate: ""
-  ssl_certificate_key: ""
-  # Static files
-  static_root: "${TB_STATIC_ROOT:./dist}"
+  ssl_certificate: ''
+  ssl_certificate_key: ''
+  static_root: ${TB_STATIC_ROOT:./dist}
   static_enabled: true
-  # Rate limiting
   rate_limit_enabled: true
-  rate_limit_zone: "tb_limit"
-  rate_limit_rate: "10r/s"
+  rate_limit_zone: tb_limit
+  rate_limit_rate: 10r/s
   rate_limit_burst: 20
-  # Upstreams
-  upstream_http: "tb_http_backend"
-  upstream_ws: "tb_ws_backend"
-
-# Worker Manager Configuration
+  upstream_http: tb_http_backend
+  upstream_ws: tb_ws_backend
 manager:
   web_ui_enabled: true
-  web_ui_host: "127.0.0.1"
+  web_ui_host: 127.0.0.1
   web_ui_port: 9000
-  control_socket: ""  # Auto-set based on data_dir
-  pid_file: ""  # Auto-set based on data_dir
-  log_file: ""  # Auto-set based on data_dir
+  control_socket: ''
+  pid_file: ''
+  log_file: ''
   health_check_interval: 10
   restart_delay: 2
   max_restart_attempts: 5
   rolling_update_delay: 5
-
-# ToolBoxV2 Integration
 toolbox:
-  instance_id: "tbv2_worker"
+  instance_id: tbv2_worker
   modules_preload: []
-  api_prefix: "/api"
+  api_prefix: /api
   api_allowed_mods: []
-  auth_module: "CloudM.Auth"
-  verify_session_func: "validate_session"
-
-
-# =============================================================================
-# Observability (Log Analysis + Dashboard)
-# =============================================================================
+  auth_module: CloudM.Auth
+  verify_session_func: validate_session
 observability:
-  # Sync logs to MinIO (backup / long-term storage)
   sync:
     enabled: true
-    target: minio            # minio = use database.minio | remote_minio = separate server
-    # remote_endpoint: "${MINIO_REMOTE_ENDPOINT:}"
-    # remote_access_key: "${MINIO_REMOTE_ACCESS_KEY:}"
-    # remote_secret_key: "${MINIO_REMOTE_SECRET_KEY:}"
+    target: minio
     remote_bucket: system-audit-logs
-    interval_seconds: 300    # 0 = manual only
-
-  # Live dashboard (OpenObserve)
+    interval_seconds: 300
   dashboard:
     enabled: true
-    endpoint: "${OPENOBSERVE_ENDPOINT:http://localhost:5080}"
-    user: "${OPENOBSERVE_USER:root@example.com}"
-    password: "${OPENOBSERVE_PASSWORD:}"
+    endpoint: ${OPENOBSERVE_ENDPOINT:http://localhost:5080}
+    user: ${OPENOBSERVE_USER:root@example.com}
+    password: ${OPENOBSERVE_PASSWORD:}
     org: default
     system_stream: system_logs
     audit_stream: audit_logs
-    flush_interval: 5.0      # seconds between batch pushes
-
-  # Automatic log cleanup
+    flush_interval: 5.0
   cleanup:
     enabled: true
     max_age_days: 30
     max_size_mb: 500
     keep_levels:
-      - ERROR
-      - WARNING
+    - ERROR
+    - WARNING
     keep_audit: true
+app:
+  profile: developer

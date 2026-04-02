@@ -1459,6 +1459,8 @@ BEISPIELE:
                 # Main agent: Existing handling
                 final_response = self._handle_max_iterations(ctx, query)
                 success = False
+        if not hasattr(ctx.active_persona, "stats"):
+            ctx.active_persona.stats = PersonaStats()
         ctx.active_persona.stats.record_use(
             source=ctx.active_persona.source,
             query=query,
