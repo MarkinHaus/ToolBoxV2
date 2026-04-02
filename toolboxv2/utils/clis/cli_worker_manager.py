@@ -330,7 +330,7 @@ class NginxManager:
         upstream_ws = getattr(cfg, "upstream_ws", "toolbox_ws")
         server_name = getattr(cfg, "server_name", "_")
         listen_port = getattr(cfg, "listen_port", 80)
-        static_root = getattr(cfg, "static_root", "/tb_dist")
+        static_root = getattr(cfg, "static_root", "./tb_dist")
         rate_zone = getattr(cfg, "rate_limit_zone", "tb_limit")
         rate_burst = getattr(cfg, "rate_limit_burst", 20)
         auth_burst = getattr(cfg, "auth_rate_limit_burst", 10)
