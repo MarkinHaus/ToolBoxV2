@@ -8,13 +8,9 @@
       
       
       
-        <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/devdocs/dev_architecture/">
+        <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/core/workers/">
       
       
-        <link rel="prev" href="../../mods/isaa/08_EXAMPLES/06_PRODUCTION_SETUP/">
-      
-      
-        <link rel="next" href="../dev_mod_creation/">
       
       
         
@@ -25,7 +21,7 @@
     
     
       
-        <title>Module Development - ToolBoxV2 Docs</title>
+        <title>ToolBoxV2 Worker Manager — Operations Docs - ToolBoxV2 Docs</title>
       
     
     
@@ -78,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#toolboxv2-architektur-4-layer-pattern" class="md-skip">
+        <a href="#toolboxv2-worker-manager-operations-docs" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +108,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Module Development
+              ToolBoxV2 Worker Manager — Operations Docs
             
           </span>
         </div>
@@ -295,13 +291,11 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="./" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../devdocs/dev_architecture/" class="md-tabs__link">
           
   
   
@@ -341,7 +335,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../core/toolboxv2/" class="md-tabs__link">
+        <a href="../toolboxv2/" class="md-tabs__link">
           
   
   
@@ -361,7 +355,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../core/tbjs/" class="md-tabs__link">
+        <a href="../tbjs/" class="md-tabs__link">
           
   
   
@@ -401,7 +395,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../core/changelog/" class="md-tabs__link">
+        <a href="../changelog/" class="md-tabs__link">
           
   
   
@@ -656,37 +650,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Module Development
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../devdocs/dev_architecture/" class="md-nav__link">
         
   
   
@@ -702,164 +669,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#ubersicht" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Übersicht
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#layer-im-detail" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Layer im Detail
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Layer im Detail">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-data-layer-grundstruktur" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. DATA Layer — Grundstruktur
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-worker-layer-business-logic" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. WORKER Layer — Business Logic
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-manager-layer-koordination" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. MANAGER Layer — Koordination
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#4-facade-layer-api-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. FACADE Layer — API Surface
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#der-export-decorator-flow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Der @export Decorator Flow
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#result-pattern" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Result-Pattern
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#app-property-facade-access" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        App-Property (Facade Access)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#logging-integration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Logging Integration
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#version-loading" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Version Loading
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#fazit" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fazit
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -900,7 +709,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/toolboxv2/" class="md-nav__link">
+      <a href="../toolboxv2/" class="md-nav__link">
         
   
   
@@ -928,7 +737,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/tbjs/" class="md-nav__link">
+      <a href="../tbjs/" class="md-nav__link">
         
   
   
@@ -1241,7 +1050,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/onboarding/" class="md-nav__link">
+      <a href="../onboarding/" class="md-nav__link">
         
   
   
@@ -1844,7 +1653,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/isaa/" class="md-nav__link">
+      <a href="../isaa/" class="md-nav__link">
         
   
   
@@ -2128,7 +1937,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/agent.md" class="md-nav__link">
+      <a href="../agent.md" class="md-nav__link">
         
   
   
@@ -2914,31 +2723,28 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
             
   
   
@@ -2956,7 +2762,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2971,37 +2777,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Module Development
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../devdocs/dev_architecture/" class="md-nav__link">
         
   
   
@@ -3017,164 +2796,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#ubersicht" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Übersicht
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#layer-im-detail" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Layer im Detail
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Layer im Detail">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-data-layer-grundstruktur" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. DATA Layer — Grundstruktur
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-worker-layer-business-logic" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. WORKER Layer — Business Logic
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-manager-layer-koordination" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. MANAGER Layer — Koordination
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#4-facade-layer-api-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. FACADE Layer — API Surface
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#der-export-decorator-flow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Der @export Decorator Flow
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#result-pattern" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Result-Pattern
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#app-property-facade-access" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        App-Property (Facade Access)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#logging-integration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Logging Integration
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#version-loading" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Version Loading
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#fazit" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fazit
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -3187,7 +2808,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dev_mod_creation/" class="md-nav__link">
+      <a href="../../devdocs/dev_mod_creation/" class="md-nav__link">
         
   
   
@@ -3215,7 +2836,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/module_creation_guide.md" class="md-nav__link">
+      <a href="../module_creation_guide.md" class="md-nav__link">
         
   
   
@@ -3243,7 +2864,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dev_features/" class="md-nav__link">
+      <a href="../../devdocs/dev_features/" class="md-nav__link">
         
   
   
@@ -3271,7 +2892,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dev_registry/" class="md-nav__link">
+      <a href="../../devdocs/dev_registry/" class="md-nav__link">
         
   
   
@@ -3355,7 +2976,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/toolbox_guidelines/" class="md-nav__link">
+      <a href="../toolbox_guidelines/" class="md-nav__link">
         
   
   
@@ -3528,7 +3149,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/db_usage_guide.md" class="md-nav__link">
+      <a href="../db_usage_guide.md" class="md-nav__link">
         
   
   
@@ -3724,7 +3345,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/logs/" class="md-nav__link">
+      <a href="../logs/" class="md-nav__link">
         
   
   
@@ -3813,7 +3434,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/toolboxv2/" class="md-nav__link">
+      <a href="../toolboxv2/" class="md-nav__link">
         
   
   
@@ -3902,7 +3523,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/tbjs/" class="md-nav__link">
+      <a href="../tbjs/" class="md-nav__link">
         
   
   
@@ -3930,7 +3551,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/TauriApp_Architecture/" class="md-nav__link">
+      <a href="../TauriApp_Architecture/" class="md-nav__link">
         
   
   
@@ -3958,7 +3579,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/p2p_rpc_protocol/" class="md-nav__link">
+      <a href="../p2p_rpc_protocol/" class="md-nav__link">
         
   
   
@@ -3986,7 +3607,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/clis/" class="md-nav__link">
+      <a href="../clis/" class="md-nav__link">
         
   
   
@@ -4220,7 +3841,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../core/changelog/" class="md-nav__link">
+      <a href="../changelog/" class="md-nav__link">
         
   
   
@@ -4499,10 +4120,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#ubersicht" class="md-nav__link">
+  <a href="#voraussetzungen" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Übersicht
+        Voraussetzungen
       
     </span>
   </a>
@@ -4510,22 +4131,44 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#layer-im-detail" class="md-nav__link">
+  <a href="#1-erstmalige-server-einrichtung" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Layer im Detail
+        1. Erstmalige Server-Einrichtung
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Layer im Detail">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-config-struktur-verstehen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Config-Struktur verstehen
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-worker-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Worker-Lifecycle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Worker-Lifecycle">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-data-layer-grundstruktur" class="md-nav__link">
+  <a href="#starten-alle-auf-einmal" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. DATA Layer — Grundstruktur
+        Starten (alle auf einmal)
       
     </span>
   </a>
@@ -4533,10 +4176,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-worker-layer-business-logic" class="md-nav__link">
+  <a href="#stoppen" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. WORKER Layer — Business Logic
+        Stoppen
       
     </span>
   </a>
@@ -4544,10 +4187,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-manager-layer-koordination" class="md-nav__link">
+  <a href="#restart" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. MANAGER Layer — Koordination
+        Restart
       
     </span>
   </a>
@@ -4555,10 +4198,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#4-facade-layer-api-surface" class="md-nav__link">
+  <a href="#einzelnen-worker-starten" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. FACADE Layer — API Surface
+        Einzelnen Worker starten
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#einzelnen-worker-stoppen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Einzelnen Worker stoppen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#worker-id-herausfinden" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worker-ID herausfinden
       
     </span>
   </a>
@@ -4571,10 +4236,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#der-export-decorator-flow" class="md-nav__link">
+  <a href="#4-skalieren" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Der @export Decorator Flow
+        4. Skalieren
       
     </span>
   </a>
@@ -4582,10 +4247,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#result-pattern" class="md-nav__link">
+  <a href="#5-rolling-update-zero-downtime" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Result-Pattern
+        5. Rolling Update (Zero-Downtime)
       
     </span>
   </a>
@@ -4593,10 +4258,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#app-property-facade-access" class="md-nav__link">
+  <a href="#6-cluster-mehrere-server" class="md-nav__link">
     <span class="md-ellipsis">
       
-        App-Property (Facade Access)
+        6. Cluster (mehrere Server)
       
     </span>
   </a>
@@ -4604,10 +4269,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#logging-integration" class="md-nav__link">
+  <a href="#7-nginx-config-neu-schreiben-nach-konfig-anderung" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Logging Integration
+        7. nginx-Config neu schreiben (nach Konfig-Änderung)
       
     </span>
   </a>
@@ -4615,10 +4280,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#version-loading" class="md-nav__link">
+  <a href="#8-health-metrics" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Version Loading
+        8. Health &amp; Metrics
       
     </span>
   </a>
@@ -4626,10 +4291,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#fazit" class="md-nav__link">
+  <a href="#9-systemd-service-production" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Fazit
+        9. Systemd-Service (Production)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Troubleshooting
       
     </span>
   </a>
@@ -4659,154 +4335,240 @@
   
 
 
-<h1 id="toolboxv2-architektur-4-layer-pattern">ToolBoxV2 Architektur — 4-Layer Pattern<a class="headerlink" href="#toolboxv2-architektur-4-layer-pattern" title="Permanent link">&para;</a></h1>
-<h2 id="ubersicht">Übersicht<a class="headerlink" href="#ubersicht" title="Permanent link">&para;</a></h2>
-<p>Das ToolBoxV2 Framework folgt einem strikten <strong>4-Layer-Architektur-Pattern</strong>, das Separation of Concerns durch klare Abstraktionsebenen gewährleistet.</p>
-<div class="highlight"><pre><span></span><code>┌─────────────────────────────────────────────────────────┐
-│                    FACADE LAYER                          │
-│  (MainTool, @export decorator, Mod-Interface)            │
-├─────────────────────────────────────────────────────────┤
-│                   MANAGER LAYER                          │
-│  (Modul-Management, App-Koordination)                    │
-├─────────────────────────────────────────────────────────┤
-│                   WORKER LAYER                           │
-│  (Business Logic, Features, Services)                    │
-├─────────────────────────────────────────────────────────┤
-│                     DATA LAYER                           │
-│  (Types, Enums, Config, Storage)                         │
-└─────────────────────────────────────────────────────────┘
-</code></pre></div>
-<h2 id="layer-im-detail">Layer im Detail<a class="headerlink" href="#layer-im-detail" title="Permanent link">&para;</a></h2>
-<h3 id="1-data-layer-grundstruktur">1. DATA Layer — Grundstruktur<a class="headerlink" href="#1-data-layer-grundstruktur" title="Permanent link">&para;</a></h3>
-<p>Enthält primitive Typen, Enums und Konfigurationsobjekte.</p>
-<p><strong>Verantwortlichkeiten:</strong>
-- Typsicherheit durch <code>dataclass</code> und <code>Enum</code>
-- Config-Strukturen
-- Datenmodelle ohne Logik</p>
-<p><strong>Beispiel:</strong>
-<div class="highlight"><pre><span></span><code><span class="o">&lt;</span><span class="err">!</span><span class="o">--</span> <span class="n">verified</span><span class="p">:</span> <span class="n">types</span><span class="o">.</span><span class="n">py</span><span class="p">::</span><span class="n">DatabaseModes</span> <span class="o">--&gt;</span>
-<span class="nd">@dataclass</span>
-<span class="k">class</span><span class="w"> </span><span class="nc">DatabaseModes</span><span class="p">(</span><span class="n">Enum</span><span class="p">):</span>
-    <span class="n">LC</span> <span class="o">=</span> <span class="s2">&quot;LOCAL_DICT&quot;</span>
-    <span class="n">LR</span> <span class="o">=</span> <span class="s2">&quot;LOCAL_REDDIS&quot;</span>
-    <span class="n">RR</span> <span class="o">=</span> <span class="s2">&quot;REMOTE_REDDIS&quot;</span>
-    <span class="n">CB</span> <span class="o">=</span> <span class="s2">&quot;CLUSTER_BLOB&quot;</span>
-</code></pre></div></p>
-<!-- verified: types.py::AuthenticationTypes -->
-<div class="highlight"><pre><span></span><code><span class="nd">@dataclass</span>
-<span class="k">class</span><span class="w"> </span><span class="nc">AuthenticationTypes</span><span class="p">(</span><span class="n">Enum</span><span class="p">):</span>
-    <span class="n">UserNamePassword</span> <span class="o">=</span> <span class="s2">&quot;password&quot;</span>
-    <span class="n">Uri</span> <span class="o">=</span> <span class="s2">&quot;url&quot;</span>
-    <span class="n">PassKey</span> <span class="o">=</span> <span class="s2">&quot;passkey&quot;</span>
-    <span class="n">location</span> <span class="o">=</span> <span class="s2">&quot;location&quot;</span>
-    <span class="n">none</span> <span class="o">=</span> <span class="s2">&quot;none&quot;</span>
-</code></pre></div>
-<h3 id="2-worker-layer-business-logic">2. WORKER Layer — Business Logic<a class="headerlink" href="#2-worker-layer-business-logic" title="Permanent link">&para;</a></h3>
-<p>Implementiert die eigentliche Funktionalität des Modules.</p>
-<p><strong>Verantwortlichkeiten:</strong>
-- Geschäftslogik
-- Feature-Implementierung
-- Datenverarbeitung
-- Keine UI/Print-Logik</p>
-<p><strong>Charakteristik:</strong>
-- Meist <code>async</code> für I/O-Operationen
-- Keine direkten <code>print()</code> Aufrufe
-- Arbeitet mit <code>Result</code>-Objekten</p>
-<h3 id="3-manager-layer-koordination">3. MANAGER Layer — Koordination<a class="headerlink" href="#3-manager-layer-koordination" title="Permanent link">&para;</a></h3>
-<p>Verwaltet Worker-Instanzen und koordiniert deren Interaktion.</p>
-<p><strong>Verantwortlichkeiten:</strong>
-- Modul-Lifecycle (start/stop)
-- Tool-Registrierung
-- Cross-Modul Kommunikation</p>
-<p><strong>Beispiel:</strong>
-<div class="highlight"><pre><span></span><code><span class="o">&lt;</span><span class="err">!</span><span class="o">--</span> <span class="n">verified</span><span class="p">:</span> <span class="n">cli_registry</span><span class="o">.</span><span class="n">py</span><span class="p">::</span><span class="n">get_app</span> <span class="o">--&gt;</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">get_app</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_app</span> <span class="k">as</span> <span class="n">_get_app</span>
-    <span class="k">return</span> <span class="n">_get_app</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
-</code></pre></div></p>
-<h3 id="4-facade-layer-api-surface">4. FACADE Layer — API Surface<a class="headerlink" href="#4-facade-layer-api-surface" title="Permanent link">&para;</a></h3>
-<p>Der einzige öffentliche Kontaktpunkt nach außen.</p>
-<p><strong>Verantwortlichkeiten:</strong>
-- <code>MainTool</code> als Basisklasse für alle Module
-- Decorator-Integration (<code>@export</code>)
-- <code>return_result()</code> für standardisierte Rückgaben
-- Logging und Output</p>
-<p><strong>Kernklasse:</strong>
-<div class="highlight"><pre><span></span><code><span class="o">&lt;</span><span class="err">!</span><span class="o">--</span> <span class="n">verified</span><span class="p">:</span> <span class="n">main_tool</span><span class="o">.</span><span class="n">py</span><span class="p">::</span><span class="n">MainTool</span> <span class="o">--&gt;</span>
-<span class="k">class</span><span class="w"> </span><span class="nc">MainTool</span><span class="p">:</span>
-    <span class="n">toolID</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-    <span class="n">interface</span> <span class="o">=</span> <span class="kc">None</span>
-    <span class="n">spec</span> <span class="o">=</span> <span class="s2">&quot;app&quot;</span>
-    <span class="n">name</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-    <span class="n">color</span> <span class="o">=</span> <span class="s2">&quot;Bold&quot;</span>
+<h1 id="toolboxv2-worker-manager-operations-docs">ToolBoxV2 Worker Manager — Operations Docs<a class="headerlink" href="#toolboxv2-worker-manager-operations-docs" title="Permanent link">&para;</a></h1>
+<h2 id="voraussetzungen">Voraussetzungen<a class="headerlink" href="#voraussetzungen" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="c1"># nginx installieren</span>
+sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>nginx<span class="w"> </span>apache2-utils
 
-    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
-        <span class="c1"># Standard constructor - NICHT überschreiben!</span>
-        <span class="c1"># Stattdessen: __ainit__() verwenden</span>
-        <span class="k">pass</span>
+<span class="c1"># ADMIN_UI_PASSWORD setzen (persistent in ~/.bashrc oder /etc/environment)</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ADMIN_UI_PASSWORD</span><span class="o">=</span><span class="s2">&quot;dein_passwort&quot;</span>
 
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">__ainit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
-        <span class="c1"># Asynchrone Initialisierung</span>
-        <span class="c1"># Hier: version, name, tools, config setzen</span>
-        <span class="k">pass</span>
+<span class="c1"># ToolBoxV2 installiert und tb im PATH</span>
+</code></pre></div>
+<hr />
+<h2 id="1-erstmalige-server-einrichtung">1. Erstmalige Server-Einrichtung<a class="headerlink" href="#1-erstmalige-server-einrichtung" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="c1"># Schritt 1: nginx.conf include patchen (einmalig, non-invasiv)</span>
+sudo<span class="w"> </span>tb<span class="w"> </span>workers<span class="w"> </span>nginx-init
 
-    <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">return_result</span><span class="p">(</span><span class="n">error</span><span class="p">,</span> <span class="n">exec_code</span><span class="p">,</span> <span class="n">help_text</span><span class="p">,</span> <span class="n">data_info</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">data_to</span><span class="p">):</span>
-        <span class="c1"># Standardisierte Ergebnisrückgabe</span>
-        <span class="k">pass</span>
-</code></pre></div></p>
-<h2 id="der-export-decorator-flow">Der @export Decorator Flow<a class="headerlink" href="#der-export-decorator-flow" title="Permanent link">&para;</a></h2>
-<!-- verified: main_tool.py::__init__ -->
-<div class="highlight"><pre><span></span><code><span class="c1"># Im __init__ wird der @export Decorator angewendet:</span>
-<span class="bp">self</span><span class="o">.</span><span class="n">on_exit</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">tb</span><span class="p">(</span>
-    <span class="n">mod_name</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
-    <span class="n">name</span><span class="o">=</span><span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;on_exit&quot;</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
-    <span class="n">version</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">version</span>
-<span class="p">)(</span><span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;on_exit&quot;</span><span class="p">))</span>
-</code></pre></div>
-<h2 id="result-pattern">Result-Pattern<a class="headerlink" href="#result-pattern" title="Permanent link">&para;</a></h2>
-<!-- verified: main_tool.py::return_result -->
-<div class="highlight"><pre><span></span><code><span class="nd">@staticmethod</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">return_result</span><span class="p">(</span>
-    <span class="n">error</span><span class="p">:</span> <span class="n">ToolBoxError</span> <span class="o">=</span> <span class="n">ToolBoxError</span><span class="o">.</span><span class="n">none</span><span class="p">,</span>
-    <span class="n">exec_code</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
-    <span class="n">help_text</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
-    <span class="n">data_info</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-    <span class="n">data</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-    <span class="n">data_to</span><span class="o">=</span><span class="kc">None</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Result</span><span class="p">:</span>
-    <span class="c1"># Standardisierte Rückgabe für alle Mod-Operationen</span>
-    <span class="k">return</span> <span class="n">Result</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-</code></pre></div>
-<h2 id="app-property-facade-access">App-Property (Facade Access)<a class="headerlink" href="#app-property-facade-access" title="Permanent link">&para;</a></h2>
-<!-- verified: main_tool.py::app -->
-<div class="highlight"><pre><span></span><code><span class="nd">@property</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">app</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-    <span class="k">return</span> <span class="n">get_app</span><span class="p">(</span>
-        <span class="n">from_</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">spec</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">|</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">toolID</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">interface</span><span class="si">}</span><span class="s2">&quot;</span>
-    <span class="p">)</span>
+<span class="c1"># Schritt 2: Site-Config + htpasswd schreiben</span>
+sudo<span class="w"> </span>tb<span class="w"> </span>workers<span class="w"> </span>nginx-config<span class="w"> </span>--write-htpasswd
 
-<span class="nd">@app</span><span class="o">.</span><span class="n">setter</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">app</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">v</span><span class="p">):</span>
-    <span class="k">raise</span> <span class="ne">PermissionError</span><span class="p">(</span><span class="s2">&quot;You cannot set the App Instance!&quot;</span><span class="p">)</span>
+<span class="c1"># Schritt 3: Prüfen ob alles korrekt ist</span>
+tb<span class="w"> </span>workers<span class="w"> </span>nginx-check
+
+<span class="c1"># Erwartete Ausgabe:</span>
+<span class="c1"># nginx.conf path:     /etc/nginx/nginx.conf</span>
+<span class="c1"># conf exists:         ✓</span>
+<span class="c1"># box-enabled include: ✓</span>
+<span class="c1"># box-available dir:   ✓</span>
+<span class="c1"># box-enabled dir:     ✓</span>
+<span class="c1"># toolbox config:      ✓</span>
+<span class="c1"># toolbox symlink:     ✓</span>
+<span class="c1"># nginx installed:     ✓</span>
+<span class="c1"># nginx version:       nginx/1.24.0</span>
+<span class="c1"># htpasswd:            ✓</span>
+
+<span class="c1"># Schritt 4: Alles starten</span>
+tb<span class="w"> </span>workers<span class="w"> </span>start
 </code></pre></div>
-<h2 id="logging-integration">Logging Integration<a class="headerlink" href="#logging-integration" title="Permanent link">&para;</a></h2>
-<!-- verified: main_tool.py::__ainit__::get_logger -->
-<div class="highlight"><pre><span></span><code><span class="bp">self</span><span class="o">.</span><span class="n">logger</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;logs&quot;</span><span class="p">,</span> <span class="n">get_logger</span><span class="p">())</span>
-<span class="c1"># Verwendet tb_logger für zentrales Logging</span>
+<p>Nach <code>start</code> läuft:
+- ZMQ Broker (IPC zwischen Workern)
+- N HTTP Worker (aus config)
+- 1 WS Worker
+- Health Checker (alle 5s)
+- Metrics Collector (alle 60s)
+- Web UI auf <code>http://127.0.0.1:9005</code> (via <code>/admin/manager/</code> durch nginx mit Basic Auth)</p>
+<hr />
+<h2 id="2-config-struktur-verstehen">2. Config-Struktur verstehen<a class="headerlink" href="#2-config-struktur-verstehen" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>/etc/nginx/
+  nginx.conf                    ← nur gelesen, nie überschrieben
+  box-available/
+    toolbox                     ← generierte Site-Config (hier stehen ALLE ports vorab)
+  box-enabled/
+    toolbox -&gt; ../box-available/toolbox   ← Symlink, nginx lädt diese
 </code></pre></div>
-<h2 id="version-loading">Version Loading<a class="headerlink" href="#version-loading" title="Permanent link">&para;</a></h2>
-<!-- verified: main_tool.py::get_version_from_pyproject -->
-<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">get_version_from_pyproject</span><span class="p">(</span><span class="n">pyproject_path</span><span class="o">=</span><span class="s1">&#39;../pyproject.toml&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="c1"># Liest Version aus pyproject.toml [project].version</span>
-    <span class="k">pass</span>
+<p><strong>Wichtig:</strong> Die Config wird <strong>einmalig</strong> mit pre-allokierten Port-Ranges geschrieben. Nginx weiß von Anfang an von allen möglichen Worker-Ports (<code>8000–8003</code> für HTTP, <code>8100–8103</code> für WS). Tote Worker werden automatisch via passive health check übersprungen (<code>max_fails=1 fail_timeout=5s</code>). <strong>Kein nginx-Reload beim Skalieren nötig.</strong></p>
+<hr />
+<h2 id="3-worker-lifecycle">3. Worker-Lifecycle<a class="headerlink" href="#3-worker-lifecycle" title="Permanent link">&para;</a></h2>
+<h3 id="starten-alle-auf-einmal">Starten (alle auf einmal)<a class="headerlink" href="#starten-alle-auf-einmal" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>tb<span class="w"> </span>workers<span class="w"> </span>start<span class="w">              </span><span class="c1"># foreground, Ctrl+C stoppt alles</span>
+tb<span class="w"> </span>workers<span class="w"> </span>start<span class="w"> </span>--no-ui<span class="w">      </span><span class="c1"># ohne Web UI</span>
 </code></pre></div>
-<h2 id="fazit">Fazit<a class="headerlink" href="#fazit" title="Permanent link">&para;</a></h2>
-<p>Das 4-Layer-Pattern ermöglicht:
-- <strong>Testbarkeit</strong>: Jeder Layer isoliert testbar
-- <strong>Wiederverwendbarkeit</strong>: Data/Worker ohne Facade nutzbar
-- <strong>Konsistenz</strong>: Einheitliche Modulstruktur über alle Components
-- <strong>Erweiterbarkeit</strong>: Neue Module folgen dem bewährten Pattern</p>
+<h3 id="stoppen">Stoppen<a class="headerlink" href="#stoppen" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>tb<span class="w"> </span>workers<span class="w"> </span>stop<span class="w">               </span><span class="c1"># graceful shutdown aller Worker + Broker</span>
+</code></pre></div>
+<h3 id="restart">Restart<a class="headerlink" href="#restart" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>tb<span class="w"> </span>workers<span class="w"> </span>restart<span class="w">            </span><span class="c1"># stop → 2s warten → start</span>
+</code></pre></div>
+<h3 id="einzelnen-worker-starten">Einzelnen Worker starten<a class="headerlink" href="#einzelnen-worker-starten" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>tb<span class="w"> </span>workers<span class="w"> </span>worker-start<span class="w"> </span>-t<span class="w"> </span>http<span class="w">              </span><span class="c1"># neuer HTTP Worker, auto-ID + auto-Port</span>
+tb<span class="w"> </span>workers<span class="w"> </span>worker-start<span class="w"> </span>-t<span class="w"> </span>http<span class="w"> </span>-w<span class="w"> </span>main_http<span class="w"> </span><span class="c1"># mit fester ID</span>
+tb<span class="w"> </span>workers<span class="w"> </span>worker-start<span class="w"> </span>-t<span class="w"> </span>ws<span class="w">                </span><span class="c1"># neuer WS Worker</span>
+</code></pre></div>
+<h3 id="einzelnen-worker-stoppen">Einzelnen Worker stoppen<a class="headerlink" href="#einzelnen-worker-stoppen" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>tb<span class="w"> </span>workers<span class="w"> </span>worker-stop<span class="w"> </span>-w<span class="w"> </span>http_a3f2b1c0
+</code></pre></div>
+<h3 id="worker-id-herausfinden">Worker-ID herausfinden<a class="headerlink" href="#worker-id-herausfinden" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>tb<span class="w"> </span>workers<span class="w"> </span>status<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>worker_id
+<span class="c1"># oder Web UI: http://your-server/admin/manager/</span>
+</code></pre></div>
+<hr />
+<h2 id="4-skalieren">4. Skalieren<a class="headerlink" href="#4-skalieren" title="Permanent link">&para;</a></h2>
+<p>Skalierung erfolgt zur Laufzeit. Nginx braucht keinen Reload — die neuen Ports waren schon in der Config vorab registriert.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Via Web UI: POST /admin/manager/api/scale</span>
+curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://127.0.0.1:9005/admin/manager/api/scale<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;type&quot;: &quot;http&quot;, &quot;count&quot;: 4}&#39;</span>
+
+<span class="c1"># Antwort:</span>
+<span class="c1"># {&quot;status&quot;: &quot;ok&quot;, &quot;started&quot;: [&quot;http_x1&quot;, &quot;http_x2&quot;], &quot;stopped&quot;: []}</span>
+</code></pre></div>
+<p><strong>Limit:</strong> Nur bis zur pre-allokierten Port-Range skalierbar (konfiguriert in <code>config.http_worker.workers</code>). Darüber hinaus → Config neu schreiben mit <code>--force</code>.</p>
+<hr />
+<h2 id="5-rolling-update-zero-downtime">5. Rolling Update (Zero-Downtime)<a class="headerlink" href="#5-rolling-update-zero-downtime" title="Permanent link">&para;</a></h2>
+<p>Startet pro bestehendem HTTP-Worker einen neuen, validiert ihn, schaltet nginx um, fährt alten runter.</p>
+<div class="highlight"><pre><span></span><code>tb<span class="w"> </span>workers<span class="w"> </span>update
+
+<span class="c1"># Oder via API:</span>
+curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://127.0.0.1:9005/admin/manager/api/rolling-update
+</code></pre></div>
+<p><strong>Ablauf pro Worker:</strong>
+1. Neuer Worker startet auf nächstem freien Port
+2. 2s warten
+3. <code>/health</code> Check auf neuem Worker
+4. nginx reload
+5. Alter Worker draining → stop</p>
+<hr />
+<h2 id="6-cluster-mehrere-server">6. Cluster (mehrere Server)<a class="headerlink" href="#6-cluster-mehrere-server" title="Permanent link">&para;</a></h2>
+<p>Jeder Server läuft <code>tb workers start</code>. Server A kennt Server B als Remote-Node. Nginx auf Server A leitet bei Bedarf an Server B weiter (als <code>backup</code>).</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Auf Server A: Server B hinzufügen</span>
+tb<span class="w"> </span>workers<span class="w"> </span>cluster-join<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--host<span class="w"> </span>server-b.example.com<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--port<span class="w"> </span><span class="m">9005</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--secret<span class="w"> </span>dein_cluster_secret
+
+<span class="c1"># Cluster-Secret auf allen Servern gleich setzen:</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">CLUSTER_SECRET</span><span class="o">=</span><span class="s2">&quot;shared_secret_alle_server&quot;</span>
+tb<span class="w"> </span>workers<span class="w"> </span>start
+</code></pre></div>
+<p><strong>Was Cluster-Mode macht:</strong>
+- Server A pollt Server B alle 10s nach Worker-Status
+- Gesunde HTTP-Worker von B werden als <code>backup</code> in nginx upstream eingetragen
+- Fällt B aus → backup entfernt sich automatisch via passive health check</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Status aller Nodes prüfen</span>
+tb<span class="w"> </span>workers<span class="w"> </span>status<span class="w"> </span><span class="p">|</span><span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>json.tool<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-A5<span class="w"> </span>cluster
+</code></pre></div>
+<hr />
+<h2 id="7-nginx-config-neu-schreiben-nach-konfig-anderung">7. nginx-Config neu schreiben (nach Konfig-Änderung)<a class="headerlink" href="#7-nginx-config-neu-schreiben-nach-konfig-anderung" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="c1"># Worker-Anzahl in config geändert → Config neu generieren</span>
+sudo<span class="w"> </span>tb<span class="w"> </span>workers<span class="w"> </span>nginx-config<span class="w"> </span>--force
+
+<span class="c1"># nginx testen + reloaden</span>
+tb<span class="w"> </span>workers<span class="w"> </span>nginx-reload
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># Nur htpasswd erneuern (neues Passwort)</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ADMIN_UI_PASSWORD</span><span class="o">=</span><span class="s2">&quot;neues_passwort&quot;</span>
+sudo<span class="w"> </span>tb<span class="w"> </span>workers<span class="w"> </span>nginx-config<span class="w"> </span>--write-htpasswd
+</code></pre></div>
+<hr />
+<h2 id="8-health-metrics">8. Health &amp; Metrics<a class="headerlink" href="#8-health-metrics" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="c1"># Alle Worker + Health-Status</span>
+tb<span class="w"> </span>workers<span class="w"> </span>status
+
+<span class="c1"># Kompakt: nur unhealthy Worker</span>
+tb<span class="w"> </span>workers<span class="w"> </span>status<span class="w"> </span><span class="p">|</span><span class="w"> </span>python3<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;</span>
+<span class="s2">import json, sys</span>
+<span class="s2">s = json.load(sys.stdin)</span>
+<span class="s2">for wid, w in s[&#39;workers&#39;].items():</span>
+<span class="s2">    if not w[&#39;healthy&#39;]:</span>
+<span class="s2">        print(f\&quot;UNHEALTHY: {wid} state={w[&#39;state&#39;]}\&quot;)</span>
+<span class="s2">&quot;</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># Via API</span>
+curl<span class="w"> </span>http://127.0.0.1:9005/admin/manager/api/health
+curl<span class="w"> </span>http://127.0.0.1:9005/admin/manager/api/metrics
+curl<span class="w"> </span>http://127.0.0.1:9005/admin/manager/api/workers
+</code></pre></div>
+<p><strong>Health-Check-Logik:</strong>
+- HTTP Worker: <code>GET /health</code> → erwartet HTTP 200
+- WS Worker: TCP connect + <code>GET /health</code> → erwartet HTTP 200 (kein WS-Handshake nötig)
+- Interval: 5 Sekunden
+- Ergebnis in <code>worker.healthy</code> + <code>worker.health_latency_ms</code></p>
+<hr />
+<h2 id="9-systemd-service-production">9. Systemd-Service (Production)<a class="headerlink" href="#9-systemd-service-production" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="c1"># /etc/systemd/system/tb-workers.service</span>
+<span class="k">[Unit]</span>
+<span class="na">Description</span><span class="o">=</span><span class="s">ToolBoxV2 Worker Manager</span>
+<span class="na">After</span><span class="o">=</span><span class="s">network.target nginx.service</span>
+
+<span class="k">[Service]</span>
+<span class="na">Type</span><span class="o">=</span><span class="s">simple</span>
+<span class="na">User</span><span class="o">=</span><span class="s">www-data</span>
+<span class="na">Environment</span><span class="o">=</span><span class="s">ADMIN_UI_PASSWORD=dein_passwort</span>
+<span class="na">Environment</span><span class="o">=</span><span class="s">CLUSTER_SECRET=dein_cluster_secret</span>
+<span class="na">ExecStartPre</span><span class="o">=</span><span class="s">tb workers nginx-check</span>
+<span class="na">ExecStart</span><span class="o">=</span><span class="s">tb workers start --no-ui</span>
+<span class="na">ExecStop</span><span class="o">=</span><span class="s">tb workers stop</span>
+<span class="na">Restart</span><span class="o">=</span><span class="s">on-failure</span>
+<span class="na">RestartSec</span><span class="o">=</span><span class="s">5</span>
+
+<span class="k">[Install]</span>
+<span class="na">WantedBy</span><span class="o">=</span><span class="s">multi-user.target</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>systemctl<span class="w"> </span>daemon-reload
+sudo<span class="w"> </span>systemctl<span class="w"> </span><span class="nb">enable</span><span class="w"> </span>tb-workers
+sudo<span class="w"> </span>systemctl<span class="w"> </span>start<span class="w"> </span>tb-workers
+sudo<span class="w"> </span>systemctl<span class="w"> </span>status<span class="w"> </span>tb-workers
+</code></pre></div>
+<hr />
+<h2 id="10-troubleshooting">10. Troubleshooting<a class="headerlink" href="#10-troubleshooting" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Problem</th>
+<th>Diagnose</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>nginx leitet nicht weiter</td>
+<td><code>tb workers nginx-check</code></td>
+<td><code>sudo tb workers nginx-init</code></td>
+</tr>
+<tr>
+<td>Admin UI 401</td>
+<td>htpasswd fehlt</td>
+<td><code>sudo tb workers nginx-config --write-htpasswd</code></td>
+</tr>
+<tr>
+<td>Worker startet nicht</td>
+<td><code>tb workers status</code> → <code>state: failed</code></td>
+<td><code>tb workers worker-stop -w &lt;id&gt;</code> dann <code>worker-start</code></td>
+</tr>
+<tr>
+<td>Alle Worker unhealthy</td>
+<td>nginx gibt 502</td>
+<td><code>tb workers restart</code></td>
+</tr>
+<tr>
+<td>Config-Änderung greift nicht</td>
+<td>ports außerhalb Range</td>
+<td><code>sudo tb workers nginx-config --force &amp;&amp; tb workers nginx-reload</code></td>
+</tr>
+<tr>
+<td>Cluster-Node nicht erreichbar</td>
+<td><code>status</code> → <code>healthy_nodes: 0</code></td>
+<td>Firewall Port 9005, CLUSTER_SECRET prüfen</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="c1"># nginx Error-Log live</span>
+sudo<span class="w"> </span>tail<span class="w"> </span>-f<span class="w"> </span>/var/log/nginx/toolbox_error.log
+
+<span class="c1"># Worker Manager Log</span>
+journalctl<span class="w"> </span>-u<span class="w"> </span>tb-workers<span class="w"> </span>-f
+</code></pre></div>
 
 
 

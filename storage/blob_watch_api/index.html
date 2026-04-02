@@ -8,13 +8,13 @@
       
       
       
-        <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/devdocs/dev_architecture/">
+        <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/storage/blob_watch_api/">
       
       
-        <link rel="prev" href="../../mods/isaa/08_EXAMPLES/06_PRODUCTION_SETUP/">
+        <link rel="prev" href="../../new/analysis/storage/blob_sharing_api/">
       
       
-        <link rel="next" href="../dev_mod_creation/">
+        <link rel="next" href="../../services/ref_cli/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>Module Development - ToolBoxV2 Docs</title>
+        <title>Blob Watch API - ToolBoxV2 Docs</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#toolboxv2-architektur-4-layer-pattern" class="md-skip">
+        <a href="#blob-watch-api-documentation" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Module Development
+              Blob Watch API
             
           </span>
         </div>
@@ -295,13 +295,11 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="./" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../devdocs/dev_architecture/" class="md-tabs__link">
           
   
   
@@ -317,10 +315,12 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
+      <li class="md-tabs__item md-tabs__item--active">
         <a href="../../workers/" class="md-tabs__link">
           
   
@@ -656,37 +656,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Module Development
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../devdocs/dev_architecture/" class="md-nav__link">
         
   
   
@@ -702,164 +675,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#ubersicht" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Übersicht
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#layer-im-detail" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Layer im Detail
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Layer im Detail">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-data-layer-grundstruktur" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. DATA Layer — Grundstruktur
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-worker-layer-business-logic" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. WORKER Layer — Business Logic
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-manager-layer-koordination" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. MANAGER Layer — Koordination
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#4-facade-layer-api-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. FACADE Layer — API Surface
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#der-export-decorator-flow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Der @export Decorator Flow
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#result-pattern" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Result-Pattern
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#app-property-facade-access" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        App-Property (Facade Access)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#logging-integration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Logging Integration
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#version-loading" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Version Loading
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#fazit" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fazit
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -2914,31 +2729,28 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
             
   
   
@@ -2956,7 +2768,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2971,37 +2783,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Module Development
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../devdocs/dev_architecture/" class="md-nav__link">
         
   
   
@@ -3017,164 +2802,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#ubersicht" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Übersicht
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#layer-im-detail" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Layer im Detail
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Layer im Detail">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-data-layer-grundstruktur" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. DATA Layer — Grundstruktur
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-worker-layer-business-logic" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. WORKER Layer — Business Logic
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-manager-layer-koordination" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. MANAGER Layer — Koordination
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#4-facade-layer-api-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. FACADE Layer — API Surface
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#der-export-decorator-flow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Der @export Decorator Flow
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#result-pattern" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Result-Pattern
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#app-property-facade-access" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        App-Property (Facade Access)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#logging-integration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Logging Integration
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#version-loading" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Version Loading
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#fazit" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fazit
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -3187,7 +2814,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dev_mod_creation/" class="md-nav__link">
+      <a href="../../devdocs/dev_mod_creation/" class="md-nav__link">
         
   
   
@@ -3243,7 +2870,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dev_features/" class="md-nav__link">
+      <a href="../../devdocs/dev_features/" class="md-nav__link">
         
   
   
@@ -3271,7 +2898,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dev_registry/" class="md-nav__link">
+      <a href="../../devdocs/dev_registry/" class="md-nav__link">
         
   
   
@@ -3387,28 +3014,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" checked>
         
           
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
-        
-          
-          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
             
   
   
@@ -3426,7 +3056,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_7">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3500,7 +3130,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../storage/ref_database/" class="md-nav__link">
+      <a href="../ref_database/" class="md-nav__link">
         
   
   
@@ -3556,7 +3186,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../storage/ref_filehandler/" class="md-nav__link">
+      <a href="../ref_filehandler/" class="md-nav__link">
         
   
   
@@ -3584,7 +3214,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../storage/ref_blobdb/" class="md-nav__link">
+      <a href="../ref_blobdb/" class="md-nav__link">
         
   
   
@@ -3637,10 +3267,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../storage/blob_watch_api/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blob Watch API
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -3656,6 +3313,281 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Reference
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="API Reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#blobstoragewatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BlobStorage.watch()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#blobstoragestop_watch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BlobStorage.stop_watch()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#blobstoragestop_all_watches" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BlobStorage.stop_all_watches()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#blobfilewatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BlobFile.watch()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#blobfilestop_watch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BlobFile.stop_watch()
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How It Works
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How It Works">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flow-diagram" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flow Diagram
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#best-practices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Best Practices
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Best Practices">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-use-appropriate-timeouts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Use Appropriate Timeouts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-handle-errors-in-callbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Handle Errors in Callbacks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-cleanup-on-shutdown" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Cleanup on Shutdown
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-multiple-callbacks-per-blob" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Multiple Callbacks per Blob
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-considerations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance Considerations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#callback-not-called" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Callback Not Called
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#high-cpu-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        High CPU Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory-leaks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Leaks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -4499,10 +4431,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#ubersicht" class="md-nav__link">
+  <a href="#overview" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Übersicht
+        Overview
       
     </span>
   </a>
@@ -4510,22 +4442,33 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#layer-im-detail" class="md-nav__link">
+  <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Layer im Detail
+        Features
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Layer im Detail">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Reference
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="API Reference">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-data-layer-grundstruktur" class="md-nav__link">
+  <a href="#blobstoragewatch" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. DATA Layer — Grundstruktur
+        BlobStorage.watch()
       
     </span>
   </a>
@@ -4533,10 +4476,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-worker-layer-business-logic" class="md-nav__link">
+  <a href="#blobstoragestop_watch" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. WORKER Layer — Business Logic
+        BlobStorage.stop_watch()
       
     </span>
   </a>
@@ -4544,10 +4487,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-manager-layer-koordination" class="md-nav__link">
+  <a href="#blobstoragestop_all_watches" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. MANAGER Layer — Koordination
+        BlobStorage.stop_all_watches()
       
     </span>
   </a>
@@ -4555,10 +4498,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#4-facade-layer-api-surface" class="md-nav__link">
+  <a href="#blobfilewatch" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. FACADE Layer — API Surface
+        BlobFile.watch()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#blobfilestop_watch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BlobFile.stop_watch()
       
     </span>
   </a>
@@ -4571,10 +4525,110 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#der-export-decorator-flow" class="md-nav__link">
+  <a href="#how-it-works" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Der @export Decorator Flow
+        How It Works
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How It Works">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flow-diagram" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flow Diagram
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#best-practices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Best Practices
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Best Practices">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-use-appropriate-timeouts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Use Appropriate Timeouts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-handle-errors-in-callbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Handle Errors in Callbacks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-cleanup-on-shutdown" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Cleanup on Shutdown
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-multiple-callbacks-per-blob" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Multiple Callbacks per Blob
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-considerations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance Considerations
       
     </span>
   </a>
@@ -4582,57 +4636,52 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#result-pattern" class="md-nav__link">
+  <a href="#troubleshooting" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Result-Pattern
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#callback-not-called" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Callback Not Called
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#app-property-facade-access" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#high-cpu-usage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        App-Property (Facade Access)
+        High CPU Usage
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#logging-integration" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#memory-leaks" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Logging Integration
+        Memory Leaks
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#version-loading" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Version Loading
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#fazit" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fazit
-      
-    </span>
-  </a>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -4659,154 +4708,183 @@
   
 
 
-<h1 id="toolboxv2-architektur-4-layer-pattern">ToolBoxV2 Architektur — 4-Layer Pattern<a class="headerlink" href="#toolboxv2-architektur-4-layer-pattern" title="Permanent link">&para;</a></h1>
-<h2 id="ubersicht">Übersicht<a class="headerlink" href="#ubersicht" title="Permanent link">&para;</a></h2>
-<p>Das ToolBoxV2 Framework folgt einem strikten <strong>4-Layer-Architektur-Pattern</strong>, das Separation of Concerns durch klare Abstraktionsebenen gewährleistet.</p>
-<div class="highlight"><pre><span></span><code>┌─────────────────────────────────────────────────────────┐
-│                    FACADE LAYER                          │
-│  (MainTool, @export decorator, Mod-Interface)            │
-├─────────────────────────────────────────────────────────┤
-│                   MANAGER LAYER                          │
-│  (Modul-Management, App-Koordination)                    │
-├─────────────────────────────────────────────────────────┤
-│                   WORKER LAYER                           │
-│  (Business Logic, Features, Services)                    │
-├─────────────────────────────────────────────────────────┤
-│                     DATA LAYER                           │
-│  (Types, Enums, Config, Storage)                         │
-└─────────────────────────────────────────────────────────┘
+<h1 id="blob-watch-api-documentation">Blob Watch API Documentation<a class="headerlink" href="#blob-watch-api-documentation" title="Permanent link">&para;</a></h1>
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
+<p>The Blob Watch API enables real-time monitoring of blob changes with automatic callback execution. It provides a non-blocking, thread-safe way to react to blob updates.</p>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<p>✅ <strong>Non-Blocking</strong>: Runs in background thread, doesn't block your application<br />
+✅ <strong>Batch Updates</strong>: Multiple watches run in a single thread for efficiency<br />
+✅ <strong>Auto-Cleanup</strong>: Callbacks auto-remove after configurable idle timeout<br />
+✅ <strong>Thread-Safe</strong>: Safe to use from multiple threads<br />
+✅ <strong>Easy to Use</strong>: Simple callback-based API  </p>
+<hr />
+<h2 id="api-reference">API Reference<a class="headerlink" href="#api-reference" title="Permanent link">&para;</a></h2>
+<h3 id="blobstoragewatch">BlobStorage.watch()<a class="headerlink" href="#blobstoragewatch" title="Permanent link">&para;</a></h3>
+<p>Register a callback for blob changes.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">watch</span><span class="p">(</span>
+    <span class="n">blob_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">callback</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">BlobFile</span><span class="p">],</span> <span class="kc">None</span><span class="p">],</span>
+    <span class="n">max_idle_timeout</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">600</span><span class="p">,</span>
+    <span class="n">threaded</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+<span class="p">)</span>
 </code></pre></div>
-<h2 id="layer-im-detail">Layer im Detail<a class="headerlink" href="#layer-im-detail" title="Permanent link">&para;</a></h2>
-<h3 id="1-data-layer-grundstruktur">1. DATA Layer — Grundstruktur<a class="headerlink" href="#1-data-layer-grundstruktur" title="Permanent link">&para;</a></h3>
-<p>Enthält primitive Typen, Enums und Konfigurationsobjekte.</p>
-<p><strong>Verantwortlichkeiten:</strong>
-- Typsicherheit durch <code>dataclass</code> und <code>Enum</code>
-- Config-Strukturen
-- Datenmodelle ohne Logik</p>
-<p><strong>Beispiel:</strong>
-<div class="highlight"><pre><span></span><code><span class="o">&lt;</span><span class="err">!</span><span class="o">--</span> <span class="n">verified</span><span class="p">:</span> <span class="n">types</span><span class="o">.</span><span class="n">py</span><span class="p">::</span><span class="n">DatabaseModes</span> <span class="o">--&gt;</span>
-<span class="nd">@dataclass</span>
-<span class="k">class</span><span class="w"> </span><span class="nc">DatabaseModes</span><span class="p">(</span><span class="n">Enum</span><span class="p">):</span>
-    <span class="n">LC</span> <span class="o">=</span> <span class="s2">&quot;LOCAL_DICT&quot;</span>
-    <span class="n">LR</span> <span class="o">=</span> <span class="s2">&quot;LOCAL_REDDIS&quot;</span>
-    <span class="n">RR</span> <span class="o">=</span> <span class="s2">&quot;REMOTE_REDDIS&quot;</span>
-    <span class="n">CB</span> <span class="o">=</span> <span class="s2">&quot;CLUSTER_BLOB&quot;</span>
+<p><strong>Parameters:</strong>
+- <code>blob_id</code> (str): The blob to watch for changes
+- <code>callback</code> (Callable): Function called when blob changes, receives <code>BlobFile</code> object
+- <code>max_idle_timeout</code> (int): Seconds without updates before auto-removing callback (default: 600 = 10 min)
+- <code>threaded</code> (bool): If True, runs in background thread (default: True)</p>
+<p><strong>Example:</strong>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">on_change</span><span class="p">(</span><span class="n">blob_file</span><span class="p">:</span> <span class="n">BlobFile</span><span class="p">):</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="n">blob_file</span><span class="o">.</span><span class="n">read_json</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Updated: </span><span class="si">{</span><span class="n">data</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">storage</span><span class="o">.</span><span class="n">watch</span><span class="p">(</span><span class="s1">&#39;app/config.json&#39;</span><span class="p">,</span> <span class="n">on_change</span><span class="p">,</span> <span class="n">max_idle_timeout</span><span class="o">=</span><span class="mi">600</span><span class="p">)</span>
 </code></pre></div></p>
-<!-- verified: types.py::AuthenticationTypes -->
-<div class="highlight"><pre><span></span><code><span class="nd">@dataclass</span>
-<span class="k">class</span><span class="w"> </span><span class="nc">AuthenticationTypes</span><span class="p">(</span><span class="n">Enum</span><span class="p">):</span>
-    <span class="n">UserNamePassword</span> <span class="o">=</span> <span class="s2">&quot;password&quot;</span>
-    <span class="n">Uri</span> <span class="o">=</span> <span class="s2">&quot;url&quot;</span>
-    <span class="n">PassKey</span> <span class="o">=</span> <span class="s2">&quot;passkey&quot;</span>
-    <span class="n">location</span> <span class="o">=</span> <span class="s2">&quot;location&quot;</span>
-    <span class="n">none</span> <span class="o">=</span> <span class="s2">&quot;none&quot;</span>
+<hr />
+<h3 id="blobstoragestop_watch">BlobStorage.stop_watch()<a class="headerlink" href="#blobstoragestop_watch" title="Permanent link">&para;</a></h3>
+<p>Stop watching a blob.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">stop_watch</span><span class="p">(</span>
+    <span class="n">blob_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">callback</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="p">)</span>
 </code></pre></div>
-<h3 id="2-worker-layer-business-logic">2. WORKER Layer — Business Logic<a class="headerlink" href="#2-worker-layer-business-logic" title="Permanent link">&para;</a></h3>
-<p>Implementiert die eigentliche Funktionalität des Modules.</p>
-<p><strong>Verantwortlichkeiten:</strong>
-- Geschäftslogik
-- Feature-Implementierung
-- Datenverarbeitung
-- Keine UI/Print-Logik</p>
-<p><strong>Charakteristik:</strong>
-- Meist <code>async</code> für I/O-Operationen
-- Keine direkten <code>print()</code> Aufrufe
-- Arbeitet mit <code>Result</code>-Objekten</p>
-<h3 id="3-manager-layer-koordination">3. MANAGER Layer — Koordination<a class="headerlink" href="#3-manager-layer-koordination" title="Permanent link">&para;</a></h3>
-<p>Verwaltet Worker-Instanzen und koordiniert deren Interaktion.</p>
-<p><strong>Verantwortlichkeiten:</strong>
-- Modul-Lifecycle (start/stop)
-- Tool-Registrierung
-- Cross-Modul Kommunikation</p>
-<p><strong>Beispiel:</strong>
-<div class="highlight"><pre><span></span><code><span class="o">&lt;</span><span class="err">!</span><span class="o">--</span> <span class="n">verified</span><span class="p">:</span> <span class="n">cli_registry</span><span class="o">.</span><span class="n">py</span><span class="p">::</span><span class="n">get_app</span> <span class="o">--&gt;</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">get_app</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_app</span> <span class="k">as</span> <span class="n">_get_app</span>
-    <span class="k">return</span> <span class="n">_get_app</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+<p><strong>Parameters:</strong>
+- <code>blob_id</code> (str): The blob to stop watching
+- <code>callback</code> (Optional[Callable]): Specific callback to remove, or None to remove all</p>
+<p><strong>Examples:</strong>
+<div class="highlight"><pre><span></span><code><span class="c1"># Stop specific callback</span>
+<span class="n">storage</span><span class="o">.</span><span class="n">stop_watch</span><span class="p">(</span><span class="s1">&#39;app/config.json&#39;</span><span class="p">,</span> <span class="n">on_change</span><span class="p">)</span>
+
+<span class="c1"># Stop all callbacks for a blob</span>
+<span class="n">storage</span><span class="o">.</span><span class="n">stop_watch</span><span class="p">(</span><span class="s1">&#39;app/config.json&#39;</span><span class="p">)</span>
 </code></pre></div></p>
-<h3 id="4-facade-layer-api-surface">4. FACADE Layer — API Surface<a class="headerlink" href="#4-facade-layer-api-surface" title="Permanent link">&para;</a></h3>
-<p>Der einzige öffentliche Kontaktpunkt nach außen.</p>
-<p><strong>Verantwortlichkeiten:</strong>
-- <code>MainTool</code> als Basisklasse für alle Module
-- Decorator-Integration (<code>@export</code>)
-- <code>return_result()</code> für standardisierte Rückgaben
-- Logging und Output</p>
-<p><strong>Kernklasse:</strong>
-<div class="highlight"><pre><span></span><code><span class="o">&lt;</span><span class="err">!</span><span class="o">--</span> <span class="n">verified</span><span class="p">:</span> <span class="n">main_tool</span><span class="o">.</span><span class="n">py</span><span class="p">::</span><span class="n">MainTool</span> <span class="o">--&gt;</span>
-<span class="k">class</span><span class="w"> </span><span class="nc">MainTool</span><span class="p">:</span>
-    <span class="n">toolID</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-    <span class="n">interface</span> <span class="o">=</span> <span class="kc">None</span>
-    <span class="n">spec</span> <span class="o">=</span> <span class="s2">&quot;app&quot;</span>
-    <span class="n">name</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-    <span class="n">color</span> <span class="o">=</span> <span class="s2">&quot;Bold&quot;</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
-        <span class="c1"># Standard constructor - NICHT überschreiben!</span>
-        <span class="c1"># Stattdessen: __ainit__() verwenden</span>
-        <span class="k">pass</span>
-
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">__ainit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
-        <span class="c1"># Asynchrone Initialisierung</span>
-        <span class="c1"># Hier: version, name, tools, config setzen</span>
-        <span class="k">pass</span>
-
-    <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">return_result</span><span class="p">(</span><span class="n">error</span><span class="p">,</span> <span class="n">exec_code</span><span class="p">,</span> <span class="n">help_text</span><span class="p">,</span> <span class="n">data_info</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">data_to</span><span class="p">):</span>
-        <span class="c1"># Standardisierte Ergebnisrückgabe</span>
-        <span class="k">pass</span>
+<hr />
+<h3 id="blobstoragestop_all_watches">BlobStorage.stop_all_watches()<a class="headerlink" href="#blobstoragestop_all_watches" title="Permanent link">&para;</a></h3>
+<p>Stop all active watches and shutdown the watch thread.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">stop_all_watches</span><span class="p">()</span>
+</code></pre></div>
+<p><strong>Example:</strong>
+<div class="highlight"><pre><span></span><code><span class="c1"># Cleanup on application shutdown</span>
+<span class="n">storage</span><span class="o">.</span><span class="n">stop_all_watches</span><span class="p">()</span>
 </code></pre></div></p>
-<h2 id="der-export-decorator-flow">Der @export Decorator Flow<a class="headerlink" href="#der-export-decorator-flow" title="Permanent link">&para;</a></h2>
-<!-- verified: main_tool.py::__init__ -->
-<div class="highlight"><pre><span></span><code><span class="c1"># Im __init__ wird der @export Decorator angewendet:</span>
-<span class="bp">self</span><span class="o">.</span><span class="n">on_exit</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">tb</span><span class="p">(</span>
-    <span class="n">mod_name</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
-    <span class="n">name</span><span class="o">=</span><span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;on_exit&quot;</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
-    <span class="n">version</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">version</span>
-<span class="p">)(</span><span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;on_exit&quot;</span><span class="p">))</span>
+<hr />
+<h3 id="blobfilewatch">BlobFile.watch()<a class="headerlink" href="#blobfilewatch" title="Permanent link">&para;</a></h3>
+<p>Convenience method to watch a specific BlobFile instance.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">watch</span><span class="p">(</span>
+    <span class="n">callback</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">BlobFile</span><span class="p">],</span> <span class="kc">None</span><span class="p">],</span>
+    <span class="n">max_idle_timeout</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">600</span><span class="p">,</span>
+    <span class="n">threaded</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+<span class="p">)</span>
 </code></pre></div>
-<h2 id="result-pattern">Result-Pattern<a class="headerlink" href="#result-pattern" title="Permanent link">&para;</a></h2>
-<!-- verified: main_tool.py::return_result -->
-<div class="highlight"><pre><span></span><code><span class="nd">@staticmethod</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">return_result</span><span class="p">(</span>
-    <span class="n">error</span><span class="p">:</span> <span class="n">ToolBoxError</span> <span class="o">=</span> <span class="n">ToolBoxError</span><span class="o">.</span><span class="n">none</span><span class="p">,</span>
-    <span class="n">exec_code</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
-    <span class="n">help_text</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
-    <span class="n">data_info</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-    <span class="n">data</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-    <span class="n">data_to</span><span class="o">=</span><span class="kc">None</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Result</span><span class="p">:</span>
-    <span class="c1"># Standardisierte Rückgabe für alle Mod-Operationen</span>
-    <span class="k">return</span> <span class="n">Result</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-</code></pre></div>
-<h2 id="app-property-facade-access">App-Property (Facade Access)<a class="headerlink" href="#app-property-facade-access" title="Permanent link">&para;</a></h2>
-<!-- verified: main_tool.py::app -->
-<div class="highlight"><pre><span></span><code><span class="nd">@property</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">app</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-    <span class="k">return</span> <span class="n">get_app</span><span class="p">(</span>
-        <span class="n">from_</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">spec</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">|</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">toolID</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">interface</span><span class="si">}</span><span class="s2">&quot;</span>
-    <span class="p">)</span>
+<p><strong>Example:</strong>
+<div class="highlight"><pre><span></span><code><span class="n">config_file</span> <span class="o">=</span> <span class="n">BlobFile</span><span class="p">(</span><span class="s1">&#39;app/config.json&#39;</span><span class="p">,</span> <span class="s1">&#39;r&#39;</span><span class="p">)</span>
 
-<span class="nd">@app</span><span class="o">.</span><span class="n">setter</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">app</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">v</span><span class="p">):</span>
-    <span class="k">raise</span> <span class="ne">PermissionError</span><span class="p">(</span><span class="s2">&quot;You cannot set the App Instance!&quot;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">on_change</span><span class="p">(</span><span class="n">blob_file</span><span class="p">:</span> <span class="n">BlobFile</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Config changed!&quot;</span><span class="p">)</span>
+
+<span class="n">config_file</span><span class="o">.</span><span class="n">watch</span><span class="p">(</span><span class="n">on_change</span><span class="p">)</span>
+</code></pre></div></p>
+<hr />
+<h3 id="blobfilestop_watch">BlobFile.stop_watch()<a class="headerlink" href="#blobfilestop_watch" title="Permanent link">&para;</a></h3>
+<p>Stop watching this BlobFile instance.</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">stop_watch</span><span class="p">(</span><span class="n">callback</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
 </code></pre></div>
-<h2 id="logging-integration">Logging Integration<a class="headerlink" href="#logging-integration" title="Permanent link">&para;</a></h2>
-<!-- verified: main_tool.py::__ainit__::get_logger -->
-<div class="highlight"><pre><span></span><code><span class="bp">self</span><span class="o">.</span><span class="n">logger</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;logs&quot;</span><span class="p">,</span> <span class="n">get_logger</span><span class="p">())</span>
-<span class="c1"># Verwendet tb_logger für zentrales Logging</span>
+<p><strong>Example:</strong>
+<div class="highlight"><pre><span></span><code><span class="n">config_file</span><span class="o">.</span><span class="n">stop_watch</span><span class="p">(</span><span class="n">on_change</span><span class="p">)</span>
+</code></pre></div></p>
+<hr />
+<h2 id="how-it-works">How It Works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
+<h3 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>WatchManager</strong>: Manages all watch operations in a background thread</li>
+<li><strong>Long-Polling</strong>: Uses server's <code>/watch</code> endpoint (60s timeout)</li>
+<li><strong>Batch Processing</strong>: One thread handles all watches efficiently</li>
+<li><strong>Callback Dispatch</strong>: When blob changes, all registered callbacks are called</li>
+<li><strong>Auto-Cleanup</strong>: Callbacks without updates for <code>max_idle_timeout</code> are removed</li>
+</ol>
+<h3 id="flow-diagram">Flow Diagram<a class="headerlink" href="#flow-diagram" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>┌─────────────┐
+│ Application │
+└──────┬──────┘
+       │ watch(blob_id, callback)
+       ▼
+┌─────────────────┐
+│  WatchManager   │◄─── Background Thread
+└────────┬────────┘
+         │ Long-Polling /watch
+         ▼
+┌─────────────────┐
+│  Blob Server    │
+└────────┬────────┘
+         │ blob_id changed
+         ▼
+┌─────────────────┐
+│ Dispatch        │
+│ Callbacks       │
+└────────┬────────┘
+         │ callback(BlobFile)
+         ▼
+┌─────────────────┐
+│ Your Callback   │
+└─────────────────┘
 </code></pre></div>
-<h2 id="version-loading">Version Loading<a class="headerlink" href="#version-loading" title="Permanent link">&para;</a></h2>
-<!-- verified: main_tool.py::get_version_from_pyproject -->
-<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">get_version_from_pyproject</span><span class="p">(</span><span class="n">pyproject_path</span><span class="o">=</span><span class="s1">&#39;../pyproject.toml&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="c1"># Liest Version aus pyproject.toml [project].version</span>
-    <span class="k">pass</span>
+<hr />
+<h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
+<h3 id="1-use-appropriate-timeouts">1. Use Appropriate Timeouts<a class="headerlink" href="#1-use-appropriate-timeouts" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Short-lived watches (e.g., UI updates)</span>
+<span class="n">storage</span><span class="o">.</span><span class="n">watch</span><span class="p">(</span><span class="s1">&#39;ui/state.json&#39;</span><span class="p">,</span> <span class="n">on_ui_change</span><span class="p">,</span> <span class="n">max_idle_timeout</span><span class="o">=</span><span class="mi">60</span><span class="p">)</span>
+
+<span class="c1"># Long-lived watches (e.g., config monitoring)</span>
+<span class="n">storage</span><span class="o">.</span><span class="n">watch</span><span class="p">(</span><span class="s1">&#39;app/config.json&#39;</span><span class="p">,</span> <span class="n">on_config_change</span><span class="p">,</span> <span class="n">max_idle_timeout</span><span class="o">=</span><span class="mi">3600</span><span class="p">)</span>
 </code></pre></div>
-<h2 id="fazit">Fazit<a class="headerlink" href="#fazit" title="Permanent link">&para;</a></h2>
-<p>Das 4-Layer-Pattern ermöglicht:
-- <strong>Testbarkeit</strong>: Jeder Layer isoliert testbar
-- <strong>Wiederverwendbarkeit</strong>: Data/Worker ohne Facade nutzbar
-- <strong>Konsistenz</strong>: Einheitliche Modulstruktur über alle Components
-- <strong>Erweiterbarkeit</strong>: Neue Module folgen dem bewährten Pattern</p>
+<h3 id="2-handle-errors-in-callbacks">2. Handle Errors in Callbacks<a class="headerlink" href="#2-handle-errors-in-callbacks" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">safe_callback</span><span class="p">(</span><span class="n">blob_file</span><span class="p">:</span> <span class="n">BlobFile</span><span class="p">):</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">blob_file</span><span class="o">.</span><span class="n">read_json</span><span class="p">()</span>
+        <span class="n">process_data</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Callback error: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="3-cleanup-on-shutdown">3. Cleanup on Shutdown<a class="headerlink" href="#3-cleanup-on-shutdown" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">atexit</span>
+
+<span class="n">storage</span> <span class="o">=</span> <span class="n">BlobStorage</span><span class="p">(</span><span class="n">servers</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;http://localhost:3000&#39;</span><span class="p">])</span>
+<span class="n">atexit</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">storage</span><span class="o">.</span><span class="n">stop_all_watches</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="4-multiple-callbacks-per-blob">4. Multiple Callbacks per Blob<a class="headerlink" href="#4-multiple-callbacks-per-blob" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># You can register multiple callbacks for the same blob</span>
+<span class="n">storage</span><span class="o">.</span><span class="n">watch</span><span class="p">(</span><span class="s1">&#39;data.json&#39;</span><span class="p">,</span> <span class="n">callback_1</span><span class="p">,</span> <span class="n">max_idle_timeout</span><span class="o">=</span><span class="mi">300</span><span class="p">)</span>
+<span class="n">storage</span><span class="o">.</span><span class="n">watch</span><span class="p">(</span><span class="s1">&#39;data.json&#39;</span><span class="p">,</span> <span class="n">callback_2</span><span class="p">,</span> <span class="n">max_idle_timeout</span><span class="o">=</span><span class="mi">600</span><span class="p">)</span>
+
+<span class="c1"># Each callback has independent timeout</span>
+</code></pre></div>
+<hr />
+<h2 id="performance-considerations">Performance Considerations<a class="headerlink" href="#performance-considerations" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Single Thread</strong>: All watches run in one thread, very efficient</li>
+<li><strong>Batch Updates</strong>: Server sends one notification, all callbacks triggered</li>
+<li><strong>Memory</strong>: Minimal overhead, only stores callback references</li>
+<li><strong>Network</strong>: One long-polling connection per server</li>
+</ul>
+<hr />
+<h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
+<h3 id="callback-not-called">Callback Not Called<a class="headerlink" href="#callback-not-called" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Check if blob is actually changing on server</li>
+<li>Verify API key is valid</li>
+<li>Check logs for errors</li>
+<li>Ensure watch wasn't auto-removed due to timeout</li>
+</ol>
+<h3 id="high-cpu-usage">High CPU Usage<a class="headerlink" href="#high-cpu-usage" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Should not happen - watch thread sleeps during long-polling</li>
+<li>Check for errors in callbacks causing rapid retries</li>
+</ul>
+<h3 id="memory-leaks">Memory Leaks<a class="headerlink" href="#memory-leaks" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Always call <code>stop_watch()</code> or <code>stop_all_watches()</code> when done</li>
+<li>Use <code>max_idle_timeout</code> to auto-cleanup stale watches</li>
+</ul>
 
 
 
