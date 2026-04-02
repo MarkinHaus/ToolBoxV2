@@ -151,7 +151,7 @@ class NginxConfig:
     ssl_enabled: bool = False
     ssl_certificate: str = ""
     ssl_certificate_key: str = ""
-    static_root: str = "./tb_dist"
+    static_root: str = "/tb_dist"
     static_enabled: bool = True
     rate_limit_enabled: bool = True
     rate_limit_zone: str = "tb_limit"
