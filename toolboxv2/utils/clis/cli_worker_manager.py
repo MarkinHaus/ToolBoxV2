@@ -226,7 +226,7 @@ def _hash_password_for_nginx(pwd: str) -> Optional[str]:
         import bcrypt
         return bcrypt.hashpw(
             pwd.encode("utf-8"),
-            bcrypt.gensalt(rounds=12, prefix=b"2y")  # nginx erwartet $2y$
+            bcrypt.gensalt(rounds=12, prefix=b"2b")  # nginx erwartet $2y$
         ).decode("utf-8")
     except ImportError:
         pass
@@ -316,11 +316,11 @@ class NginxManager:
         remote_nodes = remote_nodes or []
 
         http_servers = "\n        ".join(
-            f"server localhost:{base_http_port + i} max_fails=1 fail_timeout=5s;"
+            f"server 127.0.0.1:{base_http_port + i} max_fails=1 fail_timeout=5s;"
             for i in range(max_http_workers)
         )
         ws_servers = "\n        ".join(
-            f"server localhost:{base_ws_port + i} max_fails=1 fail_timeout=5s;"
+            f"server 127.0.0.1:{base_ws_port + i} max_fails=1 fail_timeout=5s;"
             for i in range(max_ws_workers)
         )
         for host, port in remote_nodes:
