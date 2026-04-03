@@ -540,7 +540,7 @@ class NginxManager:
             location ^~ /admin/minio/ {{
                 auth_basic "Restricted Admin";
                 auth_basic_user_file {htpasswd_path};
-                proxy_pass http://127.0.0.1:9000/;
+                proxy_pass http://127.0.0.1:9001/;
                 proxy_set_header Host $host;
                 proxy_set_header X-Real-IP $remote_addr;
                 proxy_hide_header Server;
