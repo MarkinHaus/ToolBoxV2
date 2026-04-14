@@ -32,7 +32,7 @@ from prompt_toolkit.filters import is_done
 
 from toolboxv2.utils.workers import get_registry
 from toolboxv2.utils.extras.Style import SpinnerManager, Spinner
-from utils.extras.pt_spinner_patch import apply_prompt_toolkit_patch_safe, get_spinner_toolbar_fragment, register_app
+from toolboxv2.utils.extras.pt_spinner_patch import apply_prompt_toolkit_patch_safe, get_spinner_toolbar_fragment, register_app
 
 # Suppress noisy loggers
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)

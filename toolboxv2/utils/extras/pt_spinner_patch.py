@@ -40,7 +40,7 @@ def _try_invalidate() -> None:
 
 def apply_prompt_toolkit_patch_safe() -> None:
     try:
-        from toolboxv2.utils.extras.spinner import Spinner, SpinnerManager
+        from toolboxv2.utils.extras.Style import Spinner, SpinnerManager
     except ImportError as e:
         print(f"[pt_spinner_patch] Import failed: {e}")
         return

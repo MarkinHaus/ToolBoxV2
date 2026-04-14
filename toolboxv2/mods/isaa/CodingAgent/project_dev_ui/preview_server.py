@@ -862,9 +862,63 @@ def create_preview_server(workspace_path: str, port: int = 0) -> PreviewServer:
     return server
 
 
+from pathlib import Path
+import tempfile
+import shutil
+import time
+
+def serve_jsx_file(jsx_path: str):
+    jsx_path = Path(jsx_path)
+
+    if not jsx_path.exists() or jsx_path.suffix != ".jsx":
+        raise ValueError("Ungültiger JSX-Dateipfad")
+
+    tmpdir = tempfile.TemporaryDirectory()
+    tmp_path = Path(tmpdir.name)
+
+    # JSX-Datei kopieren
+    target_jsx = tmp_path / "app.jsx"
+    shutil.copy(jsx_path, target_jsx)
+
+    # index.html erstellen
+    (tmp_path / "index.html").write_text(f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>JSX Preview</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+    <div id="app"></div>
+
+    <script type="text/babel" src="app.jsx"></script>
+    <script type="text/babel">
+        ReactDOM.createRoot(document.getElementById('app')).render(<App />);
+    </script>
+</body>
+</html>
+""")
+
+    # Server starten (deine vorhandene Funktion)
+    server = create_preview_server(tmp_path)
+
+    print(f"Preview server running at: {server.url}")
+    print("Press Ctrl+C to stop")
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        server.stop()
+        tmpdir.cleanup()
+        print("\nServer stopped")
+
 if __name__ == "__main__":
     # Test server
-    import tempfile
+    serve_jsx_file(r"C:\Users\hausm\Documents\ToolBoxV2\plexus-editor.jsx")
+    ''' import tempfile
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Create test files
@@ -901,4 +955,4 @@ function App() {
                 time.sleep(1)
         except KeyboardInterrupt:
             server.stop()
-            print("\nServer stopped")
+            print("\nServer stopped")'''

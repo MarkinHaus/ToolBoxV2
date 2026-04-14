@@ -1,17 +1,17 @@
-name: desktop
-version: "0.1.25"
-enabled: false
-immutable: false
-description: "Desktop UI with PyQt6"
-files:
-  - "utils/extras/base_widget.py"
-  - "utils/extras/hud_widget.py"
-  - "utils/extras/show_and_hide_console.py"
-  - "utils/extras/qr.py"
-  - "utils/extras/profiler.py"
-imports: []
-dependencies: []
-requires:
-  - "core"
 commands:
-  - "gui"
+- gui
+dependencies: []
+description: Desktop UI with PyQt6
+enabled: true
+files:
+- utils/extras/base_widget.py
+- utils/extras/hud_widget.py
+- utils/extras/show_and_hide_console.py
+- utils/extras/qr.py
+- utils/extras/profiler.py
+immutable: false
+imports: []
+name: desktop
+requires:
+- core
+version: 0.1.25
