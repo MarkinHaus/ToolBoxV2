@@ -482,8 +482,6 @@ def _append_task_line(out: list, tv: TaskView, focused: bool, pad: str = " " * 1
         out.append((bg + f"bg:{C['green']}", f"● {_fmt_elapsed(elapsed)} "))
         if tv.narrator_msg:
             out.append((bg + "bg:#60a5fa", tv.narrator_msg + " "))
-        if tv.status_msg:
-            out.append((bg + "bg:#60a5fa", tv.status_msg + " "))
     elif tv.status in ("failed", "error"):
         elapsed = (tv.completed_at or tv.started_at) - tv.started_at
         out.append((bg + f"bg:{C['red']}", f"✗ {_fmt_elapsed(elapsed)} "))
@@ -3590,13 +3588,15 @@ F6 during execution       - Move agent to background
     """,
 
     # Tool Management
-    "tools": """/tools list [cat]         - List all tools (optional by category)
-/tools all                - List all tools (optional by category)
-/tools info               - List all tools (optional by category)
-/tools enable <name/cat>  - Enable a specific tool
-/tools disable <name/cat> - Disable a specific tool
-/tools enable-all         - Enable all disabled tools
-/tools disable-all        - Disable all non‑system tools
+    "tools": """/tools list [cat]         - List all tools, optional filter by category
+/tools all                - Compact table of every tool (active + disabled) incl. health
+/tools info <name>        - Detailed info + health status for one tool
+/tools enable <name/cat>  - Enable a tool or entire category
+/tools disable <name/cat> - Disable a tool or entire category
+/tools enable-all         - Re-enable all disabled tools
+/tools disable-all        - Disable all non-system tools
+/tools health             - Run health-check on ALL tools (summary)
+/tools health <name>      - Run health-check on a single tool
     """,
 
     # Additional Features
@@ -5521,12 +5521,13 @@ class ISAA_Host:
             "/vfs": {"init":None},
             "/tools": {
                 "list": tool_cats,
-                "all": None,  # Neu
-                "info": tool_names,  # Neu
-                "enable": {**tool_names, **tool_cats}, # Beides in einer Liste
+                "all": None,
+                "info": tool_names,
+                "enable": {**tool_names, **tool_cats},
                 "disable": {**tool_names, **tool_cats},
                 "enable-all": None,
                 "disable-all": None,
+                "health": tool_names,
             },
             "/audio": {
                 "on": None,
@@ -6122,13 +6123,15 @@ class ISAA_Host:
         print_separator()
 
         print_status("Tool Management", "info")
-        print_box_content("/tools list [cat]                            - List all tools (optional by category)", "")
-        print_box_content("/tools all                                   - List all tools (optional by category)", "")
-        print_box_content("/tools info                                  - List all tools (optional by category)", "")
-        print_box_content("/tools enable <name/cat>                     - Enable a specific tool", "")
-        print_box_content("/tools disable <name/cat>                    - Disable a specific tool", "")
-        print_box_content("/tools enable-all                            - Enable all disabled tools", "")
-        print_box_content("/tools disable-all                           - Disable all non-system tools", "")
+        print_box_content("/tools list [cat]        - List all tools, optional filter by category", "")
+        print_box_content("/tools all               - Compact table of every tool (active + disabled)", "")
+        print_box_content("/tools info <name>       - Detailed info incl. health status for one tool", "")
+        print_box_content("/tools enable <name/cat> - Enable a tool or entire category", "")
+        print_box_content("/tools disable <name/cat>- Disable a tool or entire category", "")
+        print_box_content("/tools enable-all        - Re-enable all disabled tools", "")
+        print_box_content("/tools disable-all       - Disable all non-system tools", "")
+        print_box_content("/tools health            - Run health-check on ALL tools (summary)", "")
+        print_box_content("/tools health <name>     - Run health-check on a single tool", "")
 
         print_separator()
         print_status("Chain Management", "info")
@@ -7256,18 +7259,33 @@ class ISAA_Host:
                             "info"
                         )
             elif sub == "live":
-                if self.zen_plus_mode:
-                    from toolboxv2.mods.isaa.extras.zen.dream_zen_adapter import patch_zen_dream, dream_with_viz_v2, unpatch_zen_dream
-                    og = {}
-                    og = patch_zen_dream(og)
-                    report = await dream_with_viz_v2(self.isaa_tools, self.active_agent_name)
-                    unpatch_zen_dream(og)
-                else:
+                # Dreamer V3: runs as normal a_stream, rendered by TaskView
+                agent = await self.isaa_tools.get_agent(self.active_agent_name)
+                agent.active_session = self.active_session_id
 
-                    from toolboxv2.mods.isaa.extras.dream_graph import dream_with_viz_v2
-                    agent: FlowAgent= await self.isaa_tools.get_agent(self.active_agent_name)
-                    agent.active_session = self.active_session_id
-                    await dream_with_viz_v2(self.isaa_tools, self.active_agent_name)
+                stream = agent.a_dream_stream()
+
+                exc = self._create_execution(
+                    kind="dream",
+                    agent_name=f"dreamer_{self.active_agent_name}",
+                    query="Meta-Learning Cycle",
+                    async_task=None,
+                    stream=stream,
+                    take_focus=True,
+                )
+                task_id = exc.task_id
+                async_task = asyncio.create_task(
+                    self._drain_agent_stream(task_id, stream, should_speak=False)
+                )
+                exc.async_task = async_task
+                async_task.add_done_callback(
+                    lambda fut: self._on_agent_task_done(task_id, fut)
+                )
+
+                c_print(HTML(
+                    f"<style fg=\\'#67e8f9\\'>"
+                    f"  ◎ dreamer gestartet → {task_id}</style>"
+                ))
 
         else:
             print_status(f"Unknown job action: {action}. Use: list, add, remove, pause, resume, fire, detail, autowake", "error")
@@ -9586,7 +9604,7 @@ class ISAA_Host:
     async def _cmd_tools(self, args: list[str]):
         """Intelligentes Tool-Management: Erkennt automatisch Namen oder Kategorien."""
         if not args:
-            print_status("Usage: /tools <list|all|info|enable|disable|enable-all|disable-all> [name/category]", "warning")
+            print_status("Usage: /tools <list|all|info|health|enable|disable|enable-all|disable-all> [name/category]", "warning")
             return
 
         action = args[0].lower()
@@ -9663,6 +9681,17 @@ class ISAA_Host:
             print_box_content(f"Flags: {' '.join(f_list) if f_list else 'none'}", "info")
 
             print_separator()
+            hs = getattr(t_obj, "health_status", None) or "UNKNOWN"
+            he = getattr(t_obj, "health_error", None)
+            lhc = getattr(t_obj, "last_health_check", None)
+            hs_col = {"HEALTHY": C["green"], "GUARANTEED": C["teal"],
+                      "DEGRADED": C["amber"], "FAILED": C["red"]}.get(hs, C["dim"])
+            lhc_str = lhc.strftime("%Y-%m-%d %H:%M:%S") if lhc else "never"
+            print_box_content(
+                f"Health: <style fg='{hs_col}'>{hs}</style>  |  Last check: {lhc_str}"
+                + (f"  |  Error: {he}" if he else ""),
+                "info"
+            )
             print_status("Description:", "info")
             print_box_content(t_obj.description, "")
 
@@ -9680,9 +9709,8 @@ class ISAA_Host:
 
             # Wir nutzen schmale Spalten für maximale Dichte
             # Spalten: Index, Name (gekürzt), Quelle, Flags (R/W/D)
-            widths = [4, 32, 4, 6]
-            print_table_header([("#", 4), ("Tool Name", 32), ("Src", 4), ("Flags", 6)], widths)
-
+            widths = [4, 30, 4, 6, 8]
+            print_table_header([("#", 4), ("Tool Name", 30), ("Src", 4), ("Flags", 6), ("Health", 8)], widths)
             all_tools = []
             for t in tm.get_all(): all_tools.append((t, True))
             for n, t in disabled_map.items(): all_tools.append((t, False))
@@ -9701,10 +9729,16 @@ class ISAA_Host:
                 src_code = src_map.get(t.source, "???")
 
                 # Tabellenzeile drucken
+                hs = getattr(t, "health_status", None) or "?"
+                hs_short = {"HEALTHY": "OK", "GUARANTEED": "GTD",
+                            "DEGRADED": "DEG", "FAILED": "FAIL",
+                            "SKIPPED": "SKP"}.get(hs, "?")
+                hs_col = {"OK": C["green"], "GTD": C["teal"],
+                          "DEG": C["amber"], "FAIL": C["red"]}.get(hs_short, C["dim"])
                 print_table_row(
-                    [str(i).zfill(3), t.name[:31], src_code, f],
+                    [str(i).zfill(3), t.name[:29], src_code, f, hs_short],
                     widths,
-                    ["grey", name_col, "cyan", "amber"]
+                    ["grey", name_col, "cyan", "amber", hs_col]
                 )
 
                 # Alle 50 Zeilen ein kleiner Separator zur Orientierung bei Massen
@@ -9713,6 +9747,70 @@ class ISAA_Host:
 
             print_box_footer()
             print_status(f"Total: {len(all_tools)} tools listed ({len(tm.get_all())} active).", "success")
+        elif action == "health":
+            # /tools health          → alle testen
+            # /tools health <name>   → einzelnes Tool testen
+            if len(args) >= 2:
+                t_name = args[1]
+                if not (tm.exists(t_name) or t_name in disabled_map):
+                    return print_status(f"Tool '{t_name}' nicht gefunden.", "error")
+                result = await tm.health_check_single(t_name)
+                col = {"HEALTHY": C["green"], "GUARANTEED": C["teal"],
+                       "DEGRADED": C["amber"], "FAILED": C["red"],
+                       "SKIPPED": C["dim"]}.get(result.status, C["dim"])
+                print_box_header(f"Health: {t_name}", "🩺")
+                print_box_content(
+                    f"<style fg='{col}'>{result.status}</style>"
+                    + (f"  ({result.execution_time_ms:.0f} ms)" if result.execution_time_ms else ""),
+                    "info"
+                )
+                if result.error:
+                    print_box_content(f"Error: {result.error}", "error")
+                if result.contract_violations:
+                    print_box_content(f"Violations: {', '.join(result.contract_violations)}", "warning")
+                if result.result_preview:
+                    print_box_content(f"Result: {result.result_preview}", "data")
+                print_box_footer()
+            else:
+                # Alle Tools testen
+                total = tm.count()
+                print_status(f"Starte Health-Check für {total} Tools...", "progress")
+                results = await tm.health_check_all()
+
+                stats = {"HEALTHY": 0, "GUARANTEED": 0, "DEGRADED": 0,
+                         "FAILED": 0, "SKIPPED": 0}
+                failed_list, degraded_list = [], []
+
+                for name, r in results.items():
+                    s = r.status
+                    stats[s] = stats.get(s, 0) + 1
+                    if s == "FAILED":   failed_list.append((name, r.error))
+                    if s == "DEGRADED": degraded_list.append((name, r.contract_violations))
+
+                print_box_header("Health-Check Results", "🩺")
+                print_box_content(
+                    f"<style fg='{C['green']}'>✓ {stats['HEALTHY']} healthy</style>  "
+                    f"<style fg='{C['teal']}'>✓ {stats['GUARANTEED']} guaranteed</style>  "
+                    f"<style fg='{C['amber']}'>⚠ {stats['DEGRADED']} degraded</style>  "
+                    f"<style fg='{C['red']}'>✗ {stats['FAILED']} failed</style>  "
+                    f"<style fg='{C['dim']}'>– {stats['SKIPPED']} skipped</style>",
+                    "info"
+                )
+
+                if failed_list:
+                    print_separator()
+                    print_status("Failed:", "error")
+                    for name, err in failed_list:
+                        print_box_content(f"{name}  →  {(err or '')[:80]}", "error")
+
+                if degraded_list:
+                    print_separator()
+                    print_status("Degraded:", "warning")
+                    for name, violations in degraded_list:
+                        v_str = ", ".join(violations or [])[:80]
+                        print_box_content(f"{name}  →  {v_str}", "warning")
+
+                print_box_footer()
 
         elif action == "list":
             # (Bleibt ähnlich wie vorher, zeigt aber alle Kategorien)
@@ -9965,6 +10063,8 @@ class ISAA_Host:
                     f"\n<style fg='{PTColors.ZEN_GREEN}'>"
                     f"  ✓ {task_id} complete</style>\n"
                 ))
+                if not result:
+                    result = tv.final_answer
                 print_code_block(result, "text", show_line_numbers=False)
         except asyncio.CancelledError:
             if exc:
@@ -10378,6 +10478,13 @@ class ISAA_Host:
                 lines.append(
                     f"<style fg='#fbbf24'>  ⟳ Läuft:   {_esc(last_iv.pending_tool)}</style>"
                 )
+
+        if tv.narrator_msg:
+            lines.append(
+                f"<style fg='{PTColors.ZEN_DIM}'>  ◎ narr:  </style>"
+                f"<style fg='#e5e7eb'>{_esc(tv.narrator_msg)}"
+                f"{'…' if len(tv.narrator_msg) > 200 else ''}</style>"
+            )
 
         # ── Finale Antwort (falls schon vorhanden) ────────────────────────
         if tv.final_answer:

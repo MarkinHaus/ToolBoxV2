@@ -21,20 +21,18 @@ Design rules
   NarratorMiniState (plan, drift, repeat) → used as context in all future
   calls of this run.
 """
-
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import json
-import logging
 import os
 import random
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-logger = logging.getLogger(__name__)
+from toolboxv2 import get_logger, get_app
+
+logger = get_logger()
 
 # ---------------------------------------------------------------------------
 # Config / Constants
@@ -45,8 +43,8 @@ NARRATOR_ENABLED: bool = os.getenv("AGENT_NARRATOR_ENABLED", "true").lower() == 
 NARRATOR_LANG: str = os.getenv("NARRATOR_LANG", "auto")  # auto | de | en
 
 # Token budget per minute (sliding window, matches Groq free-tier limits)
-NARRATOR_MAX_INPUT_TOKENS_PM: int = int(os.getenv("NARRATOR_MAX_INPUT_TPM", "3000"))
-NARRATOR_MAX_OUTPUT_TOKENS_PM: int = int(os.getenv("NARRATOR_MAX_OUTPUT_TPM", "200"))
+NARRATOR_MAX_INPUT_TOKENS_PM: int = int(os.getenv("NARRATOR_MAX_INPUT_TPM", "10000"))
+NARRATOR_MAX_OUTPUT_TOKENS_PM: int = int(os.getenv("NARRATOR_MAX_OUTPUT_TPM", "1000"))
 _BUDGET_WINDOW: float = 60.0  # seconds
 
 # Timing
@@ -302,25 +300,45 @@ def _build_think_prompt(
 
 async def _call_blitz(system: str, messages: list[dict]) -> dict | None:
     """
-    Call BLITZ_MODEL via litellm directly.
+    Call BLITZ_MODEL via LiteLLMRateLimitHandler (with fallback + key rotation).
+    Falls back to raw litellm.acompletion if no handler is initialised.
     Returns parsed JSON dict or None on any error.
     """
     try:
-        import litellm  # type: ignore
-        response = await litellm.acompletion(
-            model=BLITZ_MODEL,
-            messages=[{"role": "system", "content": system}] + messages,
-            max_tokens=40,
-            temperature=0.3,
-            stream=False,
-            drop_params=True,
-        )
+        all_messages = [{"role": "system", "content": system}] + messages
+
+        if _blitz_handler is not None:
+            import litellm as _litellm_mod
+
+            response = await _blitz_handler.completion_with_rate_limiting(
+                _litellm_mod,
+                model=BLITZ_MODEL,
+                messages=all_messages,
+                max_tokens=40,
+                temperature=0.3,
+                stream=False,
+                drop_params=True,
+            )
+        else:
+            # Fallback: direkt litellm ohne handler
+            import litellm  # type: ignore
+
+            response = await litellm.acompletion(
+                model=BLITZ_MODEL,
+                messages=all_messages,
+                max_tokens=40,
+                temperature=0.3,
+                stream=False,
+                drop_params=True,
+            )
+
         raw = response.choices[0].message.content or ""
         raw = raw.strip().strip("```json").strip("```").strip()
         data = json.loads(raw)
         usage = getattr(response, "usage", None)
         return {
             "data": data,
+            "raw": raw,
             "in": getattr(usage, "prompt_tokens", 0),
             "out": getattr(usage, "completion_tokens", 0),
         }
@@ -330,10 +348,104 @@ async def _call_blitz(system: str, messages: list[dict]) -> dict | None:
         logger.debug("Blitz call failed: %s", exc)
         return None
 
-
 # ---------------------------------------------------------------------------
 # AgentLiveNarrator
 # ---------------------------------------------------------------------------
+
+_GROQ_DEFAULT_FALLBACKS: dict[str, list[str]] = {
+    # Primary model → ordered fallback list
+    #   Strategy: same-class first, then smaller/cheaper
+    "groq/llama-3.1-8b-instant": [
+        "groq/llama-3.3-70b-versatile",
+        "groq/openai/gpt-oss-20b",
+    ],
+    "groq/llama-3.3-70b-versatile": [
+        "groq/llama-3.1-8b-instant",
+        "groq/openai/gpt-oss-20b",
+    ],
+    "groq/openai/gpt-oss-120b": [
+        "groq/openai/gpt-oss-20b",
+        "groq/llama-3.3-70b-versatile",
+        "groq/llama-3.1-8b-instant",
+    ],
+    "groq/openai/gpt-oss-20b": [
+        "groq/llama-3.1-8b-instant",
+        "groq/llama-3.3-70b-versatile",
+    ],
+}
+
+# Generic fallback when BLITZ_MODEL is a groq model not in the table above
+_GROQ_GENERIC_FALLBACKS: list[str] = [
+    "groq/llama-3.1-8b-instant",
+    "groq/llama-3.3-70b-versatile",
+    "groq/openai/gpt-oss-20b",
+]
+
+
+def _resolve_groq_fallbacks(primary: str) -> list[str]:
+    """
+    Return a fallback chain for a groq primary model.
+    Uses the explicit table if available, otherwise the generic list
+    (filtering out the primary itself).
+    """
+    if primary in _GROQ_DEFAULT_FALLBACKS:
+        return _GROQ_DEFAULT_FALLBACKS[primary]
+    # unknown groq model → generic chain minus itself
+    return [m for m in _GROQ_GENERIC_FALLBACKS if m != primary]
+
+_blitz_handler: "LiteLLMRateLimitHandler | None" = None
+
+
+def init_narrator_handler(
+    handler: "LiteLLMRateLimitHandler | None" = None,
+    fallback_models: list[str] | None = None,
+) -> "LiteLLMRateLimitHandler":
+    """
+    Initialise (or replace) the module-level rate-limit handler used by
+    all Narrator Blitz calls.
+
+    Args:
+        handler:          Pass an existing handler to share with the rest of
+                          the engine.  If None a fresh one is created.
+        fallback_models:  Optional fallback chain for BLITZ_MODEL.
+                          If None AND BLITZ_MODEL is a groq model,
+                          a sensible default chain is auto-selected.
+
+    Returns the active handler so the caller can further configure it.
+    """
+    global _blitz_handler
+
+    if handler is not None:
+        _blitz_handler = handler
+        return _blitz_handler
+
+    # Auto-detect groq fallbacks when none provided
+    if fallback_models is None and "groq" in BLITZ_MODEL.lower():
+        fallback_models = _resolve_groq_fallbacks(BLITZ_MODEL)
+        logger.info(
+            "Narrator: auto-selected groq fallbacks for %s → %s",
+            BLITZ_MODEL, fallback_models,
+        )
+
+    # lazy import – keep module importable without the handler installed
+    from toolboxv2.mods.isaa.base.IntelligentRateLimiter import LiteLLMRateLimitHandler
+
+    _blitz_handler = LiteLLMRateLimitHandler(
+        enable_model_fallback=bool(fallback_models),
+        enable_key_rotation=True,
+        key_rotation_mode="balance",
+        max_retries=2,
+    )
+
+    if fallback_models:
+        _blitz_handler.add_fallback_chain(
+            primary_model=BLITZ_MODEL,
+            fallback_models=fallback_models,
+            fallback_duration=90.0,
+        )
+
+    return _blitz_handler
+
 
 class AgentLiveNarrator:
     """
@@ -347,11 +459,15 @@ class AgentLiveNarrator:
         # async schedule (fire-and-forget, non-blocking)
         asyncio.create_task(self._narrator.on_tool_end(ctx))
     """
-
-    def __init__(self, live: "AgentLiveState", agent: Any, do_narator: bool = True):
+    def __init__(self, live: "AgentLiveState", agent: Any, do_narator=True,
+             handler: "LiteLLMRateLimitHandler | None" = None,
+             fallback_models: list[str] | None = None):
         self.live = live
         self.agent = agent  # kept for future: model preference routing
         self._enabled: bool = bool(BLITZ_MODEL) and NARRATOR_ENABLED and do_narator
+
+        if self._enabled:
+            init_narrator_handler(handler=handler, fallback_models=fallback_models)
 
         # Per-run state (reset on each execute call)
         self._mini: NarratorMiniState = NarratorMiniState()
@@ -399,6 +515,8 @@ class AgentLiveNarrator:
 
     def _set_thought(self, text: str) -> None:
         self.live.narrator_msg = text
+        from toolboxv2 import get_app
+        get_app().print(text)
         self._thought_set_time = time.monotonic()
 
     def _append_state_flags(self, text: str) -> str:
@@ -495,12 +613,65 @@ class AgentLiveNarrator:
             is_think=True,
         )
 
+    async def blitz(
+        self,
+        system: str,
+        messages: list[dict],
+        schema: dict | None = None,
+        respect_ratelimit: bool = False,
+        history: list[dict] | None = None,
+    ) -> dict | str | None:
+        """
+        Public raw Blitz-Model call – now routed through the rate-limit handler.
+
+        Args:
+            system:            System prompt.
+            messages:          User/assistant messages.
+            schema:            Optional expected JSON schema as dict.
+            respect_ratelimit: If True, checks internal narrator PM budget
+                               before calling (handler has its own limits too).
+            history:           Working history – for internal budget estimation.
+
+        Returns:
+            Parsed dict if schema given and valid,
+            raw string if no schema,
+            None on error / budget exceeded.
+        """
+        if not self._enabled:
+            return None
+
+        if respect_ratelimit:
+            if not self._budget_ok(history or []):
+                return None
+
+        result = await _call_blitz(system, messages)
+        if result is None:
+            return None
+
+        if respect_ratelimit:
+            self._record_tokens(result["in"], result["out"])
+
+        data = result["data"]
+
+        if schema is None:
+            return data if isinstance(data, dict) else result.get("raw", "")
+
+        for key, expected_type in schema.items():
+            if key not in data:
+                logger.debug("Blitz schema mismatch: missing key %r", key)
+                return None
+            if not isinstance(data[key], expected_type):
+                logger.debug(
+                    "Blitz schema mismatch: key %r expected %s got %s",
+                    key, expected_type.__name__, type(data[key]).__name__,
+                )
+                return None
+
+        return data
+
     def on_summarise(self) -> None:
         """Called when agent is about to give final_answer."""
         self.mock("summarise")
-
-    # ------------------------------------------------------------------
-    # Internal: task scheduling & cancellation
     # ------------------------------------------------------------------
 
     def _schedule(self, coro, *, is_think: bool) -> None:
@@ -634,3 +805,393 @@ class AgentLiveNarrator:
             self._set_thought(self._append_state_flags(thought))
         else:
             self.mock("think")
+
+
+    # ------------------------------------------------------------------
+    # 1. Skills – select relevant skills for current context
+    # ------------------------------------------------------------------
+
+    def schedule_skills_update(
+        self,
+        query: str,
+        history: list[dict],
+        skills_manager: Any,
+        ctx,
+    ) -> None:
+        """
+        Fire-and-forget: ask Blitz to pick the most relevant skills for the
+        current context, then update live.skills.
+
+        Call after on_init() and after schedule_think_result().
+        """
+        if not self._enabled:
+            return
+        if not self._budget_ok(history):
+            return
+
+        skill_index = _compress_skills_to_index(skills_manager)
+        if skill_index == "(no skills)":
+            return
+
+        diff = _compress_diff(history, self._history_cursor)
+        self._schedule(
+            self._blitz_skills(query, diff, skill_index, skills_manager, ctx),
+            is_think=False,
+        )
+
+    async def _blitz_skills(
+        self,
+        query: str,
+        diff_msgs: list[dict],
+        skill_index: str,
+        skills_manager: Any,
+        ctx: None
+    ) -> None:
+        system, messages = _build_skills_prompt(
+            self._lang, query, diff_msgs, skill_index, self._mini
+        )
+        result = await _call_blitz(system, messages)
+        if result is None:
+            return
+
+        self._record_tokens(result["in"], result["out"])
+
+        data = result["data"]
+        selected_ids: list[str] = data.get("ids", [])
+        if not isinstance(selected_ids, list):
+            return
+
+        # Validate ids exist in skills_manager
+        skills = getattr(skills_manager, "skills", {})
+        valid_ids = [sid for sid in selected_ids if sid in skills]
+
+        # Update live state
+        valid_names = [skills[sid].name for sid in valid_ids]
+        self.live.skills = valid_names
+        if ctx:
+            ctx.matched_skills = valid_ids
+
+        logger.debug(
+            "Narrator: skills updated → %s (reason: %s)",
+            valid_ids, data.get("reason", ""),
+        )
+
+    # ------------------------------------------------------------------
+    # 2. RuleSet – extract situation/intent and activate matching rules
+    # ------------------------------------------------------------------
+
+    def schedule_ruleset_update(
+        self,
+        history: list[dict],
+        session: Any,
+        ctx: Any,
+    ) -> None:
+        """
+        Fire-and-forget: ask Blitz to extract situation + intent from history,
+        update session.rule_set, and write result to VFS.
+
+        Call after on_init() and after substantial tool results.
+        """
+        if not self._enabled:
+            return
+        rule_set = getattr(session, "rule_set", None)
+        if rule_set is None:
+            return
+        if not self._budget_ok(history):
+            return
+
+        diff = _compress_diff(history, self._history_cursor)
+        self._schedule(
+            self._blitz_ruleset(diff, session, rule_set, ctx),
+            is_think=False,
+        )
+
+    async def _blitz_ruleset(
+        self,
+        diff_msgs: list[dict],
+        session: Any,
+        rule_set: Any,
+        ctx: Any,
+    ) -> None:
+        system, messages = _build_ruleset_prompt(self._lang, diff_msgs, self._mini)
+        result = await _call_blitz(system, messages)
+        if result is None:
+            return
+
+        self._record_tokens(result["in"], result["out"])
+
+        data = result["data"]
+        situation: str = data.get("situation", "").strip()
+        intent: str = data.get("intent", "").strip()
+        confidence: float = float(data.get("confidence", 0.0))
+
+        if not situation or not intent or confidence < 0.3:
+            logger.debug("Narrator: ruleset update skipped (low confidence %.2f)", confidence)
+            return
+
+        # Apply to rule_set (this activates matching tool groups)
+        try:
+            rule_set.set_situation(situation, intent)
+        except Exception as exc:
+            logger.debug("Narrator: rule_set.set_situation failed: %s", exc)
+            return
+
+        logger.debug(
+            "Narrator: ruleset updated → situation=%r intent=%r (conf=%.2f)",
+            situation, intent, confidence,
+        )
+
+        # Write updated VFS content
+        try:
+            vfs_content: str = rule_set.build_vfs_content()
+            vfs_filename: str = rule_set.get_vfs_filename()
+            vfs = getattr(session, "vfs", None)
+            if vfs is not None:
+                vfs.set_rules_file(vfs_content)
+                rule_set.mark_clean()
+                logger.debug("Narrator: VFS %r updated", vfs_filename)
+        except Exception as exc:
+            logger.debug("Narrator: VFS write failed: %s", exc)
+
+    # ------------------------------------------------------------------
+    # 3. Live Memory Extraction
+    # ------------------------------------------------------------------
+
+    def schedule_memory_extraction(
+        self,
+        query: str,
+        history: list[dict],
+        ctx: Any,
+        session: Any,
+    ) -> None:
+        """
+        Fire-and-forget: ask Blitz to extract useful facts from recent history,
+        inject working-memory facts into ctx.working_history and persist
+        user-level facts via session memory.
+
+        Call after schedule_tool_end() for substantive tool results.
+        """
+        if not self._enabled:
+            return
+        if not self._budget_ok(history):
+            return
+        if time.monotonic() - self._last_blitz_time < NARRATOR_MIN_INTERVAL:
+            return
+
+        diff = _compress_diff(history, self._history_cursor)
+        if not diff:
+            return
+
+        self._schedule(
+            self._blitz_memory(query, diff, ctx, session),
+            is_think=False,
+        )
+
+    async def _blitz_memory(
+        self,
+        query: str,
+        diff_msgs: list[dict],
+        ctx: Any,
+        session: Any,
+    ) -> None:
+        self._last_blitz_time = time.monotonic()
+        system, messages = _build_memory_prompt(self._lang, query, diff_msgs)
+        result = await _call_blitz(system, messages)
+        if result is None:
+            return
+
+        self._record_tokens(result["in"], result["out"])
+
+        data = result["data"]
+        if not data.get("found", False):
+            return
+
+        working_facts: list[str] = data.get("working", [])
+        user_facts: list[str] = data.get("user", [])
+
+        # --- Inject working facts into ctx.working_history ---
+        if working_facts and hasattr(ctx, "working_history"):
+            label = "Extrahierte Kontext-Fakten" if self._lang == "de" else "Extracted Context Facts"
+            facts_str = "\n".join(f"- {f}" for f in working_facts+user_facts)
+            inject_msg = {
+                "role": "system",
+                "content": f"[{label}]\n{facts_str}",
+            }
+            # Insert after the last system message to stay near context start
+            insert_at = 0
+            for i, m in enumerate(ctx.working_history):
+                if m.get("role") == "system":
+                    insert_at = i + 1
+            ctx.working_history.insert(insert_at, inject_msg)
+            logger.debug("Narrator: injected %d working facts", len(working_facts))
+
+
+# =============================================================================
+# NARRATOR EXTENSION: Skills · RuleSet · Live Memory
+# =============================================================================
+# Each of the three subsystems is self-contained:
+#   - schedule_*   → public fire-and-forget entry points (called from Engine)
+#   - _blitz_*     → async coroutines that do the actual Blitz call + side-effect
+#
+# All three respect the shared PM token budget and the cancel/priority rules
+# already established for the core narrator tasks.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# System prompts  (kept outside the class so they are importable for tests)
+# ---------------------------------------------------------------------------
+
+_SKILLS_SYSTEM_DE = """\
+Du bist ein Skill-Selektor für einen KI-Agenten. Deine einzige Aufgabe:
+Wähle aus der gegebenen Skill-Liste die 1-3 am besten passenden Skills für den aktuellen Kontext aus.
+
+Regeln:
+- Antworte AUSSCHLIESSLICH mit kompaktem JSON, kein Markdown:
+  {"ids": ["id1", "id2"], "reason": "<max 8 deutsche Wörter warum>"}
+- Wähle NUR Skills die direkt zur aktuellen Aufgabe passen
+- Lieber weniger als zu viele
+- "ids" darf leer sein wenn kein Skill passt"""
+
+_SKILLS_SYSTEM_EN = """\
+You are a skill selector for an AI agent. Your sole task:
+Select 1-3 skills from the provided list that best fit the current context.
+
+Rules:
+- Reply ONLY with compact JSON, no markdown:
+  {"ids": ["id1", "id2"], "reason": "<max 8 English words why>"}
+- Select ONLY skills directly relevant to the current task
+- Fewer is better than too many
+- "ids" may be empty if no skill fits"""
+
+_RULESET_SYSTEM_DE = """\
+Du bist ein Kontext-Analyzer für einen KI-Agenten. Deine Aufgabe:
+Extrahiere aus dem Agent-Verlauf die aktuelle Situation und den Intent.
+
+Regeln:
+- Antworte AUSSCHLIESSLICH mit kompaktem JSON, kein Markdown:
+  {"situation": "<5-8 Wörter Kontext>", "intent": "<5-8 Wörter Ziel>", "confidence": 0.0}
+- "situation": beschreibt WO der Agent gerade arbeitet (z.B. "python datei analyse", "discord api arbeit")
+- "intent": beschreibt WAS der Agent erreichen will (z.B. "fehler finden und beheben", "nachricht senden")
+- "confidence": 0.0-1.0 wie sicher du dir bist
+- Bleibe faktisch, keine Spekulation"""
+
+_RULESET_SYSTEM_EN = """\
+You are a context analyzer for an AI agent. Your task:
+Extract the current situation and intent from the agent's history.
+
+Rules:
+- Reply ONLY with compact JSON, no markdown:
+  {"situation": "<5-8 word context>", "intent": "<5-8 word goal>", "confidence": 0.0}
+- "situation": describes WHERE the agent is working (e.g. "python file analysis", "discord api work")
+- "intent": describes WHAT the agent wants to achieve (e.g. "find and fix error", "send message")
+- "confidence": 0.0-1.0 how certain you are
+- Stay factual, no speculation"""
+
+_MEMORY_SYSTEM_DE = """\
+Du bist ein Memory-Extraktor für einen KI-Agenten. Deine Aufgabe:
+Extrahiere aus dem Agent-Verlauf NUR dauerhaft nützliche Fakten.
+
+Regeln:
+- Antworte AUSSCHLIESSLICH mit kompaktem JSON, kein Markdown:
+  {"working": ["fakt1", "fakt2"], "user": ["user_fakt1"], "found": true}
+- "working": Kurzlebige Fakten relevant für den aktuellen Lauf (z.B. "Datei X liegt in /pfad/Y", "Funktion Z gibt None zurück")
+  * Max 3 Einträge, je max 15 Wörter
+  * NUR wenn sie in den nächsten Schritten gebraucht werden
+- "user": Stabile Fakten ÜBER DEN USER (z.B. "User bevorzugt deutsche Kommentare", "User arbeitet mit Python 3.12")
+  * Max 2 Einträge, je max 12 Wörter
+  * NUR echte neue Infos, keine Annahmen
+- "found": false wenn keine relevanten Fakten vorhanden
+- NIEMALS: temporäre Zustände, Zwischen-Ergebnisse, Meinungen"""
+
+_MEMORY_SYSTEM_EN = """\
+You are a memory extractor for an AI agent. Your task:
+Extract ONLY permanently useful facts from the agent's history.
+
+Rules:
+- Reply ONLY with compact JSON, no markdown:
+  {"working": ["fact1", "fact2"], "user": ["user_fact1"], "found": true}
+- "working": Short-lived facts relevant for the current run (e.g. "File X is at /path/Y", "Function Z returns None")
+  * Max 3 entries, max 15 words each
+  * ONLY if needed in upcoming steps
+- "user": Stable facts ABOUT THE USER (e.g. "User prefers English comments", "User works with Python 3.12")
+  * Max 2 entries, max 12 words each
+  * ONLY genuine new info, no assumptions
+- "found": false if no relevant facts present
+- NEVER: temporary states, intermediate results, opinions"""
+
+
+def _build_skills_prompt(
+    lang: str,
+    query: str,
+    diff_msgs: list[dict],
+    skill_index: str,
+    mini: "NarratorMiniState",
+) -> tuple[str, list[dict]]:
+    system = _SKILLS_SYSTEM_DE if lang == "de" else _SKILLS_SYSTEM_EN
+    label_q = "Anfrage" if lang == "de" else "Query"
+    label_plan = "Plan" if lang == "de" else "Plan"
+    label_skills = "Verfügbare Skills" if lang == "de" else "Available Skills"
+    label_ctx = "Letzter Kontext" if lang == "de" else "Recent Context"
+
+    parts = [f"{label_q}: {query[:120]}"]
+    if mini.plan_summary:
+        parts.append(f"{label_plan}: {mini.plan_summary}")
+    parts.append(f"{label_skills}:\n{skill_index}")
+    if diff_msgs:
+        recent = "\n".join(f"[{m['role']}] {m['content'][:80]}" for m in diff_msgs[-3:])
+        parts.append(f"{label_ctx}:\n{recent}")
+
+    return system, [{"role": "user", "content": "\n\n".join(parts)}]
+
+
+def _build_ruleset_prompt(
+    lang: str,
+    diff_msgs: list[dict],
+    mini: "NarratorMiniState",
+) -> tuple[str, list[dict]]:
+    system = _RULESET_SYSTEM_DE if lang == "de" else _RULESET_SYSTEM_EN
+    label_plan = "Bekannter Plan" if lang == "de" else "Known Plan"
+    label_ctx = "Agent-Verlauf" if lang == "de" else "Agent History"
+
+    parts = []
+    if mini.plan_summary:
+        parts.append(f"{label_plan}: {mini.plan_summary}")
+    if diff_msgs:
+        recent = "\n".join(f"[{m['role']}] {m['content'][:100]}" for m in diff_msgs[-5:])
+        parts.append(f"{label_ctx}:\n{recent}")
+    if not parts:
+        parts.append(".")
+
+    return system, [{"role": "user", "content": "\n\n".join(parts)}]
+
+
+def _build_memory_prompt(
+    lang: str,
+    query: str,
+    diff_msgs: list[dict],
+) -> tuple[str, list[dict]]:
+    system = _MEMORY_SYSTEM_DE if lang == "de" else _MEMORY_SYSTEM_EN
+    label_q = "Ursprüngliche Anfrage" if lang == "de" else "Original Query"
+    label_ctx = "Neuer Verlauf" if lang == "de" else "New History"
+
+    parts = [f"{label_q}: {query[:100]}"]
+    if diff_msgs:
+        recent = "\n".join(f"[{m['role']}] {m['content'][:120]}" for m in diff_msgs[-6:])
+        parts.append(f"{label_ctx}:\n{recent}")
+
+    return system, [{"role": "user", "content": "\n\n".join(parts)}]
+
+
+def _compress_skills_to_index(skills_manager: Any) -> str:
+    """
+    Convert SkillsManager skills to a compact index string for Blitz prompt.
+    Format: "id|name|trigger1,trigger2,trigger3"  (one per line, max 20 skills)
+    """
+    lines = []
+    skills = getattr(skills_manager, "skills", {})
+    for skill in list(skills.values()):
+        if not getattr(skill, "is_active", lambda: True)():
+            continue
+        triggers = ",".join(getattr(skill, "triggers", [])[:3])
+        lines.append(f"{skill.id}|{skill.name}|{triggers}")
+    return "\n".join(lines) if lines else "(no skills)"

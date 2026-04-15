@@ -12,20 +12,6 @@ from pydantic import BaseModel, Field
 
 from toolboxv2.mods.isaa.base.Agent.docker_vfs import DockerConfig
 
-
-@dataclass
-class DreamConfig:
-    """Configuration for a dream cycle."""
-    max_budget: int = os.getenv("DREAMER_BUDGET", 160000)                   # max tokens for LLM calls
-    max_history_time: Optional[float] = None # hours back to scan (None = since last dream)
-    do_skill_split: bool = True              # split bloated skills into focused sub-skills
-    do_skill_evolve: bool = True             # refine instructions from failure patterns
-    do_persona_evolve: bool = True           # adjust persona profiles from success correlations
-    do_create_new: bool = True               # allow genesis of new skills/personas
-    hard_stop: bool = False                  # True = abort on first error, False = skip & continue
-    publish_threshold: float = 0.8           # min confidence to publish to skill marketplace
-    publish_min_version: int = 3             # min version to publish
-
 class CheckpointConfig(BaseModel):
     """Checkpoint configuration"""
     enabled: bool = True

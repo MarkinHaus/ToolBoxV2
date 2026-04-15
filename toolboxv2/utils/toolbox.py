@@ -2439,7 +2439,6 @@ class App(AppType, metaclass=Singleton):
         if module_name not in self.functions:
             self.functions[module_name] = {}
         if func_name in self.functions[module_name]:
-            self.print(f"Overriding function {func_name} from {module_name}", end="\r")
             self.functions[module_name][func_name] = data
         else:
             self.functions[module_name][func_name] = data

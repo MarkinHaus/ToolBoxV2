@@ -414,11 +414,12 @@ class Tools(MainTool):
     async def _fire_job_callback(self, job: JobDefinition):
         """Callback wenn ein Job feuert."""
         if job.query == "__dream__":
-            from toolboxv2.mods.isaa.base.Agent.dreamer import DreamConfig
+            from toolboxv2.mods.isaa.base.dreamer.types import DreamConfig
             agent = await self.get_agent(job.agent_name)
             dream_cfg = DreamConfig()
             if job.trigger.extra and "dream_config" in job.trigger.extra:
-                dream_cfg = DreamConfig(**job.trigger.extra["dream_config"])
+                dream_cfg = DreamConfig(**{k: v for k, v in job.trigger.extra["dream_config"].items()
+                                           if k in DreamConfig.__dataclass_fields__})
             return await agent.a_dream(dream_cfg)
 
         agent = await self.get_agent(job.agent_name)

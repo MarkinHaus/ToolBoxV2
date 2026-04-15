@@ -334,20 +334,35 @@ class TestSkill(unittest.TestCase):
         self.assertTrue(skill3.is_active())
 
     def test_skill_record_usage(self):
-        """Test Confidence Update bei Verwendung"""
+        """Test Confidence Update, total_uses und recent_queries bei Verwendung"""
         Skill = skills.Skill
 
         skill = Skill(id="test", name="Test", triggers=[], instruction="Test", confidence=0.5)
 
         # Success erhöht confidence
-        skill.record_usage(success=True)
+        skill.record_usage(success=True, query="test anfrage", trigger_keyword="test")
         self.assertEqual(skill.confidence, 0.6)
         self.assertEqual(skill.success_count, 1)
+        self.assertEqual(skill.total_uses, 1)  # +P3
+        self.assertEqual(len(skill.recent_queries), 1)  # +P3
+        self.assertEqual(skill.recent_queries[0]["ok"], True)  # +P3
+        self.assertEqual(skill.recent_queries[0]["kw"], "test")  # +P3
 
         # Failure verringert confidence
-        skill.record_usage(success=False)
+        skill.record_usage(success=False, query="fehler fall")
         self.assertAlmostEqual(skill.confidence, 0.45, places=5)  # 0.6 - 0.15
         self.assertEqual(skill.failure_count, 1)
+        self.assertEqual(skill.total_uses, 2)  # +P3
+        self.assertEqual(len(skill.recent_queries), 2)  # +P3
+
+        # effectiveness property
+        self.assertAlmostEqual(skill.effectiveness, 0.5, places=5)  # +P3: 1/2
+
+        # Minimaler Aufruf ohne optionale Args (Rückwärtskompatibilität)
+        skill2 = Skill(id="t2", name="T2", triggers=[], instruction="", confidence=0.5)
+        skill2.record_usage(success=True)  # muss weiterhin funktionieren
+        self.assertEqual(skill2.total_uses, 1)
+        self.assertEqual(skill2.recent_queries[0]["q"], "")
 
     def test_skill_serialization(self):
         """Test to_dict und from_dict"""

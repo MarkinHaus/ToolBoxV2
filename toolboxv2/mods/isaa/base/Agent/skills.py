@@ -648,10 +648,15 @@ class Skill:
     activation_threshold: float = 0.6  # Wird erst aktiv wenn confidence >= threshold
     success_count: int = 0
     failure_count: int = 0
+    total_uses: int = 0
 
     # Timestamps
     created_at: datetime = field(default_factory=datetime.now)
     last_used: Optional[datetime] = None
+
+
+    recent_queries: list = field(default_factory=list)
+    _recent_queries_max: int = field(default=15, repr=False, compare=False)
 
     def is_active(self) -> bool:
         """Skill ist aktiv wenn confidence >= threshold"""
@@ -662,15 +667,47 @@ class Skill:
         query_lower = query.lower()
         return any(trigger.lower() in query_lower for trigger in self.triggers)
 
-    def record_usage(self, success: bool):
-        """Lernen aus Verwendung"""
-        self.last_used = datetime.now()
+    def record_usage(
+        self,
+        success: bool,
+        query: str = "",
+        trigger_keyword: str = "",
+        iterations_used: int = 0,
+    ) -> None:
+        """Lernen aus Verwendung + Query-Log."""
+        now = datetime.now()
+        self.last_used = now
+        self.total_uses += 1
+
         if success:
             self.success_count += 1
             self.confidence = min(1.0, self.confidence + 0.1)
         else:
             self.failure_count += 1
             self.confidence = max(0.1, self.confidence - 0.15)
+
+        # Kompaktes Log-Entry
+        entry = {
+            "ts": now.isoformat(timespec="seconds"),
+            "q": query[:100],
+            "kw": trigger_keyword,
+            "ok": success,
+            "iters": iterations_used,
+        }
+        self.recent_queries.append(entry)
+        if len(self.recent_queries) > self._recent_queries_max:
+            self.recent_queries.pop(0)
+
+    @property
+    def effectiveness(self) -> float:
+        """0.0-1.0: success_count / total_uses."""
+        return self.success_count / self.total_uses if self.total_uses else 0.0
+
+    @property
+    def avg_iterations(self) -> float:
+        """Durchschnittliche Iterations-Nutzung über alle geloggten Queries."""
+        logged = [e["iters"] for e in self.recent_queries if e.get("iters")]
+        return sum(logged) / len(logged) if logged else 0.0
 
     def merge_with(self, other: 'Skill'):
         """
@@ -736,6 +773,8 @@ class Skill:
             'success_count': self.success_count,
             'failure_count': self.failure_count,
             'created_at': self.created_at.isoformat(),
+            'total_uses': self.total_uses,
+            'recent_queries': self.recent_queries,
             'last_used': self.last_used.isoformat() if self.last_used else None
         }
 
@@ -759,6 +798,8 @@ class Skill:
             skill.created_at = datetime.fromisoformat(data['created_at'])
         if data.get('last_used'):
             skill.last_used = datetime.fromisoformat(data['last_used'])
+        skill.total_uses = data.get('total_uses', 0)
+        skill.recent_queries = data.get('recent_queries', [])
         return skill
 
 
@@ -1670,7 +1711,11 @@ class SkillsManager:
             if similar_skill:
                 # MERGE into existing skill instead of creating duplicate
                 old_confidence = similar_skill.confidence
-                similar_skill.record_usage(True)  # +0.1 confidence
+                similar_skill.record_usage(
+                    success=True,
+                    query=query,
+                    trigger_keyword=triggers[0] if triggers else "",
+                )
                 similar_skill.merge_with(Skill(
                     id="temp",
                     name=name,
@@ -1785,11 +1830,48 @@ class SkillsManager:
             _log.debug(f"[SkillsManager] Failed to parse skill response: {e}")
             return None
 
-    def record_skill_usage(self, skill_id: str, success: bool):
-        """Record skill usage for learning"""
+    def record_skill_usage(
+        self,
+        skill_id: str,
+        success: bool,
+        query: str = "",
+        trigger_keyword: str = "",
+        iterations_used: int = 0,
+    ) -> None:
+        """Record skill usage with full context for effectiveness tracking."""
         if skill_id in self.skills:
-            self.skills[skill_id].record_usage(success)
-            self._skill_embeddings_dirty = True  # Confidence changed
+            self.skills[skill_id].record_usage(
+                success=success,
+                query=query,
+                trigger_keyword=trigger_keyword,
+                iterations_used=iterations_used,
+            )
+            self._skill_embeddings_dirty = True
+
+    def record_matched_skills_usage(
+        self,
+        matched_skills: list,
+        success: bool,
+        query: str = "",
+        iterations_used: int = 0,
+    ) -> None:
+        """
+        Convenience: record usage for all skills that were matched in a run.
+        Called once per execute() / stream_generator() run.
+        """
+        for skill in (matched_skills or []):
+            # Der Trigger-Keyword kommt aus dem ersten matching trigger
+            trigger_kw = next(
+                (t for t in getattr(skill, "triggers", []) if t.lower() in query.lower()),
+                "",
+            )
+            self.record_skill_usage(
+                skill_id=skill.id,
+                success=success,
+                query=query,
+                trigger_keyword=trigger_kw,
+                iterations_used=iterations_used,
+            )
 
     # =========================================================================
     # TOOL GROUPS (migrated from rule_set.py)

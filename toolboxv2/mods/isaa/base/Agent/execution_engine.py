@@ -513,7 +513,7 @@ class PersonaProfile:
     stats: PersonaStats = field(default_factory=PersonaStats)
 
     def apply_max_iterations(self, base: int) -> int:
-        return min(base*0.6 ,int(base * self.max_iterations_factor))
+        return int(min(base*0.6 ,int(base * self.max_iterations_factor)))
 
 from toolboxv2.mods.isaa.base.Agent.default_personas import _BUILTIN_PERSONAS, _PERSONA_KEYWORDS
 
@@ -1262,10 +1262,10 @@ BEISPIELE:
         """
         # ── Dream intercept ──
         if query == "__dream__":
-            from toolboxv2.mods.isaa.base.Agent.dreamer import DreamConfig
-            cfg = DreamConfig()  # or parse from job.trigger.extra
-            report = await self.agent.a_dream(cfg)
-            return report.model_dump_json() if get_ctx else str(report)
+            # V3: Dream runs as its own agent stream, not inside execute()
+            report = await self.agent.a_dream()
+            result = report.get("report", str(report)) if isinstance(report, dict) else str(report)
+            return (result, None) if get_ctx else result
         session = await self.agent.session_manager.get_or_create(session_id)
 
         # Use existing context or create new one
@@ -1362,6 +1362,8 @@ BEISPIELE:
         self.live.enter(AgentPhase.INIT, f"{action} [{agent_type}] {ctx.run_id}: {query[:80]}")
         self._narrator.reset(query)
         self._narrator.on_init(query)
+        self._narrator.schedule_skills_update(query, ctx.working_history, self.skills_manager, ctx=ctx)
+        self._narrator.schedule_ruleset_update(ctx.working_history, session, ctx)
 
         final_response = None
         success = True
@@ -1491,9 +1493,24 @@ BEISPIELE:
                 final_response=final_response,
                 success=success,
                 matched_skills=ctx.matched_skills,
+                iterations_used=ctx.current_iteration,
             )
 
+        self.skills_manager.record_matched_skills_usage(
+            matched_skills=ctx.matched_skills,
+            success=success,
+            query=query,
+            iterations_used=ctx.current_iteration,
+        )
 
+        # <<< STATS P3 – Persona stats in VFS persistieren
+        if ctx.active_persona.name != "default":
+            app = get_app()
+            app.run_bg_task_advanced(
+                self._persist_persona_stats,
+                session=session,
+                persona=ctx.active_persona,
+            )
 
         # Remove from active executions
         self._active_executions.pop(ctx.run_id, None)
@@ -1540,6 +1557,15 @@ BEISPIELE:
                 session.vfs = RestrictedVFSWrapper(session.vfs, self.sub_agent_output_dir)
 
         self._current_session = session
+
+        if query == "__dream__":
+            async def _dream_stream_wrapper(ctx):
+                async for chunk in self.agent.a_dream_stream():
+                    yield chunk
+                yield {"type": "done", "success": True, "final_answer": "Dream cycle complete"}
+
+            return _dream_stream_wrapper, ctx
+
         trigger_kw, trigger_skill = None, None
         if not is_resume:
             try:
@@ -1594,6 +1620,10 @@ BEISPIELE:
         self.live.tools_loaded = ctx.get_dynamic_tool_names() if ctx.dynamic_tools else []
         self.live.persona = ctx.active_persona.name
         self.live.enter(AgentPhase.INIT, f"{'Resume' if is_resume else 'Start'} stream [{ctx.run_id}]")
+        self._narrator.reset(query)
+        self._narrator.on_init(query)
+        self._narrator.schedule_skills_update(query, ctx.working_history, self.skills_manager, ctx=ctx)
+        self._narrator.schedule_ruleset_update(ctx.working_history, session, ctx)
 
         async def stream_generator(ctx: ExecutionContext):
             """Generator that yields chunks during execution"""
@@ -1637,6 +1667,8 @@ BEISPIELE:
                 ctx.current_iteration += 1
                 self.live.max_iterations = ctx.max_iterations
                 self.live.iteration = ctx.current_iteration
+
+                self._narrator.on_llm_pre_call(ctx.working_history)
                 self.live.enter(AgentPhase.LLM_CALL, f"iter {ctx.current_iteration}/{max_iterations}")
 
                 # Check pause
@@ -1692,6 +1724,7 @@ BEISPIELE:
                         stream_kwargs["temperature"] = ctx.active_persona.temperature
                     stream_response = None
                     try:
+                        self.live.status_msg = "Calling LLM"
                         stream_response = await self.agent.a_run_llm_completion(
                             messages=current_messages,
                             tools=current_tools,
@@ -1954,6 +1987,7 @@ BEISPIELE:
                         )
 
                     if final_response:
+                        self._narrator.on_summarise()
                         break
                 else:
                     # No tool calls - treat content as final
@@ -1993,8 +2027,23 @@ BEISPIELE:
                     final_response=final_response,
                     success=success,
                     matched_skills=ctx.matched_skills,
+                    iterations_used=ctx.current_iteration,
                 )
 
+            self.skills_manager.record_matched_skills_usage(
+                matched_skills=ctx.matched_skills,
+                success=success,
+                query=query,
+                iterations_used=ctx.current_iteration,
+            )
+
+            if ctx.active_persona.name != "default":
+                app = get_app()
+                app.run_bg_task_advanced(
+                    self._persist_persona_stats,
+                    session=session,
+                    persona=ctx.active_persona,
+                )
 
             self._active_executions.pop(ctx.run_id, None)
 
@@ -2024,12 +2073,17 @@ BEISPIELE:
         final_response: str,
         success: bool,
         matched_skills: list,
+        iterations_used: int = 0,
     ):
         """Runs learning and recording in background to not block the UI"""
         try:
             # 1. Record usage stats (Fast)
-            for skill in matched_skills:
-                self.skills_manager.record_skill_usage(skill.id, success)
+            self.skills_manager.record_matched_skills_usage(
+                matched_skills=matched_skills,
+                success=success,
+                query=query,
+                iterations_used=iterations_used,
+            )
 
             # 2. Learn new skills (Slow - involves LLM)
             if success and len(tools_used) >= 2:
@@ -2074,6 +2128,7 @@ BEISPIELE:
         is_final = False
         self.live.tool = ToolExecution(name=f_name, args_summary=str(f_args)[:120], t_start=time.time())
         self.live.enter(AgentPhase.TOOL_EXEC)
+        self.live.status_msg = f"Calling tool {f_name}"
 
         # === STATIC TOOLS ===
         if f_name == "think":
@@ -2294,19 +2349,6 @@ BEISPIELE:
 
             ctx.auto_focus.record(f_name, f_args, result[:200])
 
-        if f_name == "think":
-            # think result ist typischerweise der komplette gedankengang
-            thinking_content = str(result)[:800]
-            self._narrator.schedule_think_result(
-                thinking_content=thinking_content,
-                history=ctx.working_history,
-            )
-        else:
-            self._narrator.schedule_tool_end(
-                tool_name=f_name,
-                result_snippet=str(result)[:80],
-                history=ctx.working_history,
-            )
         # Add tool result to working history (if not final_answer)
         if not is_final:
             # Context Budget Management: Szenario A/B/C
@@ -2314,6 +2356,35 @@ BEISPIELE:
                 ctx, f_name, str(result), f_id
             )
             ctx.working_history.append(managed_msg)
+
+        if f_name == "think":
+            # think result ist typischerweise der komplette gedankengang
+            thinking_content = str(result)[:800]
+            self._narrator.schedule_think_result(
+                thinking_content=thinking_content,
+                history=ctx.working_history,
+            )
+            self._narrator.schedule_skills_update(
+                ctx.query, ctx.working_history, self.skills_manager, ctx=ctx
+            )
+        else:
+            self._narrator.schedule_tool_end(
+                tool_name=f_name,
+                result_snippet=str(result)[:80],
+                history=ctx.working_history,
+            )
+            self._narrator.schedule_memory_extraction(
+                query=ctx.query,
+                history=ctx.working_history,
+                ctx=ctx,
+                session=self._current_session,
+            )
+
+            self._narrator.schedule_ruleset_update(
+                history=ctx.working_history,
+                session=self._current_session,
+                ctx=ctx,
+            )
 
         return result, is_final
 
@@ -2655,7 +2726,7 @@ BEISPIELE:
         - Auto-removes lowest relevance tool when limit reached
         - Triggers partial compression on category change + len > 3
         """
-        self.live.status_msg = f"Loading tools: {tools_input}"
+        self.live.status_msg = f"Loading {tools_input}"
         self.live.log(f"Loading tools: {tools_input}")
         if (
             isinstance(tools_input, str)
@@ -3086,13 +3157,18 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
             )
 
             # Wir nutzen working_history als Kontext, aber limitiert
-            summary_text = await self.agent.a_run_llm_completion(
-                messages=ctx.working_history[-10:]
-                + [{"role": "user", "content": summary_prompt}],
-                model_preference="fast",
-                max_tokens=400,
-                stream=False,
+            summary_text = await self._narrator.blitz(
+                system=summary_prompt,
+                messages=ctx.working_history[-20:]
             )
+            if not summary_text:
+                summary_text = await self.agent.a_run_llm_completion(
+                    messages=ctx.working_history[-20:]
+                    + [{"role": "user", "content": summary_prompt}],
+                    model_preference="fast",
+                    max_tokens=400,
+                    stream=False,
+                )
         except Exception as e:
             # Fallback auf Rule-Based Compressor bei Fehler
             auto_sum = HistoryCompressor.compress_to_summary(

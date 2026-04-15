@@ -135,7 +135,7 @@ async def _run_due_jobs(jobs_file: Path, due_jobs: list[dict]):
         try:
             agent = await isaa_tools.get_agent(job.agent_name)
             if job.query == "__dream__":
-                from toolboxv2.mods.isaa.base.Agent.dreamer import DreamConfig
+                from toolboxv2.mods.isaa.base.dreamer.types import DreamConfig
                 dream_cfg = DreamConfig()
                 if job.trigger.extra and "dream_config" in job.trigger.extra:
                     dream_cfg = DreamConfig(**job.trigger.extra["dream_config"])

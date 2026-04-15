@@ -31,7 +31,6 @@ from toolboxv2 import Style, get_logger, get_app
 from toolboxv2.mods.isaa.base.Agent.chain import Chain, ConditionalChain
 from toolboxv2.mods.isaa.base.Agent.types import (
     AgentModelData,
-    DreamConfig,
 )
 from toolboxv2.mods.isaa.base.patch.power_vfs import grep_vfs, search_vfs, find_files
 from toolboxv2.mods.isaa.base.audio_io.audioIo import (
@@ -1545,23 +1544,251 @@ class FlowAgent:
     # Dreaming
     # =========================================================================
 
-    async def a_dream(self, config: Optional[DreamConfig] = None) -> 'DreamReport':
-        """
-        FlowAgent.a_dream() — run an async meta-learning cycle.
+        # =========================================================================
+        # Dreaming V3 — Agent-based Meta-Learning
+        # =========================================================================
 
-        Usage:
-            report = await agent.a_dream(DreamConfig(max_budget=5000))
-            report = await agent.a_dream()  # defaults
-        """
+        async def a_dream(self, config=None) -> dict:
+            """
+            Run a meta-learning dream cycle (blocking).
 
-        if config is None:
-            config = DreamConfig()
+            Collects the stream internally and returns the final report dict.
 
-        if not hasattr(self, '_dreamer'):
-            from toolboxv2.mods.isaa.base.Agent.dreamer import Dreamer
-            self._dreamer = Dreamer(self)
+            Usage:
+                report = await agent.a_dream(DreamConfig(max_budget=5000))
+                report = await agent.a_dream()  # defaults
+            """
+            final_answer = ""
+            async for chunk in self.a_dream_stream(config):
+                if chunk.get("type") == "final_answer":
+                    final_answer = chunk.get("answer", "")
+            return {"report": final_answer}
 
-        return await self._dreamer.dream(config)
+        async def a_dream_stream(self, config=None):
+            """
+            Streaming dream cycle — identical interface to a_stream().
+
+            Yields the same chunk format (type, agent, iter, tool_start, etc.)
+            so icli, TaskView, and any other consumer works unchanged.
+
+            Usage:
+                async for chunk in agent.a_dream_stream(DreamConfig()):
+                    handle(chunk)
+            """
+            from toolboxv2.mods.isaa.base.dreamer.types import DreamConfig as DreamConfigV3
+
+            if config is None:
+                config = DreamConfigV3()
+            elif not isinstance(config, DreamConfigV3):
+                # Support old DreamConfig by converting
+                config = DreamConfigV3(**{k: v for k, v in config.__dict__.items()
+                                          if k in DreamConfigV3.__dataclass_fields__})
+
+            dreamer_agent = await self._get_or_create_dreamer_agent()
+
+            # Pre-harvest: parse logs + snapshot current state (no LLM needed)
+            from toolboxv2.mods.isaa.base.dreamer.harvest import (
+                harvest_from_vfs, get_cutoff, filter_records,
+            )
+            from toolboxv2.mods.isaa.base.dreamer.agent import (
+                build_dream_query, prepare_dreamer_vfs,
+            )
+            from toolboxv2.mods.isaa.base.dreamer.prompts import (
+                build_dreamer_system_prompt,
+            )
+
+            # Get parent session for log access
+            parent_session = await self.session_manager.get_or_create(
+                self.active_session or "default"
+            )
+            vfs = parent_session.vfs
+
+            # Harvest logs
+            cutoff = get_cutoff(
+                max_history_time=config.max_history_time,
+                last_run_ts=None,  # TODO: read from VFS /global/.memory/dreamer/last_run
+            )
+            records = harvest_from_vfs(vfs, "/global/.memory/logs", cutoff)
+
+            # Snapshots
+            sm = self.session_manager.skills_manager if hasattr(self.session_manager, 'skills_manager') else None
+            rule_set = getattr(parent_session, 'rule_set', None)
+
+            harvest_data = {
+                "records": records,
+                "skill_snapshot": sm.to_checkpoint() if sm else {},
+                "rule_snapshot": rule_set.to_checkpoint() if rule_set else {},
+                "persona_snapshot": {},  # loaded from VFS by dreamer tools
+            }
+
+            # Setup dreamer session + VFS
+            import time as _time
+            dreamer_session_id = f"dreamer_{self.amd.name}_{int(_time.time())}"
+            dreamer_session = await dreamer_agent.session_manager.get_or_create(dreamer_session_id)
+            dreamer_agent.init_session_tools(dreamer_session)
+            prepare_dreamer_vfs(dreamer_session.vfs, harvest_data)
+
+            # Build system prompt with context
+            skill_count = len(sm.skills) if sm else 0
+            active_count = sum(1 for s in sm.skills.values() if s.is_active()) if sm else 0
+            rule_count = len(rule_set.situation_rules) if rule_set else 0
+
+            system_prompt = build_dreamer_system_prompt(
+                parent_agent_name=self.amd.name,
+                budget=config.max_budget,
+                harvest_window=f"last {config.max_history_time or 72}h",
+                record_count=len(records),
+                skill_count=skill_count,
+                active_count=active_count,
+                rule_count=rule_count,
+                persona_count=0,
+            )
+
+            # Override dreamer agent system message for this run
+            dreamer_agent.amd.system_message = system_prompt
+
+            # Build the dream query
+            query = build_dream_query(
+                config=config,
+                record_count=len(records),
+                skill_count=skill_count,
+                rule_count=rule_count,
+            )
+
+            # Stream the dream run like any other agent run
+            async for chunk in dreamer_agent.a_stream(
+                query=query,
+                session_id=dreamer_session_id,
+                max_iterations=50,
+            ):
+                # Enrich chunks with dream metadata
+                chunk["_dream"] = True
+                chunk["_dream_id"] = dreamer_session_id
+                chunk["_parent_agent"] = self.amd.name
+                yield chunk
+
+        async def _get_or_create_dreamer_agent(self):
+            """Get or create the DreamerAgent (a standalone FlowAgent)."""
+            if hasattr(self, '_dreamer_agent') and self._dreamer_agent is not None:
+                return self._dreamer_agent
+
+            from toolboxv2.mods.isaa.base.dreamer.agent import create_dreamer_agent_config
+            from toolboxv2.mods.isaa.base.dreamer.tools import get_all_dream_tool_definitions
+            from toolboxv2.mods.isaa.base.dreamer.tool_handler import DreamerToolHandler
+
+            # Get ISAA module for builder access
+            try:
+                from toolboxv2 import get_app
+                isaa = get_app().get_mod("isaa")
+            except Exception:
+                isaa = None
+
+            agent_config = create_dreamer_agent_config(
+                parent_name=self.amd.name,
+                parent_fast_model=self.amd.fast_llm_model,
+            )
+
+            if isaa:
+                # Use ISAA builder pattern (gets memory, web search, etc.)
+                builder = isaa.get_agent_builder(
+                    name=agent_config["name"],
+                    add_base_tools=True,
+                    with_dangerous_shell=False,
+                )
+                builder.with_models(
+                    agent_config["fast_llm_model"],
+                    agent_config["complex_llm_model"],
+                )
+                builder.with_stream(True)
+
+                # Build the agent
+                dreamer_agent = await builder.build()
+
+                # Register in ISAA so it's visible
+                await isaa.register_agent(builder)
+            else:
+                # Standalone fallback (no ISAA module)
+                from toolboxv2.mods.isaa.base.Agent.builder import FlowAgentBuilder, AgentConfig
+                config = AgentConfig(
+                    name=agent_config["name"],
+                    fast_llm_model=agent_config["fast_llm_model"],
+                    complex_llm_model=agent_config["complex_llm_model"],
+                )
+                dreamer_agent = await FlowAgentBuilder(config=config).build()
+
+            # Register dream_* tools as callable functions on the agent
+            # The tool handler holds references to parent's skills/rules/personas
+            # and will be re-initialized on each dream run with fresh harvest data
+            self._dreamer_agent = dreamer_agent
+            self._register_dream_tools(dreamer_agent)
+
+            return dreamer_agent
+
+        def _register_dream_tools(self, dreamer_agent):
+            """Register all dream_* tools on the dreamer agent."""
+            from toolboxv2.mods.isaa.base.dreamer.tool_handler import DreamerToolHandler
+
+            sm = self.session_manager.skills_manager if hasattr(self.session_manager, 'skills_manager') else None
+
+            # Create handler with current parent data
+            handler = DreamerToolHandler(
+                skills=dict(sm.skills) if sm else {},
+                rules={},
+                patterns=[],
+                personas={},
+                records=[],
+            )
+
+            # Map tool names to handler methods
+            tool_map = {
+                "dream_get_records": lambda query_filter="", success_only=False,
+                                            failure_only=False, limit=50, **kw: handler.handle_get_records(
+                    query_filter, success_only, failure_only, limit),
+                "dream_get_skills": lambda **kw: handler.handle_get_skills(),
+                "dream_get_rules": lambda **kw: handler.handle_get_rules(),
+                "dream_get_personas": lambda **kw: handler.handle_get_personas(),
+                "dream_cluster_records": lambda record_ids=None, threshold=0.65, **kw:
+                handler.handle_cluster_records(record_ids, threshold),
+                "dream_evolve_skill": lambda **kw: handler.handle_evolve_skill(**kw),
+                "dream_create_skill": lambda **kw: handler.handle_create_skill(**kw),
+                "dream_merge_skills": lambda primary_skill_id="", secondary_skill_id="",
+                                             merged_instruction="", **kw: handler.handle_merge_skills(
+                    primary_skill_id, secondary_skill_id, merged_instruction),
+                "dream_split_skill": lambda skill_id="", sub_intents=None, **kw:
+                handler.handle_split_skill(skill_id, sub_intents or []),
+                "dream_compress_skill": lambda skill_id="", **kw:
+                handler.handle_compress_skill(skill_id),
+                "dream_extract_rules": lambda rules=None, **kw:
+                handler.handle_extract_rules(rules or []),
+                "dream_learn_pattern": lambda pattern="", source_situation="",
+                                              category="general", tags=None, **kw: handler.handle_learn_pattern(
+                    pattern, source_situation, category, tags),
+                "dream_evolve_persona": lambda **kw: handler.handle_evolve_persona(**kw),
+                "dream_prune_personas": lambda **kw: handler.handle_prune_personas(),
+                "dream_cleanup_skills": lambda **kw: handler.handle_cleanup_skills(),
+                "dream_cleanup_rules": lambda **kw: handler.handle_cleanup_rules(),
+                "dream_delete_skill": lambda skill_id="", reason="", **kw:
+                handler.handle_delete_skill(skill_id, reason),
+                "dream_delete_rule": lambda rule_id="", reason="", **kw:
+                handler.handle_delete_rule(rule_id, reason),
+                "dream_extract_memories": lambda memories=None, **kw:
+                handler.handle_extract_memories(memories or []),
+                "dream_persist_checkpoint": lambda **kw:
+                handler.handle_persist_checkpoint(None),  # VFS injected at call time
+            }
+
+            # Get tool definitions for descriptions
+            from toolboxv2.mods.isaa.base.dreamer.tools import get_all_dream_tool_definitions
+            tool_defs = {t["function"]["name"]: t for t in get_all_dream_tool_definitions()}
+
+            for tool_name, tool_func in tool_map.items():
+                desc = tool_defs.get(tool_name, {}).get("function", {}).get("description", "")
+                dreamer_agent.add_tool(
+                    tool_func=tool_func,
+                    name=tool_name,
+                    description=desc,
+                    category=["dream"],
+                )
 
     # =========================================================================
     # audio processing
