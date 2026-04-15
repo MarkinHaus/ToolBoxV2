@@ -57,6 +57,7 @@ class AgentLiveState:
     # -- visible to renderer (the user MUST see these) -------------------------
     thought: str = ""           # current agent thought / focus
     status_msg: str = ""        # one-liner: "Loading tools...", "LLM Error: ..."
+    narrator_msg: str = ""        # one-liner: "Loading tools...", "LLM Error: ..."
     skills: list = field(default_factory=list)   # matched skill names
     tools_loaded: list = field(default_factory=list)  # currently loaded tool names
     persona: str = ""

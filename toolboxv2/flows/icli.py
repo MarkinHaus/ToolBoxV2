@@ -214,6 +214,8 @@ class TaskView:
     query: str
     status: str = "running"
     persona: str = ""
+    narrator_msg: str = ""
+    status_msg: str = ""
     skills: list[str] = field(default_factory=list)
     iteration: int = 0
     max_iter: int = 0
@@ -255,6 +257,10 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
         tv.persona = chunk["persona"]
     if chunk.get("skills"):
         tv.skills = chunk["skills"]
+    if chunk.get("narrator_msg"):
+        tv.narrator_msg = chunk["narrator_msg"]
+    if chunk.get("status_msg"):
+        tv.status_msg = chunk["status_msg"]
     if chunk.get("iter") is not None:
         tv.iteration = chunk["iter"]
     if chunk.get("max_iter") is not None:
@@ -474,8 +480,10 @@ def _append_task_line(out: list, tv: TaskView, focused: bool, pad: str = " " * 1
     if tv.status in ("completed", "done"):
         elapsed = (tv.completed_at or tv.started_at) - tv.started_at
         out.append((bg + f"bg:{C['green']}", f"● {_fmt_elapsed(elapsed)} "))
-        if tv.skills:
-            out.append((bg + "bg:#60a5fa", " ".join(tv.skills) + " "))
+        if tv.narrator_msg:
+            out.append((bg + "bg:#60a5fa", tv.narrator_msg + " "))
+        if tv.status_msg:
+            out.append((bg + "bg:#60a5fa", tv.status_msg + " "))
     elif tv.status in ("failed", "error"):
         elapsed = (tv.completed_at or tv.started_at) - tv.started_at
         out.append((bg + f"bg:{C['red']}", f"✗ {_fmt_elapsed(elapsed)} "))
@@ -1705,6 +1713,155 @@ def print_code_block(code: str, language: str = "text", width: int = 76, show_li
             c_print(HTML(f"  <style fg='{PTColors.GREY}'>{i:3d}</style> {line}"))
         else:
             c_print(HTML(f"  {line}"))
+
+def _pct(part: int, total: int) -> str:
+    return f"{part / total * 100:.1f}%" if total else "0.0%"
+
+def _bar_fet(used: int, limit: int, width: int = 44) -> str:
+    """Farbiger ASCII-Fortschrittsbalken (Kern-Element, bleibt in allen Varianten)."""
+    pct = used / limit if limit else 0
+    filled = int(pct * width)
+    empty = width - filled
+    color = PTColors.GREEN if pct < 0.5 else (PTColors.YELLOW if pct < 0.8 else PTColors.RED)
+    return (
+        f"<style fg='{color}'>{'█' * filled}</style>"
+        f"<style fg='{PTColors.GREY}'>{'░' * empty}</style>"
+    )
+
+
+def show_xray_v3(data: dict):
+    sid = data['session_id']
+    model = data['model']
+    used = data['t_total']
+    t_last = data.get('t_last', 0)
+    limit = data['limit']
+    bd = data['breakdown']
+    sys_det = data['system_details']
+    meta = data['meta']
+    free = limit - used
+
+    BAR_W = 20
+
+    def mini_bar(tokens: int, total: int, width: int = BAR_W) -> str:
+        filled = int((tokens / total) * width) if total else 0
+        return (
+            f"<style fg='{PTColors.CYAN}'>{'▓' * filled}</style>"
+            f"<style fg='{PTColors.GREY}'>{'░' * (width - filled)}</style>"
+        )
+
+    def sub_row(label: str, tokens: int, color: str = PTColors.GREY, note: str = ""):
+        """Eingerückte Sub-Zeile – korrekt an Tabellenspalten ausgerichtet."""
+        PREFIX = "  └ "  # 4 Zeichen
+        pad = max(0, NAME_W - len(PREFIX) - len(label))
+        empty_bar = " " * (BAR_W + 2)
+        note_html = (f" <style fg='{PTColors.GREY}'>{esc(note)}</style>" if note else "")
+        c_print(HTML(
+            f"  <style fg='{PTColors.GREY}'>{PREFIX}{esc(label)}{' ' * pad}</style>{sep}"
+            f"{empty_bar}{sep}"
+            f"<style fg='{color}'>{tokens:>9,}</style>{sep}"
+            f"<style fg='{PTColors.GREY}'>{_pct(tokens, used):>9}</style>"
+            f"{note_html}"
+        ))
+
+    # ── HEADER ──────────────────────────────────────────────────────────────
+    print_box_header("CONTEXT X-RAY", icon="🔍")
+    c_print(HTML(
+        f"  <style fg='{PTColors.GREY}'>Session:</style> "
+        f"<style fg='{PTColors.BRIGHT_WHITE}'><b>{esc(sid)}</b></style>   "
+        f"<style fg='{PTColors.GREY}'>Modell:</style> "
+        f"<style fg='{PTColors.BRIGHT_CYAN}'>{esc(model)}</style>   "
+        f"<style fg='{PTColors.GREY}'>Limit:</style> "
+        f"<style fg='{PTColors.WHITE}'>{limit:,}</style>"
+    ))
+    c_print(HTML(""))
+
+    # ── HAUPT-BAR ───────────────────────────────────────────────────────────
+    c_print(HTML(f"  {_bar_fet(used, limit, width=50)}"))
+    c_print(HTML(
+        f"  <style fg='{PTColors.BRIGHT_WHITE}'><b>{used:,}</b></style>"
+        f"<style fg='{PTColors.GREY}'> / {limit:,} Token"
+        f"   ·   {_pct(used, limit)} belegt"
+        f"   ·   {free:,} frei ({_pct(free, limit)})</style>"
+    ))
+    c_print(HTML(""))
+
+    # ── TABELLE ─────────────────────────────────────────────────────────────
+    NAME_W = 22
+    cols = [("KOMPONENTE", ""), ("MINI-BAR", ""), ("TOKENS", ""), ("ANTEIL", "")]
+    widths = [NAME_W, BAR_W + 2, 9, 9]
+    print_table_header(cols, widths)
+
+    sep = f" <style fg='{PTColors.GREY}'>│</style> "
+
+    def main_row(name: str, tokens: int, name_color: str = PTColors.WHITE,
+                 tok_color: str = PTColors.CYAN):
+        safe = esc(name)
+        pad = max(0, NAME_W - len(name))
+        bar_h = mini_bar(tokens, used)
+        tok_s = f"{tokens:>9,}"
+        pct_s = f"{_pct(tokens, used):>9}"
+        c_print(HTML(
+            f"  <style fg='{name_color}'>{safe}{' ' * pad}</style>{sep}"
+            f"{bar_h}  {sep}"
+            f"<style fg='{tok_color}'>{tok_s}</style>{sep}"
+            f"<style fg='{PTColors.YELLOW}'>{pct_s}</style>"
+        ))
+
+    # System Prompt + Sub-Details
+    skills_vol = sys_det["All Skills (Volume)"]
+    skills_note = (f"{meta['active_skill_count']} aktiv · vol {skills_vol:,}" if skills_vol else "")
+    main_row("System Prompt Total", bd["System Prompt Total"])
+    sub_row("Base System Prompt", sys_det["Base System Prompt"])
+    sub_row("VFS Content", sys_det["VFS Content"])
+    if sys_det["Active Skills"] > 0:
+        sub_row("Active Skills", sys_det["Active Skills"],
+                color=PTColors.ZEN_CYAN, note=skills_note)
+    elif skills_vol > 0:
+        sub_row("Skills (inaktiv)", 0, note=f"vol {skills_vol:,}")
+
+    # Active Tools – Info als kompakte Anmerkungszeile
+    tools_note = f"{meta['tool_count']} defs · {meta['dynamic_tools_loaded']} dyn"
+    main_row("Active Tools", bd["Active Tools"], tok_color=PTColors.ZEN_AMBER)
+    c_print(HTML(f"  <style fg='{PTColors.GREY}'>  └ {tools_note}</style>"))
+
+    # History getrennt – msg_count als kompakte Anmerkungszeile
+    main_row("History (Perm)", bd["History (Perm)"], tok_color=PTColors.CYAN)
+    c_print(HTML(f"  <style fg='{PTColors.GREY}'>  └ {meta['msg_count']} msgs</style>"))
+    main_row("History (Work)", bd["History (Work)"], tok_color=PTColors.CYAN)
+    c_print(HTML(f"  <style fg='{PTColors.GREY}'>  └ {meta['w_msg_count']} msgs</style>"))
+
+    # Last Input
+    main_row("Last Input", bd["Last Input"],
+             name_color=PTColors.ZEN_DIM, tok_color=PTColors.GREY)
+
+    print_separator()
+
+    # ── TOTALS + SAVINGS ────────────────────────────────────────────────────
+    hist_total = bd["History (Perm)"] + bd["History (Work)"]
+    print_status(
+        f"Skills: {meta['active_skill_count']} aktiv"
+        f"   Tools: {meta['tool_count']} defs · {meta['dynamic_tools_loaded']} dyn"
+        f"   Msgs: {meta['msg_count']}",
+        "info",
+    )
+
+    # Warnings
+    usage_pct = used / limit * 100 if limit else 0
+    if usage_pct > 85:
+        print_status("KRITISCHE AUSLASTUNG – 'shift_focus' ausführen!", "error")
+    elif sys_det["VFS Content"] > 4000:
+        print_status(
+            f"Hohe VFS-Last ({sys_det['VFS Content']:,} tokens) – 'vfs_close' empfohlen",
+            "warning",
+        )
+    elif hist_total > 6000:
+        print_status(
+            f"Langer Kontext ({hist_total:,} History-Tokens) – Zusammenfassung empfohlen",
+            "warning",
+        )
+
+    print_box_footer()
+
 
 # =============================================================================
 # CONSTANTS & VERSION
@@ -9649,7 +9806,11 @@ class ISAA_Host:
         """Handle /context commands."""
         try:
             agent = await self.isaa_tools.get_agent(self.active_agent_name)
-            await agent.context_overview(self.active_session_id,print_visual=True, f_print=ansi_c_print)
+            run_id = None
+            if self._focused_task_id and self._focused_task_id is self.all_executions:
+                run_id = self.all_executions[self._focused_task_id].run_id
+            data = await agent.context_overview(self.active_session_id, execution_id=run_id, print_visual=False)
+            show_xray_v3(data)
         except Exception as e:
             print_status(f"Error: {e}", "error")
             import traceback

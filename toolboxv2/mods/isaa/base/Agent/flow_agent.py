@@ -20,6 +20,7 @@ import os
 import re
 import time
 import uuid
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Generator, Union, Optional
 
@@ -95,6 +96,7 @@ except ImportError as e:
 logger = get_logger()
 
 MAX_CONTINUATIONS = os.environ.get("AGENT_INTERN_MAX_CONTINUATIONS", 5)
+
 
 # ===== MEDIA PARSING UTILITIES =====
 def parse_media_from_query(query: str) -> tuple[str, list[dict]]:
@@ -1735,6 +1737,9 @@ class FlowAgent:
         description: str | None = None,
         category: list[str] | str | None = None,
         flags: dict[str, bool] | None = None,
+        live_test_inputs=None,
+        cleanup_func=None,
+        result_contract=None,
         **kwargs,
     ):
         """Register a tool."""
@@ -1762,6 +1767,9 @@ class FlowAgent:
             description=description,
             category=category,
             flags=flags,
+            live_test_inputs=live_test_inputs,
+            cleanup_func=cleanup_func,
+            result_contract=result_contract,
         )
 
     def remove_tool(self, name: str):
@@ -1992,11 +2000,281 @@ class FlowAgent:
         def check_permissions(action: str, context: dict | None = None) -> dict:
             """Check if an action is permitted under the active rule set."""
             result = session.rule_on_action(action, context)
-            return {"allowed": result.allowed, "reason": result.reason, "rule": result.rule_name}
+            return {"allowed": result.allowed, "reason": asdict(result), "rule": result.rule_name}
+
+
+        # ── Utility tools test ────────────────────────────────────────────
+
+        async def agent_tool_test(tool_name: str, custom_inputs: dict | None = None) -> dict:
+            """
+            Test any registered tool and report its health status.
+
+            Use this when a tool is not working as expected. Returns a detailed
+            diagnostic report including execution result, contract violations, and
+            a concrete suggestion for what to do next.
+
+            Args:
+                tool_name:     Name of the tool to test (exactly as registered)
+                custom_inputs: Optional dict of kwargs to use instead of stored live_test_inputs
+
+            Returns:
+                {
+                    "tool_name":          str,
+                    "status":             "HEALTHY|DEGRADED|FAILED|SKIPPED|GUARANTEED|NOT_FOUND",
+                    "execution_time_ms":  float,
+                    "result_preview":     str | None,   # max 300 chars
+                    "contract_violations": list[str],
+                    "error":              str | None,
+                    "suggestion":         str
+                }
+            """
+            tm = self.tool_manager  # session aus closure
+
+            entry = tm.get(tool_name)
+            if entry is None:
+                available = tm.list_names()
+                close = [n for n in available if tool_name.lower() in n.lower()][:5]
+                return {
+                    "tool_name": tool_name,
+                    "status": "NOT_FOUND",
+                    "execution_time_ms": 0.0,
+                    "result_preview": None,
+                    "contract_violations": [],
+                    "error": f"Tool '{tool_name}' not registered",
+                    "suggestion": (
+                        f"Similar tools: {close}" if close
+                        else f"Use list_tools() to see all {len(available)} registered tools"
+                    ),
+                }
+
+            # Bestimme test inputs: custom_inputs > live_test_inputs > leer
+            effective_inputs: dict | None = custom_inputs
+            if effective_inputs is None and entry.live_test_inputs:
+                effective_inputs = entry.live_test_inputs[0]
+
+            # Delegiere an ToolManager.health_check_single (modifiziert ggf. temp. live_test_inputs)
+            if effective_inputs is not None and not entry.live_test_inputs:
+                # Temporär setzen damit health_check_single es aufgreift
+                entry.live_test_inputs = [effective_inputs]
+                result = await tm.health_check_single(tool_name)
+                entry.live_test_inputs = []
+            else:
+                if effective_inputs is not None:
+                    orig = entry.live_test_inputs[:]
+                    entry.live_test_inputs = [effective_inputs]
+                    result = await tm.health_check_single(tool_name)
+                    entry.live_test_inputs = orig
+                else:
+                    result = await tm.health_check_single(tool_name)
+
+            # Suggestion je Status
+            suggestions = {
+                "HEALTHY": "Tool is working correctly.",
+                "GUARANTEED": "Tool is marked as manually verified — no live test run.",
+                "SKIPPED": (
+                    "Add live_test_inputs when registering this tool, or call again with "
+                    "custom_inputs={'param': 'value'} to test directly."
+                ),
+                "DEGRADED": (
+                    f"Contract violations detected: {result.contract_violations}. "
+                    "Check the tool's return value against its result_contract definition."
+                ),
+                "FAILED": (
+                    f"Tool raised an exception: {result.error}. "
+                    "Check the tool implementation or its dependencies."
+                ),
+            }
+
+            return {
+                "tool_name": result.tool_name,
+                "status": result.status,
+                "execution_time_ms": round(result.execution_time_ms, 2),
+                "result_preview": (result.result_preview or "")[:300],
+                "contract_violations": result.contract_violations,
+                "error": result.error,
+                "suggestion": suggestions.get(result.status, "Unknown status."),
+            }
 
         # ══════════════════════════════════════════════════════════════════
         # TOOL REGISTRY
         # ══════════════════════════════════════════════════════════════════
+        _TOOL_HEALTH_EXTENSIONS = {
+
+            # ── PRIMARY ───────────────────────────────────────────────────────────────
+
+            "vfs_shell": {
+                "live_test_inputs": [{"command": "ls /"}],
+                "result_contract": {
+                    "allow_none": False,
+                    "allow_empty_string": False,
+                    "expected_type": "dict",
+                    "semantic_check_hint": (
+                        "If success=False then stderr must not be empty. "
+                        "stdout and stderr must both be strings. returncode must be int."
+                    ),
+                },
+                # ls / hat keine Seiteneffekte → kein cleanup nötig
+                "cleanup_func": None,
+            },
+
+            "vfs_view": {
+                "live_test_inputs": [{"path": "/system_context.md", "line_start": 1, "line_end": 5}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "dict",
+                    "semantic_check_hint": (
+                        "If success=True, 'content' and 'showing' keys must be present. "
+                        "If success=False, 'error' must be present."
+                    ),
+                },
+                # Datei nach Test wieder schließen
+                "cleanup_func": lambda inputs, result: (
+                    session.vfs.files.get(
+                        session.vfs._normalize_path(inputs["path"])
+                    ).__setattr__("state", "closed")
+                    if result and result.get("success")
+                    else None
+                ),
+            },
+
+            "search_vfs": {
+                "live_test_inputs": [{"query": "system", "mode": "filename"}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "list",
+                },
+                "cleanup_func": None,
+            },
+
+            # ── FILESYSTEM COPY ───────────────────────────────────────────────────────
+
+            "fs_copy_to_vfs": {
+                # Testet mit allowed_dirs blockiert → erwarteter Fehler ist valide
+                "live_test_inputs": [{"local_path": "/nonexistent_probe", "allowed_dirs": ["/tmp"]}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "dict",
+                },
+                "cleanup_func": None,
+            },
+
+            "fs_copy_from_vfs": {
+                "live_test_inputs": [
+                    {"vfs_path": "/system_context.md", "local_path": "/tmp/_vfs_probe_out.md", "allowed_dirs": ["/tmp"],
+                     "overwrite": True}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "dict",
+                },
+                "cleanup_func": lambda inputs, result: (
+                    __import__("os").unlink("/tmp/_vfs_probe_out.md")
+                    if __import__("os").path.exists("/tmp/_vfs_probe_out.md")
+                    else None
+                ),
+            },
+
+            "fs_copy_dir_from_vfs": {
+                # Testet mit nicht-existierendem Verzeichnis — erwartet Fehler-String
+                "live_test_inputs": [{"vfs_path": "/_nonexistent_probe_dir", "local_path": "/tmp/_vfs_dir_probe"}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "str",
+                },
+                "cleanup_func": None,
+            },
+
+            # ── MOUNT ─────────────────────────────────────────────────────────────────
+
+            "vfs_mount": {
+                "live_test_inputs": [{"local_path": "/tmp", "vfs_path": "/_probe_mount", "readonly": True}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "dict",
+                },
+                "cleanup_func": lambda inputs, result: (
+                    session.vfs.unmount("/_probe_mount", save_changes=False)
+                    if result and result.get("success")
+                    else None
+                ),
+            },
+
+            "vfs_unmount": {
+                # Testet mit nicht-gemounteten Pfad — soll graceful scheitern
+                "live_test_inputs": [{"vfs_path": "/_not_mounted_probe"}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "dict",
+                },
+                "cleanup_func": None,
+            },
+
+            "vfs_refresh_mount": {
+                "live_test_inputs": [{"vfs_path": "/_not_mounted_probe"}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "dict",
+                },
+                "cleanup_func": None,
+            },
+
+            "vfs_sync_all": {
+                "live_test_inputs": [{}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "dict",
+                },
+                "cleanup_func": None,
+            },
+
+            # ── SHARING ───────────────────────────────────────────────────────────────
+            # Sharing hat inter-session dependencies → guaranteed_healthy
+
+            "vfs_share_create": {"flags": {"guaranteed_healthy": True}},
+            "vfs_share_list": {"flags": {"guaranteed_healthy": True}},
+            "vfs_share_mount": {"flags": {"guaranteed_healthy": True}},
+
+            # ── LSP / DOCKER ──────────────────────────────────────────────────────────
+            # Externe Deps → guaranteed_healthy
+
+            "vfs_diagnostics": {"flags": {"guaranteed_healthy": True}},
+            "docker_run": {"flags": {"guaranteed_healthy": True}},
+            "docker_start_app": {"flags": {"guaranteed_healthy": True}},
+            "docker_stop_app": {"flags": {"guaranteed_healthy": True}},
+            "docker_logs": {"flags": {"guaranteed_healthy": True}},
+            "docker_status": {"flags": {"guaranteed_healthy": True}},
+
+            # ── HISTORY / RULES ───────────────────────────────────────────────────────
+
+            "history": {
+                "live_test_inputs": [{"last_n": 1}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "list",
+                },
+                "cleanup_func": None,
+            },
+
+            "set_agent_situation": {
+                "live_test_inputs": [{"situation": "_probe", "intent": "_probe_intent"}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "dict",
+                },
+                "cleanup_func": lambda inputs, result: (
+                    session.set_situation("", "") if result and result.get("success") else None
+                ),
+            },
+
+            "check_permissions": {
+                "live_test_inputs": [{"action": "_probe_action", "context": {}}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "dict",
+                },
+                "cleanup_func": None,
+            },
+        }
+
         tools = [
             # ── PRIMARY (replaces ~18 individual vfs_* tools) ─────────────
             {
@@ -2169,7 +2447,24 @@ class FlowAgent:
                 "name": "check_permissions",
                 "category": ["situation", "rules"],
             },
+            # ── Utility tools test ────────────
+            {
+                 "tool_func":  agent_tool_test,
+                 "name":       "agent_tool_test",
+                 "category":   ["meta", "diagnostics"],
+                 "flags":      {"guaranteed_healthy": True},
+                 "description": (
+                     "Test any registered tool and get a diagnostic report. "
+                     "Use when a tool fails or behaves unexpectedly. "
+                     "Pass tool_name and optional custom_inputs={'param': 'value'}."
+                 ),
+             },
         ]
+
+        for i,elm in enumerate(tools):
+            name = elm.get("name")
+            if name in _TOOL_HEALTH_EXTENSIONS:
+                tools[i].update(_TOOL_HEALTH_EXTENSIONS[name])
 
         # ── Optional: Google Tools ────────────────────────────────────────
         if os.getenv("WITH_GOOGLE_TOOLS", "false") == "true":
@@ -2202,9 +2497,9 @@ class FlowAgent:
     async def context_overview(
         self,
         session_id: str | None = None,
+        execution_id: str | None = None,
         print_visual: bool = True,
         f_print=None,
-        query_preview: str = ""
     ) -> dict:
         """
         Analysiert den *exakten* Token-Verbrauch durch Simulation eines echten Engine-Schritts.
@@ -2220,13 +2515,17 @@ class FlowAgent:
         # 1. Engine holen (Wichtig für exakten Prompt-Bau inkl. Rules & Sub-Agent Constraints)
         engine = self._get_execution_engine()
 
-        # Versuch, den aktiven Kontext wiederherzustellen oder einen neuen zu simulieren
         ctx = None
-        if engine._active_executions:
-            for c in engine._active_executions.values():
-                if c.session_id == target_session:
-                    ctx = c
-                    break
+        if execution_id:
+            ctx = engine.get_execution(execution_id)
+        # Versuch, den aktiven Kontext wiederherzustellen oder einen neuen zu simulieren
+
+        if ctx is None:
+            if engine._active_executions:
+                for c in engine._active_executions.values():
+                    if c.session_id == target_session:
+                        ctx = c
+                        break
 
         if not ctx:
             from toolboxv2.mods.isaa.base.Agent.execution_engine import ExecutionContext
@@ -2234,8 +2533,8 @@ class FlowAgent:
             # Simuliere Start-Zustand für korrekte Tool-Berechnung
             # (Relevanz-Berechnung triggern, damit Dynamic Tools korrekt simuliert werden)
             try:
-                engine._calculate_tool_relevance(ctx, query_preview or "status check")
-                engine._preload_skill_tools(ctx, query_preview or "status check")
+                engine._calculate_tool_relevance(ctx, "status check")
+                engine._preload_skill_tools(ctx, "status check")
             except Exception:
                 pass  # Fallback falls SkillsManager noch nicht bereit
 
@@ -2251,18 +2550,13 @@ class FlowAgent:
         # C. Tools (Das kritische Delta: Exakte API-Definition holen)
         active_tools = engine._get_tool_definitions(ctx)
 
-        # D. Simulierter nächster User Input
-        next_msg = [{"role": "user", "content": query_preview or "(Next User Input Placeholder)"}]
-
         # 3. Message Stack rekonstruieren (Engine-Logik)
-        final_messages = []
+        final_messages = [{"role": "system", "content": sys_prompt_content}] + perm_history
 
         # Wenn Working History existiert, ist der System Prompt dort meist Index 0.
         # Wir ersetzen ihn durch den FRISCHEN System Prompt (mit aktuellen VFS-Daten).
         if work_history and len(work_history) > 0 and work_history[0].get('role') == 'system':
-            final_messages = [{"role": "system", "content": sys_prompt_content}] + work_history[1:] + next_msg
-        else:
-            final_messages = [{"role": "system", "content": sys_prompt_content}] + perm_history + next_msg
+            final_messages.extend(work_history[1:])
 
         # 4. Präzises Token Counting mit Overhead
         model = self.amd.fast_llm_model.split("/")[-1]
@@ -2310,44 +2604,66 @@ class FlowAgent:
             skills_content = engine.skills_manager.build_skill_prompt_section(ctx.matched_skills)
 
         # 5. Metriken berechnen
+        # System-Prompt gesamt & Sub-Komponenten
         t_sys_total = count([{"role": "system", "content": sys_prompt_content}])
-        t_tools = count([], tools=active_tools)  # Nur die Tool-Definitionen
+        t_vfs = count([{"role": "system", "content": vfs_content}]) if vfs_content else 0
+        t_base = count([{"role": "system", "content": base_sys}]) if base_sys else 0
+        t_skills = count([{"role": "system", "content": skills_content}]) if skills_content else 0
 
-        # History ist alles zwischen System (Index 0) und User (Letzter Index)
-        msgs_between = final_messages[1:-1] if len(final_messages) > 2 else []
-        t_hist = count(msgs_between)
+        # Vollständiges Skill-Volumen (alle, nicht nur gematchte)
+        t_skills_all = 0
+        try:
+            if hasattr(engine, 'skills_manager') and engine.skills_manager:
+                sm = engine.skills_manager
+                all_skills = sm.skills.values()
+                if all_skills:
+                    all_skills_str = sm.build_skill_prompt_section(all_skills)
+                    t_skills_all = count([{"role": "system", "content": all_skills_str}])
+        except Exception:
+            pass
 
-        t_user = count(next_msg)
+        # Tools
+        t_tools = count([], tools=active_tools)
 
-        # Total (Besser als Summe, da der Tokenizer Optimierungen bei Kontext-Fusion hat)
+        # History: Perm und Work getrennt zählen
+        work_slice = (work_history[1:]
+                      if work_history and work_history[0].get('role') == 'system'
+                      else work_history or [])
+        t_hist_perm = count(perm_history)
+        t_hist_work = count(work_slice)
+
+        # Letzte Nachricht (Next / Last Input)
+        t_last = count(perm_history[-1:]) if perm_history else 0
+
+        # Total (Tokenizer-Fusion kann von Summe abweichen)
         t_total = count(final_messages, tools=active_tools)
-
-        # Sub-Komponenten Zählung (String-basiert, da reine Text-Teile)
-        t_vfs = count(vfs_content)
-        t_base = count(base_sys)
-        t_skills = count(skills_content)
 
         metrics = {
             "session_id": target_session,
             "model": model,
             "t_total": t_total,
+            "t_last": t_last,
             "limit": context_limit,
             "breakdown": {
-                "System & VFS": t_sys_total,
+                "System Prompt Total": t_sys_total,
                 "Active Tools": t_tools,
-                "History (Perm+Work)": t_hist,
-                "Next Input": t_user
+                "History (Perm)": t_hist_perm,
+                "History (Work)": t_hist_work,
+                "Last Input": t_last,
             },
             "system_details": {
+                "Base System Prompt": t_base,
                 "VFS Content": t_vfs,
-                "Base Rules": t_base,
-                "Skills": t_skills
+                "Active Skills": t_skills,
+                "All Skills (Volume)": t_skills_all,
             },
             "meta": {
                 "tool_count": len(active_tools),
                 "msg_count": len(final_messages),
-                "dynamic_tools_loaded": len(ctx.dynamic_tools) if ctx else 0
-            }
+                "w_msg_count": len(work_slice),
+                "dynamic_tools_loaded": len(ctx.dynamic_tools) if ctx else 0,
+                "active_skill_count": len(ctx.matched_skills) if (ctx and ctx.matched_skills) else 0,
+            },
         }
 
         if print_visual:
@@ -2356,13 +2672,9 @@ class FlowAgent:
         return metrics
 
     def _print_context_visual(self, m: dict, model_name: str, f_print=None):
-        """
-        Visualisiert den Context-Load als übersichtliches Budget-Dashboard.
-        """
         if f_print is None:
             f_print = print
 
-        # Colors & Styles
         C_RESET = "\033[0m"
         C_DIM = "\033[90m"
         C_CYAN = "\033[36m"
@@ -2371,84 +2683,92 @@ class FlowAgent:
         C_RED = "\033[31m"
         C_BOLD = "\033[1m"
         C_WHITE = "\033[97m"
+        C_BLUE = "\033[34m"
 
         total = m["t_total"]
+        t_last = m.get("t_last", 0)
         limit = m["limit"]
-        usage_pct = (total / limit) * 100
+        usage_pct = (total / limit * 100) if limit else 0
+        free = limit - total
 
-        # Ampel-Farben für die Load-Bar
-        if usage_pct < 50:
-            bar_color = C_GREEN
-        elif usage_pct < 80:
-            bar_color = C_YELLOW
-        else:
-            bar_color = C_RED
+        bar_color = C_GREEN if usage_pct < 50 else (C_YELLOW if usage_pct < 80 else C_RED)
 
-        # Header
-        f_print(f"\n{C_BOLD}🔍 CONTEXT X-RAY{C_RESET}  {C_DIM}Session:{C_RESET} {C_CYAN}{m['session_id']}{C_RESET}")
+        # ── HEADER ──────────────────────────────────────────────────────────────
+        f_print(f"\n{C_BOLD}🔍 CONTEXT X-RAY{C_RESET}  "
+                f"{C_DIM}Session:{C_RESET} {C_CYAN}{m['session_id']}{C_RESET}")
         f_print(f"{C_DIM}Model: {model_name} | Limit: {limit:,} tokens{C_RESET}")
-        f_print(f"{C_DIM}────────────────────────────────────────────────────────────{C_RESET}")
+        f_print(f"{C_DIM}{'─' * 62}{C_RESET}")
 
-        # 1. The Budget Bar
-        bar_width = 40
-        filled = int((total / limit) * bar_width)
+        # ── HAUPT-BAR ───────────────────────────────────────────────────────────
+        bar_width = 44
+        filled = int((total / limit) * bar_width) if limit else 0
         bar = "█" * filled + C_DIM + "░" * (bar_width - filled) + C_RESET
-
         f_print(f"Load:  {bar_color}{bar}{C_RESET} {C_BOLD}{usage_pct:.1f}%{C_RESET}")
-        f_print(f"       {total:,} / {limit:,} tokens used\n")
+        f_print(f"       {C_WHITE}{total:,}{C_RESET}{C_DIM} / {limit:,} tokens used"
+                f"   ·   {free:,} frei ({100 - usage_pct:.1f}%){C_RESET}\n")
 
-        # 2. Detailed Breakdown Table
-        f_print(f"{C_BOLD}{'COMPONENT':<25} {'TOKENS':>10} {'% LOAD':>10}{C_RESET}")
-        f_print(f"{C_DIM}{'-' * 48}{C_RESET}")
+        # ── TABELLE ─────────────────────────────────────────────────────────────
+        COL_W = (28, 10, 10)  # COMPONENT | TOKENS | % LOAD
+        header = (f"{C_BOLD}{'COMPONENT':<{COL_W[0]}} {'TOKENS':>{COL_W[1]}} "
+                  f"{'% LOAD':>{COL_W[2]}}{C_RESET}")
+        f_print(header)
+        f_print(f"{C_DIM}{'─' * (sum(COL_W) + 2)}{C_RESET}")
 
-        def print_row(label, value, is_sub=False, extra_info=""):
-            pct = (value / total) * 100 if total > 0 else 0
+        def row(label, tokens, is_sub=False, extra="", color=C_WHITE):
+            pct = (tokens / total * 100) if total else 0
+            prefix = f"{C_DIM}  └ " if is_sub else ""
+            end = C_RESET
+            f_print(
+                f"{prefix}{color}{label:<{COL_W[0]}}{end}"
+                f" {C_CYAN}{tokens:>{COL_W[1]},}{C_RESET}"
+                f" {C_YELLOW}{pct:>{COL_W[2] - 1}.1f}%{C_RESET}"
+                + (f"  {extra}" if extra else "")
+            )
 
-            if is_sub:
-                prefix = f"{C_DIM}  └─ "
-                color = C_DIM
-            else:
-                prefix = ""
-                color = C_RESET
-
-            fmt_label = f"{prefix}{label}"
-            f_print(f"{color}{fmt_label:<25} {value:>10,} {pct:>9.1f}%{C_RESET} {extra_info}")
-
-        # System Breakdown
         bd = m["breakdown"]
         sys_det = m["system_details"]
-
-        print_row("System Prompt", bd["System & VFS"])
-        print_row("VFS Files      ", sys_det["VFS Content"], True)
-        print_row("Base Rules      ", sys_det["Base Rules"], True)
-        if sys_det["Skills"] > 0:
-            print_row("Skills      ", sys_det["Skills"], True)
-
-        # Tools Breakdown
         meta = m["meta"]
-        print_row("Active Tools", bd["Active Tools"])
-        tool_info = f"{C_DIM}({meta['tool_count']} defs, {meta['dynamic_tools_loaded']} dyn){C_RESET}"
-        f_print(f"     {C_DIM}└─ API Schema Cost{C_RESET}         {tool_info}")
 
-        # History Breakdown
-        print_row("History & Memory", bd["History (Perm+Work)"])
-        f_print(f"     {C_DIM}└─ {meta['msg_count']} messages in stack{C_RESET}")
+        # System Prompt + Sub-Details
+        row("System Prompt Total", bd["System Prompt Total"], color=C_WHITE)
+        row("Base System Prompt", sys_det["Base System Prompt"], is_sub=True, color=C_DIM)
+        row("VFS Content", sys_det["VFS Content"], is_sub=True, color=C_DIM)
+        if sys_det["Active Skills"] > 0:
+            skills_extra = (f"{C_DIM}({meta['active_skill_count']} aktiv  |  "
+                            f"Gesamt-Vol: {sys_det['All Skills (Volume)']:,}){C_RESET}")
+            row("Active Skills", sys_det["Active Skills"], is_sub=True,
+                color=C_DIM, extra=skills_extra)
+        elif sys_det["All Skills (Volume)"] > 0:
+            f_print(f"  {C_DIM}└ Skills (inaktiv)  Gesamt-Vol: "
+                    f"{sys_det['All Skills (Volume)']:,} tokens{C_RESET}")
 
-        # User Input
-        print_row("Next Input (Sim)", bd["Next Input"])
+        # Active Tools
+        tools_extra = (f"{C_DIM}({meta['tool_count']} defs, "
+                       f"{meta['dynamic_tools_loaded']} dyn){C_RESET}")
+        row("Active Tools", bd["Active Tools"], color=C_WHITE, extra=tools_extra)
 
-        f_print(f"{C_DIM}{'-' * 48}{C_RESET}")
+        # History getrennt
+        row("History (Perm)", bd["History (Perm)"], color=C_WHITE)
+        row("History (Work)", bd["History (Work)"], color=C_WHITE,
+            extra=f"{C_DIM}{meta['msg_count']} msgs im Stack{C_RESET}")
 
-        # 3. Smart Warnings
+        # Last Input
+        row("Last Input", bd["Last Input"], color=C_BLUE)
+
+        f_print(f"{C_DIM}{'─' * (sum(COL_W) + 2)}{C_RESET}")
+        row("TOTAL", total, color=C_BOLD + C_WHITE)
+
+        # ── WARNINGS ────────────────────────────────────────────────────────────
+        hist_total = bd["History (Perm)"] + bd["History (Work)"]
         if usage_pct > 85:
-            f_print(f"\n{C_RED}⚠️  CRITICAL TOKEN LOAD{C_RESET}")
-            f_print("   Action: Execute 'shift_focus' tool to compress history.")
+            f_print(f"\n{C_RED}⚠  KRITISCHE AUSLASTUNG  –  {usage_pct:.1f}%{C_RESET}")
+            f_print("   Aktion: 'shift_focus' ausführen um History zu komprimieren.")
         elif sys_det["VFS Content"] > 4000:
-            f_print(f"\n{C_YELLOW}⚠️  Heavy VFS Load{C_RESET}")
-            f_print("   Action: Close unused files using 'vfs_close'.")
-        elif bd["History (Perm+Work)"] > 6000:
-            f_print(f"\n{C_YELLOW}⚠️  Long Context{C_RESET}")
-            f_print("   Note: Working history is getting long. Consider summarizing.")
+            f_print(f"\n{C_YELLOW}⚠  Hohe VFS-Last  ({sys_det['VFS Content']:,} tokens){C_RESET}")
+            f_print("   Aktion: Nicht benötigte Dateien mit 'vfs_close' schließen.")
+        elif hist_total > 6000:
+            f_print(f"\n{C_YELLOW}⚠  Langer Kontext  ({hist_total:,} History-Tokens){C_RESET}")
+            f_print("   Hinweis: Working History wächst. Zusammenfassung empfohlen.")
 
         f_print("")
 

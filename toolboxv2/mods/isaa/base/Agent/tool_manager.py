@@ -13,6 +13,7 @@ Author: FlowAgent V2
 import asyncio
 import inspect
 import json
+import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Any, Callable
@@ -53,6 +54,21 @@ class ToolEntry:
     server_name: str | None = None            # For MCP/A2A: which server
     original_name: str | None = None          # Original tool name before prefixing
 
+    #   # Health / Testing
+    live_test_inputs: list[dict] = field(default_factory=list)
+    cleanup_func: Callable | None = field(default=None, repr=False)
+    result_contract: dict | None = None
+    # result_contract schema:
+    # {
+    #   "allow_none": bool,            default True
+    #   "allow_empty_string": bool,    default True
+    #   "expected_type": str,          "str"|"dict"|"list"|"int"|"bool"|"float"|"any"
+    #   "semantic_check_hint": str     hint für on-demand LLM-Validator
+    # }
+    health_status: str = "UNKNOWN"           # UNKNOWN|HEALTHY|DEGRADED|FAILED|GUARANTEED
+    health_error: str | None = None
+    last_health_check: datetime | None = None
+
     def __post_init__(self):
         """Ensure defaults and build schema"""
         if self.flags is None:
@@ -90,6 +106,9 @@ class ToolEntry:
             danger_keywords = ['delete', 'remove', 'drop', 'destroy', 'purge', 'clear', 'reset']
             self.flags['dangerous'] = any(kw in name_lower or kw in desc_lower for kw in danger_keywords)
 
+        if 'guaranteed_healthy' not in self.flags:
+            self.flags['guaranteed_healthy'] = False
+
         # Requires confirmation
         if 'requires_confirmation' not in self.flags:
             self.flags['requires_confirmation'] = self.flags.get('dangerous', False)
@@ -118,6 +137,34 @@ class ToolEntry:
                 return False
         return True
 
+
+@dataclass
+class ToolHealthResult:
+    """
+    Ergebnis eines Health-Checks für ein einzelnes Tool.
+    status: HEALTHY | DEGRADED | FAILED | SKIPPED | GUARANTEED
+    """
+    tool_name: str
+    status: str
+    error: str | None = None
+    execution_time_ms: float = 0.0
+    result_preview: str | None = None
+    contract_violations: list[str] = field(default_factory=list)
+    semantic_issues: list[str] = field(default_factory=list)
+
+    def is_ok(self) -> bool:
+        return self.status in ("HEALTHY", "GUARANTEED")
+
+    def to_agent_message(self) -> str:
+        """Transparente Darstellung für den Agent bei Execution-Fehlern."""
+        parts = [f"[ToolHealthResult:{self.tool_name}] status={self.status}"]
+        if self.error:
+            parts.append(f"error={self.error}")
+        if self.contract_violations:
+            parts.append(f"contract_violations={self.contract_violations}")
+        if self.semantic_issues:
+            parts.append(f"semantic_issues={self.semantic_issues}")
+        return " | ".join(parts)
 
 # =============================================================================
 # TOOL MANAGER
@@ -171,7 +218,10 @@ class ToolManager:
         source: str = "local",
         server_name: str | None = None,
         metadata: dict[str, Any] | None = None,
-        args_schema: str | None = None
+        args_schema: str | None = None,
+        live_test_inputs: list[dict] | None = None,
+        cleanup_func: Callable | None = None,
+        result_contract: dict | None = None,
     ) -> ToolEntry:
         """
         Register a tool in the registry.
@@ -256,6 +306,14 @@ class ToolManager:
             original_name=name if server_name else None,
             metadata=metadata or {}
         )
+
+        # Health / Testing fields
+        if live_test_inputs is not None:
+            entry.live_test_inputs = live_test_inputs
+        if cleanup_func is not None:
+            entry.cleanup_func = cleanup_func
+        if result_contract is not None:
+            entry.result_contract = result_contract
 
         if tool_name in self._pending_checkpoint_data:
             pending_data = self._pending_checkpoint_data.pop(tool_name)
@@ -861,6 +919,29 @@ class ToolManager:
             if asyncio.iscoroutine(result):
                 result = await result
 
+            # --- Result Contract Validation (transparent für den Agent) ---
+            contract = entry.result_contract or {}
+            contract_violations = []
+
+            if not contract.get("allow_none", True) and result is None:
+                contract_violations.append("result is None but allow_none=False")
+
+            if not contract.get("allow_empty_string", True) and result == "":
+                contract_violations.append("result is empty string but allow_empty_string=False")
+
+            expected_type = contract.get("expected_type", "any")
+            if expected_type != "any" and result is not None:
+                _type_map = {"str": str, "dict": dict, "list": list, "int": int, "bool": bool, "float": float}
+                if expected_type in _type_map and not isinstance(result, _type_map[expected_type]):
+                    contract_violations.append(f"expected_type={expected_type}, got={type(result).__name__}")
+
+            if contract_violations:
+                hint = contract.get("semantic_check_hint", "")
+                raise ValueError(
+                    f"Tool '{function_name}' result_contract violation: {contract_violations}"
+                    + (f" | semantic_hint: {hint}" if hint else "")
+                )
+
             execution_time = time.time() - start_time
 
             # Audit-Log: Tool Executed Success
@@ -871,10 +952,10 @@ class ToolManager:
                     app.audit_logger.log_action(
                         user_id="system",
                         action="agent.tool.executed",
-                        resource=f"/agent/tools/{name}",
+                        resource=f"/agent/tools/{function_name}",
                         status="SUCCESS",
                         details={
-                            "tool_name": name,
+                            "tool_name": function_name,
                             "tool_source": entry.source,
                             "args_count": len(kwargs),
                             "execution_time_ms": round(execution_time * 1000, 2),
@@ -900,10 +981,10 @@ class ToolManager:
                     app.audit_logger.log_action(
                         user_id="system",
                         action="agent.tool.error",
-                        resource=f"/agent/tools/{name}",
+                        resource=f"/agent/tools/{function_name}",
                         status="FAILURE",
                         details={
-                            "tool_name": name,
+                            "tool_name": function_name,
                             "tool_source": entry.source,
                             "error_type": type(e).__name__,
                             "error_message": error_msg,
@@ -913,6 +994,187 @@ class ToolManager:
             except Exception:
                 pass
             raise
+
+    # =========================================================================
+    # HEALTH CHCK
+    # =========================================================================
+
+    async def health_check_single(self, name: str) -> 'ToolHealthResult':
+        """
+        Führt einen Health-Check für ein einzelnes Tool aus.
+
+        Logik:
+          - guaranteed_healthy flag → GUARANTEED, kein execution
+          - keine live_test_inputs + kein guaranteed → SKIPPED
+          - MCP/A2A (function=None) → SKIPPED
+          - sonst: execution mit live_test_inputs[0], contract validation, cleanup
+        """
+        entry = self._registry.get(name)
+        if entry is None:
+            return ToolHealthResult(tool_name=name, status="FAILED", error="Tool not found in registry")
+
+        # GUARANTEED: manuell als stabil markiert
+        if entry.flags.get("guaranteed_healthy", False):
+            entry.health_status = "GUARANTEED"
+            entry.last_health_check = datetime.now()
+            return ToolHealthResult(tool_name=name, status="GUARANTEED")
+
+        # Kein live test möglich
+        if not entry.live_test_inputs:
+            return ToolHealthResult(
+                tool_name=name,
+                status="SKIPPED",
+                error="No live_test_inputs provided — set guaranteed_healthy=True if manually verified"
+            )
+
+        # MCP/A2A ohne lokale function
+        if entry.function is None:
+            return ToolHealthResult(
+                tool_name=name,
+                status="SKIPPED",
+                error=f"{entry.source} tool has no local function"
+            )
+
+        test_input = entry.live_test_inputs[0]
+        violations: list[str] = []
+        start = time.time()
+
+        try:
+            if asyncio.iscoroutinefunction(entry.function):
+                result = await entry.function(**test_input)
+            else:
+                result = entry.function(**test_input)
+
+            if asyncio.iscoroutine(result):
+                result = await result
+
+            exec_ms = (time.time() - start) * 1000
+
+            # --- Contract Validation ---
+            contract = entry.result_contract or {}
+
+            if not contract.get("allow_none", True) and result is None:
+                violations.append("result is None but allow_none=False")
+
+            if not contract.get("allow_empty_string", True) and result == "":
+                violations.append("result is empty string but allow_empty_string=False")
+
+            expected_type = contract.get("expected_type", "any")
+            if expected_type != "any" and result is not None:
+                _type_map = {
+                    "str": str, "dict": dict, "list": list,
+                    "int": int, "bool": bool, "float": float
+                }
+                if expected_type in _type_map and not isinstance(result, _type_map[expected_type]):
+                    violations.append(
+                        f"expected_type={expected_type}, got={type(result).__name__}"
+                    )
+
+            # --- Cleanup ---
+            if entry.cleanup_func is not None:
+                try:
+                    cleanup_result = entry.cleanup_func(test_input, result)
+                    if asyncio.iscoroutine(cleanup_result):
+                        await cleanup_result
+                except Exception as ce:
+                    violations.append(f"cleanup_func raised: {ce}")
+
+            result_preview = repr(result)[:200] if result is not None else "None"
+
+            if violations:
+                entry.health_status = "DEGRADED"
+                entry.health_error = "; ".join(violations)
+                entry.last_health_check = datetime.now()
+                return ToolHealthResult(
+                    tool_name=name,
+                    status="DEGRADED",
+                    execution_time_ms=exec_ms,
+                    result_preview=result_preview,
+                    contract_violations=violations
+                )
+
+            entry.health_status = "HEALTHY"
+            entry.health_error = None
+            entry.last_health_check = datetime.now()
+            return ToolHealthResult(
+                tool_name=name,
+                status="HEALTHY",
+                execution_time_ms=exec_ms,
+                result_preview=result_preview
+            )
+
+        except Exception as e:
+            exec_ms = (time.time() - start) * 1000
+            entry.health_status = "FAILED"
+            entry.health_error = str(e)
+            entry.last_health_check = datetime.now()
+            return ToolHealthResult(
+                tool_name=name,
+                status="FAILED",
+                error=str(e),
+                execution_time_ms=exec_ms
+            )
+
+    async def health_check_all(self) -> dict[str, 'ToolHealthResult']:
+        """
+        Health-Check für alle registrierten Tools.
+        Returns: dict tool_name → ToolHealthResult
+        """
+        results: dict[str, ToolHealthResult] = {}
+        for name in list(self._registry.keys()):
+            results[name] = await self.health_check_single(name)
+        return results
+
+    def is_healthy(self, name: str) -> bool:
+        """True wenn tool HEALTHY oder GUARANTEED ist."""
+        entry = self._registry.get(name)
+        if entry is None:
+            return False
+        return entry.health_status in ("HEALTHY", "GUARANTEED")
+
+    async def semantic_check(
+        self,
+        name: str,
+        result: Any,
+        llm_caller: Callable[[str], Any]
+    ) -> list[str]:
+        """
+        On-demand LLM-basierter Semantic-Check eines Tool-Results.
+        Nur aufrufen wenn semantic_check_hint im result_contract gesetzt ist.
+
+        Args:
+            name:        Tool-Name
+            result:      Das tatsächliche Execution-Result
+            llm_caller:  async callable(prompt: str) -> str
+
+        Returns:
+            Liste von semantischen Widersprüchen, leer wenn OK.
+        """
+        entry = self._registry.get(name)
+        if entry is None:
+            return [f"Tool '{name}' not found"]
+
+        hint = (entry.result_contract or {}).get("semantic_check_hint")
+        if not hint:
+            return []
+
+        prompt = (
+            f"Tool: {name}\n"
+            f"Description: {entry.description[:300]}\n"
+            f"Result: {repr(result)[:600]}\n"
+            f"Semantic check: {hint}\n"
+            f"List any contradictions or inconsistencies as bullet points. "
+            f"If result is semantically consistent, reply only: OK"
+        )
+
+        try:
+            response = await llm_caller(prompt)
+            response = response.strip()
+            if response.upper() == "OK" or response.upper().startswith("OK"):
+                return []
+            return [line.strip("- ").strip() for line in response.splitlines() if line.strip()]
+        except Exception as e:
+            return [f"semantic_check failed: {e}"]
 
     # =========================================================================
     # RULESET INTEGRATION

@@ -32,6 +32,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, Corou
 
 from litellm import max_tokens
 
+from mods.isaa.base.Agent.narrator import AgentLiveNarrator
 from toolboxv2 import get_app, get_logger
 
 # Import Live State Management
@@ -1086,6 +1087,7 @@ class ExecutionEngine(SubAgentResumeExtension):
         callback: Any = None,
         # Sub-agent parameters
         is_sub_agent: bool = False,
+        do_narrator: bool = True,
         sub_agent_output_dir: str | None = None,
         sub_agent_budget: int = 5000,
     ):
@@ -1105,6 +1107,8 @@ class ExecutionEngine(SubAgentResumeExtension):
             agent_name=getattr(agent, "amd", None) and agent.amd.name or "?",
             is_sub=is_sub_agent,
         )
+
+        self._narrator = AgentLiveNarrator(live=self.live, agent=agent, do_narator=do_narrator)
 
         # Sub-agent state
         self.is_sub_agent = is_sub_agent
@@ -1356,6 +1360,8 @@ BEISPIELE:
         self.live.tools_loaded = ctx.get_dynamic_tool_names() if ctx.dynamic_tools else []
         self.live.persona = ctx.active_persona.name
         self.live.enter(AgentPhase.INIT, f"{action} [{agent_type}] {ctx.run_id}: {query[:80]}")
+        self._narrator.reset(query)
+        self._narrator.on_init(query)
 
         final_response = None
         success = True
@@ -1365,6 +1371,7 @@ BEISPIELE:
             self.live.max_iterations = ctx.max_iterations
             ctx.current_iteration += 1
 
+            self._narrator.on_llm_pre_call(ctx.working_history)
             self.live.iteration = ctx.current_iteration
             self.live.enter(AgentPhase.LLM_CALL, f"iter {ctx.current_iteration}/{max_iterations}")
 
@@ -1433,6 +1440,7 @@ BEISPIELE:
 
                 # Exit loop if final_answer was called
                 if final_response is not None:
+                    self._narrator.on_summarise()
                     break
             else:
                 # No tool calls - text response (accept as final)
@@ -1615,6 +1623,8 @@ BEISPIELE:
                 # Token budget info
                 chunk["tokens_used"] = self._calculate_context_load(ctx)
                 chunk["tokens_max"] = self._get_max_context_tokens()
+                chunk["narrator_msg"] = self.live.narrator_msg
+                chunk["status_msg"] = self.live.status_msg
                 # Skills & Persona
                 chunk["skills"] = [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
                 chunk["persona"] = ctx.active_persona.name if ctx.active_persona else "default"
@@ -1958,6 +1968,9 @@ BEISPIELE:
                 success = False
                 yield enrich({"type": "max_iterations", "answer": final_response})
 
+            if not hasattr(ctx.active_persona, "stats"):
+                ctx.active_persona.stats = PersonaStats()
+
             ctx.active_persona.stats.record_use(
                 source=ctx.active_persona.source,
                 query=query,
@@ -2045,6 +2058,7 @@ BEISPIELE:
         f_name = tool_call.function.name
         f_id = tool_call.id
 
+        self._narrator.on_tool_start(f_name)
         try:
             f_args = json.loads(tool_call.function.arguments)
         except:
@@ -2280,6 +2294,19 @@ BEISPIELE:
 
             ctx.auto_focus.record(f_name, f_args, result[:200])
 
+        if f_name == "think":
+            # think result ist typischerweise der komplette gedankengang
+            thinking_content = str(result)[:800]
+            self._narrator.schedule_think_result(
+                thinking_content=thinking_content,
+                history=ctx.working_history,
+            )
+        else:
+            self._narrator.schedule_tool_end(
+                tool_name=f_name,
+                result_snippet=str(result)[:80],
+                history=ctx.working_history,
+            )
         # Add tool result to working history (if not final_answer)
         if not is_final:
             # Context Budget Management: Szenario A/B/C
@@ -2644,7 +2671,25 @@ BEISPIELE:
             names = [tools_input]
         else:
             names = list(tools_input) if tools_input else []
+        # --- Category expansion: name that isn't an exact tool → treat as category ---
+        all_tool_entries = self.agent.tool_manager.get_all()
+        category_map: dict[str, list[str]] = {}
+        for t in all_tool_entries:
+            cats = t.category if isinstance(t.category, list) else [t.category]
+            for c in cats:
+                if c:
+                    category_map.setdefault(c.lower(), []).append(t.name)
 
+            expanded: list[str] = []
+            for name in names:
+                name = name.strip()
+                if name in self.agent.tool_manager.list_names():
+                    expanded.append(name)
+                elif name.lower() in category_map:
+                    expanded.extend(category_map[name.lower()])
+                else:
+                    expanded.append(name)  # keep original → "not found" error below
+            names = expanded
         loaded = []
         failed = []
         removed = []
@@ -2701,16 +2746,17 @@ BEISPIELE:
             else:
                 failed.append(f"{name} (limit erreicht)")
 
-        # Build response message
-        msg_parts = []
-        if loaded:
-            msg_parts.append(f"Geladen: {', '.join(loaded)}")
-        if removed:
-            msg_parts.append(f"Auto-entfernt (niedrige Relevanz): {', '.join(removed)}")
-        if failed:
-            msg_parts.append(f"Fehlgeschlagen: {', '.join(failed)}")
+           # Build response message with slot usage
+            msg_parts = []
+            if loaded:
+                msg_parts.append(f"Geladen: {', '.join(loaded)}")
+            if removed:
+                msg_parts.append(f"Auto-entfernt (niedrige Relevanz): {', '.join(removed)}")
+            if failed:
+                msg_parts.append(f"Fehlgeschlagen: {', '.join(failed)}")
+            msg_parts.append(f"Slots: {len(ctx.dynamic_tools)}/{ctx.max_dynamic_tools} used")
 
-        return "\n".join(msg_parts) if msg_parts else "Keine Änderungen"
+            return "\n".join(msg_parts) if msg_parts else "Keine Änderungen"
 
     def _tool_list_tools(self, category: Optional[str] = None) -> str:
         """List available tools with optional category filter"""
@@ -3013,11 +3059,27 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         summary_text = "Keine Zusammenfassung."
         try:
             # Nutze schnelles Modell für Zusammenfassung
+            narrator_hint = ""
+            if self._narrator and self._narrator._mini.plan_summary:
+                flags = []
+                if self._narrator._mini.repeat:
+                    lang = self._narrator._lang
+                    flags.append(
+                        "Wiederholungen erkannt – fasse diese zusammen" if lang == "de" else "repetitions detected – consolidate these")
+                if self._narrator._mini.drift:
+                    lang = self._narrator._lang
+                    flags.append(
+                        "Plan-Abweichungen erkannt – betone was vom Originalziel abwich" if lang == "de" else "drift detected – highlight deviations from original goal")
+                narrator_hint = (
+                    f"Agent-Intent (auto-erkannt): {self._narrator._mini.plan_summary}\n"
+                    + ("\n".join(flags) + "\n" if flags else "")
+                )
             summary_prompt = (
                 f"Analysiere den folgenden Verlauf eines Agenten-Laufs.\n"
                 f"Aufgabe: {query}\n"
                 f"Status: {'Erfolg' if success else 'Fehlschlag'}\n"
                 f"Tools genutzt: {', '.join(ctx.tools_used)}\n\n"
+                f"{narrator_hint}"
                 f"compressed summary : {summary}"
                 f"Erstelle eine prägnante Zusammenfassung mit wichtigen details (max 2-3 Sätze) der durchgeführten Aktionen und des Ergebnisses."
                 f"Erwähne erstellte/bearbeitete Dateien."
@@ -3042,6 +3104,10 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
 
         # Persist persona stats
         if ctx.active_persona:
+
+            if not hasattr(ctx.active_persona, "stats"):
+                ctx.active_persona.stats = PersonaStats()
+
             ctx.active_persona.stats.record_use(
                 source=ctx.active_persona.source,
                 query=query,
@@ -3051,7 +3117,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                 trigger_keyword=getattr(ctx, "persona_trigger_kw", None),
                 trigger_skill=getattr(ctx, "persona_trigger_skill", None),
             )
-        await self._persist_persona_stats(session, ctx.active_persona)
+            await self._persist_persona_stats(session, ctx.active_persona)
 
         # 3. Permanent Speichern
         # User message

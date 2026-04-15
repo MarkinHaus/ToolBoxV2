@@ -516,14 +516,6 @@ class DecisionTask(Task):
     decision_model: str = "fast"  # Welches LLM für Entscheidung
 
 
-class PlanData(BaseModel):
-    """Dataclass for plan data"""
-    plan_name: str = Field(..., discription="Name of the plan")
-    description: str = Field(..., discription="Description of the plan")
-    execution_strategy: str = Field(..., discription="Execution strategy for the plan")
-    tasks: list[LLMTask | ToolTask | DecisionTask] = Field(..., discription="List of tasks in the plan")
-
-
 # Erweiterte Task-Erstellung
 def create_task(task_type: str, **kwargs) -> Task:
     """Factory für Task-Erstellung mit korrektem Typ"""
