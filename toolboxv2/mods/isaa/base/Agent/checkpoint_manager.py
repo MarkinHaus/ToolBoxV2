@@ -47,6 +47,39 @@ class AgentCheckpoint:
     # Metadata
     metadata: dict = field(default_factory=dict)
 
+    def _get_age_string(self, target_date: datetime) -> str:
+        """Helper to format a datetime into a human-readable age string with up to 2 units."""
+        age = datetime.now() - target_date
+
+        # max(0, ...) verhindert Fehler, falls die Systemzeit minimal abweicht
+        seconds = max(0, int(age.total_seconds()))
+
+        if seconds < 60:
+            return "Just now"
+
+        # Definition der Intervalle in Sekunden
+        intervals = (
+            ('y', 31536000),  # 365 Tage
+            ('mo', 2592000),  # 30 Tage
+            ('d', 86400),  # 1 Tag
+            ('h', 3600),  # 1 Stunde
+            ('m', 60)  # 1 Minute
+        )
+
+        result = []
+        for unit_name, unit_seconds in intervals:
+            value = seconds // unit_seconds
+
+            if value > 0:
+                seconds -= value * unit_seconds
+                result.append(f"{value}{unit_name}")
+
+            # Wir haben 2 Einheiten gefunden -> Schleife abbrechen
+            if len(result) == 2:
+                break
+
+        return " ".join(result) + " ago" if result else "Just now"
+
     def get_summary(self) -> str:
         """Get human-readable summary"""
         parts = []
@@ -59,9 +92,37 @@ class AgentCheckpoint:
             parts.append(f"{tool_count} tools")
 
         if self.statistics:
+            tokens_in = self.statistics.get('total_tokens_in', 0)
+            tokens_out = self.statistics.get('total_tokens_out', 0)
+            if tokens_in > 0 or tokens_out > 0:
+                in_k = round(tokens_in / 1000, 1)
+                out_k = round(tokens_out / 1000, 1)
+                parts.append(f"Tokens I/O: {in_k}k/{out_k}k")
+
             cost = self.statistics.get('total_cost', 0)
             if cost > 0:
                 parts.append(f"${cost:.4f} spent")
+
+        # --- 1. FIRST USED ---
+        first_used_dt = None
+        # Versuch, "first_used" oder "created_at" aus den Metadaten zu lesen
+        raw_first_used = self.metadata.get('first_used') or self.metadata.get('created_at')
+
+        if isinstance(raw_first_used, datetime):
+            first_used_dt = raw_first_used
+        elif isinstance(raw_first_used, str):
+            try:
+                # Falls es als ISO-String gespeichert wurde
+                first_used_dt = datetime.fromisoformat(raw_first_used)
+            except ValueError:
+                pass
+
+        if first_used_dt and self._get_age_string(first_used_dt) != "Just now":
+            parts.append(f"F used: {self._get_age_string(first_used_dt)}")
+
+        # --- 2. LAST USE ---
+        # self.timestamp ist der Zeitpunkt, an dem dieser Checkpoint erstellt/gespeichert wurde
+        parts.append(f"L used: {self._get_age_string(self.timestamp)}")
 
         return "; ".join(parts) if parts else "Empty checkpoint"
 
@@ -132,7 +193,7 @@ class CheckpointManager:
             latest = self._find_latest_checkpoint()
             if latest:
                 self._loaded_checkpoint = self._load_checkpoint_file(latest)
-                print(f"[CheckpointManager] Loaded checkpoint: {latest}\n{self._loaded_checkpoint.get_summary()}")
+                print(f"[CheckpointManager] Loaded checkpoint: {self._loaded_checkpoint.get_summary()}")
         except Exception as e:
             print(f"[CheckpointManager] Auto-load failed: {e}")
 
@@ -172,9 +233,39 @@ class CheckpointManager:
         return checkpoints[0][0]
 
     def _load_checkpoint_file(self, filepath: str) -> AgentCheckpoint:
-        """Load checkpoint from file"""
+        """
+        Load checkpoint from file and correct timestamp if necessary.
+        This handles loading old checkpoints that were saved before the
+        timestamp field was added to the class.
+        """
         with open(filepath, 'rb') as f:
-            return pickle.load(f)
+            checkpoint = pickle.load(f)
+
+        # --- FIX STARTS HERE ---
+        # The loaded checkpoint might have a default timestamp (datetime.now())
+        # if it was created with an older class version.
+        # We correct it using the more reliable filename or file modification date.
+
+        filename = os.path.basename(filepath)
+        corrected_timestamp = None
+
+        try:
+            if filename.startswith('agent_checkpoint_'):
+                ts_str = filename.replace('agent_checkpoint_', '').replace('.pkl', '')
+                corrected_timestamp = datetime.strptime(ts_str, "%Y%m%d_%H%M%S")
+            elif filename == 'final_checkpoint.pkl':
+                # For final checkpoints, the modification time is the best we have.
+                corrected_timestamp = datetime.fromtimestamp(os.path.getmtime(filepath))
+        except (ValueError, IndexError):
+            # Fallback to file modification time if parsing fails
+            corrected_timestamp = datetime.fromtimestamp(os.path.getmtime(filepath))
+
+        if corrected_timestamp:
+            # Overwrite the potentially incorrect timestamp on the loaded object
+            checkpoint.timestamp = corrected_timestamp
+        # --- FIX ENDS HERE ---
+
+        return checkpoint
 
     # =========================================================================
     # CHECKPOINT CREATION
@@ -239,6 +330,7 @@ class CheckpointManager:
             'created_by': 'CheckpointManager',
             'agent_version': '2.0',
             'checkpoint_version': checkpoint.version,
+            'first_used': getattr(self.agent.amd, 'created_at', datetime.now().isoformat())
         }
 
         return checkpoint

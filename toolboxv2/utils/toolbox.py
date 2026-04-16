@@ -162,8 +162,6 @@ class App(AppType, metaclass=Singleton):
         except Exception as e:
             print("Error loading manifest",e)
 
-
-        get_logger().info(Style.GREEN("Starting Application instance"))
         if args.init and args.init is not None and self.start_dir not in sys.path:
             sys.path.append(self.start_dir)
 
@@ -287,13 +285,6 @@ class App(AppType, metaclass=Singleton):
             self._setup_observability(self.manifest.observability.slow_on_init)
         except Exception as e:
             self.logger.debug(f"Observability setup skipped: {e}")
-
-
-        self.print(
-            Style.GREEN(
-                f"Finish init up in {time.perf_counter() - t0:.2f}s"
-            )
-        )
 
     async def observability_health_check_and_anabel(self):
 

@@ -2183,7 +2183,7 @@ Session: {self.session_id}
     # CONTEXT BUILDING
     # =========================================================================
 
-    def file_tree_string(self, as_list=False):
+    def file_tree_string(self, as_list=False, max_depth=4):
 
         parts = ["=== VFS (Virtual File System) ==="]
 
@@ -2192,7 +2192,7 @@ Session: {self.session_id}
             for vfs_path, mount in self.mounts.items():
                 parts.append(f"  {vfs_path} → {mount.local_path}")
         # Build directory tree summary
-        dir_tree = self._build_tree_string()
+        dir_tree = self._build_tree_string(max_depth=max_depth)
         if dir_tree:
             parts.append("\n📁 Structure:")
             parts.append(dir_tree)

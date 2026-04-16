@@ -1714,6 +1714,17 @@ BEISPIELE:
                     None  # Verfolgt, welches Tool gerade durch Text fortgesetzt wird
                 )
 
+                multiplex_queue = asyncio.Queue()
+
+                def narrator_stream_cb(msg):
+                    try:
+                        # Narrator pusht SOFORT in die Queue
+                        multiplex_queue.put_nowait({"_type": "narrator", "msg": msg})
+                    except Exception:
+                        pass
+
+                self._narrator.on_live_update_callback = narrator_stream_cb
+
                 while continuation_count < MAX_CONTINUATIONS:
                     stream_kwargs = {"stream": True, "true_stream": True}
                     if model:
@@ -1745,8 +1756,33 @@ BEISPIELE:
 
                     finish_reason = None
 
+                    # Background-Task, der das LLM liest und in die Queue pumpt
+                    async def pump_llm(resp):
+                        try:
+                            async for c in resp:
+                                await multiplex_queue.put({"_type": "llm", "chunk": c})
+                            await multiplex_queue.put({"_type": "done"})
+                        except Exception as err:
+                            await multiplex_queue.put({"_type": "error", "error": err})
+
+                    pumper_task = asyncio.create_task(pump_llm(stream_response))
+
                     try:
-                        async for chunk in stream_response:
+                        while True:
+                            item = await multiplex_queue.get()
+
+                            # Sofortiges Yielding des Narrators!
+                            if item["_type"] == "narrator":
+                                yield enrich({"type": "narrator", "narrator_msg": item["msg"]})
+                                continue
+
+                            if item["_type"] == "done":
+                                break
+
+                            if item["_type"] == "error":
+                                raise item["error"]
+
+                            chunk = item["chunk"]
                             delta = (
                                 chunk.choices[0].delta
                                 if hasattr(chunk, "choices") and chunk.choices
@@ -1831,6 +1867,9 @@ BEISPIELE:
                                 })
                             break
                         raise
+                    finally:
+                        if not pumper_task.done():
+                            pumper_task.cancel()
                     # --- Ende des Chunks. Prüfen auf Token Limit ---
                     if finish_reason not in ["length", "max_tokens"]:
                         break  # Generierung natürlich beendet
@@ -2046,7 +2085,7 @@ BEISPIELE:
                 )
 
             self._active_executions.pop(ctx.run_id, None)
-
+            self._narrator.on_live_update_callback = None
             yield enrich(
                 {"type": "done", "success": success, "final_answer": final_response}
             )
@@ -2169,18 +2208,85 @@ BEISPIELE:
                 },
             ]
             try:
-                response = await self.agent.a_run_llm_completion(
+
+                self._narrator.schedule_skills_update(
+                    ctx.query, ctx.working_history, self.skills_manager, ctx=ctx
+                )
+                self.live.status_msg = f"Skills updated successfully scheduled"
+
+                self._narrator.schedule_memory_extraction(
+                    query=ctx.query,
+                    history=ctx.working_history,
+                    ctx=ctx,
+                    session=self._current_session,
+                )
+
+                self.live.status_msg = f"Memory updated successfully scheduled"
+                self._narrator.schedule_ruleset_update(
+                    history=ctx.working_history,
+                    session=self._current_session,
+                    ctx=ctx,
+                )
+
+                self.live.status_msg = f"Ruleset updated successfully scheduled"
+            except:
+                pass
+            try:
+                stream_response = await self.agent.a_run_llm_completion(
                     messages=messages,
                     model_preference="complex",
                     max_tokens=450,
-                    get_response_message=True,
+                    stream=True,
+                    true_stream=True,
                     with_context=False,
                 )
-                thought = response.content
+                if asyncio.iscoroutine(stream_response):
+                    stream_response = await stream_response
+
+                # Stream think output — update narrator mock after each paragraph
+                thought_acc = ""
+                chunk_buffer = ""
+
+                # Definiere Trennzeichen, bei denen ein Gedanke "sinnvoll" pausiert
+                # Satzzeichen, Doppelpunkt oder Newline markieren oft eine abgeschlossene Idee
+                pause_chars = {".", "\n", ":", ";", "?"}
+
+                async for chunk in stream_response:
+                    delta = chunk.choices[0].delta if hasattr(chunk, "choices") and chunk.choices else None
+                    if delta and hasattr(delta, "content") and delta.content:
+                        content = delta.content
+                        thought_acc += content
+                        chunk_buffer += content
+
+                        # Update live.thought UI
+                        self.live.thought = thought_acc[-200:]
+
+                        # Prüfe, ob das Chunk eines der Pause-Zeichen enthält
+                        if any(pc in content for pc in pause_chars) and len(chunk_buffer) > 40:
+                            # Wir haben einen Sinnabschnitt!
+                            # Übergebe diesen Satz an den Narrator. Der `moc=False` (oder True, je nach deiner Logik)
+                            # sorgt dafür, dass dieser echte Kontext im `context_str` landet.
+
+                            clean_sentence = chunk_buffer.strip().replace("\n", " ")
+
+                            # Hier greift unsere neue Intelligenz:
+                            # Anstatt den Text roh auszugeben, triggern wir `_set_thought` mit dem echten Text,
+                            # ODER wir rufen mock("llm_pre", ...) auf, damit der Remixer den `chunk_buffer` frisst!
+
+                            # Update inspier manuell für den Remixer
+                            self._narrator._inspier += " " + clean_sentence
+
+                            # Triggere einen neuen Mock-Lauf, der jetzt die echten Daten aus _inspier nutzt
+                            self._narrator.mock("llm_pre")
+
+                            # Buffer leeren für den nächsten Satz
+                            chunk_buffer = ""
+
+                thought = thought_acc
                 result = thought
             except Exception as e:
                 result = str(e)
-            self.live.thought = thought  # visible to renderer
+            self.live.thought = thought[-200:] if thought else str(result)[:200]
             # Record in AutoFocus
             ctx.auto_focus.record(f_name, f_args, thought)
             ctx.max_iterations += 1
@@ -2357,34 +2463,25 @@ BEISPIELE:
             )
             ctx.working_history.append(managed_msg)
 
-        if f_name == "think":
-            # think result ist typischerweise der komplette gedankengang
-            thinking_content = str(result)[:800]
-            self._narrator.schedule_think_result(
-                thinking_content=thinking_content,
-                history=ctx.working_history,
-            )
-            self._narrator.schedule_skills_update(
-                ctx.query, ctx.working_history, self.skills_manager, ctx=ctx
-            )
-        else:
-            self._narrator.schedule_tool_end(
-                tool_name=f_name,
-                result_snippet=str(result)[:80],
-                history=ctx.working_history,
-            )
-            self._narrator.schedule_memory_extraction(
-                query=ctx.query,
-                history=ctx.working_history,
-                ctx=ctx,
-                session=self._current_session,
-            )
+        try:
+            if f_name == "think":
+                # think result ist typischerweise der komplette gedankengang
+                thinking_content = str(result)
+                self._narrator.schedule_think_result(
+                    thinking_content=thinking_content,
+                    history=ctx.working_history,
+                )
+            else:
+                self._narrator.schedule_tool_end(
+                    tool_name=f_name,
+                    result_snippet=str(result)[:80],
+                    history=ctx.working_history,
+                )
 
-            self._narrator.schedule_ruleset_update(
-                history=ctx.working_history,
-                session=self._current_session,
-                ctx=ctx,
-            )
+        except Exception as e:
+            self.live.narrator_msg = "Failed to execute tool execution engine"
+            get_app().debug_rains(e)
+            get_app().print(e)
 
         return result, is_final
 

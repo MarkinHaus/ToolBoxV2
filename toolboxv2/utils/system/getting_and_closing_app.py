@@ -1,6 +1,7 @@
 import asyncio
 import atexit
 import os
+import sys
 import time
 
 from ..extras.Style import Style
@@ -47,8 +48,6 @@ def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None, sync=
 
         app_con = App
     app = app_con(name, args=args) if name else app_con()
-    logger.info(Style.Bold(f"App instance, returned ID: {app.id}"))
-
     registered_apps[0] = app
     return app
 
@@ -70,6 +69,9 @@ async def a_get_proxy_app(app, host="localhost", port=6587, key="remote@root", t
 @atexit.register
 def save_closing_app():
     # Coroutine erst hier erstellen, damit sie nicht vorzeitig "verloren" geht
+    if "unittest" in sys.modules or os.environ.get("TOOLBOX_TESTING") == "true" or "test" in sys.argv:
+        return
+
     if registered_apps[0] is not None:
         print("CLOSING APP")
         registered_apps[0].exit()

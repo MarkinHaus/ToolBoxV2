@@ -8,14 +8,19 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 
 def async_test(coro):
-    """Decorator to run async tests with unittest."""
     def wrapper(*args, **kwargs):
         loop = asyncio.new_event_loop()
         try:
-            return loop.run_until_complete(coro(*args, **kwargs))
+            result = loop.run_until_complete(coro(*args, **kwargs))
+            # Alle pending tasks noch drainieren
+            pending = asyncio.all_tasks(loop)
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            return result
         finally:
             loop.close()
     return wrapper
+
 
 
 # --- PYTEST STDOUT SCHUTZ ---

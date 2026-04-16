@@ -77,9 +77,8 @@ from toolboxv2.mods.isaa.base.audio_io.audio_live import (
     LiveModeEngine, LiveModeConfig, EndMode,
     SpeakerProfileStore,
 )
-import sys
-import sys
-
+import os
+os.environ["NARRATOR_CONSOLE_PRINT"] = "false"
 def ensure_utf8_stdout():
     if sys.platform == "win32" and "pytest" not in sys.modules:
         try:
@@ -277,6 +276,14 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
     t = chunk.get("type", "")
     iv = tv._get_iter(tv.iteration) if tv.iteration > 0 else None
 
+    if t == "narrator":
+        tv.narrator_msg = chunk.get("narrator_msg", "")
+        # === INTERFACE REGISTRY HOOK SOFORT AUSFÜHREN ===
+        get_registry().publish_sync(
+            id=f"icli.task.{tv.task_id}",
+            data=dataclasses.asdict(tv)
+        )
+        return  # Blockiert das restliche Phasen-Handling nicht
 
 
     if t == "reasoning":
@@ -345,6 +352,7 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
             tv.status = "completed" if chunk.get("success", True) else "failed"
         tv.phase = "done"
         tv.completed_at = time.time()
+        tv.narrator_msg = ""
         if iv: iv._in_reasoning = False
 
 
@@ -352,12 +360,14 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
         if not chunk.get("_sub_agent_id"):
             tv.status = "error"
         tv.phase = "error"
+        tv.narrator_msg = "error"
         tv.completed_at = time.time()
         if iv: iv._in_reasoning = False
 
     elif t == "final_answer":
         tv.phase = "done"
         tv.status = "completed"
+        tv.narrator_msg = ""
         tv.completed_at = time.time()
         answer = chunk.get("answer", chunk.get("content", chunk.get("chunk", "")))
         if iv: iv._in_reasoning = False
@@ -374,12 +384,15 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
 
 # ── A: Footer toolbar renderer ────────────────────────────────────────────────
 
+_was_spinner: list[bool] = [False]
+
 def render_footer_toolbar(
     task_views: dict[str, TaskView],
     focused_id: Optional[str],
     audio_recording: bool = False,
     audio_processing: bool = False,
     overlay_open: bool = False,
+    set_interval: Any = None,
 ) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     bg     = "fg:#111827 "   # konsistent dunkel, kein terminal-default
@@ -388,11 +401,15 @@ def render_footer_toolbar(
     term_width = _shutil.get_terminal_size().columns
     pad = " " * max(0, term_width)
     if audio_recording:
+        if set_interval:
+            set_interval(0.1)
         out.append((bg + "fg:#dc2626 bg:#ffffff", " ● REC  F4=stop "))
         out.append((bg + fg_dim, pad))
         return out
 
     if audio_processing:
+        if set_interval:
+            set_interval(0.4)
         out.append((bg + "fg:#7c3aed bg:#ffffff", " ⚙ PROC  processing... "))
         out.append((bg + fg_dim, pad))
         return out
@@ -400,21 +417,35 @@ def render_footer_toolbar(
     # ── Spinner ──────────────────────────────────────────────────────────────
     spinner_text = get_spinner_toolbar_fragment()
     if spinner_text:
+
+        if set_interval:
+            if not _was_spinner[0]:
+                set_interval(1.76)
+                _was_spinner[0] = True
+            else:
+                set_interval(0.859)
         out.append(("fg:#fbbf24 bg:#1f2937", f" {spinner_text} "))
         out.append((bg + fg_dim, pad))
         return out
+    else:
+        _was_spinner[0] = False
+
 
     if not task_views:
+        if set_interval:
+            set_interval(1)
         out.append((bg + fg_dim, f" ◦ idle   F2=overview  F4=audio  F5=status "))
         out.append((bg + fg_dim, pad))
         return out
 
     if overlay_open:
+        if set_interval:
+            set_interval(1)
         out.append((bg + "bg:#67e8f9", " ◎ ZEN+ OPEN "))
         out.append((bg + fg_dim, " Esc=close\n"))
 
     main_tasks = [(tid, tv) for tid, tv in task_views.items() if "__sub__" not in tid]
-    shown = main_tasks[:5]
+    shown = main_tasks[::-1][:5]
     overflow = len(main_tasks) - len(shown)
 
     for tid, tv in shown:
@@ -441,11 +472,11 @@ def render_footer_toolbar(
 
 def _append_task_line(out: list, tv: TaskView, focused: bool, pad: str = " " * 120) -> None:
     # Basis: dunkler Hintergrund, Text hell — alles explizit gesetzt
-    bg      = "fg:#111827 "   # dunkelgrau, kein ansiblack (vermeidet terminal-default weiß)
-    fg_dim  = "bg:#6b7280"
+    bg = "fg:#111827 "  # dunkelgrau, kein ansiblack
+    fg_dim = "bg:#6b7280"
     fg_main = "bg:#e5e7eb"
 
-    # Fokus-Indikator
+    # Fokus-Indikator (Pfeil ganz links)
     out.append((bg + ("bg:#67e8f9" if focused else fg_dim), " ▸ " if focused else "   "))
 
     # Status-Symbol — farbig auf gleichem bg
@@ -460,10 +491,10 @@ def _append_task_line(out: list, tv: TaskView, focused: bool, pad: str = " " * 1
     out.append((bg + "bg:#67e8f9", bar))
     out.append((bg + fg_dim, f" {tv.iteration}/{tv.max_iter:<3} "))
 
-    # Persona — vollständig wenn fertig
+    # Persona
     if tv.persona and tv.persona != "default":
         name = tv.persona if tv.status in ("completed", "done", "failed", "error") \
-               else _short(tv.persona, 14)
+            else _short(tv.persona, 14)
         out.append((bg + "bg:#a78bfa", f"{name} "))
     else:
         out.append((bg + fg_dim, " "))
@@ -476,33 +507,48 @@ def _append_task_line(out: list, tv: TaskView, focused: bool, pad: str = " " * 1
     else:
         out.append((bg + fg_dim, "     "))
 
-    # Hauptstatus-Block
+    # === HAUPTSTATUS & LIVE NARRATOR BLOCK ===
     if tv.status in ("completed", "done"):
         elapsed = (tv.completed_at or tv.started_at) - tv.started_at
         out.append((bg + f"bg:{C['green']}", f"● {_fmt_elapsed(elapsed)} "))
         if tv.narrator_msg:
             out.append((bg + "bg:#60a5fa", tv.narrator_msg + " "))
+
     elif tv.status in ("failed", "error"):
         elapsed = (tv.completed_at or tv.started_at) - tv.started_at
         out.append((bg + f"bg:{C['red']}", f"✗ {_fmt_elapsed(elapsed)} "))
-    elif tv.phase == "thinking":
-        out.append((bg + fg_dim, f"◎ {_short(tv.last_thought.replace(chr(10), ' '), 30)} "))
-    elif tv.phase in ("tool", "tool_done") and tv.last_tool:
-        ok_col = C["green"] if tv.last_tool_ok else C["red"]
-        ok_sym = SYM["ok"] if tv.last_tool_ok else SYM["fail"]
-        out.append((bg + "bg:#60a5fa", f"◇ {_short(tv.last_tool, 14)} "))
-        out.append((bg + f"bg:{ok_col}", f"{ok_sym} "))
-        if tv.last_tool_info:
-            out.append((bg + fg_dim, f"{_short(tv.last_tool_info, 20)} "))
-    else:
-        out.append((bg + fg_dim, "⋯ "))
 
+    else:
+        # 1. Phasen-Infos (Denken / Tools)
+        if tv.phase == "thinking":
+            out.append((bg + fg_dim, f"◎ {_short(tv.last_thought.replace(chr(10), ' '), 20)} "))
+        elif tv.phase in ("tool", "tool_done") and tv.last_tool:
+            ok_col = C["green"] if tv.last_tool_ok else C["red"]
+            ok_sym = SYM["ok"] if tv.last_tool_ok else SYM["fail"]
+            out.append((bg + "bg:#60a5fa", f"◇ {_short(tv.last_tool, 14)} "))
+            out.append((bg + f"bg:{ok_col}", f"{ok_sym} "))
+            if tv.last_tool_info:
+                out.append((bg + fg_dim, f"{_short(tv.last_tool_info, 15)} "))
+        else:
+            out.append((bg + fg_dim, "⋯ "))
+
+        # 2. LIVE NARRATOR INJEKTION (Läuft parallel zu Tools/Denken)
+        if tv.narrator_msg:
+            # F7 Fokus-Highlighting: Fokussierter Agent leuchtet Gelb/Amber, andere Blau
+            n_col = "bg:#f59e0b "+bg if focused else "bg:#3b82f6 "+bg
+            icon = " 🔉 " if focused else " 🔈 "
+            # Auffälliger Abstand und Formatierung für den Narrator
+            narrator_msg = tv.narrator_msg
+            if len(narrator_msg) > len(pad) - 15:
+                narrator_msg = narrator_msg[:len(pad) - 15] + '...'
+            out.append((bg + n_col, f"{icon}{narrator_msg} "))
+
+    # Sub-Agenten
     if tv.sub_agents:
         out.append((bg + "bg:#f472b6", f"✦{len(tv.sub_agents)} "))
 
-    # Padding-Block bis Zeilenende — verhindert weißen Rest
+    # Padding-Block bis Zeilenende
     out.append((bg + fg_dim, pad))
-
 
 # ── B: Fullscreen overlay ─────────────────────────────────────────────────────
 
@@ -3504,6 +3550,7 @@ _help_text = {
 /session new               - Create new session
 /session show [n]          - Show last n messages (default 10)
 /session clear             - Clear current session history
+/session working             - Show working history
     """,
 
     # MCP Management (Live)
@@ -4016,7 +4063,8 @@ class ISAA_Host:
                         sub_tv.completed_at = time.time()
 
         running = any(v.status == "running" for v in self._task_views.values())
-        self.set_dynamic_interval(0.5 if running else 1.5)
+        if str(self.dynamic_interval[0]) in ["0", "1"]:
+            self.set_dynamic_interval(0.5 if running else 1.5)
         if self.prompt_session and self.prompt_session.app:
             try:
                 self.prompt_session.app.invalidate()
@@ -4231,16 +4279,21 @@ class ISAA_Host:
             candidates = [tid for tid, t in self.all_executions.items() if t.status == "running"]
             if not candidates:
                 return
+
             if self._focused_task_id and self._focused_task_id in self.all_executions:
                 self.all_executions[self._focused_task_id].is_focused = False
+
             try:
                 idx = candidates.index(self._focused_task_id)
                 next_id = candidates[(idx + 1) % len(candidates)]
             except (ValueError, TypeError):
                 next_id = candidates[0]
+
             self.all_executions[next_id].is_focused = True
             self._focused_task_id = next_id
+
             c_print(HTML(f"<style fg='#67e8f9'>  ◎ Focus → {next_id}</style>"))
+            event.app.invalidate()
 
         @kb.add("f8")
         def _(event):
@@ -5580,7 +5633,8 @@ class ISAA_Host:
                 "switch": {},
                 "list": None,
                 "new": None,
-                "show": None,
+                "show": {"len":None},
+                "working": None,
                 "clear": None,
             },
             "/task": {
@@ -5694,6 +5748,7 @@ class ISAA_Host:
             audio_recording=self._audio_recording,
             audio_processing=self._was_recording_is_prossesing_audio,
             overlay_open=self._overlay is not None,
+            set_interval=self.set_dynamic_interval,
         )
 
     def _get_keybinding_indicator(self) -> str:
@@ -6041,6 +6096,7 @@ class ISAA_Host:
         print_box_content("/session new                                  - Create new session", "")
         print_box_content("/session show [n]                             - Show last n messages (default 10)", "")
         print_box_content("/session clear                                - Clear current session history", "")
+        print_box_content("/session working                              - Show working history", "")
 
         print_separator()
 
@@ -6716,49 +6772,17 @@ class ISAA_Host:
     async def _cmd_session(self, args: list[str]):
         """Handle /session commands."""
         if not args:
-            print_status("Usage: /session <list|switch|new|clear|show>", "warning")
+            print_status("Usage: /session <list|switch|new|clear|show|working>", "warning")
             return
 
-        action = args[0]
-        if action == "clear":
-            try:
-                agent = await self.isaa_tools.get_agent(self.active_agent_name)
-                session = agent.session_manager.get(self.active_session_id)
-
-                if not session:
-                    print_status("No active session found.", "error")
-                    return
-            except Exception as e:
-                print_status(f"Error accessing session: {e}", "error")
-                return
-            session.clear_history()
-            # If the session has a persistence layer, ensure it saves
-            self._save_state()
-            print_status(f"History cleared for session '{self.active_session_id}'.", "success")
-
-        elif action == "show":
-            limit = 10
-            if len(args) > 1 and args[1].isdigit():
-                limit = int(args[1])
-            try:
-                agent = await self.isaa_tools.get_agent(self.active_agent_name)
-                session = agent.session_manager.get(self.active_session_id)
-
-                if not session:
-                    print_status("No active session found.", "error")
-                    return
-            except Exception as e:
-                print_status(f"Error accessing session: {e}", "error")
-                return
-            history = session.get_history(last_n=limit)
-
-            if not history:
+        def show_history(_history):
+            if not _history:
                 print_status("History is empty.", "info")
                 return
 
-            print_box_header(f"History: {self.active_agent_name}@{self.active_session_id} (Last {len(history)})", "💬")
+            print_box_header(f"History: {self.active_agent_name}@{self.active_session_id} (Last {len(_history)})", "💬")
 
-            for msg in history:
+            for msg in _history:
                 role = msg.get("role", "unknown")
                 content = msg.get("content", "")
 
@@ -6796,6 +6820,68 @@ class ISAA_Host:
                     c_print(HTML(""))
 
             print_box_footer()
+
+        action = args[0]
+        if action == "clear":
+            try:
+                agent = await self.isaa_tools.get_agent(self.active_agent_name)
+                session = agent.session_manager.get(self.active_session_id)
+
+                if not session:
+                    print_status("No active session found.", "error")
+                    return
+            except Exception as e:
+                print_status(f"Error accessing session: {e}", "error")
+                return
+            session.clear_history()
+            # If the session has a persistence layer, ensure it saves
+            self._save_state()
+            print_status(f"History cleared for session '{self.active_session_id}'.", "success")
+        elif action == "working":
+            agent = await self.isaa_tools.get_agent(self.active_agent_name)
+            run_id = None
+            if self._focused_task_id and self._focused_task_id is self.all_executions:
+                run_id = self.all_executions[self._focused_task_id].run_id
+
+            elif self.all_executions:
+                run_id = list(self.all_executions.values())[-1].run_id
+            else:
+                print_status("No run id found | run agent first", "error")
+                return
+
+            engine = agent._execution_engine_cache
+            ctx = None
+            if not engine:
+                print_status("No execution found", "warning")
+                return
+
+            ctx = engine.get_execution(run_id)
+
+            if not ctx and engine._active_executions:
+                ctx = list(engine._active_executions.values())[-1]
+
+            if not ctx:
+                print_status("No working context found", "info")
+
+            history = ctx.working_history
+            show_history(history)
+
+        elif action == "show":
+            limit = 10
+            if len(args) > 1 and args[1].isdigit():
+                limit = int(args[1])
+            try:
+                agent = await self.isaa_tools.get_agent(self.active_agent_name)
+                session = agent.session_manager.get(self.active_session_id)
+
+                if not session:
+                    print_status("No active session found.", "error")
+                    return
+            except Exception as e:
+                print_status(f"Error accessing session: {e}", "error")
+                return
+            history = session.get_history(last_n=limit)
+            show_history(history)
 
         elif action == "list":
             try:
@@ -7283,7 +7369,7 @@ class ISAA_Host:
                 )
 
                 c_print(HTML(
-                    f"<style fg=\\'#67e8f9\\'>"
+                    f"<style fg='#67e8f9'>"
                     f"  ◎ dreamer gestartet → {task_id}</style>"
                 ))
 
@@ -8288,7 +8374,7 @@ class ISAA_Host:
         print_box_header(
             f"VFS Structure: {self.active_agent_name}@{self.active_session_id}", "📂"
         )
-        print_code_block(session.vfs.file_tree_string(), "markdown")
+        print_code_block(session.vfs.file_tree_string(max_depth=4), "markdown")
 
 
     async def _vfs_show_file(self, session, filename: str):
@@ -9780,22 +9866,33 @@ class ISAA_Host:
                 stats = {"HEALTHY": 0, "GUARANTEED": 0, "DEGRADED": 0,
                          "FAILED": 0, "SKIPPED": 0}
                 failed_list, degraded_list = [], []
+                skipped_list, healthy_list = [], []
 
                 for name, r in results.items():
                     s = r.status
                     stats[s] = stats.get(s, 0) + 1
                     if s == "FAILED":   failed_list.append((name, r.error))
+                    if s == "SKIPPED":   skipped_list.append(name)
+                    if s == "HEALTHY":   healthy_list.append(name)
                     if s == "DEGRADED": degraded_list.append((name, r.contract_violations))
 
                 print_box_header("Health-Check Results", "🩺")
-                print_box_content(
-                    f"<style fg='{C['green']}'>✓ {stats['HEALTHY']} healthy</style>  "
-                    f"<style fg='{C['teal']}'>✓ {stats['GUARANTEED']} guaranteed</style>  "
-                    f"<style fg='{C['amber']}'>⚠ {stats['DEGRADED']} degraded</style>  "
-                    f"<style fg='{C['red']}'>✗ {stats['FAILED']} failed</style>  "
-                    f"<style fg='{C['dim']}'>– {stats['SKIPPED']} skipped</style>",
-                    "info"
-                )
+                print_box_content(f"{stats['HEALTHY']} healthy", style="success")
+                print_box_content(f"{stats['GUARANTEED']} guaranteed",
+                                  style="success")  # Mapping checkmark to success style
+                print_box_content(f"{stats['DEGRADED']} degraded", style="warning")
+                print_box_content(f"{stats['FAILED']} failed", style="error")
+                print_box_content(f"{stats['SKIPPED']} skipped", style="")
+
+                if healthy_list:
+                    print_separator()
+                    for name in healthy_list:
+                        print_box_content(f"{name}  →  HEALTHY", "error")
+
+                if skipped_list:
+                    print_separator()
+                    for name in skipped_list:
+                        print_box_content(f"{name}  →  SKIPPED", "error")
 
                 if failed_list:
                     print_separator()
