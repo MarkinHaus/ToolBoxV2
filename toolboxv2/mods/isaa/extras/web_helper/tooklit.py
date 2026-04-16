@@ -1561,8 +1561,9 @@ class PlaywrightProxy:
 
     # ── Tool Calls ──
 
-    def call_tool(self, name: str, **kwargs) -> Any:
+    def call_tool(self, tool_name: str, **kwargs) -> Any:
         """Thread-safe synchroner Tool-Call."""
+        name = tool_name
         with self._lock:
             self._counter += 1
             req_id = self._counter
@@ -1592,7 +1593,8 @@ class PlaywrightProxy:
 
             def _make_fn(tool_name: str):
                 def fn(**kw):
-                    return self.call_tool(tool_name, **kw)
+                    print("AGRNT PW:", kw)
+                    return self.call_tool(tool_name=tool_name, **kw)
                 fn.__name__ = tool_name
                 fn.__doc__ = meta.get("description", "")
                 return fn

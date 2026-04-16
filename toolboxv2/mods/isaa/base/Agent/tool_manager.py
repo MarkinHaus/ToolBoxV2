@@ -1112,7 +1112,8 @@ class ToolManager:
                 execution_time_ms=exec_ms,
                 result_preview=result_preview
             )
-
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             exec_ms = (time.time() - start) * 1000
             entry.health_status = "FAILED"

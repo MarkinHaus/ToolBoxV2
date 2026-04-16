@@ -315,13 +315,9 @@ class _FeatureEnableTestBase(_FeatureTestBase):
         if activate is None:
             self.skipTest("Keine activation_f")
 
-        # SYSTEMATISCHER FIX:
-        # Wir täuschen vor, dass eine echte interaktive Konsole existiert.
-        # Dies verhindert, dass Tools abstürzen, wenn sie headless getestet werden.
         with patch("sys.stdout.isatty", return_value=True), \
             patch("sys.stderr.isatty", return_value=True), \
             patch("sys.stdin.isatty", return_value=True):
-
             try:
                 result = activate(self.agent)
                 if asyncio.iscoroutine(result):
@@ -329,17 +325,7 @@ class _FeatureEnableTestBase(_FeatureTestBase):
             except (ImportError, ModuleNotFoundError) as e:
                 self.skipTest(f"Import fehlt: {e}")
             except Exception as e:
-                # Falls es tiefere Windows-API-Aufrufe sind, fangen wir sie als
-                # harmlosen Skip auf, anstatt den Test Runner crashen zu lassen.
                 self.skipTest(f"Enable failed (externe Abhängigkeit): {e}")
-        try:
-            result = activate(self.agent)
-            if asyncio.iscoroutine(result):
-                asyncio.get_event_loop().run_until_complete(result)
-        except (ImportError, ModuleNotFoundError) as e:
-            self.skipTest(f"Import fehlt: {e}")
-        except Exception as e:
-            self.skipTest(f"Enable failed (externe Abhängigkeit): {e}")
 
     def test_F_enable_calls_add_tools(self):
         self._skip_if_error()
@@ -394,6 +380,59 @@ class _FeatureEnableTestBase(_FeatureTestBase):
             pass
         self.agent.remove_tools.assert_called()
 
+    def _ensure_real_tool_manager(self):
+        """
+        Ersetzt den Mock tool_manager durch einen echten ToolManager,
+        falls verfügbar. Skippt sonst den Test.
+        Tools die via agent.add_tools(...) oder tool_manager.register_tool(...)
+        registriert wurden, werden übernommen.
+        """
+        from unittest.mock import MagicMock
+
+        tm = getattr(self.agent, "tool_manager", None)
+        if tm is not None and not isinstance(tm, MagicMock):
+            return tm  # schon echt
+
+        try:
+            from toolboxv2.mods.isaa.base.Agent.tool_manager import ToolManager
+        except ImportError as e:
+            self.skipTest(f"ToolManager nicht importierbar: {e}")
+
+        real_tm = ToolManager()
+
+        # Übernehme Tools aus dem Mock (falls add_tools / register_tool aufgerufen wurden)
+        registered = getattr(self.agent, "_registered_tools", []) or []
+        for t in registered:
+            try:
+                real_tm.register_tool(
+                    name=t["name"],
+                    func=t.get("tool_func"),
+                    meta=t,
+                )
+            except Exception:
+                continue
+
+        self.agent.tool_manager = real_tm
+        return real_tm
+
+    async def _run_single_health_check(self, tool_name, timeout=10.0):
+        """Führt health_check_single mit Timeout aus und returned das Result oder None bei Timeout."""
+        tm = self.agent.tool_manager
+        task = asyncio.create_task(tm.health_check_single(tool_name))
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except asyncio.TimeoutError:
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=0.5)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                pass
+            return None
+
+    def _health_check(self, tool_name, timeout=10.0):
+        """Sync-Wrapper: liefert health_result oder None (Timeout)."""
+        coro = self._run_single_health_check(tool_name, timeout=timeout)
+        return asyncio.get_event_loop().run_until_complete(coro)
 
 # =============================================================================
 # Feature-Klassen
@@ -541,7 +580,7 @@ class TestAutofixFeature(_FeatureEnableTestBase):
 
 
 class TestDesktopAutoFeatureLive(_FeatureEnableTestBase):
-
+    FEATURE_NAME = "desktop_auto"
     def setUp(self):
         super().setUp()
         # Initialisiere das Feature
@@ -692,43 +731,50 @@ class TestSessionToolsLive(unittest.IsolatedAsyncioTestCase):
             "vfs_shell muss nach init_session_tools registriert sein")
 
     async def test_03_per_tool_subtests(self):
-        """
-        Jedes Tool wird einzeln getestet.
-        Status wird ausgegeben, FAILED lässt subTest scheitern.
-        """
         from toolboxv2.mods.isaa.base.Agent.tool_manager import ToolHealthResult
-        import time
+        import sys
 
         entries = self.tm.get_all()
-        print(f"\n  Session-Tools Health Check ({len(entries)} tools):\n")
+        print(f"\n  Session-Tools Health Check ({len(entries)} tools):\n", flush=True)
 
         icons = {
-            "HEALTHY":     "✅",
-            "GUARANTEED":  "🔒",
-            "DEGRADED":    "⚠️ ",
-            "FAILED":      "❌",
-            "SKIPPED":     "⏭️ ",
-            "NO_FUNCTION": "🔌",
+            "HEALTHY": "✅", "GUARANTEED": "🔒", "DEGRADED": "⚠️ ",
+            "FAILED": "❌", "SKIPPED": "⏭️ ", "NO_FUNCTION": "🔌",
         }
 
         for entry in sorted(entries, key=lambda e: e.name):
+            # Live-Marker VOR dem Call — so siehst du welches Tool hängt
+            print(f"  → testing {entry.name} ...", end="", flush=True)
+
             with self.subTest(tool=entry.name):
-                result: ToolHealthResult = await self.tm.health_check_single(entry.name)
+                task = asyncio.create_task(self.tm.health_check_single(entry.name))
+                try:
+                    result: ToolHealthResult = await asyncio.wait_for(
+                        asyncio.shield(task), timeout=5.0
+                    )
+                except asyncio.TimeoutError:
+                    task.cancel()
+                    try:
+                        await asyncio.wait_for(task, timeout=0.5)
+                    except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                        pass
+                    print(f"\r  ⏱️  {entry.name:<45} TIMEOUT (>5s){' ' * 20}", flush=True)
+                    self.fail(f"Tool '{entry.name}' TIMEOUT")
+                    continue
 
                 icon = icons.get(result.status, "?")
-                line = f"  {icon} {entry.name:<45} {result.status}"
+                line = f"\r  {icon} {entry.name:<45} {result.status}"
                 if result.execution_time_ms > 0:
                     line += f"  ({result.execution_time_ms:.1f}ms)"
+                line += " " * 20  # overwrite "testing..."
                 if result.error and result.status not in ("SKIPPED", "NO_FUNCTION", "GUARANTEED"):
-                    line += f"\n       └─ {result.error[:100]}"
+                    line += f"\n       └─ {result.error}"
                 if result.contract_violations:
                     line += f"\n       └─ violations: {result.contract_violations}"
-                print(line)
+                print(line, flush=True)
 
-                self.assertNotEqual(
-                    result.status, "FAILED",
-                    f"Tool '{entry.name}' FAILED: {result.error}"
-                )
+                self.assertNotEqual(result.status, "FAILED",
+                                    f"Tool '{entry.name}' FAILED: {result.error}")
 
     async def test_04_agent_tool_test_registered(self):
         self.assertTrue(
@@ -796,5 +842,390 @@ class TestSessionToolsLive(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(total, 0)
 
 
+class TestCodeExecutorFeatureLive(_FeatureEnableTestBase):
+
+    def setUp(self):
+        self.FEATURE_NAME = "coder"
+        super().setUp()
+
+        # Simuliere einen Agent, der über tool_manager verfügt.
+        # Wichtig: Wir übergeben docker=True, damit beide Tools für den Test
+        # geladen und überprüft werden.
+        from toolboxv2.mods.isaa.base.Agent.executors import register_code_exec_tools
+        self.registered_tools = register_code_exec_tools(self.agent, docker=True)
+
+    def test_tool_health_checks(self):
+        """Validiert alle Tools im Code-Executor Feature durch den Health-Manager"""
+
+        for tool_def in self.registered_tools:
+            tool_name = tool_def["name"]
+
+            with self.subTest(tool=tool_name):
+                # Wenn das Tool kein guaranteed_healthy hat, muss es live_test_inputs haben
+                is_guaranteed = tool_def.get("flags", {}).get("guaranteed_healthy", False)
+                if not is_guaranteed:
+                    self.assertIn("live_test_inputs", tool_def,
+                                  f"Tool {tool_name} hat weder live_test_inputs noch guaranteed_healthy!")
+
+                # Führe den (ggf. asynchronen) Health-Check aus
+                health_result = self.agent.tool_manager.health_check_single(tool_name)
+
+                # Health-Check auswerten
+                self.assertIn(health_result.status, ["HEALTHY", "WARNING"],
+                              f"Tool {tool_name} ist fehlgeschlagen!\n"
+                              f"Grund: {health_result.error_message}\n"
+                              f"Hint: {health_result.contract.get('semantic_check_hint')}")
+
+                # Spezifische Contract-Checks für den Live-Test (LocalCodeExecutor)
+                if tool_name == "exec_code" and health_result.status == "HEALTHY":
+                    self.assertIsInstance(health_result.last_output, dict)
+                    self.assertTrue(health_result.last_output.get("success"),
+                                    "Die Code-Execution sollte erfolgreich gewesen sein.")
+                    self.assertIn("health_check_ok", health_result.last_output.get("output", ""),
+                                  "Der Output entsprach nicht dem erwarteten Print-Statement des Live-Tests.")
+
+class TestChainToolsFeatureLive(_FeatureEnableTestBase):
+
+    def setUp(self):
+        self.FEATURE_NAME = "chain"
+        super().setUp()
+
+        # Tools initialisieren
+        # Die Mock-Umgebung stellt sicher, dass get_app().data_dir in einem sicheren Test-Ordner liegt.
+        from toolboxv2.mods.isaa.base.chain.chain_tools import create_chain_tools
+        self.chain_tools = create_chain_tools(self.agent)
+
+        # Tools in den Agenten/ToolManager registrieren
+        for tool_def in self.chain_tools:
+            self.agent.tool_manager.register_tool(
+                name=tool_def["name"],
+                func=tool_def["tool_func"],
+                meta=tool_def
+            )
+
+    def test_tool_health_checks(self):
+        """Führt automatische Health-Checks für das Agent-Driven Chain System aus"""
+        self._ensure_real_tool_manager()
+
+        # Chain-Tools neu registrieren falls Mock überschrieben wurde
+        for tool_def in self.chain_tools:
+            try:
+                self.agent.tool_manager.register_tool(
+                    name=tool_def["name"],
+                    func=tool_def["tool_func"],
+                    meta=tool_def,
+                )
+            except Exception:
+                pass
+
+        for tool_def in self.chain_tools:
+            tool_name = tool_def["name"]
+
+            with self.subTest(tool=tool_name):
+                self.assertIn("live_test_inputs", tool_def,
+                              f"Tool {tool_name} hat keine live_test_inputs definiert!")
+
+                health_result = self._health_check(tool_name)
+                if health_result is None:
+                    self.fail(f"Tool '{tool_name}' TIMEOUT (>10s)")
+
+                self.assertIn(health_result.status, ["HEALTHY", "WARNING"],
+                              f"Tool {tool_name} ist fehlgeschlagen!\n"
+                              f"Fehler: {getattr(health_result, 'error_message', None)}\n"
+                              f"Hint: {health_result.contract.get('semantic_check_hint') if getattr(health_result, 'contract', None) else None}")
+
+                output = str(health_result.last_output).lower()
+
+                if tool_name == "create_validate_chain":
+                    self.assertIn("erstellt", output)
+                    self.assertIn("valid", output.upper())
+                elif tool_name == "run_chain":
+                    self.assertIn("nicht gefunden", output)
+                elif tool_name == "list_auto_get_fitting":
+                    self.assertTrue(
+                        "gespeicherte chains" in output or "keine chains" in output,
+                        "Listen-Output entspricht nicht dem Standardformat"
+                    )
+
+
+class TestCoderToolsetFeatureLive(_FeatureEnableTestBase):
+
+    def setUp(self):
+
+        self.FEATURE_NAME = "coder"
+        super().setUp()
+        from toolboxv2.mods.isaa.CodingAgent.coder_toolset import coder_register_flow_tools
+        # Tools und CoderPool initialisieren (Root ist hier ".", was den Test-Ordner repräsentiert)
+        self.coder_pool, self.coder_tools = coder_register_flow_tools(self.agent, project_root=".")
+
+        # Tools in den Agenten/ToolManager laden
+        for tool_def in self.coder_tools:
+            self.agent.tool_manager.register_tool(
+                name=tool_def["name"],
+                func=tool_def["tool_func"],
+                meta=tool_def
+            )
+
+    def test_tool_health_checks(self):
+        """Validiert das FlowAgent ↔ CoderAgent Toolset durch den Health-Manager"""
+        self._ensure_real_tool_manager()
+
+        for tool_def in self.coder_tools:
+            try:
+                self.agent.tool_manager.register_tool(
+                    name=tool_def["name"],
+                    func=tool_def["tool_func"],
+                    meta=tool_def,
+                )
+            except Exception:
+                pass
+
+        for tool_def in self.coder_tools:
+            tool_name = tool_def["name"]
+
+            with self.subTest(tool=tool_name):
+                is_guaranteed = tool_def.get("flags", {}).get("guaranteed_healthy", False)
+                if not is_guaranteed:
+                    self.assertIn("live_test_inputs", tool_def,
+                                  f"Tool {tool_name} hat weder live_test_inputs noch guaranteed_healthy!")
+
+                health_result = self._health_check(tool_name)
+                if health_result is None:
+                    self.fail(f"Tool '{tool_name}' TIMEOUT (>10s)")
+
+                self.assertIn(health_result.status, ["HEALTHY", "WARNING"],
+                              f"Tool {tool_name} ist fehlgeschlagen!\n"
+                              f"Fehler: {getattr(health_result, 'error_message', None)}\n"
+                              f"Hint: {health_result.contract.get('semantic_check_hint') if getattr(health_result, 'contract', None) else None}")
+
+                if not is_guaranteed and health_result.status == "HEALTHY":
+                    out = health_result.last_output
+
+                    if tool_name == "analyze_codebase":
+                        self.assertIn("tree", out)
+                        self.assertIn("total_files", out)
+                    elif tool_name in ["interact", "steer"]:
+                        self.assertFalse(out, f"{tool_name} sollte False bei Dummy-ID zurückgeben")
+                    elif tool_name in ["validate_worktree", "accept"]:
+                        self.assertIsInstance(out, dict)
+                        self.assertIn("error", out, f"{tool_name} sollte bei Dummy-ID eine Fehlermeldung werfen")
+                        self.assertEqual(out["error"], "unknown coder_id")
+                    elif tool_name == "observe":
+                        self.assertIsInstance(out, dict, "Observe muss ein Dictionary zurückgeben.")
+
+
+class TestDocsFeatureLive(_FeatureEnableTestBase):
+
+    def setUp(self):
+        self.FEATURE_NAME = "docs"
+        super().setUp()
+
+        # ==========================================
+        # DER TRICK: Extraktion via Dummy FeatureManager
+        # ==========================================
+        self.feature_callbacks = {}
+
+        class DummyFM:
+            def add_feature(inner_self, name, activation_f=None, deactivation_f=None):
+                self.feature_callbacks[name] = {
+                    "enable": activation_f,
+                    "disable": deactivation_f
+                }
+
+        fm = DummyFM()
+
+        # Loader-Funktion aufrufen (füllt self.feature_callbacks["docs"])
+        from toolboxv2.flows.icli import load_docs_feature
+        load_docs_feature(fm)
+
+        # Falls der Mock-Agent in _FeatureEnableTestBase kein 'add_tools' hat,
+        # leiten wir es direkt an den tool_manager weiter:
+        if not hasattr(self.agent, "add_tools"):
+            def mock_add_tools(tools):
+                for t in tools:
+                    self.agent.tool_manager.register_tool(
+                        name=t["name"],
+                        func=t["tool_func"],
+                        meta=t
+                    )
+
+            self.agent.add_tools = mock_add_tools
+
+        # Feature manuell enablen (Achtung: Die enable-Funktion ist hier ASYNC!)
+        enable_func = self.feature_callbacks["docs"]["enable"]
+        enable_coro = enable_func(self.agent)
+
+        if asyncio.iscoroutine(enable_coro):
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(enable_coro)
+
+        # Tools aus dem Agent extrahieren, die zum docs feature gehören
+        self.doc_tools = [
+            t for name, t in self.agent.tool_manager._registry.items()
+            if name.startswith("docs_") or name == "get_task_context"
+        ]
+
+    def test_tool_health_checks(self):
+        """Validiert das Documentation System Feature durch den Health-Manager"""
+        self._ensure_real_tool_manager()
+
+        # Tools neu extrahieren nach realem tool_manager
+        doc_tool_names = [
+            name for name in self.agent.tool_manager._registry.keys()
+            if name.startswith("docs_") or name == "get_task_context"
+        ]
+
+        self.assertTrue(len(doc_tool_names) > 0, "Docs Tools wurden nicht geladen!")
+
+        for tool_name in doc_tool_names:
+            with self.subTest(tool=tool_name):
+                entry = self.agent.tool_manager._registry[tool_name]
+                tool_meta = getattr(entry, "meta", {}) or {}
+
+                self.assertIn("live_test_inputs", tool_meta,
+                              f"Tool {tool_name} hat keine live_test_inputs!")
+
+                health_result = self._health_check(tool_name)
+                if health_result is None:
+                    self.fail(f"Tool '{tool_name}' TIMEOUT (>10s)")
+
+                self.assertIn(health_result.status, ["HEALTHY", "WARNING"],
+                              f"Tool {tool_name} ist fehlgeschlagen!\n"
+                              f"Fehler: {getattr(health_result, 'error_message', None)}\n"
+                              f"Hint: {health_result.contract.get('semantic_check_hint') if getattr(health_result, 'contract', None) else None}")
+
+                out = health_result.last_output
+                self.assertIsInstance(out, dict, "Alle Docs Tools müssen ein Dict zurückgeben.")
+
+                if tool_name == "docs_writer":
+                    self.assertIn("error", out)
+                elif tool_name == "docs_reader":
+                    self.assertIn("count", out)
+                elif tool_name == "get_task_context":
+                    self.assertIn("result", out)
+                    self.assertIn("meta", out)
+                elif tool_name == "docs_init":
+                    self.assertIn("status", out)
+                    self.assertEqual(out["status"], "loaded")
+
+    def tearDown(self):
+        # Feature sauber beenden (die disable-Funktion ist synchron)
+        if "docs" in self.feature_callbacks:
+            self.feature_callbacks["docs"]["disable"](self.agent)
+
+        super().tearDown()
+
+
+class TestAutoAgentsFeaturesLive(_FeatureEnableTestBase):
+
+    def setUp(self):
+        super().setUp()
+
+        # ==========================================
+        # DER TRICK: Extraktion via Dummy FeatureManager
+        # ==========================================
+        self.feature_callbacks = {}
+
+        class DummyFM:
+            def add_feature(inner_self, name, activation_f=None, deactivation_f=None):
+                self.feature_callbacks[name] = {
+                    "enable": activation_f,
+                    "disable": deactivation_f
+                }
+
+        fm = DummyFM()
+        from toolboxv2.flows.icli import (
+            load_autodoc_feature,
+            load_autotest_feature,
+            load_autofix_feature
+        )
+        # Loader-Funktionen aufrufen (füllt self.feature_callbacks)
+        load_autodoc_feature(fm)
+        load_autotest_feature(fm)
+        load_autofix_feature(fm)
+
+        # Falls der Mock-Agent in _FeatureEnableTestBase kein 'add_tools' hat,
+        # leiten wir es direkt an den tool_manager weiter:
+        if not hasattr(self.agent, "add_tools"):
+            def mock_add_tools(tools):
+                for t in tools:
+                    self.agent.tool_manager.register_tool(
+                        name=t["name"],
+                        func=t["tool_func"],
+                        meta=t
+                    )
+
+            self.agent.add_tools = mock_add_tools
+
+        # Features manuell enablen (Tools werden via agent.add_tools registriert)
+        self.feature_callbacks["autodoc"]["enable"](self.agent)
+        self.feature_callbacks["autotest"]["enable"](self.agent)
+        self.feature_callbacks["autofix"]["enable"](self.agent)
+
+        # Tools filtern (wir nutzen prefix 'tb_')
+        self.auto_tools = [
+            name for name in self.agent.tool_manager._registry.keys()
+            if name.startswith("tb_")
+        ]
+
+    def test_tool_health_checks(self):
+        """Validiert AutoDoc, AutoTest und AutoFix durch den Health-Manager"""
+        self._ensure_real_tool_manager()
+
+        auto_tool_names = [
+            name for name in self.agent.tool_manager._registry.keys()
+            if name.startswith("tb_")
+        ]
+
+        self.assertTrue(len(auto_tool_names) > 0, "Die Auto-Tools wurden nicht geladen!")
+
+        for tool_name in auto_tool_names:
+            with self.subTest(tool=tool_name):
+                entry = self.agent.tool_manager._registry[tool_name]
+                tool_def = getattr(entry, "meta", {}) or {}
+
+                is_guaranteed = tool_def.get("flags", {}).get("guaranteed_healthy", False)
+                if not is_guaranteed:
+                    self.assertIn("live_test_inputs", tool_def,
+                                  f"Tool {tool_name} hat weder live_test_inputs noch guaranteed_healthy!")
+
+                health_result = self._health_check(tool_name)
+                if health_result is None:
+                    self.fail(f"Tool '{tool_name}' TIMEOUT (>10s)")
+
+                self.assertIn(health_result.status, ["HEALTHY", "WARNING"],
+                              f"Tool {tool_name} ist fehlgeschlagen!\n"
+                              f"Fehler: {getattr(health_result, 'error_message', None)}\n"
+                              f"Hint: {health_result.contract.get('semantic_check_hint') if getattr(health_result, 'contract', None) else None}")
+
+                if not is_guaranteed and health_result.status == "HEALTHY":
+                    out = health_result.last_output
+
+                    if tool_name in ["tb_fetch_code_for_doc", "tb_write_doc", "tb_analyze_semantics",
+                                     "tb_write_tests", "tb_run_single_test"]:
+                        self.assertIsInstance(out, dict)
+                        self.assertIn("error", out,
+                                      f"{tool_name} sollte bei Negative-Testing mit 'error' antworten.")
+                    elif tool_name == "tb_apply_best_fix":
+                        self.assertIsInstance(out, str)
+                        self.assertIn("ERROR", out)
+                    elif tool_name == "tb_report_failure":
+                        self.assertIsInstance(out, str)
+                        self.assertIn("AutoFix FAILED", out)
+
+    def tearDown(self):
+        # Features sauber beenden mithilfe der extrahierten 'disable' Closures
+        if "autodoc" in self.feature_callbacks: self.feature_callbacks["autodoc"]["disable"](self.agent)
+        if "autotest" in self.feature_callbacks: self.feature_callbacks["autotest"]["disable"](self.agent)
+        if "autofix" in self.feature_callbacks: self.feature_callbacks["autofix"]["disable"](self.agent)
+
+        super().tearDown()
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+"""
+Ran 141 tests in 80.522s
+
+FAILED (failures=5, skipped=29
+"""

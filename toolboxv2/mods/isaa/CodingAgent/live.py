@@ -351,8 +351,12 @@ class MockIPython:
         # import nest_asyncio
         # nest_asyncio.apply()
         # Set up virtual environment if it doesn't exist
-        with Spinner("Starting virtual environment"):
-            self._setup_venv()
+        marker = self._venv_path / ".tb_venv_ok"
+        if marker.exists():
+            self._setup_venv()  # validiert via marker, ~1ms
+        else:
+            with Spinner("Creating virtual environment"):
+                self._setup_venv()
         self.reset()
 
     def _virtual_open(self, filepath, mode='r', *args, **kwargs):
@@ -385,12 +389,48 @@ class MockIPython:
         return real_file
 
     def _setup_venv(self):
-        """Create virtual environment if it doesn't exist"""
-        if not self._venv_path.exists():
+        """Create virtual environment if it doesn't exist or is broken.
+        Fast-path (~1ms) when a valid venv from the same Python is already there."""
+        marker = self._venv_path / ".tb_venv_ok"
+
+        # Platform-spezifischer Python-Binary-Pfad
+        if sys.platform == "win32":
+            venv_python = self._venv_path / "Scripts" / "python.exe"
+        else:
+            venv_python = self._venv_path / "bin" / "python"
+
+        # Fingerprint: Python-Version + Executable-Pfad.
+        # Wenn sich der Host-Python ändert (z.B. 3.11 → 3.12), bauen wir neu.
+        fingerprint = f"{sys.version_info.major}.{sys.version_info.minor}|{sys.executable}"
+
+        # Fast path: marker existiert, binary existiert, fingerprint passt → fertig
+        if marker.exists() and venv_python.exists():
             try:
-                subprocess.run([sys.executable, "-m", "venv", str(self._venv_path)], check=True)
-            except subprocess.CalledProcessError as e:
-                raise RuntimeError(f"Failed to create virtual environment: {str(e)}")
+                if marker.read_text(encoding="utf-8").strip() == fingerprint:
+                    return
+            except OSError:
+                pass  # marker defekt → rebuild
+
+        # Rebuild: alte (evtl. kaputte) venv entfernen
+        if self._venv_path.exists():
+            shutil.rmtree(self._venv_path, ignore_errors=True)
+
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "venv", "--without-pip", str(self._venv_path)],
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"Failed to create virtual environment: {e.stderr.decode(errors='ignore') if e.stderr else e}"
+            )
+
+        # Marker schreiben — erst NACH erfolgreichem Build
+        try:
+            marker.write_text(fingerprint, encoding="utf-8")
+        except OSError:
+            pass
 
     def _virtual_open(self, filepath, mode='r', *args, **kwargs):
         """Custom open function that uses virtual filesystem"""

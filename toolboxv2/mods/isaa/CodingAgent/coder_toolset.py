@@ -851,6 +851,114 @@ def _inject_send_message(coder, coder_id: str, buffer: MessageBuffer):
 # ═══════════════════════════════════════════════════════════════
 #  REGISTRATION
 # ═══════════════════════════════════════════════════════════════
+_TOOL_HEALTH_EXTENSIONS = {
+    "analyze_codebase": {
+        "live_test_inputs": [
+            {
+                "files_hint": None,
+                "root": "."  # Das aktuelle Verzeichnis lesen ist sicher
+            }
+        ],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": (
+                "Es muss ein Dictionary zurückgegeben werden, das die Keys 'tree' "
+                "und 'total_files' enthält."
+            )
+        },
+        "cleanup_func": None
+    },
+    "refine_task": {
+        # Benötigt einen echten LLM-Aufruf. Um Flakiness und API-Kosten in der CI
+        # zu vermeiden, markieren wir es als garantiert gesund.
+        "flags": {"guaranteed_healthy": True},
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Sollte ein Dict mit 'task', 'scope', 'risks' zurückgeben."
+        }
+    },
+    "spawn_coder": {
+        # Erstellt Hintergrund-Tasks, Git-Worktrees und LLM-Instanzen.
+        # Zu komplex und ressourcenintensiv für flüchtige Health-Checks.
+        "flags": {"guaranteed_healthy": True},
+        "result_contract": {
+            "expected_type": str,
+            "semantic_check_hint": "Sollte eine neu generierte coder_id (String) zurückgeben."
+        }
+    },
+    "interact": {
+        "live_test_inputs": [
+            {
+                # Teste auf nicht-existenten Coder, um den Pool-Lookup zu validieren
+                "coder_id": "_probe_missing_coder_123",
+                "message": "Probe Message",
+                "inject_context": None
+            }
+        ],
+        "result_contract": {
+            "expected_type": bool,
+            "semantic_check_hint": "Muss False zurückgeben, da der Coder nicht existiert."
+        },
+        "cleanup_func": None
+    },
+    "observe": {
+        "live_test_inputs": [{}],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Sollte ein Dictionary mit aktuellen Coder-States zurückgeben (kann leer sein)."
+        },
+        "cleanup_func": None
+    },
+    "steer": {
+        "live_test_inputs": [
+            {
+                "action": "pause",
+                "coder_id": "_probe_missing_coder_123",
+                "reassign_to": None
+            }
+        ],
+        "result_contract": {
+            "expected_type": bool,
+            "semantic_check_hint": "Muss False zurückgeben, da der Ziel-Coder nicht existiert."
+        },
+        "cleanup_func": None
+    },
+    "validate_worktree": {
+        "live_test_inputs": [
+            {
+                "coder_id": "_probe_missing_coder_123",
+                "checks": None
+            }
+        ],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Muss ein Dict mit {'error': 'unknown coder_id'} zurückgeben."
+        },
+        "cleanup_func": None
+    },
+    "accept": {
+        "live_test_inputs": [
+            {
+                "coder_id": "_probe_missing_coder_123",
+                "files": None,
+                "cleanup": False
+            }
+        ],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Muss ein Dict mit {'error': 'unknown coder_id'} zurückgeben."
+        },
+        "cleanup_func": None
+    },
+    "sequential_execute": {
+        # Umfassende Pipeline-Ausführung inkl. Retries und LLM.
+        "flags": {"guaranteed_healthy": True},
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Erwartet ein Dictionary mit 'success', 'summary', 'applied_files' etc."
+        }
+    }
+}
 
 def coder_register_flow_tools(flow_agent, project_root: str, agent: Any = None, config: dict | None = None) -> tuple[
     CoderPool, list[
@@ -866,6 +974,9 @@ def coder_register_flow_tools(flow_agent, project_root: str, agent: Any = None, 
     """Registriert alle 8 FlowAgent-Tools. Gibt CoderPool zurück."""
     pool = CoderPool()
     tools = _make_tools(pool, agent or flow_agent, project_root, config)
+    for tool in tools:
+        if tool["name"] in _TOOL_HEALTH_EXTENSIONS:
+            tool.update(_TOOL_HEALTH_EXTENSIONS[tool["name"]])
     # for t in tools:
     #     flow_agent.add_tool(**t)
     return pool, tools

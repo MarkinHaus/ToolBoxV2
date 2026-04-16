@@ -1124,6 +1124,12 @@ class ExecutionEngine(SubAgentResumeExtension):
         self._active_executions: Dict[str, ExecutionContext] = {}
         self._current_session: 'AgentSessionV2' = None
 
+        # Finalization locks (for background commit after final_answer)
+        self._finalize_locks: Dict[str, asyncio.Lock] = {}  # per session
+        self._skills_stats_lock = asyncio.Lock()  # global (skills shared file)
+        self._persona_stats_lock = asyncio.Lock()  # global (persona shared file)
+        self._pending_finalize_tasks: Dict[str, asyncio.Task] = {}  # run_id → task
+
         # Get or create SkillsManager
         if (
             hasattr(agent.session_manager, "skills_manager")
@@ -1204,6 +1210,11 @@ BEISPIELE:
         if duration > 0.5:  # Alles über 500ms loggen
             get_logger().warning(f"⚠️ PHASE LONG DURATION: {name} took {duration:.2f}s")
 
+    async def wait_all_pending_finalizes(self) -> None:
+        """Wait for all pending finalize tasks (e.g. on shutdown)."""
+        tasks = list(self._pending_finalize_tasks.values())
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
     def _get_memory_instance(self) -> Any:
         """Get memory instance from agent's session manager"""
         try:
@@ -1224,6 +1235,93 @@ BEISPIELE:
         except Exception as e:
             self.live.log(f"Failed to auto-group tools: {e}", logging.WARNING)
 
+    def _get_finalize_lock(self, session_id: str) -> asyncio.Lock:
+        """Lock pro Session für add_message-Ordering."""
+        if session_id not in self._finalize_locks:
+            self._finalize_locks[session_id] = asyncio.Lock()
+        return self._finalize_locks[session_id]
+
+
+    async def _wait_for_pending_finalize(self, session_id: str) -> None:
+        """Warte auf pending finalize der vorherigen Query auf dieser Session.
+
+        Wird am Start von execute/execute_stream aufgerufen, damit
+        Folge-Queries den commit der vorherigen sehen.
+        """
+        lock = self._finalize_locks.get(session_id)
+        if lock is not None and lock.locked():
+            self.live.status_msg = "Waiting for previous finalization"
+            async with lock:
+                pass  # just wait
+
+    async def _finalize_run(
+        self,
+        ctx: ExecutionContext,
+        session,
+        query: str,
+        final_response: str,
+        success: bool,
+        trigger_kw: str | None,
+        trigger_skill: str | None,
+    ) -> None:
+        """Background finalization: log + summary + commit + stats.
+
+        Runs under session-lock so concurrent queries on same session
+        wait for completion.
+        """
+        session_id = ctx.session_id or "default"
+        session_lock = self._get_finalize_lock(session_id)
+
+        async with session_lock:
+            # 1. Commit run (log + LLM summary + session.add_message)
+            try:
+                await self._commit_run_slow(ctx, session, query, final_response, success)
+            except Exception as e:
+                self.live.log(f"[Finalize] commit_run_slow failed: {e}", logging.ERROR)
+
+            # 2. Skills stats (global shared file → global lock)
+            async with self._skills_stats_lock:
+                try:
+                    self.skills_manager.record_matched_skills_usage(
+                        matched_skills=ctx.matched_skills,
+                        success=success,
+                        query=query,
+                        iterations_used=ctx.current_iteration,
+                    )
+                except Exception as e:
+                    self.live.log(f"[Finalize] skills record failed: {e}", logging.ERROR)
+
+            # 3. Persona stats persist (global shared file → global lock)
+            if ctx.active_persona and ctx.active_persona.name != "default":
+                async with self._persona_stats_lock:
+                    try:
+                        await self._persist_persona_stats(session, ctx.active_persona)
+                    except Exception as e:
+                        self.live.log(
+                            f"[Finalize] persona persist failed: {e}", logging.ERROR
+                        )
+
+            # 4. Learning task (already internally bg, schedule after commit)
+            if success:
+                try:
+                    app = get_app()
+                    app.run_bg_task_advanced(
+                        self._background_learning_task,
+                        query=query,
+                        tools_used=ctx.tools_used,
+                        final_response=final_response,
+                        success=success,
+                        matched_skills=ctx.matched_skills,
+                        iterations_used=ctx.current_iteration,
+                    )
+                except Exception as e:
+                    self.live.log(
+                        f"[Finalize] learning schedule failed: {e}", logging.ERROR
+                    )
+
+        # Outside lock: cleanup
+        self._active_executions.pop(ctx.run_id, None)
+        self._pending_finalize_tasks.pop(ctx.run_id, None)
 
     # =========================================================================
     # MAIN EXECUTION LOOP
@@ -1236,6 +1334,7 @@ BEISPIELE:
         max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30),
         ctx: "ExecutionContext | None" = None,
         get_ctx: bool = False,
+        persist_blocking: bool = False,
     ) -> "tuple[str, ExecutionContext] | str":
         """
         Main execution loop.
@@ -1267,7 +1366,6 @@ BEISPIELE:
             result = report.get("report", str(report)) if isinstance(report, dict) else str(report)
             return (result, None) if get_ctx else result
         session = await self.agent.session_manager.get_or_create(session_id)
-
         # Use existing context or create new one
         is_resume = ctx is not None
         if ctx is None:
@@ -1281,6 +1379,7 @@ BEISPIELE:
         ctx.session_id = session_id
         ctx.query = query
 
+        await self._wait_for_pending_finalize(session_id)
         # Initialize SubAgentManager (only if NOT a sub-agent)
         if not self.is_sub_agent and not is_resume:
             self._sub_agent_manager = SubAgentManager(
@@ -1436,6 +1535,7 @@ BEISPIELE:
                 success = False
         if not hasattr(ctx.active_persona, "stats"):
             ctx.active_persona.stats = PersonaStats()
+
         ctx.active_persona.stats.record_use(
             source=ctx.active_persona.source,
             query=query,
@@ -1445,43 +1545,26 @@ BEISPIELE:
             trigger_keyword=trigger_kw,
             trigger_skill=trigger_skill,
         )
-        # 7. Compress and commit to permanent history
-        await self._commit_run(ctx, session, query, final_response, success)
-
-        # 8. Learn from successful runs
-        if success:
-            app = get_app()
-            app.run_bg_task_advanced(
-                self._background_learning_task,
-                query=query,
-                tools_used=ctx.tools_used,
-                final_response=final_response,
-                success=success,
-                matched_skills=ctx.matched_skills,
-                iterations_used=ctx.current_iteration,
-            )
-
-        self.skills_manager.record_matched_skills_usage(
-            matched_skills=ctx.matched_skills,
-            success=success,
-            query=query,
-            iterations_used=ctx.current_iteration,
-        )
-
-        # <<< STATS P3 – Persona stats in VFS persistieren
-        if ctx.active_persona.name != "default":
-            app = get_app()
-            app.run_bg_task_advanced(
-                self._persist_persona_stats,
-                session=session,
-                persona=ctx.active_persona,
-            )
-
-        # Remove from active executions
-        self._active_executions.pop(ctx.run_id, None)
 
         self.live.status_msg = f"done (ok={success}, iters={ctx.current_iteration})"
-        self.live.enter(AgentPhase.DONE, f"Execution [{ctx.run_id}] complete (success={success}, iters={ctx.current_iteration})")
+        self.live.enter(
+            AgentPhase.DONE,
+            f"Execution [{ctx.run_id}] complete "
+            f"(success={success}, iters={ctx.current_iteration})",
+        )
+
+        # Finalize: commit + skills-stats + persona-persist + learning.
+        # Default: background (user bekommt return SOFORT).
+        # persist_blocking=True: await für crash-safety.
+        finalize_coro = self._finalize_run(
+            ctx, session, query, final_response, success,
+            trigger_kw, trigger_skill,
+        )
+        if persist_blocking:
+            await finalize_coro
+        else:
+            task = asyncio.create_task(finalize_coro)
+            self._pending_finalize_tasks[ctx.run_id] = task
 
         if get_ctx:
             return final_response, ctx
@@ -1495,6 +1578,7 @@ BEISPIELE:
         max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30),
         ctx: "ExecutionContext | None" = None,
         model=None,
+        persist_blocking: bool = False,
     ) -> tuple[Callable, ExecutionContext]:
         """
         Initialize execution and return stream generator + context.
@@ -1512,6 +1596,7 @@ BEISPIELE:
         ctx.session_id = session_id
         ctx.query = query
 
+        await self._wait_for_pending_finalize(session_id)
         # Initialize SubAgentManager
         if not self.is_sub_agent and not is_resume:
             self._sub_agent_manager = SubAgentManager(
@@ -2083,39 +2168,29 @@ BEISPIELE:
                 trigger_keyword=trigger_kw,
                 trigger_skill=trigger_skill,
             )
-                # Commit
-            await self._commit_run(ctx, session, query, final_response, success)
 
-            # Learn
-            if success:
-                app = get_app()
-                app.run_bg_task_advanced(
-                    self._background_learning_task,
-                    query=query,
-                    tools_used=ctx.tools_used,
-                    final_response=final_response,
-                    success=success,
-                    matched_skills=ctx.matched_skills,
-                    iterations_used=ctx.current_iteration,
-                )
-
-            self.skills_manager.record_matched_skills_usage(
-                matched_skills=ctx.matched_skills,
-                success=success,
-                query=query,
-                iterations_used=ctx.current_iteration,
-            )
-
-            if ctx.active_persona.name != "default":
-                app = get_app()
-                app.run_bg_task_advanced(
-                    self._persist_persona_stats,
-                    session=session,
-                    persona=ctx.active_persona,
-                )
-
-            self._active_executions.pop(ctx.run_id, None)
+            # Narrator cleanup (billig, muss jetzt)
             self._narrator.on_live_update_callback = None
+
+            # Dezenter Hinweis dass Post-Processing läuft
+            yield enrich({
+                "type": "post_processing",
+                "status_msg": "Saving context",
+            })
+
+            # Finalize: commit + skills + persona + learning.
+            # Default: background (user sieht done SOFORT).
+            # persist_blocking=True: await für crash-safety.
+            finalize_coro = self._finalize_run(
+                ctx, session, query, final_response, success,
+                trigger_kw, trigger_skill,
+            )
+            if persist_blocking:
+                await finalize_coro
+            else:
+                task = asyncio.create_task(finalize_coro)
+                self._pending_finalize_tasks[ctx.run_id] = task
+
             yield enrich(
                 {"type": "done", "success": success, "final_answer": final_response}
             )
@@ -2337,7 +2412,7 @@ BEISPIELE:
             try:
                 kwargs = {}
                 if len(thought) < 1000:
-                    kwargs["model"] = os.getenv("BLITZMODEL", self.agent.amd.fast_model)
+                    kwargs["model"] = os.getenv("BLITZMODEL", self.agent.amd.fast_llm_model)
                 else:
                     kwargs["model_preference"] = "complex" if '?' in thought else 'fast'
                 stream_response = await self.agent.a_run_llm_completion(
@@ -3294,7 +3369,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
 
 *Ursprüngliche Anfrage: {query[:100]}{"..." if len(query) > 100 else ""}*"""
 
-    async def _commit_run(
+    async def _commit_run_slow(
         self,
         ctx: ExecutionContext,
         session,
@@ -3303,7 +3378,10 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         success: bool,
     ):
         """
-        Archiviert den Lauf im VFS und generiert eine LLM-Zusammenfassung.
+        Background-phase commit: log-write + LLM summary + session messages.
+
+        WICHTIG: persona stats + skills stats sind jetzt in _finalize_run
+        zentralisiert (unter globalen Locks). Hier NICHT mehr doppelt.
         """
 
         # 1. Archivierung: Speichere den vollen Verlauf im VFS
@@ -3393,19 +3471,6 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
 
         # Persist persona stats
         if ctx.active_persona:
-
-            if not hasattr(ctx.active_persona, "stats"):
-                ctx.active_persona.stats = PersonaStats()
-
-            ctx.active_persona.stats.record_use(
-                source=ctx.active_persona.source,
-                query=query,
-                success=success,
-                iterations_used=ctx.current_iteration,
-                iterations_budget=ctx.max_iterations,
-                trigger_keyword=getattr(ctx, "persona_trigger_kw", None),
-                trigger_skill=getattr(ctx, "persona_trigger_skill", None),
-            )
             await self._persist_persona_stats(session, ctx.active_persona)
 
         # 3. Permanent Speichern

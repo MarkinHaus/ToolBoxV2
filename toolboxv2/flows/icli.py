@@ -446,8 +446,15 @@ def render_footer_toolbar(
         out.append((bg + fg_dim, " Esc=close\n"))
 
     main_tasks = [(tid, tv) for tid, tv in task_views.items()]
-    shown = main_tasks[::-1][off_set:off_set+5]
-    overflow = len(main_tasks) - len(shown)
+    # Neueste zuerst
+    reversed_tasks = main_tasks[::-1]
+    total = len(reversed_tasks)
+
+    # Offset clampen
+    off_set = max(0, min(off_set, max(0, total - 5)))
+
+    shown = reversed_tasks[off_set:off_set + 5]
+    overflow = total - off_set - len(shown)
 
     for tid, tv in shown:
         _append_task_line(out, tv, tid == focused_id, pad)
@@ -2017,7 +2024,7 @@ class SimpleFeatureManager:
 
 
 # ============================ Feature Definitions ============================
-
+#
 def load_desktop_auto_feature(fm: SimpleFeatureManager):
     def enable_desktop_auto(agent):
         from toolboxv2.mods.isaa.extras.destop_auto import register_enhanced_tools
@@ -2031,7 +2038,6 @@ def load_desktop_auto_feature(fm: SimpleFeatureManager):
         agent.remove_tools(tools)
         print_status("Desktop Automation enabled.", "success")
     fm.add_feature("desktop_auto", activation_f=enable_desktop_auto, deactivation_f=disable_desktop_auto)
-
 
 def load_web_auto_feature(fm):
     from toolboxv2.mods.isaa.extras.web_helper.tooklit import PlaywrightProxy
@@ -2050,7 +2056,7 @@ def load_web_auto_feature(fm):
 
     fm.add_feature("mini_web_auto", activation_f=enable, deactivation_f=disable)
 
-#
+
 def load_full_web_auto_feature(fm):
     from toolboxv2.mods.isaa.extras.web_helper.tooklit import PlaywrightProxy
     proxy = PlaywrightProxy(full=True, headless=True)
@@ -2067,7 +2073,8 @@ def load_full_web_auto_feature(fm):
         print_status("Full Web Automation disabled.", "success")
 
     fm.add_feature("full_web_auto", activation_f=enable, deactivation_f=disable)
-#
+
+
 def load_coder_toolkit(fm):
     from toolboxv2.mods.isaa.CodingAgent.coder_toolset import coder_register_flow_tools
     from toolboxv2 import init_cwd
@@ -2086,7 +2093,7 @@ def load_coder_toolkit(fm):
         print_status("Coder disabled.", "success")
 
     fm.add_feature("coder", activation_f=enable, deactivation_f=disable)
-#
+
 def load_chain_toolkit(fm):
     from toolboxv2.mods.isaa.base.chain.chain_tools import create_chain_tools
     tools_set = [None]
@@ -2129,7 +2136,88 @@ def load_docs_feature(fm):
     """
     docs_system = [None]  # Mutable container for the docs system instance
     docs_tools = [None]   # Mutable container for the tool list
-
+    _TOOL_HEALTH_EXTENSIONS = {
+        "docs_reader": {
+            "live_test_inputs": [
+                {
+                    "query": "_probe_health_check_query",
+                    "max_results": 1
+                }
+            ],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": (
+                    "Das Tool muss ein Dictionary mit 'count' und 'time_ms' (oder 'sections') zurückgeben."
+                )
+            },
+            "cleanup_func": None
+        },
+        "docs_writer": {
+            "live_test_inputs": [
+                {
+                    # Negative Testing: Wir prüfen das Routing und Error-Handling,
+                    # ohne echte Dateien zu schreiben.
+                    "action": "_probe_invalid_action"
+                }
+            ],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": (
+                    "Da die Action ungültig ist, muss ein Dict mit dem Key 'error' "
+                    "und einer entsprechenden Fehlermeldung zurückgegeben werden."
+                )
+            },
+            "cleanup_func": None
+        },
+        "docs_lookup": {
+            "live_test_inputs": [
+                {
+                    "name": "_probe_SystemTest",
+                    "max_results": 1
+                }
+            ],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": "Muss ein Dict mit 'results' (Liste) und 'count' zurückgeben."
+            },
+            "cleanup_func": None
+        },
+        "docs_sync": {
+            "live_test_inputs": [{}],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": "Muss ein Dict mit 'changes_detected' und 'files_updated' zurückgeben."
+            },
+            "cleanup_func": None
+        },
+        "docs_init": {
+            "live_test_inputs": [
+                {
+                    # Wichtig: force_rebuild=False für einen schnellen, sicheren Test!
+                    "force_rebuild": False,
+                    "show_tqdm": False
+                }
+            ],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": "Muss ein Dict mit 'status' (z.B. 'loaded') und 'time_ms' zurückgeben."
+            },
+            "cleanup_func": None
+        },
+        "get_task_context": {
+            "live_test_inputs": [
+                {
+                    "files": [],
+                    "intent": "_probe_health_check_intent"
+                }
+            ],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": "Muss ein Dict mit 'result' und 'meta' zurückgeben."
+            },
+            "cleanup_func": None
+        }
+    }
     async def enable(agent):
         """Enable documentation system and add tools to agent."""
         try:
@@ -2143,7 +2231,7 @@ def load_docs_feature(fm):
                 c_print(HTML(f"<style fg='ansicyan'>📚 Auto-detected docs dir:</style> <style fg='ansigreen'>{docs_dir}</style>"))
             else:
                 # Prompt user for docs directory
-                docs_input = current_dir
+                docs_input = tb_root_dir
                 docs_dir = Path(docs_input).expanduser().resolve()
 
             if not docs_dir.exists():
@@ -2210,6 +2298,10 @@ def load_docs_feature(fm):
                 }
             ]
 
+            for tool in tools:
+                if tool["name"] in _TOOL_HEALTH_EXTENSIONS:
+                    tool.update(_TOOL_HEALTH_EXTENSIONS[tool["name"]])
+
             docs_tools[0] = tools
             agent.add_tools(tools)
 
@@ -2239,6 +2331,42 @@ def load_autodoc_feature(fm):
     from toolboxv2 import get_app, tb_root_dir
     import ast, re
 
+    _TOOL_HEALTH_EXTENSIONS = {
+        # ─── AUTODOC ───
+        "tb_doc_attach_system": {
+            "live_test_inputs": [{"query": ""}],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": "Gibt ein Dict mit status 'ok' oder 'already_attached' zurück."
+            },
+            "cleanup_func": None
+        },
+        "tb_find_tested_symbols": {
+            "live_test_inputs": [{"query": "_probe_missing_symbol"}],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": "Sollte Kandidaten (oder Fehler bei fehlendem Init) als Dict zurückgeben."
+            },
+            "cleanup_func": None
+        },
+        "tb_fetch_code_for_doc": {
+            "live_test_inputs": [{"query": "_probe_missing_element::probe.py"}],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": "Muss ein Dict mit 'error' (not found) zurückgeben."
+            },
+            "cleanup_func": None
+        },
+        "tb_write_doc": {
+            "live_test_inputs": [{"query": "invalid_json_payload_to_prevent_disk_write"}],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": "Muss mit 'error' wegen invalidem JSON fehlschlagen."
+            },
+            "cleanup_func": None
+        },
+    }
+
     tools_set = [None]
 
     def enable(agent):
@@ -2249,6 +2377,7 @@ def load_autodoc_feature(fm):
             Filtert: hat test_* Funktion irgendwo im Repo.
             Gibt zurück: {candidates: [{name, file, type, signature, has_doc}]}
             """
+            import os
             from toolboxv2.utils.extras.mkdocs import DocsSystem
             try:
                 system: DocsSystem = agent._autodoc_system
@@ -2260,33 +2389,81 @@ def load_autodoc_feature(fm):
             undoc = {s["element"]: s for s in raw.get("suggestions", [])
                      if s.get("type") == "missing_docs"}
 
-            # 2. Test-Dateien scannen — welche Namen tauchen in test_* auf
+            if not undoc:
+                return {"candidates": [], "total_undoc": 0, "total_tested": 0}
+
+            # 2. Test-Dateien scannen — mit hartem Pruning + Cap
+            EXCLUDE_DIRS = {
+                ".venv", "venv", "env", ".env",
+                "node_modules", "__pycache__", ".git", ".hg", ".svn",
+                ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox",
+                "build", "dist", ".eggs", "site-packages",
+                ".idea", ".vscode", "htmlcov", ".coverage",
+            }
+            MAX_TEST_FILES = 40
+            MAX_FILE_BYTES = 200_000  # skip riesige Test-Files
+
+            # Nur an den üblichen Stellen suchen statt im ganzen Repo
+            candidate_roots = [
+                tb_root_dir / "tests",
+                tb_root_dir / "test",
+                tb_root_dir / "toolboxv2" / "tests",
+            ]
+            candidate_roots = [p for p in candidate_roots if p.exists()]
+            if not candidate_roots:
+                candidate_roots = [tb_root_dir]  # fallback
+
+            test_files: list[Path] = []
+            for root in candidate_roots:
+                for dirpath, dirnames, filenames in os.walk(root):
+                    # Prune in-place — os.walk betritt gelöschte dirs nicht mehr
+                    dirnames[:] = [d for d in dirnames
+                                   if d not in EXCLUDE_DIRS and not d.startswith(".")]
+                    for fn in filenames:
+                        if fn.endswith(".py") and (fn.startswith("test_") or fn.endswith("_test.py")):
+                            test_files.append(Path(dirpath) / fn)
+                            if len(test_files) >= MAX_TEST_FILES:
+                                break
+                    if len(test_files) >= MAX_TEST_FILES:
+                        break
+                if len(test_files) >= MAX_TEST_FILES:
+                    break
+
+            # Nur Identifier die wir *suchen* — nicht jeden call-Namen sammeln
+            undoc_names = set(undoc.keys())
+            if not undoc_names:
+                return {"candidates": [], "total_undoc": 0, "total_tested": 0}
+
+            # Ein einziges Regex über alle gesuchten Namen → O(bytes) statt O(bytes * names)
+            name_pattern = re.compile(
+                r'\b(' + '|'.join(re.escape(n) for n in undoc_names) + r')\s*\(',
+            )
+
             test_names: set[str] = set()
-            test_roots = list(tb_root_dir.rglob("test_*.py")) + list(tb_root_dir.rglob("*_test.py"))
-            for tf in test_roots[:40]:
+            for tf in test_files:
                 try:
+                    if tf.stat().st_size > MAX_FILE_BYTES:
+                        continue
                     src = tf.read_text(encoding="utf-8", errors="ignore")
-                    # Alle Identifier die getestet werden (call-Namen)
-                    for m in re.finditer(r'\b([A-Za-z_][A-Za-z0-9_]+)\s*\(', src):
+                    for m in name_pattern.finditer(src):
                         test_names.add(m.group(1))
                 except Exception:
-                    pass
+                    continue
 
             # 3. Schnittmenge: undokumentiert UND getestet
+            q = query.lower() if query else ""
             candidates = []
             for name, meta in undoc.items():
-                if name in test_names or (query and query.lower() in name.lower()):
+                if name in test_names or (q and q in name.lower()):
                     candidates.append({
                         "name": name,
                         "file": meta.get("file", ""),
                         "type": meta.get("element_type", ""),
                     })
 
-            # Optional: query filtert zusätzlich
             if query and not candidates:
-                # Fallback: alle undokumentierten die query enthalten
                 for name, meta in undoc.items():
-                    if query.lower() in name.lower():
+                    if q in name.lower():
                         candidates.append({
                             "name": name,
                             "file": meta.get("file", ""),
@@ -2447,6 +2624,10 @@ def load_autodoc_feature(fm):
              ),
              "category": ["autodoc", "docs"]},
         ]
+        # --- HEALTH-CHECK INTEGRATION ---
+        for tool in tools:
+            if tool["name"] in _TOOL_HEALTH_EXTENSIONS:
+                tool.update(_TOOL_HEALTH_EXTENSIONS[tool["name"]])
         agent.add_tools(tools)
         tools_set[0] = tools
 
@@ -2528,7 +2709,33 @@ def load_autotest_feature(fm):
     from toolboxv2.mods.isaa.base.chain.chain_tools import ChainStore, StoredChain
     from toolboxv2 import get_app, tb_root_dir
     import ast, re, textwrap
-
+    _TOOL_HEALTH_EXTENSIONS = {
+        # ─── AUTOTEST ───
+        "tb_analyze_semantics": {
+            "live_test_inputs": [{"query": "_probe_missing_semantics::file.py"}],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": "Gibt Fehler-Dict zurück, da das Element nicht existiert."
+            },
+            "cleanup_func": None
+        },
+        "tb_write_tests": {
+            "live_test_inputs": [{"query": "invalid_json_payload_to_prevent_test_write"}],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": "Muss mit 'error' wegen invalidem JSON fehlschlagen."
+            },
+            "cleanup_func": None
+        },
+        "tb_run_single_test": {
+            "live_test_inputs": [{"query": "tests/test_non_existent_probe_file.py"}],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": "Muss Fehler-Dict (Test file not found) zurückgeben."
+            },
+            "cleanup_func": None
+        },
+    }
     tools_set = [None]
 
     def enable(agent):
@@ -2823,6 +3030,10 @@ def load_autotest_feature(fm):
              ),
              "category": ["autotest", "run"]},
         ]
+        # --- HEALTH-CHECK INTEGRATION ---
+        for tool in tools:
+            if tool["name"] in _TOOL_HEALTH_EXTENSIONS:
+                tool.update(_TOOL_HEALTH_EXTENSIONS[tool["name"]])
         agent.add_tools(tools)
         tools_set[0] = tools
 
@@ -2971,7 +3182,43 @@ def load_autofix_feature(fm):
     from toolboxv2.mods.isaa.CodingAgent.coder import CoderAgent
     from toolboxv2 import get_app, init_cwd
     import subprocess, datetime, shutil
-
+    _TOOL_HEALTH_EXTENSIONS = {
+        # ─── AUTOFIX ───
+        "tb_run_tests": {
+            # Das Ausführen der echten Suite via Subprozess ist zu schwer für einen Health-Check.
+            "flags": {"guaranteed_healthy": True},
+            "result_contract": {"expected_type": dict,
+                                "semantic_check_hint": "Sollte {status, output, error_summary} liefern."}
+        },
+        "tb_coder_fix_a": {
+            "flags": {"guaranteed_healthy": True},  # Erfordert LLM und CoderAgent
+            "result_contract": {"expected_type": str, "semantic_check_hint": "Sollte Fix-Resultat String liefern."}
+        },
+        "tb_coder_fix_b": {
+            "flags": {"guaranteed_healthy": True},  # Erfordert LLM und CoderAgent
+            "result_contract": {"expected_type": str, "semantic_check_hint": "Sollte Fix-Resultat String liefern."}
+        },
+        "tb_apply_best_fix": {
+            "live_test_inputs": [{"query": "APPLY:A"}],
+            "result_contract": {
+                "expected_type": str,
+                "semantic_check_hint": "Muss fehlschlagen ('ERROR: no coder fix available'), da kein Coder im Test existiert."
+            },
+            "cleanup_func": None
+        },
+        "tb_create_pr": {
+            "flags": {"guaranteed_healthy": True},  # Gefährlich: Führt echte Git-Commits und PRs aus!
+            "result_contract": {"expected_type": str, "semantic_check_hint": "Sollte PR-URL String liefern."}
+        },
+        "tb_report_failure": {
+            "live_test_inputs": [{"query": "_probe_failure_reason"}],
+            "result_contract": {
+                "expected_type": str,
+                "semantic_check_hint": "Muss einen String zurückgeben, der den Fehlerbericht enthält."
+            },
+            "cleanup_func": None
+        }
+    }
     tools_set = [None]
     _state: dict = {"coder_a": None, "coder_b": None, "project_path": str(init_cwd)}
 
@@ -3097,6 +3344,10 @@ def load_autofix_feature(fm):
              "description": "Report autofix failure after re-test. Returns human-readable summary.",
              "category": ["autofix"]},
         ]
+        # --- HEALTH-CHECK INTEGRATION ---
+        for tool in tools:
+            if tool["name"] in _TOOL_HEALTH_EXTENSIONS:
+                tool.update(_TOOL_HEALTH_EXTENSIONS[tool["name"]])
         agent.add_tools(tools)
         tools_set[0] = tools
 

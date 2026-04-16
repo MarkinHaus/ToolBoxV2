@@ -1619,6 +1619,8 @@ def iter_files(root: Path, suffixes: Set[str], exclude_dirs: Set[str]):
             pass
         except FileNotFoundError:
             pass
+        except WindowsError:
+            pass
 
 class FileScanner:
     """Fast file discovery with filtering."""

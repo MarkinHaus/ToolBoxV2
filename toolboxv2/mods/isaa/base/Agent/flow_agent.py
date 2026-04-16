@@ -1275,6 +1275,7 @@ class FlowAgent:
         human_online: bool = False,
         max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS",30),
         get_ctx: bool = False,
+        persist_blocking: bool = False,
         **kwargs,
     ) -> str | tuple[str, Any]:
         """
@@ -1325,6 +1326,7 @@ class FlowAgent:
                 max_iterations=max_iterations,
                 ctx=ctx,
                 get_ctx=get_ctx,
+                persist_blocking=persist_blocking,
             )
 
             return result
@@ -1421,6 +1423,7 @@ class FlowAgent:
         human_online: bool = False,
         max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30),
         user_lightning_model: bool | None = None,
+        persist_blocking: bool = False,
         **kwargs,
     ) -> AsyncGenerator[dict, None]:
         """
@@ -1470,7 +1473,8 @@ class FlowAgent:
                 session_id=session_id,
                 max_iterations=max_iterations,
                 ctx=ctx,
-                model=os.getenv("BLITZMODEL") if user_lightning_model else None,
+                model=os.getenv("BLITZMODEL", self.amd.fast_llm_model) if user_lightning_model else None,
+                persist_blocking=persist_blocking,
             )
 
             # Yield all chunks
@@ -1540,6 +1544,11 @@ class FlowAgent:
                 msg = chunk.get("status_msg", "")
                 if msg:
                     yield f"⏳ {msg}...\n"
+
+            elif chunk_type == "post_processing":
+                msg = chunk.get("status_msg", "")
+                if msg:
+                    yield f"\r💾 {msg}...\r"
 
             elif chunk_type == "narrator":
                 # Mini-Flux: Narrator-Gedanken inline, dezent
@@ -3218,7 +3227,11 @@ class FlowAgent:
         """Clean shutdown."""
         self.is_running = False
         print("\nSaving checkpoint...", end="\r")
+        engine = self._get_execution_engine()
+        if engine:
+            await engine.wait_all_pending_finalizes()
         await self.save()
+
         if self.amd.enable_docker:
             await self.session_manager.cleanup_docker_containers()
         await self.session_manager.close_all()

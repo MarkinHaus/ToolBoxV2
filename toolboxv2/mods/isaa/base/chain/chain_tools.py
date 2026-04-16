@@ -1106,6 +1106,65 @@ def generate_chain_id(name: str, dsl: str) -> str:
     raw = f"{name}:{dsl}"
     return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
+_TOOL_HEALTH_EXTENSIONS = {
+    "create_validate_chain": {
+        "live_test_inputs": [
+            {
+                # Wir erstellen eine komplett sichere "Echo" Chain, die nur eine Custom-Funktion aufruft.
+                "name": "_probe_health_chain",
+                "dsl": "def:echo(x) -> str(x)\ndef:echo",
+                "description": "Health check probe chain",
+                "tags": "test,healthcheck"
+            }
+        ],
+        "result_contract": {
+            "expected_type": str,
+            "semantic_check_hint": (
+                "Die Rückgabe muss ein String sein, der die erfolgreiche Erstellung bestätigt "
+                "(sollte 'erstellt' und den Status 'VALID' enthalten, da die Syntax korrekt ist)."
+            )
+        },
+        # Ein echtes Cleanup wäre hier das Löschen aus dem ChainStore, aber im Rahmen
+        # einer Test-Session (die temporäre Ordner nutzt) reicht das Überschreiben der Probe-Chain.
+        "cleanup_func": None
+    },
+    "run_chain": {
+        "live_test_inputs": [
+            {
+                # Wir testen gezielt den Error-Pfad (Suche nach einer Dummy-ID)
+                # Das beweist, dass das Tool aufgerufen wird und der ChainStore antwortet.
+                "name_or_id": "_probe_missing_chain_999",
+                "input_data": "test_input",
+                "accept": False
+            }
+        ],
+        "result_contract": {
+            "expected_type": str,
+            "semantic_check_hint": (
+                "Da nach einer nicht-existenten Chain gesucht wird, MUSS die Rückgabe "
+                "eine Fehlermeldung sein, die besagt, dass die Chain nicht gefunden wurde "
+                "(z.B. 'nicht gefunden')."
+            )
+        },
+        "cleanup_func": None
+    },
+    "list_auto_get_fitting": {
+        "live_test_inputs": [
+            {
+                "task_description": "test search phrase",
+                "show_all": False
+            }
+        ],
+        "result_contract": {
+            "expected_type": str,
+            "semantic_check_hint": (
+                "Das Tool muss einen String zurückgeben, der entweder 'Keine Chains gespeichert' "
+                "oder 'Gespeicherte Chains' enthält."
+            )
+        },
+        "cleanup_func": None
+    }
+}
 
 def create_chain_tools(
     agent: Any,
@@ -1379,7 +1438,7 @@ def create_chain_tools(
 
         return "\n".join(lines)
 
-    return [
+    tools = [
     {
         "tool_func": create_validate_chain,
         "name": "create_validate_chain",
@@ -1467,3 +1526,10 @@ def create_chain_tools(
         }
     }
 ]
+
+    # --- HEALTH-CHECK INTEGRATION ---
+    for tool in tools:
+        if tool["name"] in _TOOL_HEALTH_EXTENSIONS:
+            tool.update(_TOOL_HEALTH_EXTENSIONS[tool["name"]])
+
+    return tools
