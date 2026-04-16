@@ -1297,44 +1297,9 @@ BEISPIELE:
         # Only initialize if not resuming
         trigger_kw, trigger_skill = None, None
         if not is_resume:
-            # 1. Match skills (hybrid: keyword + embedding)
-            try:
-                ctx.matched_skills = await self.skills_manager.match_skills_async(
-                    query, max_results=MAX_PARALLEL_SKILLS
-                )
-            except Exception as _skill_err:
-                self.live.log(
-                    f"[Skills] async match failed ({type(_skill_err).__name__}), "
-                    f"falling back to keyword-only: {_skill_err}",
-                    logging.WARNING,
-                )
-                ctx.matched_skills = self.skills_manager.match_skills(query, max_results=MAX_PARALLEL_SKILLS)
-
-            # 2. Calculate tool relevance scores (once at start, cached)
-            self._calculate_tool_relevance(ctx, query)
-
-            # 3. Preload relevant tools from matched skills
-            self._preload_skill_tools(ctx, query)
-
-            if not self._personas_loaded:
-                self._persona_router.load_learned_personas(session)
-                self._personas_loaded = True
-            # 3b. Route persona based on query + skills + dreamer insights
-            dreamer_insights = getattr(
-                      getattr(self.agent.amd, 'persona', None), '_dream_insights', None)
-            ctx.active_persona, trigger_kw, trigger_skill = self._persona_router.route(
-                      query, ctx.matched_skills, dreamer_insights)
-
-            # Apply persona overrides
-
-            if ctx.active_persona.name != "default":
-                max_iterations = ctx.active_persona.apply_max_iterations(max_iterations)
-                self.live.log(
-                    f"Persona: {ctx.active_persona.name} "
-                    f"(model={ctx.active_persona.model_preference}, "
-                    f"temp={ctx.active_persona.temperature}, "
-                    f"max_iter={max_iterations})"
-                )
+            max_iterations, trigger_kw, trigger_skill = await self._parallel_init(
+                ctx, session, query, max_iterations
+            )
 
             # 4. Build initial messages
             system_prompt = self._build_system_prompt(ctx, session)
@@ -1565,7 +1530,7 @@ BEISPIELE:
                 yield {"type": "done", "success": True, "final_answer": "Dream cycle complete"}
 
             return _dream_stream_wrapper, ctx
-
+        '''
         trigger_kw, trigger_skill = None, None
         if not is_resume:
             try:
@@ -1624,7 +1589,9 @@ BEISPIELE:
         self._narrator.on_init(query)
         self._narrator.schedule_skills_update(query, ctx.working_history, self.skills_manager, ctx=ctx)
         self._narrator.schedule_ruleset_update(ctx.working_history, session, ctx)
-
+        '''
+        # Init-State wird innerhalb des Generators ausgeführt für sofortiges TTFU
+        _init_state = {"trigger_kw": None, "trigger_skill": None, "max_iterations": max_iterations}
         async def stream_generator(ctx: ExecutionContext):
             """Generator that yields chunks during execution"""
             nonlocal session, max_iterations
@@ -1642,25 +1609,79 @@ BEISPIELE:
             # Determine depth/type (simple heuristic or passed param)
             is_sub = self.is_sub_agent
 
+            # === DEFERRED INIT: yields status während teurer Ops ===
+            trigger_kw = _init_state["trigger_kw"]
+            trigger_skill = _init_state["trigger_skill"]
+
+            if not is_resume:
+                # Status sofort raus (vor gather)
+                self.live.status_msg = "Initializing (skills + tools + personas)"
+                yield {
+                    "type": "status",
+                    "status_msg": "Initializing (skills + tools + personas)",
+                    "agent": agent_name,
+                    "iter": 0,
+                }
+                max_iterations, trigger_kw, trigger_skill = await self._parallel_init(
+                    ctx, session, query, max_iterations
+                )
+
+                # 4. Build prompt
+                system_prompt = self._build_system_prompt(ctx, session)
+                history_depth = 2 if self.is_sub_agent else 6
+                permanent_history = session.get_history_for_llm(last_n=history_depth)
+
+                ctx.working_history = [
+                    {"role": "system", "content": system_prompt},
+                    *permanent_history,
+                    {"role": "user", "content": query},
+                ]
+
+            # Live state
+            self.live.run_id = ctx.run_id
+            self.live.max_iterations = max_iterations
+            self.live.t_start = time.time()
+            self.live.skills = [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
+            self.live.tools_loaded = ctx.get_dynamic_tool_names() if ctx.dynamic_tools else []
+            self.live.persona = ctx.active_persona.name
+            self.live.enter(
+                AgentPhase.INIT,
+                f"{'Resume' if is_resume else 'Start'} stream [{ctx.run_id}]",
+            )
+            self._narrator.reset(query)
+            self._narrator.on_init(query)
+            self._narrator.schedule_skills_update(
+                query, ctx.working_history, self.skills_manager, ctx=ctx
+            )
+            self._narrator.schedule_ruleset_update(ctx.working_history, session, ctx)
+
             ctx.max_iterations = max_iterations
 
             # Helper to enrich chunks
             def enrich(chunk):
-                chunk["agent"] = agent_name
-                chunk["iter"] = ctx.current_iteration
-                chunk["max_iter"] = ctx.max_iterations
-                chunk["is_sub"] = is_sub
-                # Token budget info
-                chunk["tokens_used"] = self._calculate_context_load(ctx)
-                chunk["tokens_max"] = self._get_max_context_tokens()
-                chunk["narrator_msg"] = self.live.narrator_msg
-                chunk["status_msg"] = self.live.status_msg
-                # Skills & Persona
-                chunk["skills"] = [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
-                chunk["persona"] = ctx.active_persona.name if ctx.active_persona else "default"
-                chunk["persona_source"] = ctx.active_persona.source if ctx.active_persona else "default"
-                chunk["persona_model"] = ctx.active_persona.model_preference if ctx.active_persona else "fast"
-                chunk["persona_iterations_factor"] = ctx.active_persona.max_iterations_factor
+                chunk.setdefault("agent", agent_name)
+                chunk.setdefault("iter", ctx.current_iteration)
+                chunk.setdefault("max_iter", ctx.max_iterations)
+                chunk.setdefault("is_sub", is_sub)
+                try:
+                    chunk.setdefault("tokens_used", self._calculate_context_load(ctx))
+                except Exception:
+                    chunk.setdefault("tokens_used", 0)
+                chunk.setdefault("tokens_max", self._get_max_context_tokens())
+                chunk.setdefault("narrator_msg", self.live.narrator_msg)
+                chunk.setdefault("status_msg", self.live.status_msg)
+                chunk.setdefault(
+                    "skills",
+                    [s.name for s in ctx.matched_skills] if ctx.matched_skills else [],
+                )
+                persona = ctx.active_persona
+                chunk.setdefault("persona", persona.name if persona else "default")
+                chunk.setdefault("persona_source", persona.source if persona else "default")
+                chunk.setdefault("persona_model", persona.model_preference if persona else "fast")
+                chunk.setdefault(
+                    "persona_iterations_factor",
+                    persona.max_iterations_factor if persona else 1.0,
+                )
                 return chunk
 
             while ctx.current_iteration < ctx.max_iterations:
@@ -1669,7 +1690,16 @@ BEISPIELE:
                 self.live.iteration = ctx.current_iteration
 
                 self._narrator.on_llm_pre_call(ctx.working_history)
-                self.live.enter(AgentPhase.LLM_CALL, f"iter {ctx.current_iteration}/{max_iterations}")
+                self.live.status_msg = f"Thinking (iter {ctx.current_iteration}/{max_iterations})"
+                self.live.enter(
+                    AgentPhase.LLM_CALL,
+                    f"iter {ctx.current_iteration}/{max_iterations}",
+                )
+                # Sofortiges Iteration-Start-Signal (vor LLM-Latenz)
+                yield enrich({
+                    "type": "iteration_start",
+                    "iteration": ctx.current_iteration,
+                })
 
                 # Check pause
                 if ctx.status == "paused":
@@ -2092,6 +2122,75 @@ BEISPIELE:
 
         return stream_generator, ctx
 
+    async def _parallel_init(
+        self,
+        ctx: "ExecutionContext",
+        session: "AgentSessionV2",
+        query: str,
+        max_iterations: int,
+    ) -> tuple[int, str | None, str | None]:
+        """
+        Run heavy init ops in parallel: skill matching, tool relevance,
+        persona loading. Followed by sequential preload + persona routing.
+
+        Returns:
+            (updated_max_iterations, trigger_kw, trigger_skill)
+        """
+
+        async def _match_skills():
+            try:
+                return await self.skills_manager.match_skills_async(
+                    query, max_results=MAX_PARALLEL_SKILLS
+                )
+            except Exception as _skill_err:
+                self.live.log(
+                    f"[Skills] async match failed "
+                    f"({type(_skill_err).__name__}), fallback keyword: "
+                    f"{_skill_err}",
+                    logging.WARNING,
+                )
+                return self.skills_manager.match_skills(
+                    query, max_results=MAX_PARALLEL_SKILLS
+                )
+
+        async def _calc_tool_relevance():
+            await asyncio.to_thread(self._calculate_tool_relevance, ctx, query)
+
+        async def _load_personas():
+            if not self._personas_loaded:
+                await asyncio.to_thread(
+                    self._persona_router.load_learned_personas, session
+                )
+                self._personas_loaded = True
+
+        matched_skills_result, _, _ = await asyncio.gather(
+            _match_skills(),
+            _calc_tool_relevance(),
+            _load_personas(),
+            return_exceptions=False,
+        )
+        ctx.matched_skills = matched_skills_result
+
+        self._preload_skill_tools(ctx, query)
+
+        dreamer_insights = getattr(
+            getattr(self.agent.amd, 'persona', None), '_dream_insights', None
+        )
+        ctx.active_persona, trigger_kw, trigger_skill = self._persona_router.route(
+            query, ctx.matched_skills, dreamer_insights
+        )
+
+        if ctx.active_persona.name != "default":
+            max_iterations = ctx.active_persona.apply_max_iterations(max_iterations)
+            self.live.log(
+                f"Persona: {ctx.active_persona.name} "
+                f"(model={ctx.active_persona.model_preference}, "
+                f"temp={ctx.active_persona.temperature}, "
+                f"max_iter={max_iterations})"
+            )
+
+        return max_iterations, trigger_kw, trigger_skill
+
     def _should_warn_loop(self, ctx: ExecutionContext) -> bool:
         """Check if we should inject a loop warning"""
         if ctx.loop_warning_given:
@@ -2229,13 +2328,21 @@ BEISPIELE:
                 )
 
                 self.live.status_msg = f"Ruleset updated successfully scheduled"
-            except:
+            except Exception as e:
+                print(e)
                 pass
+
+            thought_acc = ""
+
             try:
+                kwargs = {}
+                if len(thought) < 1000:
+                    kwargs["model"] = os.getenv("BLITZMODEL", self.agent.amd.fast_model)
+                else:
+                    kwargs["model_preference"] = "complex" if '?' in thought else 'fast'
                 stream_response = await self.agent.a_run_llm_completion(
                     messages=messages,
-                    model_preference="complex",
-                    max_tokens=450,
+                    max_tokens=2048,
                     stream=True,
                     true_stream=True,
                     with_context=False,
@@ -2244,7 +2351,6 @@ BEISPIELE:
                     stream_response = await stream_response
 
                 # Stream think output — update narrator mock after each paragraph
-                thought_acc = ""
                 chunk_buffer = ""
 
                 # Definiere Trennzeichen, bei denen ein Gedanke "sinnvoll" pausiert
@@ -2285,7 +2391,8 @@ BEISPIELE:
                 thought = thought_acc
                 result = thought
             except Exception as e:
-                result = str(e)
+                result = thought_acc if 'thought_acc' in locals() and thought_acc else str(e)
+                thought = result
             self.live.thought = thought[-200:] if thought else str(result)[:200]
             # Record in AutoFocus
             ctx.auto_focus.record(f_name, f_args, thought)
@@ -2301,13 +2408,13 @@ BEISPIELE:
         # === DISCOVERY TOOLS ===
         elif f_name == "list_tools":
             result = self._tool_list_tools(f_args.get("category"))
-            ctx.auto_focus.record(f_name, f_args, result[:200])
+            ctx.auto_focus.record(f_name, f_args, result)
             ctx.max_iterations += 1
 
         elif f_name == "load_tools":
             tools_input = f_args.get("tools") or f_args.get("names")
             result = await self._tool_load_tools(ctx, tools_input)
-            ctx.auto_focus.record(f_name, f_args, result[:200])
+            ctx.auto_focus.record(f_name, f_args, result)
             ctx.max_iterations += 1
 
         elif f_name == "shift_focus":
@@ -2453,7 +2560,7 @@ BEISPIELE:
                     ctx.add_tool(f_name, 1, "auto-detect-use")
                     result = f"Error: Tool '{f_name}' war noch nicht geladen (auto lodet). Nutze list_tools() und load_tools  () um tools dynamisch zu aktivieren. damit du es fehlerfrei verwenden kannst! Aufgetretener fehler : {e}"
 
-            ctx.auto_focus.record(f_name, f_args, result[:200])
+            ctx.auto_focus.record(f_name, f_args, result)
 
         # Add tool result to working history (if not final_answer)
         if not is_final:
@@ -2688,21 +2795,30 @@ BEISPIELE:
     # =========================================================================
 
     def _calculate_tool_relevance(self, ctx: ExecutionContext, query: str):
-        """Calculate relevance scores for all tools at query start (cached)"""
+        """Calculate relevance scores for all tools at query start (cached).
+
+        Early-exit falls Cache bereits gefüllt (Resume-Szenario).
+        """
+        if ctx.tool_relevance_cache:
+            return
+
         all_tools = self.agent.tool_manager.get_all()
 
+        # Batch: vermeide wiederholte isinstance-Checks
         for tool in all_tools:
-            # Calculate relevance
-            score = self.skills_manager.score_tool_relevance(
-                query=query, tool_name=tool.name, tool_description=tool.description or ""
+            name = tool.name
+            desc = tool.description or ""
+            ctx.tool_relevance_cache[name] = self.skills_manager.score_tool_relevance(
+                query=query, tool_name=name, tool_description=desc
             )
-            ctx.tool_relevance_cache[tool.name] = score
 
-            # Cache categories
-            categories = (
-                tool.category if isinstance(tool.category, list) else [tool.category]
-            )
-            ctx.tool_category_cache[tool.name] = set(c for c in categories if c)
+            raw_cat = tool.category
+            if isinstance(raw_cat, list):
+                ctx.tool_category_cache[name] = {c for c in raw_cat if c}
+            elif raw_cat:
+                ctx.tool_category_cache[name] = {raw_cat}
+            else:
+                ctx.tool_category_cache[name] = set()
 
     def _preload_skill_tools(self, ctx: ExecutionContext, query: str):
         """Preload relevant tools from matched skills"""

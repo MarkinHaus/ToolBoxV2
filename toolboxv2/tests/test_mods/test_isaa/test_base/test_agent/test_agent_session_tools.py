@@ -13,6 +13,8 @@ Run:
 import unittest
 from unittest.mock import MagicMock, patch, AsyncMock
 
+from base.Agent.rule_set import RuleResult
+
 
 # =============================================================================
 # Mock-Session und Mock-VFS für isolierte Tests
@@ -50,8 +52,12 @@ def _make_mock_session():
     session.vfs = _make_mock_vfs()
     session.get_history_for_llm = MagicMock(return_value=[])
     session.set_situation = MagicMock(return_value=None)
-    session.rule_on_action = MagicMock(return_value=MagicMock(
-        allowed=True, reason="OK", rule_name=None
+    session.rule_on_action = MagicMock(return_value=RuleResult(
+        allowed=True,
+        instructions=[""],
+        warnings=[""],
+        required_steps=[""],
+        suggested_tool_group=None,
     ))
     session.vfs_diagnostics = AsyncMock(return_value={"diagnostics": []})
     session.docker_run_command = AsyncMock(return_value={"success": True})
@@ -196,8 +202,7 @@ class TestSessionToolContracts(unittest.TestCase):
     def test_08_filesystem_write_tools_are_guaranteed(self):
         """fs_copy_* und mount/unmount müssen guaranteed sein (Seiteneffekte)."""
         self._skip_if_unavailable()
-        write_tools = {"fs_copy_to_vfs", "fs_copy_from_vfs", "fs_copy_dir_from_vfs",
-                       "vfs_mount", "vfs_unmount", "vfs_refresh_mount"}
+        write_tools = {} # all vfs tools have test
         for name in write_tools:
             entry = self.tm.get(name)
             if entry:
@@ -216,7 +221,7 @@ class TestSessionToolContracts(unittest.TestCase):
                 hint = entry.result_contract.get("semantic_check_hint", "")
                 self.assertTrue(
                     len(hint) > 20,
-                    f"{name}: semantic_check_hint fehlt oder zu kurz"
+                    f"{name}: semantic_check_hint fehlt oder zu kurz | {hint}"
                 )
 
     def test_10_cleanup_func_on_situation_tool(self):

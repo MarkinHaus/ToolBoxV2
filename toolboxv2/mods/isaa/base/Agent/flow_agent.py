@@ -684,8 +684,7 @@ class FlowAgent:
 
             # Edge Case für True-Streaming (wird vom UI-Streaming direkt an Nutzer geleitet)
             if use_stream and true_stream:
-                if use_stream:
-                    llm_kwargs["stream_options"] = {"include_usage": True}
+                llm_kwargs["stream_options"] = {"include_usage": True}
                 return await self.llm_handler.completion_with_rate_limiting(litellm, **llm_kwargs)
 
             # --- AUTO-RESUME SCHLEIFE (bis zu 100x Output Limit!) ---
@@ -1444,21 +1443,26 @@ class FlowAgent:
         self.active_session = session_id
         self.is_running = True
 
+        # TTFU: Sofortiges Status-Signal an UI (vor jeglichem I/O)
+        yield {
+            "type": "status",
+            "status_msg": "Initializing session",
+            "agent": getattr(self.amd, "name", "?"),
+        }
+
         session = await self.session_manager.get_or_create(session_id)
         self.init_session_tools(session)
+
+        # Engine einmalig holen (war vorher doppelt)
+        engine = self._get_execution_engine(human_online=human_online)
 
         # Check for resume
         ctx = None
         if execution_id:
-            engine = self._get_execution_engine(
-                human_online=human_online,
-            )
             ctx = engine.get_execution(execution_id)
 
         try:
-            engine = self._get_execution_engine(
-                human_online=human_online,
-            )
+            yield {"type": "status", "status_msg": "Preparing execution"}
 
             # Get stream generator
             stream_func, ctx = await engine.execute_stream(
@@ -1475,7 +1479,6 @@ class FlowAgent:
 
         except Exception as e:
             import traceback
-
             traceback.print_exc()
             yield {"type": "error", "error": str(e)}
         finally:
@@ -1532,6 +1535,22 @@ class FlowAgent:
 
             elif chunk_type == "error":
                 yield f"\n❌ Fehler: {chunk['error']}\n"
+
+            elif chunk_type == "status":
+                msg = chunk.get("status_msg", "")
+                if msg:
+                    yield f"⏳ {msg}...\n"
+
+            elif chunk_type == "narrator":
+                # Mini-Flux: Narrator-Gedanken inline, dezent
+                nm = chunk.get("narrator_msg", "")
+                if nm:
+                    # \r überschreibt vorherige Narrator-Line im Terminal
+                    yield f"\r💭 {nm[:100]}\r"
+
+            elif chunk_type == "iteration_start":
+                yield f"\n🔄 Iter {chunk.get('iteration', '?')}/{chunk.get('max_iter', '?')}\n"
+
 
             elif chunk_type == "done":
                 status = "✅" if chunk.get("success") else "⚠️"
@@ -1992,7 +2011,12 @@ class FlowAgent:
         flags: dict[str, bool] | None = None,
         live_test_inputs=None,
         cleanup_func=None,
+
         result_contract=None,
+        allow_none: bool = "None",
+        allow_empty_string: bool = "None",
+        expected_type: type = "None" ,
+        semantic_check_hint: str = "None",
         **kwargs,
     ):
         """Register a tool."""
@@ -2014,6 +2038,16 @@ class FlowAgent:
         except Exception:
             pass
 
+        if result_contract is None:
+            result_contract = {}
+            if allow_none != "None":
+                result_contract["allow_none"] = allow_none
+            if allow_empty_string != "None":
+                result_contract["allow_empty_string"] = allow_empty_string
+            if expected_type != "None":
+                result_contract["expected_type"] = expected_type
+            if semantic_check_hint != "None":
+                result_contract["semantic_check_hint"] = semantic_check_hint
         self.tool_manager.register(
             func=tool_func,
             name=name,
@@ -2362,11 +2396,11 @@ class FlowAgent:
                     "allow_empty_string": False,
                     "expected_type": "dict",
                     "semantic_check_hint": (
+                        "Must contain keys: success (bool), stdout (str), stderr (str), returncode (int). "
                         "If success=False then stderr must not be empty. "
-                        "stdout and stderr must both be strings. returncode must be int."
+                        "For 'ls /' on a healthy VFS, stdout must list at least one entry."
                     ),
                 },
-                # ls / hat keine Seiteneffekte → kein cleanup nötig
                 "cleanup_func": None,
             },
 
@@ -2376,11 +2410,11 @@ class FlowAgent:
                     "allow_none": False,
                     "expected_type": "dict",
                     "semantic_check_hint": (
-                        "If success=True, 'content' and 'showing' keys must be present. "
-                        "If success=False, 'error' must be present."
+                        "If success=True, 'content' (str) and 'showing' (str or dict) keys must be present "
+                        "and content must not be empty for a non-empty file. "
+                        "If success=False, 'error' (str, non-empty) must be present."
                     ),
                 },
-                # Datei nach Test wieder schließen
                 "cleanup_func": lambda inputs, result: (
                     session.vfs.files.get(
                         session.vfs._normalize_path(inputs["path"])
@@ -2395,6 +2429,10 @@ class FlowAgent:
                 "result_contract": {
                     "allow_none": False,
                     "expected_type": "list",
+                    "semantic_check_hint": (
+                        "Must return a list (may be empty). Each item should be a dict with at least "
+                        "a 'path' key. For mode='content' entries may additionally contain 'snippet' or 'line'."
+                    ),
                 },
                 "cleanup_func": None,
             },
@@ -2402,22 +2440,30 @@ class FlowAgent:
             # ── FILESYSTEM COPY ───────────────────────────────────────────────────────
 
             "fs_copy_to_vfs": {
-                # Testet mit allowed_dirs blockiert → erwarteter Fehler ist valide
                 "live_test_inputs": [{"local_path": "/nonexistent_probe", "allowed_dirs": ["/tmp"]}],
                 "result_contract": {
                     "allow_none": False,
                     "expected_type": "dict",
+                    "semantic_check_hint": (
+                        "Must contain 'success' (bool). For this probe (nonexistent file blocked by allowed_dirs) "
+                        "success must be False and 'error' (str, non-empty) must be present. "
+                        "A successful call must contain 'vfs_path' (str)."
+                    ),
                 },
                 "cleanup_func": None,
             },
 
             "fs_copy_from_vfs": {
                 "live_test_inputs": [
-                    {"vfs_path": "/system_context.md", "local_path": "/tmp/_vfs_probe_out.md", "allowed_dirs": ["/tmp"],
-                     "overwrite": True}],
+                    {"vfs_path": "/system_context.md", "local_path": "/tmp/_vfs_probe_out.md",
+                     "allowed_dirs": ["/tmp"], "overwrite": True}],
                 "result_contract": {
                     "allow_none": False,
                     "expected_type": "dict",
+                    "semantic_check_hint": (
+                        "Must contain 'success' (bool). If success=True, 'local_path' must be present "
+                        "and point to an existing file on disk. If success=False, 'error' must be non-empty."
+                    ),
                 },
                 "cleanup_func": lambda inputs, result: (
                     __import__("os").unlink("/tmp/_vfs_probe_out.md")
@@ -2427,11 +2473,15 @@ class FlowAgent:
             },
 
             "fs_copy_dir_from_vfs": {
-                # Testet mit nicht-existierendem Verzeichnis — erwartet Fehler-String
                 "live_test_inputs": [{"vfs_path": "/_nonexistent_probe_dir", "local_path": "/tmp/_vfs_dir_probe"}],
                 "result_contract": {
                     "allow_none": False,
                     "expected_type": "str",
+                    "semantic_check_hint": (
+                        "Must return a status string. For this probe (nonexistent directory) the string "
+                        "must indicate failure — contain 'not a directory', 'No files found', or similar. "
+                        "On success, string should start with 'Exported' and include a file count."
+                    ),
                 },
                 "cleanup_func": None,
             },
@@ -2443,6 +2493,10 @@ class FlowAgent:
                 "result_contract": {
                     "allow_none": False,
                     "expected_type": "dict",
+                    "semantic_check_hint": (
+                        "Must contain 'success' (bool). If success=True, 'vfs_path' must equal the requested mount "
+                        "point and the mount must be readonly as requested. If success=False, 'error' must be non-empty."
+                    ),
                 },
                 "cleanup_func": lambda inputs, result: (
                     session.vfs.unmount("/_probe_mount", save_changes=False)
@@ -2452,11 +2506,14 @@ class FlowAgent:
             },
 
             "vfs_unmount": {
-                # Testet mit nicht-gemounteten Pfad — soll graceful scheitern
                 "live_test_inputs": [{"vfs_path": "/_not_mounted_probe"}],
                 "result_contract": {
                     "allow_none": False,
                     "expected_type": "dict",
+                    "semantic_check_hint": (
+                        "Must contain 'success' (bool). For this probe (not-mounted path) success must be False "
+                        "and 'error' must indicate the path is not mounted. Must not raise."
+                    ),
                 },
                 "cleanup_func": None,
             },
@@ -2466,6 +2523,10 @@ class FlowAgent:
                 "result_contract": {
                     "allow_none": False,
                     "expected_type": "dict",
+                    "semantic_check_hint": (
+                        "Must contain 'success' (bool). For this probe (not-mounted path) success must be False "
+                        "and 'error' must be non-empty. Must not raise."
+                    ),
                 },
                 "cleanup_func": None,
             },
@@ -2475,16 +2536,59 @@ class FlowAgent:
                 "result_contract": {
                     "allow_none": False,
                     "expected_type": "dict",
+                    "semantic_check_hint": (
+                        "Must contain 'success' (bool). Should include counters like 'synced' (int) or "
+                        "'errors' (list). Running on a clean VFS must return success=True with synced=0."
+                    ),
                 },
                 "cleanup_func": None,
             },
 
             # ── SHARING ───────────────────────────────────────────────────────────────
-            # Sharing hat inter-session dependencies → guaranteed_healthy
 
-            "vfs_share_create": {"flags": {"guaranteed_healthy": True}},
-            "vfs_share_list": {"flags": {"guaranteed_healthy": True}},
-            "vfs_share_mount": {"flags": {"guaranteed_healthy": True}},
+            "vfs_share_create": {
+                "live_test_inputs": [{"vfs_path": "/", "readonly": True, "expires_hours": 1.0}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "dict",
+                    "semantic_check_hint": (
+                        "Must contain 'success' (bool). If success=True, 'share_id' (str, non-empty) must be present. "
+                        "If success=False, 'error' must be non-empty."
+                    ),
+                },
+                "cleanup_func": lambda inputs, result: (
+                    __import__("toolboxv2.mods.isaa.base.patch.power_vfs", fromlist=["get_sharing_manager"])
+                    .get_sharing_manager().delete_share(result["share_id"], agent_name=self.amd.name, session_id=session.session_id)
+                    if result and result.get("success") and result.get("share_id")
+                    else None
+                ),
+            },
+
+            "vfs_share_list": {
+                "live_test_inputs": [{}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "list",
+                    "semantic_check_hint": (
+                        "Must return a list (may be empty). Each item must be a dict with keys "
+                        "'id' (str), 'path' (str), 'owner' (str)."
+                    ),
+                },
+                "cleanup_func": None,
+            },
+
+            "vfs_share_mount": {
+                "live_test_inputs": [{"share_id": "_nonexistent_probe_share"}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "dict",
+                    "semantic_check_hint": (
+                        "Must contain 'success' (bool). For this probe (nonexistent share_id) success must be False "
+                        "and 'error' must indicate the share was not found. Must not raise."
+                    ),
+                },
+                "cleanup_func": None,
+            },
 
             # ── LSP / DOCKER ──────────────────────────────────────────────────────────
             # Externe Deps → guaranteed_healthy
@@ -2503,6 +2607,10 @@ class FlowAgent:
                 "result_contract": {
                     "allow_none": False,
                     "expected_type": "list",
+                    "semantic_check_hint": (
+                        "Must return a list (may be empty if no history). Each item must be a dict with at least "
+                        "'role' (str) and 'content' (str or list) keys."
+                    ),
                 },
                 "cleanup_func": None,
             },
@@ -2512,6 +2620,11 @@ class FlowAgent:
                 "result_contract": {
                     "allow_none": False,
                     "expected_type": "dict",
+                    "semantic_check_hint": (
+                        "Must contain 'success' (bool, True for valid inputs), 'situation' (str, equal to input) "
+                        "and 'intent' (str, equal to input). The session state must reflect the new situation "
+                        "after the call."
+                    ),
                 },
                 "cleanup_func": lambda inputs, result: (
                     session.set_situation("", "") if result and result.get("success") else None
@@ -2523,6 +2636,10 @@ class FlowAgent:
                 "result_contract": {
                     "allow_none": False,
                     "expected_type": "dict",
+                    "semantic_check_hint": (
+                        "Must contain 'allowed' (bool), 'reason' (dict — serialized RuleResult) and "
+                        "'rule' (str or None, the active instructions)."
+                    ),
                 },
                 "cleanup_func": None,
             },

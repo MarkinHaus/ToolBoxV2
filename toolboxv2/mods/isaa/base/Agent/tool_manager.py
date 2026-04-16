@@ -236,6 +236,16 @@ class ToolManager:
             server_name: For MCP/A2A: the server name
             metadata: Additional metadata
             args_schema: Override args schema string
+            live_test_inputs: list
+            cleanup_func: Callable
+            result_contract: dict
+                # result_contract schema:
+                # {
+                #   "allow_none": bool,            default True
+                #   "allow_empty_string": bool,    default True
+                #   "expected_type": str,          "str"|"dict"|"list"|"int"|"bool"|"float"|"any"
+                #   "semantic_check_hint": str     hint für on-demand LLM-Validator
+                # }
 
         Returns:
             Created ToolEntry

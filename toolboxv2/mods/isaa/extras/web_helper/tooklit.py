@@ -26,6 +26,7 @@ Usage:
 import asyncio
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Callable, Optional
 
 from toolboxv2.mods.isaa.extras.web_helper.web_agent import WebAgent
@@ -1151,6 +1152,16 @@ class WebAgentToolkit:
         if not include_browser_control:
             tools = [t for t in tools if t.category != ToolCategory.BROWSER]
 
+        result_tools = []
+        for t in tools:
+            t_dict = t.to_dict()
+            if t.name in _TOOL_HEALTH_EXTENSIONS:
+                t_dict.update(_TOOL_HEALTH_EXTENSIONS[t.name])
+            else:
+                # Falls wir ein Tool vergessen haben, warnen/fallback generieren
+                t_dict["flags"]["guaranteed_healthy"] = False
+            result_tools.append(t_dict)
+
         return [t.to_dict() for t in tools]
 
     def get_tool_names(self) -> list[str]:
@@ -1186,6 +1197,141 @@ class WebAgentToolkit:
 # CONVENIENCE FUNCTIONS
 # ============================================================================
 
+# ============================================================================
+# HEALTH CHECK EXTENSIONS
+# ============================================================================
+_TOOL_HEALTH_EXTENSIONS = {
+    # --- BROWSER CONTROL ---
+    "browser_start": {
+        "flags": {"guaranteed_healthy": True},  # Stateful, wird vom Lifecycle/Proxy gemanaged
+    },
+    "browser_stop": {
+        "flags": {"guaranteed_healthy": True},
+    },
+    "browser_status": {
+        "live_test_inputs": [{}],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Das Dictionary muss die Keys 'running', 'headless', 'auto_start' und 'keep_open' enthalten."
+        }
+    },
+    "browser_set_headless": {
+        "flags": {"guaranteed_healthy": True},
+    },
+
+    # --- SEARCH ---
+    "web_search": {
+        "live_test_inputs": [{"query": "Python programming", "max_results": 1}],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Muss 'query', 'total', 'engines' und eine Liste 'results' enthalten."
+        }
+    },
+    "search_site": {
+        "live_test_inputs": [{"site": "example.com", "query": "test", "max_results": 1}],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Erwartet Suchergebnisse gefiltert auf eine spezifische Domain."
+        }
+    },
+    "search_files": {
+        "flags": {"guaranteed_healthy": True}, # Kann live zu unerwarteten Downloads/Timeouts führen
+    },
+
+    # --- NAVIGATION ---
+    "goto": {
+        "live_test_inputs": [{"url": "https://example.com", "wait_until": "domcontentloaded"}],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Muss 'url' und 'title' ('Example Domain') der aufgerufenen Seite enthalten."
+        }
+    },
+    "back": {
+        "flags": {"guaranteed_healthy": True}, # Erfordert Historie, im isolierten Test instabil
+    },
+    "refresh": {
+        "flags": {"guaranteed_healthy": True},
+    },
+    "current_url": {
+        "live_test_inputs": [{}],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Muss die aktuelle 'url' und den 'title' des Browsers zurückgeben."
+        }
+    },
+
+    # --- INTERACTION (Alle DOM-abhängigen Tools sind guaranteed_healthy für isolierte Tests) ---
+    "click": {"flags": {"guaranteed_healthy": True}},
+    "type": {"flags": {"guaranteed_healthy": True}},
+    "select": {"flags": {"guaranteed_healthy": True}},
+    "scroll": {"flags": {"guaranteed_healthy": True}},
+    "scroll_to_bottom": {"flags": {"guaranteed_healthy": True}},
+    "wait": {"flags": {"guaranteed_healthy": True}},
+    "hover": {"flags": {"guaranteed_healthy": True}},
+
+    # --- EXTRACTION ---
+    "scrape_url": {
+        "live_test_inputs": [{"url": "https://example.com"}],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Muss strukturierten Markdown-Inhalt (Titel, Links, Meta) der URL zurückgeben."
+        }
+    },
+    "extract": {"flags": {"guaranteed_healthy": True}}, # Benötigt vorherigen goto() Aufruf
+    "extract_text": {"flags": {"guaranteed_healthy": True}},
+    "extract_html": {"flags": {"guaranteed_healthy": True}},
+    "extract_links": {"flags": {"guaranteed_healthy": True}},
+    "extract_attribute": {"flags": {"guaranteed_healthy": True}},
+
+    # --- SESSION ---
+    "session_save": {
+        "live_test_inputs": [{"name": "_probe_test_session"}],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Muss 'status': 'saved' und den 'path' zur erstellten Datei zurückgeben."
+        },
+        "cleanup_func": lambda result, **kwargs: Path(result.get("path", "")).unlink(missing_ok=True) if result.get("path") else None
+    },
+    "session_load": {
+        "live_test_inputs": [{"name": "_probe_test_nonexistent_session"}],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Muss negative/fehlgeschlagene Ladung korrekt als Dictionary abfangen (success=False)."
+        }
+    },
+    "session_list": {
+        "live_test_inputs": [{}],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Muss eine Liste 'sessions' (kann leer sein) enthalten."
+        }
+    },
+    "login": {"flags": {"guaranteed_healthy": True}}, # Benötigt echte Credentials
+
+    # --- UTILITY ---
+    "screenshot": {
+        "live_test_inputs": [{"name": "_probe_test_screenshot", "full_page": False}],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Muss 'path' zum Screenshot enthalten."
+        },
+        "cleanup_func": lambda result, **kwargs: Path(result.get("path", "")).unlink(missing_ok=True) if result.get("path") else None
+    },
+    "execute_js": {
+        "live_test_inputs": [{"script": "return 10 + 20;"}],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Muss {'result': 30} zurückgeben (Prüfung auf funktionierende V8 Engine)."
+        }
+    },
+    "get_logs": {
+        "live_test_inputs": [{}],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Muss eine Zusammenfassung der internen Agent-Logs liefern."
+        }
+    }
+}
 def get_full_tools(
     headless: bool = True,
     auto_start: bool = True,
@@ -1455,6 +1601,9 @@ class PlaywrightProxy:
                 **meta,
                 "tool_func": _make_fn(name),
             }
+            if name in _TOOL_HEALTH_EXTENSIONS:
+                tool_dict.update(_TOOL_HEALTH_EXTENSIONS[name])
+
             tools.append(tool_dict)
 
         return tools

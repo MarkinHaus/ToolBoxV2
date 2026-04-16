@@ -393,6 +393,7 @@ def render_footer_toolbar(
     audio_processing: bool = False,
     overlay_open: bool = False,
     set_interval: Any = None,
+    off_set:int = 0
 ) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     bg     = "fg:#111827 "   # konsistent dunkel, kein terminal-default
@@ -444,8 +445,8 @@ def render_footer_toolbar(
         out.append((bg + "bg:#67e8f9", " ◎ ZEN+ OPEN "))
         out.append((bg + fg_dim, " Esc=close\n"))
 
-    main_tasks = [(tid, tv) for tid, tv in task_views.items() if "__sub__" not in tid]
-    shown = main_tasks[::-1][:5]
+    main_tasks = [(tid, tv) for tid, tv in task_views.items()]
+    shown = main_tasks[::-1][off_set:off_set+5]
     overflow = len(main_tasks) - len(shown)
 
     for tid, tv in shown:
@@ -726,6 +727,7 @@ class TaskOverlay:
         if self._selected_sub:
             out.append((bg + "fg:#f472b6", "  ✦ sub-agent"))
         out.append((bg + "fg:#6b7280", f"  {_short(tv.query, 52)}\n"))
+        out.append((bg + "fg:#374151", f"  {_short(tv.narrator_msg, 52)}\n"))
 
         if tv.persona and tv.persona != "default":
             out.append((bg + "fg:#a78bfa", f"   Persona: {tv.persona}"))
@@ -2020,7 +2022,7 @@ def load_desktop_auto_feature(fm: SimpleFeatureManager):
     def enable_desktop_auto(agent):
         from toolboxv2.mods.isaa.extras.destop_auto import register_enhanced_tools
         kit, tools = register_enhanced_tools()
-        agent.add_tools(**tools)
+        agent.add_tools(tools)
         print_status("Desktop Automation enabled.", "success")
 
     def disable_desktop_auto(agent):
@@ -2048,7 +2050,7 @@ def load_web_auto_feature(fm):
 
     fm.add_feature("mini_web_auto", activation_f=enable, deactivation_f=disable)
 
-
+#
 def load_full_web_auto_feature(fm):
     from toolboxv2.mods.isaa.extras.web_helper.tooklit import PlaywrightProxy
     proxy = PlaywrightProxy(full=True, headless=True)
@@ -2065,7 +2067,7 @@ def load_full_web_auto_feature(fm):
         print_status("Full Web Automation disabled.", "success")
 
     fm.add_feature("full_web_auto", activation_f=enable, deactivation_f=disable)
-
+#
 def load_coder_toolkit(fm):
     from toolboxv2.mods.isaa.CodingAgent.coder_toolset import coder_register_flow_tools
     from toolboxv2 import init_cwd
@@ -2084,7 +2086,7 @@ def load_coder_toolkit(fm):
         print_status("Coder disabled.", "success")
 
     fm.add_feature("coder", activation_f=enable, deactivation_f=disable)
-
+#
 def load_chain_toolkit(fm):
     from toolboxv2.mods.isaa.base.chain.chain_tools import create_chain_tools
     tools_set = [None]
@@ -2141,7 +2143,7 @@ def load_docs_feature(fm):
                 c_print(HTML(f"<style fg='ansicyan'>📚 Auto-detected docs dir:</style> <style fg='ansigreen'>{docs_dir}</style>"))
             else:
                 # Prompt user for docs directory
-                docs_input = input("Enter documentation directory path: ")
+                docs_input = current_dir
                 docs_dir = Path(docs_input).expanduser().resolve()
 
             if not docs_dir.exists():
@@ -5742,6 +5744,9 @@ class ISAA_Host:
     def _get_bottom_toolbar(self):
         if self.zen_plus_mode or self._overlay is not None:
             return []
+        off_set = 0
+        if self._focused_task_id and self._focused_task_id in self.all_executions:
+            off_set = list(self.all_executions.keys()).index(self._focused_task_id)
         return render_footer_toolbar(
             task_views=self._task_views,
             focused_id=self._focused_task_id,
@@ -5749,6 +5754,7 @@ class ISAA_Host:
             audio_processing=self._was_recording_is_prossesing_audio,
             overlay_open=self._overlay is not None,
             set_interval=self.set_dynamic_interval,
+            off_set=off_set
         )
 
     def _get_keybinding_indicator(self) -> str:

@@ -120,6 +120,7 @@ y = 20
         import sys
 
         # Capture stdout
+        original_stdout = sys.stdout
         captured_output = io.StringIO()
         sys.stdout = captured_output
 
@@ -132,7 +133,7 @@ y = 20
             self.fail(f"Spinner raised an unexpected exception: {e}")
         finally:
             # Restore stdout
-            sys.stdout = sys.__stdout__
+            sys.stdout = original_stdout
 
         # Check that something was printed
         output = captured_output.getvalue()
@@ -141,6 +142,8 @@ y = 20
     def test_style_color_demo(self):
         """Test color demo method."""
         # Capture stdout
+
+        original_stdout = sys.stdout
         captured_output = io.StringIO()
         sys.stdout = captured_output
 
@@ -150,7 +153,7 @@ y = 20
             self.fail(f"Color demo raised an unexpected exception: {e}")
         finally:
             # Restore stdout
-            sys.stdout = sys.__stdout__
+            sys.stdout = original_stdout
 
         # Check that something was printed
         output = captured_output.getvalue()

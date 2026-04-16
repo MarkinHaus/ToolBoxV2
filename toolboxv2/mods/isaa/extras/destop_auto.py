@@ -1043,7 +1043,45 @@ class EnhancedDesktopAutomation:
 # ============================================================================
 # TOOL REGISTRATION
 # ============================================================================
-
+_TOOL_HEALTH_EXTENSIONS = {
+    "scout_interface": {
+        "live_test_inputs": [
+            {
+                # Sicherer Read-Only-Scan ohne Fenster-Wechsel
+                "app_name": None,
+                "window_title": None,
+                "auto_switch": False
+            }
+        ],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": (
+                "Das Tool muss ein Dictionary zurückgeben, das den Key 'status' enthält "
+                "sowie eine Liste 'open_applications'. Da auto_switch=False ist, dürfen "
+                "keine unerwarteten Fenster-Wechsel stattfinden."
+            )
+        },
+        "cleanup_func": None # Keine Seiteneffekte, kein Cleanup nötig
+    },
+    "execute_action": {
+        "live_test_inputs": [
+            {
+                # Bewusstes Fake-Kommando, um echte GUI-Events (Klicks/Keys)
+                # im Testlauf zu verhindern. Beweist aber, dass das Routing funktioniert.
+                "command": "_probe_safe_test_command_do_not_execute"
+            }
+        ],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": (
+                "Das Tool muss ein Dictionary zurückgeben. Im Test-Szenario wird "
+                "entweder 'status': 'error' (Kommando nicht gefunden) oder "
+                "'message': 'No active application...' erwartet. Ein Absturz ist ein Fehlschlag."
+            )
+        },
+        "cleanup_func": None # Da wir ein Fake-Kommando senden, passiert nichts
+    }
+}
 def register_enhanced_tools(user_level: UserLevel | str = UserLevel.BASIC):
     """Registriert Enhanced Tools"""
 
@@ -1108,6 +1146,10 @@ Verfügbare Actions siehe scout_interface['preview']['key_actions']
             }
         }
     ]
+
+    for tool in tools:
+        if tool["name"] in _TOOL_HEALTH_EXTENSIONS:
+            tool.update(_TOOL_HEALTH_EXTENSIONS[tool["name"]])
 
     return toolkit, tools
 

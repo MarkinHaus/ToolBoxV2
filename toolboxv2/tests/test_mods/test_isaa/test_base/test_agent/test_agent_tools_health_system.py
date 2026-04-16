@@ -452,7 +452,7 @@ class TestSelfAgentToolHealth(unittest.IsolatedAsyncioTestCase):
 
         results = await self.tm.health_check_all()
         not_healthy = {
-            name: r.status for name, r in results.items()
+            name:( r.status, r.result_preview, r.contract_violations )for name, r in results.items()
             if r.status not in ("HEALTHY", "GUARANTEED", "SKIPPED")
         }
         self.assertEqual(

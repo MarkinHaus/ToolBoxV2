@@ -656,9 +656,7 @@ class TestHistoryCompressor(unittest.TestCase):
         )
 
         self.assertIsNotNone(summary)
-        # Should keep system + summary + last 2
-        from litellm import token_counter
-        b,a = token_counter(messages=working_history),token_counter(messages=remaining)
+        b,a = len(str(working_history)),len(str(remaining))
         print(b,'#',a)
         self.assertLess(a,b//2)
         self.assertEqual(len(remaining), len(working_history)+1)

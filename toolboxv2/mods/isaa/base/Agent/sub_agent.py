@@ -161,7 +161,7 @@ class SubAgentManager:
         output_dir: str,
         wait: bool = True,
         budget: int = 5000,
-        timeout: int = 300
+        timeout: int = 900
     ) -> str | SubAgentResult:
         """
         Spawn a new sub-agent.

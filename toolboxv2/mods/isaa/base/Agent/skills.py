@@ -1388,21 +1388,6 @@ class SkillsManager:
             if skill.matches_keywords(query):
                 matched.append((skill, 1.0))  # Score 1.0 für keyword match
 
-        # Phase 2: Embedding Fallback (wenn weniger als max_results gefunden)
-        if len(matched) < max_results and self._memory:
-            try:
-                import asyncio
-                # Check if we're in an async context
-                try:
-                    loop = asyncio.get_running_loop()
-                    # We're in async context, need to handle differently
-                    # For now, skip embedding matching in sync context
-                except RuntimeError:
-                    # No running loop, can't do async embedding match
-                    pass
-            except Exception:
-                pass
-
         # Sort by score, then by confidence
         matched.sort(key=lambda x: (x[1], x[0].confidence), reverse=True)
 

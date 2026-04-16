@@ -78,6 +78,7 @@ class TestAgentPerformance(unittest.IsolatedAsyncioTestCase):
         )
         self.agent = FlowAgent(self.amd, auto_load_checkpoint=False)
         self.engine = ExecutionEngine(self.agent)
+        self.agent.checkpoint_manager.save = AsyncMock()
 
         self.monitor = HeartbeatMonitor()
         self.monitor_task = asyncio.create_task(self.monitor.start())
@@ -112,7 +113,7 @@ class TestAgentPerformance(unittest.IsolatedAsyncioTestCase):
 
         self.assertLess(self.monitor.max_gap, 0.3, "Der Event-Loop wurde zu lange blockiert!")
 
-    @patch("litellm.acompletion")
+    @patch("litellm.acompletion", new_callable=AsyncMock)
     async def test_stability_auto_resume_loop(self, mock_completion):
         """Prüft ob der Agent bei 100 Continuation-Calls abbricht."""
         # Simuliere 'abgeschnittenen' Text
@@ -129,7 +130,8 @@ class TestAgentPerformance(unittest.IsolatedAsyncioTestCase):
         print(f"\n--- STABILITY REPORT: Auto-Resume ---")
         self.assertIn("Part", res)
 
-    @patch("litellm.acompletion")
+    @patch("litellm.acompletion", new_callable=AsyncMock)
+    # @patch("toolboxv2.mods.isaa.extras.adapter.litellm_embed", new_callable=AsyncMock)
     @patch("litellm.token_counter")
     async def test_context_displacement_corruption(self, mock_counter, mock_completion):
         """Sicherstellung der tool_call_id Integrität bei riesigem Content."""

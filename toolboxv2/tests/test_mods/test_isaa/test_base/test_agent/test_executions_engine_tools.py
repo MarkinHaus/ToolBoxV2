@@ -12,6 +12,7 @@ Run:
 """
 
 import json
+import sys
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,6 +22,20 @@ from toolboxv2.mods.isaa.base.Agent import execution_engine
 # =============================================================================
 # Helpers / Fixtures
 # =============================================================================
+async def _fake_stream():
+    chunks = [
+        "## 1. Situation Assessment\nStable.\n",
+        "## 2. Key Insights\nNone.\n",
+        "## 3. Concrete Tips\nContinue.\n",
+    ]
+    for c in chunks:
+        delta = MagicMock()
+        delta.content = c
+        choice = MagicMock()
+        choice.delta = delta
+        chunk = MagicMock()
+        chunk.choices = [choice]
+        yield chunk
 
 def _make_agent():
     agent = MagicMock()
@@ -39,6 +54,7 @@ def _make_agent():
     session = MagicMock()
     session.add_message = AsyncMock()
     agent.session_manager.get_or_create = AsyncMock(return_value=session)
+    agent.a_run_llm_completion = AsyncMock(return_value=_fake_stream())
     return agent
 
 
@@ -358,6 +374,18 @@ class TestShiftFocusTool(unittest.IsolatedAsyncioTestCase):
 # =============================================================================
 
 class TestDiscoveryTools(unittest.IsolatedAsyncioTestCase):
+
+    def setUp(self):
+        print(type(sys.stdout))
+        # 1. PyCharms Teamcity-StringIO merken
+        self._pycharm_stdout = sys.stdout
+        super().setUp()
+
+    def tearDown(self):
+        super().tearDown()
+        # 2. Prüfen ob dein Code sys.stdout überschrieben hat und reparieren
+        if sys.stdout is not self._pycharm_stdout:
+            sys.stdout = self._pycharm_stdout
 
     async def test_27_list_tools_not_final(self):
         e, ctx = _make_engine(), _make_ctx()
