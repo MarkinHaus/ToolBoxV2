@@ -74,6 +74,7 @@ dependencies = [
     "spacy>=3.8.11",
     "pyautogui>=0.9.54",
     "pygetwindow>=0.0.9",
+    "aiosqlite>=0.22.1",
 ]
 
 [project.scripts]

@@ -1922,6 +1922,7 @@ BEISPIELE:
                                     ] += delta.content
                                 else:
                                     collected_content += delta.content
+                                    self._narrator._inspier += delta.content
                                     yield enrich({"type": "content", "chunk": delta.content})
 
                             # 2. Reasoning sammeln (falls vorhanden)
@@ -1983,6 +1984,7 @@ BEISPIELE:
                             break
                         raise
                     finally:
+                        self._narrator._set_thought(collected_content[:250], moc=False)
                         if not pumper_task.done():
                             pumper_task.cancel()
                     # --- Ende des Chunks. Prüfen auf Token Limit ---
@@ -2325,11 +2327,13 @@ BEISPIELE:
         f_name = tool_call.function.name
         f_id = tool_call.id
 
-        self._narrator.on_tool_start(f_name)
         try:
             f_args = json.loads(tool_call.function.arguments)
         except:
             f_args = {}
+
+
+        self._narrator.on_tool_start(f_name+" "+(f_args.get(list(f_args.keys())[0], "") if f_args else ""))
 
         # Track tool usage
         ctx.tools_used.append(f_name)

@@ -4420,6 +4420,34 @@ class ISAA_Host:
         except Exception as e:
             print_status(f"Failed to save state: {e}", "error")
 
+
+    @staticmethod
+    def _save_to_vfs_and_insert(buf, content: str, vfs, filename: str):
+        """Speichert content ins VFS und fügt Referenz in Buffer ein."""
+        import time
+        ts = int(time.time())
+        vfs_path = f"/userpaste/{ts}_{filename}"
+        vfs.mkdir("/userpaste", parents=True)  # idempotent
+        vfs.create(vfs_path, content)
+        buf.insert_text(f"[vfs:{vfs_path}]")
+
+    def _save_to_vfs_async_and_insert(self, buf, content: str, filename: str):
+        """Async Variante: holt VFS, speichert, insertet."""
+
+        async def _do():
+            try:
+                agent = await self.isaa_tools.get_agent(self.active_agent_name)
+                session = await agent.session_manager.get_or_create(self.active_session_id)
+                vfs = getattr(session, "vfs", None)
+                if vfs:
+                    self._save_to_vfs_and_insert(buf, content, vfs, filename)
+                else:
+                    buf.insert_text(content)  # Fallback
+            except Exception:
+                buf.insert_text(content)  # Fallback
+
+        asyncio.ensure_future(_do())
+
     # =========================================================================
     # KEY BINDINGS (AUDIO)
     # =========================================================================
@@ -4431,12 +4459,6 @@ class ISAA_Host:
         # ── Safe Paste: Bracketed-Paste (große Texte, Dateipfade, Medien) ──
         @kb.add("<bracketed-paste>")
         def handle_bracketed_paste(event):
-            """
-            Sicheres Einfügen:
-            - Normalisiert Encoding (verhindert UTF-8-Fehler bei großen Texten)
-            - Erkennt Medienpfade (Bilder, PDFs) → fügt [media:pfad] ein
-            - Erkennt Textdateipfade → liest Inhalt und fügt ihn ein
-            """
             buf = event.app.current_buffer
             raw = event.data or ""
             safe = _safe_decode_paste(raw)
@@ -4448,8 +4470,7 @@ class ISAA_Host:
                 buf.insert_text(f"[media:{clean_path}]")
                 return
 
-            # ── Textdatei-Pfad → Dateiinhalt inline einfügen ─────────────
-
+            # ── Textdatei-Pfad → ins VFS + Referenz einfügen ─────────────
             if self.auto_paste_text and "\n" not in stripped and len(stripped.split()) == 1:
                 candidate = Path(stripped.strip('"').strip("'"))
                 if candidate.is_file() and candidate.suffix.lower() in (
@@ -4458,12 +4479,18 @@ class ISAA_Host:
                 ):
                     try:
                         content = candidate.read_text(encoding="utf-8", errors="replace")
-                        buf.insert_text(_safe_decode_paste(content))
+                        filename = candidate.name
+                        self._save_to_vfs_async_and_insert(buf, content, filename)
                         return
                     except Exception:
-                        pass  # Fallthrough zu normalem Einfügen
+                        pass  # Fallthrough
 
-            # ── Normaler Text: safe einfügen ─────────────────────────────
+            # ── Normaler großer Text → ins VFS ───────────────────────────
+            if "\n" in safe or len(safe) > 500:
+                self._save_to_vfs_async_and_insert(buf, safe, "paste.txt")
+                return
+
+            # ── Kurzer Text: direkt einfügen ─────────────────────────────
             buf.insert_text(safe)
 
         @kb.add("c-j")  # Ctrl+J → Newline (einzige echte Option)
@@ -4477,23 +4504,27 @@ class ISAA_Host:
         # ── Ctrl+V Fallback (terminals ohne bracketed-paste support) ──────
         @kb.add("c-v")
         def handle_ctrl_v(event):
-            """Ctrl+V: versucht Clipboard zu lesen, fällt auf bracket-paste zurück."""
             try:
                 import pyperclip
                 text = pyperclip.paste() or ""
             except Exception:
-                # Kein pyperclip → normales Terminal-Paste (Terminal sendet Zeichen direkt)
                 return
             if not text:
                 return
             safe = _safe_decode_paste(text)
             stripped = safe.strip()
             buf = event.app.current_buffer
+
             if _is_pasteable_media_path(stripped):
                 clean_path = stripped.strip('"').strip("'")
                 buf.insert_text(f"[media:{clean_path}]")
-            else:
-                buf.insert_text(safe)
+                return
+
+            if "\n" in safe or len(safe) > 500:
+                self._save_to_vfs_async_and_insert(buf, safe, "paste.txt")
+                return
+
+            buf.insert_text(safe)
 
         @kb.add("f4")
         def _(event):
@@ -8174,7 +8205,7 @@ class ISAA_Host:
         """Handle /vfs commands - mount, unmount, sync, tree, file content."""
         try:
             agent = await self.isaa_tools.get_agent(self.active_agent_name)
-            session = await agent.session_manager.get_or_create(self.active_session_id) # TODO expose args
+            session = await agent.session_manager.get_or_create(self.active_session_id)
 
             if not session or not hasattr(session, "vfs"):
                 print_status("No VFS available in current session", "warning")

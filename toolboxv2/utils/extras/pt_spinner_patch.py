@@ -85,7 +85,7 @@ def apply_prompt_toolkit_patch_safe() -> None:
             self._spinners.clear()
         self._should_run = False
         _set_state(False)   # Toolbar leeren statt \r\033[K
-        sys.exit(0)
+        #sys.exit(0)
 
     # ── __exit__: kein stdout mehr ───────────────────────────────────────────
     def _pt_spinner_exit(self: Spinner, exc_type, exc_val, exc_tb) -> None:

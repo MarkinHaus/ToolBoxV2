@@ -64,12 +64,13 @@ class ToolDefinition:
         return {
             "name": self.name,
             "description": self.description,
-            "tool_func": self.func,
+            "func": self.func,
             "category": self.category.value,
-            "parameters": self.parameters,
+            "args_schema": self.parameters,
             "returns": self.returns,
             "flags": self.flags,
-            "examples": self.examples
+            "examples": self.examples,
+            "source": "web-toolkit"
         }
 
 
@@ -1460,7 +1461,7 @@ def _playwright_worker_main(
             tool_meta = [t.to_dict() for t in toolkit._tools]
             # Entferne nicht-serialisierbare Felder
             for meta in tool_meta:
-                meta.pop("tool_func", None)
+                meta.pop("func", None)
         else:
             from toolboxv2.mods.isaa.extras.web_helper.web_agent import (
                 minimal_web_agent_integration,
@@ -1601,7 +1602,7 @@ class PlaywrightProxy:
 
             tool_dict = {
                 **meta,
-                "tool_func": _make_fn(name),
+                "func": _make_fn(name),
             }
             if name in _TOOL_HEALTH_EXTENSIONS:
                 tool_dict.update(_TOOL_HEALTH_EXTENSIONS[name])

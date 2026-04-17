@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LiveSync — Benutzerhandbuch</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@400;500&family=Source+Sans+3:ital,wght@0,300;0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0e0f11;
+  --surface: #16181c;
+  --surface-2: #1e2028;
+  --border: #2a2d36;
+  --border-accent: #3d4150;
+  --text: #e2e4ea;
+  --text-muted: #8b8fa4;
+  --text-dim: #5c6075;
+  --accent: #6ee7b7;
+  --accent-dim: #2d6b54;
+  --accent-glow: rgba(110,231,183,0.08);
+  --warn: #fbbf24;
+  --danger: #f87171;
+  --info: #60a5fa;
+  --code-bg: #12131a;
+  --serif: 'DM Serif Display', Georgia, serif;
+  --sans: 'Source Sans 3', -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', 'Consolas', monospace;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 17px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Grain overlay ── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ── Layout ── */
+.page { display: flex; min-height: 100vh; }
+
+/* ── Sidebar ── */
+.sidebar {
+  position: sticky;
+  top: 0;
+  width: 280px;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 32px 24px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.sidebar::-webkit-scrollbar { width: 3px; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+.logo {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
+.logo-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 36px;
+  font-family: var(--mono);
+}
+
+.nav-section {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 24px 0 10px;
+}
+
+.nav-link {
+  display: block;
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 14px;
+  transition: all 0.15s;
+  margin-bottom: 2px;
+}
+.nav-link:hover { background: var(--accent-glow); color: var(--accent); }
+
+/* ── Main ── */
+.main {
+  flex: 1;
+  max-width: 820px;
+  padding: 48px 56px 120px;
+}
+
+/* ── Hero ── */
+.hero {
+  margin-bottom: 64px;
+  padding-bottom: 48px;
+  border-bottom: 1px solid var(--border);
+}
+
+.hero h1 {
+  font-family: var(--serif);
+  font-size: 48px;
+  font-weight: 400;
+  line-height: 1.15;
+  margin-bottom: 16px;
+  color: var(--text);
+}
+
+.hero h1 em {
+  color: var(--accent);
+  font-style: italic;
+}
+
+.hero-tagline {
+  font-size: 19px;
+  color: var(--text-muted);
+  max-width: 540px;
+  line-height: 1.6;
+}
+
+.badge-row { display: flex; gap: 8px; margin-top: 20px; flex-wrap: wrap; }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.badge .dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.badge.warn .dot { background: var(--warn); }
+
+/* ── Section ── */
+section { margin-bottom: 56px; }
+
+section h2 {
+  font-family: var(--serif);
+  font-size: 30px;
+  font-weight: 400;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+
+section h3 {
+  font-family: var(--sans);
+  font-size: 18px;
+  font-weight: 600;
+  margin: 28px 0 12px;
+  color: var(--text);
+}
+
+p { margin-bottom: 14px; color: var(--text-muted); }
+
+strong { color: var(--text); font-weight: 600; }
+
+/* ── Code ── */
+code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: var(--code-bg);
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--accent);
+}
+
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 24px;
+  overflow-x: auto;
+  margin: 16px 0 20px;
+  line-height: 1.55;
+  position: relative;
+}
+
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 13.5px;
+  color: var(--text-muted);
+}
+
+pre .comment { color: var(--text-dim); }
+pre .cmd { color: var(--accent); }
+pre .output { color: var(--text-dim); font-style: italic; }
+pre .flag { color: var(--info); }
+
+.pre-label {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ── Callouts ── */
+.callout {
+  padding: 16px 20px;
+  border-radius: 10px;
+  margin: 20px 0;
+  border-left: 3px solid;
+  font-size: 15px;
+}
+
+.callout.info {
+  background: rgba(96,165,250,0.06);
+  border-color: var(--info);
+}
+.callout.warn {
+  background: rgba(251,191,36,0.06);
+  border-color: var(--warn);
+}
+.callout.danger {
+  background: rgba(248,113,113,0.06);
+  border-color: var(--danger);
+}
+.callout.success {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+}
+
+.callout-title {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.callout.info .callout-title { color: var(--info); }
+.callout.warn .callout-title { color: var(--warn); }
+.callout.danger .callout-title { color: var(--danger); }
+.callout.success .callout-title { color: var(--accent); }
+
+/* ── Steps ── */
+.steps { counter-reset: step; margin: 24px 0; }
+
+.step {
+  display: flex;
+  gap: 20px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+  counter-increment: step;
+}
+
+.step::before {
+  content: counter(step);
+  flex-shrink: 0;
+  width: 36px; height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--accent-glow);
+  border: 1px solid var(--accent-dim);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+.step-content h4 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+.step-content p { margin-bottom: 8px; }
+
+/* ── Table ── */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0 20px;
+  font-size: 14px;
+}
+
+th {
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 2px solid var(--border);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+tr:hover td { background: var(--accent-glow); }
+
+/* ── Flow diagram ── */
+.flow {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin: 24px 0;
+  overflow-x: auto;
+  padding: 12px 0;
+}
+
+.flow-node {
+  padding: 10px 18px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  text-align: center;
+}
+
+.flow-node.highlight {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+  background: var(--accent-glow);
+}
+
+.flow-arrow {
+  font-size: 18px;
+  color: var(--text-dim);
+  padding: 0 6px;
+  flex-shrink: 0;
+}
+
+/* ── Responsive ── */
+@media (max-width: 900px) {
+  .sidebar { display: none; }
+  .main { padding: 32px 20px 80px; }
+  .hero h1 { font-size: 32px; }
+  .flow { flex-wrap: wrap; gap: 8px; }
+  .flow-arrow { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- Sidebar -->
+<nav class="sidebar">
+  <div class="logo">LiveSync</div>
+  <div class="logo-sub">v1.0 · Benutzerhandbuch</div>
+
+  <div class="nav-section">Erste Schritte</div>
+  <a class="nav-link" href="#overview">Überblick</a>
+  <a class="nav-link" href="#requirements">Voraussetzungen</a>
+  <a class="nav-link" href="#install">Installation</a>
+
+  <div class="nav-section">Nutzung</div>
+  <a class="nav-link" href="#share-create">Share erstellen</a>
+  <a class="nav-link" href="#share-join">Share beitreten</a>
+  <a class="nav-link" href="#status">Status prüfen</a>
+  <a class="nav-link" href="#stop">Sync stoppen</a>
+
+  <div class="nav-section">Alltag</div>
+  <a class="nav-link" href="#sync-flow">Wie Sync funktioniert</a>
+  <a class="nav-link" href="#conflicts">Konflikte lösen</a>
+  <a class="nav-link" href="#deleted-files">Gelöschte Dateien</a>
+  <a class="nav-link" href="#offline">Offline-Nutzung</a>
+
+  <div class="nav-section">Referenz</div>
+  <a class="nav-link" href="#file-types">Unterstützte Dateien</a>
+  <a class="nav-link" href="#cli-ref">CLI-Referenz</a>
+  <a class="nav-link" href="#troubleshoot">Fehlerbehebung</a>
+</nav>
+
+<!-- Main Content -->
+<main class="main">
+
+<!-- Hero -->
+<header class="hero" id="overview">
+  <h1>LiveSync <em>Benutzer&shy;handbuch</em></h1>
+  <p class="hero-tagline">
+    Datei auf dem Desktop ändern — in Sekunden auf dem Handy.
+    LiveSync hält deine Obsidian-Vaults über beliebig viele Geräte synchron.
+  </p>
+  <div class="badge-row">
+    <span class="badge"><span class="dot"></span> Echtzeit-Sync</span>
+    <span class="badge"><span class="dot"></span> Client-seitig verschlüsselt</span>
+    <span class="badge"><span class="dot"></span> Self-hosted</span>
+    <span class="badge warn"><span class="dot"></span> Kein Datenverlust</span>
+  </div>
+</header>
+
+<!-- Requirements -->
+<section id="requirements">
+  <h2>Voraussetzungen</h2>
+  <p>LiveSync läuft komplett self-hosted auf deiner ToolBoxV2-Infrastruktur. Du brauchst:</p>
+  <table>
+    <thead><tr><th>Komponente</th><th>Details</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Server</strong></td><td>ToolBoxV2 mit MinIO (läuft bereits auf dem RYZEN-Server)</td></tr>
+      <tr><td><strong>Desktop</strong></td><td>Python 3.10+, beliebiges OS</td></tr>
+      <tr><td><strong>Handy</strong></td><td>Termux (Android) mit Python</td></tr>
+      <tr><td><strong>Netzwerk</strong></td><td>Port 8765 (WebSocket) + Port 9000 (MinIO) erreichbar</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- Installation -->
+<section id="install">
+  <h2>Installation</h2>
+
+  <h3>Server (einmalig)</h3>
+  <pre><code><span class="comment"># Abhängigkeiten installieren</span>
+<span class="cmd">pip install</span> websockets watchdog minio cryptography aiosqlite pydantic
+
+<span class="comment"># Selftest — prüft ob alles vorhanden ist</span>
+<span class="cmd">python -c</span> <span class="flag">"from toolboxv2.mods.CloudM.LiveSync import run_selftest; print(run_selftest())"</span>
+<span class="output">{'websockets': True, 'watchdog': True, 'minio': True, ...}</span></code></pre>
+
+  <h3>Client (jedes Gerät)</h3>
+  <pre><code><span class="comment"># Gleiche Abhängigkeiten</span>
+<span class="cmd">pip install</span> websockets watchdog minio cryptography aiosqlite pydantic</code></pre>
+
+  <div class="callout info">
+    <div class="callout-title">Termux (Android)</div>
+    <p>In Termux zuerst <code>pkg install python rust</code> ausführen, dann die pip-Pakete installieren. <code>cryptography</code> braucht den Rust-Compiler.</p>
+  </div>
+</section>
+
+<!-- Create Share -->
+<section id="share-create">
+  <h2>Share erstellen</h2>
+  <p>Ein <strong>Share</strong> verbindet einen lokalen Ordner mit einem verschlüsselten MinIO-Store. Du erstellst ihn auf dem Server, dann treten andere Geräte mit dem Token bei.</p>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-content">
+        <h4>Server starten</h4>
+        <pre><code><span class="cmd">python -m</span> toolboxv2.mods.CloudM.LiveSync.server \
+    <span class="flag">--vault</span> /srv/obsidian/vaults/main \
+    <span class="flag">--share-id</span> obsidian-vault \
+    <span class="flag">--port</span> 8765</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-content">
+        <h4>Share + Token generieren</h4>
+        <pre><code><span class="cmd">python -c</span> <span class="flag">"
+from toolboxv2.mods.CloudM.LiveSync import create_share
+result = create_share('/srv/obsidian/vaults/main', ws_port=8765)
+print('Token:', result['token'])
+"</span>
+<span class="output">Token: eyJ2IjogMSwgInNoYXJlX2lkIjogImFiYzEyMyIsIC4uLn0=</span></code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-content">
+        <h4>Token verteilen</h4>
+        <p>Kopiere den Token-String an dein anderes Gerät (per Message, QR-Code, Clipboard — der Token enthält <strong>keine</strong> MinIO-Passwörter, nur Endpoint + Verschlüsselungskey).</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout success">
+    <div class="callout-title">Sicherheit</div>
+    <p>Der Token enthält den AES-256 Verschlüsselungsschlüssel. Wer den Token hat, kann die Dateien lesen. Teile ihn nur über sichere Kanäle.</p>
+  </div>
+</section>
+
+<!-- Join Share -->
+<section id="share-join">
+  <h2>Share beitreten</h2>
+  <p>Auf jedem weiteren Gerät (Laptop, Termux, …):</p>
+
+  <pre><code><span class="cmd">python -m</span> toolboxv2.mods.CloudM.LiveSync.client \
+    <span class="flag">--token</span> "eyJ2IjogMSwgInNoYXJlX2lkIjogImFiYzEyMyIsIC4uLn0=" \
+    <span class="flag">--vault</span> ~/obsidian-vault</code></pre>
+
+  <p>Der Client verbindet sich per WebSocket, erhält MinIO-Zugangsdaten, und beginnt sofort mit dem Sync. Beim ersten Start werden alle Dateien heruntergeladen.</p>
+
+  <div class="flow">
+    <div class="flow-node">Token eingeben</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-node highlight">WS verbinden</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-node">Credentials empfangen</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-node highlight">Full Sync</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-node">Live-Modus ✓</div>
+  </div>
+</section>
+
+<!-- Status -->
+<section id="status">
+  <h2>Status prüfen</h2>
+  <pre><code><span class="cmd">python -c</span> <span class="flag">"
+from toolboxv2.mods.CloudM.LiveSync import get_sync_status, check_minio_health
+print(get_sync_status())
+print(check_minio_health())
+"</span>
+<span class="output">{'running': True, 'pid': 12345, 'shares': [...]}</span>
+<span class="output">{'ok': True, 'message': 'MinIO OK'}</span></code></pre>
+</section>
+
+<!-- Stop -->
+<section id="stop">
+  <h2>Sync stoppen</h2>
+  <pre><code><span class="comment"># Einzelnen Share stoppen</span>
+<span class="cmd">python -c</span> <span class="flag">"from toolboxv2.mods.CloudM.LiveSync import stop_share; print(stop_share('abc123'))"</span>
+
+<span class="comment"># Gesamten Server stoppen</span>
+<span class="cmd">python -c</span> <span class="flag">"from toolboxv2.mods.CloudM.LiveSync import stop_sync; print(stop_sync())"</span></code></pre>
+  <p>Der Client stoppt mit <code>Ctrl+C</code>. Ungesendete Änderungen werden beim nächsten Start nachgeholt.</p>
+</section>
+
+<!-- Sync Flow -->
+<section id="sync-flow">
+  <h2>Wie Sync funktioniert</h2>
+  <p>LiveSync nutzt ein <strong>Notification-Modell</strong>: Dateien gehen direkt über MinIO, WebSocket transportiert nur Metadaten.</p>
+
+  <div class="flow">
+    <div class="flow-node">Datei ändern</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-node">Watchdog</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-node">2s Debounce</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-node highlight">zlib + AES → MinIO</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-node">WS Notify</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-node highlight">MinIO → AES + zlib</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-node">Datei da ✓</div>
+  </div>
+
+  <div class="callout info">
+    <div class="callout-title">Performance</div>
+    <p>Änderungen werden 2 Sekunden gesammelt (Debouncing), dann als Batch verarbeitet. Maximal 5 gleichzeitige Transfers. Bei einem Vault mit 100.000 Dateien wird der initiale Sync als komprimierte SQLite-DB übertragen.</p>
+  </div>
+</section>
+
+<!-- Conflicts -->
+<section id="conflicts">
+  <h2>Konflikte lösen</h2>
+  <p>Wenn zwei Geräte gleichzeitig dieselbe Datei ändern, erkennt LiveSync den Konflikt und reagiert je nach Dateityp:</p>
+
+  <table>
+    <thead><tr><th>Dateityp</th><th>Strategie</th><th>Was passiert</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>.md</code></td>
+        <td><strong>Merge-Marker</strong></td>
+        <td>Beide Versionen werden in die Datei geschrieben, getrennt durch Git-Style-Marker. Du entscheidest manuell.</td>
+      </tr>
+      <tr>
+        <td><code>.png .jpg .pdf</code></td>
+        <td><strong>Latest-Wins</strong></td>
+        <td>Die neuere Version gewinnt. Die ältere wird als <code>.conflict</code>-Backup gespeichert.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Merge-Marker Beispiel</h3>
+  <pre><code><span class="flag"><<<<<<< LOCAL (desktop-markin @ 18:30:01)</span>
+Hier steht die Version von deinem Desktop.
+<span class="flag">=======</span>
+Hier steht die Version vom Handy.
+<span class="flag">>>>>>>> REMOTE (handy @ 18:30:00)</span></code></pre>
+  <p>Öffne die Datei, wähle die richtige Version, lösche die Marker, speichere — LiveSync synct die bereinigte Datei automatisch.</p>
+
+  <div class="callout warn">
+    <div class="callout-title">Wichtig</div>
+    <p>Konflikte werden <strong>niemals stillschweigend</strong> gelöst. Du siehst immer eine Log-Meldung und einen Eintrag im Sync-Log.</p>
+  </div>
+</section>
+
+<!-- Deleted Files -->
+<section id="deleted-files">
+  <h2>Gelöschte Dateien</h2>
+  <p>Wenn eine Datei auf einem Gerät gelöscht wird, wird sie auf den anderen Geräten <strong>nicht sofort gelöscht</strong> — stattdessen wandert sie in den Ordner <code>.sync-trash/</code> im Vault.</p>
+  <pre><code>vault/
+├── notes.md
+├── .sync-trash/
+│   └── 1713379200_old_notes.md    <span class="comment">← hierhin verschoben</span>
+└── ...</code></pre>
+  <p>Du kannst jederzeit Dateien aus <code>.sync-trash/</code> wiederherstellen.</p>
+</section>
+
+<!-- Offline -->
+<section id="offline">
+  <h2>Offline-Nutzung</h2>
+  <p>Du kannst normal weiterarbeiten, auch wenn das Netzwerk weg ist:</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-content">
+        <h4>Offline arbeiten</h4>
+        <p>Dateien normal bearbeiten. LiveSync merkt sich alle Änderungen lokal.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-content">
+        <h4>Wieder verbinden</h4>
+        <p>Client reconnected automatisch (exponential backoff: 1s, 2s, 4s, …, max 60s).</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-content">
+        <h4>Catchup</h4>
+        <p>Checksums werden verglichen. Fehlende Dateien werden heruntergeladen, lokale Änderungen hochgeladen.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- File Types -->
+<section id="file-types">
+  <h2>Unterstützte Dateien</h2>
+  <table>
+    <thead><tr><th>Typ</th><th>Extensions</th><th>Max. Größe</th><th>Sync</th></tr></thead>
+    <tbody>
+      <tr><td>Text</td><td><code>.md .txt .json .csv</code></td><td>50 MB</td><td>✓</td></tr>
+      <tr><td>Bilder</td><td><code>.png .jpg .jpeg .gif .webp</code></td><td>50 MB</td><td>✓</td></tr>
+      <tr><td>Dokumente</td><td><code>.pdf</code></td><td>50 MB</td><td>✓</td></tr>
+      <tr><td>System</td><td><code>.obsidian/* .git/*</code></td><td>—</td><td>✗ ignoriert</td></tr>
+      <tr><td>Temp</td><td><code>.tmp .sync-tmp .backup</code></td><td>—</td><td>✗ ignoriert</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- CLI Reference -->
+<section id="cli-ref">
+  <h2>CLI-Referenz</h2>
+
+  <h3>Server</h3>
+  <pre><code><span class="cmd">python -m</span> toolboxv2.mods.CloudM.LiveSync.server \
+    <span class="flag">--vault</span> /path/to/vault \
+    <span class="flag">--share-id</span> my-share \
+    <span class="flag">--host</span> 0.0.0.0 \
+    <span class="flag">--port</span> 8765</code></pre>
+
+  <h3>Client</h3>
+  <pre><code><span class="cmd">python -m</span> toolboxv2.mods.CloudM.LiveSync.client \
+    <span class="flag">--token</span> "BASE64_TOKEN" \
+    <span class="flag">--vault</span> /path/to/local/vault</code></pre>
+
+  <h3>ToolBoxV2 API</h3>
+  <table>
+    <thead><tr><th>Funktion</th><th>Beschreibung</th></tr></thead>
+    <tbody>
+      <tr><td><code>create_share(vault_path)</code></td><td>Erstellt Share, gibt Token zurück</td></tr>
+      <tr><td><code>join_share(vault_path, token)</code></td><td>Tritt einem Share bei</td></tr>
+      <tr><td><code>start_sync(vault_path)</code></td><td>Startet Server als Subprocess</td></tr>
+      <tr><td><code>stop_sync()</code></td><td>Stoppt Server</td></tr>
+      <tr><td><code>get_sync_status()</code></td><td>Status + verbundene Clients</td></tr>
+      <tr><td><code>list_shares()</code></td><td>Alle aktiven Shares</td></tr>
+      <tr><td><code>stop_share(share_id)</code></td><td>Einzelnen Share beenden</td></tr>
+      <tr><td><code>get_sync_log(share_id)</code></td><td>Letzte Sync-Events</td></tr>
+      <tr><td><code>run_selftest()</code></td><td>Dependency-Check</td></tr>
+      <tr><td><code>check_minio_health()</code></td><td>MinIO-Verbindungstest</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- Troubleshoot -->
+<section id="troubleshoot">
+  <h2>Fehlerbehebung</h2>
+
+  <h3><code>[LiveSync] ERROR MinIO unreachable</code></h3>
+  <p>MinIO ist nicht erreichbar. Prüfe: läuft <code>systemctl status minio</code>? Ist Port 9000 offen? Sind die ENV-Variablen <code>MINIO_ENDPOINT</code>, <code>MINIO_ROOT_USER</code>, <code>MINIO_ROOT_PASSWORD</code> korrekt gesetzt?</p>
+
+  <h3><code>[LiveSync] ERROR Checksum mismatch after 3 retries</code></h3>
+  <p>Die heruntergeladene Datei stimmt nicht mit der erwarteten Prüfsumme überein. Meist ein Netzwerkproblem. Lösche die lokale <code>.sync-tmp</code>-Datei und starte den Client neu.</p>
+
+  <h3><code>[LiveSync] WARN Conflict detected</code></h3>
+  <p>Kein Fehler — zwei Geräte haben gleichzeitig dieselbe Datei geändert. Siehe <a href="#conflicts" style="color:var(--accent)">Konflikte lösen</a>.</p>
+
+  <h3>Client reconnected nicht</h3>
+  <p>Prüfe ob der Server läuft und Port 8765 erreichbar ist. Der Client versucht automatisch mit steigenden Wartezeiten (bis 60s) zu reconnecten.</p>
+
+  <div class="callout danger">
+    <div class="callout-title">Niemals manuell die SQLite-DBs löschen</div>
+    <p>Die Dateien <code>.livesync_client.db</code> und <code>.livesync_server.db</code> enthalten den Sync-Index. Löschst du sie, muss ein vollständiger Resync durchgeführt werden.</p>
+  </div>
+</section>
+
+</main>
+</div>
+</body>
+</html>

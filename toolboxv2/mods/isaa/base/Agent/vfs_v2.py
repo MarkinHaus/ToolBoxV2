@@ -21,6 +21,7 @@ from enum import Enum, auto
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Callable
 
+
 if TYPE_CHECKING:
     from toolboxv2.mods.isaa.base.Agent.lsp_manager import Diagnostic, LSPManager
 
@@ -1218,8 +1219,14 @@ Session: {self.session_id}
                     result = self.delete(item_path)
                 if not result["success"]:
                     return result
-
-        del self.directories[path]
+        if not contents or force:
+            # Sicherheitsnetz: alle verbliebenen Sub-Directories + sich selbst entfernen
+            dirs_to_remove = [
+                p for p in list(self.directories.keys())
+                if p.startswith(path + "/") or p == path
+            ]
+            for d in dirs_to_remove:
+                del self.directories[d]
         self._dirty = True
 
         return {"success": True, "message": f"Removed directory: {path}"}
@@ -2284,6 +2291,7 @@ Session: {self.session_id}
 
     def to_checkpoint(self) -> dict:
         """Serialize VFS for checkpoint"""
+        from toolboxv2.mods.isaa.base.patch.power_vfs import GLOBAL_VFS_PATH
         return {
             "session_id": self.session_id,
             "agent_name": self.agent_name,
@@ -2298,6 +2306,17 @@ Session: {self.session_id}
                 }
                 for path, f in self.files.items()
                 if not f.readonly
+            },
+            "mounts": {
+                vfs_path: {
+                    "local_path": mount.local_path,
+                    "readonly": mount.readonly,
+                    "auto_sync": mount.auto_sync,
+                    "allowed_extensions": mount.allowed_extensions,
+                    "exclude_patterns": list(mount.exclude_patterns),
+                }
+                for vfs_path, mount in self.mounts.items()
+                if vfs_path != GLOBAL_VFS_PATH  # Global wird separat gemountet
             },
         }
 
@@ -2314,6 +2333,10 @@ Session: {self.session_id}
             if "content" in file_data:
                 file_data["_content"] = file_data.pop("content")
             self.files[path] = VFSFile(**file_data)
+
+        for vfs_path, mount_data in data.get("mounts", {}).items():
+            if os.path.isdir(mount_data["local_path"]):
+                self.mount(**mount_data, vfs_path=vfs_path)
 
         self._dirty = True
 

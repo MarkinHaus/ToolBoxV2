@@ -1116,14 +1116,12 @@ class TestDocsFeatureLive(_FeatureEnableTestBase):
         super().tearDown()
 
 
-class TestAutoAgentsFeaturesLive(_FeatureEnableTestBase):
+class TestAutoDocFeatureLive(_FeatureEnableTestBase):
 
     def setUp(self):
+        self.FEATURE_NAME = "autodoc"
         super().setUp()
 
-        # ==========================================
-        # DER TRICK: Extraktion via Dummy FeatureManager
-        # ==========================================
         self.feature_callbacks = {}
 
         class DummyFM:
@@ -1134,18 +1132,9 @@ class TestAutoAgentsFeaturesLive(_FeatureEnableTestBase):
                 }
 
         fm = DummyFM()
-        from toolboxv2.flows.icli import (
-            load_autodoc_feature,
-            load_autotest_feature,
-            load_autofix_feature
-        )
-        # Loader-Funktionen aufrufen (füllt self.feature_callbacks)
+        from toolboxv2.flows.icli import load_autodoc_feature
         load_autodoc_feature(fm)
-        load_autotest_feature(fm)
-        load_autofix_feature(fm)
 
-        # Falls der Mock-Agent in _FeatureEnableTestBase kein 'add_tools' hat,
-        # leiten wir es direkt an den tool_manager weiter:
         if not hasattr(self.agent, "add_tools"):
             def mock_add_tools(tools):
                 for t in tools:
@@ -1154,22 +1143,12 @@ class TestAutoAgentsFeaturesLive(_FeatureEnableTestBase):
                         func=t["tool_func"],
                         meta=t
                     )
-
             self.agent.add_tools = mock_add_tools
 
-        # Features manuell enablen (Tools werden via agent.add_tools registriert)
         self.feature_callbacks["autodoc"]["enable"](self.agent)
-        self.feature_callbacks["autotest"]["enable"](self.agent)
-        self.feature_callbacks["autofix"]["enable"](self.agent)
-
-        # Tools filtern (wir nutzen prefix 'tb_')
-        self.auto_tools = [
-            name for name in self.agent.tool_manager._registry.keys()
-            if name.startswith("tb_")
-        ]
 
     def test_tool_health_checks(self):
-        """Validiert AutoDoc, AutoTest und AutoFix durch den Health-Manager"""
+        """Validiert AutoDoc durch den Health-Manager"""
         self._ensure_real_tool_manager()
 
         auto_tool_names = [
@@ -1177,7 +1156,7 @@ class TestAutoAgentsFeaturesLive(_FeatureEnableTestBase):
             if name.startswith("tb_")
         ]
 
-        self.assertTrue(len(auto_tool_names) > 0, "Die Auto-Tools wurden nicht geladen!")
+        self.assertTrue(len(auto_tool_names) > 0, "AutoDoc Tools wurden nicht geladen!")
 
         for tool_name in auto_tool_names:
             with self.subTest(tool=tool_name):
@@ -1200,13 +1179,155 @@ class TestAutoAgentsFeaturesLive(_FeatureEnableTestBase):
 
                 if not is_guaranteed and health_result.status == "HEALTHY":
                     out = health_result.last_output
-
-                    if tool_name in ["tb_fetch_code_for_doc", "tb_write_doc", "tb_analyze_semantics",
-                                     "tb_write_tests", "tb_run_single_test"]:
+                    if tool_name in ["tb_fetch_code_for_doc", "tb_write_doc", "tb_analyze_semantics"]:
                         self.assertIsInstance(out, dict)
                         self.assertIn("error", out,
                                       f"{tool_name} sollte bei Negative-Testing mit 'error' antworten.")
-                    elif tool_name == "tb_apply_best_fix":
+
+    def tearDown(self):
+        if "autodoc" in self.feature_callbacks:
+            self.feature_callbacks["autodoc"]["disable"](self.agent)
+        super().tearDown()
+
+
+class TestAutoTestFeatureLive(_FeatureEnableTestBase):
+
+    def setUp(self):
+        self.FEATURE_NAME = "autotest"
+        super().setUp()
+
+        self.feature_callbacks = {}
+
+        class DummyFM:
+            def add_feature(inner_self, name, activation_f=None, deactivation_f=None):
+                self.feature_callbacks[name] = {
+                    "enable": activation_f,
+                    "disable": deactivation_f
+                }
+
+        fm = DummyFM()
+        from toolboxv2.flows.icli import load_autotest_feature
+        load_autotest_feature(fm)
+
+        if not hasattr(self.agent, "add_tools"):
+            def mock_add_tools(tools):
+                for t in tools:
+                    self.agent.tool_manager.register_tool(
+                        name=t["name"],
+                        func=t["tool_func"],
+                        meta=t
+                    )
+            self.agent.add_tools = mock_add_tools
+
+        self.feature_callbacks["autotest"]["enable"](self.agent)
+
+    def test_tool_health_checks(self):
+        """Validiert AutoTest durch den Health-Manager"""
+        self._ensure_real_tool_manager()
+
+        auto_tool_names = [
+            name for name in self.agent.tool_manager._registry.keys()
+            if name.startswith("tb_")
+        ]
+
+        self.assertTrue(len(auto_tool_names) > 0, "AutoTest Tools wurden nicht geladen!")
+
+        for tool_name in auto_tool_names:
+            with self.subTest(tool=tool_name):
+                entry = self.agent.tool_manager._registry[tool_name]
+                tool_def = getattr(entry, "meta", {}) or {}
+
+                is_guaranteed = tool_def.get("flags", {}).get("guaranteed_healthy", False)
+                if not is_guaranteed:
+                    self.assertIn("live_test_inputs", tool_def,
+                                  f"Tool {tool_name} hat weder live_test_inputs noch guaranteed_healthy!")
+
+                health_result = self._health_check(tool_name)
+                if health_result is None:
+                    self.fail(f"Tool '{tool_name}' TIMEOUT (>10s)")
+
+                self.assertIn(health_result.status, ["HEALTHY", "WARNING"],
+                              f"Tool {tool_name} ist fehlgeschlagen!\n"
+                              f"Fehler: {getattr(health_result, 'error_message', None)}\n"
+                              f"Hint: {health_result.contract.get('semantic_check_hint') if getattr(health_result, 'contract', None) else None}")
+
+                if not is_guaranteed and health_result.status == "HEALTHY":
+                    out = health_result.last_output
+                    if tool_name in ["tb_write_tests", "tb_run_single_test"]:
+                        self.assertIsInstance(out, dict)
+                        self.assertIn("error", out,
+                                      f"{tool_name} sollte bei Negative-Testing mit 'error' antworten.")
+
+    def tearDown(self):
+        if "autotest" in self.feature_callbacks:
+            self.feature_callbacks["autotest"]["disable"](self.agent)
+        super().tearDown()
+
+
+class TestAutoFixFeatureLive(_FeatureEnableTestBase):
+
+    def setUp(self):
+        self.FEATURE_NAME = "autofix"
+        super().setUp()
+
+        self.feature_callbacks = {}
+
+        class DummyFM:
+            def add_feature(inner_self, name, activation_f=None, deactivation_f=None):
+                self.feature_callbacks[name] = {
+                    "enable": activation_f,
+                    "disable": deactivation_f
+                }
+
+        fm = DummyFM()
+        from toolboxv2.flows.icli import load_autofix_feature
+        load_autofix_feature(fm)
+
+        if not hasattr(self.agent, "add_tools"):
+            def mock_add_tools(tools):
+                for t in tools:
+                    self.agent.tool_manager.register_tool(
+                        name=t["name"],
+                        func=t["tool_func"],
+                        meta=t
+                    )
+            self.agent.add_tools = mock_add_tools
+
+        self.feature_callbacks["autofix"]["enable"](self.agent)
+
+    def test_tool_health_checks(self):
+        """Validiert AutoFix durch den Health-Manager"""
+        self._ensure_real_tool_manager()
+
+        auto_tool_names = [
+            name for name in self.agent.tool_manager._registry.keys()
+            if name.startswith("tb_")
+        ]
+
+        self.assertTrue(len(auto_tool_names) > 0, "AutoFix Tools wurden nicht geladen!")
+
+        for tool_name in auto_tool_names:
+            with self.subTest(tool=tool_name):
+                entry = self.agent.tool_manager._registry[tool_name]
+                tool_def = getattr(entry, "meta", {}) or {}
+
+                is_guaranteed = tool_def.get("flags", {}).get("guaranteed_healthy", False)
+                if not is_guaranteed:
+                    self.assertIn("live_test_inputs", tool_def,
+                                  f"Tool {tool_name} hat weder live_test_inputs noch guaranteed_healthy!")
+
+                health_result = self._health_check(tool_name)
+                if health_result is None:
+                    self.fail(f"Tool '{tool_name}' TIMEOUT (>10s)")
+
+                self.assertIn(health_result.status, ["HEALTHY", "WARNING"],
+                              f"Tool {tool_name} ist fehlgeschlagen!\n"
+                              f"Fehler: {getattr(health_result, 'error_message', None)}\n"
+                              f"Hint: {health_result.contract.get('semantic_check_hint') if getattr(health_result, 'contract', None) else None}")
+
+                if not is_guaranteed and health_result.status == "HEALTHY":
+                    out = health_result.last_output
+                    if tool_name == "tb_apply_best_fix":
                         self.assertIsInstance(out, str)
                         self.assertIn("ERROR", out)
                     elif tool_name == "tb_report_failure":
@@ -1214,11 +1335,8 @@ class TestAutoAgentsFeaturesLive(_FeatureEnableTestBase):
                         self.assertIn("AutoFix FAILED", out)
 
     def tearDown(self):
-        # Features sauber beenden mithilfe der extrahierten 'disable' Closures
-        if "autodoc" in self.feature_callbacks: self.feature_callbacks["autodoc"]["disable"](self.agent)
-        if "autotest" in self.feature_callbacks: self.feature_callbacks["autotest"]["disable"](self.agent)
-        if "autofix" in self.feature_callbacks: self.feature_callbacks["autofix"]["disable"](self.agent)
-
+        if "autofix" in self.feature_callbacks:
+            self.feature_callbacks["autofix"]["disable"](self.agent)
         super().tearDown()
 
 if __name__ == "__main__":

@@ -423,7 +423,8 @@ RUNNER_KEYS = [
     "llm-gateway",
     "docksh",
     "docker-image",
-    "fl"
+    "fl",
+    "LiveSync",
 ]
 
 DEFAULT_MODI = "cli"
@@ -1908,6 +1909,9 @@ def runner_setup():
         ).main(),
         "fl": lambda: __import__(
             "toolboxv2.feature_loader", fromlist=["main"]
+        ).main(),
+        "LiveSync": lambda: __import__(
+            "toolboxv2.mods.CloudM.LiveSync", fromlist=["main"]
         ).main(),
     }
 

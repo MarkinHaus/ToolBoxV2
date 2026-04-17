@@ -599,7 +599,7 @@ class SpinnerManager(metaclass=Singleton):
         self._should_run = False
         sys.stdout.write("\r\033[K")  # Clear the spinner's line.
         sys.stdout.flush()
-        sys.exit(0)
+        #sys.exit(0)
 
     def register_spinner(self, spinner):
         """Register a new spinner."""

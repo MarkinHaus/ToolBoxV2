@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LiveSync — Developer Documentation</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Sans+3:ital,wght@0,300;0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #09090b;
+  --surface: #131318;
+  --surface-2: #1a1b23;
+  --surface-3: #222330;
+  --border: #27293a;
+  --border-accent: #363a52;
+  --text: #e4e5f0;
+  --text-muted: #9296b4;
+  --text-dim: #555876;
+  --accent: #a78bfa;
+  --accent-dim: #6d5aad;
+  --accent-glow: rgba(167,139,250,0.07);
+  --green: #6ee7b7;
+  --green-glow: rgba(110,231,183,0.07);
+  --orange: #fb923c;
+  --orange-glow: rgba(251,146,60,0.06);
+  --blue: #60a5fa;
+  --red: #f87171;
+  --yellow: #fbbf24;
+  --code-bg: #0d0d14;
+  --serif: 'DM Serif Display', Georgia, serif;
+  --sans: 'Source Sans 3', -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', 'Consolas', monospace;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 16.5px;
+  line-height: 1.72;
+  -webkit-font-smoothing: antialiased;
+}
+
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+  pointer-events: none; z-index: 9999;
+}
+
+/* ── Layout ── */
+.page { display: flex; min-height: 100vh; }
+
+.sidebar {
+  position: sticky; top: 0;
+  width: 264px; height: 100vh;
+  overflow-y: auto;
+  padding: 28px 20px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.sidebar::-webkit-scrollbar { width: 3px; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+.logo { font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin-bottom: 2px; }
+.logo-sub { font-size: 11px; color: var(--text-dim); margin-bottom: 32px; font-family: var(--mono); }
+
+.nav-group { margin-bottom: 20px; }
+.nav-head { font-family: var(--mono); font-size: 9.5px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; padding-left: 10px; }
+.nav-link { display: block; padding: 4px 10px; border-radius: 5px; color: var(--text-muted); text-decoration: none; font-size: 13px; transition: all 0.12s; margin-bottom: 1px; }
+.nav-link:hover { background: var(--accent-glow); color: var(--accent); }
+.nav-link code { font-size: 11.5px; background: none; border: none; padding: 0; color: inherit; }
+
+.main { flex: 1; max-width: 860px; padding: 44px 52px 140px; }
+
+/* ── Typography ── */
+.hero { margin-bottom: 56px; padding-bottom: 40px; border-bottom: 1px solid var(--border); }
+.hero h1 { font-family: var(--serif); font-size: 44px; font-weight: 400; line-height: 1.15; margin-bottom: 12px; }
+.hero h1 em { color: var(--accent); font-style: italic; }
+.hero-sub { font-size: 18px; color: var(--text-muted); max-width: 560px; }
+
+section { margin-bottom: 52px; }
+section h2 {
+  font-family: var(--serif); font-size: 28px; font-weight: 400;
+  margin-bottom: 18px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+section h3 { font-size: 17px; font-weight: 600; margin: 26px 0 10px; color: var(--text); }
+section h4 { font-family: var(--mono); font-size: 13px; font-weight: 500; letter-spacing: 0.04em; margin: 20px 0 8px; color: var(--accent); }
+
+p { margin-bottom: 12px; color: var(--text-muted); }
+strong { color: var(--text); font-weight: 600; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code {
+  font-family: var(--mono); font-size: 0.86em;
+  background: var(--code-bg); padding: 2px 6px;
+  border-radius: 4px; border: 1px solid var(--border);
+  color: var(--green);
+}
+
+pre {
+  background: var(--code-bg); border: 1px solid var(--border);
+  border-radius: 10px; padding: 18px 22px;
+  overflow-x: auto; margin: 14px 0 18px;
+  line-height: 1.52; position: relative;
+}
+pre code { background: none; border: none; padding: 0; font-size: 13px; color: var(--text-muted); }
+.cm { color: var(--text-dim); }
+.kw { color: var(--accent); }
+.fn { color: var(--green); }
+.st { color: var(--orange); }
+.hl { color: var(--text); font-weight: 500; }
+.pre-tag {
+  position: absolute; top: 7px; right: 11px;
+  font-family: var(--mono); font-size: 9.5px;
+  color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em;
+}
+
+/* ── Callout ── */
+.callout { padding: 14px 18px; border-radius: 9px; margin: 18px 0; border-left: 3px solid; font-size: 14.5px; }
+.callout p { margin-bottom: 6px; }
+.callout.purple { background: var(--accent-glow); border-color: var(--accent); }
+.callout.green { background: var(--green-glow); border-color: var(--green); }
+.callout.orange { background: var(--orange-glow); border-color: var(--orange); }
+.callout-label { font-family: var(--mono); font-size: 10px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 4px; }
+.callout.purple .callout-label { color: var(--accent); }
+.callout.green .callout-label { color: var(--green); }
+.callout.orange .callout-label { color: var(--orange); }
+
+/* ── Table ── */
+table { width: 100%; border-collapse: collapse; margin: 14px 0 18px; font-size: 13.5px; }
+th { text-align: left; padding: 8px 12px; border-bottom: 2px solid var(--border); font-family: var(--mono); font-size: 10px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); }
+td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text-muted); }
+td code { font-size: 12px; }
+tr:hover td { background: var(--accent-glow); }
+
+/* ── Architecture diagram ── */
+.arch-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  margin: 20px 0;
+}
+.arch-box {
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.arch-box.span2 { grid-column: span 2; }
+.arch-box.highlight { border-color: var(--accent-dim); background: var(--accent-glow); }
+.arch-box.green-hl { border-color: #2d6b54; background: var(--green-glow); }
+.arch-title { font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 6px; }
+.arch-box.highlight .arch-title { color: var(--accent); }
+.arch-box.green-hl .arch-title { color: var(--green); }
+.arch-desc { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+
+/* ── Module cards ── */
+.mod-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 18px 0; }
+.mod-card {
+  padding: 16px 18px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  transition: border-color 0.15s;
+}
+.mod-card:hover { border-color: var(--border-accent); }
+.mod-name { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
+.mod-loc { font-family: var(--mono); font-size: 10px; color: var(--text-dim); margin-bottom: 6px; }
+.mod-desc { font-size: 13px; color: var(--text-muted); line-height: 1.45; }
+
+/* ── Flow arrows ── */
+.flow-v { display: flex; flex-direction: column; gap: 0; margin: 20px 0; align-items: flex-start; }
+.flow-v-node {
+  padding: 10px 20px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.flow-v-node.hl { border-color: var(--accent-dim); color: var(--accent); background: var(--accent-glow); }
+.flow-v-node.green { border-color: #2d6b54; color: var(--green); background: var(--green-glow); }
+.flow-v-arrow { padding: 0 0 0 20px; color: var(--text-dim); font-size: 13px; line-height: 1.8; font-family: var(--mono); }
+
+/* ── Responsive ── */
+@media (max-width: 960px) {
+  .sidebar { display: none; }
+  .main { padding: 28px 18px 80px; }
+  .hero h1 { font-size: 30px; }
+  .arch-grid { grid-template-columns: 1fr; }
+  .arch-box.span2 { grid-column: span 1; }
+  .mod-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+<nav class="sidebar">
+  <div class="logo">LiveSync</div>
+  <div class="logo-sub">Developer Docs · v1.0</div>
+
+  <div class="nav-group">
+    <div class="nav-head">Architecture</div>
+    <a class="nav-link" href="#overview">System Overview</a>
+    <a class="nav-link" href="#components">Component Map</a>
+    <a class="nav-link" href="#data-flow">Data Flow</a>
+    <a class="nav-link" href="#process-model">Process Model</a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-head">Modules</div>
+    <a class="nav-link" href="#mod-protocol"><code>protocol.py</code></a>
+    <a class="nav-link" href="#mod-config"><code>config.py</code></a>
+    <a class="nav-link" href="#mod-crypto"><code>crypto.py</code></a>
+    <a class="nav-link" href="#mod-index"><code>index.py</code></a>
+    <a class="nav-link" href="#mod-minio"><code>minio_helper.py</code></a>
+    <a class="nav-link" href="#mod-conflict"><code>conflict.py</code></a>
+    <a class="nav-link" href="#mod-server"><code>server.py</code></a>
+    <a class="nav-link" href="#mod-client"><code>client.py</code></a>
+    <a class="nav-link" href="#mod-init"><code>__init__.py</code></a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-head">Protocol</div>
+    <a class="nav-link" href="#ws-protocol">WS Messages</a>
+    <a class="nav-link" href="#minio-schema">MinIO Schema</a>
+    <a class="nav-link" href="#cred-flow">Credential Flow</a>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-head">Internals</div>
+    <a class="nav-link" href="#watchdog-bridge">Watchdog → Asyncio</a>
+    <a class="nav-link" href="#conflict-resolution">Conflict Resolution</a>
+    <a class="nav-link" href="#full-state">Full State Sync</a>
+    <a class="nav-link" href="#testing">Testing</a>
+  </div>
+</nav>
+
+<main class="main">
+
+<header class="hero" id="overview">
+  <h1>LiveSync <em>Internals</em></h1>
+  <p class="hero-sub">
+    Architecture, protocol, and module reference for developers extending or debugging the LiveSync system.
+  </p>
+</header>
+
+<!-- Components -->
+<section id="components">
+  <h2>Component Map</h2>
+  <p>LiveSync consists of three independent runtime components communicating over WebSocket (notifications) and S3 API (data).</p>
+
+  <div class="arch-grid">
+    <div class="arch-box highlight">
+      <div class="arch-title">SyncService (server.py)</div>
+      <div class="arch-desc">WS server, auth + credential provisioning, broadcast engine, server-side index, watchdog on server vault. Runs as a standalone subprocess.</div>
+    </div>
+    <div class="arch-box green-hl">
+      <div class="arch-title">MinIO</div>
+      <div class="arch-desc">Persistent encrypted file store. Per-client scoped credentials via CredentialBroker. Clients upload/download directly — server is NOT in the data path.</div>
+    </div>
+    <div class="arch-box">
+      <div class="arch-title">ToolBoxV2 (__init__.py)</div>
+      <div class="arch-desc">Supervisor: starts/stops SyncService subprocess, healthcheck, share CRUD. Provides @export API for TB integration.</div>
+    </div>
+    <div class="arch-box span2">
+      <div class="arch-title">SyncClient (client.py)</div>
+      <div class="arch-desc">Runs on each device. Watchdog → debounce → encrypt → MinIO upload → WS notify. Receives WS notifications → MinIO download → decrypt → atomic write. Auto-reconnect with exponential backoff. Offline buffer for changes during disconnection.</div>
+    </div>
+    <div class="arch-box">
+      <div class="arch-title">Shared Libraries</div>
+      <div class="arch-desc">protocol.py, config.py, crypto.py, index.py, minio_helper.py, conflict.py — used by both server and client.</div>
+    </div>
+  </div>
+
+  <div class="callout purple">
+    <div class="callout-label">Key Invariant</div>
+    <p><strong>WebSocket NEVER carries file content.</strong> Only metadata + MinIO object keys. All file data flows directly between clients and MinIO.</p>
+  </div>
+</section>
+
+<!-- Data Flow -->
+<section id="data-flow">
+  <h2>Data Flow — Syncing a File</h2>
+
+  <div class="flow-v">
+    <div class="flow-v-node">Client A: Watchdog detects file change</div>
+    <div class="flow-v-arrow">↓</div>
+    <div class="flow-v-node">DebounceBatch: 2s collect, dedup by path</div>
+    <div class="flow-v-arrow">↓</div>
+    <div class="flow-v-node">Checksum check against local index (skip if unchanged)</div>
+    <div class="flow-v-arrow">↓</div>
+    <div class="flow-v-node hl">zlib.compress() → AES-256-GCM encrypt → MinIO PUT</div>
+    <div class="flow-v-arrow">↓</div>
+    <div class="flow-v-node">WS → Server: {"type":"file_changed", "path", "checksum", "minio_key"}</div>
+    <div class="flow-v-arrow">↓</div>
+    <div class="flow-v-node">Server: update index, check for conflict, broadcast to Client B</div>
+    <div class="flow-v-arrow">↓</div>
+    <div class="flow-v-node">WS → Client B: {"type":"file_changed", ..., "source_client":"A"}</div>
+    <div class="flow-v-arrow">↓</div>
+    <div class="flow-v-node green">Client B: MinIO GET → AES decrypt → zlib decompress → atomic write</div>
+    <div class="flow-v-arrow">↓</div>
+    <div class="flow-v-node">Client B: verify SHA-256 checksum → update local index</div>
+  </div>
+</section>
+
+<!-- Process Model -->
+<section id="process-model">
+  <h2>Process Model</h2>
+  <pre><code><span class="cm">// Independence: processes survive each other's crashes</span>
+
+ToolBoxV2 starts → SyncService <span class="kw">as subprocess</span> (own port)
+SyncService crash → ToolBox detects → <span class="fn">auto-restart</span>
+ToolBox crash    → SyncService <span class="hl">keeps running</span> (independent process)
+Client crash     → <span class="fn">auto-reconnect</span> with exponential backoff (1s → 60s max)</code></pre>
+</section>
+
+<!-- Modules -->
+<section id="mod-protocol">
+  <h2>Module Reference</h2>
+  <p>9 files, 3179 LOC implementation, 1291 LOC tests. All modules are used by both server and client (shared library pattern).</p>
+
+  <div class="mod-grid">
+    <div class="mod-card">
+      <div class="mod-name">protocol.py</div>
+      <div class="mod-loc">347 LOC · 13 message types</div>
+      <div class="mod-desc">Pydantic envelope <code>SyncMessage</code> with typed payloads. File classification (<code>classify_file</code>), ignore rules (<code>should_ignore</code>). Factory methods for every message type.</div>
+    </div>
+    <div class="mod-card" id="mod-config">
+      <div class="mod-name">config.py</div>
+      <div class="mod-loc">126 LOC</div>
+      <div class="mod-desc"><code>SyncConfig</code> (runtime config), <code>ShareToken</code> (encode/decode with NO MinIO credentials), <code>load_env_config()</code> for environment variables.</div>
+    </div>
+    <div class="mod-card" id="mod-crypto">
+      <div class="mod-name">crypto.py</div>
+      <div class="mod-loc">191 LOC</div>
+      <div class="mod-desc">AES-256-GCM + zlib. Wraps <code>toolboxv2.utils.security.cryp</code> primitives, falls back to direct <code>cryptography</code> usage. Atomic file write via <code>.sync-tmp</code>.</div>
+    </div>
+    <div class="mod-card" id="mod-index">
+      <div class="mod-name">index.py</div>
+      <div class="mod-loc">221 LOC</div>
+      <div class="mod-desc">Async SQLite via aiosqlite. <code>files</code> + <code>sync_log</code> tables. Export/import as gzipped dump for full-state sync (100k files scenario).</div>
+    </div>
+    <div class="mod-card" id="mod-minio">
+      <div class="mod-name">minio_helper.py</div>
+      <div class="mod-loc">301 LOC</div>
+      <div class="mod-desc">Upload/download/list/delete. Key helpers (<code>make_object_key</code>, <code>rel_path_from_object_key</code>). CredentialBroker integration for scoped service accounts.</div>
+    </div>
+    <div class="mod-card" id="mod-conflict">
+      <div class="mod-name">conflict.py</div>
+      <div class="mod-loc">153 LOC</div>
+      <div class="mod-desc">Conflict detection (checksum comparison), <code>.md</code> merge markers (Git-style), binary latest-wins, <code>.backup</code> creation, <code>.sync-trash/</code> for deletes.</div>
+    </div>
+    <div class="mod-card" id="mod-server">
+      <div class="mod-name">server.py</div>
+      <div class="mod-loc">662 LOC</div>
+      <div class="mod-desc">WS server, auth + CredentialBroker, broadcast with skip-originator, server-side watchdog with <code>AsyncWatchdogHandler</code> (thread-safe queue).</div>
+    </div>
+    <div class="mod-card" id="mod-client">
+      <div class="mod-name">client.py</div>
+      <div class="mod-loc">791 LOC</div>
+      <div class="mod-desc">WS client with reconnect, <code>DebounceBatch</code> (2s collect), upload/download pipelines, checksum verification, offline buffer, <code>_writing_paths</code> suppression.</div>
+    </div>
+  </div>
+
+  <div class="mod-card" id="mod-init" style="margin-top: 10px;">
+    <div class="mod-name">__init__.py</div>
+    <div class="mod-loc">387 LOC · Supervisor</div>
+    <div class="mod-desc">Subprocess management (start/stop/restart), share CRUD (create/join/stop/list), selftest, MinIO healthcheck, sync log reader. ToolBoxV2 @export decorators when TB is available.</div>
+  </div>
+</section>
+
+<!-- WS Protocol -->
+<section id="ws-protocol">
+  <h2>WebSocket Protocol</h2>
+
+  <h4>Envelope</h4>
+  <pre><code>{
+  <span class="st">"type"</span>: <span class="st">"file_changed"</span>,
+  <span class="st">"payload"</span>: { ... },
+  <span class="st">"timestamp"</span>: <span class="kw">1713379200.0</span>,
+  <span class="st">"msg_id"</span>: <span class="st">"a1b2c3d4e5f6"</span>
+}</code><span class="pre-tag">json</span></pre>
+
+  <h4>Message Types</h4>
+  <table>
+    <thead><tr><th>Type</th><th>Direction</th><th>Payload Fields</th></tr></thead>
+    <tbody>
+      <tr><td><code>auth</code></td><td>C→S</td><td>client_id, device_type, share_id</td></tr>
+      <tr><td><code>auth_success</code></td><td>S→C</td><td>client_id, minio_credentials, checksums</td></tr>
+      <tr><td><code>file_changed</code></td><td>C→S / S→C</td><td>path, checksum, minio_key, file_type, source_client</td></tr>
+      <tr><td><code>file_deleted</code></td><td>C→S / S→C</td><td>path, source_client</td></tr>
+      <tr><td><code>file_renamed</code></td><td>C→S / S→C</td><td>old_path, new_path, checksum, minio_key, source_client</td></tr>
+      <tr><td><code>request_full</code></td><td>C→S</td><td>path</td></tr>
+      <tr><td><code>request_sync</code></td><td>C→S</td><td><em>(empty)</em></td></tr>
+      <tr><td><code>full_state_ready</code></td><td>S→C</td><td>minio_key, file_count</td></tr>
+      <tr><td><code>conflict</code></td><td>S→C</td><td>path, local_checksum, remote_checksum, resolution, winner, message</td></tr>
+      <tr><td><code>ack</code></td><td>S→C</td><td>path, checksum</td></tr>
+      <tr><td><code>ping</code> / <code>pong</code></td><td>bidir</td><td><em>(empty)</em></td></tr>
+      <tr><td><code>error</code></td><td>S→C</td><td>message, path</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- MinIO Schema -->
+<section id="minio-schema">
+  <h2>MinIO Object Schema</h2>
+  <pre><code>livesync/                          <span class="cm">← bucket</span>
+└── {share_id}/
+    ├── notes.md<span class="kw">.enc</span>               <span class="cm">← encrypted + compressed file</span>
+    ├── sub/deep/file.txt<span class="kw">.enc</span>
+    └── <span class="fn">.meta/</span>
+        ├── notes.md<span class="st">.json</span>          <span class="cm">← metadata (checksum, mtime, source_client)</span>
+        └── <span class="fn">.meta/</span>index.db.gz     <span class="cm">← full state export (gzipped SQLite)</span></code><span class="pre-tag">bucket layout</span></pre>
+
+  <h4>Key Construction</h4>
+  <pre><code><span class="fn">make_object_key</span>(<span class="st">"share123"</span>, <span class="st">"sub/notes.md"</span>)
+  → <span class="st">"share123/sub/notes.md.enc"</span>
+
+<span class="fn">make_meta_key</span>(<span class="st">"share123"</span>, <span class="st">"sub/notes.md"</span>)
+  → <span class="st">"share123/.meta/sub/notes.md.json"</span>
+
+<span class="fn">rel_path_from_object_key</span>(<span class="st">"share123"</span>, <span class="st">"share123/sub/notes.md.enc"</span>)
+  → <span class="st">"sub/notes.md"</span></code><span class="pre-tag">python</span></pre>
+</section>
+
+<!-- Credential Flow -->
+<section id="cred-flow">
+  <h2>MinIO Credential Flow</h2>
+  <p>Clients never have admin credentials. The server mints scoped service accounts via <code>CredentialBroker</code> at auth time.</p>
+
+  <div class="flow-v">
+    <div class="flow-v-node">Client sends WS: auth {client_id, share_id}</div>
+    <div class="flow-v-arrow">↓</div>
+    <div class="flow-v-node hl">Server calls CredentialBroker.vend_share_credentials(share_id)</div>
+    <div class="flow-v-arrow">↓</div>
+    <div class="flow-v-node">MinIO Admin API: create service account with scoped policy</div>
+    <div class="flow-v-arrow">↓ Policy: s3:*Object + s3:ListBucket on livesync/{share_id}/*</div>
+    <div class="flow-v-node green">Server sends WS: auth_success {minio_credentials, checksums}</div>
+    <div class="flow-v-arrow">↓</div>
+    <div class="flow-v-node">Client initializes Minio(creds) → direct S3 uploads/downloads</div>
+  </div>
+
+  <div class="callout green">
+    <div class="callout-label">Security Design</div>
+    <p>The <strong>Share Token</strong> contains the AES encryption key + endpoints but <strong>never</strong> MinIO credentials. Credentials are provisioned per-session via WebSocket after authentication. If CredentialBroker fails, the system falls back to admin credentials with a logged warning.</p>
+  </div>
+</section>
+
+<!-- Watchdog Bridge -->
+<section id="watchdog-bridge">
+  <h2>Watchdog → Asyncio Bridge</h2>
+  <p>Watchdog runs callbacks on its own thread. Calling <code>asyncio.create_task()</code> from there crashes the event loop. The fix:</p>
+
+  <pre><code><span class="kw">class</span> <span class="fn">AsyncWatchdogHandler</span>(FileSystemEventHandler):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, loop, queue, vault_path):
+        self.loop = loop      <span class="cm"># asyncio event loop</span>
+        self.queue = queue    <span class="cm"># asyncio.Queue</span>
+
+    <span class="kw">def</span> <span class="fn">on_modified</span>(self, event):
+        <span class="cm"># Thread-safe! Never asyncio.create_task() here</span>
+        self.loop.<span class="hl">call_soon_threadsafe</span>(
+            self.queue.put_nowait, ("modified", rel_path)
+        )</code><span class="pre-tag">python</span></pre>
+
+  <p>The asyncio side drains the queue on each loop iteration, feeds events into <code>DebounceBatch</code>, and processes after the 2-second window.</p>
+
+  <div class="callout orange">
+    <div class="callout-label">Bug Prevention</div>
+    <p>The client also suppresses watchdog events for files it's currently writing (<code>_writing_paths</code> set). Without this, downloading a file would trigger a re-upload loop.</p>
+  </div>
+</section>
+
+<!-- Conflict Resolution -->
+<section id="conflict-resolution">
+  <h2>Conflict Resolution</h2>
+
+  <h3>Detection</h3>
+  <p>Server compares incoming checksum against its index. If both are non-empty and differ → conflict.</p>
+  <pre><code><span class="kw">def</span> <span class="fn">detect_conflict</span>(local_cs, remote_cs) -> bool:
+    <span class="kw">if not</span> local_cs <span class="kw">or not</span> remote_cs:
+        <span class="kw">return</span> <span class="st">False</span>   <span class="cm"># new file, no conflict</span>
+    <span class="kw">return</span> local_cs != remote_cs</code><span class="pre-tag">python</span></pre>
+
+  <h3>Resolution Strategy</h3>
+  <table>
+    <thead><tr><th>File Type</th><th>Strategy</th><th>Implementation</th></tr></thead>
+    <tbody>
+      <tr><td><code>.md</code></td><td>Merge markers</td><td>Both versions embedded with <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt; LOCAL / ======= / &gt;&gt;&gt;&gt;&gt;&gt;&gt; REMOTE</code></td></tr>
+      <tr><td>Binary</td><td>Latest-wins</td><td>Newer mtime wins. Loser saved as <code>.conflict.{checksum}.ext</code></td></tr>
+      <tr><td>All</td><td>Backup-first</td><td><code>.backup</code> created before any overwrite</td></tr>
+      <tr><td>Deletes</td><td>Trash</td><td>Moved to <code>.sync-trash/</code>, never permanently deleted</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout purple">
+    <div class="callout-label">Safety Invariant</div>
+    <p>Every conflict is logged (<code>sync_log</code> table), broadcast to all clients (WS <code>conflict</code> message), and printed to console. <strong>No silent data loss.</strong></p>
+  </div>
+</section>
+
+<!-- Full State -->
+<section id="full-state">
+  <h2>Full State Sync (100k Files)</h2>
+  <p>Sending 100k checksums as JSON over WebSocket would be ~4MB of JSON. Instead:</p>
+
+  <div class="flow-v">
+    <div class="flow-v-node">New client sends: request_full</div>
+    <div class="flow-v-arrow">↓</div>
+    <div class="flow-v-node hl">Server: index.export_gzipped() → SQLite dump → gzip</div>
+    <div class="flow-v-arrow">↓</div>
+    <div class="flow-v-node">Server uploads to MinIO: share/.meta/index.db.gz</div>
+    <div class="flow-v-arrow">↓</div>
+    <div class="flow-v-node">WS: full_state_ready {minio_key, file_count}</div>
+    <div class="flow-v-arrow">↓</div>
+    <div class="flow-v-node green">Client downloads DB → import_gzipped() → diff → batch download (max 5 concurrent)</div>
+  </div>
+</section>
+
+<!-- Testing -->
+<section id="testing">
+  <h2>Testing</h2>
+  <pre><code><span class="cm"># Run full suite (95 tests)</span>
+<span class="kw">python -m unittest</span> discover tests/ -v
+
+<span class="cm"># Run single module</span>
+<span class="kw">python -m unittest</span> tests/test_crypto.py -v
+
+<span class="cm"># Run single test class</span>
+<span class="kw">python -m unittest</span> tests.test_client.TestDebouncer -v</code><span class="pre-tag">shell</span></pre>
+
+  <table>
+    <thead><tr><th>Test File</th><th>Tests</th><th>Covers</th></tr></thead>
+    <tbody>
+      <tr><td><code>test_config.py</code></td><td>7</td><td>SyncConfig, ShareToken roundtrip, env loading</td></tr>
+      <tr><td><code>test_crypto.py</code></td><td>15</td><td>Key gen, encrypt/decrypt bytes+files, checksum, tampering</td></tr>
+      <tr><td><code>test_index.py</code></td><td>12</td><td>CRUD, sync_log, export/import gzipped</td></tr>
+      <tr><td><code>test_minio_helper.py</code></td><td>14</td><td>Upload/download/list/delete (mocked), key helpers, healthcheck</td></tr>
+      <tr><td><code>test_conflict.py</code></td><td>14</td><td>Detection, merge markers, latest-wins, backup, sync-trash</td></tr>
+      <tr><td><code>test_server.py</code></td><td>9</td><td>Index build, conflict check, broadcast, watchdog queue</td></tr>
+      <tr><td><code>test_client.py</code></td><td>16</td><td>Debounce, backoff, diff, upload/download pipeline, delete</td></tr>
+      <tr><td><code>test_init.py</code></td><td>8</td><td>Token creation, share registry, status, selftest</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout green">
+    <div class="callout-label">Test Philosophy</div>
+    <p>All tests use <code>unittest</code> (no pytest). MinIO and WebSocket are mocked for unit tests. Server/client tests verify logic without starting real network services. Integration testing against a real MinIO instance is a future step.</p>
+  </div>
+</section>
+
+</main>
+</div>
+</body>
+</html>

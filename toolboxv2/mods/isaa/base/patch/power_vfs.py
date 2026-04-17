@@ -217,7 +217,6 @@ class GlobalVFSManager:
         }
 
     def delete_file(self, relative_path: str) -> dict:
-        """Löscht eine Datei aus dem globalen Ordner"""
         if ".." in relative_path:
             return {"success": False, "error": "Path traversal not allowed"}
 
@@ -231,6 +230,20 @@ class GlobalVFSManager:
                 shutil.rmtree(file_path)
             else:
                 file_path.unlink()
+
+            # VFS-Sync: alle registrierten Instanzen updaten
+            vfs_path = f"{GLOBAL_VFS_PATH}/{relative_path}"
+            for vfs in self._mounted_vfs.values():
+                # Files unter dem Pfad rauswerfen
+                for p in [p for p in list(vfs.files.keys()) if p.startswith(vfs_path)]:
+                    del vfs.files[p]
+                    vfs._shadow_index.pop(p, None)
+                # Dirs rauswerfen
+                for p in [p for p in list(vfs.directories.keys())
+                          if p.startswith(vfs_path + "/") or p == vfs_path]:
+                    del vfs.directories[p]
+                vfs._dirty = True
+
             return {"success": True, "deleted": f"{GLOBAL_VFS_PATH}/{relative_path}"}
         except Exception as e:
             return {"success": False, "error": str(e)}
