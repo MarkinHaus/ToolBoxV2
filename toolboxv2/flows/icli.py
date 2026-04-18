@@ -7236,10 +7236,18 @@ class ISAA_Host:
                         tname, raw_res, raw_in = iv.tools_raw[idx]
 
                         # Versuchen zu parsen für schönes Markdown
+                        try:
+                            raw_in = json.loads(raw_in) if raw_in.startswith('{') else raw_in
+                        except:
+                            pass
+                        try:
+                            raw_res = json.loads(raw_res) if raw_res.startswith('{') else raw_res
+                        except:
+                            pass
                         io_data = {
                             "Tool": tname,
-                            "Input": json.loads(raw_in) if raw_in.startswith('{') else raw_in,
-                            "Result": json.loads(raw_res) if raw_res.startswith('{') else raw_res
+                            "Input": raw_in,
+                            "Result": raw_res
                         }
 
                         c_print(HTML(f"    <style fg='{PTColors.ZEN_DIM}'>    ↳ Raw I/O:</style>"))
