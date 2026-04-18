@@ -57,7 +57,7 @@ class Diagnostic:
     severity: DiagnosticSeverity = DiagnosticSeverity.ERROR
     code: str | int | None = None
     source: str | None = None
-    
+
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization"""
         return {
@@ -70,7 +70,7 @@ class Diagnostic:
             "code": self.code,
             "source": self.source
         }
-    
+
     def to_display_string(self, content_lines: list[str] | None = None) -> str:
         """Format diagnostic for display"""
         severity_icons = {
@@ -79,16 +79,16 @@ class Diagnostic:
             DiagnosticSeverity.INFORMATION: "ℹ️",
             DiagnosticSeverity.HINT: "💡"
         }
-        
+
         icon = severity_icons.get(self.severity, "•")
         line_num = self.range.start.line + 1
         col = self.range.start.character + 1
-        
+
         result = f"{icon} Line {line_num}:{col} - {self.message}"
-        
+
         if self.source:
             result += f" [{self.source}]"
-        
+
         if content_lines and 0 <= self.range.start.line < len(content_lines):
             line_content = content_lines[self.range.start.line]
             result += f"\n   │ {line_content}"
@@ -96,7 +96,7 @@ class Diagnostic:
             caret_pos = self.range.start.character
             caret_len = max(1, self.range.end.character - self.range.start.character)
             result += f"\n   │ {' ' * caret_pos}{'^' * caret_len}"
-        
+
         return result
 
 
@@ -218,14 +218,14 @@ LSP_SERVERS: dict[str, LSPServerConfig] = {
 class LSPManager:
     """
     Manages LSP servers for code diagnostics.
-    
+
     Features:
     - Automatic server installation
     - Server lifecycle management
     - Diagnostic retrieval
     - Caching for performance
     """
-    
+
     def __init__(
         self,
         cache_dir: str | None = None,
@@ -234,7 +234,7 @@ class LSPManager:
     ):
         """
         Initialize LSP Manager.
-        
+
         Args:
             cache_dir: Directory for caching LSP data
             auto_install: Automatically install missing LSP servers
@@ -243,48 +243,48 @@ class LSPManager:
         self.cache_dir = Path(cache_dir) if cache_dir else Path(tempfile.gettempdir()) / "vfs_lsp"
         self.auto_install = auto_install
         self.timeout = timeout
-        
+
         # Server processes
         self._servers: dict[str, asyncio.subprocess.Process] = {}
         self._server_locks: dict[str, asyncio.Lock] = {}
-        
+
         # Installation status cache
         self._installed: dict[str, bool] = {}
-        
+
         # Diagnostic cache: (file_path, content_hash) -> diagnostics
         self._diagnostic_cache: dict[tuple[str, str], list[Diagnostic]] = {}
-        
+
         # Ensure cache directory exists
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-    
+
     def _get_server_for_language(self, language_id: str) -> str | None:
         """Get the LSP server name for a language"""
         for server_name, config in LSP_SERVERS.items():
             if language_id in config.language_ids:
                 return server_name
         return None
-    
+
     def _is_installed(self, server_name: str) -> bool:
         """Check if LSP server is installed"""
         if server_name in self._installed:
             return self._installed[server_name]
-        
+
         config = LSP_SERVERS.get(server_name)
         if not config:
             return False
-        
+
         # Check if command exists
         installed = shutil.which(config.install_check) is not None
         self._installed[server_name] = installed
-        
+
         return installed
-    
+
     async def _install_server(self, server_name: str) -> bool:
         """Install an LSP server"""
         config = LSP_SERVERS.get(server_name)
         if not config:
             return False
-        
+
         try:
             # Run install command
             process = await asyncio.create_subprocess_exec(
@@ -292,55 +292,55 @@ class LSPManager:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            
+
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(),
                 timeout=300  # 5 minute timeout for installation
             )
-            
+
             if process.returncode == 0:
                 self._installed[server_name] = True
                 return True
             else:
-                print(f"Failed to install {server_name}: {stderr.decode()}")
+                print(f"Failed to install {server_name}: {stderr.decode('utf-8', errors='replace')}")
                 return False
-                
+
         except asyncio.TimeoutError:
             print(f"Timeout installing {server_name}")
             return False
         except Exception as e:
             print(f"Error installing {server_name}: {e}")
             return False
-    
+
     async def _ensure_server_available(self, server_name: str) -> bool:
         """Ensure LSP server is available, installing if needed"""
         if self._is_installed(server_name):
             return True
-        
+
         if self.auto_install:
             return await self._install_server(server_name)
-        
+
         return False
-    
+
     async def _start_server(self, server_name: str) -> asyncio.subprocess.Process | None:
         """Start an LSP server process"""
         if server_name not in self._server_locks:
             self._server_locks[server_name] = asyncio.Lock()
-        
+
         async with self._server_locks[server_name]:
             # Check if already running
             if server_name in self._servers:
                 proc = self._servers[server_name]
                 if proc.returncode is None:  # Still running
                     return proc
-            
+
             config = LSP_SERVERS.get(server_name)
             if not config:
                 return None
-            
+
             if not await self._ensure_server_available(server_name):
                 return None
-            
+
             try:
                 process = await asyncio.create_subprocess_exec(
                     *config.start_command,
@@ -348,14 +348,14 @@ class LSPManager:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
-                
+
                 self._servers[server_name] = process
                 return process
-                
+
             except Exception as e:
                 print(f"Error starting {server_name}: {e}")
                 return None
-    
+
     async def _send_lsp_request(
         self,
         server_name: str,
@@ -366,7 +366,7 @@ class LSPManager:
         process = await self._start_server(server_name)
         if not process or not process.stdin or not process.stdout:
             return None
-        
+
         # Build JSON-RPC request
         request = {
             "jsonrpc": "2.0",
@@ -374,14 +374,14 @@ class LSPManager:
             "method": method,
             "params": params
         }
-        
+
         content = json.dumps(request)
         message = f"Content-Length: {len(content)}\r\n\r\n{content}"
-        
+
         try:
             process.stdin.write(message.encode())
             await process.stdin.drain()
-            
+
             # Read response
             # First read headers
             headers = {}
@@ -396,7 +396,7 @@ class LSPManager:
                 if ": " in line:
                     key, value = line.split(": ", 1)
                     headers[key] = value
-            
+
             # Read content
             content_length = int(headers.get("Content-Length", 0))
             if content_length > 0:
@@ -405,20 +405,20 @@ class LSPManager:
                     timeout=self.timeout
                 )
                 return json.loads(content.decode())
-            
+
             return None
-            
+
         except asyncio.TimeoutError:
             return None
         except Exception as e:
             print(f"LSP request error: {e}")
             return None
-    
+
     def _content_hash(self, content: str) -> str:
         """Generate hash for content caching"""
         import hashlib
         return hashlib.md5(content.encode()).hexdigest()
-    
+
     async def get_diagnostics(
         self,
         file_path: str,
@@ -427,12 +427,12 @@ class LSPManager:
     ) -> list[Diagnostic]:
         """
         Get diagnostics for a file.
-        
+
         Args:
             file_path: Virtual file path
             content: File content
             language_id: Language identifier (e.g., "python", "javascript")
-            
+
         Returns:
             List of Diagnostic objects
         """
@@ -440,20 +440,20 @@ class LSPManager:
         cache_key = (file_path, self._content_hash(content))
         if cache_key in self._diagnostic_cache:
             return self._diagnostic_cache[cache_key]
-        
+
         # Get appropriate server
         server_name = self._get_server_for_language(language_id)
         if not server_name:
             return []
-        
+
         # Use simple diagnostic approach for common cases
         diagnostics = await self._get_simple_diagnostics(content, language_id, server_name)
-        
+
         # Cache results
         self._diagnostic_cache[cache_key] = diagnostics
-        
+
         return diagnostics
-    
+
     async def _get_simple_diagnostics(
         self,
         content: str,
@@ -465,24 +465,24 @@ class LSPManager:
         This is faster and more reliable than full LSP for basic diagnostics.
         """
         diagnostics = []
-        
+
         if language_id == "python" and server_name == "pylsp":
             diagnostics = await self._python_diagnostics(content)
         elif language_id in ("javascript", "typescript", "typescriptreact", "javascriptreact"):
             diagnostics = await self._js_ts_diagnostics(content, language_id)
         # Add more language-specific handlers as needed
-        
+
         return diagnostics
-    
+
     async def _python_diagnostics(self, content: str) -> list[Diagnostic]:
         """Get Python diagnostics using pyflakes/pylint"""
         diagnostics = []
-        
+
         # Create temp file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', encoding='utf-8', delete=False) as f:
             f.write(content)
             temp_path = f.name
-        
+
         try:
             # Try pyflakes first (fast)
             try:
@@ -492,8 +492,8 @@ class LSPManager:
                     stderr=asyncio.subprocess.PIPE
                 )
                 stdout, _ = await asyncio.wait_for(process.communicate(), timeout=10)
-                
-                for line in stdout.decode().strip().split('\n'):
+
+                for line in stdout.decode('utf-8', errors='replace').strip().split('\n'):
                     if not line:
                         continue
                     # Parse pyflakes output: filename:line:col: message
@@ -515,7 +515,7 @@ class LSPManager:
                             pass
             except Exception:
                 pass
-            
+
             # Also run basic syntax check
             try:
                 compile(content, '<string>', 'exec')
@@ -531,16 +531,16 @@ class LSPManager:
                     severity=DiagnosticSeverity.ERROR,
                     source="python"
                 ))
-        
+
         finally:
             os.unlink(temp_path)
-        
+
         return diagnostics
-    
+
     async def _js_ts_diagnostics(self, content: str, language_id: str) -> list[Diagnostic]:
         """Get JavaScript/TypeScript diagnostics"""
         diagnostics = []
-        
+
         # Determine file extension
         ext = {
             "javascript": ".js",
@@ -548,12 +548,12 @@ class LSPManager:
             "typescript": ".ts",
             "typescriptreact": ".tsx"
         }.get(language_id, ".js")
-        
+
         # Create temp file
-        with tempfile.NamedTemporaryFile(mode='w', suffix=ext, delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode='w', suffix=ext, encoding='utf-8',delete=False) as f:
             f.write(content)
             temp_path = f.name
-        
+
         try:
             # Try tsc for TypeScript
             if language_id in ("typescript", "typescriptreact"):
@@ -565,8 +565,8 @@ class LSPManager:
                             stderr=asyncio.subprocess.PIPE
                         )
                         stdout, _ = await asyncio.wait_for(process.communicate(), timeout=15)
-                        
-                        for line in stdout.decode().strip().split('\n'):
+
+                        for line in stdout.decode('utf-8', errors='replace').strip().split('\n'):
                             if not line:
                                 continue
                             # Parse tsc output
@@ -577,7 +577,7 @@ class LSPManager:
                                 col = int(match.group(2)) - 1
                                 severity = DiagnosticSeverity.ERROR if match.group(3) == "error" else DiagnosticSeverity.WARNING
                                 message = match.group(4)
-                                
+
                                 diagnostics.append(Diagnostic(
                                     range=Range(
                                         start=Position(line_num, col),
@@ -589,12 +589,12 @@ class LSPManager:
                                 ))
                     except Exception:
                         pass
-        
+
         finally:
             os.unlink(temp_path)
-        
+
         return diagnostics
-    
+
     async def stop_server(self, server_name: str):
         """Stop a running LSP server"""
         if server_name in self._servers:
@@ -606,16 +606,16 @@ class LSPManager:
                 except asyncio.TimeoutError:
                     process.kill()
             del self._servers[server_name]
-    
+
     async def stop_all_servers(self):
         """Stop all running LSP servers"""
         for server_name in list(self._servers.keys()):
             await self.stop_server(server_name)
-    
+
     def clear_cache(self):
         """Clear diagnostic cache"""
         self._diagnostic_cache.clear()
-    
+
     def get_server_status(self) -> dict[str, dict]:
         """Get status of all LSP servers"""
         status = {}
@@ -628,11 +628,11 @@ class LSPManager:
                 "package_manager": config.package_manager
             }
         return status
-    
+
     def get_available_servers(self) -> list[str]:
         """Get list of available (installed) LSP servers"""
         return [name for name in LSP_SERVERS if self._is_installed(name)]
-    
+
     async def ensure_server_for_language(self, language_id: str) -> bool:
         """Ensure LSP server is available for a language"""
         server_name = self._get_server_for_language(language_id)

@@ -2665,7 +2665,7 @@ BEISPIELE:
                 )
 
         except Exception as e:
-            self.live.narrator_msg = "Failed to execute tool execution engine"
+            self.live.narrator_msg = "Failed to execute narrator tool post processing"
             get_app().debug_rains(e)
             get_app().print(e)
 

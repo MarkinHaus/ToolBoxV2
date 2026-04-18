@@ -201,7 +201,7 @@ class FlowAgentBuilder:
 
         # Runtime components
         self._custom_tools: dict[
-            str, tuple[Callable, str, list[str] | None, dict[str, Any] | None]
+            str, tuple[Callable, str, list[str] | None, dict[str, Any] | None, dict[str, Any] | None]
         ] = {}
         self._mcp_tools: dict[str, dict] = {}
         self._mcp_session_manager = None
@@ -657,6 +657,7 @@ class FlowAgentBuilder:
         description: str = None,
         category: list[str] | str = None,
         flags: dict[str, bool] = None,
+        **kwargs
     ) -> "FlowAgentBuilder":
         """
         Add custom tool function.
@@ -679,7 +680,7 @@ class FlowAgentBuilder:
         else:
             categories = category
 
-        self._custom_tools[tool_name] = (func, tool_desc, categories, flags)
+        self._custom_tools[tool_name] = (func, tool_desc, categories, flags, kwargs)
 
         iprint(f"Tool added: {tool_name} (categories: {categories})")
         return self
@@ -1042,6 +1043,7 @@ class FlowAgentBuilder:
                     tool_desc,
                     categories,
                     flags,
+                    kwargs
                 ) in self._custom_tools.items():
                     try:
                         agent.add_tool(
@@ -1050,6 +1052,7 @@ class FlowAgentBuilder:
                             description=tool_desc,
                             category=categories,
                             flags=flags,
+                            **kwargs
                         )
                         tools_added += 1
                     except Exception as e:

@@ -1,11 +1,19 @@
 import importlib.util
 import os
 import time
+import re
 
 from toolboxv2 import Spinner
 
 from ..utils.extras.gist_control import GistLoader
 
+def normalize_flow_name(name: str) -> str:
+    """myFlow, my-flow, my_flow, MyFlow → 'my_flow'"""
+    # camelCase/PascalCase: insert _ before uppercase groups
+    name = re.sub(r'([A-Z]+)', lambda m: '_' + m.group(0).lower(), name)
+    name = name.replace('-', '_').lower()
+    name = re.sub(r'_+', '_', name)
+    return name.strip('_')
 
 def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None, ui=False):
 
@@ -45,15 +53,19 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None, ui=False)
                             and callable(module.run)
                             and hasattr(module, "NAME")
                         ):
-                            flows_dict_[module.NAME] = module.run
+                            func = module.run
                     else:
                         if (
                             hasattr(module, "ui")
                             and callable(module.ui)
                             and hasattr(module, "NAME")
                         ):
-                            flows_dict_[module.NAME] = module.ui
-
+                            func = module.ui
+                    key = normalize_flow_name(module.NAME)
+                    flows_dict_[key] = func
+                    fname_key = normalize_flow_name(name)
+                    if fname_key != key:
+                        flows_dict_[fname_key] = func
 
                 elif file_name.endswith('.py') and s in file_name:
                     name = os.path.splitext(file_name)[0]

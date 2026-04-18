@@ -426,8 +426,7 @@ def render_footer_toolbar(
             else:
                 set_interval(0.859)
         out.append(("fg:#fbbf24 bg:#1f2937", f" {spinner_text} "))
-        out.append((bg + fg_dim, pad))
-        return out
+        out.append((bg + fg_dim, pad+'\n'))
     else:
         _was_spinner[0] = False
 
@@ -7073,40 +7072,41 @@ class ISAA_Host:
             for msg in _history:
                 role = msg.get("role", "unknown")
                 content = msg.get("content", "")
-
-                # Format based on role
-                if role == "user":
-                    c_print(HTML(f"  <style font-weight='bold' fg='ansigreen'>User 👤</style>"))
-                    print_code_block(f"  {esc(content)}")
-                    c_print(HTML(""))  # Spacing
-
-                elif role == "assistant":
-                    c_print(HTML(f"  <style font-weight='bold' fg='ansicyan'>{self.active_agent_name} 🤖</style>"))
-
-                    # Check for Tool Calls
-                    if "tool_calls" in msg and msg["tool_calls"]:
-                        for tc in msg["tool_calls"]:
-                            fn = tc.get("function", {})
-                            name = fn.get("name", "unknown")
-                            c_print(HTML(f"  <style fg='ansiyellow'>🔧 Calls: {name}(...)</style>"))
-
-                    if content:
+                try:
+                    # Format based on role
+                    if role == "user":
+                        c_print(HTML(f"  <style font-weight='bold' fg='ansigreen'>User 👤</style>"))
                         print_code_block(f"  {esc(content)}")
-                    c_print(HTML(""))  # Spacing
+                        c_print(HTML(""))  # Spacing
 
-                elif role == "tool":
-                    # Tool Output - usually verbose, show summary
-                    call_id = msg.get("tool_call_id", "unknown")
-                    preview = content[:10000] + "..." if len(content) > 10000 else content
-                    c_print(HTML(f"  <style fg='ansimagenta'>⚙️ Tool Result ({call_id})</style>"))
-                    c_print(HTML(f"  <style fg='gray'>{esc(preview)}</style>"))
-                    c_print(HTML(""))
+                    elif role == "assistant":
+                        c_print(HTML(f"  <style font-weight='bold' fg='ansicyan'>{self.active_agent_name} 🤖</style>"))
 
-                elif role == "system":
-                    c_print(HTML(f"  <style fg='ansired'>System ⚠️</style>"))
-                    print_code_block(f"  {esc(content)}")
-                    c_print(HTML(""))
+                        # Check for Tool Calls
+                        if "tool_calls" in msg and msg["tool_calls"]:
+                            for tc in msg["tool_calls"]:
+                                fn = tc.get("function", {})
+                                name = fn.get("name", "unknown")
+                                c_print(HTML(f"  <style fg='ansiyellow'>🔧 Calls: {_esc(name)}(...)</style>"))
 
+                        if content:
+                            print_code_block(f"  {esc(content)}")
+                        c_print(HTML(""))  # Spacing
+
+                    elif role == "tool":
+                        # Tool Output - usually verbose, show summary
+                        call_id = msg.get("tool_call_id", "unknown")
+                        preview = content[:10000] + "..." if len(content) > 10000 else content
+                        c_print(HTML(f"  <style fg='ansimagenta'>⚙️ Tool Result ({call_id})</style>"))
+                        c_print(HTML(f"  <style fg='gray'>{esc(preview)}</style>"))
+                        c_print(HTML(""))
+
+                    elif role == "system":
+                        c_print(HTML(f"  <style fg='ansired'>System ⚠️</style>"))
+                        print_code_block(f"  {esc(content)}")
+                        c_print(HTML(""))
+                except:
+                    c_print(f"invalid enty {role}-{msg}")
             print_box_footer()
 
         action = args[0]
@@ -9259,6 +9259,10 @@ class ISAA_Host:
             except Exception:
                 pass
             try:
+                await self.active_coder.cleanup_agents()
+            except Exception:
+                pass
+            try:
                 self.active_coder.worktree.cleanup()
             except Exception:
                 pass
@@ -9303,17 +9307,6 @@ class ISAA_Host:
                             pass
                     elif section == "THOUGHT":
                         self._ingest_chunk(tid, {"type": "reasoning", "chunk": content + "\n"})
-                    elif section == "TOOL CALL":
-                        # FIX 2: Name und Args sauber trennen (Bsp: "read_file({"path": "x"})")
-                        parts = content.split("(", 1)
-                        name = parts[0].strip()
-                        args_str = parts[1].rsplit(")", 1)[0] if len(parts) > 1 else ""
-                        coder_state["current_tool"] = name
-                        self._ingest_chunk(tid, {"type": "tool_start", "name": name, "args": args_str})
-                    elif section == "TOOL RESULT":
-                        # FIX 2: Den korrekten, gemerkten Namen verwenden
-                        self._ingest_chunk(tid, {"type": "tool_result", "name": coder_state["current_tool"],
-                                                 "result": content})
                         coder_state["current_tool"] = "unknown"
                     elif section in ["IO-CALC", "IO-COMMIT", "IO-ERR", "IO"]:
                         # Datei-Operationen als Content in den Stream geben
@@ -9331,32 +9324,27 @@ class ISAA_Host:
                 self.active_coder.log_handler = coder_log_handler
                 self.active_coder.stream_callback = coder_stream_handler
                 self.active_coder.stream_enabled = True
+                self.active_coder.row_chunk_fun = lambda c:self._ingest_chunk(_tid_holder[0], c)
 
                 # 3. Hintergrund-Task Wrapper für den Coder
                 async def _run_coder_bg():
-                    try:
-                        result = await self.active_coder.execute(task_prompt)
+                    result = await self.active_coder.execute(task_prompt)
 
-                        # Task abschließen
-                        self._ingest_chunk(_tid_holder[0], {"type": "done", "success": result.success})
-                        self._ingest_chunk(_tid_holder[0], {"type": "final_answer", "answer": result.message})
+                    # Task abschließen
+                    self._ingest_chunk(_tid_holder[0], {"type": "done", "success": result.success})
+                    self._ingest_chunk(_tid_holder[0], {"type": "final_answer", "answer": result.message})
 
-                        # Kleine Zusammenfassung fürs Terminal
-                        with patch_stdout():
-                            if result.success and result.changed_files:
-                                c_print(HTML(
-                                    f"<style fg='ansicyan'>Modified files: {', '.join(result.changed_files)}</style>"))
-                                c_print(HTML(
-                                    "<style fg='ansiyellow'>Use '/coder diff' to review, '/coder accept' to apply.</style>"))
+                    # Kleine Zusammenfassung fürs Terminal
+                    with patch_stdout():
+                        if result.success and result.changed_files:
+                            c_print(HTML(
+                                f"<style fg='ansicyan'>Modified files: {', '.join(result.changed_files)}</style>"))
+                            c_print(HTML(
+                                "<style fg='ansiyellow'>Use '/coder diff' to review, '/coder accept' to apply.</style>"))
 
-                        if not result.success:
-                            raise Exception(result.message)
-                        return result.message
-                    finally:
-                        # Handler aufräumen
-                        self.active_coder.log_handler = None
-                        self.active_coder.stream_callback = self.active_coder._default_stream_handler
-
+                    if not result.success:
+                        raise Exception(result.message)
+                    return result.message
                 c_print(HTML("<style fg='ansimagenta'>⚡ Starting Code Generation Task...</style>"))
 
                 # 4. Als offiziellen Background-Task registrieren
