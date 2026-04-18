@@ -18,6 +18,7 @@ Usage in init_session_tools():
 from __future__ import annotations
 
 import fnmatch
+import json
 import os
 import re
 import shlex
@@ -67,6 +68,83 @@ def _parse_n_flag(args: list[str], default: int = 10) -> tuple[int, list[str]]:
     return n, rest
 
 
+def _parse_n_flag(args: list[str], default: int = 10) -> tuple[int, list[str]]:
+    """Extract -n N / -nN from args, return (n, remaining_args)."""
+    n = default
+    rest: list[str] = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "-n" and i + 1 < len(args):
+            try:
+                n = int(args[i + 1])
+                i += 2
+                continue
+            except ValueError:
+                pass
+        elif a.startswith("-n") and len(a) > 2:
+            try:
+                n = int(a[2:])
+                i += 1
+                continue
+            except ValueError:
+                pass
+        rest.append(a)
+        i += 1
+    return n, rest
+
+
+def _decode_content(raw: str) -> str:
+    """
+    Normalisiert Content aus Agent-Tool-Calls.
+
+    Versteht alle drei Schreibweisen:
+      "line1\\nline2"   <- JSON-escape (Standard)
+      "line1\nline2"    <- echter Newline (auch ok)
+      r"line1\\nline2"  <- r-Praefix wurde bereits von _strip_quotes entfernt,
+                           \\n bleibt dann als Literal (fuer Regex, Windows-Pfade)
+
+    Idempotent: mehrfaches Aufrufen = selbes Ergebnis.
+    NIEMALS selbst \\\\n schreiben — das erzeugt Backslash+n im File.
+    """
+    # Schritt 1: double-escaped abbauen (\\\\n -> \\n), max 3 Durchlaeufe
+    for _ in range(3):
+        if '\\\\' not in raw:
+            break
+        raw = raw.replace('\\\\n', '\\n')
+        raw = raw.replace('\\\\t', '\\t')
+        raw = raw.replace('\\\\r', '\\r')
+        new = re.sub(r'\\\\(.)', r'\\\1', raw)
+        if new == raw:
+            break
+        raw = new
+
+    # Schritt 2: JSON-style escapes -> echte Zeichen
+    raw = raw.replace('\\n', '\n')
+    raw = raw.replace('\\t', '\t')
+    raw = raw.replace('\\r', '\r')
+    raw = raw.replace('\\"', '"')
+    raw = raw.replace("\\'", "'")
+    return raw
+
+
+def _strip_quotes(s: str) -> str:
+    """
+    Entfernt aeussere Anfuehrungszeichen inkl. r-Praefix.
+
+    Unterstuetzte Formen:
+      "..."   '...'   r"..."   r'...'   \"\"\"...\"\"\"   '''...'''
+    """
+    s = s.strip()
+    is_raw = s.startswith(('r"', "r'"))
+    if is_raw:
+        s = s[1:]   # r-Praefix entfernen, Rest normal behandeln
+    for q in ('"""', "'''"):
+        if s.startswith(q) and s.endswith(q) and len(s) >= 6:
+            return s[3:-3]
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
+        return s[1:-1]
+    return s
 # =============================================================================
 # VFS SHELL FACTORY
 # =============================================================================
@@ -82,8 +160,8 @@ def _split_compound(command: str) -> list[tuple[str, str]]:
         ';'   SEQ  — always runs
 
     NOTE: Newline is intentionally NOT an operator.
-    Agents send multi-line content via write/echo as actual newlines,
-    e.g.  write /f.py "line1\nline2"  — treating \n as a separator
+    Agents send multi-line content via write_mini/echo as actual newlines,
+    e.g.  write_mini /f.py "line1\nline2"  — treating \n as a separator
     would silently truncate content or produce 'command not found'.
     Use ';' or '&&' to batch multiple commands.
     """
@@ -355,6 +433,34 @@ def make_vfs_shell(session: "AgentSessionV2"):
         """
         Unix-like shell interface for VFS operations.
 
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        WICHTIG: SCHREIB-LIMITS & CHUNK-PROTOKOLL
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        Ein einzelner Tool-Call darf max ~40 Zeilen Content enthalten.
+        Grund: JSON-Tool-Calls können bei Längenbeschränkung abbrechen.
+        Ein abgebrochener Call = keine Wirkung. Kein partial-write.
+
+        REGEL:
+          < 40 Zeilen  →  write <path> "..."   (ein Call)
+          ≥ 40 Zeilen  →  write_chunk          (ein Call pro Block)
+
+        CHUNK-PROTOKOLL:
+          write_chunk <path> 0 <N> "<block_0_content>"   ← erzeugt/überschreibt Datei
+          write_chunk <path> 1 <N> "<block_1_content>"   ← hängt an
+          ...
+          write_chunk <path> N-1 <N> "<block_N-1>"       ← finalisiert
+
+        Nach Abbruch / Wiederaufnahme:
+          write_chunk_status <path>   →  zeigt welche Blöcke fehlen
+          Dann nur die fehlenden Blöcke erneut senden.
+
+        Content-Encoding (alle Varianten funktionieren):
+          "line1\\nline2"   ← \\n wird zu Newline (Standard in JSON)
+          "line1\nline2"    ← echter Newline (auch ok)
+          NIEMALS: \\\\n   ← das erzeugt einen Backslash + n im File!
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
         Supported commands
         ------------------
         NAVIGATION  ls [-la] [-R] [path]  |  pwd  |  tree [path] [-L depth]
@@ -365,7 +471,7 @@ def make_vfs_shell(session: "AgentSessionV2"):
         WRITE       touch <path>
                     echo "text" > <path>        (overwrite)
                     echo "text" >> <path>       (append)
-                    write <path> "content"      (multi-line, \\n supported)
+                    write_mini <path> "content"      (multi-line, \\n supported) # only for small files
                     edit <path> <start> <end> "new_content"   (line-range replace)
                     mkdir [-p] <path>
                     rm [-rf] <path>
@@ -406,10 +512,7 @@ def make_vfs_shell(session: "AgentSessionV2"):
         )
         if echo_m:
             raw_content, op, path = echo_m.groups()
-            raw_content = raw_content.strip()  # ← NEU: trailing spaces weg
-            if len(raw_content) >= 2 and raw_content[0] == raw_content[-1] and raw_content[0] in ('"', "'"):
-                raw_content = raw_content[1:-1]
-            content = raw_content.replace("\\n", "\n").replace("\\t", "\t")
+            content = _decode_content(_strip_quotes(raw_content))
             r = vfs.write(path, content) if op == ">" else vfs.append(path, content)
             return _ok() if r.get("success") else _err(r.get("error", "write failed"))
 
@@ -731,18 +834,109 @@ def make_vfs_shell(session: "AgentSessionV2"):
         # ═══════════════════════════════════════════════════════════════════
         # write <path> <content>   (multi-line aware, \n \t processed)
         # ═══════════════════════════════════════════════════════════════════
-        elif cmd == "write":
+        elif cmd == "write_mini":
             if len(rest) < 2:
                 return _err("write: usage: write <path> <content>")
             path = rest[0]
             # Extract content from raw command to preserve \n before any tokenizer eats it
             raw = re.match(r"write\s+\S+\s+(.*)", command, re.DOTALL)
             raw_content = raw.group(1) if raw else " ".join(rest[1:])
-            if len(raw_content) >= 2 and raw_content[0] == raw_content[-1] and raw_content[0] in ('"', "'"):
-                raw_content = raw_content[1:-1]
-            content = raw_content.replace("\\n", "\n").replace("\\t", "\t")
+            content = _decode_content(_strip_quotes(raw_content))
             r = vfs.write(path, content)
             return _ok(f"written: {path} ({len(content)} chars)") if r.get("success") else _err(r.get("error", ""))
+
+        # In vfs_shell_tool.py
+
+        elif cmd == "write_chunk":
+            """
+            Schreibe einen einzelnen Block einer größeren Datei.
+
+            Syntax:
+                write_chunk <path> <chunk_idx> <total_chunks> <content>
+
+            Beispiel (3 Blöcke à ~50 Zeilen):
+                write_chunk /src/big.py 0 3 "import os\nimport sys\n..."
+                write_chunk /src/big.py 1 3 "def foo():\n    pass\n..."
+                write_chunk /src/big.py 2 3 "if __name__ == '__main__':\n..."
+
+            Bei chunk_idx == 0        → Datei wird neu angelegt (overwrite)
+            Bei chunk_idx == total-1  → Datei wird finalisiert, Zeilencount gemeldet
+            Abbruch mittendrin?       → write_chunk_status <path> zeigt welcher Block fehlt
+            """
+            if len(rest) < 4:
+                return _err("write_chunk: usage: write_chunk <path> <idx> <total> <content>")
+
+            path = rest[0]
+            try:
+                idx = int(rest[1])
+                total = int(rest[2])
+            except ValueError:
+                return _err("write_chunk: idx and total must be integers")
+
+            raw = re.match(r"write_chunk\s+\S+\s+\d+\s+\d+\s+(.*)", command, re.DOTALL)
+            raw_content = raw.group(1) if raw else " ".join(rest[3:])
+            content = _decode_content(_strip_quotes(raw_content))
+
+            np = vfs._normalize_path(path)
+
+            # Chunk-State im VFS als Sidecar speichern
+            state_path = np + ".__chunks__"
+
+            if idx == 0:
+                # Start: Sidecar anlegen, Datei leeren
+                state = {"total": total, "received": [], "size": 0}
+                vfs.write(state_path, json.dumps(state))
+                r = vfs.write(path, content)
+            else:
+                # Folge-Block: Sidecar lesen, anhängen
+                sr = vfs.read(state_path)
+                if not sr.get("success"):
+                    return _err(f"write_chunk: no active chunk session for {path} — start with idx=0")
+                state = json.loads(sr["content"])
+
+                if idx in state["received"]:
+                    return _ok(f"chunk {idx}/{total - 1} already received, skipped")
+
+                if state["total"] != total:
+                    return _err(f"write_chunk: total mismatch (expected {state['total']}, got {total})")
+
+                r = vfs.append(path, content)
+
+            if not r.get("success"):
+                return _err(r.get("error", "write failed"))
+
+            state["received"].append(idx)
+            state["size"] += len(content)
+            vfs.write(state_path, json.dumps(state))
+
+            missing = [i for i in range(total) if i not in state["received"]]
+
+            if not missing:
+                # Finalisiert — Sidecar löschen
+                vfs.delete(state_path)
+                fc = vfs.read(path)
+                lines = len(fc["content"].splitlines()) if fc.get("success") else "?"
+                return _ok(f"✓ {path} complete — {total} chunks, {state['size']} chars, {lines} lines")
+
+            return _ok(f"chunk {idx}/{total - 1} ok — missing: {missing}")
+
+
+        elif cmd == "write_chunk_status":
+            """Zeigt Status einer laufenden Chunk-Session."""
+            if not rest:
+                return _err("write_chunk_status: missing path")
+            path = rest[0]
+            state_path = vfs._normalize_path(path) + ".__chunks__"
+            sr = vfs.read(state_path)
+            if not sr.get("success"):
+                return _ok(f"No active chunk session for {path}")
+            state = json.loads(sr["content"])
+            missing = [i for i in range(state["total"]) if i not in state["received"]]
+            return _ok(
+                f"path={path}\n"
+                f"total={state['total']}  received={sorted(state['received'])}  missing={missing}\n"
+                f"size_so_far={state['size']} chars"
+            )
         # ═══════════════════════════════════════════════════════════════════
         # edit <path> <line_start> <line_end> <new_content>
         # ═══════════════════════════════════════════════════════════════════
@@ -754,7 +948,7 @@ def make_vfs_shell(session: "AgentSessionV2"):
                 line_start, line_end = int(rest[1]), int(rest[2])
             except ValueError:
                 return _err("edit: line_start and line_end must be integers")
-            new_content = " ".join(rest[3:]).replace("\\n", "\n").replace("\\t", "\t")
+            new_content = _decode_content(_strip_quotes(" ".join(rest[3:])))
             r = vfs.edit(path, line_start, line_end, new_content)
             return _ok(r.get("message", "ok")) if r.get("success") else _err(r.get("error", ""))
 

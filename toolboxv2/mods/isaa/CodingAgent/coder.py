@@ -678,40 +678,34 @@ class GitWorktree:
 # SUB-AGENT SYSTEM PROMPTS (NEW)
 # ═══════════════════════════════════════════════════════════════════════
 
-PLANNER_SYSTEM = """\
+PLANNER_SYSTEM = """
 Du bist der PLANNER-Agent eines Multi-Agent-Coding-Systems.
 
 AUFGABE: Analysiere die Codebasis und erstelle einen strukturierten Ausführungsplan.
 
 REGELN:
-1. Nutze read_file und grep um die Codebasis zu verstehen BEVOR du planst.
-2. Erstelle den Plan via create_plan Tool mit klar definierten Subtasks.
-3. Jeder Subtask MUSS spezifizieren: description, files (Liste), priority.
-4. Dateien dürfen NICHT zwischen Subtasks überlappen! Jede Datei gehört genau einem Subtask.
-5. Du darfst NUR .md Dateien schreiben (via write_md Tool).
-6. Schreibe Status-Updates in _coordination.md.
-7. Wenn der Task nur 1-2 Dateien betrifft, erstelle nur 1 Subtask.
-8. Rufe am Ende ZWINGEND create_plan auf.
-
-FORMAT für create_plan:
-[
-  {"description": "Was getan werden soll", "files": ["pfad/datei.py"], "priority": "high|normal|low"},
-  ...
-]
+1. Nutze vfs_shell("ls /project") und vfs_shell("cat /project/...") um die Codebasis zu verstehen BEVOR du planst.
+2. Nutze vfs_shell("grep -rn 'pattern' /project") um relevante Stellen zu finden.
+3. Erstelle den Plan via add_subtask Tool (einmal pro Subtask aufrufen).
+4. Jeder Subtask MUSS spezifizieren: description, files (Komma-getrennt), priority.
+5. Dateien dürfen NICHT zwischen Subtasks überlappen! Jede Datei gehört genau einem Subtask.
+6. Wenn der Task nur 1-2 Dateien betrifft, erstelle nur 1 Subtask.
+7. Rufe am Ende ZWINGEND finalize_plan auf.
+8. Schreibe Status-Updates in _coordination.md via vfs_shell("echo '...' >> /project/_coordination.md").
 """
 
-VALIDATOR_SYSTEM = """\
+VALIDATOR_SYSTEM = """
 Du bist der VALIDATOR-Agent eines Multi-Agent-Coding-Systems.
 
 AUFGABE: Prüfe die Änderungen der Coder-Agents auf Korrektheit.
 
 REGELN:
-1. Lies die geänderten Dateien via read_file.
+1. Lies die geänderten Dateien via vfs_shell("cat /project/...") oder vfs_view.
 2. Prüfe auf: Syntaxfehler, Logikfehler, fehlende Imports, kaputte Referenzen.
 3. Führe Tests aus wenn verfügbar (run_file oder bash).
 4. Melde Ergebnisse via report_issues Tool.
-5. Leere Liste = alles OK.
-6. Lies _coordination.md für Kontext zum Plan.
+5. Leere Liste [] = alles OK.
+6. Lies /project/_coordination.md für Kontext zum Plan.
 
 FORMAT für report_issues:
 [
@@ -719,7 +713,6 @@ FORMAT für report_issues:
   ...
 ]
 """
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # INPUT MANAGER (unchanged)
@@ -741,18 +734,18 @@ class CoderAgent:
     SYSTEM_PROMPT = (
         "Du bist ein Elite Coding-Agent.\n"
         "REGELN:\n"
-        "1. ARCHITEKTUR ZUERST: Nutze 'memory_recall', um Zusammenhänge zu verstehen, BEVOR du Code schreibst.\n"
-        "2. LIES Dateien (read_file) BEVOR du editierst. Niemals blind raten!\n"
+        "1. ARCHITEKTUR ZUERST: Lies /project/_coordination.md um den Plan zu verstehen.\n"
+        "2. LIES Dateien via vfs_shell('cat /project/...') oder vfs_view BEVOR du editierst. Niemals blind raten!\n"
         "3. Änderungen NUR via XML Edit-Blöcke. BENUTZE NIEMALS 'bash' mit 'cat' oder 'echo' um Code zu schreiben!\n"
         "   VERBOTEN: 'bash', 'cat', 'echo', 'printf' zum Schreiben von Dateien!\n"
         "   Das System erkennt Änderungen NUR über die unten beschriebenen <edit>-Blöcke.\n"
         "4. BEENDEN: Wenn du alle Aufgaben erledigt hast, rufe ZWINGEND das Tool 'done' auf (oder schreibe [DONE]).\n"
         "5. Schreibe VOR jedem Edit einen <thought>...</thought> Block.\n"
-        "6. ISOLIERTER WORKSPACE: Alle Pfade RELATIV zum Projektordner!\n"
+        "6. ISOLIERTER WORKSPACE: Alle Pfade unter /project/!\n"
         "7. CODE AUSFÜHREN: Nutze IMMER 'run_file' für Skripte/Tests. 'bash' NUR wenn nötig.\n"
         "8. <edit>-Blöcke sind KEIN JSON-Tool! Gib sie als plain Text in deiner Antwort aus.\n"
-        "9. Lies _coordination.md für den Gesamtplan und Status der anderen Agents.\n"
-        "10. Bearbeite NUR die dir zugewiesenen Dateien!\n\n"
+        "9. Bearbeite NUR die dir zugewiesenen Dateien!\n"
+        "10. Nutze vfs_shell('grep -rn ...') zum Suchen im Code.\n\n"
         "FORMAT FÜR ÄNDERUNGEN:\n"
         "<edit path=\"pfad/datei.py\">\n"
         "<search>\n"
@@ -1075,6 +1068,10 @@ class CoderAgent:
     # NEW: Sub-Agent Lifecycle
     # ─────────────────────────────────────────────────────────────────
 
+    # ── In _ensure_agents(), NACH worktree.setup(): ──
+    # ALT: await self._mount_worktree_vfs(aname)
+    # NEU:
+
     async def _ensure_agents(self):
         """Lazy-init planner, coder(s), validator via FlowAgentBuilder."""
         if self._sub_agents_ready:
@@ -1082,7 +1079,15 @@ class CoderAgent:
 
         from toolboxv2 import get_app
         isaa = get_app().get_mod("isaa")
-        host = self  # closure reference
+
+        # ── Create shared VFS share from worktree ──
+        from toolboxv2.mods.isaa.base.patch.power_vfs import get_sharing_manager
+        sharing = get_sharing_manager()
+
+        # We need a "source VFS" to create the share from.
+        # Use the first agent's VFS as bootstrap, mount worktree, then share it.
+        # Instead: create share directly from local path (bypass VFS share API limitation)
+        self._shared_worktree_path = str(self.worktree.path)
 
         # ── PLANNER ──
         pb = isaa.get_agent_builder(
@@ -1090,10 +1095,10 @@ class CoderAgent:
         )
         pb.with_system_message(PLANNER_SYSTEM)
         pb.with_models(self.model)
-        self._register_planner_tools(pb, host)
+        self._register_planner_tools(pb, self)
         await isaa.register_agent(pb)
 
-        # ── CODER (1 by default, more spawned if plan has parallel subtasks) ──
+        # ── CODER ──
         coder_name = f"coder_{self._agent_uid}_0"
         self._coder_names = [coder_name]
         cb = isaa.get_agent_builder(
@@ -1101,7 +1106,7 @@ class CoderAgent:
         )
         cb.with_system_message(self.SYSTEM_PROMPT)
         cb.with_models(self.model)
-        self._register_coder_tools(cb, host, coder_name)
+        self._register_coder_tools(cb, self, coder_name)
         await isaa.register_agent(cb)
 
         # ── VALIDATOR ──
@@ -1110,15 +1115,17 @@ class CoderAgent:
         )
         vb.with_system_message(VALIDATOR_SYSTEM)
         vb.with_models(self.model)
-        self._register_validator_tools(vb, host)
+        self._register_validator_tools(vb, self)
         await isaa.register_agent(vb)
 
-        # ── VFS Mount for all agents ──
+        # ── Mount worktree into ALL agents as shared mount ──
         for aname in [self._planner_name] + self._coder_names + [self._validator_name]:
-            await self._mount_worktree_vfs(aname)
+            await self._mount_shared_worktree(aname)
 
         self._sub_agents_ready = True
-        self._log("AGENTS", f"Sub-agents ready: {self._planner_name}, {self._coder_names}, {self._validator_name}", "green")
+        self._log("AGENTS",
+                  f"Sub-agents ready (shared worktree): {self._planner_name}, {self._coder_names}, {self._validator_name}",
+                  "green")
 
     async def _spawn_extra_coder(self, index: int) -> str:
         """Spawn an additional coder agent for parallel work."""
@@ -1136,28 +1143,47 @@ class CoderAgent:
         cb.with_models(self.model)
         self._register_coder_tools(cb, self, coder_name)
         await isaa.register_agent(cb)
-        await self._mount_worktree_vfs(coder_name)
+        await self._mount_shared_worktree(coder_name)
 
         self._coder_names.append(coder_name)
         self._log("AGENTS", f"Spawned extra coder: {coder_name}", "cyan")
         return coder_name
 
-    async def _mount_worktree_vfs(self, agent_name: str):
-        """Mount worktree into agent's session VFS at /project."""
+    async def _mount_shared_worktree(self, agent_name: str):
+        """Mount worktree as shared auto_sync mount so all agents see the same files."""
         from toolboxv2 import get_app
         isaa = get_app().get_mod("isaa")
         agent = await isaa.get_agent(agent_name)
         session = await agent.session_manager.get_or_create("default")
         try:
+            # Mount with auto_sync=True so writes go to disk immediately
+            # All agents mount the SAME local_path → shared state via filesystem
             session.vfs.mount(
-                local_path=str(self.worktree.path),
+                local_path=self._shared_worktree_path,
                 vfs_path="/project",
                 readonly=False,
-                auto_sync=True
+                auto_sync=True,  # KEY: writes go to disk immediately
             )
-            self._log("VFS", f"Mounted worktree for {agent_name}", "cyan")
+            self._log("VFS", f"Shared mount for {agent_name} → {self._shared_worktree_path}", "cyan")
         except Exception as e:
             self._log("VFS-WARN", f"Mount failed for {agent_name}: {e}", "yellow")
+
+    async def _refresh_agent_vfs(self, agent_name: str):
+        """Refresh agent's VFS mount to pick up changes from other agents."""
+        from toolboxv2 import get_app
+        isaa = get_app().get_mod("isaa")
+        try:
+            agent = await isaa.get_agent(agent_name)
+            session = await agent.session_manager.get_or_create("default")
+            session.vfs.refresh_mount("/project")
+            self._log("SYNC", f"Refreshed VFS for {agent_name}", "cyan")
+        except Exception as e:
+            self._log("SYNC-WARN", f"Refresh failed for {agent_name}: {e}", "yellow")
+
+    async def _refresh_all_agents(self):
+        """Refresh VFS for all active agents."""
+        for aname in [self._planner_name] + self._coder_names + [self._validator_name]:
+            await self._refresh_agent_vfs(aname)
 
     async def cleanup_agents(self):
         """Remove all sub-agents and unmount VFS."""
@@ -1173,7 +1199,7 @@ class CoderAgent:
                 agent = await isaa.get_agent(name)
                 session = await agent.session_manager.get_or_create("default")
                 try:
-                    session.vfs.unmount("/project", save_changes=False)
+                    session.vfs.unmount("/project", save_changes=True)
                 except Exception:
                     pass
                 # Agent entfernen — je nach isaa API
@@ -1194,58 +1220,51 @@ class CoderAgent:
     # ─────────────────────────────────────────────────────────────────
 
     def _register_planner_tools(self, builder, host: "CoderAgent"):
-        """Register planner-specific tools: read, grep, list, create_plan, write_md."""
+        """Register planner-specific tools. VFS tools come from FlowAgent."""
 
-        async def read_file(path: str, start_line: int | None = None, end_line: int | None = None) -> str:
-            """Read a file from the project. Use start_line/end_line for ranges."""
-            return await smart_read_file(
-                path, start_line, end_line, host.worktree.path,
-                host.agent, [], host.model, ""
-            )
+        async def add_subtask(description: str, files: str, priority: str = "normal") -> str:
+            """Add a subtask to the execution plan.
 
-        async def grep(pattern: str) -> str:
-            """Search for a pattern across the codebase."""
-            return await host._smart_grep(pattern, [])
+            Args:
+                description: What needs to be done in this subtask.
+                files: Comma-separated list of file paths this subtask will modify.
+                      Example: "src/main.py, src/utils.py"
+                priority: "high", "normal", or "low"
 
-        async def list_files(path: str = ".") -> str:
-            """List files and directories at the given path."""
-            target = (host.worktree.path / path).resolve()
-            if not target.exists():
-                return f"Error: {path} not found"
-            result = []
-            for item in sorted(target.iterdir()):
-                if item.name in GitWorktree.SCAN_EXCLUDES or item.name.startswith("."):
-                    continue
-                prefix = "DIR  " if item.is_dir() else "FILE "
-                result.append(f"{prefix}{item.relative_to(host.worktree.path)}")
-            return "\n".join(result[:200]) if result else "(empty)"
+            Call this once per subtask. Files MUST NOT overlap between subtasks!
+            Call finalize_plan when all subtasks are added.
+            """
+            if priority not in ("high", "normal", "low"):
+                return f"Error: priority must be high/normal/low, got '{priority}'"
 
-        async def create_plan(subtasks_json: str) -> str:
-            """Create execution plan. Argument: JSON array of subtasks.
-            Each subtask: {"description": "...", "files": ["path/a.py"], "priority": "high|normal|low"}
-            Files MUST NOT overlap between subtasks!"""
-            try:
-                subtasks = json.loads(subtasks_json) if isinstance(subtasks_json, str) else subtasks_json
-            except json.JSONDecodeError as e:
-                return f"Error: Invalid JSON — {e}"
+            file_list = [f.strip() for f in files.split(",") if f.strip()]
 
-            if not isinstance(subtasks, list) or not subtasks:
-                return "Error: subtasks must be a non-empty list."
+            existing_files = set()
+            for st in host._current_plan:
+                existing_files.update(st.get("files", []))
 
-            # Validate no file overlap
-            seen_files = set()
-            for st in subtasks:
-                for f in st.get("files", []):
-                    if f in seen_files:
-                        return f"Error: File '{f}' assigned to multiple subtasks! Fix overlap."
-                    seen_files.add(f)
+            overlap = set(file_list) & existing_files
+            if overlap:
+                return f"Error: Files already assigned to another subtask: {', '.join(overlap)}"
 
-            host._current_plan = subtasks
+            subtask = {
+                "description": description,
+                "files": file_list,
+                "priority": priority,
+            }
+            host._current_plan.append(subtask)
 
-            # Write coordination file
+            return f"Subtask {len(host._current_plan)} added: {description} ({len(file_list)} files, {priority})"
+
+        async def finalize_plan() -> str:
+            """Finalize the execution plan. Call after all subtasks are added via add_subtask.
+            This writes _coordination.md and locks the plan."""
+            if not host._current_plan:
+                return "Error: No subtasks added. Use add_subtask first."
+
             plan_md = "# Execution Plan\n\n"
-            for i, st in enumerate(subtasks):
-                plan_md += f"## Subtask {i+1}: {st.get('description', '?')}\n"
+            for i, st in enumerate(host._current_plan):
+                plan_md += f"## Subtask {i + 1}: {st.get('description', '?')}\n"
                 plan_md += f"- Files: {', '.join(st.get('files', []))}\n"
                 plan_md += f"- Priority: {st.get('priority', 'normal')}\n"
                 plan_md += f"- Status: pending\n\n"
@@ -1254,41 +1273,16 @@ class CoderAgent:
             coord_path = host.worktree.path / "_coordination.md"
             coord_path.write_text(plan_md, encoding="utf-8")
 
-            return f"Plan created: {len(subtasks)} subtask(s). Written to _coordination.md."
+            return f"Plan finalized: {len(host._current_plan)} subtask(s). Written to _coordination.md."
 
-        async def write_md(path: str, content: str) -> str:
-            """Write a .md file in the worktree. Planner can ONLY write .md files."""
-            if not path.endswith(".md"):
-                return "Error: Planner can only write .md files."
-            target = (host.worktree.path / path).resolve()
-            # Safety: must stay within worktree
-            try:
-                target.relative_to(host.worktree.path)
-            except ValueError:
-                return "Error: Path escapes worktree."
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
-            return f"Written: {path}"
-
-        builder.add_tool(read_file, "read_file", "Read a project file", category=["filesystem"])
-        builder.add_tool(grep, "grep", "Search pattern in codebase", category=["search"])
-        builder.add_tool(list_files, "list_files", "List directory contents", category=["filesystem"])
-        builder.add_tool(create_plan, "create_plan", "Create structured execution plan (JSON)", category=["planning"])
-        builder.add_tool(write_md, "write_md", "Write a .md file (planner only)", category=["filesystem"])
+        # NO read_file, grep, list_files, write_md — agents use vfs_shell instead
+        builder.add_tool(add_subtask, "add_subtask", "Add a subtask to the plan (call per subtask)",
+                         category=["planning"], flags={"system_tool_by_name": True})
+        builder.add_tool(finalize_plan, "finalize_plan", "Finalize plan after all subtasks added",
+                         category=["planning"], flags={"system_tool_by_name": True})
 
     def _register_coder_tools(self, builder, host: "CoderAgent", coder_name: str):
-        """Register coder-specific tools: read, grep, bash, run_file, status, done."""
-
-        async def read_file(path: str, start_line: int | None = None, end_line: int | None = None) -> str:
-            """Read a file from the project."""
-            return await smart_read_file(
-                path, start_line, end_line, host.worktree.path,
-                host.agent, [], host.model, ""
-            )
-
-        async def grep(pattern: str) -> str:
-            """Search for a pattern in the codebase."""
-            return await host._smart_grep(pattern, [])
+        """Register coder-specific tools. VFS tools (read, write, grep, ls) come from FlowAgent."""
 
         async def bash(command: str) -> str:
             """Run a shell command in the worktree. Do NOT use for writing files!"""
@@ -1311,26 +1305,14 @@ class CoderAgent:
             """Signal that all assigned tasks are complete."""
             return "[DONE]"
 
-        builder.add_tool(read_file, "read_file", "Read a project file", category=["filesystem"])
-        builder.add_tool(grep, "grep", "Search pattern in codebase", category=["search"])
-        builder.add_tool(bash, "bash", "Run shell command (NOT for writing files!)", category=["shell"])
-        builder.add_tool(run_file, "run_file", "Run a script or test file", category=["execution"])
-        builder.add_tool(update_status, "update_status", "Update coordination status", category=["coordination"])
-        builder.add_tool(done, "done", "Signal task completion", category=["control"])
+        # NO read_file, grep — agents use vfs_shell("cat ..."), vfs_shell("grep ...") instead
+        builder.add_tool(bash, "bash", "Run shell command (NOT for writing files!)", category=["shell"],flags={"system_tool_by_name": True} )
+        builder.add_tool(run_file, "run_file", "Run a script or test file", category=["execution"],flags={"system_tool_by_name": True} )
+        builder.add_tool(update_status, "update_status", "Update coordination status", category=["coordination"],flags={"system_tool_by_name": True} )
+        builder.add_tool(done, "done", "Signal task completion", category=["control"],flags={"system_tool_by_name": True} )
 
     def _register_validator_tools(self, builder, host: "CoderAgent"):
-        """Register validator-specific tools: read, grep, bash, run_file, report_issues."""
-
-        async def read_file(path: str, start_line: int | None = None, end_line: int | None = None) -> str:
-            """Read a file from the project."""
-            return await smart_read_file(
-                path, start_line, end_line, host.worktree.path,
-                host.agent, [], host.model, ""
-            )
-
-        async def grep(pattern: str) -> str:
-            """Search for a pattern in the codebase."""
-            return await host._smart_grep(pattern, [])
+        """Register validator-specific tools. VFS tools come from FlowAgent."""
 
         async def bash(command: str) -> str:
             """Run a shell command for testing/linting."""
@@ -1347,7 +1329,7 @@ class CoderAgent:
             try:
                 issues = json.loads(issues_json) if isinstance(issues_json, str) else issues_json
             except json.JSONDecodeError as e:
-                return f"Error: Invalid JSON — {e}"
+                return f"Error: Invalid JSON - {e}"
             host._validation_issues = issues if isinstance(issues, list) else []
             if not host._validation_issues:
                 return "Validation passed. No issues found."
@@ -1357,11 +1339,10 @@ class CoderAgent:
             )
             return f"Found {len(host._validation_issues)} issue(s):\n{report}"
 
-        builder.add_tool(read_file, "read_file", "Read a project file", category=["filesystem"])
-        builder.add_tool(grep, "grep", "Search pattern in codebase", category=["search"])
-        builder.add_tool(bash, "bash", "Run shell command for testing", category=["shell"])
-        builder.add_tool(run_file, "run_file", "Run a test file", category=["execution"])
-        builder.add_tool(report_issues, "report_issues", "Report validation results (JSON)", category=["validation"])
+        # NO read_file, grep — agents use vfs_shell instead
+        builder.add_tool(bash, "bash", "Run shell command for testing", category=["shell"], flags={"system_tool_by_name": True})
+        builder.add_tool(run_file, "run_file", "Run a test file", category=["execution"], flags={"system_tool_by_name": True})
+        builder.add_tool(report_issues, "report_issues", "Report validation results (JSON)", category=["validation"], flags={"system_tool_by_name": True})
 
     # ─────────────────────────────────────────────────────────────────
     # NEW: Stream Collector
@@ -1372,65 +1353,82 @@ class CoderAgent:
         from toolboxv2 import get_app
         isaa = get_app().get_mod("isaa")
         agent = await isaa.get_agent(agent_name)
+        # ── NEU: Signal sub-agent start ──
+        if self.row_chunk_fun:
+            self.row_chunk_fun({
+                "type": "sub_agent_start",
+                "sub_agent": agent_name,
+                "query": query[:100],
+            })
 
         full_response = []
-        async for chunk in agent.a_stream(
-            query=query,
-            session_id="default",
-            max_iterations=self.max_iters,
-        ):
+        try:
+            async for chunk in agent.a_stream(
+                query=query,
+                session_id="default",
+                max_iterations=self.max_iters,
+            ):
+                if self.row_chunk_fun:
+                    chunk["sub_agent"] = agent_name
+                    self.row_chunk_fun(chunk)
+                ctype = chunk.get("type", "")
+
+                if ctype == "content":
+                    text = chunk.get("chunk", "")
+                    full_response.append(text)
+                    if self.stream_enabled and self.stream_callback:
+                        tagged = f"[{prefix}] {text}" if prefix else text
+                        if asyncio.iscoroutinefunction(self.stream_callback):
+                            await self.stream_callback(tagged)
+                        else:
+                            self.stream_callback(tagged)
+
+                elif ctype == "tool_start":
+                    self._log(f"{prefix}-TOOL", chunk.get("name", "?"), "cyan")
+                    if self.log_handler:
+                        self.log_handler("TOOL CALL", f"{chunk.get('name', '?')}({chunk.get('args', '')})")
+
+                elif ctype == "tool_result":
+                    result_text = str(chunk.get("result", ""))[:300]
+                    self._log(f"{prefix}-RESULT", result_text, "grey")
+                    if self.log_handler:
+                        self.log_handler("TOOL RESULT", result_text)
+
+                elif ctype == "error":
+                    self._log(f"{prefix}-ERROR", chunk.get("error", "?"), "red")
+
+                elif ctype == "final_answer":
+                    answer = chunk.get("answer", "")
+                    if answer:
+                        full_response.append(answer)
+        finally:
+            # ── NEU: Signal sub-agent done ──
             if self.row_chunk_fun:
-                self.row_chunk_fun(chunk)
-            ctype = chunk.get("type", "")
-
-            if ctype == "content":
-                text = chunk.get("chunk", "")
-                full_response.append(text)
-                if self.stream_enabled and self.stream_callback:
-                    tagged = f"[{prefix}] {text}" if prefix else text
-                    if asyncio.iscoroutinefunction(self.stream_callback):
-                        await self.stream_callback(tagged)
-                    else:
-                        self.stream_callback(tagged)
-
-            elif ctype == "tool_start":
-                self._log(f"{prefix}-TOOL", chunk.get("name", "?"), "cyan")
-                if self.log_handler:
-                    self.log_handler("TOOL CALL", f"{chunk.get('name', '?')}({chunk.get('args', '')})")
-
-            elif ctype == "tool_result":
-                result_text = str(chunk.get("result", ""))[:300]
-                self._log(f"{prefix}-RESULT", result_text, "grey")
-                if self.log_handler:
-                    self.log_handler("TOOL RESULT", result_text)
-
-            elif ctype == "error":
-                self._log(f"{prefix}-ERROR", chunk.get("error", "?"), "red")
-
-            elif ctype == "final_answer":
-                answer = chunk.get("answer", "")
-                if answer:
-                    full_response.append(answer)
-
+                self.row_chunk_fun({
+                    "type": "sub_agent_done",
+                    "sub_agent": agent_name,
+                })
         return "".join(full_response)
 
     # ─────────────────────────────────────────────────────────────────
     # NEW: Orchestration Phases
     # ─────────────────────────────────────────────────────────────────
-
     async def _run_planner(self, task: str) -> list[dict]:
-        """Phase 1: Planner analyzes codebase and creates subtask plan."""
         self._current_plan = []
 
         planner_query = (
             f"Analysiere das Projekt und erstelle einen Plan für folgende Aufgabe:\n\n"
             f"{task}\n\n"
             f"Schritte:\n"
-            f"1. Nutze list_files('.') und read_file um die Struktur zu verstehen.\n"
-            f"2. Nutze grep um relevante Stellen zu finden.\n"
-            f"3. Erstelle den Plan via create_plan Tool.\n"
-            f"4. Jeder Subtask braucht: description, files (KEINE Überlappung!), priority.\n"
-            f"5. Wenn nur 1-2 Dateien betroffen: 1 Subtask reicht.\n"
+            f"1. Nutze vfs_shell('ls /project') und vfs_shell('cat /project/...') um die Struktur zu verstehen.\n"
+            f"2. Nutze vfs_shell('grep -rn \"pattern\" /project') um relevante Stellen zu finden.\n"
+            f"3. Füge Subtasks hinzu via add_subtask (einmal pro Subtask aufrufen).\n"
+            f"   - description: Was getan werden soll\n"
+            f"   - files: Komma-getrennte Liste der betroffenen Dateien\n"
+            f"   - priority: high/normal/low\n"
+            f"   ACHTUNG: Dateien dürfen NICHT zwischen Subtasks überlappen!\n"
+            f"4. Wenn nur 1-2 Dateien betroffen: 1 Subtask reicht.\n"
+            f"5. Rufe am Ende finalize_plan auf.\n"
         )
 
         await self._collect_stream(self._planner_name, planner_query, prefix="PLANNER")
@@ -1485,7 +1483,6 @@ class CoderAgent:
         return list(set(all_changed))
 
     def _build_coder_query(self, subtask: dict) -> str:
-        """Build coder prompt from a subtask."""
         files = subtask.get("files", [])
         desc = subtask.get("description", "")
         files_str = ', '.join(files) if files else "(alle relevanten Dateien)"
@@ -1494,9 +1491,9 @@ class CoderAgent:
             f"Aufgabe: {desc}\n\n"
             f"Zugewiesene Dateien: {files_str}\n\n"
             f"WICHTIG:\n"
-            f"- Lies _coordination.md für den Gesamtplan.\n"
+            f"- Lies /project/_coordination.md für den Gesamtplan.\n"
             f"- Bearbeite NUR die dir zugewiesenen Dateien.\n"
-            f"- Lies jede Datei mit read_file BEVOR du sie editierst.\n"
+            f"- Lies jede Datei mit vfs_shell('cat /project/...') BEVOR du sie editierst.\n"
             f"- Schreibe Änderungen als <edit>-Blöcke in deiner Antwort.\n"
             f"- Rufe update_status auf wenn du einen Teilschritt abschließt.\n"
             f"- Rufe done() auf wenn du fertig bist.\n"
@@ -1523,6 +1520,40 @@ class CoderAgent:
 
         await self._collect_stream(self._validator_name, query, prefix="VALIDATOR")
         return self._validation_issues
+
+    # Neue Methode für Fix-Runs:
+
+    async def _run_fix_coders(self, fix_subtasks: list[dict]) -> list[str]:
+        """Run coders in FIX mode — strict, scoped, no further development."""
+        all_changed: list[str] = []
+
+        coder_name = self._coder_names[0]
+        for st in fix_subtasks:
+            query = self._build_fix_query(st)
+            response = await self._collect_stream(coder_name, query, prefix="FIXER")
+            edits = self._parse_edits(response)
+            applied = await self._apply_edits(edits)
+            all_changed.extend(applied)
+
+        return list(set(all_changed))
+
+    def _build_fix_query(self, subtask: dict) -> str:
+        files = subtask.get("files", [])
+        desc = subtask.get("description", "")
+        files_str = ', '.join(files) if files else "(siehe Beschreibung)"
+
+        return (
+            f"## STRICT FIX MODE - NUR DAS BESCHRIEBENE PROBLEM BEHEBEN!\n\n"
+            f"Problem: {desc}\n"
+            f"Betroffene Dateien: {files_str}\n\n"
+            f"REGELN FÜR FIX MODE:\n"
+            f"- Lies die betroffene(n) Datei(en) mit vfs_shell('cat /project/...').\n"
+            f"- Behebe NUR das beschriebene Problem. NICHTS ANDERES ändern!\n"
+            f"- Keine Refactorings, keine neuen Features, keine Verbesserungen.\n"
+            f"- Minimale Änderung: So wenig Zeilen wie möglich.\n"
+            f"- Rufe SOFORT done() auf wenn der Fix angewendet ist.\n"
+            f"- Wenn du mehr als 1 Edit-Block brauchst, stimmt etwas nicht.\n"
+        )
 
     # ─────────────────────────────────────────────────────────────────
     # UPDATED: Main Execute (orchestrates planner → coder → validator)
@@ -1574,10 +1605,16 @@ class CoderAgent:
             subtasks = await self._run_planner(enriched_task)
             self._log("PHASE", f"Plan: {len(subtasks)} subtask(s)", "green")
 
+            # ── Sync planner output to all coders ──
+            await self._refresh_all_agents()
+
             # ── 5. CODER PHASE ──
             self._log("PHASE", "=== CODER ===", "bold")
             edit_changed = await self._run_coders(subtasks)
             self._log("PHASE", f"Coder changed: {edit_changed}", "green")
+
+            # ── Sync coder output before validation ──
+            await self._refresh_all_agents()
 
             # ── 6. VALIDATOR PHASE + FIX LOOP ──
             all_changed = edit_changed or await self.worktree.changed_files()
@@ -1614,7 +1651,8 @@ class CoderAgent:
                             seen.add(key)
                             deduped.append(st)
 
-                    await self._run_coders(deduped)
+                    await self._run_fix_coders(deduped)
+                    await self._refresh_all_agents()
                     all_changed = await self.worktree.changed_files()
                     issues = await self._run_validator(all_changed)
 

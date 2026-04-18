@@ -589,6 +589,12 @@ class SpinnerManager(metaclass=Singleton):
         except ValueError:
             print("Spinner Manager not in the min Thread no signal possible")
             pass
+        try:
+            if sys.stdout.encoding.lower() != 'utf-8':
+                sys.stdout.reconfigure(encoding='utf-8')
+        except Exception:
+            print("Spinner Manager stdout encoding override.")
+
 
     def _signal_handler(self, signum, frame):
         """Handle SIGINT by stopping all spinners gracefully."""
@@ -597,8 +603,8 @@ class SpinnerManager(metaclass=Singleton):
                 spinner.running = False
             self._spinners.clear()
         self._should_run = False
-        sys.stdout.write("\r\033[K")  # Clear the spinner's line.
-        sys.stdout.flush()
+        sys.stdout.buffer.write("\r\033[K".encode('utf-8'))
+        sys.stdout.buffer.flush()
         #sys.exit(0)
 
     def register_spinner(self, spinner):
@@ -649,8 +655,9 @@ class SpinnerManager(metaclass=Singleton):
 
                     # Clear line and write.
                     try:
-                        sys.stdout.write("\r" + render_line + "\033[K")
-                        sys.stdout.flush()
+                        line = "\r" + render_line + "\033[K"
+                        sys.stdout.buffer.write(line.encode('utf-8'))
+                        sys.stdout.buffer.flush()
                     except Exception:
                         self._should_run = False
 
@@ -744,5 +751,5 @@ class Spinner:
         self.manager.unregister_spinner(self)
         # Clear the spinner's line if it was the primary spinner.
         if self._is_primary:
-            sys.stdout.write("\r\033[K")
-            sys.stdout.flush()
+            sys.stdout.buffer.write("\r\033[K".encode('utf-8'))
+            sys.stdout.buffer.flush()

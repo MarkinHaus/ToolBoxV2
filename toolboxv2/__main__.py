@@ -424,6 +424,7 @@ RUNNER_KEYS = [
     "docksh",
     "docker-image",
     "fl",
+    "ytss",
     "LiveSync",
 ]
 
@@ -1909,6 +1910,9 @@ def runner_setup():
         ).main(),
         "fl": lambda: __import__(
             "toolboxv2.feature_loader", fromlist=["main"]
+        ).main(),
+        "ytss": lambda: __import__(
+            "toolboxv2.ytss", fromlist=["main"]
         ).main(),
         "LiveSync": lambda: __import__(
             "toolboxv2.mods.CloudM.LiveSync", fromlist=["main"]

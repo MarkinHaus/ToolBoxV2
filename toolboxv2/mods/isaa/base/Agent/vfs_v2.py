@@ -576,27 +576,9 @@ class VFSFile:
 # =============================================================================
 
 def unescape_string(text: str) -> str:
-    """
-    Entfernt Backslash-Escape-Sequenzen für Anführungszeichen,
-    Apostrophe und Backslashes selbst.
-    """
-    if not text:
-        return text
-
-    # Mapping der zu ersetzenden Sequenzen
-    replacements = {
-        r'\"': '"',
-        r"\'": "'",
-        r"\´": "´",
-        r"\`": "`",
-        r"\\": "\\"
-    }
-
-    # Wir iterieren durch das Mapping und ersetzen die Sequenzen
-    for escaped, original in replacements.items():
-        text = text.replace(escaped, original)
-
-    return text
+    """Delegiert an _decode_content — einzige Quelle der Wahrheit."""
+    from toolboxv2.mods.isaa.base.patch.vfs_shell_tool import _decode_content, _strip_quotes
+    return _decode_content(_strip_quotes(text))
 
 class VirtualFileSystemV2:
     """

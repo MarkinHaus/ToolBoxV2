@@ -6593,8 +6593,11 @@ class ISAA_Host:
 
                     if choice == "q":
                         for t in self.all_executions.values():
-                            if t.status == "running":
-                                t.async_task.cancel()
+                            if t and t.status == "running":
+                                try:
+                                    t.async_task.cancel()
+                                except:
+                                    pass
                         raise EOFError
 
                     elif choice == "b":
@@ -9270,6 +9273,15 @@ class ISAA_Host:
                 await self.active_coder.cleanup_agents()
             except Exception:
                 pass
+            # ── Cleanup child task views ──
+            parent_prefix = None
+            for tid, exc in list(self.all_executions.items()):
+                if exc.kind == "coder_sub":
+                    if exc.status == "running":
+                        exc.status = "cancelled"
+                    tv = self._task_views.get(tid)
+                    if tv:
+                        tv.status = "cancelled"
             try:
                 self.active_coder.worktree.cleanup()
             except Exception:
@@ -9305,34 +9317,76 @@ class ISAA_Host:
                 # 1. Eigener Log-Handler: Übersetzt Coder-Logs in UI-Chunks für Zen+
                 def coder_log_handler(section: str, content: str):
                     tid = _tid_holder[0]
-                    if not tid: return
-
-                    if section == "LOOP":
-                        try:
-                            iter_str = content.split("/")[0].strip()
-                            self._ingest_chunk(tid, {"iter": int(iter_str), "max_iter": self.active_coder.max_iters})
-                        except:
-                            pass
-                    elif section == "THOUGHT":
-                        self._ingest_chunk(tid, {"type": "reasoning", "chunk": content + "\n"})
-                        coder_state["current_tool"] = "unknown"
-                    elif section in ["IO-CALC", "IO-COMMIT", "IO-ERR", "IO"]:
-                        # Datei-Operationen als Content in den Stream geben
+                    if not tid:
+                        return
+                    # Nur CoderAgent-eigene Sections weiterleiten
+                    if section in ("PHASE", "EDIT", "EDIT-ERR", "SYNC", "AGENTS", "CLEANUP", "VFS"):
                         self._ingest_chunk(tid, {"type": "content", "chunk": f"\n[{section}] {content}\n"})
-                    elif section in ["ERROR", "TOOL ERROR", "BASH-FAIL"]:
+                    elif section in ("ERROR",):
                         self._ingest_chunk(tid, {"type": "error", "chunk": content})
 
-                # 2. Eigener Stream-Handler: Gibt den echten LLM-Text an das UI weiter
-                async def coder_stream_handler(chunk_text: str):
-                    tid = _tid_holder[0]
-                    if tid:
-                        self._ingest_chunk(tid, {"type": "content", "chunk": chunk_text})
+                    # Stream-Callback: DEAKTIVIERT — row_chunk_fun übernimmt alles
+                    # (stream_callback würde Duplikate erzeugen)
 
-                # Handler in den Coder injizieren und Streaming erzwingen
                 self.active_coder.log_handler = coder_log_handler
-                self.active_coder.stream_callback = coder_stream_handler
-                self.active_coder.stream_enabled = True
-                self.active_coder.row_chunk_fun = lambda c:self._ingest_chunk(_tid_holder[0], c)
+                self.active_coder.stream_callback = None  # ← KEY: kein Doppel-Stream
+                self.active_coder.stream_enabled = False  # ← irrelevant wenn callback=None
+
+                # Sub-Agent Task-View Management
+                _sub_task_ids: dict[str, str] = {}  # agent_name → child_task_id
+
+                def _coder_chunk_router(chunk: dict):
+                    parent_tid = _tid_holder[0]
+                    if not parent_tid:
+                        return
+
+                    sub_agent = chunk.get("sub_agent")
+                    chunk_type = chunk.get("type", "")
+
+                    # Sub-agent lifecycle
+                    if chunk_type == "sub_agent_start" and sub_agent:
+                        # Create child TaskView
+                        child_tid = f"{parent_tid}::{sub_agent}"
+                        _sub_task_ids[sub_agent] = child_tid
+
+                        self._task_views[child_tid] = TaskView(
+                            task_id=child_tid,
+                            agent_name=sub_agent,
+                            query=chunk.get("query", "")[:80],
+                        )
+                        # Register as lightweight execution (no async_task — parent owns lifecycle)
+                        self.all_executions[child_tid] = ExecutionTask(
+                            task_id=child_tid,
+                            agent_name=sub_agent,
+                            query=chunk.get("query", "")[:80],
+                            kind="coder_sub",
+                            async_task=None,  # Parent controls lifecycle
+                            is_focused=False,
+                        )
+                        self._ingest_chunk(child_tid, {"type": "status", "status": "running"})
+                        return
+
+                    if chunk_type == "sub_agent_done" and sub_agent:
+                        child_tid = _sub_task_ids.get(sub_agent)
+                        if child_tid:
+                            exc = self.all_executions.get(child_tid)
+                            if exc:
+                                exc.status = "completed"
+                            tv = self._task_views.get(child_tid)
+                            if tv:
+                                tv.status = "completed"
+                            # safe ascii-only chunk
+                            self._ingest_chunk(child_tid, {"type": "done", "success": True})
+                        return
+
+                    # Route regular chunks to both parent AND child
+                    self._ingest_chunk(parent_tid, chunk)
+
+                    if sub_agent and sub_agent in _sub_task_ids:
+                        child_tid = _sub_task_ids[sub_agent]
+                        self._ingest_chunk(child_tid, chunk)
+
+                self.active_coder.row_chunk_fun = _coder_chunk_router
 
                 # 3. Hintergrund-Task Wrapper für den Coder
                 async def _run_coder_bg():
@@ -10429,6 +10483,20 @@ class ISAA_Host:
     def _on_agent_task_done(self, task_id: str, fut: asyncio.Future):
         """Called when a chat-mode agent task finishes. Updates SSOT + focus."""
         exc = self.all_executions.get(task_id)
+        if exc and exc.kind == "coder_sub":
+            return
+        # ── Propagate status to child sub-agent tasks ──
+        child_prefix = f"{task_id}::"
+        for child_tid, child_exc in self.all_executions.items():
+            if child_tid.startswith(child_prefix) and child_exc.status == "running":
+                try:
+                    final_status = "completed" if not fut.cancelled() and fut.exception() is None else "cancelled"
+                except Exception:
+                    final_status = "failed"
+                child_exc.status = final_status
+                tv = self._task_views.get(child_tid)
+                if tv:
+                    tv.status = final_status
 
         # _drain_agent_stream already swallows exceptions; fut.result() is safe here
         # but we still guard so a programming error in the callback never kills the CLI.
@@ -10440,10 +10508,13 @@ class ISAA_Host:
             if tv:
                 tv.status = "completed"
             with patch_stdout():
-                c_print(HTML(
-                    f"\n<style fg='{PTColors.ZEN_GREEN}'>"
-                    f"  ✓ {task_id} complete</style>\n"
-                ))
+                try:
+                    c_print(HTML(
+                        f"\n<style fg='{PTColors.ZEN_GREEN}'>"
+                        f"  [ok] {task_id} complete</style>\n"  # ← ASCII statt ✓
+                    ))
+                except UnicodeEncodeError:
+                    c_print(f"\n  [ok] {task_id} complete\n")
                 if not result:
                     result = tv.final_answer
                 print_code_block(result, "text", show_line_numbers=False)

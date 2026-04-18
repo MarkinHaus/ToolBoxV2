@@ -195,64 +195,90 @@ def init_git(_):
     os.system("git stash pop")
 
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
 @no_test
 def update_core(self, backup=False, name=""):
     """Update ToolBox core"""
     from toolboxv2 import tb_root_dir
-    import subprocess
 
-    tb_home_dir = tb_root_dir.parent
+    # Sicherstellen, dass tb_home_dir ein Path-Objekt ist
+    tb_home_dir = Path(tb_root_dir).parent
 
     def is_git_installed():
         try:
-            subprocess.run(['git', '--version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=str(tb_home_dir))
+            # cwd hier eigentlich egal, aber zur Sicherheit drin
+            subprocess.run(['git', '--version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             return True
-        except FileNotFoundError:
+        except (FileNotFoundError, subprocess.CalledProcessError):
             return False
 
     def is_git_repository():
-        return os.path.isdir(str(tb_home_dir/'.git'))
-
-    def is_pip_installed(package_name):
-        try:
-            subprocess.check_output(['pip', 'show', package_name]).decode('utf-8')
-            return True
-        except subprocess.CalledProcessError:
-            return False
+        return (tb_home_dir / '.git').is_dir()
 
     if is_git_installed() and is_git_repository():
-        update_core_git(self, backup, name, tb_home_dir)
+        self.update_core_git(backup, name, tb_home_dir)
     else:
-        update_core_pip(self, tb_home_dir)
+        self.update_core_pip(tb_home_dir)
 
 
 def update_core_pip(self, tb_home_dir):
     """Update via pip"""
     self.print("Updating via pip...")
-    os.system("pip install --upgrade ToolBoxV2")
+    try:
+        # sys.executable stellt sicher, dass das gleiche Python-Env genutzt wird
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "ToolBoxV2"],
+            check=True,
+            cwd=str(tb_home_dir)
+        )
+        self.app.print_ok()
+    except subprocess.CalledProcessError as e:
+        print(f"Error updating via pip: {e}")
 
 
 def update_core_git(self, backup=False, name="base", tb_home_dir=None):
     """Update via git"""
-
-    from toolboxv2 import tb_root_dir
-    import subprocess
-
-    tb_home_dir = tb_root_dir.parent
     self.print("Updating via git...")
 
-    if backup:
-        os.system("git fetch --all")
-        os.system(f"git branch backup-master-{self.app.id}-{self.version}-{name}")
-        os.system("git reset --hard origin/master")
+    def run_git(args):
+        """Helper to run git commands in the correct directory"""
+        return subprocess.run(
+            ['git'] + args,
+            cwd=str(tb_home_dir),
+            capture_output=True,
+            text=True
+        )
 
-    out = os.system("git pull")
-    self.app.remove_all_modules()
+    try:
+        if backup:
+            # Fetch all updates
+            run_git(["fetch", "--all"])
 
-    if out == 0:
-        self.app.print_ok()
-    else:
-        print(f"Error updating: {out}")
+            # Create backup branch
+            branch_name = f"backup-master-{self.app.id}-{self.version}-{name}"
+            run_git(["branch", branch_name])
+
+            # Reset to origin/master
+            run_git(["reset", "--hard", "origin/master"])
+
+        # Der eigentliche Pull
+        result = run_git(["pull"])
+
+        if result.returncode == 0:
+            self.app.remove_all_modules()
+            self.app.print_ok()
+            if result.stdout:
+                print(result.stdout.strip())
+        else:
+            print(f"Error updating: {result.stderr}")
+
+    except Exception as e:
+        print(f"An unexpected error occurred during git update: {e}")
 
 
 # =================== User Registration (Clerk) ===================

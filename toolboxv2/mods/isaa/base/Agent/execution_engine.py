@@ -2415,7 +2415,7 @@ BEISPIELE:
 
             try:
                 kwargs = {}
-                if len(thought) < 1000:
+                if len(thought) < 120 and not '?' in thought or not '/' in thought:
                     kwargs["model"] = os.getenv("BLITZMODEL", self.agent.amd.fast_llm_model)
                 else:
                     kwargs["model_preference"] = "complex" if '?' in thought else 'fast'
@@ -3183,17 +3183,24 @@ BEISPIELE:
 
         # 4. VFS tools (always available, not counted in limit)
         all_tools = self.agent.tool_manager.get_all_litellm()
-        for tool in all_tools:
-            t_name = tool["function"]["name"]
-            if t_name in VFS_TOOL_NAMES:
-                definitions.append(tool)
 
         # 5. Dynamic tools (from slots)
         dynamic_names = ctx.get_dynamic_tool_names()
-        for tool in all_tools:
-            t_name = tool["function"]["name"]
-            if t_name in dynamic_names and t_name not in VFS_TOOL_NAMES:
-                definitions.append(tool)
+
+        # 5. Filter für VFS + SYSTEM_TOOL_BY_NAME + DYNAMIC SLOTS
+        for tool_def in all_tools:
+            t_name = tool_def["function"]["name"]
+            t_entry = self.agent.tool_manager.get(t_name)
+
+            # Check flags
+            is_system = t_entry.flags.get("system_tool_by_name", False) if t_entry and t_entry.flags else False
+            is_vfs = t_name in VFS_TOOL_NAMES
+            is_dynamic = t_name in dynamic_names
+
+            if is_system or is_vfs or is_dynamic:
+                # Duplikate vermeiden (falls ein Tool in mehreren Listen ist)
+                if not any(d["function"]["name"] == t_name for d in definitions):
+                    definitions.append(tool_def)
 
         return definitions
 
