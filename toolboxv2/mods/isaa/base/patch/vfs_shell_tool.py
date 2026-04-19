@@ -834,12 +834,12 @@ def make_vfs_shell(session: "AgentSessionV2"):
         # ═══════════════════════════════════════════════════════════════════
         # write <path> <content>   (multi-line aware, \n \t processed)
         # ═══════════════════════════════════════════════════════════════════
-        elif cmd == "write_mini":
+        elif cmd in ("write", "write_mini"):
             if len(rest) < 2:
                 return _err("write: usage: write <path> <content>")
             path = rest[0]
             # Extract content from raw command to preserve \n before any tokenizer eats it
-            raw = re.match(r"write\s+\S+\s+(.*)", command, re.DOTALL)
+            raw = re.match(r"write(?:_mini)?\s+\S+\s+(.*)", command, re.DOTALL)
             raw_content = raw.group(1) if raw else " ".join(rest[1:])
             content = _decode_content(_strip_quotes(raw_content))
             r = vfs.write(path, content)

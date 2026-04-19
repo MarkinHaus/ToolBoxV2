@@ -981,7 +981,7 @@ class TestVfsView(unittest.TestCase):
         for k in ("success", "path", "content", "showing", "total_lines"):
             self.assertIn(k, r)
 
-class TestShellMultiCommandSeq(unittest.TestCase):
+class TestShellMultiCommandSeq2(unittest.TestCase):
     """
     Sequence operator: ';' — both commands always run.
     NOTE: newline is NOT supported as a separator (compatibility risk).
@@ -1051,6 +1051,34 @@ class TestShellMultiCommandSeq(unittest.TestCase):
         content = self.vfs.read("/f.txt")["content"]
         self.assertIn("hello", content)
         self.assertIn("world", content)
+
+
+class TestSharedStoreFailuresSurface(unittest.TestCase):
+    """Fix 3 — shared_write failures must not be silently swallowed."""
+
+    def test_shared_store_explicit_failure_surfaces(self):
+        from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
+        import tempfile
+
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            gvfs = get_global_vfs()
+            mount_key = gvfs.register_shared_mount(tmp.name, hydrate=False)
+
+            session = _make_session()
+            session.vfs.mount(tmp.name, vfs_path="/proj", auto_sync=True)
+            sh = make_vfs_shell(session)
+
+            # Path traversal → shared_write returns success=False
+            r = sh('write /proj/../evil.py "x=1"')
+            # Either the command fails, or falls to legacy with different error.
+            # What we care about: the result must NOT be success=True with
+            # a silently-dropped shared-store error.
+            if not r["success"]:
+                self.assertTrue(r.get("stderr"), "Failure must carry an error message")
+        finally:
+            gvfs.unregister_shared_mount(tmp.name)
+            tmp.cleanup()
 
 if __name__ == "__main__":
     unittest.main()

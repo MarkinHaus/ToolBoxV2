@@ -95,7 +95,7 @@ class TestPiperTTS(unittest.TestCase):
             TEST_TEXT_SHORT,
             config=TTSConfig(
                 backend=TTSBackend.PIPER,
-                voice="en_US-amy-medium",
+                voice="de_DE-thorsten-high",
                 language="en",
             ),
         )
@@ -105,7 +105,7 @@ class TestPiperTTS(unittest.TestCase):
     def test_synthesize_returns_wav(self):
         result = synthesize(
             TEST_TEXT_EN,
-            config=TTSConfig(backend=TTSBackend.PIPER, voice="en_US-amy-medium"),
+            config=TTSConfig(backend=TTSBackend.PIPER, voice="de_DE-thorsten-high"),
         )
         self.assertEqual(result.format, "wav")
         self.assertGreater(result.sample_rate, 0)
@@ -114,7 +114,7 @@ class TestPiperTTS(unittest.TestCase):
     def test_synthesize_long_text(self):
         result = synthesize(
             TEST_TEXT_LONG,
-            config=TTSConfig(backend=TTSBackend.PIPER, voice="en_US-amy-medium"),
+            config=TTSConfig(backend=TTSBackend.PIPER, voice="de_DE-thorsten-high"),
         )
         assert_tts_result(self, result, "piper_long")
         info = wav_info(result.audio)
@@ -125,7 +125,7 @@ class TestPiperTTS(unittest.TestCase):
     def test_stream_yields_bytes(self):
         chunks = list(synthesize_stream(
             TEST_TEXT_SHORT,
-            config=TTSConfig(backend=TTSBackend.PIPER, voice="en_US-amy-medium"),
+            config=TTSConfig(backend=TTSBackend.PIPER, voice="de_DE-thorsten-high"),
         ))
         self.assertGreater(len(chunks), 0)
         total_bytes = sum(len(c) for c in chunks)
@@ -146,7 +146,7 @@ class TestPiperTTS(unittest.TestCase):
             TEST_TEXT_EN,
             config=TTSConfig(
                 backend=TTSBackend.PIPER,
-                voice="en_US-amy-medium",
+                voice="de_DE-thorsten-high",
                 emotion=TTSEmotion.FRIENDLY,
             ),
         )

@@ -1046,7 +1046,6 @@ def setup_logging(
     file_handler.setLevel(file_level)
     logger.addHandler(file_handler)
 
-    print(f"{interminal=}")
     # Console handler
     if interminal:
         console_handler = logging.StreamHandler()

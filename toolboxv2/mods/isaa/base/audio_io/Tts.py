@@ -146,7 +146,7 @@ class TTSConfig:
 
         if not self.voice:
             defaults = {
-                TTSBackend.PIPER: "en_US-amy-medium",
+                TTSBackend.PIPER: "de_DE-thorsten-high",
                 TTSBackend.VIBEVOICE: "Carter",
                 TTSBackend.GROQ_TTS: "Fritz-PlayAI",
                 TTSBackend.ELEVENLABS: "21m00Tcm4TlvDq8ikWAM",
@@ -220,40 +220,86 @@ def _synthesize_piper(text: str, config: TTSConfig) -> TTSResult:
     try:
         from piper.voice import PiperVoice
     except ImportError:
-        raise ImportError("piper-tts not installed. Install with: pip install piper-tts")
+        raise ImportError(
+            "piper-tts not installed. Install with: pip install piper-tts"
+        )
 
-    model_path = config.piper_model_path or config.voice
-    if not model_path.endswith(".onnx"):
-        model_path += ".onnx"
-
-    voice = PiperVoice.load(os.path.join(os.getenv("PIPER_MODELS_FOLDER", ".") , model_path))
+    model_path = _resolve_piper_model_path(config)
+    voice = PiperVoice.load(model_path)
 
     audio_buffer = io.BytesIO()
     with wave.open(audio_buffer, "wb") as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(voice.config.sample_rate)
-        voice.synthesize(text, wav_file)
+        # Piper sets header itself when set_wav_format=True (default).
+        voice.synthesize_wav(text, wav_file)
 
     audio_bytes = audio_buffer.getvalue()
+
+    # Guard against silent failures — e.g. an unsupported API ending up
+    # with only the 44-byte WAV header. Raise loudly instead of returning
+    # a corrupt result that confuses downstream clients (icli_web, etc).
+    if len(audio_bytes) <= 44:
+        raise RuntimeError(
+            f"Piper produced no audio samples for text={text!r}. "
+            f"Got {len(audio_bytes)} bytes (header-only). "
+            f"Check piper-tts version (need 1.3+) and model file integrity."
+        )
+
     with io.BytesIO(audio_bytes) as buf:
         with wave.open(buf, "rb") as wav:
-            duration = wav.getnframes() / wav.getframerate()
+            sample_rate = wav.getframerate()
+            duration = wav.getnframes() / sample_rate
 
     return TTSResult(
         audio=audio_bytes, format="wav",
-        sample_rate=voice.config.sample_rate, duration=duration, channels=1,
+        sample_rate=sample_rate, duration=duration, channels=1,
+        emotion=config.emotion,
     )
 
 
 def _stream_piper(text: str, config: TTSConfig) -> Generator[bytes, None, None]:
+    """Stream raw int16 PCM bytes from Piper in chunks.
+
+    Note: these are RAW PCM bytes, not WAV — the caller is responsible for
+    framing. If you need WAV framing per chunk, wrap each yielded blob in
+    _create_wav_header(voice.config.sample_rate, ..., data_size=len(blob)).
+    """
     try:
         from piper.voice import PiperVoice
     except ImportError:
         raise ImportError("piper-tts not installed")
-    model_path = config.piper_model_path or config.voice
+
+    model_path = _resolve_piper_model_path(config)
     voice = PiperVoice.load(model_path)
-    yield from voice.synthesize_stream_raw(text)
+    any_chunk = False
+    for chunk in voice.synthesize(text):
+        payload = getattr(chunk, "audio_int16_bytes", None)
+        if payload:
+            any_chunk = True
+            yield payload
+    if not any_chunk:
+        raise RuntimeError(
+            f"Piper synthesize() yielded no audio chunks for text={text!r}"
+        )
+
+
+def _resolve_piper_model_path(config: TTSConfig) -> str:
+    """Build the absolute .onnx path Piper can load.
+
+    Rules:
+      - If piper_model_path is given and absolute, use it as-is.
+      - Otherwise join config.voice (or model_path) onto PIPER_MODELS_FOLDER.
+      - Always ensure the path ends in '.onnx' so Piper's auto-derived
+        config lookup finds '<name>.onnx.json'.
+    """
+    raw = config.piper_model_path or config.voice
+    if not raw.endswith(".onnx"):
+        raw = raw + ".onnx"
+    # Absolute paths pass through; relative paths resolve against the
+    # models folder env var (default: current directory).
+    if os.path.isabs(raw):
+        return raw
+    folder = os.getenv("PIPER_MODELS_FOLDER", ".")
+    return os.path.join(folder, raw)
 
 
 # =============================================================================
@@ -642,7 +688,7 @@ def synthesize_stream(
 # =============================================================================
 
 
-def synthesize_piper(text: str, voice: str = "en_US-amy-medium", **kwargs) -> TTSResult:
+def synthesize_piper(text: str, voice: str = "de_DE-thorsten-high", **kwargs) -> TTSResult:
     return synthesize(text, config=TTSConfig(backend=TTSBackend.PIPER, voice=voice, **kwargs))
 
 

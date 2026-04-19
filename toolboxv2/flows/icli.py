@@ -6231,21 +6231,6 @@ class ISAA_Host:
         # Coder Mode Indicator
         # Cleanup: Sub-TaskViews + Executions entfernen
         if self.active_coder:
-            parent_tv = None
-            for tid, tv in list(self._task_views.items()):
-                if tv.is_swarm_summary and not tv.is_swarm_sub:
-                    parent_tv = tv
-                    break
-
-            if parent_tv:
-                for sub_tid in list(parent_tv.sub_task_ids.values()):
-                    # Aus TaskViews + Executions entfernen
-                    self._task_views.pop(sub_tid, None)
-                    exc = self.all_executions.get(sub_tid)
-                    if exc:
-                        if exc.status == "running":
-                            exc.status = "cancelled"
-                        # Nach kurzer Zeit aus all_executions entfernen oder als done markieren
             mode_indicator = f"<style fg='ansimagenta'>[CODER:{Path(self.active_coder_path).name}]</style>"
             agent_indicator = ""
         else:
@@ -9406,31 +9391,154 @@ class ISAA_Host:
 
         # --- START ---
         if action == "start":
-            target_path = os.path.abspath(os.path.expanduser(args[1])) if len(args) >= 2 else self.init_dir
-            if not os.path.isdir(target_path):
-                print_status(f"Directory not found: {target_path}", "error")
+            import html
+
+            # Import from coder.py
+            from toolboxv2.mods.isaa.CodingAgent.coder import ProjectDetector, ProjectScaffolder
+
+            # Step 1: target path (arg or cwd)
+            target_raw = args[1] if len(args) >= 2 else self.init_dir
+            target_path = Path(os.path.abspath(os.path.expanduser(target_raw)))
+
+            # Step 2: detect
+            try:
+                ctx = ProjectDetector.detect(str(target_path))
+            except Exception as e:
+                print_status(f"Detection failed: {e}", "error")
                 return
+
+            # Step 3: show summary
+            print_box_header("Coder Setup", "👨‍💻")
+            for line in ctx.to_summary().splitlines():
+                print_box_content(line, "info")
+            for note in ctx.notes:
+                print_box_content(f"• {note}", "")
+            print_box_footer()
+
+            # Step 4: resolve mode-specific decisions
+            config_extras = {}
+            scaffold_kind = None
+            actual_root = ctx.root
+
+            if ctx.mode == "new":
+                # Ask: scaffold yes/no + which kind
+                with patch_stdout():
+                    c_print(HTML("\n<style fg='ansicyan'>📁 Leeres/neues Verzeichnis erkannt.</style>"))
+                    kind_choice = await self.prompt_session.prompt_async(
+                        HTML(
+                            "<style fg='ansicyan'>Projekttyp? [1=python-uv  2=python-pip  3=node-npm  4=node-bun  5=web-static  6=skip]</style>\n❯ ")
+                    )
+                    kind_map = {"1": "python-uv", "2": "python-pip", "3": "node-npm",
+                                "4": "node-bun", "5": "web-static", "6": None}
+                    scaffold_kind = kind_map.get(kind_choice.strip(), None)
+
+                    if scaffold_kind:
+                        confirm = await self.prompt_session.prompt_async(
+                            HTML(
+                                f"<style fg='ansiyellow'>Scaffold '{scaffold_kind}' in {target_path}? [y/N]</style> ❯ ")
+                        )
+                        if confirm.strip().lower() in ("y", "yes", "j", "ja"):
+                            created = ProjectScaffolder.scaffold(target_path, scaffold_kind)
+                            print_status(f"Created {len(created)} files: {', '.join(created)}", "success")
+                            # Re-detect after scaffold
+                            ctx = ProjectDetector.detect(str(target_path))
+                        else:
+                            print_status("Skipping scaffold — starting on empty dir", "info")
+
+            elif ctx.mode == "existing_file":
+                # Single file — ask whether to also pull sibling dir or just this file
+                with patch_stdout():
+                    c_print(HTML(
+                        f"\n<style fg='ansicyan'>📄 Einzelne Datei: {html.escape(str(target_path))}</style>\n"
+                        f"<style fg='ansigray'>Scope wählen:</style>\n"
+                        f"  1 = Nur diese Datei (isoliert)\n"
+                        f"  2 = Datei + sibling tests/ Ordner\n"
+                        f"  3 = Ganzer Parent-Ordner\n"
+                    ))
+                    scope = await self.prompt_session.prompt_async(HTML("<style fg='ansicyan'>❯ Scope [1]: </style>"))
+                    scope = scope.strip() or "1"
+                    if scope == "3":
+                        actual_root = target_path.parent
+                    elif scope == "2":
+                        actual_root = target_path.parent
+                        config_extras["scope_hint"] = f"focus on {target_path.name} and its tests only"
+                    else:
+                        actual_root = target_path.parent
+                        config_extras["scope_hint"] = f"ONLY modify {target_path.name}"
+
+            elif ctx.mode == "file_pair":
+                # Source + test file auto-paired
+                with patch_stdout():
+                    c_print(HTML(
+                        f"\n<style fg='ansicyan'>🔗 Datei-Paar erkannt:</style>\n"
+                        f"  Source: {ctx.entry_files[0] if ctx.entry_files else '?'}\n"
+                        f"  Test:   {ctx.test_paths[0] if ctx.test_paths else '?'}\n"
+                    ))
+                actual_root = ctx.root
+                config_extras["scope_hint"] = f"work on pair: {', '.join(ctx.entry_files)}"
+
+            elif ctx.mode == "subfolder":
+                with patch_stdout():
+                    c_print(HTML(
+                        f"\n<style fg='ansiyellow'>⚠ Subfolder of git repo.</style>\n"
+                        f"<style fg='ansigray'>Worktree-Modus:</style>\n"
+                        f"  1 = Nur subfolder kopieren (schneller, isoliert)\n"
+                        f"  2 = Git worktree auf repo root (volle history)\n"
+                    ))
+                    wt_mode = await self.prompt_session.prompt_async(HTML("<style fg='ansicyan'>❯ Modus [1]: </style>"))
+                    wt_mode = wt_mode.strip() or "1"
+                    # mode "1" is already the default in GitWorktree when root != git_root — handled automatically
+
+            # Step 5: isolation / env question for project kinds that need it
+            if ctx.kind in ("python-uv", "python-pip") and ctx.mode != "existing_file":
+                with patch_stdout():
+                    c_print(HTML("\n<style fg='ansicyan'>🐍 Python-Env:</style>"))
+                    env_choice = await self.prompt_session.prompt_async(
+                        HTML("<style fg='ansicyan'>Root-env (.venv in origin) oder worktree-env? [R/w]</style> ❯ ")
+                    )
+                    config_extras["use_root_env"] = env_choice.strip().lower() not in ("w", "worktree")
+
+            # Step 6: enable run_tests?
+            if ctx.has_tests:
+                with patch_stdout():
+                    test_enable = await self.prompt_session.prompt_async(
+                        HTML("<style fg='ansicyan'>🧪 run_tests nach jedem Edit aktivieren? [y/N]</style> ❯ ")
+                    )
+                    config_extras["run_tests"] = test_enable.strip().lower() in ("y", "yes", "j", "ja")
+
+            # Step 7: agent + instantiate
             try:
                 agent = await self.isaa_tools.get_agent(self.active_agent_name)
-                print_status(f"Initializing Coder on {target_path}...", "progress")
+                print_status(f"Initializing Coder on {actual_root}...", "progress")
                 agent.verbose = True
+
                 async def custom_ask_callback(question: str) -> str:
                     with patch_stdout():
                         if self.zen_plus_mode:
                             self._overlay = None
                             self.zen_plus_mode = False
                             await asyncio.sleep(1)
-                        c_print(HTML(f"\n<style fg='ansicyan'>🤖 Coder fragt:</style> <style fg='ansiyellow'>{html.escape(question)}</style>"))
-                        answer = await self.prompt_session.prompt_async(HTML("<style fg='ansicyan'>❯ Antwort: </style>"))
+                        c_print(HTML(
+                            f"\n<style fg='ansicyan'>🤖 Coder fragt:</style> <style fg='ansiyellow'>{html.escape(question)}</style>"))
+                        answer = await self.prompt_session.prompt_async(
+                            HTML("<style fg='ansicyan'>❯ Antwort: </style>"))
                         return answer
 
-                self.active_coder = CoderAgent(agent, target_path, config={"ask_callback": custom_ask_callback})
+                config = {"ask_callback": custom_ask_callback, **config_extras}
+
+                self.active_coder = CoderAgent(agent, str(actual_root), config=config)
                 self.active_coder.print = ansi_c_print
-                self.active_coder_path = target_path
+                self.active_coder_path = str(actual_root)
+                # Attach detected context for later commands (/coder info uses this)
+                self.active_coder._project_ctx = ctx
 
                 print_box_header("Coder Mode Activated", "👨‍💻")
-                print_box_content(f"Target: {target_path}", "info")
-                print_box_content(f"Agent: {self.active_agent_name}", "info")
+                print_box_content(f"Target:   {actual_root}", "info")
+                print_box_content(f"Mode:     {ctx.mode}", "info")
+                print_box_content(f"Kind:     {ctx.kind}", "info")
+                print_box_content(f"Agent:    {self.active_agent_name}", "info")
+                if ctx.run_commands:
+                    print_box_content(f"Run:      {ctx.run_commands[0]}", "")
                 print_box_content("Commands:", "bold")
                 for line in [
                     "  /coder task <instruction>     - Auto-implement",
@@ -9443,7 +9551,7 @@ class ISAA_Host:
                     "  /coder test [cmd]             - Run tests in worktree",
                     "  /coder files                  - List worktree contents",
                     "  /coder info                   - Show paths + status",
-                    "  /coder stream [on/off]        - Show paths + status",
+                    "  /coder stream [on/off]        - Toggle streaming",
                     "  /coder stop                   - Exit (accept changes first!)",
                 ]:
                     print_box_content(line, "")
@@ -9451,6 +9559,7 @@ class ISAA_Host:
             except Exception as e:
                 import traceback
                 print_status(f"Failed to start coder: {e} {traceback.format_exc()}", "error")
+            return
         elif action == "stream":
             if len(args) < 2:
                 c_print("/coder stream on or off")
@@ -9463,19 +9572,78 @@ class ISAA_Host:
             c_print(f"Coder streaming {'enabled' if self.active_coder.stream_enabled else 'disabled'}")
 
         elif action == "info":
+            if not self.active_coder:
+                print_status("No coder active. Use /coder start first.", "warning")
+                return
 
             wt = self.active_coder.worktree
             wt_path = wt.worktree_path
+            ctx = getattr(self.active_coder, "_project_ctx", None)
+
             print_box_header("Coder Info", "ℹ")
+
+            # ── Paths & Worktree ──
             print_box_content(f"Origin (dein Repo):  {wt.origin_root}", "info")
             print_box_content(f"Worktree (Coder):    {wt_path}", "info")
             print_box_content(
                 f"Git-Modus:           {'Ja (Branch: ' + wt._branch + ')' if wt._is_git else 'Nein (Kopie)'}", "info")
+
+            # ── Project Context (wenn detected) ──
+            if ctx:
+                print_box_content(f"Projekt-Modus:       {ctx.mode}", "info")
+                print_box_content(f"Projekt-Kind:        {ctx.kind}", "info")
+                if ctx.entry_files:
+                    print_box_content(f"Entries:             {', '.join(ctx.entry_files[:5])}", "")
+                if ctx.package_files:
+                    print_box_content(f"Packages:            {', '.join(ctx.package_files)}", "")
+                if ctx.test_paths:
+                    print_box_content(f"Tests:               {', '.join(ctx.test_paths[:3])}", "")
+                if ctx.run_commands:
+                    print_box_content(f"Run-Commands:        {' | '.join(ctx.run_commands[:2])}", "")
+
+            # ── Agent & Model ──
             print_box_content(f"Agent:               {self.active_agent_name}", "info")
             print_box_content(f"Model:               {self.active_coder.model}", "info")
             print_box_content(f"Stream:              {self.active_coder.stream_enabled}", "info")
+
+            # ── Runtime Config Flags ──
+            flags = []
+            if getattr(self.active_coder, "run_tests", False):
+                flags.append("run_tests")
+            if getattr(self.active_coder, "use_root_env", True):
+                flags.append("root-env")
+            else:
+                flags.append("worktree-env")
+            if getattr(self.active_coder, "ask_enabled", False):
+                flags.append("ask")
+            if getattr(self.active_coder, "sync_enabled", True):
+                flags.append(f"sync({self.active_coder.sync_interval:.0f}s)")
+            scope_hint = self.active_coder.config.get("scope_hint") if self.active_coder.config else None
+            if scope_hint:
+                flags.append(f"scoped")
+            if flags:
+                print_box_content(f"Flags:               {', '.join(flags)}", "")
+            if scope_hint:
+                print_box_content(f"Scope-Hint:          {scope_hint[:80]}", "")
+
+            # ── Sub-Agents (Multi-Agent v5) ──
+            if getattr(self.active_coder, "_sub_agents_ready", False):
+                coders = self.active_coder._coder_names
+                print_box_content(f"Sub-Agents:          planner + {len(coders)} coder + validator", "info")
+
+            # ── Token Tracker ──
+            tracker = getattr(self.active_coder, "tracker", None)
+            if tracker:
+                limit = tracker.limit
+                used = tracker.total_tokens
+                pct = (used / limit * 100) if limit else 0
+                print_box_content(
+                    f"Tokens:              {used:,} / {limit:,} ({pct:.1f}%)  "
+                    f"compressions: {tracker.compressions_done}", "info")
+
             print_separator()
 
+            # ── Changed Files ──
             try:
                 changed = await wt.changed_files()
                 if changed:
@@ -9483,24 +9651,29 @@ class ISAA_Host:
                     for f in changed:
                         src = wt_path / f
                         size = src.stat().st_size if src.exists() else 0
-                        c_print(f"  ● {f}  ({size:,} bytes)")
+                        # Check if file also exists in origin to mark NEW vs MODIFIED
+                        dst = wt.origin_root / f
+                        marker = "●" if dst.exists() else "+"
+                        c_print(f"  {marker} {f}  ({size:,} bytes)")
                 else:
                     print_box_content("Keine Änderungen im Worktree.", "info")
             except Exception as e:
                 print_box_content(f"Fehler beim Lesen: {e}", "error")
 
-            # Letzte Edits aus Memory
+            # ── Last Tasks from Memory ──
             if self.active_coder.memory.reports:
                 print_separator()
                 print_box_content("Letzte Tasks:", "bold")
                 for r in self.active_coder.memory.reports[-3:]:
                     status = "✓" if r.get("success") else "✗"
                     files = ", ".join(r.get("changed_files", [])[:5])
-                    c_print(f"  {status} {r.get('task', '?')[:60]}")
+                    task_str = r.get("task", "?")
+                    c_print(f"  {status} {task_str[:60]}{'...' if len(task_str) > 60 else ''}")
                     if files:
                         c_print(f"    → {files}")
 
             print_box_footer()
+
         # --- STOP ---
         elif action == "stop":
             if not self.active_coder:
@@ -10705,11 +10878,40 @@ class ISAA_Host:
             yield {"type": "error", "message": f"agent '{agent_name}': {e}"}
             return
 
+        try:
+            from toolboxv2.mods.icli_web._icli_web_tool import register_icli_web_tools
+            register_icli_web_tools(agent)
+        except Exception as e:
+            c_print(e)
+
+        WEB_TALK_PROMPT = f"""Du bist im Web-TALK Modus. Alle deine Ausgaben werden dem Nutzer vorgelesen — außer Tool-Calls, die laufen still im Hintergrund.
+
+## Verhalten
+
+- Antworte kurz und direkt. Der Nutzer hört dich, er liest dich nicht.
+- Sprache des Nutzers spiegeln: Deutsch → Deutsch, Englisch → Englisch.
+- Keine Markdown-Formatierung, keine Bullet-Points, keine Codeblöcke — das wird 1:1 gesprochen und klingt schlimm.
+- Keine URLs oder lange IDs vorlesen. Wenn nötig, sage "ich habe dir einen Link geschickt" und öffne stattdessen ein Panel.
+- DU MUST in der selben sprache antworten wie der nutzer standart DE, denn EN, sonst muss der nutzer es einmal sagen.
+- Wider hole dich nicht in eime run ! sage nichs wenn es nichts neues gitb oder das du hier etwas läger benötigst.
+
+## Tools
+
+- Für strukturierte Infos, Formulare, Auswahl oder Visualisierung: nutze `show_template(key)` oder `show_interactive_panel`. Das Panel erscheint rechts, du sprichst parallel dazu.
+- Für Status aus dem Panel (was der Nutzer eingegeben/ausgewählt hat): `get_interactive_panel_state()`.
+- Für Stimm-Steuerung: nutze `custom_speek` um Tonfall, Emotion, oder Tempo deiner Sprache zu ändern. Das ist wichtig für natürliches Sprechen.
+- Erst antworten (= sprechen), dann Tools nutzen wenn du weitere Infos brauchst.
+
+## User-Query
+
+{query}"""
+
         # Original agent stream
         original_stream = agent.a_stream(
-            query=query,
+            query=WEB_TALK_PROMPT,
             session_id=self.active_session_id,
             max_iterations=self.max_iteration,
+            user_lightning_model=True
         )
 
         # Tee: both _drain_agent_stream AND our caller see every chunk.
@@ -10911,28 +11113,54 @@ class ISAA_Host:
         exc = self.all_executions.get(task_id)
         if exc and exc.kind == "coder_sub":
             return
+
+        # ── Determine final status ONCE, correctly ──
+        # cancelled → asyncio.CancelledError or fut.cancelled()
+        # failed    → fut.exception() returned a non-None exception
+        # completed → clean result
+        if fut.cancelled():
+            final_status = "cancelled"
+        else:
+            try:
+                fut_exc = fut.exception()
+                final_status = "failed" if fut_exc is not None else "completed"
+            except asyncio.CancelledError:
+                final_status = "cancelled"
+            except Exception:
+                final_status = "failed"
+
         # ── Propagate status to child sub-agent tasks ──
         child_prefix = f"{task_id}::"
         for child_tid, child_exc in self.all_executions.items():
             if child_tid.startswith(child_prefix) and child_exc.status == "running":
-                try:
-                    final_status = "completed" if not fut.cancelled() and fut.exception() is None else "cancelled"
-                except Exception:
-                    final_status = "failed"
                 child_exc.status = final_status
                 tv = self._task_views.get(child_tid)
                 if tv:
                     tv.status = final_status
+
+        # ── Swarm cleanup: if this was a coder parent task, mark all swarm
+        # sub-TaskViews as finished (status only — do NOT pop them yet; user
+        # should still see them until they explicitly clear via F9).
+        parent_tv = self._task_views.get(task_id)
+        if parent_tv and getattr(parent_tv, "is_swarm_summary", False) \
+            and not getattr(parent_tv, "is_swarm_sub", False):
+            for sub_tid in list(parent_tv.sub_task_ids.values()):
+                sub_exc = self.all_executions.get(sub_tid)
+                if sub_exc and sub_exc.status == "running":
+                    sub_exc.status = final_status
+                sub_tv = self._task_views.get(sub_tid)
+                if sub_tv and sub_tv.status == "running":
+                    sub_tv.status = final_status
 
         # _drain_agent_stream already swallows exceptions; fut.result() is safe here
         # but we still guard so a programming error in the callback never kills the CLI.
         try:
             result = fut.result()
             if exc and exc.status not in ("cancelled", "failed"):
-                exc.status = "completed"
+                exc.status = final_status
             tv = self._task_views.get(task_id)
             if tv:
-                tv.status = "completed"
+                tv.status = final_status
             with patch_stdout():
                 try:
                     c_print(HTML(
@@ -11441,6 +11669,22 @@ class ISAA_Host:
 
         except BaseException:  # ← FIX B: was "except Exception"
             pass
+
+        if self.active_coder:
+            parent_tv = None
+            for tid, tv in list(self._task_views.items()):
+                if tv.is_swarm_summary and not tv.is_swarm_sub:
+                    parent_tv = tv
+                    break
+
+            if parent_tv:
+                for sub_tid in list(parent_tv.sub_task_ids.values()):
+                    # Aus TaskViews + Executions entfernen
+                    self._task_views.pop(sub_tid, None)
+                    exc = self.all_executions.get(sub_tid)
+                    if exc:
+                        if exc.status == "running":
+                            exc.status = "cancelled"
 
         if self._focused_task_id == task_id:
             if task:

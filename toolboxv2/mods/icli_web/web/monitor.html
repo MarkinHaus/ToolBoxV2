@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>icli // monitor</title>
+<style>
+  :root {
+    --raw-primary: 55% 0.18 230;
+    --primary: oklch(var(--raw-primary));
+    --success: oklch(65% 0.2 145);
+    --error:   oklch(55% 0.22 25);
+    --term-bg: #000;
+    --term-bg-raised: #0a0a0f;
+    --term-border: rgba(255,255,255,0.12);
+    --term-fg: rgba(255,255,255,0.92);
+    --term-fg-dim: rgba(255,255,255,0.5);
+    --term-fg-muted: rgba(255,255,255,0.3);
+    --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--term-bg); color: var(--term-fg);
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.4;
+    height: 100%; overflow: hidden;
+  }
+  .nav {
+    padding: 8px 16px; color: var(--term-fg-dim);
+    border-bottom: 1px solid var(--term-border); font-size: 11px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .nav a { color: var(--primary); text-decoration: none; padding: 0 4px; }
+  .nav .sep { color: var(--term-fg-muted); }
+  .nav .current { color: var(--term-fg); }
+  .nav .pulse { margin-left: auto; color: var(--term-fg-muted); }
+  .nav .pulse.live { color: var(--success); }
+  .nav .pulse.live::before { content: "● "; }
+  .nav .pulse.dead::before { content: "✕ "; color: var(--error); }
+  .nav .btn-inline {
+    font-family: var(--font-mono); font-size: 10px;
+    background: transparent; color: var(--term-fg-dim);
+    border: 1px solid var(--term-border); border-radius: 0;
+    padding: 2px 8px; cursor: pointer; margin-left: 8px;
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+  .nav .btn-inline:hover { color: var(--primary); border-color: var(--primary); }
+
+  main { display: grid; grid-template-columns: 320px 1fr;
+         height: calc(100% - 31px - 22px); }
+
+  .list { border-right: 1px solid var(--term-border); overflow-y: auto; }
+  .list-head {
+    padding: 8px 12px; font-size: 10px; text-transform: uppercase;
+    letter-spacing: 1px; color: var(--term-fg-muted);
+    border-bottom: 1px solid var(--term-border);
+    display: flex; justify-content: space-between;
+  }
+  .task {
+    padding: 8px 12px; border-bottom: 1px solid var(--term-border);
+    cursor: pointer; border-left: 2px solid transparent;
+  }
+  .task:hover { background: rgba(255,255,255,0.03); }
+  .task.sel { border-left-color: var(--primary);
+              background: color-mix(in oklch, var(--primary) 12%, transparent); }
+  .task .row1 { display: flex; justify-content: space-between; gap: 8px; }
+  .task .id { color: var(--term-fg-muted); font-size: 10px; }
+  .task .phase { font-size: 10px; text-transform: uppercase; }
+  .task .query { color: var(--term-fg-dim); margin-top: 4px;
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .task .meta { color: var(--term-fg-muted); font-size: 10px; margin-top: 2px; }
+  .phase-running, .phase-thinking, .phase-content, .phase-tool { color: var(--primary); }
+  .phase-done { color: var(--success); }
+  .phase-error { color: var(--error); }
+
+  .detail { overflow-y: auto; padding: 16px 20px; }
+  .detail h1 { font-size: 14px; margin: 0 0 4px; font-weight: 500; }
+  .detail h1::before { content: "# "; color: var(--term-fg-muted); }
+  .detail .sub { color: var(--term-fg-muted); margin-bottom: 16px; font-size: 11px; }
+  .detail .empty { color: var(--term-fg-muted); text-align: center; margin-top: 40px; }
+
+  .iter { border: 1px solid var(--term-border);
+          margin-bottom: 12px; background: var(--term-bg-raised); }
+  .iter-head {
+    padding: 6px 12px; border-bottom: 1px solid var(--term-border);
+    font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--term-fg-muted); display: flex; justify-content: space-between;
+  }
+  .iter-body { padding: 8px 12px; }
+  .thought { color: var(--term-fg-dim); white-space: pre-wrap;
+             font-size: 11px; margin: 4px 0; }
+  .thought::before { content: "› "; color: var(--term-fg-muted); }
+  .tool { font-size: 11px; padding: 4px 6px;
+          display: grid; grid-template-columns: 16px 1fr 80px 12px;
+          gap: 8px; align-items: center;
+          cursor: pointer; border-left: 2px solid transparent;
+          border-radius: 0; }
+  .tool:hover { background: rgba(255,255,255,0.04); border-left-color: var(--primary); }
+  .tool.open  { background: rgba(255,255,255,0.05); border-left-color: var(--primary); }
+  .tool .caret { color: var(--term-fg-muted); font-size: 9px; }
+  .tool.open .caret { color: var(--primary); }
+  .tool .g { color: var(--success); } .tool .g.bad { color: var(--error); }
+  .tool .name { color: var(--term-fg); }
+  .tool .info { color: var(--term-fg-dim); overflow: hidden;
+                text-overflow: ellipsis; white-space: nowrap; }
+  .tool .t { color: var(--term-fg-muted); text-align: right; }
+  .tool-details {
+    font-size: 11px; padding: 8px 12px; margin: 0 -12px;
+    background: var(--term-bg-sunken);
+    border-top: 1px solid var(--term-border);
+    border-bottom: 1px solid var(--term-border);
+    color: var(--term-fg-dim);
+  }
+  .tool-details pre {
+    margin: 4px 0 0; padding: 8px; font-size: 10px; line-height: 1.45;
+    background: var(--term-bg); border: 1px solid var(--term-border);
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 320px; overflow-y: auto; color: var(--term-fg);
+  }
+  .tool-details .lbl {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--term-fg-muted); margin-top: 6px;
+  }
+  .tool-details .lbl:first-child { margin-top: 0; }
+  .tool-details .lbl .truncated {
+    /* Inline marker next to label when a value got cut off */
+    font-size: 9px; letter-spacing: 1px; color: var(--warning);
+    text-transform: none; margin-left: 6px;
+  }
+  .tool-details pre.dim { color: var(--term-fg-muted); font-style: italic; }
+
+  /* ── Narrator timeline ──────────────────────────────────────────────
+     Stream of agent-tagged narration messages shown above the iterations.
+     Main agents get a solid box; sub-agents are indented with a left rule
+     so the hierarchy reads at a glance. */
+  .narrator-section {
+    margin-bottom: 16px; border: 1px solid var(--term-border);
+    background: var(--term-bg-raised);
+  }
+  .narrator-head {
+    padding: 6px 12px; border-bottom: 1px solid var(--term-border);
+    font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--term-fg-muted);
+  }
+  .narr-agent {
+    padding: 6px 10px; border-bottom: 1px solid var(--term-border);
+  }
+  .narr-agent:last-child { border-bottom: none; }
+  .narr-agent.sub {
+    padding-left: 24px; border-left: 3px solid var(--primary);
+    background: rgba(255,255,255,0.02);
+  }
+  .narr-agent-head {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+  }
+  .narr-tag {
+    font-size: 9px; color: var(--term-fg-muted);
+    padding: 1px 5px; border: 1px solid var(--term-border);
+  }
+  .narr-agent.sub .narr-tag { color: var(--primary); border-color: var(--primary); }
+  .narr-name { color: var(--term-fg); font-weight: 600; }
+  .narr-count {
+    margin-left: auto; color: var(--term-fg-muted);
+    font-size: 9px; padding: 1px 5px; background: var(--term-bg);
+  }
+  .narr-events {
+    display: flex; flex-direction: column; gap: 2px; padding-left: 4px;
+  }
+  .narr-ev {
+    display: flex; align-items: baseline; gap: 8px;
+    font-size: 11px; line-height: 1.45; padding: 2px 0;
+    color: var(--term-fg-dim);
+  }
+  .narr-iter, .narr-off {
+    font-size: 9px; color: var(--term-fg-muted); font-family: var(--term-font);
+    letter-spacing: 0.5px; flex-shrink: 0; min-width: 28px;
+  }
+  .narr-iter { color: var(--primary); }
+  .narr-text {
+    color: var(--term-fg); white-space: pre-wrap; word-break: break-word;
+    flex: 1;
+  }
+
+  .final {
+    border: 1px solid var(--primary); background: rgba(0,0,0,0.4);
+    padding: 10px 14px; margin-top: 12px; white-space: pre-wrap; color: var(--term-fg);
+  }
+  .final::before {
+    content: "## final_answer"; display: block; color: var(--term-fg-muted);
+    font-size: 10px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;
+  }
+  .expand-task {
+    padding-bottom: 20px; margin-bottom: 20px;
+    border-bottom: 1px solid var(--term-border);
+  }
+  .expand-task:last-child { border-bottom: none; }
+/* Per-task remove button in the list */
+  .task { position: relative; }
+  .task .row1 { padding-right: 18px; }
+  .task .rm {
+    position: absolute; top: 6px; right: 6px;
+    width: 16px; height: 16px; line-height: 14px; text-align: center;
+    color: var(--term-fg-muted); background: transparent;
+    border: 1px solid transparent; font-size: 11px;
+    cursor: pointer; border-radius: 0; padding: 0;
+  }
+  .task .rm:hover { color: var(--error); border-color: var(--error); }
+
+  /* Tool detail: labelled input/output panels */
+  .td-section { margin-top: 8px; }
+  .td-section:first-child { margin-top: 0; }
+  .td-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    font-size: 9px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--term-fg-muted); margin-bottom: 3px;
+  }
+  .td-head .meta { color: var(--term-fg-muted); font-size: 9px; letter-spacing: 0.5px; }
+  .td-head .copy {
+    background: transparent; border: 1px solid var(--term-border);
+    color: var(--term-fg-muted); font-family: var(--font-mono);
+    font-size: 9px; padding: 1px 6px; cursor: pointer; letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .td-head .copy:hover { color: var(--primary); border-color: var(--primary); }
+  .td-head .copy.ok { color: var(--success); border-color: var(--success); }
+
+  /* vfs_shell command prompt styling */
+  .vfs-cmd {
+    background: var(--term-bg); border: 1px solid var(--term-border);
+    padding: 8px 10px; font-size: 11px; color: var(--term-fg);
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .vfs-cmd::before { content: "$ "; color: var(--success); }
+
+  /* stdout/stderr split for vfs_shell */
+  .vfs-stream {
+    margin-top: 4px; padding: 8px; background: var(--term-bg);
+    border: 1px solid var(--term-border); font-size: 10px;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 320px; overflow-y: auto; line-height: 1.45;
+  }
+  .vfs-stream.stderr { border-color: var(--error); color: var(--error); }
+  .vfs-stream.empty { color: var(--term-fg-muted); font-style: italic; }
+  .vfs-rc {
+    display: inline-block; padding: 1px 6px; font-size: 9px;
+    border: 1px solid var(--term-border); color: var(--term-fg-dim);
+    letter-spacing: 1px; margin-left: 6px;
+  }
+  .vfs-rc.zero { color: var(--success); border-color: var(--success); }
+  .vfs-rc.nonzero { color: var(--error); border-color: var(--error); }
+
+  .status-bar {
+    position: fixed; bottom: 0; left: 0; right: 0; height: 22px;
+    background: var(--term-bg-raised); border-top: 1px solid var(--term-border);
+    font-size: 10px; color: var(--term-fg-dim);
+    display: flex; align-items: center; padding: 0 12px; gap: 12px;
+  }
+  .status-bar .seg + .seg::before {
+    content: "│"; color: var(--term-border); margin-right: 12px;
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <span>/</span>
+  <a href="/orb" id="orb-link">orb</a>
+  <span class="sep">/</span>
+  <span class="current">monitor</span>
+<button class="btn-inline" id="clear-done">clear all done</button>
+  <span class="pulse" id="pulse">connecting…</span>
+</nav>
+
+<main>
+  <aside class="list">
+    <div class="list-head"><span>tasks</span><span id="count">0</span></div>
+    <div id="tasks"></div>
+  </aside>
+  <section class="detail" id="detail">
+    <div class="empty">no task selected</div>
+  </section>
+</main>
+
+<div class="status-bar">
+  <span class="seg">● icli_web</span>
+  <span class="seg" id="sb-tasks">0 tasks</span>
+  <span class="seg" id="sb-time"></span>
+</div>
+
+<script>
+(() => {
+  const tasks = new Map();
+  let selectedId = null;
+  const $tasks = document.getElementById("tasks");
+  const $detail = document.getElementById("detail");
+  const $count = document.getElementById("count");
+  const $pulse = document.getElementById("pulse");
+  const $sbTasks = document.getElementById("sb-tasks");
+  const $sbTime = document.getElementById("sb-time");
+
+  function fmtAgo(ts) {
+    if (!ts) return "—";
+    const s = Math.max(0, Math.floor(Date.now()/1000 - ts));
+    if (s < 60) return s + "s";
+    if (s < 3600) return Math.floor(s/60) + "m";
+    return Math.floor(s/3600) + "h";
+  }
+
+  function esc(s) {
+    return String(s ?? "").replace(/[&<>"']/g,
+      c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+
+  function renderList() {
+    const arr = Array.from(tasks.values())
+      .sort((a,b) => (b.started_at||0) - (a.started_at||0));
+    $count.textContent = arr.length;
+    $sbTasks.textContent = arr.length + " tasks";
+    $tasks.innerHTML = "";
+    for (const t of arr) {
+      const div = document.createElement("div");
+      div.className = "task" + (t.task_id === selectedId ? " sel" : "");
+      div.innerHTML = `
+        <button class="rm" title="remove task" data-rm="${t.task_id}">×</button>
+        <div class="row1">
+          <span class="id">${t.task_id}</span>
+          <span class="phase phase-${t.phase||'running'}">${t.phase||'…'}</span>
+        </div>
+        <div class="query">${esc(t.query || "")}</div>
+        <div class="meta">${t.agent_name||"?"} · iter ${t.iteration||0}/${t.max_iter||"?"} · ${fmtAgo(t.started_at)}</div>`;
+      div.onclick = (e) => {
+        if (e.target.dataset && e.target.dataset.rm) {
+          removeTask(e.target.dataset.rm);
+          return;
+        }
+        selectedId = t.task_id; renderAll();
+      };
+      $tasks.appendChild(div);
+    }
+  }
+
+  // Normalize the many shapes a tool entry can arrive in. Older icli
+  // versions emit a 4-tuple [name, ok, elapsed, info], newer ones emit
+  // an object with any of: name, success, ok, elapsed, started_at,
+  // completed_at, info, args, input, output, result, result_preview,
+  // error, tool_id, id, iteration, status, metadata, tags, flags,
+  // reasoning, thought, call_id. Map them all into a consistent
+  // "fields" dict where present keys are ready to render.
+  function normalizeTool(tool) {
+    if (Array.isArray(tool)) {
+      const [name, ok, elapsed, info] = tool;
+      return {
+        name, ok: ok !== false, elapsed, info,
+        _fields: { name, info,
+                   status: ok !== false ? "success" : "failure",
+                   elapsed: elapsed != null ? elapsed : undefined }
+      };
+    }
+    if (!tool || typeof tool !== "object") return null;
+    const okRaw = tool.success ?? tool.ok;
+    const ok = okRaw === undefined ? true : okRaw !== false;
+    const status = tool.status
+      || (okRaw === undefined ? (tool.error ? "error" : "unknown")
+          : (ok ? "success" : "failure"));
+    return {
+      name: tool.name || tool.tool_name || "?",
+      ok, elapsed: tool.elapsed ?? tool.duration,
+      info: tool.info || tool.result_preview,
+      _fields: {
+        "tool id":     tool.tool_id || tool.id || tool.call_id,
+        "name":        tool.name || tool.tool_name,
+        "iteration":   tool.iteration,
+        "status":      status,
+        "error":       tool.error,
+        "elapsed":     tool.elapsed ?? tool.duration,
+        "started":     tool.started_at,
+        "completed":   tool.completed_at,
+        "args":        tool.args,
+        "input":       tool.input,
+        "output":      tool.output,
+        "result":      tool.result,
+        "result preview": tool.result_preview !== undefined && !tool.result
+                          ? tool.result_preview : undefined,
+        "info":        (tool.info && !tool.result_preview) ? tool.info : undefined,
+        "reasoning":   tool.reasoning,
+        "thought":     tool.thought,
+        "metadata":    tool.metadata || tool.meta,
+        "tags":        tool.tags,
+        "flags":       tool.flags,
+      }
+    };
+  }
+
+  // Format a value for a <pre> block. Strings pass through (truncated
+  // if huge). Objects/arrays JSON.stringify with indentation. Numbers
+  // get sensible precision. null/undefined marked explicitly.
+  const MAX_PRE_CHARS = 8000;  // cap per-field so one giant blob can't freeze the page
+  function formatValue(v) {
+    if (v === null)       return { text: "null", truncated: false };
+    if (v === undefined)  return { text: "—",    truncated: false };
+    if (typeof v === "string") {
+      const truncated = v.length > MAX_PRE_CHARS;
+      return {
+        text: truncated ? v.slice(0, MAX_PRE_CHARS) : v,
+        truncated,
+        originalLen: v.length
+      };
+    }
+    if (typeof v === "number") {
+      // Timestamps: if it looks like a unix epoch (> year 2000), show
+      // both raw and ISO. Otherwise just the number.
+      if (v > 946684800 && v < 4102444800) {
+        return { text: new Date(v * 1000).toISOString() + "  (" + v + ")",
+                 truncated: false };
+      }
+      if (v > 946684800000 && v < 4102444800000) {
+        return { text: new Date(v).toISOString() + "  (" + v + ")",
+                 truncated: false };
+      }
+      if (!Number.isInteger(v)) {
+        return { text: v.toFixed(3), truncated: false };
+      }
+      return { text: String(v), truncated: false };
+    }
+    if (typeof v === "boolean") return { text: String(v), truncated: false };
+    // Object or array — pretty-print JSON safely
+    try {
+      const json = JSON.stringify(v, null, 2);
+      const truncated = json.length > MAX_PRE_CHARS;
+      return {
+        text: truncated ? json.slice(0, MAX_PRE_CHARS) : json,
+        truncated, originalLen: json.length
+      };
+    } catch (e) {
+      // Circular ref or BigInt — fall back to String()
+      return { text: String(v), truncated: false };
+    }
+  }
+
+  // Set of tool-keys (taskId:iterN:toolIndex) the user has expanded —
+  // persists across re-renders so SSE updates don't collapse what
+  // they're looking at. Progressive filling works the same way: as
+  // new fields arrive on the tool object, the open details block gets
+  // re-rendered with them alongside the already-visible fields.
+  const openTools = new Set();
+  function toolKey(taskId, iterN, toolIdx) {
+    return `${taskId}:${iterN}:${toolIdx}`;
+  }
+
+// Try to parse vfs_shell raw_result into {success, stdout, stderr, returncode}.
+  // Raw string is the repr/str of the Python dict — we first try JSON parse
+  // (works if it was JSON-encoded) and fall back to a tolerant regex split.
+  function parseVfsResult(raw) {
+    if (!raw) return null;
+    const s = String(raw).trim();
+    try {
+      const obj = JSON.parse(s);
+      if (obj && typeof obj === "object" && ("stdout" in obj || "stderr" in obj)) {
+        return {
+          success: obj.success !== false,
+          stdout: obj.stdout ?? "",
+          stderr: obj.stderr ?? "",
+          returncode: obj.returncode ?? 0,
+        };
+      }
+    } catch (_) { /* fall through */ }
+    // Python repr fallback: {'success': True, 'stdout': '...', 'stderr': '', 'returncode': 0}
+    const m = s.match(/['"]success['"]\s*:\s*(True|False|true|false)/);
+    const so = s.match(/['"]stdout['"]\s*:\s*['"]([\s\S]*?)['"]\s*,\s*['"]stderr['"]/);
+    const se = s.match(/['"]stderr['"]\s*:\s*['"]([\s\S]*?)['"]\s*,\s*['"]returncode['"]/);
+    const rc = s.match(/['"]returncode['"]\s*:\s*(-?\d+)/);
+    if (!m && !so && !se) return null;
+    const unesc = (x) => x ? x.replace(/\\n/g, "\n").replace(/\\t/g, "\t")
+                              .replace(/\\'/g, "'").replace(/\\"/g, '"')
+                              .replace(/\\\\/g, "\\") : "";
+    return {
+      success: m ? /true/i.test(m[1]) : true,
+      stdout: unesc(so ? so[1] : ""),
+      stderr: unesc(se ? se[1] : ""),
+      returncode: rc ? parseInt(rc[1], 10) : 0,
+    };
+  }
+
+  // Generic labelled section with copy button. Pass pre-escaped content or
+  // mark `rawHtml=true` to skip escaping (for already-built HTML blocks).
+  function ioSection(label, meta, bodyHtml, copyText) {
+    const cpId = "cp_" + Math.random().toString(36).slice(2, 9);
+    const metaSpan = meta ? `<span class="meta">${esc(meta)}</span>` : "";
+    const copyBtn = copyText != null
+      ? `<button class="copy" data-cp="${cpId}">copy</button>` : "";
+    return `<div class="td-section">
+      <div class="td-head">
+        <span>${esc(label)}${metaSpan ? " " + metaSpan : ""}</span>
+        ${copyBtn}
+      </div>
+      ${bodyHtml}
+      ${copyText != null ? `<template data-cp-src="${cpId}">${esc(copyText)}</template>` : ""}
+    </div>`;
+  }
+
+  function renderTool(tool, taskId, iterN, toolIdx, iv) {
+    const norm = normalizeTool(tool);
+    if (!norm) return "";
+    const { name, ok, elapsed, info } = norm;
+
+    const key = toolKey(taskId, iterN, toolIdx);
+    const isOpen = openTools.has(key);
+    const caret = isOpen ? "▼" : "▶";
+
+    // Compact row (always visible)
+    let html = `<div class="tool ${isOpen ? "open" : ""}" data-tool-key="${key}">
+      <span class="g ${ok?"":"bad"}">${ok?"●":"✕"}</span>
+      <span class="name">${esc(name||"?")}<span class="info"> ${esc(info||"")}</span></span>
+      <span class="t">${elapsed != null ? Number(elapsed).toFixed(2)+"s" : ""}</span>
+      <span class="caret">${caret}</span>
+    </div>`;
+
+    if (!isOpen) return html;
+
+    // Pull raw input/output from iv.tools_raw at the same index.
+    // Shape: [name, raw_result, raw_input] from ingest_chunk.
+    const raw = (iv && iv.tools_raw && iv.tools_raw[toolIdx]) || null;
+    const rawInput  = raw ? raw[2] : "";
+    const rawOutput = raw ? raw[1] : "";
+
+    html += `<div class="tool-details" data-tool-detail="${key}">`;
+
+    // Header strip: status · elapsed
+    const statusLbl = ok ? "success" : "failure";
+    const elapsedLbl = elapsed != null ? Number(elapsed).toFixed(3) + "s" : "—";
+    html += `<div class="td-section"><div class="td-head">
+      <span>status <span class="meta">${esc(statusLbl)} · ${esc(elapsedLbl)}</span></span>
+    </div></div>`;
+
+    if (name === "vfs_shell") {
+      // Input is a shell command string. Render as $ prompt.
+      const cmd = String(rawInput || "").replace(/^['"]|['"]$/g, "");
+      html += ioSection("command", "", `<div class="vfs-cmd">${esc(cmd)}</div>`, cmd);
+
+      // Output: try to split into stdout / stderr / returncode.
+      const parsed = parseVfsResult(rawOutput);
+      if (parsed) {
+        const rcCls = parsed.returncode === 0 ? "zero" : "nonzero";
+        const soCls = parsed.stdout ? "" : "empty";
+        const seCls = parsed.stderr ? "stderr" : "stderr empty";
+        const soBody = parsed.stdout || "(empty)";
+        const seBody = parsed.stderr || "(empty)";
+        html += ioSection(
+          "stdout",
+          `rc=${parsed.returncode}`,
+          `<div class="vfs-stream ${soCls}">${esc(soBody)}</div>`,
+          parsed.stdout || ""
+        );
+        if (parsed.stderr || parsed.returncode !== 0) {
+          html += ioSection(
+            "stderr",
+            `<span class="vfs-rc ${rcCls}">rc ${parsed.returncode}</span>`,
+            `<div class="vfs-stream ${seCls}">${esc(seBody)}</div>`,
+            parsed.stderr || ""
+          );
+        }
+      } else {
+        // Fallback: raw blob
+        const fmt = formatValue(rawOutput);
+        html += ioSection("output", fmt.truncated
+          ? `${fmt.originalLen.toLocaleString()} chars (truncated)` : "",
+          `<pre>${esc(fmt.text)}</pre>`, String(rawOutput));
+      }
+    } else {
+      // Generic tool: input then output, pretty-printed if JSON-parseable.
+      const prettify = (v) => {
+        if (v == null || v === "") return { text: "(empty)", copy: "" };
+        const s = String(v);
+        try {
+          const parsed = JSON.parse(s);
+          return { text: JSON.stringify(parsed, null, 2), copy: s };
+        } catch (_) { return { text: s, copy: s }; }
+      };
+      const inP = prettify(rawInput);
+      const outP = prettify(rawOutput);
+      const inFmt = formatValue(inP.text);
+      const outFmt = formatValue(outP.text);
+      const inMeta = inFmt.truncated
+        ? `${inFmt.originalLen.toLocaleString()} chars (truncated)` : "";
+      const outMeta = outFmt.truncated
+        ? `${outFmt.originalLen.toLocaleString()} chars (truncated)` : "";
+      html += ioSection("input", inMeta,
+        `<pre>${esc(inFmt.text)}</pre>`, inP.copy);
+      html += ioSection("output", outMeta,
+        `<pre>${esc(outFmt.text)}</pre>`, outP.copy);
+    }
+
+    // Extra info line from the 4-tuple (short preview string)
+    if (info) {
+      html += ioSection("info", "", `<pre>${esc(info)}</pre>`, String(info));
+    }
+
+    html += `</div>`;
+    return html;
+  }
+
+  // Render the narrator timeline: events grouped by agent, sub-agents
+  // nested below their parent agent. Each event shows iter badge + time
+  // offset + text. Keeps chronological order within each group.
+  function renderNarrators(t) {
+    const events = t.narrator_events || [];
+    if (!events.length) return "";
+
+    // Bucket events: top-level agents keyed by name, sub-agent events
+    // attached to the currently-active top-level agent bucket. A single
+    // agent name can appear both as main and sub depending on is_sub;
+    // we key by "<name>:<isSubFlag>" so they don't collide.
+    const buckets = new Map();  // key → { name, is_sub, events[] }
+    let lastTopLevel = null;
+    for (const ev of events) {
+      const name = ev.agent || "?";
+      const isSub = !!ev.is_sub;
+      const key = (isSub ? "sub:" : "main:") + name;
+      if (!buckets.has(key)) {
+        buckets.set(key, { name, is_sub: isSub, events: [] });
+      }
+      buckets.get(key).events.push(ev);
+    }
+
+    // Order: main agents first (in insertion order, = first-seen), then
+    // sub-agents after. Simpler than building a true tree and covers
+    // the common case "parent spawns subs, subs narrate, parent resumes".
+    const main = [], subs = [];
+    for (const b of buckets.values()) (b.is_sub ? subs : main).push(b);
+
+    const first_ts = events[0].timestamp || 0;
+    function offset(ev) {
+      if (!ev.timestamp || !first_ts) return "";
+      const d = ev.timestamp - first_ts;
+      if (d < 1)   return "+" + Math.round(d * 1000) + "ms";
+      if (d < 60)  return "+" + d.toFixed(1) + "s";
+      return "+" + Math.floor(d / 60) + "m" + Math.floor(d % 60) + "s";
+    }
+
+    let html = `<div class="narrator-section">
+      <div class="narrator-head">narrator · ${events.length} event${events.length === 1 ? "" : "s"}</div>`;
+    const renderBucket = (b) => {
+      const cls = b.is_sub ? "narr-agent sub" : "narr-agent";
+      const tag = b.is_sub ? "↳ sub" : "agent";
+      let inner = `<div class="${cls}"><div class="narr-agent-head">
+        <span class="narr-tag">${tag}</span>
+        <span class="narr-name">${esc(b.name)}</span>
+        <span class="narr-count">${b.events.length}</span>
+      </div><div class="narr-events">`;
+      for (const ev of b.events) {
+        const iterBadge = ev.iter != null ? `<span class="narr-iter">i${ev.iter}</span>` : "";
+        const off = offset(ev);
+        const offBadge = off ? `<span class="narr-off">${off}</span>` : "";
+        inner += `<div class="narr-ev">
+          ${iterBadge}${offBadge}
+          <span class="narr-text">${esc(ev.text)}</span>
+        </div>`;
+      }
+      inner += `</div></div>`;
+      return inner;
+    };
+    for (const b of main) html += renderBucket(b);
+    for (const b of subs) html += renderBucket(b);
+    html += `</div>`;
+    return html;
+  }
+
+  function renderDetail() {
+    if (!selectedId || !tasks.has(selectedId)) {
+      $detail.innerHTML = '<div class="empty">no task selected</div>';
+      return;
+    }
+    const t = tasks.get(selectedId);
+    let html = `<h1>${esc(t.query || t.task_id)}</h1>
+      <div class="sub">${t.agent_name||"?"} · ${t.task_id} · ${t.status||"?"}${t.persona ? " · " + esc(t.persona) : ""}</div>`;
+    // Narrator timeline sits above iterations — it's the agent-facing
+    // "what's happening right now" stream that's independent of tool
+    // calls. Empty = nothing rendered.
+    html += renderNarrators(t);
+    for (const iv of (t.iterations || [])) {
+      html += `<div class="iter"><div class="iter-head"><span>iter ${iv.n}</span><span>${(iv.tools||[]).length} tools</span></div><div class="iter-body">`;
+      for (const th of (iv.thoughts||[])) {
+        html += `<div class="thought">${esc(th)}</div>`;
+      }
+      (iv.tools || []).forEach((tool, idx) => {
+        html += renderTool(tool, t.task_id, iv.n, idx, iv);
+      });
+      html += "</div></div>";
+    }
+    if (t.final_answer) html += `<div class="final">${esc(t.final_answer)}</div>`;
+    $detail.innerHTML = html;
+    wireToolClicks();
+  }
+
+  // Delegate click on any .tool element to toggle its details block
+  function wireToolClicks() {
+    $detail.querySelectorAll(".tool").forEach(el => {
+      el.onclick = () => {
+        const k = el.dataset.toolKey;
+        if (openTools.has(k)) openTools.delete(k);
+        else openTools.add(k);
+        renderDetail();
+      };
+    });
+    $detail.querySelectorAll("button.copy").forEach(btn => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.cp;
+        const tpl = $detail.querySelector(`template[data-cp-src="${id}"]`);
+        if (!tpl) return;
+        const text = tpl.innerHTML
+          .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+          .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+        navigator.clipboard.writeText(text).then(() => {
+          btn.textContent = "copied";
+          btn.classList.add("ok");
+          setTimeout(() => {
+            btn.textContent = "copy";
+            btn.classList.remove("ok");
+          }, 1200);
+        }).catch(() => {
+          btn.textContent = "err";
+          setTimeout(() => btn.textContent = "copy", 1200);
+        });
+      };
+    });
+  }
+
+  function renderAll() { renderList(); renderDetail(); }
+
+// Remove a single task from the local view. Server-side retention
+  // is handled by the icli job system — this is a view-only action.
+  function removeTask(taskId) {
+    if (!tasks.has(taskId)) return;
+    tasks.delete(taskId);
+    if (selectedId === taskId) selectedId = null;
+    renderAll();
+  }
+
+  // Clear only tasks in a terminal state. Running tasks stay.
+  document.getElementById("clear-done").onclick = () => {
+    const DONE = new Set(["completed", "failed", "error"]);
+    for (const [id, t] of Array.from(tasks.entries())) {
+      if (DONE.has(t.status)) {
+        tasks.delete(id);
+        if (selectedId === id) selectedId = null;
+      }
+    }
+    renderAll();
+    // Best-effort: tell server to drop its cache of terminal tasks
+    const key = localStorage.getItem("icli_api_key") || "";
+    fetch("/monitor/clear_done" + (key ? "?key=" + encodeURIComponent(key) : ""),
+          { method: "POST" }).catch(() => {});
+  };
+
+  function renderAll() { renderList(); renderDetail(); }
+
+  setInterval(() => {
+    $sbTime.textContent = new Date().toTimeString().slice(0,8);
+  }, 1000);
+
+  function connect() {
+    const urlParams = new URLSearchParams(location.search);
+    const key = window.__ICLI_API_KEY__ || urlParams.get("key")
+      || localStorage.getItem("icli_api_key") || "";
+    if (urlParams.get("key")) localStorage.setItem("icli_api_key", urlParams.get("key"));
+    if (key) document.getElementById("orb-link").href =
+      "/orb?key=" + encodeURIComponent(key);
+
+    const url = "/stream/tasks" + (key ? "?key=" + encodeURIComponent(key) : "");
+    const es = new EventSource(url);
+    es.onopen = () => { $pulse.textContent = "live"; $pulse.className = "pulse live"; };
+    es.onerror = () => {
+      $pulse.textContent = "disconnected"; $pulse.className = "pulse dead";
+      es.close(); setTimeout(connect, 2000);
+    };
+    es.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "snapshot") {
+          tasks.clear();
+          for (const t of (msg.data || [])) tasks.set(t.task_id, t);
+        } else if (msg.type === "task") {
+          tasks.set(msg.data.task_id, msg.data);
+        } else if (msg.type === "narrator_event") {
+          // Append to the in-memory task; the server already stages
+          // it if the task doesn't exist yet but we also self-heal
+          // here so a late narrator doesn't get dropped.
+          let t = tasks.get(msg.task_id);
+          if (!t) {
+            t = { task_id: msg.task_id, narrator_events: [] };
+            tasks.set(msg.task_id, t);
+          }
+          if (!t.narrator_events) t.narrator_events = [];
+          t.narrator_events.push(msg.event);
+          if (t.narrator_events.length > 200) {
+            t.narrator_events = t.narrator_events.slice(-200);
+          }
+        }
+        renderAll();
+      } catch (e) { console.warn("bad event", e); }
+    };
+  }
+  connect();
+})();
+</script>
+</body>
+</html>

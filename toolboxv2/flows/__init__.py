@@ -16,7 +16,8 @@ def normalize_flow_name(name: str) -> str:
     return name.strip('_')
 
 def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None, ui=False):
-
+    if s:
+        s = normalize_flow_name(s)
     if flows_dict_ is None:
         flows_dict_ = {}
     with Spinner("Loading flows"):
@@ -66,8 +67,7 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None, ui=False)
                     fname_key = normalize_flow_name(name)
                     if fname_key != key:
                         flows_dict_[fname_key] = func
-
-                elif file_name.endswith('.py') and s in file_name:
+                elif file_name.endswith('.py') and s in normalize_flow_name(file_name):
                     name = os.path.splitext(file_name)[0]
                     spec = importlib.util.spec_from_file_location(name, os.path.join(dir_path, file_name))
                     module = importlib.util.module_from_spec(spec)
@@ -84,6 +84,8 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None, ui=False)
                             and hasattr(module, "NAME")
                         ):
                             flows_dict_[module.NAME] = module.run
+                            if normalize_flow_name(module.NAME) != module.NAME:
+                                flows_dict_[normalize_flow_name(module.NAME)] = module.run
                     else:
                         if (
                             hasattr(module, "ui")
@@ -91,5 +93,7 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None, ui=False)
                             and hasattr(module, "NAME")
                         ):
                             flows_dict_[module.NAME] = { 'ui':module.ui, 'icon': getattr(module, "ICON", "apps"), 'auth': getattr(module, "AUTH", False), 'bg_img_url': getattr(module, "BG_IMG_URL", None) }
+                            if normalize_flow_name(module.NAME) != module.NAME:
+                                flows_dict_[normalize_flow_name(module.NAME)] = { 'ui':module.ui, 'icon': getattr(module, "ICON", "apps"), 'auth': getattr(module, "AUTH", False), 'bg_img_url': getattr(module, "BG_IMG_URL", None) }
 
         return flows_dict_

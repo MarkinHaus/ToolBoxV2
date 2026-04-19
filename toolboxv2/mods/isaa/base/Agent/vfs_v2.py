@@ -1518,8 +1518,8 @@ Session: {self.session_id}
                                 "total_chars": len(content),
                             }
                         return {"success": True, "content": content}
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(e)
         # Auto-refresh for system files with auto-refresh enabled
         if (isinstance(f, VFSFile) and f.readonly
             and getattr(f, "_auto_refresh", False)
@@ -1561,12 +1561,17 @@ Session: {self.session_id}
                 }
 
         content = f.content
-        if len(content) > max_chars*2.1:
+        if len(content) > max_chars * 2.1:
             return {
                 "success": True,
-                "content": content[:max_chars] + f"\n\n... [TRUNCATED: File is {len(content)} chars. Use 'view' for specific lines] ..." + content[:-max_chars],
+                "content": (
+                    content[:max_chars]
+                    + f"\n\n... [TRUNCATED: File is {len(content)} chars. "
+                      "Use 'view' for specific lines] ...\n\n"
+                    + content[-max_chars:]
+                ),
                 "truncated": True,
-                "total_chars": len(content)
+                "total_chars": len(content),
             }
 
         return {"success": True, "content": content}
@@ -1617,8 +1622,18 @@ Session: {self.session_id}
                         "message": f"Updated '{path}' via shared store",
                         "version": result.get("version"),
                     }
-            except Exception:
-                pass
+                    # Shared-store returned explicit failure — surface it.
+                return {
+                    "success": False,
+                    "error": f"shared_write failed: {result.get('error', 'unknown')}",
+                }
+            except Exception as e:
+                # Real exception (permission, disk, path-traversal) — do not
+                # silently fall through. Return so the agent sees the error.
+                return {
+                    "success": False,
+                    "error": f"shared_write exception: {type(e).__name__}: {e}",
+                }
 
 
         if self._is_file(path):
@@ -1761,7 +1776,8 @@ Session: {self.session_id}
                     return None
                 gvfs = get_global_vfs()
                 return ("global", relative, str(gvfs.data_dir))
-            except Exception:
+            except Exception as e:
+                print(e)
                 return None
 
         # Generische Shared-Mounts (Worktrees etc.)
@@ -1779,7 +1795,8 @@ Session: {self.session_id}
             if not relative:
                 return None
             return (mount_key, relative, mount.local_path)
-        except Exception:
+        except Exception as e:
+            print(e)
             return None
 
     def sync_all(self) -> dict:
@@ -1927,7 +1944,8 @@ Session: {self.session_id}
                         "success": True,
                         "message": f"Deleted '{path}' via shared store",
                     }
-            except Exception:
+            except Exception as e:
+                print(e)
                 pass
 
         f = self.files[path]
@@ -2082,7 +2100,8 @@ Session: {self.session_id}
                     if hasattr(summary, "__await__"):
                         summary = await summary
                     f.mini_summary = str(summary).strip()
-                except Exception:
+                except Exception as e:
+                    print(e)
                     f.mini_summary = (
                         f"[{f.size} chars, {len(f.content.splitlines())} lines]"
                     )
@@ -2223,7 +2242,8 @@ Session: {self.session_id}
             try:
                 lines_count = len(f.content.splitlines())
                 file_size = f.size
-            except Exception:
+            except Exception as e:
+                print(e)
                 lines_count = -1
                 file_size = f.size_bytes
 
@@ -3005,7 +3025,8 @@ Session: {self.session_id}
                 get_mount_poll_registry,
             )
             get_mount_poll_registry().unsubscribe_all(self)
-        except Exception:
+        except Exception as e:
+            print(e)
             pass  # Destructor must never raise
 
 import os

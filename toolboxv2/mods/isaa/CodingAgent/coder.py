@@ -55,16 +55,17 @@ class CoderResult:
 
 @dataclass
 class ExecutionReport:
-    timestamp: str; task: str; changed_files: List[str]; success: bool
-    key_decisions: List[str] = field(default_factory=list)
-    errors_encountered: List[str] = field(default_factory=list)
+    timestamp: str
+    task: str
+    changed_files: List[str]
+    success: bool
     summary: str = ""
     patterns_learned: list | None = None
+    final_response: dict = field(default_factory=dict)
 
     def to_context_str(self) -> str:
         return (f"[{self.timestamp}] {'✓' if self.success else '✗'} {self.task}\n"
                 f"  Files: {', '.join(self.changed_files) or '-'}  {self.summary}")
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # TOKEN MANAGEMENT (unchanged)
@@ -337,6 +338,362 @@ def _fmt(path: str, lines: list, start: int, end: int) -> str:
     body = "\n".join(f"{i+1:5d}|{l}" for i, l in enumerate(lines[s:e], start=s))
     return f"--- {path} ({start}-{e}/{len(lines)}) ---\n{body}"
 
+# ═══════════════════════════════════════════════════════════════════════
+# PROJECT CONTEXT DETECTION
+# ═══════════════════════════════════════════════════════════════════════
+
+@dataclass
+class ProjectContext:
+    """Detected project metadata. Zero-guessing — all fields based on actual filesystem."""
+    mode: str                        # "new" | "existing_project" | "existing_file" | "file_pair" | "subfolder"
+    root: Path                       # The actual working root for the worktree
+    kind: str                        # "python-uv" | "python-pip" | "node-npm" | "node-bun" | "web-static" | "rust" | "go" | "mixed" | "empty" | "unknown"
+    has_git: bool
+    has_tests: bool
+    test_paths: List[str]            # Detected test dirs/files relative to root
+    entry_files: List[str]           # Main entry points relative to root
+    package_files: List[str]         # pyproject.toml, package.json, Cargo.toml, etc.
+    run_commands: List[str]          # Suggested run commands (e.g. "uv run pytest", "npm test")
+    notes: List[str]                 # Human-readable findings for confirmation UI
+
+    def to_summary(self) -> str:
+        lines = [
+            f"Mode:      {self.mode}",
+            f"Kind:      {self.kind}",
+            f"Root:      {self.root}",
+            f"Git:       {'yes' if self.has_git else 'no'}",
+            f"Tests:     {'yes' if self.has_tests else 'no'}"
+            + (f" ({', '.join(self.test_paths[:3])})" if self.test_paths else ""),
+        ]
+        if self.entry_files:
+            lines.append(f"Entries:   {', '.join(self.entry_files[:5])}")
+        if self.package_files:
+            lines.append(f"Packages:  {', '.join(self.package_files)}")
+        if self.run_commands:
+            lines.append(f"Run:       {' | '.join(self.run_commands[:3])}")
+        return "\n".join(lines)
+
+
+class ProjectDetector:
+    """Detects project layout and suggests a working root for the worktree."""
+
+    PYTHON_PACKAGE_FILES = {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "uv.lock", "poetry.lock", "Pipfile"}
+    NODE_PACKAGE_FILES = {"package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock"}
+    RUST_FILES = {"Cargo.toml"}
+    GO_FILES = {"go.mod"}
+    WEB_FILES = {"index.html"}
+    TEST_DIR_NAMES = {"tests", "test", "__tests__", "spec"}
+    TEST_FILE_PATTERNS = ("test_", "_test.", ".test.", ".spec.", "tests.py")
+
+    @classmethod
+    def detect(cls, path: str) -> ProjectContext:
+        p = Path(path).expanduser().resolve()
+
+        # ── File vs Directory ──
+        if p.is_file():
+            return cls._detect_file(p)
+        if not p.exists():
+            # New project scenario — empty dir that doesn't exist yet
+            return ProjectContext(
+                mode="new", root=p, kind="empty", has_git=False, has_tests=False,
+                test_paths=[], entry_files=[], package_files=[], run_commands=[],
+                notes=[f"Path does not exist — will be created: {p}"],
+            )
+        if not p.is_dir():
+            raise ValueError(f"Not a file or directory: {p}")
+
+        return cls._detect_dir(p)
+
+    @classmethod
+    def _detect_file(cls, f: Path) -> ProjectContext:
+        """Single file handed to coder. Worktree root = parent dir, but scoped to this file."""
+        parent = f.parent
+        ext = f.suffix.lower()
+        kind_map = {".py": "python-pip", ".js": "node-npm", ".ts": "node-npm",
+                    ".jsx": "node-npm", ".tsx": "node-npm", ".html": "web-static",
+                    ".rs": "rust", ".go": "go"}
+        kind = kind_map.get(ext, "unknown")
+
+        # Look for a sibling test file / pair
+        pair = cls._find_test_pair(f)
+        entries = [f.name]
+        if pair:
+            entries.append(pair.name)
+
+        return ProjectContext(
+            mode="file_pair" if pair else "existing_file",
+            root=parent,
+            kind=kind,
+            has_git=(parent / ".git").exists(),
+            has_tests=bool(pair),
+            test_paths=[pair.name] if pair else [],
+            entry_files=entries,
+            package_files=[],
+            run_commands=cls._suggest_run_for_file(f, kind),
+            notes=[f"Single file: {f.name}"] + ([f"Test pair: {pair.name}"] if pair else []),
+        )
+
+    @classmethod
+    def _find_test_pair(cls, f: Path) -> Optional[Path]:
+        """Given a source file, find its test counterpart in parent dir (shallow scan)."""
+        stem = f.stem
+        parent = f.parent
+        candidates = [
+            parent / f"test_{stem}{f.suffix}",
+            parent / f"{stem}_test{f.suffix}",
+            parent / f"{stem}.test{f.suffix}",
+            parent / f"{stem}.spec{f.suffix}",
+            parent / "tests" / f"test_{stem}{f.suffix}",
+            parent / "test" / f"test_{stem}{f.suffix}",
+        ]
+        for c in candidates:
+            if c.exists() and c != f:
+                return c
+        # Reverse: if user passed the test file, find source
+        for prefix in ("test_", ):
+            if stem.startswith(prefix):
+                src = parent / f"{stem[len(prefix):]}{f.suffix}"
+                if src.exists():
+                    return src
+        return None
+
+    @classmethod
+    def _detect_dir(cls, d: Path) -> ProjectContext:
+        """Directory detection — shallow scan of root for markers."""
+        try:
+            entries = {e.name for e in d.iterdir()}
+        except PermissionError:
+            entries = set()
+
+        if not entries or entries == {".git"}:
+            return ProjectContext(
+                mode="new", root=d, kind="empty", has_git=(".git" in entries),
+                has_tests=False, test_paths=[], entry_files=[], package_files=[],
+                run_commands=[], notes=["Directory is empty — new project mode"],
+            )
+
+        kind, pkg_files, run_cmds = cls._classify_kind(d, entries)
+        test_paths = cls._find_tests(d, entries)
+        entry_files = cls._find_entries(d, entries, kind)
+        has_git = (d / ".git").exists() or cls._has_git_ancestor(d)
+
+        # Is this a subfolder of a larger repo?
+        is_subfolder = has_git and not (d / ".git").exists()
+
+        return ProjectContext(
+            mode="subfolder" if is_subfolder else "existing_project",
+            root=d,
+            kind=kind,
+            has_git=has_git,
+            has_tests=bool(test_paths),
+            test_paths=test_paths,
+            entry_files=entry_files,
+            package_files=pkg_files,
+            run_commands=run_cmds,
+            notes=[f"{len(entries)} top-level entries"]
+                  + (["Subfolder of a larger git repo"] if is_subfolder else []),
+        )
+
+    @classmethod
+    def _classify_kind(cls, d: Path, entries: set) -> tuple[str, list[str], list[str]]:
+        pkg_files = []
+        run_cmds = []
+
+        py_files = entries & cls.PYTHON_PACKAGE_FILES
+        node_files = entries & cls.NODE_PACKAGE_FILES
+        rust_files = entries & cls.RUST_FILES
+        go_files = entries & cls.GO_FILES
+        web_files = entries & cls.WEB_FILES
+
+        if py_files and node_files:
+            pkg_files = sorted(py_files | node_files)
+            return "mixed", pkg_files, cls._suggest_mixed_cmds(d, py_files, node_files)
+
+        if py_files:
+            pkg_files = sorted(py_files)
+            uv_mode = "uv.lock" in py_files or shutil.which("uv") is not None and "pyproject.toml" in py_files
+            kind = "python-uv" if uv_mode else "python-pip"
+            run_cmds = cls._suggest_python_cmds(d, uv_mode, py_files)
+            return kind, pkg_files, run_cmds
+
+        if node_files:
+            pkg_files = sorted(node_files)
+            if "bun.lockb" in node_files or "bun.lock" in node_files:
+                kind = "node-bun"; run_cmds = ["bun install", "bun test", "bun run dev"]
+            elif "pnpm-lock.yaml" in node_files:
+                kind = "node-npm"; run_cmds = ["pnpm install", "pnpm test", "pnpm dev"]
+            elif "yarn.lock" in node_files:
+                kind = "node-npm"; run_cmds = ["yarn install", "yarn test", "yarn dev"]
+            else:
+                kind = "node-npm"; run_cmds = ["npm install", "npm test", "npm run dev"]
+            return kind, pkg_files, run_cmds
+
+        if rust_files:
+            return "rust", sorted(rust_files), ["cargo build", "cargo test", "cargo run"]
+        if go_files:
+            return "go", sorted(go_files), ["go build ./...", "go test ./...", "go run ."]
+        if web_files:
+            return "web-static", sorted(web_files), ["python -m http.server 8000"]
+
+        return "unknown", [], []
+
+    @classmethod
+    def _suggest_python_cmds(cls, d: Path, uv_mode: bool, pkg_files: set) -> list[str]:
+        cmds = []
+        if uv_mode:
+            cmds.extend(["uv sync", "uv run pytest"])
+            if (d / "pyproject.toml").exists():
+                cmds.append("uv run python -m <module>")
+        else:
+            is_win = platform.system() == "Windows"
+            venv_py = ".venv/Scripts/python.exe" if is_win else ".venv/bin/python"
+            if (d / ".venv").exists() or (d / "venv").exists():
+                cmds.append(f"{venv_py} -m pytest")
+            else:
+                cmds.extend(["python -m venv .venv", "pip install -r requirements.txt"])
+            cmds.append("pytest" if "requirements.txt" in pkg_files else "python -m unittest")
+        return cmds
+
+    @classmethod
+    def _suggest_mixed_cmds(cls, d: Path, py: set, node: set) -> list[str]:
+        out = []
+        if "uv.lock" in py: out.append("uv run pytest")
+        elif py: out.append("pytest")
+        if "bun.lockb" in node or "bun.lock" in node: out.append("bun test")
+        elif node: out.append("npm test")
+        return out
+
+    @classmethod
+    def _suggest_run_for_file(cls, f: Path, kind: str) -> list[str]:
+        name = f.name
+        if kind.startswith("python"):
+            # Check if uv available at file's parent
+            if shutil.which("uv") and (f.parent / "pyproject.toml").exists():
+                return [f"uv run python {name}", f"uv run pytest {name}"]
+            return [f"python {name}", f"pytest {name}"]
+        if kind.startswith("node"):
+            return [f"node {name}", f"npm test -- {name}"]
+        if kind == "rust":
+            return [f"cargo run --bin {f.stem}"]
+        if kind == "web-static":
+            return [f"open {name}"]
+        return []
+
+    @classmethod
+    def _find_tests(cls, d: Path, entries: set) -> list[str]:
+        found = []
+        for tname in cls.TEST_DIR_NAMES:
+            if tname in entries and (d / tname).is_dir():
+                found.append(tname + "/")
+        # Also scan top-level for test files (shallow, no recursion)
+        try:
+            for f in d.iterdir():
+                if f.is_file() and any(pat in f.name for pat in cls.TEST_FILE_PATTERNS):
+                    found.append(f.name)
+                    if len(found) >= 10:
+                        break
+        except PermissionError:
+            pass
+        return found
+
+    @classmethod
+    def _find_entries(cls, d: Path, entries: set, kind: str) -> list[str]:
+        candidates = {
+            "python-uv": ["main.py", "app.py", "__main__.py", "cli.py", "run.py"],
+            "python-pip": ["main.py", "app.py", "__main__.py", "cli.py", "run.py"],
+            "node-npm": ["index.js", "index.ts", "main.js", "main.ts", "src/index.js", "src/index.ts"],
+            "node-bun": ["index.ts", "index.js", "main.ts", "src/index.ts"],
+            "web-static": ["index.html"],
+            "rust": ["src/main.rs", "src/lib.rs"],
+            "go": ["main.go", "cmd/main.go"],
+        }.get(kind, [])
+        found = []
+        for c in candidates:
+            if (d / c).exists():
+                found.append(c)
+        return found
+
+    @staticmethod
+    def _has_git_ancestor(d: Path) -> bool:
+        for parent in d.parents:
+            if (parent / ".git").exists():
+                return True
+        return False
+
+class ProjectScaffolder:
+    """Creates minimal scaffolding for new projects. Only when user opts in."""
+
+    @staticmethod
+    def scaffold(root: Path, kind: str, name: Optional[str] = None) -> list[str]:
+        """Create minimal files for given project kind. Returns list of created files."""
+        root.mkdir(parents=True, exist_ok=True)
+        name = name or root.name
+        created = []
+
+        if kind == "python-uv":
+            (root / "pyproject.toml").write_text(
+                f'[project]\nname = "{name}"\nversion = "0.1.0"\nrequires-python = ">=3.10"\ndependencies = []\n\n'
+                f'[tool.uv]\ndev-dependencies = ["pytest"]\n'
+            )
+            (root / "main.py").write_text(f'def main():\n    print("Hello from {name}")\n\n\nif __name__ == "__main__":\n    main()\n')
+            (root / "tests").mkdir(exist_ok=True)
+            (root / "tests" / "__init__.py").touch()
+            (root / "tests" / "test_main.py").write_text(
+                "import unittest\nfrom main import main\n\n\nclass TestMain(unittest.TestCase):\n"
+                "    def test_main_runs(self):\n        main()  # smoke test\n\n\n"
+                "if __name__ == '__main__':\n    unittest.main()\n"
+            )
+            (root / ".gitignore").write_text(".venv/\n__pycache__/\n*.pyc\n.pytest_cache/\n")
+            created = ["pyproject.toml", "main.py", "tests/__init__.py", "tests/test_main.py", ".gitignore"]
+
+        elif kind == "python-pip":
+            (root / "requirements.txt").write_text("")
+            (root / "main.py").write_text(f'def main():\n    print("Hello from {name}")\n\n\nif __name__ == "__main__":\n    main()\n')
+            (root / "tests").mkdir(exist_ok=True)
+            (root / "tests" / "test_main.py").write_text(
+                "import unittest\nfrom main import main\n\n\nclass TestMain(unittest.TestCase):\n"
+                "    def test_main_runs(self):\n        main()\n\n\n"
+                "if __name__ == '__main__':\n    unittest.main()\n"
+            )
+            (root / ".gitignore").write_text(".venv/\nvenv/\n__pycache__/\n*.pyc\n")
+            created = ["requirements.txt", "main.py", "tests/test_main.py", ".gitignore"]
+
+        elif kind == "node-npm":
+            (root / "package.json").write_text(
+                f'{{\n  "name": "{name}",\n  "version": "0.1.0",\n  "type": "module",\n'
+                f'  "scripts": {{\n    "start": "node index.js",\n    "test": "node --test"\n  }}\n}}\n'
+            )
+            (root / "index.js").write_text(f'console.log("Hello from {name}");\n')
+            (root / "index.test.js").write_text(
+                "import { test } from 'node:test';\nimport assert from 'node:assert';\n\n"
+                "test('smoke', () => { assert.ok(true); });\n"
+            )
+            (root / ".gitignore").write_text("node_modules/\n.env\n")
+            created = ["package.json", "index.js", "index.test.js", ".gitignore"]
+
+        elif kind == "node-bun":
+            (root / "package.json").write_text(
+                f'{{\n  "name": "{name}",\n  "version": "0.1.0",\n  "type": "module",\n'
+                f'  "scripts": {{\n    "start": "bun run index.ts",\n    "test": "bun test"\n  }}\n}}\n'
+            )
+            (root / "index.ts").write_text(f'console.log("Hello from {name}");\n')
+            (root / "index.test.ts").write_text(
+                'import { test, expect } from "bun:test";\n\ntest("smoke", () => { expect(true).toBe(true); });\n'
+            )
+            (root / ".gitignore").write_text("node_modules/\n.env\nbun.lockb\n")
+            created = ["package.json", "index.ts", "index.test.ts", ".gitignore"]
+
+        elif kind == "web-static":
+            (root / "index.html").write_text(
+                f'<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n'
+                f'<title>{name}</title>\n<link rel="stylesheet" href="style.css">\n</head>\n'
+                f'<body>\n<h1>{name}</h1>\n<script src="app.js"></script>\n</body>\n</html>\n'
+            )
+            (root / "style.css").write_text("body { font-family: system-ui; margin: 2rem; }\n")
+            (root / "app.js").write_text("console.log('app loaded');\n")
+            created = ["index.html", "style.css", "app.js"]
+
+        return created
 
 # ═══════════════════════════════════════════════════════════════════════
 # GIT WORKTREE (unchanged — full class kept for completeness)
@@ -687,11 +1044,13 @@ REGELN:
 1. Nutze vfs_shell("ls /project") und vfs_shell("cat /project/...") um die Codebasis zu verstehen BEVOR du planst.
 2. Nutze vfs_shell("grep -rn 'pattern' /project") um relevante Stellen zu finden.
 3. Erstelle den Plan via add_subtask Tool (einmal pro Subtask aufrufen).
-4. Jeder Subtask MUSS spezifizieren: description, files (Komma-getrennt), priority.
+4. Jeder Subtask MUSS spezifizieren: description, files (Komma-getrennt, MINDESTENS 1 Datei), priority.
 5. Dateien dürfen NICHT zwischen Subtasks überlappen! Jede Datei gehört genau einem Subtask.
 6. Wenn der Task nur 1-2 Dateien betrifft, erstelle nur 1 Subtask.
-7. Rufe am Ende ZWINGEND finalize_plan auf.
-8. Schreibe Status-Updates in _coordination.md via vfs_shell("echo '...' >> /project/_coordination.md").
+7. STRICT ZERO-GUESSING: Rate NIEMALS welche Dateien existieren. Nutze vfs_shell('ls') um zu prüfen.
+8. Lies JEDE Datei die du in einen Subtask aufnimmst mindestens einmal (cat), damit der Umfang klar ist.
+9. Rufe am Ende ZWINGEND finalize_plan auf.
+10. Schreibe Status-Updates in _coordination.md via vfs_shell("echo '...' >> /project/_coordination.md").
 """
 
 VALIDATOR_SYSTEM = """
@@ -736,12 +1095,21 @@ class CoderAgent:
         "REGELN:\n"
         "1. ARCHITEKTUR ZUERST: Lies /project/_coordination.md um den Plan zu verstehen.\n"
         "2. LIES Dateien via vfs_shell('cat /project/...') oder vfs_view BEVOR du editierst. Niemals blind raten!\n"
+        "3. SCHREIBEN — STRIKT NACH DATEI-GRÖSSE:\n"
+        "   - Datei < 40 Zeilen:  vfs_shell('write /project/f.py \"content\"')\n"
+        "   - Datei >= 40 Zeilen: write_chunk-Protokoll (siehe unten). NIEMALS echo >> für grosse Dateien!\n"
+        "   write_chunk Protokoll:\n"
+        "     vfs_shell('write_chunk /project/f.js 0 3 \"...block 0...\"')  # erzeugt Datei\n"
+        "     vfs_shell('write_chunk /project/f.js 1 3 \"...block 1...\"')  # appended\n"
+        "     vfs_shell('write_chunk /project/f.js 2 3 \"...block 2...\"')  # finalisiert\n"
+        "   Wenn ein write_chunk Call abbricht: vfs_shell('write_chunk_status /project/f.js') zeigt welche Bloecke fehlen.\n"
         "4. BEENDEN: Wenn du alle Aufgaben erledigt hast, rufe ZWINGEND das Tool 'done' auf (oder schreibe [DONE]).\n"
-        "5. Schreibe VOR jedem Edit einen <thought>...</thought> Block.\n"
+        "5. VERIFIZIERE JEDEN WRITE: Nach jedem write/write_chunk sofort vfs_shell('cat /project/...') und pruefen dass der Inhalt stimmt.\n"
+        "   Wenn Inhalt abweicht: write_chunk_status aufrufen, dann fehlende Bloecke nachschicken.\n"
         "6. ISOLIERTER WORKSPACE: Alle Pfade unter /project/!\n"
-        "7. CODE AUSFÜHREN: Nutze IMMER 'run_file' für Skripte/Tests. 'bash' NUR wenn nötig.\n"
-        "9. Bearbeite NUR die dir zugewiesenen Dateien!\n"
-        "10. Nutze vfs_shell('grep -rn ...') zum Suchen im Code.\n\n"
+        "7. CODE AUSFUEHREN: Nutze IMMER 'run_file' fuer Skripte/Tests. 'bash' NUR wenn noetig.\n"
+        "8. Bearbeite NUR die dir zugewiesenen Dateien!\n"
+        "9. Nutze vfs_shell('grep -rn ...') zum Suchen im Code.\n\n"
     )
 
     def __init__(self, agent, project_root: str, config: dict = None):
@@ -1154,6 +1522,8 @@ class CoderAgent:
                 return f"Error: priority must be high/normal/low, got '{priority}'"
 
             file_list = [f.strip() for f in files.split(",") if f.strip()]
+            if not file_list:
+                return "Error: Subtask must specify at least one file. Use vfs_shell('ls /project') to discover files."
 
             existing_files = set()
             for st in host._current_plan:
@@ -1163,13 +1533,8 @@ class CoderAgent:
             if overlap:
                 return f"Error: Files already assigned to another subtask: {', '.join(overlap)}"
 
-            subtask = {
-                "description": description,
-                "files": file_list,
-                "priority": priority,
-            }
+            subtask = {"description": description, "files": file_list, "priority": priority}
             host._current_plan.append(subtask)
-
             return f"Subtask {len(host._current_plan)} added: {description} ({len(file_list)} files, {priority})"
 
         async def finalize_plan() -> str:
@@ -1335,7 +1700,7 @@ class CoderAgent:
 
         return "".join(full_response)
     # ─────────────────────────────────────────────────────────────────
-    # NEW: Orchestration Phases
+    # Orchestration Phases
     # ─────────────────────────────────────────────────────────────────
     async def _run_planner(self, task: str) -> list[dict]:
         self._current_plan = []
@@ -1364,83 +1729,116 @@ class CoderAgent:
         return self._current_plan
 
     async def _run_coders(self, subtasks: list[dict]) -> list[str]:
-        """Phase 2: Run a single coder agent on all subtasks at once."""
-        all_changed: list[str] = []
-
+        """Phase 2: Main coder orchestrates; for multiple subtasks spawn sub-coders in parallel."""
         if not subtasks:
-            return all_changed
+            return []
 
-        coder_name = self._coder_names[0]
+        # Einfacher Fall: 1 Subtask → Main-Coder macht es direkt
+        if len(subtasks) == 1:
+            coder_name = self._coder_names[0]
+            query = self._build_coder_query(subtasks[0])
+            response = await self._collect_stream(coder_name, query, prefix="CODER")
+            return [response]
 
-        # Alle Subtasks in einem einzigen Prompt zusammenfassen
-        tasks_text = ""
-        for i, st in enumerate(subtasks, 1):
-            files = st.get("files", [])
-            desc = st.get("description", "")
-            files_str = ', '.join(files) if files else "(alle relevanten Dateien)"
-            tasks_text += f"### Subtask {i}\n- Aufgabe: {desc}\n- Zugewiesene Dateien: {files_str}\n\n"
+        # Komplexer Fall: Mehrere Subtasks → Main-Coder delegiert an Sub-Coder
+        # Spawne zusätzliche Coder (einer pro Subtask, minus der Main-Coder)
+        spawn_coros = [self._spawn_extra_coder(i + 1) for i in range(len(subtasks) - 1)]
+        extra_names = await asyncio.gather(*spawn_coros)
+        all_coders = [self._coder_names[0]] + list(extra_names)
 
-        query = (
-            f"Führe die folgenden Subtasks aus:\n\n"
-            f"{tasks_text}"
-            f"WICHTIG:\n"
-            f"- Lies /project/_coordination.md für den Gesamtplan.\n"
-            f"- Bearbeite NUR die dir zugewiesenen Dateien.\n"
-            f"- Lies jede Datei mit vfs_shell('cat /project/...') BEVOR du sie editierst.\n"
-            f"- Rufe update_status auf, wenn du einen Teilschritt abschließt.\n"
-            f"- Rufe done() auf, wenn ALLE Subtasks abgeschlossen sind.\n"
-        )
+        # Weise jedem Coder genau einen Subtask zu und starte parallel
+        async def _run_one(coder_name: str, subtask: dict, idx: int) -> str:
+            query = self._build_coder_query(subtask)
+            # Prefix mit Index für klare Unterscheidung im Stream
+            return await self._collect_stream(coder_name, query, prefix=f"CODER-{idx + 1}")
 
-        response = await self._collect_stream(coder_name, query, prefix="CODER")
+        tasks = [
+            _run_one(coder_name, st, i)
+            for i, (coder_name, st) in enumerate(zip(all_coders, subtasks))
+        ]
+        responses = await asyncio.gather(*tasks, return_exceptions=True)
 
-        return [response]
+        # Exceptions in Logs umwandeln, nicht crashen
+        cleaned = []
+        for i, r in enumerate(responses):
+            if isinstance(r, Exception):
+                self._log("CODER-ERROR", f"Subtask {i + 1} failed: {r}", "red")
+                cleaned.append(f"[ERROR in subtask {i + 1}: {r}]")
+            else:
+                cleaned.append(r)
+        return cleaned
 
     async def _run_fix_coders(self, fix_subtasks: list[dict]) -> list[str]:
-        """Run a single coder agent in FIX mode for all issues at once."""
-        all_changed: list[str] = []
-
+        """Run coder(s) in FIX mode. Parallel wenn mehrere unabhängige Fixes."""
         if not fix_subtasks:
-            return all_changed
+            return []
 
-        coder_name = self._coder_names[0]
+        if len(fix_subtasks) == 1:
+            coder_name = self._coder_names[0]
+            query = self._build_fix_query(fix_subtasks[0])
+            return [await self._collect_stream(coder_name, query, prefix="FIXER")]
 
-        # Alle Fixes/Issues in einem einzigen Prompt zusammenfassen
-        issues_text = ""
-        for i, st in enumerate(fix_subtasks, 1):
-            files = st.get("files", [])
-            desc = st.get("description", "")
-            files_str = ', '.join(files) if files else "(siehe Beschreibung)"
-            issues_text += f"### Issue {i}\n- Problem: {desc}\n- Betroffene Dateien: {files_str}\n\n"
+        # Stelle sicher dass genug Sub-Coder existieren
+        needed = len(fix_subtasks) - len(self._coder_names)
+        if needed > 0:
+            spawn_coros = [
+                self._spawn_extra_coder(len(self._coder_names) + i)
+                for i in range(needed)
+            ]
+            await asyncio.gather(*spawn_coros)
 
-        query = (
-            f"## STRICT FIX MODE - NUR DIE BESCHRIEBENEN PROBLEME BEHEBEN!\n\n"
-            f"{issues_text}"
-            f"REGELN FÜR FIX MODE:\n"
-            f"- Lies die betroffene(n) Datei(en) mit vfs_shell('cat /project/...').\n"
-            f"- Behebe NUR die beschriebenen Probleme. NICHTS ANDERES ändern!\n"
-            f"- Keine Refactorings, keine neuen Features, keine Verbesserungen.\n"
-            f"- Minimale Änderung: So wenig Zeilen wie möglich.\n"
-            f"- Rufe SOFORT done() auf, wenn alle Fixes angewendet sind.\n"
-        )
+        all_coders = self._coder_names[:len(fix_subtasks)]
 
-        response = await self._collect_stream(coder_name, query, prefix="FIXER")
+        async def _run_one(coder_name: str, subtask: dict, idx: int) -> str:
+            query = self._build_fix_query(subtask)
+            return await self._collect_stream(coder_name, query, prefix=f"FIXER-{idx + 1}")
 
-        return [response]
+        tasks = [
+            _run_one(coder_name, st, i)
+            for i, (coder_name, st) in enumerate(zip(all_coders, fix_subtasks))
+        ]
+        responses = await asyncio.gather(*tasks, return_exceptions=True)
+        return [f"[ERROR: {r}]" if isinstance(r, Exception) else r for r in responses]
 
     def _build_coder_query(self, subtask: dict) -> str:
         files = subtask.get("files", [])
         desc = subtask.get("description", "")
-        files_str = ', '.join(files) if files else "(alle relevanten Dateien)"
+        # Pull the full _coordination.md contents so the coder sees the
+        # complete spec, not just this subtask's one-line description.
+        coord_content = ""
+        try:
+            coord_path = self.worktree.path / "_coordination.md"
+            if coord_path.exists():
+                coord_content = coord_path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+        if not files:
+            files_line = "Keine spezifischen Dateien zugewiesen — arbeite minimal."
+            boundary = ""
+        else:
+            files_line = f"ZUGEWIESENE DATEIEN (NUR DIESE BEARBEITEN): {', '.join(files)}"
+            # Harte Datei-Grenze als strict rule
+            boundary = (
+                f"\n\nSTRICT ZERO-SCOPE-DRIFT POLICY:\n"
+                f"- Du darfst AUSSCHLIESSLICH diese Dateien bearbeiten: {', '.join(files)}\n"
+                f"- Jede andere Datei ist TABU. Lesen ist OK (zum Kontext), aber NIEMALS editieren.\n"
+                f"- Wenn du merkst dass du eine andere Datei ändern müsstest: STOP, rufe done() "
+                f"auf und notiere via update_status() was fehlt.\n"
+                f"- Wenn Informationen fehlen: Nutze vfs_shell('cat ...') oder vfs_shell('grep ...'). "
+                f"NIEMALS raten, was in einer Datei stehen könnte.\n"
+            )
 
         return (
             f"Aufgabe: {desc}\n\n"
-            f"Zugewiesene Dateien: {files_str}\n\n"
-            f"WICHTIG:\n"
-            f"- Lies /project/_coordination.md für den Gesamtplan.\n"
-            f"- Bearbeite NUR die dir zugewiesenen Dateien.\n"
-            f"- Lies jede Datei mit vfs_shell('cat /project/...') BEVOR du sie editierst.\n"
-            f"- Rufe update_status auf wenn du einen Teilschritt abschließt.\n"
-            f"- Rufe done() auf wenn du fertig bist.\n"
+            f"{files_line}\n\n"
+            f"## VOLLSTAENDIGER PLAN (aus _coordination.md):\n"
+            f"{coord_content or '(leer)'}\n\n"
+            f"## WICHTIG:\n"
+            f"- Oben siehst du den kompletten Plan. Dein Subtask ist oben beschrieben.\n"
+            f"- Lies jede zugewiesene Datei mit vfs_shell('cat /project/...') BEVOR du editierst.\n"
+            f"- Rufe update_status() auf wenn du einen Teilschritt abschließt.\n"
+            f"- Rufe done() auf wenn ALLE deine zugewiesenen Dateien fertig sind."
+            f"{boundary}"
         )
 
     async def _run_validator(self, changed_files: list[str]) -> list[dict]:
@@ -1475,12 +1873,14 @@ class CoderAgent:
             f"Problem: {desc}\n"
             f"Betroffene Dateien: {files_str}\n\n"
             f"REGELN FÜR FIX MODE:\n"
+            f"- Bearbeite AUSSCHLIESSLICH: {files_str}. Jede andere Datei ist TABU.\n"
             f"- Lies die betroffene(n) Datei(en) mit vfs_shell('cat /project/...').\n"
             f"- Behebe NUR das beschriebene Problem. NICHTS ANDERES ändern!\n"
             f"- Keine Refactorings, keine neuen Features, keine Verbesserungen.\n"
             f"- Minimale Änderung: So wenig Zeilen wie möglich.\n"
+            f"- Wenn Infos fehlen: NICHT RATEN. Datei lesen oder done() aufrufen.\n"
             f"- Rufe SOFORT done() auf wenn der Fix angewendet ist.\n"
-            f"- Wenn du mehr als 1 Edit-Block brauchst, stimmt etwas nicht.\n"
+            f"- Wenn du mehr als 1-2 Edits brauchst, stimmt etwas nicht — done() und update_status().\n"
         )
 
     # ─────────────────────────────────────────────────────────────────
@@ -1591,6 +1991,20 @@ class CoderAgent:
                 changed_files=final_changed or [],
                 success=True,
                 summary=f"Completed: {len(subtasks)} subtask(s), {len(final_changed or [])} file(s) changed",
+                final_response={
+                    "status": "success",
+                    "subtasks_planned": len(subtasks),
+                    "subtasks": [
+                        {"description": st.get("description", ""), "files": st.get("files", [])}
+                        for st in subtasks
+                    ],
+                    "files_changed": final_changed or [],
+                    "validation_issues": self._validation_issues or [],
+                    "tokens_used": self.tracker.total_tokens,
+                    "compressions": self.tracker.compressions_done,
+                    "model": self.model,
+                    "worktree_path": str(self.worktree.path) if self.worktree.path else None,
+                },
             )
             self.memory.add(report)
 
@@ -1613,8 +2027,15 @@ class CoderAgent:
                 task=task[:200],
                 changed_files=[],
                 success=False,
-                errors_encountered=[str(e)],
                 summary=f"Failed: {str(e)[:100]}",
+                final_response={
+                    "status": "error",
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "traceback": error_details,
+                    "subtasks_planned": len(subtasks) if subtasks else 0,
+                    "tokens_used": self.tracker.total_tokens,
+                },
             )
             self.memory.add(report)
 

@@ -1,0 +1,52 @@
+{
+  "test_hello": {
+    "template": "info",
+    "category": "test",
+    "description": "Simplest possible user template — a plain info card. If this shows up in list_panel_templates(), the ENV template loader is working.",
+    "content": {
+      "title": "Hello from user templates",
+      "body": "This panel was loaded from a JSON file in ICLI_WEB_TEMPLATES_DIR. If you can see it, the loader works."
+    }
+  },
+
+  "test_form": {
+    "template": "form",
+    "category": "test",
+    "description": "Tiny 2-field form to verify form template loading + validation.",
+    "content": {
+      "title": "Test form",
+      "fields": [
+        {
+          "name": "nickname",
+          "label": "Your nickname",
+          "type": "text"
+        },
+        {
+          "name": "mood",
+          "label": "How's your day",
+          "type": "select",
+          "options": ["great", "fine", "meh", "tired"],
+          "value": "fine"
+        }
+      ],
+      "submit_label": "Send",
+      "submit_query": "User submitted the test form."
+    }
+  },
+
+  "test_pick": {
+    "template": "choice",
+    "category": "test",
+    "description": "Quick choice test — three buttons that echo the selection back as a query.",
+    "content": {
+      "title": "Test choice",
+      "prompt": "Pick one to send back to the agent:",
+      "options": [
+        { "value": "red",   "label": "Red" },
+        { "value": "green", "label": "Green" },
+        { "value": "blue",  "label": "Blue" }
+      ],
+      "on_choice_query": "User picked {choice}"
+    }
+  }
+}

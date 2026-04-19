@@ -1,0 +1,20 @@
+{
+  "md_showcase": {
+    "template": "markdown",
+    "category": "user",
+    "description": "Markdown rendering showcase — exercises every pattern the inline parser supports. Drop this JSON into ICLI_WEB_TEMPLATES_DIR, then run show_template('md_showcase') to see headers, bold/italic, inline + fenced code, links, lists, blockquotes and paragraphs side by side.",
+    "content": {
+      "title": "Markdown showcase",
+      "md": "# Heading one\n## Heading two\n### Heading three\n\nRegular paragraph with **bold**, *italic*, and `inline code` inline.\n\nAnother paragraph so you can see the gap.\n\n- First list item\n- Second with `code`\n- Third with a [link to example.com](https://example.com)\n\n> Blockquote: the renderer escapes all HTML before applying patterns, so `<script>` tags land as literal text.\n\n```python\n# Fenced code block\ndef greet(name: str) -> str:\n    return f\"hi, {name}\"\n\nprint(greet(\"icli_web\"))\n```\n\nTrailing paragraph to confirm the parser closes code fences cleanly.\n"
+    }
+  },
+  "md_xss_probe": {
+    "template": "markdown",
+    "category": "user",
+    "description": "XSS probe — renders markdown containing script tags, javascript: URLs, onerror handlers and other injection attempts. If the output shows these as literal text (no alert, no broken DOM), the escape-first strategy is working. Use for manual smoke-testing the orb renderer.",
+    "content": {
+      "title": "XSS probe (should render as literal text)",
+      "md": "# Injection attempts\n\n`<script>alert('xss')</script>` must render as text.\n\n<img src=x onerror=\"alert('xss')\">\n\n[click me](javascript:alert('xss'))\n\n```html\n<iframe src=\"javascript:alert('xss')\"></iframe>\n```\n\nAll of the above must appear as visible characters, not executed.\n"
+    }
+  }
+}

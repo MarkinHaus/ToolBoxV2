@@ -21,8 +21,8 @@ from pathlib import Path
 
 def profile_code(sort_by="cumulative", top_n=30,
                  module_filter=None, graph=True, graph_file="import_graph.html",
-                 group_depth=2, min_time=0.01, blame_threshold=0.1):
-    if os.getenv("PROFILING", "false") != "true":
+                 group_depth=2, min_time=0.01, blame_threshold=0.1, override=False):
+    if override or os.getenv("PROFILING", "false") != "true":
         return lambda x:x
     def decorator(func):
         @wraps(func)

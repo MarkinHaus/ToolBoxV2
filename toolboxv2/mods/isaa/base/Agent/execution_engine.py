@@ -3302,6 +3302,19 @@ BEISPIELE:
                 "D. REPORT: Use `final_answer()` only when the objective is met or definitively impossible.",
            ]))
 
+        # do not guess part.
+        prompt_parts.append(
+            "STRICT ZERO-GUESSING POLICY: You must NEVER guess anything, anywhere, under any circumstances! "
+            "Do not guess processes, rules, tools, information, functions, APIs, or documentation. "
+            "Always base your answers strictly on the provided context and facts. "
+            "IF INFORMATION IS MISSING OR INSUFFICIENT: "
+            "1. Think outside the box and look for tools that can help. "
+            "2. Actively retrieve the missing data (e.g., search the web, read files) and bring it into the context. "
+            "3. If tools cannot provide the factual answer, you MUST ASK THE USER. Never guess. "
+            "SOLE EXCEPTION: If the user explicitly requests you to guess in a 'minimal demo setting'. "
+            "If this exception applies, you MUST clearly and explicitly wrap and declare the guessed parts with "
+            "warning labels like '[GUESSED INFO]' so the user knows exactly what is not factual."
+        )
         # Add skills section if matched
         if ctx.matched_skills:
             skill_section = self.skills_manager.build_skill_prompt_section(

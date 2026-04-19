@@ -1,0 +1,45 @@
+{
+  "custom_clock": {
+    "template": "html",
+    "category": "custom",
+    "description": "Live-updating analog clock drawn on canvas. Demonstrates setInterval + Canvas2D + CSS-var theming inside a trusted panel.",
+    "content": {
+      "title": "Clock",
+      "trusted": true,
+      "html": "<div style='display:flex; flex-direction:column; gap:8px; align-items:center;'><canvas id='clock-{uid}' width='200' height='200' style='border:2px solid var(--ink); border-radius:50%; background:var(--paper-sunken);'></canvas><div id='clock-readout-{uid}' style='font-family:var(--font-display); font-size:14px; color:var(--ink); letter-spacing:2px;'>00:00:00</div></div><script>(function(){var c=document.getElementById('clock-{uid}');if(!c||c.dataset.wired)return;c.dataset.wired='1';var ctx=c.getContext('2d');var out=document.getElementById('clock-readout-{uid}');var timer=null;function draw(){var cs=getComputedStyle(document.documentElement);var ink=cs.getPropertyValue('--ink').trim()||'#111';var prim=cs.getPropertyValue('--primary').trim()||'#3a6';var now=new Date();var h=now.getHours(),m=now.getMinutes(),s=now.getSeconds();ctx.clearRect(0,0,200,200);ctx.strokeStyle=ink;ctx.lineWidth=2;for(var i=0;i<12;i++){var a=(i/12)*Math.PI*2-Math.PI/2;ctx.beginPath();ctx.moveTo(100+Math.cos(a)*85,100+Math.sin(a)*85);ctx.lineTo(100+Math.cos(a)*92,100+Math.sin(a)*92);ctx.stroke();}var sa=(s/60)*Math.PI*2-Math.PI/2;var ma=((m+s/60)/60)*Math.PI*2-Math.PI/2;var ha=((h%12+m/60)/12)*Math.PI*2-Math.PI/2;ctx.strokeStyle=ink;ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(100,100);ctx.lineTo(100+Math.cos(ha)*45,100+Math.sin(ha)*45);ctx.stroke();ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(100,100);ctx.lineTo(100+Math.cos(ma)*65,100+Math.sin(ma)*65);ctx.stroke();ctx.strokeStyle=prim;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(100,100);ctx.lineTo(100+Math.cos(sa)*75,100+Math.sin(sa)*75);ctx.stroke();ctx.fillStyle=ink;ctx.beginPath();ctx.arc(100,100,4,0,Math.PI*2);ctx.fill();out.textContent=String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');}draw();timer=setInterval(draw,1000);})();</script>"
+    }
+  },
+
+  "custom_counter": {
+    "template": "html",
+    "category": "custom",
+    "description": "Reactive counter with +/- buttons + live readout. Demonstrates event listeners, state-in-closure, and using data-field to expose state to the agent via get_interactive_panel_state().",
+    "content": {
+      "title": "Counter",
+      "trusted": true,
+      "html": "<div style='display:flex; flex-direction:column; gap:12px; align-items:center; padding:8px;'><div id='count-disp-{uid}' style='font-family:var(--font-display); font-size:42px; font-weight:600; color:var(--ink); min-width:80px; text-align:center;'>0</div><div style='display:flex; gap:8px;'><button class='pc-ctrl' data-act='dec-{uid}' style='font-size:18px; padding:4px 14px;'>−</button><button class='pc-ctrl' data-act='reset-{uid}'>reset</button><button class='pc-ctrl' data-act='inc-{uid}' style='font-size:18px; padding:4px 14px;'>+</button></div><div style='font-family:var(--font-display); font-size:10px; color:var(--ink-muted); letter-spacing:1.5px; text-transform:uppercase;'>agent reads via data-field=\"count\"</div><input type='hidden' data-field='count' data-panel-id='{uid}' value='0'></div><script>(function(){var disp=document.getElementById('count-disp-{uid}');if(!disp||disp.dataset.wired)return;disp.dataset.wired='1';var hidden=document.querySelector('input[data-field=\"count\"][data-panel-id=\"{uid}\"]');var n=0;function update(){disp.textContent=n;if(hidden)hidden.value=String(n);}document.querySelector('[data-act=\"inc-{uid}\"]').onclick=function(){n++;update();};document.querySelector('[data-act=\"dec-{uid}\"]').onclick=function(){n--;update();};document.querySelector('[data-act=\"reset-{uid}\"]').onclick=function(){n=0;update();};})();</script>"
+    }
+  },
+
+  "custom_keyboard": {
+    "template": "html",
+    "category": "custom",
+    "description": "Last-key-pressed visualizer. Demonstrates keydown capture scoped to the panel, mouse hover styling, and live DOM updates.",
+    "content": {
+      "title": "Keyboard",
+      "trusted": true,
+      "html": "<div id='kb-wrap-{uid}' tabindex='0' style='display:flex; flex-direction:column; gap:10px; align-items:center; padding:16px; border:2px dashed var(--ink); outline:none; cursor:pointer;'><div style='font-family:var(--font-display); font-size:11px; color:var(--ink-muted); letter-spacing:1.5px; text-transform:uppercase;'>Click here, then press any key</div><div id='kb-key-{uid}' style='font-family:var(--font-display); font-size:48px; font-weight:600; color:var(--primary); min-height:56px; line-height:1;'>…</div><div id='kb-info-{uid}' style='font-family:var(--font-display); font-size:11px; color:var(--ink-muted); letter-spacing:1px;'>no key yet</div></div><script>(function(){var wrap=document.getElementById('kb-wrap-{uid}');if(!wrap||wrap.dataset.wired)return;wrap.dataset.wired='1';var key=document.getElementById('kb-key-{uid}');var info=document.getElementById('kb-info-{uid}');wrap.addEventListener('keydown',function(e){e.preventDefault();var k=e.key;if(k===' ')k='SPACE';if(k.length>1)k=k.toUpperCase();key.textContent=k;info.textContent='code='+e.code+' · '+(e.ctrlKey?'CTRL ':'')+(e.altKey?'ALT ':'')+(e.shiftKey?'SHIFT ':'')+(e.metaKey?'META ':'');});wrap.addEventListener('focus',function(){wrap.style.borderStyle='solid';});wrap.addEventListener('blur',function(){wrap.style.borderStyle='dashed';});})();</script>"
+    }
+  },
+
+  "custom_sketch": {
+    "template": "html",
+    "category": "custom",
+    "description": "Drawing pad — drag to sketch, double-click to clear. Demonstrates mouse event handling on canvas, dynamic stroke color from CSS vars, and a button to persist the drawing into a data-field so the agent can see it as a base64 PNG.",
+    "content": {
+      "title": "Sketch pad",
+      "trusted": true,
+      "html": "<div style='display:flex; flex-direction:column; gap:8px; align-items:center;'><canvas id='sk-{uid}' width='300' height='200' style='border:2px solid var(--ink); background:var(--paper-surface); cursor:crosshair;'></canvas><div style='display:flex; gap:8px;'><button class='pc-ctrl' data-act='clear-{uid}'>clear</button><button class='pc-ctrl' data-act='snap-{uid}'>capture</button></div><div id='sk-status-{uid}' style='font-family:var(--font-display); font-size:10px; color:var(--ink-muted); letter-spacing:1px;'>drag to draw · dbl-click to clear</div><input type='hidden' data-field='sketch_png' data-panel-id='{uid}' value=''></div><script>(function(){var c=document.getElementById('sk-{uid}');if(!c||c.dataset.wired)return;c.dataset.wired='1';var ctx=c.getContext('2d');var drawing=false,lx=0,ly=0;function ink(){return getComputedStyle(document.documentElement).getPropertyValue('--ink').trim()||'#111';}ctx.strokeStyle=ink();ctx.lineWidth=2;ctx.lineCap='round';function pt(e){var r=c.getBoundingClientRect();return[e.clientX-r.left,e.clientY-r.top];}c.addEventListener('mousedown',function(e){var p=pt(e);drawing=true;lx=p[0];ly=p[1];ctx.strokeStyle=ink();});c.addEventListener('mousemove',function(e){if(!drawing)return;var p=pt(e);ctx.beginPath();ctx.moveTo(lx,ly);ctx.lineTo(p[0],p[1]);ctx.stroke();lx=p[0];ly=p[1];});window.addEventListener('mouseup',function(){drawing=false;});c.addEventListener('dblclick',function(){ctx.clearRect(0,0,300,200);});document.querySelector('[data-act=\"clear-{uid}\"]').onclick=function(){ctx.clearRect(0,0,300,200);};document.querySelector('[data-act=\"snap-{uid}\"]').onclick=function(){var png=c.toDataURL('image/png');var h=document.querySelector('input[data-field=\"sketch_png\"][data-panel-id=\"{uid}\"]');if(h)h.value=png;document.getElementById('sk-status-{uid}').textContent='captured '+Math.round(png.length/1024)+' KB — agent can read via get_interactive_panel_state';};})();</script>"
+    }
+  }
+}

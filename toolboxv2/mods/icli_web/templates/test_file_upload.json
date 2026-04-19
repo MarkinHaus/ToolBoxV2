@@ -1,0 +1,46 @@
+{
+  "file_any_single": {
+    "template": "file",
+    "category": "user",
+    "description": "Upload a single file of any type into the agent's session VFS. State exposes metadata only ({name, size, type, vfs_path}); the bytes live in VFS under vfs_target and can be read by the agent from there.",
+    "content": {
+      "title": "Upload any file",
+      "prompt": "Drop a file here or click to pick one.",
+      "max_size_mb": 10,
+      "multiple": false,
+      "vfs_target": "uploads/",
+      "submit_label": "Use this file",
+      "submit_query": "User uploaded a file."
+    }
+  },
+  "file_image_multi": {
+    "template": "file",
+    "category": "user",
+    "description": "Upload one or more images (png/jpg/webp/gif). MIME-filtered via accept; bytes land in VFS under uploads/images/.",
+    "content": {
+      "title": "Upload images",
+      "prompt": "Drop images here or click to pick. Multiple allowed.",
+      "max_size_mb": 25,
+      "multiple": true,
+      "accept": ["image/png", "image/jpeg", "image/webp", "image/gif"],
+      "vfs_target": "uploads/images/",
+      "submit_label": "Process images",
+      "submit_query": "User uploaded images for processing."
+    }
+  },
+  "file_pdf_only": {
+    "template": "file",
+    "category": "user",
+    "description": "Upload a single PDF (e.g. for ingestion / Q&A). Uses a wildcard-style accept string rather than a list.",
+    "content": {
+      "title": "Upload PDF",
+      "prompt": "Drop a PDF here or click to pick one.",
+      "max_size_mb": 50,
+      "multiple": false,
+      "accept": "application/pdf",
+      "vfs_target": "uploads/pdfs/",
+      "submit_label": "Ingest PDF",
+      "submit_query": "User uploaded a PDF for ingestion."
+    }
+  }
+}

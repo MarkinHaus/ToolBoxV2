@@ -1,0 +1,1995 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>icli // orb</title>
+<style>
+  :root, html[data-theme="light"] {
+    --raw-primary: 55% 0.18 230;
+    --primary: oklch(var(--raw-primary));
+    --success: oklch(65% 0.2 145);
+    --warning: oklch(75% 0.18 85);
+    --error:   oklch(55% 0.22 25);
+
+    /* Paper (Neobrutalism) — Light */
+    --paper-bg:      #f4f1ea;
+    --paper-surface: #ffffff;
+    --paper-sunken:  #ebe7dc;
+    --ink:           #111111;
+    --ink-muted:     #555555;
+    --ink-faint:     #888888;
+
+    --font-display: 'IBM Plex Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+    --font-body:    'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+
+    /* Paper texture: faint SVG noise + subtle repeating horizontal fibers.
+       A real printed page look; no libraries. Inline so there are no
+       network requests. The noise is an SVG filter rendering feTurbulence
+       then desaturating to a sepia blend. */
+    --paper-texture:
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.07  0 0 0 0 0.06  0 0 0 0 0.04  0 0 0 0.06 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    --paper-lines:
+      repeating-linear-gradient(
+        0deg,
+        transparent 0,
+        transparent 3px,
+        rgba(0,0,0,0.012) 3px,
+        rgba(0,0,0,0.012) 4px);
+  }
+  html[data-theme="dark"] {
+    /* Pure black like the monitor. Surfaces differ only by a single
+       step (black vs. very-near-black) so borders carry all the
+       structure, not tint. */
+    --paper-bg:      #000000;
+    --paper-surface: #000000;
+    --paper-sunken:  #000000;
+    --ink:           rgba(255,255,255,0.92);
+    --ink-muted:     rgba(255,255,255,0.5);
+    --ink-faint:     rgba(255,255,255,0.3);
+    --paper-texture:
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.95  0 0 0 0 0.94  0 0 0 0 0.91  0 0 0 0.015 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    --paper-lines:
+      repeating-linear-gradient(
+        0deg,
+        transparent 0,
+        transparent 3px,
+        rgba(255,255,255,0.005) 3px,
+        rgba(255,255,255,0.005) 4px);
+  }
+  /* Auto default to system pref if no explicit theme is set */
+  @media (prefers-color-scheme: dark) {
+    html:not([data-theme]) {
+      --paper-bg:      #000000;
+      --paper-surface: #000000;
+      --paper-sunken:  #000000;
+      --ink:           rgba(255,255,255,0.92);
+      --ink-muted:     rgba(255,255,255,0.5);
+      --ink-faint:     rgba(255,255,255,0.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background-color: var(--paper-bg);
+    background-image: var(--paper-texture), var(--paper-lines);
+    background-repeat: repeat;
+    color: var(--ink);
+    font-family: var(--font-body); font-size: 16px; line-height: 1.5;
+    height: 100%; overflow: hidden;
+  }
+
+  /* ── Nav (thick bottom rule, mono links) ─────────────────────────────── */
+  .nav {
+    padding: 12px 20px; background: var(--paper-bg);
+    border-bottom: 3px solid var(--ink);
+    font-family: var(--font-display); font-size: 13px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .nav a {
+    color: var(--ink); text-decoration: underline;
+    text-decoration-thickness: 2px; text-underline-offset: 3px;
+    padding: 2px 4px; text-transform: uppercase; letter-spacing: 1px;
+    font-weight: 500;
+  }
+  .nav a:hover { background: var(--ink); color: var(--paper-bg); text-decoration-color: transparent; }
+  .nav .sep { color: var(--ink-faint); }
+  .nav .current {
+    text-transform: uppercase; letter-spacing: 1px; font-weight: 600;
+    border-bottom: 2px solid var(--ink); padding: 2px 4px;
+  }
+  .nav .stat { font-size: 12px; margin-left: 8px; color: var(--ink-muted); }
+  .nav .stat.on  { color: var(--ink); }
+  .nav .stat.on::before  { content: "● "; color: var(--success); }
+  .nav .stat.off::before { content: "○ "; color: var(--ink-faint); }
+  .nav .stat.err::before { content: "✕ "; color: var(--error); }
+  .nav .spacer { margin-left: auto; }
+
+  /* ── Layout ────────────────────────────────────────────────────────
+     Main area uses flex so the chat column can be drag-resized with a
+     divider. Column widths are stored in CSS vars so the drag-handle
+     JS can update them in real time without re-running layout.        */
+  main {
+    display: flex;
+    height: calc(100% - 50px - 28px);
+    min-height: 0;
+  }
+  .orb-pane {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 22px; padding: 24px;
+    background-color: transparent;
+    /* orb pane inherits paper texture from body */
+  }
+  /* Resize handle between orb and chat. 6px wide but with an extended
+     pointer hit-box via ::before. Cursor reflects drag axis. */
+  .drag-handle {
+    flex: 0 0 6px;
+    background: var(--ink);
+    cursor: col-resize;
+    position: relative; user-select: none;
+    z-index: 5;
+  }
+  .drag-handle::before {
+    content: ""; position: absolute;
+    top: 0; bottom: 0; left: -6px; right: -6px; /* 18px hit area */
+  }
+  .drag-handle::after {
+    /* Grip indicator — 3 short horizontal bars */
+    content: ""; position: absolute;
+    top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 2px; height: 32px;
+    background:
+      linear-gradient(var(--paper-bg), var(--paper-bg)) 0 0/2px 6px no-repeat,
+      linear-gradient(var(--paper-bg), var(--paper-bg)) 0 13px/2px 6px no-repeat,
+      linear-gradient(var(--paper-bg), var(--paper-bg)) 0 26px/2px 6px no-repeat;
+  }
+  .drag-handle:hover { background: var(--primary); }
+  main.chat-closed  .drag-handle { display: none; }
+  main.chat-full    .orb-pane,
+  main.chat-full    .drag-handle { display: none; }
+  /* While dragging, disable transitions and user-select everywhere */
+  body.dragging, body.dragging * { user-select: none !important; cursor: col-resize !important; }
+  /* Snap animation on mouseup */
+  .chat-pane, .orb-pane {
+    transition: flex-basis 160ms ease-out;
+  }
+  body.dragging .chat-pane, body.dragging .orb-pane {
+    transition: none;
+  }
+  #audioVisualizer {
+    /* Shrink with the pane but never exceed 300px. The orb-pane must
+       clip any overflow since the particles coords assume 300×300. */
+    width: min(300px, 85%); aspect-ratio: 1;
+    max-width: 300px; max-height: 100%;
+    background: var(--paper-surface);
+    border: 3px solid var(--ink);
+    /* Inset highlight uses --ink (inverted by theme) with mixed alpha so
+       it reads as paper shine in light mode and dim rim in dark mode. */
+    box-shadow: inset -8px -8px 20px
+                color-mix(in oklch, var(--ink) 22%, transparent);
+    border-radius: 50%;
+    position: relative; overflow: hidden;
+    flex-shrink: 0;
+  }
+  .orb-pane { overflow: hidden; }
+  .particle {
+    position: absolute; width: 10px; height: 10px;
+    background-color: var(--ink);
+    border-radius: 50%; pointer-events: none;
+    transition: background-color 150ms linear, width 80ms linear, height 80ms linear;
+  }
+  #infos {
+    color: var(--ink-muted); font-size: 14px; text-align: center;
+    min-height: 18px; max-width: 620px; margin: 0;
+    font-family: var(--font-body);
+  }
+  #infos .m { color: var(--ink); background: var(--paper-sunken);
+              padding: 1px 6px; border: 1px solid var(--ink);
+              font-family: var(--font-display); }
+
+  /* ── Buttons (offset shadow, square) ──────────────────────────────── */
+  .btn {
+    font-family: var(--font-display); font-size: 13px; font-weight: 600;
+    letter-spacing: 0.5px; text-transform: uppercase;
+    padding: 8px 14px;
+    background: var(--paper-surface); color: var(--ink);
+    border: 2px solid var(--ink); border-radius: 0;
+    box-shadow: 4px 4px 0 var(--ink);
+    cursor: pointer;
+    transition: transform 80ms linear, box-shadow 80ms linear;
+  }
+  .btn:hover { transform: translate(-2px, -2px); box-shadow: 6px 6px 0 var(--ink); }
+  .btn:active { transform: translate(2px, 2px); box-shadow: 0 0 0 var(--ink); }
+  .btn.primary { background: var(--primary); color: #fff; }
+  .btn.danger  { background: var(--error);   color: #fff; }
+  .btn.ghost   { background: transparent; }
+  .btn.small { padding: 4px 10px; font-size: 11px; box-shadow: 3px 3px 0 var(--ink); }
+  .btn.small:hover { box-shadow: 5px 5px 0 var(--ink); }
+
+  #microphoneButton {
+    width: 80px; height: 80px; border-radius: 50%;
+    padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+    box-shadow: 6px 6px 0 var(--ink);
+  }
+  #microphoneButton:hover { box-shadow: 8px 8px 0 var(--ink); }
+
+  .controls { display: flex; gap: 12px; align-items: center; }
+  .sel, .txt {
+    font-family: var(--font-body); font-size: 14px; padding: 8px 10px;
+    background: var(--paper-surface); color: var(--ink);
+    border: 2px solid var(--ink); border-radius: 0;
+    box-shadow: 3px 3px 0 var(--ink);
+  }
+  .sel:focus, .txt:focus {
+    outline: none; transform: translate(-1px, -1px);
+    box-shadow: 4px 4px 0 var(--primary);
+  }
+
+  /* ── Chat (middle column, drag-resizable) ─────────────────────────── */
+  .chat-pane {
+    flex: 0 0 var(--chat-w, 340px);
+    min-width: 0;
+    background: var(--paper-surface);
+    border-left: 2px solid var(--ink);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  main.chat-closed .chat-pane { display: none; }
+  main.chat-full   .chat-pane { flex: 1 1 0; }
+  main.panel-open  { /* handled via panel-pane flex-basis below */ }
+  .chat-head {
+    padding: 10px 14px; border-bottom: 2px solid var(--ink);
+    display: flex; justify-content: space-between; align-items: center;
+    font-family: var(--font-display); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 1.5px;
+  }
+  .chat-head .count { color: var(--ink-muted); font-weight: normal; }
+  .chat-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
+  .chat-foot { border-top: 2px solid var(--ink); padding: 10px 12px;
+               display: flex; gap: 8px; background: var(--paper-sunken); }
+  .chat-foot .txt { flex: 1; font-size: 14px; }
+  .msg { margin-bottom: 14px; }
+  .msg .who {
+    font-family: var(--font-display); font-size: 10px;
+    text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--ink-muted); font-weight: 600;
+  }
+  .msg.user .who { color: var(--ink); }
+  .msg.user .who::before { content: "▶ "; color: var(--primary); }
+  .msg.agent .who { color: var(--primary); }
+  .msg.agent .who::before { content: "◆ "; }
+  .msg.sys .who { color: var(--ink-faint); }
+  .msg.sys .who::before { content: "· "; }
+  .msg .text {
+    white-space: pre-wrap; margin-top: 4px; font-size: 14px;
+    color: var(--ink); line-height: 1.55;
+  }
+  .msg.sys .text { color: var(--ink-muted); font-size: 13px; }
+
+  /* Toggle tabs on the edges */
+  .edge-tab {
+    position: fixed; z-index: 60; top: 50%; transform: translateY(-50%);
+    font-family: var(--font-display); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 1.5px;
+    background: var(--paper-surface); color: var(--ink);
+    border: 2px solid var(--ink);
+    box-shadow: 4px 4px 0 var(--ink);
+    padding: 12px 7px; cursor: pointer;
+    writing-mode: vertical-rl; text-orientation: mixed;
+    border-radius: 0;
+  }
+  .edge-tab:hover { transform: translateY(-50%) translate(-2px,-2px);
+                    box-shadow: 6px 6px 0 var(--ink); }
+  .edge-tab.chat-tab  {
+    /* When both tabs are visible at once, chat sits above the midline */
+    right: 12px; top: calc(50% - 70px); transform: none;
+  }
+  .edge-tab.chat-tab:hover { transform: translate(-2px,-2px); }
+  main:not(.chat-closed) ~ .edge-tab.chat-tab { display: none; }
+  .edge-tab.panel-tab { left: 12px; }
+
+  /* ── Interactive panel (right) ────────────────────────────────────── */
+  .panel-pane {
+    flex: 0 0 var(--panel-w, 420px);
+    min-width: 0;
+    border-left: 2px solid var(--ink); background: var(--paper-sunken);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  main:not(.panel-open) .panel-pane { display: none; }
+  .panel-head {
+    padding: 10px 14px; border-bottom: 2px solid var(--ink);
+    background: var(--paper-bg);
+    display: flex; justify-content: space-between; align-items: center;
+    font-family: var(--font-display); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 1.5px;
+  }
+  .panel-body { flex: 1; overflow-y: auto; padding: 14px; }
+  .panel-card {
+    background: var(--paper-surface); border: 2px solid var(--ink);
+    box-shadow: 4px 4px 0 var(--ink); padding: 14px; margin-bottom: 14px;
+    position: relative;
+  }
+  .panel-card.collapsed { padding: 10px 14px; }
+  .panel-card.collapsed .panel-card-body { display: none; }
+  .panel-card-head {
+    display: flex; align-items: center; gap: 8px;
+    margin: 0 0 10px;
+  }
+  .panel-card.collapsed .panel-card-head { margin-bottom: 0; }
+  .panel-card-head h4 {
+    margin: 0; flex: 1; font-family: var(--font-display); font-size: 13px;
+    font-weight: 600; letter-spacing: 0.3px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .panel-card-head h4::before { content: "# "; color: var(--ink-muted); }
+  .panel-card-head .pc-ctrl {
+    font-family: var(--font-display); font-size: 11px; font-weight: 600;
+    border: 1.5px solid var(--ink); background: transparent; color: var(--ink);
+    padding: 2px 7px; cursor: pointer; border-radius: 0; line-height: 1;
+  }
+  .panel-card-head .pc-ctrl:hover { background: var(--ink); color: var(--paper-bg); }
+  .panel-empty { color: var(--ink-faint); font-size: 13px; padding: 20px 8px; }
+  .panel-empty-tab {
+    /* Shown when the whole panel pane is closed — floats on right edge,
+       below midline so it doesn't collide with chat-tab above */
+    position: fixed; right: 12px; top: calc(50% + 70px); transform: none;
+    writing-mode: vertical-rl; text-orientation: mixed;
+    font-family: var(--font-display); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 1.5px;
+    padding: 12px 7px; background: var(--paper-surface);
+    color: var(--ink); border: 2px solid var(--ink);
+    box-shadow: 4px 4px 0 var(--ink); cursor: pointer; z-index: 50;
+  }
+  .panel-empty-tab:hover { transform: translate(-2px,-2px);
+                           box-shadow: 6px 6px 0 var(--ink); }
+  main.panel-open ~ .panel-empty-tab { display: none; }
+  .panel-card input, .panel-card select, .panel-card textarea {
+    width: 100%; font-family: var(--font-body); font-size: 14px;
+    padding: 6px 8px; background: var(--paper-sunken); color: var(--ink);
+    border: 2px solid var(--ink); border-radius: 0; margin-bottom: 8px;
+  }
+  .panel-card label {
+    font-family: var(--font-display); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 1px; color: var(--ink-muted);
+    display: block; margin-bottom: 4px;
+  }
+  .panel-card button {
+    font-family: var(--font-display); font-size: 12px; font-weight: 600;
+    letter-spacing: 0.5px; text-transform: uppercase;
+    padding: 6px 12px; margin: 4px 6px 0 0;
+    background: var(--paper-surface); color: var(--ink);
+    border: 2px solid var(--ink); border-radius: 0;
+    box-shadow: 3px 3px 0 var(--ink); cursor: pointer;
+  }
+  .panel-card button:hover { transform: translate(-1px,-1px); box-shadow: 4px 4px 0 var(--ink); }
+  .panel-card button.primary { background: var(--primary); color: #fff; }
+
+  /* ── Drawer (settings) ────────────────────────────────────────────── */
+  .drawer {
+    position: fixed; top: 0; right: -480px; width: 460px; height: 100%;
+    background: var(--paper-surface); border-left: 3px solid var(--ink);
+    box-shadow: -8px 0 0 var(--ink);
+    z-index: 80; transition: right 200ms linear;
+    display: flex; flex-direction: column;
+  }
+  .drawer.open { right: 0; }
+  .drawer-head {
+    padding: 14px 18px; border-bottom: 3px solid var(--ink);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .drawer-head h2 { margin: 0; font-family: var(--font-display);
+                    font-size: 18px; font-weight: 600; }
+  .drawer-head h2::before { content: "# "; color: var(--ink-muted); }
+  .drawer-body { flex: 1; overflow-y: auto; padding: 18px; }
+  .section { margin-bottom: 22px; padding-bottom: 16px;
+             border-bottom: 2px solid var(--ink); }
+  .section:last-child { border-bottom: none; }
+  .section h3 {
+    margin: 0 0 12px; font-family: var(--font-display); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--ink); font-weight: 600;
+  }
+  .field {
+    display: grid; grid-template-columns: 140px 1fr;
+    gap: 10px; align-items: center; margin-bottom: 10px;
+  }
+  .field label { font-size: 13px; color: var(--ink-muted);
+                 font-family: var(--font-display); }
+  .field .sel, .field .txt, .field input[type="range"] { width: 100%; }
+  .field .range-wrap {
+    display: grid; grid-template-columns: 1fr 50px; gap: 8px; align-items: center;
+  }
+  .field .range-val { font-family: var(--font-display); font-size: 11px;
+                      color: var(--ink-muted); text-align: right; }
+  .checkbox-row {
+    display: flex; gap: 8px; align-items: center; margin-bottom: 8px;
+  }
+  .checkbox-row label { font-size: 13px; color: var(--ink); }
+  .hint { font-size: 12px; color: var(--ink-faint);
+          margin-top: 6px; padding-left: 140px; }
+  textarea.txt { font-family: var(--font-body); resize: vertical; min-height: 70px; }
+
+  /* ── Status bar ──────────────────────────────────────────────────── */
+  .status-bar {
+    position: fixed; bottom: 0; left: 0; right: 0; height: 28px;
+    background: var(--paper-bg); border-top: 3px solid var(--ink);
+    font-family: var(--font-display); font-size: 11px; color: var(--ink-muted);
+    display: flex; align-items: center; padding: 0 14px; gap: 14px;
+  }
+  .status-bar .seg + .seg::before {
+    content: "│"; color: var(--ink-faint); margin-right: 14px;
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <span>/</span>
+  <span class="current">orb</span>
+  <span class="sep">/</span>
+  <a href="/monitor" id="monitor-link">monitor</a>
+  <span class="stat" id="stat-mic">mic idle</span>
+  <span class="stat" id="stat-icli">icli ?</span>
+  <span class="spacer"></span>
+  <button class="btn small ghost" id="theme-toggle" title="toggle light/dark">☀</button>
+  <button class="btn small" id="settings-btn">settings</button>
+</nav>
+
+<main id="main-layout">
+  <section class="orb-pane">
+    <div id="audioVisualizer"></div>
+    <p id="infos">Connecting…</p>
+    <div class="controls">
+      <select class="sel" id="agent-sel">
+        <option value="self">self</option>
+        <option value="isaa">isaa</option>
+        <option value="coder">coder</option>
+      </select>
+      <button class="btn" id="microphoneButton">mic</button>
+    </div>
+  </section>
+
+  <div class="drag-handle" id="chat-resize" title="drag to resize (double-click: 50/50)"></div>
+
+  <aside class="chat-pane" id="chat-pane">
+    <div class="chat-head">
+      <span>Chat</span>
+      <span>
+        <span class="count" id="tr-count">0</span>
+        <button class="btn small ghost" id="chat-toggle" title="hide chat">×</button>
+      </span>
+    </div>
+    <div class="chat-body" id="tr-body"></div>
+    <div class="chat-foot">
+      <input class="txt" id="chat-input" type="text"
+             placeholder="Type a message and press Enter…"
+             autocomplete="off" />
+      <button class="btn small primary" id="chat-send">send</button>
+    </div>
+  </aside>
+
+  <aside class="panel-pane" id="panel-pane">
+    <div class="panel-head">
+      <span>Interactive</span>
+      <button class="btn small ghost" id="panel-close" title="close panel">×</button>
+    </div>
+    <div class="panel-body" id="panel-body">
+      <div class="panel-empty">No interactive content yet. The agent can push panels here using the <code>show_interactive_panel</code> tool.</div>
+    </div>
+  </aside>
+</main>
+
+<button class="edge-tab chat-tab" id="chat-open" title="show chat">chat</button>
+<button class="panel-empty-tab" id="panel-open" title="show interactive panel">panel</button>
+
+<aside class="drawer" id="drawer">
+  <div class="drawer-head">
+    <h2>settings</h2>
+    <button class="btn" id="drawer-close">close</button>
+  </div>
+  <div class="drawer-body">
+
+    <div class="section">
+      <h3>Capture mode</h3>
+      <div class="field">
+        <label for="capture-mode">mode</label>
+        <select class="sel" id="capture-mode">
+          <option value="ptt">Push-to-talk</option>
+          <option value="vad" selected>VAD (hands-free)</option>
+          <option value="hybrid">Both</option>
+        </select>
+      </div>
+      <div class="hint">VAD keeps mic open, sends on silence.</div>
+    </div>
+
+    <div class="section">
+      <h3>End detection</h3>
+      <div class="checkbox-row">
+        <input type="checkbox" id="end-silence" checked>
+        <label for="end-silence">Silence detection</label>
+      </div>
+      <div class="field">
+        <label for="silence-ms">silence ms</label>
+        <div class="range-wrap">
+          <input type="range" id="silence-ms" min="200" max="2500" value="700" step="50">
+          <span class="range-val" id="silence-ms-val">700</span>
+        </div>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="end-manual" checked>
+        <label for="end-manual">Manual stop (mic / Enter)</label>
+      </div>
+      <div class="field">
+        <label for="max-utterance">max duration</label>
+        <div class="range-wrap">
+          <input type="range" id="max-utterance" min="5" max="60" value="30" step="1">
+          <span class="range-val" id="max-utterance-val">30s</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>STT (recognition)</h3>
+      <div class="field">
+        <label for="stt-location">location</label>
+        <select class="sel" id="stt-location">
+          <option value="browser">Browser (Web Speech)</option>
+          <option value="server">Server (whisper/groq)</option>
+        </select>
+      </div>
+      <div class="field" id="stt-backend-field" style="display:none">
+        <label for="stt-backend">backend</label>
+        <select class="sel" id="stt-backend"></select>
+      </div>
+      <div class="field" id="stt-model-field" style="display:none">
+        <label for="stt-model">model</label>
+        <select class="sel" id="stt-model"></select>
+      </div>
+      <div class="field">
+        <label for="stt-language">language</label>
+        <select class="sel" id="stt-language">
+          <option value="de">de</option><option value="en">en</option>
+          <option value="auto">auto</option>
+        </select>
+      </div>
+      <div class="field" id="stt-device-field" style="display:none">
+        <label for="stt-device">device</label>
+        <select class="sel" id="stt-device"></select>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>TTS (voice)</h3>
+      <div class="field">
+        <label for="tts-backend">backend</label>
+        <select class="sel" id="tts-backend"></select>
+      </div>
+      <div class="field">
+        <label for="tts-voice">voice</label>
+        <select class="sel" id="tts-voice"></select>
+      </div>
+      <div class="field">
+        <label for="tts-language">language</label>
+        <select class="sel" id="tts-language">
+          <option value="de">de</option><option value="en">en</option>
+          <option value="fr">fr</option><option value="es">es</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="tts-emotion">emotion</label>
+        <select class="sel" id="tts-emotion"></select>
+      </div>
+      <div class="field">
+        <label for="tts-speed">speed</label>
+        <div class="range-wrap">
+          <input type="range" id="tts-speed" min="0.5" max="2.0" value="1.0" step="0.05">
+          <span class="range-val" id="tts-speed-val">1.00x</span>
+        </div>
+      </div>
+      <div class="field" id="style-prompt-field" style="display:none">
+        <label for="style-prompt">style prompt</label>
+        <textarea class="txt" id="style-prompt"
+                  placeholder="e.g. warm narrator, measured pace"></textarea>
+      </div>
+      <div class="hint" id="style-prompt-hint" style="display:none">
+        Free-text style description (Qwen3-TTS, etc).
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Actions</h3>
+      <div class="controls">
+        <button class="btn primary" id="apply-btn">apply</button>
+        <button class="btn" id="test-voice-btn">test voice</button>
+        <button class="btn" id="reset-btn">reset</button>
+      </div>
+    </div>
+
+  </div>
+</aside>
+
+<div class="status-bar">
+  <span class="seg" id="sb-conn">○ ws</span>
+  <span class="seg" id="sb-state">idle</span>
+  <span class="seg" id="sb-mode">vad</span>
+  <span class="seg" id="sb-stt">stt:browser</span>
+  <span class="seg" id="sb-tts">tts:—</span>
+  <span class="seg" id="sb-time"></span>
+</div>
+
+<script>
+(() => {
+  // ═══ Config ═════════════════════════════════════════════════════════════
+  const urlParams = new URLSearchParams(location.search);
+  const API_KEY = window.__ICLI_API_KEY__
+    || urlParams.get("key")
+    || localStorage.getItem("icli_api_key") || "";
+  if (urlParams.get("key")) localStorage.setItem("icli_api_key", urlParams.get("key"));
+
+  const WS_URL = window.__ICLI_WS_URL__
+    || `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws/orb`;
+
+  if (API_KEY) {
+    document.getElementById("monitor-link").href =
+      "/monitor?key=" + encodeURIComponent(API_KEY);
+  }
+
+  const DEFAULT_SETTINGS = {
+    captureMode: "vad", endSilence: true, silenceMs: 700,
+    endManual: true, maxUtterance: 30,
+    sttLocation: "browser", sttBackend: "faster_whisper",
+    sttModel: "small", sttLanguage: "de", sttDevice: "cpu",
+    ttsBackend: "piper", ttsVoice: "de_DE-thorsten-high",
+    ttsLanguage: "de", ttsEmotion: "neutral", ttsSpeed: 1.0,
+    stylePrompt: "",
+  };
+  let settings = Object.assign({}, DEFAULT_SETTINGS,
+    JSON.parse(localStorage.getItem("icli_orb_settings") || "{}"));
+  let capabilities = null;
+
+  function saveSettings() {
+    localStorage.setItem("icli_orb_settings", JSON.stringify(settings));
+  }
+
+  // ═══ DOM ════════════════════════════════════════════════════════════════
+  const $ = (id) => document.getElementById(id);
+  const viz = $("audioVisualizer");
+  const micBtn = $("microphoneButton");
+  const info = $("infos");
+  const drawer = $("drawer");
+  const trBody = $("tr-body");
+  const trCount = $("tr-count");
+  const statMic = $("stat-mic");
+  const statIcli = $("stat-icli");
+  const sbConn = $("sb-conn");
+  const sbState = $("sb-state");
+  const sbMode = $("sb-mode");
+  const sbStt = $("sb-stt");
+  const sbTts = $("sb-tts");
+  const sbTime = $("sb-time");
+
+  // ═══ State ══════════════════════════════════════════════════════════════
+  let ws;
+  let particles = [];
+  let isRecording = false, isPlaying = false, isError = false;
+  let msgCount = 0, currentAgentMsg = null;
+  let activeCid = null;               // cid of in-flight query
+  let vadSpeaking = false, vadSilenceStart = null, vadTimer = null;
+  let utteranceStart = 0;
+  let browserRecog = null;
+
+  // ── Single AudioContext for the whole page ───────────────────────────
+  //
+  // One context covers both sides:
+  //   mic input  → micAnalyser → (nothing else; analysis only)
+  //   TTS output → playbackGain → destination, also tapped into
+  //                ttsAnalyser for particle animation
+  //
+  // We never create a second AudioContext. Chrome requires a user gesture
+  // to start the context; gestureUnlock() is called on the first mic
+  // click / Enter key / chat-send. Before that, we still build the
+  // context but leave it in "suspended" state.
+  let audioContext = null;
+  let micAnalyser = null, ttsAnalyser = null;
+  let micSource = null, mediaRecorder = null;
+  let playbackGain = null;
+  // Currently active BufferSourceNodes (for stop)
+  const activeSources = new Set();
+  // Next time a chunk should start playing; advances as each chunk is scheduled
+  let nextPlayTime = 0;
+  // Count of chunks still queued / playing — lets us detect "done speaking"
+  let pendingChunks = 0;
+  // Highest chunk_index we've actually played (for ack → server buffer trim)
+  let lastPlayedIndex = -1;
+
+  // ═══ Particles ════════════════════════════════════════════════════════
+  // Colors adapted to Paper palette: ink by default, primary while active,
+  // success when replying, error on failure. No translucent whites.
+  function createParticles(num) {
+    for (let i = 0; i < num; i++) {
+      const p = document.createElement("div");
+      p.classList.add("particle");
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.random() * 50 + 100;
+      p.x = 150 + Math.cos(a) * r;
+      p.y = 150 + Math.sin(a) * r;
+      p.style.transform = `translate(${p.x}px, ${p.y}px)`;
+      // Random speed in [-1, 1], but clamp magnitude ≥ 0.25 in each axis
+      // so no particle can sit still (previously ones with near-zero speed
+      // froze and never moved — visible as dead pixels).
+      let sx = (Math.random() - 0.5) * 2;
+      let sy = (Math.random() - 0.5) * 2;
+      if (Math.abs(sx) < 0.25) sx = sx < 0 ? -0.25 : 0.25;
+      if (Math.abs(sy) < 0.25) sy = sy < 0 ? -0.25 : 0.25;
+      p.speedX = sx;
+      p.speedY = sy;
+      viz.appendChild(p);
+      particles.push(p);
+    }
+  }
+
+  function visualizeAudio() {
+    function frame() {
+      requestAnimationFrame(frame);
+      // Pick the analyser matching what's currently happening — so the
+      // particles react to the playback waveform when the agent is speaking,
+      // and to mic input when the user is.
+      let a = null;
+      if (isRecording && micAnalyser) a = micAnalyser;
+      else if (isPlaying && ttsAnalyser) a = ttsAnalyser;
+      const active = !!a;
+      const freq = a ? new Uint8Array(a.frequencyBinCount) : null;
+      if (a) a.getByteFrequencyData(freq);
+      particles.forEach((p, i) => {
+        if (active && freq) {
+          const intensity = freq[i % freq.length] / 255;
+          // Size: bins with low intensity stay small (5px min). Bins with
+          // activity pulse up to 30px.
+          const size = Math.max(5, intensity * 30);
+          p.style.width = `${size}px`; p.style.height = `${size}px`;
+          // Movement: always at least base drift so no particle freezes
+          // just because its bin is quiet. High-intensity bins move faster.
+          const m = 0.6 + intensity * 10;
+          p.x += p.speedX * m; p.y += p.speedY * m;
+        } else {
+          // Idle: slow drift, reset to baseline size
+          p.x += p.speedX * 0.6; p.y += p.speedY * 0.6;
+          p.style.width = "10px"; p.style.height = "10px";
+        }
+        const d = Math.hypot(p.x - 150, p.y - 150);
+        if (d > 150) { p.speedX *= -1; p.speedY *= -1; }
+        p.style.transform = `translate(${p.x}px, ${p.y}px)`;
+      });
+    }
+    frame();
+  }
+
+  function resetParticles() {
+    isError = false;
+    particles.forEach(p => p.style.backgroundColor = "var(--ink)");
+  }
+  function playingParticles() {
+    particles.forEach(p => p.style.backgroundColor = "var(--success)");
+  }
+  function recordingParticles() {
+    particles.forEach(p => p.style.backgroundColor = "var(--primary)");
+  }
+  function redParticles() {
+    isError = true;
+    particles.forEach(p => p.style.backgroundColor = "var(--error)");
+  }
+
+  // ═══ Audio init (one-time, persistent) ═════════════════════════════════
+  function ensureContext() {
+    if (audioContext) return audioContext;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    audioContext = new AC();
+    // Playback chain — gain node lets us snap volume for stop.
+    playbackGain = audioContext.createGain();
+    playbackGain.gain.value = 0.95;
+    ttsAnalyser = audioContext.createAnalyser();
+    ttsAnalyser.fftSize = 64;
+    playbackGain.connect(ttsAnalyser);
+    ttsAnalyser.connect(audioContext.destination);
+    return audioContext;
+  }
+
+  // Chrome requires a user gesture before AudioContext can run. Called
+  // from mic click / Enter / chat-send. Safe to call many times.
+  async function gestureUnlock() {
+    ensureContext();
+    if (audioContext.state === "suspended") {
+      try { await audioContext.resume(); } catch {}
+    }
+  }
+
+  async function initMic() {
+    ensureContext();
+    if (micSource && mediaRecorder) return true;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, sampleRate: 16000 }
+      });
+      micSource = audioContext.createMediaStreamSource(stream);
+      micAnalyser = audioContext.createAnalyser();
+      micAnalyser.fftSize = 64;
+      micSource.connect(micAnalyser);
+      // micAnalyser intentionally NOT connected to destination (no mic loopback)
+
+      const mime = "audio/webm;codecs=opus";
+      mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
+      mediaRecorder.ondataavailable = (ev) => {
+        if (ev.data.size > 0 && ws?.readyState === WebSocket.OPEN
+            && settings.sttLocation === "server") {
+          ws.send(new Blob([ev.data], { type: mime }));
+        }
+      };
+      return true;
+    } catch (e) {
+      console.error("mic init failed", e);
+      redParticles();
+      info.innerText = "Microphone denied";
+      return false;
+    }
+  }
+
+  // ═══ VAD (RMS-based) ═══════════════════════════════════════════════════
+  function rmsLevel() {
+    if (!micAnalyser) return 0;
+    const data = new Uint8Array(micAnalyser.frequencyBinCount);
+    micAnalyser.getByteTimeDomainData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+      const v = (data[i] - 128) / 128; sum += v*v;
+    }
+    return Math.sqrt(sum / data.length);
+  }
+
+  const VAD_THRESHOLD = 0.02;
+  function startVadLoop() {
+    stopVadLoop();
+    vadTimer = setInterval(() => {
+      if (!isRecording || !settings.endSilence) return;
+      const level = rmsLevel();
+      const now = performance.now();
+      if (utteranceStart &&
+          (now - utteranceStart) / 1000 > settings.maxUtterance) {
+        stopRecording(); return;
+      }
+      if (level > VAD_THRESHOLD) {
+        if (!vadSpeaking) { vadSpeaking = true; utteranceStart = now; }
+        vadSilenceStart = null;
+      } else if (vadSpeaking) {
+        if (vadSilenceStart === null) vadSilenceStart = now;
+        else if (now - vadSilenceStart >= settings.silenceMs) stopRecording();
+      }
+    }, 60);
+  }
+  function stopVadLoop() {
+    if (vadTimer) { clearInterval(vadTimer); vadTimer = null; }
+    vadSpeaking = false; vadSilenceStart = null;
+  }
+
+  // ── Barge-in detector ───────────────────────────────────────────────────
+  // While the agent is speaking, keep the mic open and watch for voice
+  // activity. First sustained speech → full cancel + auto-start recording.
+  // This is the "ich rede einfach rein" UX the user asked for.
+  let bargeTimer = null;
+  let bargeSpeakingStart = null;
+  const BARGE_THRESHOLD = 0.035;   // higher than idle VAD to avoid loopback
+  const BARGE_MIN_MS = 200;        // sustained speech for this long → barge
+
+  async function startBargeMonitor() {
+    // Make sure mic is open so rmsLevel returns something useful
+    await gestureUnlock();
+    if (!await initMic()) return;
+    stopBargeMonitor();
+    bargeTimer = setInterval(() => {
+      if (!isPlaying) { stopBargeMonitor(); return; }
+      const level = rmsLevel();
+      const now = performance.now();
+      if (level > BARGE_THRESHOLD) {
+        if (bargeSpeakingStart === null) bargeSpeakingStart = now;
+        else if (now - bargeSpeakingStart >= BARGE_MIN_MS) {
+          // User is clearly talking over the agent — kill TTS + agent
+          // task, then automatically start recording to capture what
+          // they're saying. No click required.
+          console.log("[barge-in] user speech detected, cancelling agent");
+          stopBargeMonitor();
+          stopPlayback({ fullCancel: true });
+          // Auto-start recording so the utterance doesn't get lost
+          startRecording();
+        }
+      } else {
+        bargeSpeakingStart = null;
+      }
+    }, 60);
+  }
+  function stopBargeMonitor() {
+    if (bargeTimer) { clearInterval(bargeTimer); bargeTimer = null; }
+    bargeSpeakingStart = null;
+  }
+
+  // ═══ Browser STT ═══════════════════════════════════════════════════════
+  function makeBrowserRecog() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return null;
+    const r = new SR();
+    r.continuous = true; r.interimResults = true;
+    r.lang = settings.sttLanguage === "de" ? "de-DE" : "en-US";
+    r.onresult = (ev) => {
+      let interim = "", final = "";
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const t = ev.results[i][0].transcript;
+        if (ev.results[i].isFinal) final += t;
+        else interim += t;
+      }
+      if (interim) info.innerText = interim;
+      if (final.trim()) {
+        info.innerText = final;
+        addMsg("user", final.trim());
+        sendQuery(final.trim());
+      }
+    };
+    r.onerror = (e) => {
+      if (e.error !== "no-speech") console.warn("stt err", e.error);
+    };
+    r.onend = () => { if (isRecording) try { r.start(); } catch {} };
+    return r;
+  }
+
+  // ═══ WebSocket ══════════════════════════════════════════════════════════
+  let wsBackoff = 1000;           // ms
+  const WS_BACKOFF_MAX = 30000;
+  const WS_BACKOFF_FACTOR = 1.5;
+  let wsConnectedAt = 0;
+  let pingInterval = null;
+
+  function connectWS() {
+    const url = WS_URL + (API_KEY ? `?key=${encodeURIComponent(API_KEY)}` : "");
+    try { ws = new WebSocket(url); }
+    catch (e) { scheduleReconnect(); return; }
+    ws.binaryType = "arraybuffer";
+
+    ws.onopen = async () => {
+      sbConn.textContent = "● ws";
+      wsConnectedAt = Date.now();
+      wsBackoff = 1000;     // reset backoff on success
+      await fetchCapabilities();
+      buildSettingsUI();
+
+      // Resume if a query was in flight when we got disconnected
+      if (activeCid) {
+        try {
+          ws.send(JSON.stringify({
+            action: "resume", cid: activeCid,
+            from_index: lastPlayedIndex + 1,
+          }));
+          info.innerText = `Resuming session ${activeCid}…`;
+        } catch {}
+      } else {
+        info.innerText = "Ready. Press mic or Enter.";
+      }
+
+      // Start our own ping every 20s (belt & suspenders with server's 15s)
+      if (pingInterval) clearInterval(pingInterval);
+      pingInterval = setInterval(() => {
+        if (ws?.readyState === WebSocket.OPEN) {
+          try { ws.send(JSON.stringify({ type: "ping" })); } catch {}
+        }
+      }, 20000);
+    };
+
+    ws.onmessage = (ev) => {
+      if (typeof ev.data === "string") {
+        try { handleMsg(JSON.parse(ev.data)); }
+        catch (e) { console.warn("bad msg", e); }
+      } else {
+        // Binary WAV frame — belongs to the chunk whose meta just arrived
+        enqueueAudio(ev.data, lastAudioMeta);
+        lastAudioMeta = null;
+      }
+    };
+
+    ws.onclose = (ev) => {
+      sbConn.textContent = "✕ ws";
+      if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+      if (wsConnectedAt && Date.now() - wsConnectedAt > 30000) wsBackoff = 1000;
+      wsConnectedAt = 0;
+      // Don't clear activeCid on close — we want to resume if reconnect
+      // brings us back quickly. lastPlayedIndex stays so resume starts
+      // at the right chunk.
+      currentAgentMsg = null;
+      if (ev.code === 4401) {
+        info.innerHTML = 'Auth failed. Check <span class="m">?key=</span>';
+        return;
+      }
+      scheduleReconnect();
+    };
+    ws.onerror = () => { sbConn.textContent = "✕ ws"; };
+  }
+
+  function scheduleReconnect() {
+    const jitter = wsBackoff * 0.2 * (Math.random() * 2 - 1);
+    const delay = Math.max(100, wsBackoff + jitter);
+    info.innerText = `Disconnected — reconnecting in ${(delay/1000).toFixed(1)}s…`;
+    setTimeout(connectWS, delay);
+    wsBackoff = Math.min(wsBackoff * WS_BACKOFF_FACTOR, WS_BACKOFF_MAX);
+  }
+
+  // Meta for the next binary frame to arrive. Captured from the preceding
+  // {"type":"audio", chunk_index, text, ...} JSON message.
+  let lastAudioMeta = null;
+
+  function handleMsg(msg) {
+    if (msg.type === "ping" || msg.type === "pong") {
+      if (msg.type === "ping" && ws?.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify({ type: "pong" })); } catch {}
+      }
+      return;
+    }
+    if (msg.type === "status") {
+      updateIcliStatus(msg.icli_connected);
+      return;
+    }
+    if (msg.type === "cid_assigned") {
+      activeCid = msg.cid;
+      lastPlayedIndex = -1;
+      return;
+    }
+    if (msg.type === "resumed") {
+      info.innerText = `Resumed · ${msg.chunks||0} chunks replayed`;
+      return;
+    }
+    // All other messages have a cid — filter by active session
+    if (msg.cid && activeCid && msg.cid !== activeCid) return;
+
+    if (msg.type === "transcription") {
+      addMsg("user", msg.text);
+      info.innerText = msg.text;
+    } else if (msg.type === "text_chunk") {
+      if (!currentAgentMsg) currentAgentMsg = addMsg("agent", "");
+      currentAgentMsg.querySelector(".text").textContent += msg.text || "";
+      trBody.scrollTop = trBody.scrollHeight;
+      sbState.textContent = "thinking";
+    } else if (msg.type === "response") {
+      if (!currentAgentMsg) addMsg("agent", msg.text);
+      else currentAgentMsg.querySelector(".text").textContent = msg.text;
+    } else if (msg.type === "reasoning") {
+      addMsg("sys", "› " + (msg.text || ""));
+    } else if (msg.type === "tool_start") {
+      addMsg("sys", "→ " + (msg.name || "tool"));
+    } else if (msg.type === "tool_result") {
+      const icon = msg.success ? "●" : "✕";
+      const info_str = msg.info ? ` — ${msg.info}` : "";
+      addMsg("sys", `${icon} ${msg.name || "tool"}${info_str}`);
+    } else if (msg.type === "narrator") {
+      if (msg.text) info.innerText = msg.text;
+    } else if (msg.type === "audio") {
+      // Meta arriving right before a binary frame. Stash it so the
+      // binary handler can tag the chunk with chunk_index for ack.
+      lastAudioMeta = msg;
+    } else if (msg.type === "interactive_panel") {
+      renderInteractivePanel(msg);
+    } else if (msg.type === "done") {
+      currentAgentMsg = null;
+      activeCid = null;
+      lastPlayedIndex = -1;
+      sbState.textContent = "idle";
+    } else if (msg.type === "error") {
+      addMsg("sys", msg.error || "error");
+      info.innerText = "Error: " + (msg.error || "?");
+      redParticles();
+      activeCid = null;
+      sbState.textContent = "idle";
+    }
+  }
+
+  function updateIcliStatus(connected) {
+    if (connected) {
+      statIcli.textContent = "icli live"; statIcli.className = "stat on";
+    } else {
+      statIcli.textContent = "icli offline"; statIcli.className = "stat err";
+      info.innerText = "icli not connected — start icli first";
+    }
+  }
+
+  function sendQuery(text) {
+    if (ws?.readyState !== WebSocket.OPEN) return;
+    // Barge-in: if something is currently speaking or an agent task is
+    // alive, fully cancel it before starting a new turn. Server also
+    // does a server-side cancel on "query" action, but doing it here too
+    // is free and guarantees the particle/audio state resets now.
+    if (isPlaying || activeCid) stopPlayback({ fullCancel: true });
+    activeCid = null;
+    currentAgentMsg = null;
+    lastPlayedIndex = -1;
+    ws.send(JSON.stringify({
+      action: "query", text, query: text,
+      agent: $("agent-sel").value,
+      tts: ttsConfig(), stt: sttConfig(),
+      context: panelContext(),
+    }));
+    sbState.textContent = "thinking";
+  }
+
+  function sendAudioStart() {
+    if (ws?.readyState !== WebSocket.OPEN) return;
+    if (isPlaying || activeCid) stopPlayback({ fullCancel: true });
+    currentAgentMsg = null;
+    lastPlayedIndex = -1;
+    ws.send(JSON.stringify({
+      action: "audio_start",
+      agent: $("agent-sel").value,
+      tts: ttsConfig(), stt: sttConfig(),
+      context: panelContext(),
+    }));
+  }
+
+  function sendAudioEnd() {
+    if (ws?.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      action: "audio_end",
+      context: panelContext(),
+    }));
+    sbState.textContent = "thinking";
+  }
+
+  function ttsConfig() {
+    return {
+      backend: settings.ttsBackend, voice: settings.ttsVoice,
+      language: settings.ttsLanguage, emotion: settings.ttsEmotion,
+      speed: settings.ttsSpeed,
+      style_prompt: settings.stylePrompt || undefined,
+    };
+  }
+  function sttConfig() {
+    return {
+      backend: settings.sttBackend, model: settings.sttModel,
+      language: settings.sttLanguage, device: settings.sttDevice,
+    };
+  }
+  // panelContext() is defined in the Interactive Panel section below.
+
+  // ═══ Playback (Web Audio, gapless, cancellable) ═══════════════════════
+  //
+  // Each received WAV arrives as an ArrayBuffer. We decode it on the
+  // shared audioContext, schedule a BufferSourceNode to play at
+  // nextPlayTime, and advance nextPlayTime by the buffer duration. This
+  // gives gapless playback; chunks queue naturally.
+  //
+  // Every scheduled source is tracked in activeSources — stopPlayback()
+  // calls .stop() on each and disconnects them, which kills audio even
+  // mid-buffer (unlike an <audio> element which has to finish decoding).
+  async function enqueueAudio(arrayBuf, meta) {
+    if (!arrayBuf || arrayBuf.byteLength === 0) return;
+    // Guard: a header-only WAV (44 bytes) or tiny blob will decode to 0
+    // duration and advance the playback clock weirdly. Skip and warn.
+    if (arrayBuf.byteLength <= 44) {
+      console.warn("skipping empty audio frame", arrayBuf.byteLength, "bytes",
+                   meta ? "idx="+meta.chunk_index : "");
+      return;
+    }
+    await gestureUnlock();  // no-op if already running
+    const idx = meta ? meta.chunk_index : null;
+
+    let buffer;
+    try {
+      // decodeAudioData wants an ArrayBuffer it can take over; we get an
+      // ArrayBuffer directly from binaryType='arraybuffer' so we pass it in.
+      // Slice to be safe if the runtime wants an unshared copy.
+      buffer = await audioContext.decodeAudioData(arrayBuf.slice(0));
+    } catch (e) {
+      console.warn("decode failed", e, "size:", arrayBuf.byteLength);
+      // Don't kill the pipeline — just skip this chunk and ack so the
+      // server trims its buffer (otherwise it'll keep trying to resend).
+      if (idx !== null && idx !== undefined
+          && ws?.readyState === WebSocket.OPEN && activeCid) {
+        try {
+          ws.send(JSON.stringify({
+            action: "ack", cid: activeCid, chunk_index: idx,
+          }));
+        } catch {}
+      }
+      return;
+    }
+    // Empty decode (0 duration) — skip without warning, treat as ack-and-move-on
+    if (buffer.duration <= 0) {
+      if (idx !== null && idx !== undefined
+          && ws?.readyState === WebSocket.OPEN && activeCid) {
+        try {
+          ws.send(JSON.stringify({
+            action: "ack", cid: activeCid, chunk_index: idx,
+          }));
+        } catch {}
+      }
+      return;
+    }
+
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(playbackGain);
+
+    const now = audioContext.currentTime;
+    // If we fell behind real-time (nothing playing for a while), jump back
+    // to now — don't schedule in the past.
+    if (nextPlayTime < now) nextPlayTime = now;
+    const startAt = nextPlayTime;
+    source.start(startAt);
+    nextPlayTime = startAt + buffer.duration;
+    pendingChunks++;
+    activeSources.add(source);
+
+    if (!isPlaying) {
+      isPlaying = true;
+      sbState.textContent = "speaking";
+      playingParticles();
+      // Open the mic quietly and listen for the user talking over the
+      // agent — barge-in without a mic click.
+      startBargeMonitor();
+    }
+
+    source.onended = () => {
+      activeSources.delete(source);
+      pendingChunks--;
+      if (idx !== null && idx !== undefined) {
+        lastPlayedIndex = Math.max(lastPlayedIndex, idx);
+        // Tell the server we played this chunk so it can trim its ring buffer
+        if (ws?.readyState === WebSocket.OPEN && activeCid) {
+          try {
+            ws.send(JSON.stringify({
+              action: "ack", cid: activeCid, chunk_index: idx,
+            }));
+          } catch {}
+        }
+      }
+      if (pendingChunks <= 0 && isPlaying) {
+        isPlaying = false;
+        stopBargeMonitor();
+        resetParticles();
+        micBtn.textContent = "mic";
+        if (sbState.textContent === "speaking") sbState.textContent = "idle";
+      }
+    };
+  }
+
+  // stop_tts: just shut up (server keeps the agent running).
+  // cancel:   full barge-in (server kills the agent task too).
+  function stopPlayback({ fullCancel = false } = {}) {
+    stopBargeMonitor();
+    // Kill every scheduled/playing source immediately.
+    for (const src of activeSources) {
+      try { src.onended = null; src.stop(0); } catch {}
+      try { src.disconnect(); } catch {}
+    }
+    activeSources.clear();
+    pendingChunks = 0;
+    nextPlayTime = 0;
+    isPlaying = false;
+
+    if (ws?.readyState === WebSocket.OPEN) {
+      const action = fullCancel ? "cancel" : "stop_tts";
+      try {
+        ws.send(JSON.stringify({
+          action, cid: activeCid,
+        }));
+      } catch {}
+    }
+
+    resetParticles();
+    sbState.textContent = "idle";
+    if (fullCancel) {
+      // Treat as new turn — drop cid so nothing resumes.
+      activeCid = null;
+      currentAgentMsg = null;
+      lastPlayedIndex = -1;
+    }
+  }
+
+  // ═══ Recording ═════════════════════════════════════════════════════════
+  async function startRecording() {
+    // User gesture — unlock audio context for playback too
+    await gestureUnlock();
+    if (!await initMic()) return;
+    // Barge-in: interrupting the agent by starting to talk = full cancel.
+    if (isPlaying || activeCid) stopPlayback({ fullCancel: true });
+    activeCid = null;
+    currentAgentMsg = null;
+    utteranceStart = performance.now();
+    recordingParticles();
+
+    if (settings.sttLocation === "browser") {
+      if (!browserRecog) browserRecog = makeBrowserRecog();
+      if (!browserRecog) {
+        info.innerText = "Web Speech not supported — use server STT";
+        return;
+      }
+      try { browserRecog.start(); } catch {}
+    } else {
+      sendAudioStart();
+      try { mediaRecorder.start(200); } catch {}
+    }
+
+    isRecording = true; isError = false;
+    micBtn.textContent = "stop";
+    statMic.textContent = "mic live"; statMic.className = "stat on";
+    sbState.textContent = "listening";
+    info.innerText = settings.captureMode === "vad"
+      ? "Listening… (silence ends)" : "Listening…";
+
+    if (settings.captureMode !== "ptt" && settings.endSilence) startVadLoop();
+  }
+
+  function stopRecording() {
+    if (!isRecording) return;
+    isRecording = false;
+    stopVadLoop();
+    if (settings.sttLocation === "browser") {
+      try { browserRecog?.stop(); } catch {}
+    } else {
+      try { mediaRecorder?.stop(); } catch {}
+      setTimeout(sendAudioEnd, 120);
+    }
+    micBtn.textContent = "mic";
+    statMic.textContent = "mic idle"; statMic.className = "stat off";
+    sbState.textContent = "thinking";
+    playingParticles();   // switch to success color while agent is processing
+  }
+
+  // Mic button: playing → full cancel (interrupt agent's monologue);
+  // recording → stop and send; idle → start recording.
+  micBtn.addEventListener("click", async () => {
+    await gestureUnlock();
+    if (isPlaying) { stopPlayback({ fullCancel: true }); return; }
+    if (isRecording) stopRecording();
+    else startRecording();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    // Skip if user is typing in an input/select/textarea/button
+    const tag = e.target.tagName;
+    const inForm = tag === "SELECT" || tag === "INPUT"
+                || tag === "TEXTAREA" || tag === "BUTTON";
+
+    // Space or Enter while the agent is speaking = full cancel.
+    // Works from anywhere that isn't a form field — lets the user mute
+    // the agent quickly without hunting for the button.
+    if ((e.key === " " || e.key === "Enter") && isPlaying && !inForm) {
+      e.preventDefault();
+      stopPlayback({ fullCancel: true });
+      return;
+    }
+
+    // Enter (not in form) = mic toggle when idle / recording
+    if (e.key === "Enter" && !inForm) {
+      e.preventDefault();
+      micBtn.click();
+    }
+  });
+
+  // ═══ Settings UI ═══════════════════════════════════════════════════════
+  async function fetchCapabilities() {
+    try {
+      const r = await fetch("/capabilities", {
+        headers: { "X-API-Key": API_KEY }
+      });
+      capabilities = await r.json();
+    } catch (e) {
+      console.warn("caps fetch failed", e);
+      capabilities = { tts: {}, stt: {}, agents: [] };
+    }
+    // Populate the agent dropdown from the discovered list. Keep the
+    // user's current selection if it's still available; otherwise fall
+    // back to the first available agent (usually "self").
+    const agents = Array.isArray(capabilities.agents) && capabilities.agents.length
+      ? capabilities.agents
+      : ["self", "isaa", "coder"];
+    const sel = $("agent-sel");
+    const prev = sel.value;
+    const keep = agents.includes(prev) ? prev : agents[0];
+    fillSelect(sel, agents, keep);
+  }
+
+  function fillSelect(sel, values, current) {
+    sel.innerHTML = "";
+    for (const v of values) {
+      const o = document.createElement("option");
+      o.value = v; o.textContent = v;
+      if (v === current) o.selected = true;
+      sel.appendChild(o);
+    }
+  }
+
+  function buildSettingsUI() {
+    if (!capabilities) return;
+    $("capture-mode").value = settings.captureMode;
+    $("end-silence").checked = settings.endSilence;
+    $("end-manual").checked = settings.endManual;
+    $("silence-ms").value = settings.silenceMs;
+    $("silence-ms-val").textContent = settings.silenceMs;
+    $("max-utterance").value = settings.maxUtterance;
+    $("max-utterance-val").textContent = settings.maxUtterance + "s";
+
+    $("stt-location").value = settings.sttLocation;
+    fillSelect($("stt-backend"),
+      capabilities.stt?.backends || ["faster_whisper","groq_whisper"],
+      settings.sttBackend);
+    updateSttModels();
+    fillSelect($("stt-device"),
+      capabilities.stt?.devices || ["cpu","cuda","auto"], settings.sttDevice);
+    $("stt-language").value = settings.sttLanguage;
+    toggleSttFields();
+
+    fillSelect($("tts-backend"),
+      capabilities.tts?.backends
+        || ["piper","vibevoice","groq_tts","elevenlabs","index_tts"],
+      settings.ttsBackend);
+    updateVoicesList();
+    fillSelect($("tts-emotion"),
+      capabilities.tts?.emotions
+        || ["neutral","calm","excited","serious","friendly","empathetic","urgent"],
+      settings.ttsEmotion);
+    $("tts-language").value = settings.ttsLanguage;
+    $("tts-speed").value = settings.ttsSpeed;
+    $("tts-speed-val").textContent = Number(settings.ttsSpeed).toFixed(2) + "x";
+    $("style-prompt").value = settings.stylePrompt || "";
+    toggleStylePromptField();
+
+    sbMode.textContent = settings.captureMode;
+    sbStt.textContent = `stt:${settings.sttLocation}`;
+    sbTts.textContent = `tts:${settings.ttsBackend}`;
+  }
+
+  function updateSttModels() {
+    const backend = $("stt-backend").value;
+    const models = capabilities.stt?.models?.[backend] || ["small"];
+    fillSelect($("stt-model"), models, settings.sttModel);
+  }
+
+  function updateVoicesList() {
+    const backend = $("tts-backend").value;
+    const voices = capabilities.tts?.voices?.[backend] || [];
+    fillSelect($("tts-voice"),
+      voices.length ? voices : [settings.ttsVoice || "default"],
+      settings.ttsVoice);
+  }
+
+  function toggleSttFields() {
+    const server = $("stt-location").value === "server";
+    $("stt-backend-field").style.display = server ? "" : "none";
+    $("stt-model-field").style.display = server ? "" : "none";
+    $("stt-device-field").style.display = server ? "" : "none";
+  }
+
+  function toggleStylePromptField() {
+    const backend = $("tts-backend").value;
+    const sup = (capabilities.tts?.supports_style_prompt || []).includes(backend);
+    $("style-prompt-field").style.display = sup ? "" : "none";
+    $("style-prompt-hint").style.display = sup ? "" : "none";
+  }
+
+  function wireInputs() {
+    $("capture-mode").onchange = e => {
+      settings.captureMode = e.target.value; sbMode.textContent = settings.captureMode;
+    };
+    $("end-silence").onchange = e => settings.endSilence = e.target.checked;
+    $("end-manual").onchange = e => settings.endManual = e.target.checked;
+    $("silence-ms").oninput = e => {
+      settings.silenceMs = parseInt(e.target.value);
+      $("silence-ms-val").textContent = settings.silenceMs;
+    };
+    $("max-utterance").oninput = e => {
+      settings.maxUtterance = parseInt(e.target.value);
+      $("max-utterance-val").textContent = settings.maxUtterance + "s";
+    };
+    $("stt-location").onchange = e => {
+      settings.sttLocation = e.target.value; toggleSttFields();
+      sbStt.textContent = `stt:${settings.sttLocation}`;
+    };
+    $("stt-backend").onchange = e => {
+      settings.sttBackend = e.target.value; updateSttModels();
+    };
+    $("stt-model").onchange = e => settings.sttModel = e.target.value;
+    $("stt-device").onchange = e => settings.sttDevice = e.target.value;
+    $("stt-language").onchange = e => {
+      settings.sttLanguage = e.target.value; browserRecog = null;
+    };
+    $("tts-backend").onchange = e => {
+      settings.ttsBackend = e.target.value;
+      updateVoicesList(); toggleStylePromptField();
+      sbTts.textContent = `tts:${settings.ttsBackend}`;
+    };
+    $("tts-voice").onchange = e => settings.ttsVoice = e.target.value;
+    $("tts-language").onchange = e => settings.ttsLanguage = e.target.value;
+    $("tts-emotion").onchange = e => settings.ttsEmotion = e.target.value;
+    $("tts-speed").oninput = e => {
+      settings.ttsSpeed = parseFloat(e.target.value);
+      $("tts-speed-val").textContent = settings.ttsSpeed.toFixed(2) + "x";
+    };
+    $("style-prompt").oninput = e => settings.stylePrompt = e.target.value;
+
+    $("apply-btn").onclick = () => {
+      saveSettings();
+      info.innerText = "Settings saved.";
+      drawer.classList.remove("open");
+    };
+    $("reset-btn").onclick = () => {
+      settings = Object.assign({}, DEFAULT_SETTINGS);
+      saveSettings(); buildSettingsUI();
+    };
+    $("test-voice-btn").onclick = async () => {
+      saveSettings();
+      await gestureUnlock();
+      if (ws?.readyState !== WebSocket.OPEN) return;
+      // Barge-in on anything currently playing so the test voice is
+      // immediately audible.
+      if (isPlaying || activeCid) stopPlayback({ fullCancel: true });
+      activeCid = null;
+      currentAgentMsg = null;
+      lastPlayedIndex = -1;
+      // Direct TTS bypass — server routes this straight to Piper
+      // without waking the agent. Keeps feedback loop fast.
+      ws.send(JSON.stringify({
+        action: "tts_preview",
+        text: settings.ttsLanguage === "de"
+          ? "Sprachtest. Eins, zwei, drei."
+          : "Voice check. One, two, three.",
+        tts: ttsConfig(),
+      }));
+      info.innerText = "Testing voice…";
+    };
+
+    $("settings-btn").onclick = () => drawer.classList.toggle("open");
+    $("drawer-close").onclick = () => drawer.classList.remove("open");
+  }
+
+  function addMsg(who, text) {
+    const div = document.createElement("div");
+    div.className = "msg " + who;
+    div.innerHTML = `<div class="who">${who}</div><div class="text"></div>`;
+    div.querySelector(".text").textContent = text;
+    trBody.appendChild(div);
+    trBody.scrollTop = trBody.scrollHeight;
+    msgCount++; trCount.textContent = msgCount;
+    return div;
+  }
+
+  // ═══ Chat input (text path) ═══════════════════════════════════════════
+  const chatInput = $("chat-input");
+  const chatSend = $("chat-send");
+  const mainLayout = $("main-layout");
+
+  async function submitChatInput() {
+    const text = chatInput.value.trim();
+    if (!text) return;
+    await gestureUnlock();
+    addMsg("user", text);
+    sendQuery(text);
+    chatInput.value = "";
+  }
+  chatSend.addEventListener("click", submitChatInput);
+  chatInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      submitChatInput();
+    }
+  });
+
+  // ═══ Chat + panel visibility toggles ══════════════════════════════════
+  $("chat-toggle").onclick = () => {
+    mainLayout.classList.add("chat-closed");
+    mainLayout.classList.remove("chat-full");
+    $("chat-open").style.display = "";
+  };
+  $("chat-open").onclick = () => {
+    mainLayout.classList.remove("chat-closed");
+    $("chat-open").style.display = "none";
+  };
+  $("panel-close").onclick = () => mainLayout.classList.remove("panel-open");
+  $("panel-open").onclick = () => {
+    // Reopen the panel pane. If there are no panels, show the empty
+    // placeholder; otherwise the existing panel cards are already there.
+    mainLayout.classList.add("panel-open");
+    const body = $("panel-body");
+    if (!body.querySelector(".panel-card") && !body.querySelector(".panel-empty")) {
+      body.innerHTML = '<div class="panel-empty">No interactive content. '
+        + 'The agent can push panels here using the '
+        + '<code>show_interactive_panel</code> tool.</div>';
+    }
+  };
+
+  // ═══ Theme toggle ════════════════════════════════════════════════════
+  // Two modes only: light ↔ dark. Initial value respects system pref but
+  // after the user clicks once, we pin to their explicit choice.
+  function applyTheme(name) {
+    document.documentElement.setAttribute("data-theme", name);
+    const btn = $("theme-toggle");
+    btn.textContent = name === "dark" ? "☾" : "☀";
+    btn.title = `theme: ${name} (click to toggle)`;
+  }
+  (function initTheme() {
+    let saved = localStorage.getItem("icli_orb_theme");
+    if (saved !== "light" && saved !== "dark") {
+      // First visit: fall back to system pref, then persist
+      saved = window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark" : "light";
+    }
+    applyTheme(saved);
+    localStorage.setItem("icli_orb_theme", saved);
+  })();
+  $("theme-toggle").onclick = () => {
+    const cur = localStorage.getItem("icli_orb_theme") || "light";
+    const next = cur === "dark" ? "light" : "dark";
+    localStorage.setItem("icli_orb_theme", next);
+    applyTheme(next);
+  };
+
+  // ═══ Chat drag-resize with snap ═══════════════════════════════════════
+  // Drag the divider left/right. Release anywhere to snap to the nearest
+  // ratio: 0% (orb full), 25%, 50%, 75%, 100% (chat full). Double-click
+  // toggles between 50/50 and the user's last custom width.
+  (function wireChatResize() {
+    const handle = $("chat-resize");
+    const chatPane = $("chat-pane");
+    if (!handle || !chatPane) return;
+
+    const SNAPS = [0, 0.25, 0.50, 0.75, 1.0];
+    const SNAP_THRESHOLD = 0.06;  // within ±6% of a snap point → snap
+    let dragging = false;
+    let mainRect = null;
+    let lastCustomRatio = 0.35;   // restored by double-click
+
+    function applyRatio(r) {
+      r = Math.max(0, Math.min(1, r));
+      if (r <= 0.01) {
+        mainLayout.classList.add("chat-closed");
+        mainLayout.classList.remove("chat-full");
+        $("chat-open").style.display = "";
+        return;
+      }
+      if (r >= 0.99) {
+        mainLayout.classList.remove("chat-closed");
+        mainLayout.classList.add("chat-full");
+        $("chat-open").style.display = "none";
+        return;
+      }
+      mainLayout.classList.remove("chat-closed", "chat-full");
+      $("chat-open").style.display = "none";
+      // Translate ratio of main width → chat-pane flex-basis in px
+      const w = (mainRect || mainLayout.getBoundingClientRect()).width;
+      const panelW = mainLayout.classList.contains("panel-open")
+        ? (chatPane.nextElementSibling?.getBoundingClientRect().width || 0) : 0;
+      const available = w - panelW - 6; // minus handle
+      chatPane.style.flexBasis = Math.round(available * r) + "px";
+    }
+
+    function snapTo(ratio) {
+      let best = ratio, bestDist = Infinity;
+      for (const s of SNAPS) {
+        const d = Math.abs(s - ratio);
+        if (d < bestDist) { best = s; bestDist = d; }
+      }
+      return bestDist < SNAP_THRESHOLD ? best : ratio;
+    }
+
+    handle.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      dragging = true;
+      mainRect = mainLayout.getBoundingClientRect();
+      document.body.classList.add("dragging");
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (!dragging) return;
+      const w = mainRect.width;
+      // Chat width = distance from mouse X to right edge of main
+      const chatW = mainRect.right - e.clientX;
+      const r = chatW / w;
+      applyRatio(r);
+    });
+    window.addEventListener("mouseup", (e) => {
+      if (!dragging) return;
+      dragging = false;
+      document.body.classList.remove("dragging");
+      const w = mainRect.width;
+      const chatW = mainRect.right - e.clientX;
+      const r = snapTo(chatW / w);
+      if (r > 0.01 && r < 0.99) lastCustomRatio = r;
+      applyRatio(r);
+    });
+    handle.addEventListener("dblclick", () => {
+      const cur = chatPane.getBoundingClientRect().width
+                / mainLayout.getBoundingClientRect().width;
+      applyRatio(Math.abs(cur - 0.5) < 0.02 ? lastCustomRatio : 0.5);
+    });
+  })();
+
+  // ═══ Interactive Panel ════════════════════════════════════════════════
+  //
+  // Agent sends {type:"interactive_panel", panel_id, template, state, content}
+  // We render it into #panel-body. Each panel gets its own header with a
+  // collapse (–/+) button and a close (×) button so the user can tuck
+  // panels out of the way individually. panelContext() reads the current
+  // form values for every query so the agent always sees fresh state.
+  //
+  // Templates:
+  //   "form"   — content.fields: [{name,label,type:"text|number|textarea|select|checkbox", options?, value?}]
+  //   "choice" — content.prompt, content.options: [{value,label}]
+  //   "info"   — content.title, content.body (sanitized text)
+  //   "html"   — content.html (raw; needs trusted=true or it renders as text)
+  //
+  // Unknown templates fall back to a JSON dump so nothing is lost.
+  const activePanels = new Map();  // panel_id → {template, state, content, el, collapsed}
+
+  function renderInteractivePanel(msg) {
+    const pid = msg.panel_id;
+    const body = $("panel-body");
+    // Open the pane if it's closed
+    mainLayout.classList.add("panel-open");
+    // Clear placeholder
+    const empty = body.querySelector(".panel-empty");
+    if (empty) empty.remove();
+
+    // Replace existing panel with same id (idempotent updates from agent)
+    const existing = activePanels.get(pid);
+    const wasCollapsed = existing?.collapsed;
+    if (existing?.el) existing.el.remove();
+
+    const card = document.createElement("div");
+    card.className = "panel-card" + (wasCollapsed ? " collapsed" : "");
+    card.dataset.panelId = pid;
+
+    // ── Header row: title + controls ──
+    const head = document.createElement("div");
+    head.className = "panel-card-head";
+    const h = document.createElement("h4");
+    h.textContent = (msg.content?.title) || msg.template || "Panel";
+    head.appendChild(h);
+
+    const btnCollapse = document.createElement("button");
+    btnCollapse.className = "pc-ctrl";
+    btnCollapse.title = wasCollapsed ? "expand" : "collapse";
+    btnCollapse.textContent = wasCollapsed ? "+" : "–";
+    btnCollapse.onclick = (e) => {
+      e.stopPropagation();
+      togglePanelCollapse(pid);
+    };
+    head.appendChild(btnCollapse);
+
+    const btnClose = document.createElement("button");
+    btnClose.className = "pc-ctrl";
+    btnClose.title = "close panel";
+    btnClose.textContent = "×";
+    btnClose.onclick = (e) => {
+      e.stopPropagation();
+      closeInteractivePanel(pid);
+    };
+    head.appendChild(btnClose);
+    card.appendChild(head);
+
+    // ── Body: actual template rendering ──
+    const cbody = document.createElement("div");
+    cbody.className = "panel-card-body";
+
+    try {
+      if (msg.template === "form") {
+        renderFormTemplate(cbody, pid, msg.content, msg.state);
+      } else if (msg.template === "choice") {
+        renderChoiceTemplate(cbody, pid, msg.content, msg.state);
+      } else if (msg.template === "info") {
+        renderInfoTemplate(cbody, msg.content);
+      } else if (msg.template === "html" && msg.content?.html) {
+        if (msg.content.trusted === true) {
+          // Trusted HTML path:
+          // 1) Substitute {uid} placeholders with a DOM-safe unique id.
+          //    Panel authors use this to namespace element IDs so two
+          //    copies of the same panel template don't collide.
+          // 2) innerHTML assignment does NOT execute <script> tags, so
+          //    we extract them and re-inject them as real <script>
+          //    elements via document.createElement + appendChild.
+          const uniq = "p" + pid.replace(/[^a-zA-Z0-9]/g, "") + "_"
+                     + Math.random().toString(36).slice(2, 8);
+          let html = String(msg.content.html).replaceAll("{uid}", uniq);
+          const wrap = document.createElement("div");
+          wrap.innerHTML = html;
+          cbody.appendChild(wrap);
+          // Re-execute any <script> nodes the HTML brought with it
+          const scripts = wrap.querySelectorAll("script");
+          scripts.forEach(old => {
+            const s = document.createElement("script");
+            // Copy attributes (src, type, etc.) and inline content
+            for (const a of old.attributes) s.setAttribute(a.name, a.value);
+            s.textContent = old.textContent;
+            old.replaceWith(s);
+          });
+        } else {
+          const pre = document.createElement("pre");
+          pre.style.whiteSpace = "pre-wrap";
+          pre.style.fontSize = "12px";
+          pre.textContent = msg.content.html;
+          cbody.appendChild(pre);
+        }
+      } else {
+        const pre = document.createElement("pre");
+        pre.style.whiteSpace = "pre-wrap";
+        pre.style.fontSize = "12px";
+        pre.textContent = JSON.stringify(msg.content || {}, null, 2);
+        cbody.appendChild(pre);
+      }
+    } catch (e) {
+      console.warn("panel render failed", e);
+      const err = document.createElement("div");
+      err.textContent = "Panel render error: " + e.message;
+      err.style.color = "var(--error)";
+      cbody.appendChild(err);
+    }
+
+    card.appendChild(cbody);
+    body.appendChild(card);
+    activePanels.set(pid, {
+      template: msg.template, state: msg.state || {},
+      content: msg.content || {}, el: card, collapsed: !!wasCollapsed,
+    });
+  }
+
+  function togglePanelCollapse(pid) {
+    const p = activePanels.get(pid);
+    if (!p || !p.el) return;
+    p.collapsed = !p.collapsed;
+    p.el.classList.toggle("collapsed", p.collapsed);
+    // Update the – / + button
+    const btn = p.el.querySelector(".panel-card-head .pc-ctrl");
+    if (btn) {
+      btn.textContent = p.collapsed ? "+" : "–";
+      btn.title = p.collapsed ? "expand" : "collapse";
+    }
+  }
+
+  function closeInteractivePanel(pid) {
+    const p = activePanels.get(pid);
+    if (!p) return;
+    if (p.el) p.el.remove();
+    activePanels.delete(pid);
+    // If this was the last one, show the empty state in the body
+    const body = $("panel-body");
+    if (!body.querySelector(".panel-card")) {
+      body.innerHTML = '<div class="panel-empty">No interactive content. '
+        + 'The agent can push panels here using the '
+        + '<code>show_interactive_panel</code> tool.</div>';
+      // Auto-close the pane so the orb has more space
+      mainLayout.classList.remove("panel-open");
+    }
+  }
+
+  function renderFormTemplate(el, pid, content, state) {
+    const fields = content?.fields || [];
+    for (const f of fields) {
+      const label = document.createElement("label");
+      label.textContent = f.label || f.name;
+      el.appendChild(label);
+
+      let inp;
+      const val = state?.[f.name] ?? f.value ?? "";
+      if (f.type === "textarea") {
+        inp = document.createElement("textarea");
+        inp.rows = 3;
+        inp.value = val;
+      } else if (f.type === "select") {
+        inp = document.createElement("select");
+        for (const o of (f.options || [])) {
+          const opt = document.createElement("option");
+          const ov = typeof o === "string" ? o : o.value;
+          const ol = typeof o === "string" ? o : (o.label || o.value);
+          opt.value = ov; opt.textContent = ol;
+          if (ov === val) opt.selected = true;
+          inp.appendChild(opt);
+        }
+      } else if (f.type === "checkbox") {
+        inp = document.createElement("input");
+        inp.type = "checkbox";
+        inp.checked = !!val;
+        inp.style.width = "auto";
+        inp.style.marginRight = "6px";
+      } else {
+        inp = document.createElement("input");
+        inp.type = f.type === "number" ? "number" : "text";
+        inp.value = val;
+      }
+      inp.dataset.panelId = pid;
+      inp.dataset.field = f.name;
+      if (f.type === "checkbox") inp.dataset.kind = "checkbox";
+      el.appendChild(inp);
+    }
+    if (content?.submit_label) {
+      const btn = document.createElement("button");
+      btn.className = "primary";
+      btn.textContent = content.submit_label;
+      btn.onclick = () => {
+        const payload = JSON.stringify({
+          panel: pid, state: collectPanelState(pid),
+        });
+        sendQuery(content.submit_query || payload);
+      };
+      el.appendChild(btn);
+    }
+  }
+
+  function renderChoiceTemplate(el, pid, content, state) {
+    if (content?.prompt) {
+      const p = document.createElement("div");
+      p.textContent = content.prompt;
+      p.style.marginBottom = "8px";
+      el.appendChild(p);
+    }
+    for (const o of (content?.options || [])) {
+      const ov = typeof o === "string" ? o : o.value;
+      const ol = typeof o === "string" ? o : (o.label || o.value);
+      const btn = document.createElement("button");
+      btn.textContent = ol;
+      btn.onclick = () => {
+        // Record the selection in panel state AND send as a new query
+        const p = activePanels.get(pid);
+        if (p) p.state = { ...(p.state || {}), choice: ov };
+        sendQuery(content.on_choice_query
+          ? content.on_choice_query.replace("{choice}", ov)
+          : ov);
+      };
+      el.appendChild(btn);
+    }
+  }
+
+  function renderInfoTemplate(el, content) {
+    const body = document.createElement("div");
+    body.textContent = content?.body || "";
+    body.style.whiteSpace = "pre-wrap";
+    body.style.fontSize = "14px";
+    el.appendChild(body);
+  }
+
+  // Read all form inputs inside a panel and return {fieldName: value}
+  function collectPanelState(pid) {
+    const out = {};
+    const p = activePanels.get(pid);
+    if (!p) return out;
+    const inputs = p.el.querySelectorAll("[data-field]");
+    for (const inp of inputs) {
+      const name = inp.dataset.field;
+      if (inp.dataset.kind === "checkbox") out[name] = inp.checked;
+      else out[name] = inp.value;
+    }
+    return out;
+  }
+
+  // panelContext(): what gets sent along with every query so the agent
+  // always has a current snapshot of the panel UI state.
+  function panelContext() {
+    const ctx = { panels: {} };
+    for (const [pid, p] of activePanels) {
+      ctx.panels[pid] = {
+        template: p.template,
+        state: collectPanelState(pid),
+      };
+    }
+    return ctx;
+  }
+
+  setInterval(() => {
+    sbTime.textContent = new Date().toTimeString().slice(0,8);
+  }, 1000);
+
+  // ═══ Boot ═══════════════════════════════════════════════════════════════
+  wireInputs();
+  createParticles(100);   // build the particle field immediately
+  visualizeAudio();       // start the animation loop — it self-gates on state
+  $("chat-open").style.display = "none";  // hidden while chat is open
+  if (!API_KEY) {
+    info.innerHTML = 'No API key. Add <span class="m">?key=YOUR_KEY</span> to URL.';
+    return;
+  }
+  connectWS();
+})();
+</script>
+</body>
+</html>

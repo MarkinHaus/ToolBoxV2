@@ -1473,7 +1473,7 @@ class FlowAgent:
                 session_id=session_id,
                 max_iterations=max_iterations,
                 ctx=ctx,
-                model=os.getenv("BLITZMODEL", self.amd.fast_llm_model) if user_lightning_model else None,
+                model=os.getenv("LIGHNIGMODEL", self.amd.fast_llm_model) if user_lightning_model else None,
                 persist_blocking=persist_blocking,
             )
 
