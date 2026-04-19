@@ -223,7 +223,10 @@ def _synthesize_piper(text: str, config: TTSConfig) -> TTSResult:
         raise ImportError("piper-tts not installed. Install with: pip install piper-tts")
 
     model_path = config.piper_model_path or config.voice
-    voice = PiperVoice.load(model_path)
+    if not model_path.endswith(".onnx"):
+        model_path += ".onnx"
+
+    voice = PiperVoice.load(os.path.join(os.getenv("PIPER_MODELS_FOLDER", ".") , model_path))
 
     audio_buffer = io.BytesIO()
     with wave.open(audio_buffer, "wb") as wav_file:
