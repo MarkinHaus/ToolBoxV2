@@ -19,6 +19,7 @@ import mimetypes
 import os
 import sys
 import threading
+from pathlib import Path
 
 import uvicorn
 
@@ -38,6 +39,14 @@ from toolboxv2.utils.system.getting_and_closing_app import get_app
 
 logger = logging.getLogger("DebugRunner")
 
+ICLI_WEB_DIR = Path(__file__).resolve().parents[1] / "mods" / "icli_web" / "web"
+
+ICLI_STATIC_ROUTES = {
+    "/icli": "orb.html",
+    "/icli/": "orb.html",
+    "/icli/orb": "orb.html",
+    "/icli/monitor": "monitor.html",
+}
 
 class DebugASGIDispatcher:
     """
@@ -52,10 +61,17 @@ class DebugASGIDispatcher:
         # Alle Endpunkte, die der HTTPWorker behandelt
         self.api_prefixes = (
             "/api", "/auth", "/validateSession", "/IsValidSession",
-            "/web/logoutS", "/api_user_data", "/health", "/metrics"
+            "/web/logoutS", "/api_user_data", "/health", "/metrics", "/icli",
         )
 
     async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            path = scope.get("path", "/")
+            if path in ICLI_STATIC_ROUTES:
+                file_path = ICLI_WEB_DIR / ICLI_STATIC_ROUTES[path]
+                if file_path.exists():
+                    await self._serve_file(str(file_path), send)
+                    return
         # Ignoriere Lifespan-Events, da wir manuell starten
         if scope["type"] not in ("http", "websocket"):
             if scope["type"] == "lifespan":
@@ -166,6 +182,11 @@ def run_debug_server(dist_path: str, port: int):
         if os.environ.get("TB_WS_ENABLED", "true").lower() in ("true", "1", "yes"):
             logger.info(f"Starte WS Worker auf Port {config.ws_worker.port}...")
             ws_worker = WSWorker("debug_ws", config)
+            try:
+                from toolboxv2.mods.icli_web.voice import register
+                register(ws_worker)
+            except ImportError:
+                pass
             loop.run_until_complete(ws_worker.start())
 
         loop.run_forever()
@@ -206,8 +227,7 @@ def run_debug_server(dist_path: str, port: int):
 
     uvicorn.run(debug_app, host="0.0.0.0", port=port, log_level="info")
 
-
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description="ToolBoxV2 Unified Debug Server (Uvicorn)")
     parser.add_argument("--dist", default="./dist", help="Pfad zum statischen Frontend (z.B. ./dist)")
     parser.add_argument("--port", type=int, default=5000, help="Port des Servers (Frontend + API)")
@@ -221,3 +241,7 @@ if __name__ == "__main__":
     )
 
     run_debug_server(args.dist, args.port)
+
+
+if __name__ == "__main__":
+    mein()

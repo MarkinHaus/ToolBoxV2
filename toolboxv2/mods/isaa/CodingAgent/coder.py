@@ -42,7 +42,7 @@ try: import litellm
 except ImportError: litellm = None
 
 from toolboxv2.mods.isaa.base.Agent.lsp_manager import LSPManager, DiagnosticSeverity
-
+from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
 
 # ═══════════════════════════════════════════════════════════════════════
 # DATA CLASSES (unchanged)
@@ -736,44 +736,12 @@ class CoderAgent:
         "REGELN:\n"
         "1. ARCHITEKTUR ZUERST: Lies /project/_coordination.md um den Plan zu verstehen.\n"
         "2. LIES Dateien via vfs_shell('cat /project/...') oder vfs_view BEVOR du editierst. Niemals blind raten!\n"
-        "3. Änderungen NUR via XML Edit-Blöcke. BENUTZE NIEMALS 'bash' mit 'cat' oder 'echo' um Code zu schreiben!\n"
-        "   VERBOTEN: 'bash', 'cat', 'echo', 'printf' zum Schreiben von Dateien!\n"
-        "   Das System erkennt Änderungen NUR über die unten beschriebenen <edit>-Blöcke.\n"
         "4. BEENDEN: Wenn du alle Aufgaben erledigt hast, rufe ZWINGEND das Tool 'done' auf (oder schreibe [DONE]).\n"
         "5. Schreibe VOR jedem Edit einen <thought>...</thought> Block.\n"
         "6. ISOLIERTER WORKSPACE: Alle Pfade unter /project/!\n"
         "7. CODE AUSFÜHREN: Nutze IMMER 'run_file' für Skripte/Tests. 'bash' NUR wenn nötig.\n"
-        "8. <edit>-Blöcke sind KEIN JSON-Tool! Gib sie als plain Text in deiner Antwort aus.\n"
         "9. Bearbeite NUR die dir zugewiesenen Dateien!\n"
         "10. Nutze vfs_shell('grep -rn ...') zum Suchen im Code.\n\n"
-        "FORMAT FÜR ÄNDERUNGEN:\n"
-        "<edit path=\"pfad/datei.py\">\n"
-        "<search>\n"
-        "exakter alter code\n"
-        "</search>\n"
-        "<replace>\n"
-        "neuer code\n"
-        "</replace>\n"
-        "</edit>\n\n"
-        "FORMAT FÜR NEUE DATEIEN (search leer):\n"
-        "<edit path=\"pfad/neue_datei.py\">\n"
-        "<search>\n"
-        "</search>\n"
-        "<replace>\n"
-        "kompletter neuer Inhalt\n"
-        "</replace>\n"
-        "</edit>\n\n"
-        "ELLIPSIS-SYNTAX für große Blöcke:\n"
-        "<edit path=\"pfad/datei.py\">\n"
-        "<search>\n"
-        "erste Zeilen\n"
-        "...\n"
-        "letzte Zeilen\n"
-        "</search>\n"
-        "<replace>\n"
-        "kompletter neuer Code\n"
-        "</replace>\n"
-        "</edit>\n"
     )
 
     def __init__(self, agent, project_root: str, config: dict = None):
@@ -821,6 +789,7 @@ class CoderAgent:
         self._validator_name = f"validator_{self._agent_uid}"
         self._current_plan: list[dict] = []
         self._validation_issues: list[dict] = []
+        self._shared_mount_key: str | None = None
 
     # ─────────────────────────────────────────────────────────────────
     # EXISTING METHODS (unchanged): stream, bash, grep, run_file, etc.
@@ -928,39 +897,6 @@ class CoderAgent:
             cmd = f"{prefix}{quoted_path} {args_str}"
         return await self._smart_bash(cmd.strip(), messages)
 
-    async def _smart_grep(self, pattern: str, messages: list) -> str:
-        quoted = shlex.quote(pattern) if platform.system() != "Windows" else pattern
-        if shutil.which("rg"):
-            cmd = f"rg -n {quoted} ."
-        elif self.worktree._is_git:
-            cmd = f"git grep -n {quoted}"
-        else:
-            cmd = f"grep -rn {quoted} ."
-        raw_output = await self._run_bash(cmd)
-        lines = text_to_block(raw_output)
-        total = len(lines)
-        if total > 2000:
-            head = "\n".join(lines[:500])
-            tail = "\n".join(lines[-500:])
-            return (f"GUARD: Too many matches ({total}). Showing first/last 500.\n\n"
-                    f"{head}\n\n... [{total - 1000} lines omitted] ...\n\n{tail}")
-        return raw_output
-
-    async def _ask_user(self, question: str) -> str:
-        if not getattr(self, "ask_enabled", False):
-            return "ERROR: 'ask' tool is disabled. Proceed autonomously."
-        custom_ask = self.config.get("ask_callback")
-        if custom_ask:
-            try:
-                if asyncio.iscoroutinefunction(custom_ask):
-                    return await custom_ask(question)
-                else:
-                    return await asyncio.to_thread(custom_ask, question)
-            except Exception as e:
-                self._log("ASK-ERROR", f"Callback failed: {e}", "red")
-        self.print(f"\n\033[96mAgent fragt:\033[0m {question}")
-        return input("\033[93m> Antwort:\033[0m ")
-
     async def _validate(self, changed_files: List[str]) -> List[str]:
         if not changed_files: return []
         errors = []
@@ -978,99 +914,45 @@ class CoderAgent:
     # NEW: Edit Block Parsing & Application
     # ─────────────────────────────────────────────────────────────────
 
-    def _parse_edits(self, response: str) -> list[dict]:
-        """Parse <edit> blocks from agent response text."""
-        edits = []
-        # Regex: tolerant of path= or file=, captures content between tags
-        pattern = re.compile(
-            r'<edit\s+(?:path|file)=["\']([^"\']+)["\']\s*>\s*\n'
-            r'<search>\s*\n(.*?)\n</search>\s*\n'
-            r'<replace>\s*\n(.*?)\n</replace>\s*\n'
-            r'</edit>',
-            re.DOTALL
-        )
-        for match in pattern.finditer(response):
-            edits.append({
-                "path": match.group(1).strip(),
-                "search": match.group(2),
-                "replace": match.group(3),
-            })
-        if not edits:
-            # Fallback: looser parse for incomplete blocks
-            loose = re.compile(
-                r'<edit\s+(?:path|file)=["\']([^"\']+)["\']\s*>.*?'
-                r'<search>(.*?)</search>.*?'
-                r'<replace>(.*?)</replace>',
-                re.DOTALL
-            )
-            for match in loose.finditer(response):
-                edits.append({
-                    "path": match.group(1).strip(),
-                    "search": match.group(2).strip("\n"),
-                    "replace": match.group(3).strip("\n"),
-                })
-        return edits
+    def _write_via_shared_store(self, relative_path: str, content: str) -> None:
+        """
+        Schreibt Datei über den Shared-Store wenn möglich.
+        Fallback: direktes Disk-Write (wie bisher).
 
-    async def _apply_edits(self, edits: list[dict]) -> list[str]:
-        """Apply parsed edit blocks to worktree. Returns list of changed file paths."""
-        changed = []
-        for edit in edits:
-            path = edit["path"]
-            search = edit["search"]
-            replace = edit["replace"]
-            target = (self.worktree.path / path).resolve()
+        Shared-Writes invalidieren automatisch alle Agent-VFS-Caches —
+        kein refresh_mount mehr nötig.
+        """
+        if self._shared_mount_key is not None:
+            try:
+                gvfs = get_global_vfs()
+                result = gvfs.shared_write(
+                    mount_key=self._shared_mount_key,
+                    relative_path=relative_path,
+                    content=content,
+                    local_base=self._shared_worktree_path,
+                    author="coder_orchestrator",
+                )
+                if result.get("success"):
+                    return
+            except Exception as e:
+                self._log("SHARED-WARN", f"Shared write failed: {e}", "yellow")
 
-            # New file: empty search
-            if not search.strip():
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(replace, encoding="utf-8")
-                changed.append(path)
-                self._log("EDIT", f"Created: {path}", "green")
-                continue
-
-            if not target.exists():
-                self._log("EDIT-ERR", f"File not found: {path}", "red")
-                continue
-
-            content = target.read_text(encoding="utf-8", errors="replace")
-
-            # Ellipsis syntax: first_lines ... last_lines
-            if "\n...\n" in search:
-                parts = search.split("\n...\n", 1)
-                start_marker = parts[0].rstrip("\n")
-                end_marker = parts[1].lstrip("\n")
-                start_idx = content.find(start_marker)
-                if start_idx >= 0:
-                    end_idx = content.find(end_marker, start_idx + len(start_marker))
-                    if end_idx >= 0:
-                        end_idx += len(end_marker)
-                        content = content[:start_idx] + replace.strip("\n") + content[end_idx:]
-                        target.write_text(content, encoding="utf-8")
-                        changed.append(path)
-                        self._log("EDIT", f"Ellipsis edit: {path}", "green")
-                        continue
-                self._log("EDIT-ERR", f"Ellipsis markers not found in {path}", "red")
-                continue
-
-            # Exact match replacement
-            search_clean = search.strip("\n")
-            if search_clean in content:
-                content = content.replace(search_clean, replace.strip("\n"), 1)
-                target.write_text(content, encoding="utf-8")
-                changed.append(path)
-                self._log("EDIT", f"Modified: {path}", "green")
-            else:
-                self._log("EDIT-ERR", f"Search block not found in {path}", "red")
-
-        return changed
-
+        # Fallback: direkt auf Disk
+        target = (self.worktree.path / relative_path).resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
     # ─────────────────────────────────────────────────────────────────
     # NEW: Sub-Agent Lifecycle
     # ─────────────────────────────────────────────────────────────────
-
-    # ── In _ensure_agents(), NACH worktree.setup(): ──
-    # ALT: await self._mount_worktree_vfs(aname)
-    # NEU:
+    def _emit_swarm_phase(self, phase: str, info: str = ""):
+        """Signal swarm phase transition to parent TaskView.
+        Chunk OHNE _sub_agent_id → landet auf Parent/Summary."""
+        if self.row_chunk_fun:
+            self.row_chunk_fun({
+                "type": "swarm_phase",
+                "swarm_phase": phase,
+                "swarm_info": info,
+            })
 
     async def _ensure_agents(self):
         """Lazy-init planner, coder(s), validator via FlowAgentBuilder."""
@@ -1088,6 +970,17 @@ class CoderAgent:
         # Use the first agent's VFS as bootstrap, mount worktree, then share it.
         # Instead: create share directly from local path (bypass VFS share API limitation)
         self._shared_worktree_path = str(self.worktree.path)
+        gvfs = get_global_vfs()
+        self._shared_mount_key = gvfs.register_shared_mount(
+            self._shared_worktree_path,
+            mount_key=f"worktree-{self._agent_uid}",
+            hydrate=True,
+        )
+        self._log(
+            "SHARED",
+            f"Worktree shared store: {self._shared_mount_key}",
+            "cyan",
+        )
 
         # ── PLANNER ──
         pb = isaa.get_agent_builder(
@@ -1150,21 +1043,27 @@ class CoderAgent:
         return coder_name
 
     async def _mount_shared_worktree(self, agent_name: str):
-        """Mount worktree as shared auto_sync mount so all agents see the same files."""
+        """Mount worktree als Shared-Mount. Alle Agents teilen RAM-State + Disk."""
         from toolboxv2 import get_app
         isaa = get_app().get_mod("isaa")
         agent = await isaa.get_agent(agent_name)
         session = await agent.session_manager.get_or_create("default")
         try:
-            # Mount with auto_sync=True so writes go to disk immediately
-            # All agents mount the SAME local_path → shared state via filesystem
             session.vfs.mount(
                 local_path=self._shared_worktree_path,
                 vfs_path="/project",
                 readonly=False,
-                auto_sync=True,  # KEY: writes go to disk immediately
+                auto_sync=True,
             )
-            self._log("VFS", f"Shared mount for {agent_name} → {self._shared_worktree_path}", "cyan")
+            # EBENE 3: VFS-Instanz beim GlobalVFSManager registrieren,
+            # damit Cache-Invalidierung bei Shared-Writes funktioniert.
+            gvfs = get_global_vfs()
+            gvfs.register_vfs(session.vfs)
+            self._log(
+                "VFS",
+                f"Shared mount + store for {agent_name} → {self._shared_worktree_path}",
+                "cyan",
+            )
         except Exception as e:
             self._log("VFS-WARN", f"Mount failed for {agent_name}: {e}", "yellow")
 
@@ -1179,11 +1078,6 @@ class CoderAgent:
             self._log("SYNC", f"Refreshed VFS for {agent_name}", "cyan")
         except Exception as e:
             self._log("SYNC-WARN", f"Refresh failed for {agent_name}: {e}", "yellow")
-
-    async def _refresh_all_agents(self):
-        """Refresh VFS for all active agents."""
-        for aname in [self._planner_name] + self._coder_names + [self._validator_name]:
-            await self._refresh_agent_vfs(aname)
 
     async def cleanup_agents(self):
         """Remove all sub-agents and unmount VFS."""
@@ -1202,6 +1096,13 @@ class CoderAgent:
                     session.vfs.unmount("/project", save_changes=True)
                 except Exception:
                     pass
+                try:
+                    from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
+                    gvfs = get_global_vfs()
+                    key = f"{session.vfs.agent_name}:{session.vfs.session_id}"
+                    gvfs._mounted_vfs.pop(key, None)
+                except Exception:
+                    pass
                 # Agent entfernen — je nach isaa API
                 if hasattr(isaa, "unregister_agent"):
                     await isaa.unregister_agent(name)
@@ -1210,6 +1111,21 @@ class CoderAgent:
                 self._log("CLEANUP", f"Removed agent: {name}", "grey")
             except Exception as e:
                 logger.debug(f"Cleanup {name}: {e}")
+
+        # EBENE 3: Shared-Mount entfernen
+        if self._shared_mount_key is not None:
+            try:
+                from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
+                gvfs = get_global_vfs()
+                gvfs.unregister_shared_mount(self._shared_worktree_path)
+                self._log(
+                    "CLEANUP",
+                    f"Shared mount unregistered: {self._shared_mount_key}",
+                    "grey",
+                )
+            except Exception as e:
+                logger.debug(f"Unregister shared mount: {e}")
+            self._shared_mount_key = None
 
         self._coder_names = []
         self._sub_agents_ready = False
@@ -1349,16 +1265,19 @@ class CoderAgent:
     # ─────────────────────────────────────────────────────────────────
 
     async def _collect_stream(self, agent_name: str, query: str, prefix: str = "") -> str:
-        """Run agent via a_stream(), collect full response, forward chunks to stream_callback."""
+        """Run agent via a_stream(), collect full response, forward chunks tagged with _sub_agent_id."""
         from toolboxv2 import get_app
         isaa = get_app().get_mod("isaa")
         agent = await isaa.get_agent(agent_name)
-        # ── NEU: Signal sub-agent start ──
+
+        # Sub-Agent Start → Router legt Top-Level-TaskView an
         if self.row_chunk_fun:
             self.row_chunk_fun({
-                "type": "sub_agent_start",
-                "sub_agent": agent_name,
+                "type": "swarm_sub_start",
+                "_sub_agent_id": agent_name,
+                "phase": prefix.lower() or "running",
                 "query": query[:100],
+                "max_iter": self.max_iters,
             })
 
         full_response = []
@@ -1368,20 +1287,24 @@ class CoderAgent:
                 session_id="default",
                 max_iterations=self.max_iters,
             ):
+                # ── Jeden Chunk mit Sub-Agent-Tag an Router weitergeben ──
                 if self.row_chunk_fun:
-                    chunk["sub_agent"] = agent_name
-                    self.row_chunk_fun(chunk)
-                ctype = chunk.get("type", "")
+                    tagged = dict(chunk)
+                    tagged["_sub_agent_id"] = agent_name
+                    tagged["_swarm_phase"] = prefix.lower() or "running"
+                    self.row_chunk_fun(tagged)
 
+                # ── Logging / stream_callback / final_answer sammeln ──
+                ctype = chunk.get("type", "")
                 if ctype == "content":
                     text = chunk.get("chunk", "")
                     full_response.append(text)
                     if self.stream_enabled and self.stream_callback:
-                        tagged = f"[{prefix}] {text}" if prefix else text
+                        label = f"[{prefix}] {text}" if prefix else text
                         if asyncio.iscoroutinefunction(self.stream_callback):
-                            await self.stream_callback(tagged)
+                            await self.stream_callback(label)
                         else:
-                            self.stream_callback(tagged)
+                            self.stream_callback(label)
 
                 elif ctype == "tool_start":
                     self._log(f"{prefix}-TOOL", chunk.get("name", "?"), "cyan")
@@ -1402,14 +1325,15 @@ class CoderAgent:
                     if answer:
                         full_response.append(answer)
         finally:
-            # ── NEU: Signal sub-agent done ──
+            # Sub-Agent Done → Router setzt Status, Summary zählt hoch
             if self.row_chunk_fun:
                 self.row_chunk_fun({
-                    "type": "sub_agent_done",
-                    "sub_agent": agent_name,
+                    "type": "swarm_sub_done",
+                    "_sub_agent_id": agent_name,
+                    "phase": prefix.lower() or "running",
                 })
-        return "".join(full_response)
 
+        return "".join(full_response)
     # ─────────────────────────────────────────────────────────────────
     # NEW: Orchestration Phases
     # ─────────────────────────────────────────────────────────────────
@@ -1440,47 +1364,68 @@ class CoderAgent:
         return self._current_plan
 
     async def _run_coders(self, subtasks: list[dict]) -> list[str]:
-        """Phase 2: Run coder(s) on subtasks. Parallel if non-overlapping."""
+        """Phase 2: Run a single coder agent on all subtasks at once."""
         all_changed: list[str] = []
 
-        # Check if we can parallelize (>1 subtask with non-overlapping files)
-        can_parallel = len(subtasks) > 1 and all(st.get("files") for st in subtasks)
+        if not subtasks:
+            return all_changed
 
-        if can_parallel:
-            # Ensure enough coder agents
-            for i in range(1, len(subtasks)):
-                if i >= len(self._coder_names):
-                    await self._spawn_extra_coder(i)
+        coder_name = self._coder_names[0]
 
-            # Run in parallel
-            async def _run_single(coder_name: str, subtask: dict) -> list[str]:
-                query = self._build_coder_query(subtask)
-                response = await self._collect_stream(coder_name, query, prefix=coder_name.upper())
-                edits = self._parse_edits(response)
-                return await self._apply_edits(edits)
+        # Alle Subtasks in einem einzigen Prompt zusammenfassen
+        tasks_text = ""
+        for i, st in enumerate(subtasks, 1):
+            files = st.get("files", [])
+            desc = st.get("description", "")
+            files_str = ', '.join(files) if files else "(alle relevanten Dateien)"
+            tasks_text += f"### Subtask {i}\n- Aufgabe: {desc}\n- Zugewiesene Dateien: {files_str}\n\n"
 
-            tasks = []
-            for i, st in enumerate(subtasks):
-                coder_name = self._coder_names[i % len(self._coder_names)]
-                tasks.append(_run_single(coder_name, st))
+        query = (
+            f"Führe die folgenden Subtasks aus:\n\n"
+            f"{tasks_text}"
+            f"WICHTIG:\n"
+            f"- Lies /project/_coordination.md für den Gesamtplan.\n"
+            f"- Bearbeite NUR die dir zugewiesenen Dateien.\n"
+            f"- Lies jede Datei mit vfs_shell('cat /project/...') BEVOR du sie editierst.\n"
+            f"- Rufe update_status auf, wenn du einen Teilschritt abschließt.\n"
+            f"- Rufe done() auf, wenn ALLE Subtasks abgeschlossen sind.\n"
+        )
 
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for result in results:
-                if isinstance(result, Exception):
-                    self._log("CODER-ERR", str(result), "red")
-                else:
-                    all_changed.extend(result)
-        else:
-            # Sequential on coder_0
-            coder_name = self._coder_names[0]
-            for st in subtasks:
-                query = self._build_coder_query(st)
-                response = await self._collect_stream(coder_name, query, prefix="CODER")
-                edits = self._parse_edits(response)
-                applied = await self._apply_edits(edits)
-                all_changed.extend(applied)
+        response = await self._collect_stream(coder_name, query, prefix="CODER")
 
-        return list(set(all_changed))
+        return [response]
+
+    async def _run_fix_coders(self, fix_subtasks: list[dict]) -> list[str]:
+        """Run a single coder agent in FIX mode for all issues at once."""
+        all_changed: list[str] = []
+
+        if not fix_subtasks:
+            return all_changed
+
+        coder_name = self._coder_names[0]
+
+        # Alle Fixes/Issues in einem einzigen Prompt zusammenfassen
+        issues_text = ""
+        for i, st in enumerate(fix_subtasks, 1):
+            files = st.get("files", [])
+            desc = st.get("description", "")
+            files_str = ', '.join(files) if files else "(siehe Beschreibung)"
+            issues_text += f"### Issue {i}\n- Problem: {desc}\n- Betroffene Dateien: {files_str}\n\n"
+
+        query = (
+            f"## STRICT FIX MODE - NUR DIE BESCHRIEBENEN PROBLEME BEHEBEN!\n\n"
+            f"{issues_text}"
+            f"REGELN FÜR FIX MODE:\n"
+            f"- Lies die betroffene(n) Datei(en) mit vfs_shell('cat /project/...').\n"
+            f"- Behebe NUR die beschriebenen Probleme. NICHTS ANDERES ändern!\n"
+            f"- Keine Refactorings, keine neuen Features, keine Verbesserungen.\n"
+            f"- Minimale Änderung: So wenig Zeilen wie möglich.\n"
+            f"- Rufe SOFORT done() auf, wenn alle Fixes angewendet sind.\n"
+        )
+
+        response = await self._collect_stream(coder_name, query, prefix="FIXER")
+
+        return [response]
 
     def _build_coder_query(self, subtask: dict) -> str:
         files = subtask.get("files", [])
@@ -1494,7 +1439,6 @@ class CoderAgent:
             f"- Lies /project/_coordination.md für den Gesamtplan.\n"
             f"- Bearbeite NUR die dir zugewiesenen Dateien.\n"
             f"- Lies jede Datei mit vfs_shell('cat /project/...') BEVOR du sie editierst.\n"
-            f"- Schreibe Änderungen als <edit>-Blöcke in deiner Antwort.\n"
             f"- Rufe update_status auf wenn du einen Teilschritt abschließt.\n"
             f"- Rufe done() auf wenn du fertig bist.\n"
         )
@@ -1520,22 +1464,6 @@ class CoderAgent:
 
         await self._collect_stream(self._validator_name, query, prefix="VALIDATOR")
         return self._validation_issues
-
-    # Neue Methode für Fix-Runs:
-
-    async def _run_fix_coders(self, fix_subtasks: list[dict]) -> list[str]:
-        """Run coders in FIX mode — strict, scoped, no further development."""
-        all_changed: list[str] = []
-
-        coder_name = self._coder_names[0]
-        for st in fix_subtasks:
-            query = self._build_fix_query(st)
-            response = await self._collect_stream(coder_name, query, prefix="FIXER")
-            edits = self._parse_edits(response)
-            applied = await self._apply_edits(edits)
-            all_changed.extend(applied)
-
-        return list(set(all_changed))
 
     def _build_fix_query(self, subtask: dict) -> str:
         files = subtask.get("files", [])
@@ -1572,55 +1500,53 @@ class CoderAgent:
             6. Fix loop (max 2 rounds)
             7. Post-execute: commit, memory, report
         """
-        # ── 1. Worktree Setup ──
-        with Spinner(f"Setup Worktree for agent: {self.agent.amd.name}", symbols="b"):
-            self.worktree.setup()
-
-        synced = await self.worktree.sync_from_origin(
-            sync_enabled=self.sync_enabled, sync_interval=0
-        )
-
-        # ── 2. Ensure Sub-Agents ──
-        with Spinner("Initializing sub-agents...", symbols="c"):
-            await self._ensure_agents()
-
-        # ── 3. Initial Commit ──
+        subtasks = []
         try:
-            self.worktree.commit(f"pre-task: {task[:50]}")
-        except Exception:
-            pass
+            # ── 1. Worktree Setup ──
+            with Spinner(f"Setup Worktree for agent: {self.agent.amd.name}", symbols="b"):
+                self.worktree.setup()
 
-        # ── Build enriched task ──
-        enriched_task = task
-        if synced:
-            enriched_task += f"\n\n[INFO: {len(synced)} file(s) synced: {', '.join(synced[:5])}]"
-        if prev := self.memory.get_context():
-            enriched_task += f"\n\n## Previous context:\n{prev}"
-        if getattr(self, "ask_enabled", False):
-            enriched_task += "\n\n[NOTE: 'ask' tool available for user questions]"
+            synced = await self.worktree.sync_from_origin(
+                sync_enabled=self.sync_enabled, sync_interval=0
+            )
 
-        try:
+            # ── 2. Ensure Sub-Agents ──
+            with Spinner("Initializing sub-agents...", symbols="c"):
+                await self._ensure_agents()
+
+            # ── 3. Initial Commit ──
+            try:
+                self.worktree.commit(f"pre-task: {task[:50]}")
+            except Exception:
+                pass
+
+            # ── Build enriched task ──
+            enriched_task = task
+            if synced:
+                enriched_task += f"\n\n[INFO: {len(synced)} file(s) synced: {', '.join(synced[:5])}]"
+            if prev := self.memory.get_context():
+                enriched_task += f"\n\n## Previous context:\n{prev}"
+            if getattr(self, "ask_enabled", False):
+                enriched_task += "\n\n[NOTE: 'ask' tool available for user questions]"
+
             # ── 4. PLANNER PHASE ──
+            self._emit_swarm_phase("planning")
             self._log("PHASE", "=== PLANNER ===", "bold")
             subtasks = await self._run_planner(enriched_task)
             self._log("PHASE", f"Plan: {len(subtasks)} subtask(s)", "green")
 
-            # ── Sync planner output to all coders ──
-            await self._refresh_all_agents()
-
             # ── 5. CODER PHASE ──
             self._log("PHASE", "=== CODER ===", "bold")
+            self._emit_swarm_phase("coding", f"{len(subtasks)} subtasks")
             edit_changed = await self._run_coders(subtasks)
             self._log("PHASE", f"Coder changed: {edit_changed}", "green")
-
-            # ── Sync coder output before validation ──
-            await self._refresh_all_agents()
 
             # ── 6. VALIDATOR PHASE + FIX LOOP ──
             all_changed = edit_changed or await self.worktree.changed_files()
 
             if all_changed:
                 self._log("PHASE", "=== VALIDATOR ===", "bold")
+                self._emit_swarm_phase("validating")
                 issues = await self._run_validator(all_changed)
 
                 for fix_round in range(2):
@@ -1652,7 +1578,6 @@ class CoderAgent:
                             deduped.append(st)
 
                     await self._run_fix_coders(deduped)
-                    await self._refresh_all_agents()
                     all_changed = await self.worktree.changed_files()
                     issues = await self._run_validator(all_changed)
 

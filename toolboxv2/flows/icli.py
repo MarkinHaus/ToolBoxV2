@@ -232,6 +232,11 @@ class TaskView:
     iterations: list[IterView] = field(default_factory=list)
     _iter_map: dict[int, IterView] = field(default_factory=dict)
     started_at: float = field(default_factory=time.time)
+    is_swarm_sub: bool = False
+    swarm_parent_id: str = ""
+    is_swarm_summary: bool = False  # NEU: Parent eines Swarms
+    swarm_phase: str = ""
+
     final_answer: str = ""
 
     def _get_iter(self, n: int) -> IterView:
@@ -444,15 +449,15 @@ def render_footer_toolbar(
         out.append((bg + "bg:#67e8f9", " ◎ ZEN+ OPEN "))
         out.append((bg + fg_dim, " Esc=close\n"))
 
-    main_tasks = [(tid, tv) for tid, tv in task_views.items()]
     # Neueste zuerst
+    main_tasks = [(tid, tv) for tid, tv in task_views.items()]
     reversed_tasks = main_tasks[::-1]
     total = len(reversed_tasks)
 
     # Offset clampen
-    off_set = max(0, min(off_set, max(0, total - 5)))
+    off_set = max(0, min(off_set, max(0, total - 8)))
 
-    shown = reversed_tasks[off_set:off_set + 5]
+    shown = reversed_tasks[off_set:off_set + 8]
     overflow = total - off_set - len(shown)
 
     for tid, tv in shown:
@@ -478,31 +483,42 @@ def render_footer_toolbar(
 
 
 def _append_task_line(out: list, tv: TaskView, focused: bool, pad: str = " " * 120) -> None:
-    # Basis: dunkler Hintergrund, Text hell — alles explizit gesetzt
-    bg = "fg:#111827 "  # dunkelgrau, kein ansiblack
+    bg = "fg:#111827 "
     fg_dim = "bg:#6b7280"
     fg_main = "bg:#e5e7eb"
 
-    # Fokus-Indikator (Pfeil ganz links)
-    out.append((bg + ("bg:#67e8f9" if focused else fg_dim), " ▸ " if focused else "   "))
+    # Einrückung für Swarm-Subs
+    indent = "    " if tv.is_swarm_sub else " "
 
-    # Status-Symbol — farbig auf gleichem bg
+    # Fokus-Pfeil
+    out.append((bg + ("bg:#67e8f9" if focused else fg_dim),
+                f"{indent}▸ " if focused else f"{indent}  "))
+
+    # Status-Symbol
     sym, col = STATUS_SYM.get(tv.status, ("◯", "cyan"))
     out.append((bg + f"bg:{C[col]}", f"{sym} "))
 
-    # Agent-Name
-    out.append((bg + fg_main, f"{_short(tv.agent_name, 10):<10} "))
+    # Agent-Name (Summary mit 🐝, Subs mit gekürztem Namen)
+    name = tv.agent_name
+    if tv.is_swarm_summary:
+        name = f"🐝 {name}"
+    elif tv.is_swarm_sub:
+        # Nur Kategorie zeigen (planner_abc123 → planner)
+        parts = name.split("_")
+        name = parts[0] if len(parts) > 1 else name
+    width = 12 if tv.is_swarm_sub else 10
+    out.append((bg + fg_main, f"{_short(name, width):<{width}} "))
 
-    # Fortschrittsbalken
+    # Progress-Bar
     bar = _bar(tv.iteration, tv.max_iter, 8)
     out.append((bg + "bg:#67e8f9", bar))
     out.append((bg + fg_dim, f" {tv.iteration}/{tv.max_iter:<3} "))
 
-    # Persona
-    if tv.persona and tv.persona != "default":
-        name = tv.persona if tv.status in ("completed", "done", "failed", "error") \
+    # Persona (nur auf Non-Summary, Non-Sub)
+    if tv.persona and tv.persona != "default" and not tv.is_swarm_sub and not tv.is_swarm_summary:
+        p_name = tv.persona if tv.status in ("completed", "done", "failed", "error") \
             else _short(tv.persona, 14)
-        out.append((bg + "bg:#a78bfa", f"{name} "))
+        out.append((bg + "bg:#a78bfa", f"{p_name} "))
     else:
         out.append((bg + fg_dim, " "))
 
@@ -514,7 +530,41 @@ def _append_task_line(out: list, tv: TaskView, focused: bool, pad: str = " " * 1
     else:
         out.append((bg + fg_dim, "     "))
 
-    # === HAUPTSTATUS & LIVE NARRATOR BLOCK ===
+    # ═══ SUMMARY-BRANCH: Phase + Sub-Counter ═══
+    if tv.is_swarm_summary:
+        phase = tv.swarm_phase or "init"
+        phase_col = {
+            "init":       "#6b7280",
+            "planning":   "#fbbf24",
+            "coding":     "#60a5fa",
+            "validating": "#a78bfa",
+            "fixing":     "#f59e0b",
+            "done":       "#4ade80",
+            "error":      "#f87171",
+        }.get(phase, "#6b7280")
+        out.append((bg + f"bg:{phase_col}", f" {phase.upper()} "))
+
+        if tv.sub_agents:
+            total = len(tv.sub_agents)
+            done = sum(1 for s in tv.sub_agents.values() if s == 1)
+            running = sum(1 for s in tv.sub_agents.values() if s == 0)
+            err = sum(1 for s in tv.sub_agents.values() if s == 2)
+            parts = [f"🐝 {done}/{total}"]
+            if running:
+                parts.append(f"⟳{running}")
+            if err:
+                parts.append(f"✗{err}")
+            out.append((bg + "bg:#f472b6", " " + "  ".join(parts) + " "))
+
+        if tv.narrator_msg:
+            msg = tv.narrator_msg
+            if len(msg) > len(pad) - 20:
+                msg = msg[:len(pad) - 20] + "..."
+            out.append((bg + "bg:#3b82f6", f" {msg} "))
+        out.append((bg + fg_dim, pad))
+        return
+
+    # ═══ STANDARD-BRANCH: für Non-Summary (inkl. einzelne Swarm-Subs) ═══
     if tv.status in ("completed", "done"):
         elapsed = (tv.completed_at or tv.started_at) - tv.started_at
         out.append((bg + f"bg:{C['green']}", f"● {_fmt_elapsed(elapsed)} "))
@@ -526,7 +576,6 @@ def _append_task_line(out: list, tv: TaskView, focused: bool, pad: str = " " * 1
         out.append((bg + f"bg:{C['red']}", f"✗ {_fmt_elapsed(elapsed)} "))
 
     else:
-        # 1. Phasen-Infos (Denken / Tools)
         if tv.phase == "thinking":
             out.append((bg + fg_dim, f"◎ {_short(tv.last_thought.replace(chr(10), ' '), 20)} "))
         elif tv.phase in ("tool", "tool_done") and tv.last_tool:
@@ -539,24 +588,19 @@ def _append_task_line(out: list, tv: TaskView, focused: bool, pad: str = " " * 1
         else:
             out.append((bg + fg_dim, "⋯ "))
 
-        # 2. LIVE NARRATOR INJEKTION (Läuft parallel zu Tools/Denken)
         if tv.narrator_msg:
-            # F7 Fokus-Highlighting: Fokussierter Agent leuchtet Gelb/Amber, andere Blau
-            n_col = "bg:#f59e0b "+bg if focused else "bg:#3b82f6 "+bg
+            n_col = "bg:#f59e0b " + bg if focused else "bg:#3b82f6 " + bg
             icon = " 🔉 " if focused else " 🔈 "
-            # Auffälliger Abstand und Formatierung für den Narrator
             narrator_msg = tv.narrator_msg
             if len(narrator_msg) > len(pad) - 15:
-                narrator_msg = narrator_msg[:len(pad) - 15] + '...'
+                narrator_msg = narrator_msg[:len(pad) - 15] + "..."
             out.append((bg + n_col, f"{icon}{narrator_msg} "))
 
-    # Sub-Agenten
-    if tv.sub_agents:
+    # Nested-Sub-Counter (nur für Non-Summary, Non-Swarm-Sub mit nested Kindern)
+    if tv.sub_agents and not tv.is_swarm_summary and not tv.is_swarm_sub:
         out.append((bg + "bg:#f472b6", f"✦{len(tv.sub_agents)} "))
 
-    # Padding-Block bis Zeilenende
     out.append((bg + fg_dim, pad))
-
 # ── B: Fullscreen overlay ─────────────────────────────────────────────────────
 
 class TaskOverlay:
@@ -574,22 +618,55 @@ class TaskOverlay:
         self._right_scroll: int = 0  # scroll im rechten Panel
         self._input_scroll: int = 0  # Scroll-Position für Input
         self._scroll_focus: str = "result"  # Fokus ("input" oder "result")
+        self._iter_scroll_focus: str = "iter"
         self._selected_iter: Optional[int] = None  # None = liste; int = drill-down
         self._right_iter_cursor: int = 0  # Index in reversed(tv.iterations) — welche Iter ist im Cursor
         self._selected_tool_idx: int = 0  # Welches Tool ist im Drill-Down ausgewählt
         self._tool_view: str = "list"  # "list" | "detail" — detail zeigt raw args+result
         self._app: Optional[Application] = None
+        self._last_content_lines: int = 0
+        self._last_final_lines: int = 0
+        self._final_scroll: int = 0
+        self._visible_height: int = 20
+
+    def _max_scroll(self, total_lines: int, visible: int = 20) -> int:
+        """Verhindert Scrollen über das Content-Ende hinaus."""
+        return max(0, total_lines - visible)
 
     def _left_items(self) -> list[tuple[str, str]]:
+        """Returns list of (task_id, sub_name). sub_name == "" für direkte TaskViews."""
         items: list[tuple[str, str]] = []
+        seen_tids: set[str] = set()
+
         for tid, tv in self._views.items():
-            if "__sub__" in tid:
+            if tid in seen_tids:
                 continue
+
+            # Legacy nested subs (durch _ingest_chunk erzeugt) überspringen
+            if "__sub__" in tid and not tv.is_swarm_sub:
+                continue
+
+            # Swarm-Subs werden direkt nach ihrem Parent eingefügt — skip hier
+            if tv.is_swarm_sub:
+                continue
+
+            # Reguläre TaskView oder Swarm-Summary als Top-Level-Eintrag
             items.append((tid, ""))
-            # Sub-Agents nur navigierbar solange Parent läuft
-            if tv.status == "running":
+            seen_tids.add(tid)
+
+            # ── Swarm-Summary: direkt darunter seine Swarm-Subs ──
+            if tv.is_swarm_summary:
+                for sub_name, sub_tid in tv.sub_task_ids.items():
+                    if sub_tid in self._views and sub_tid not in seen_tids:
+                        # Als eigenen Eintrag mit sub_name markieren
+                        items.append((sub_tid, ""))
+                        seen_tids.add(sub_tid)
+
+            # ── Non-Swarm mit nested subs (legacy): als (parent_tid, sub_name) ──
+            elif tv.status == "running" and tv.sub_agents:
                 for sub in tv.sub_agents:
                     items.append((tid, sub))
+
         return items
 
     def _effective_view(self) -> Optional[TaskView]:
@@ -661,26 +738,75 @@ class TaskOverlay:
             (bg + "fg:#67e8f9 bold", " ◯ Tasks\n"),
             (bg + "fg:#374151", " " + "─" * 28 + "\n"),
         ]
+
         for tid, tv in self._views.items():
-            # Nur Haupt-Tasks zeigen (sub-task-IDs herausfiltern)  ← NEU
-            if "__sub__" in tid:
+            # Legacy nested subs überspringen
+            if "__sub__" in tid and not tv.is_swarm_sub:
+                continue
+            # Swarm-Subs werden zusammen mit ihrem Parent gerendert
+            if tv.is_swarm_sub:
                 continue
 
             task_sel = (tid == self._selected and self._selected_sub == "")
             row_bg = focus_bg if task_sel else bg
             sym, col = STATUS_SYM.get(tv.status, ("◯", "cyan"))
             focus_arrow = "▸ " if (self._focus == "left" and task_sel) else "  "
+
+            # Summary-Entry hat 🐝-Prefix
+            name = tv.agent_name
+            if tv.is_swarm_summary:
+                name = f"🐝 {name}"
+
             out.append((row_bg + f"fg:{C[col]}", f" {focus_arrow}{sym} "))
             out.append((row_bg + ("fg:#ffffff bold" if task_sel else "fg:#e5e7eb"),
-                        _short(tv.agent_name, 18) + "\n"))
+                        _short(name, 18) + "\n"))
 
-            # Sub-Agents
+            # Phase + Sub-Counter unter Summary
+            if tv.is_swarm_summary:
+                phase = tv.swarm_phase or "init"
+                out.append((row_bg + "fg:#fbbf24",
+                            f"     {phase.upper()}"))
+                if tv.sub_agents:
+                    done = sum(1 for s in tv.sub_agents.values() if s == 1)
+                    total = len(tv.sub_agents)
+                    out.append((row_bg + "fg:#f472b6", f"  {done}/{total}"))
+                out.append((row_bg, "\n"))
+
+                # ── Swarm-Subs direkt darunter als navigierbare Top-Level-Items ──
+                for sub_name, sub_tid in tv.sub_task_ids.items():
+                    sub_tv = self._views.get(sub_tid)
+                    if not sub_tv:
+                        continue
+
+                    sub_sel = (sub_tid == self._selected and self._selected_sub == "")
+                    sub_bg = focus_bg if sub_sel else bg
+                    sub_arrow = "  ▸" if (self._focus == "left" and sub_sel) else "   "
+
+                    sub_sym, sub_col = STATUS_SYM.get(sub_tv.status, ("✦", "purple"))
+                    # Kategorie-Name (planner_abc → planner)
+                    display_name = sub_name.split("_")[0]
+
+                    out.append((sub_bg + f"fg:{C.get(sub_col, '#f472b6')}",
+                                f"{sub_arrow} {sub_sym} "))
+                    out.append((sub_bg + ("fg:#ffffff bold" if sub_sel else "fg:#d1a8f0"),
+                                _short(display_name, 14) + "\n"))
+
+                    # Iter-Anzeige unter Swarm-Sub
+                    if sub_sel:
+                        if sub_tv.iteration or sub_tv.max_iter:
+                            out.append((sub_bg + "fg:#6b7280",
+                                        f"       iter {sub_tv.iteration}/{sub_tv.max_iter}\n"))
+                        if sub_tv.last_tool:
+                            out.append((sub_bg + "fg:#60a5fa",
+                                        f"       ◇ {_short(sub_tv.last_tool, 14)}\n"))
+                continue  # ← wichtig: nicht auch noch als normalen Eintrag rendern
+
+            # ── Legacy: expanded nested subs (non-swarm) ──
             for sub in tv.sub_agents:
                 sub_sel = (tid == self._selected and self._selected_sub == sub)
                 sub_bg = "bg:#1f2937 " if sub_sel else bg
                 sub_arrow = "  ▸" if (self._focus == "left" and sub_sel) else "   "
 
-                # Eigene TaskView des Sub-Agents holen                    ← ÄNDERUNG
                 sub_task_id = tv.sub_task_ids.get(sub)
                 sub_tv = self._views.get(sub_task_id) if sub_task_id else None
                 if not sub_tv:
@@ -697,17 +823,14 @@ class TaskOverlay:
                 out.append((sub_bg + ("fg:#ffffff bold" if sub_sel else "fg:#d1a8f0"),
                             _short(sub, 16) + "\n"))
 
-                if sub_sel and sub_tv:  # ← ÄNDERUNG
-                    # Persona anzeigen
+                if sub_sel and sub_tv:
                     if sub_tv.persona and sub_tv.persona != "default":
                         out.append((sub_bg + "fg:#a78bfa",
                                     f"       ✦ {_short(sub_tv.persona, 14)}\n"))
-                    # Skills (max 3)
                     if sub_tv.skills:
                         skills_str = " ".join(sub_tv.skills[:3])
                         out.append((sub_bg + "fg:#60a5fa",
                                     f"       {_short(skills_str, 18)}\n"))
-                    # Iter-Stand
                     out.append((sub_bg + "fg:#6b7280",
                                 f"       iter {sub_tv.iteration}/{sub_tv.max_iter}\n"))
 
@@ -728,10 +851,17 @@ class TaskOverlay:
             return FormattedText(out)
 
         # ── Header ──────────────────────────────────────────────────────────
+        # ── Header ──────────────────────────────────────────────────────────
         sym, col = STATUS_SYM.get(tv.status, ("◯", "cyan"))
         out.append((bg + f"fg:{C[col]} bold", f" {sym} {tv.agent_name}"))
-        if self._selected_sub:
+
+        if tv.is_swarm_sub:
+            out.append((bg + "fg:#f472b6", "  🐝 swarm-sub"))
+        elif tv.is_swarm_summary:
+            out.append((bg + "fg:#fbbf24", f"  🐝 swarm summary ({tv.swarm_phase or 'init'})"))
+        elif self._selected_sub:
             out.append((bg + "fg:#f472b6", "  ✦ sub-agent"))
+
         out.append((bg + "fg:#6b7280", f"  {_short(tv.query, 52)}\n"))
         out.append((bg + "fg:#374151", f"  {_short(tv.narrator_msg, 52)}\n"))
 
@@ -793,7 +923,12 @@ class TaskOverlay:
 
                     skip = self._input_scroll
                     # Input auf max. 15 Zeilen begrenzen, damit Result sichtbar bleibt
-                    visible_lines = display_lines[skip: skip + 15]
+                    visible_lines = display_lines[skip: skip + 20]
+
+                    # Nach dem Rendern: max_scroll merken für bounded up/down
+                    if self._scroll_focus == "input":
+                        max_input = max(0, len(display_lines) - 20)
+                        self._input_scroll = min(self._input_scroll, max_input)
 
                     for line in visible_lines:
                         out.append((bg + "fg:#d1d5db", f"     {line}\n"))
@@ -905,70 +1040,114 @@ class TaskOverlay:
         # ── Iterations-Liste (kein Drill-Down) ──────────────────────────────
         iters = list(reversed(tv.iterations))
 
-        # Berechne die Gesamthöhe des Inhalts (Iterationen + Final Answer)
-        # Wir brauchen das, um zu wissen, wie weit wir scrollen können.
-        total_content_height = 0
-        for iv in iters:
-            total_content_height += (1 + len(iv.thoughts) + len(iv.tools) + (1 if iv.pending_tool else 0))
-        if tv.final_answer:
-            total_content_height += (3 + len(tv.final_answer.split("\n")))
-
-        # Auto-Scroll-Logik: Wenn Cursor sich dem Ende nähert, Scroll-Offset anpassen
-        # Wir wollen, dass der Cursor (und bei Ende die Final Answer) immer im Blick bleibt
-        max_scroll = max(0, total_content_height - 15)  # 15 ist die sichtbare Höhe ca.
-        self._right_scroll = min(self._right_scroll, max_scroll)
-
-        # Rendering
-        skip = self._right_scroll
-        cursor_abs = self._right_iter_cursor
+        # Zwei unabhängige Scroll-Bereiche: Iterationen + Final Answer
+        # Flatten alle Iter-Zeilen in eine Liste für saubere Scroll-Berechnung
+        iter_lines_flat: list[tuple[str, str]] = []
 
         for list_idx, iv in enumerate(iters):
-            iter_lines = 1 + len(iv.thoughts) + len(iv.tools) + (1 if iv.pending_tool else 0)
-
-            # Rendering Logik beibehalten
-            if skip >= iter_lines:
-                skip -= iter_lines
-                continue
-
             is_cur = iv.n == tv.iteration and tv.status == "running"
-            is_cursor_sel = (self._focus == "right" and list_idx == cursor_abs)
+            is_cursor_sel = (self._focus == "right"
+                             and self._iter_scroll_focus == "iter"
+                             and list_idx == self._right_iter_cursor)
             hint = " ▸ running" if is_cur else ""
-
-            iter_bg = sel_bg if is_cursor_sel else bg
             cursor_sym = "▸ " if is_cursor_sel else "  "
-            iter_label = f"   {cursor_sym}── iter {iv.n}{hint} " + "─" * 28 + "\n"
             label_col = "#ffffff bold" if is_cursor_sel else "#fbbf24 bold"
-            out.append((iter_bg + f"fg:{label_col}", iter_label))
+            iter_bg = sel_bg if is_cursor_sel else bg
+
+            iter_lines_flat.append((iter_bg + f"fg:{label_col}",
+                                    f"   {cursor_sym}── iter {iv.n}{hint} " + "─" * 28 + "\n"))
 
             for thought in iv.thoughts:
-                out.append((bg + "fg:#6b7280", "      ◎ "))
-                out.append((bg + "fg:#e5e7eb", _short(thought.replace("\n", " "), 68) + "\n"))
+                iter_lines_flat.append((bg + "fg:#6b7280", "      ◎ "))
+                iter_lines_flat.append((bg + "fg:#e5e7eb",
+                                        _short(thought.replace("\n", " "), 68) + "\n"))
 
             for tname, tok, elapsed, info in iv.tools:
                 ok_col = C["green"] if tok else C["red"]
                 ok_sym = SYM["ok"] if tok else SYM["fail"]
                 elapsed_s = f"{elapsed:.2f}s" if elapsed > 0 else "     "
-                out.append((bg + "fg:#60a5fa", "      ◇ "))
-                out.append((bg + "fg:#e5e7eb", f"{_short(tname, 16):<16} "))
-                out.append((bg + f"fg:{ok_col}", f"{ok_sym}  "))
-                out.append((bg + "fg:#6b7280", f"{elapsed_s:>7}  "))
+                iter_lines_flat.append((bg + "fg:#60a5fa", "      ◇ "))
+                iter_lines_flat.append((bg + "fg:#e5e7eb", f"{_short(tname, 16):<16} "))
+                iter_lines_flat.append((bg + f"fg:{ok_col}", f"{ok_sym}  "))
+                iter_lines_flat.append((bg + "fg:#6b7280", f"{elapsed_s:>7}  "))
                 if info:
-                    out.append((bg + "fg:#9ca3af", _short(info, 36)))
-                out.append((bg, "\n"))
+                    iter_lines_flat.append((bg + "fg:#9ca3af", _short(info, 36)))
+                iter_lines_flat.append((bg, "\n"))
 
             if iv.pending_tool:
-                out.append((bg + "fg:#60a5fa", "      ◇ "))
-                out.append((bg + "fg:#fbbf24", f"{_short(iv.pending_tool, 16):<16} ⋯ running...\n"))
+                iter_lines_flat.append((bg + "fg:#60a5fa", "      ◇ "))
+                iter_lines_flat.append((bg + "fg:#fbbf24",
+                                        f"{_short(iv.pending_tool, 16):<16} ⋯ running...\n"))
 
-        # Final Answer Rendering (wird erst ausgegeben, wenn wir durch die Iterationen durch sind)
+        # Zähle Zeilen anhand "\n"-Vorkommen in den Text-Fragmenten
+        def _count_lines(fragments: list[tuple[str, str]]) -> int:
+            return sum(frag[1].count("\n") for frag in fragments)
+
+        iter_total_lines = _count_lines(iter_lines_flat)
+        self._last_content_lines = iter_total_lines
+
+        # Auto-scroll: halte ausgewählte Iter im Blick
+        # (vereinfachte Heuristik — präzise Cursor-Verfolgung könnte man verfeinern)
+        visible = self._visible_height
+        max_iter_scroll = self._max_scroll(iter_total_lines, visible)
+        self._right_scroll = min(self._right_scroll, max_iter_scroll)
+
+        # Fragmente ausgeben mit Scroll-Offset (zeilenweise überspringen)
+        skip = self._right_scroll
+        skipped = 0
+        emitted_lines = 0
+        for style, text in iter_lines_flat:
+            if skipped < skip:
+                nl_count = text.count("\n")
+                if skipped + nl_count <= skip:
+                    skipped += nl_count
+                    continue
+                # Teilweise überspringen: finde die erste noch sichtbare Zeile
+                parts = text.split("\n")
+                remaining = skip - skipped
+                if remaining < len(parts) - 1:
+                    text = "\n".join(parts[remaining:])
+                    skipped = skip
+                else:
+                    skipped += nl_count
+                    continue
+            if emitted_lines >= visible:
+                break
+            out.append((style, text))
+            emitted_lines += text.count("\n")
+
+        # Scroll-Indikator für Iter-Bereich
+        if iter_total_lines > visible:
+            pos_s = f"{min(self._right_scroll + visible, iter_total_lines)}/{iter_total_lines}"
+            focus_marker = " [iter ◂]" if self._iter_scroll_focus == "iter" else ""
+            out.append((bg + "fg:#6b7280", f"   ── scroll {pos_s}{focus_marker}\n"))
+
+        # ── Final Answer (eigener Scroll-Bereich) ────────────────────────────
         if tv.final_answer:
-            # Hier prüfen wir den 'skip' für die Final Answer
-            final_lines = tv.final_answer.split("\n")
+            final_lines_all = tv.final_answer.split("\n")
+            self._last_final_lines = len(final_lines_all)
 
             out.append((bg + "fg:#374151", "\n   " + "─" * 64 + "\n"))
-            out.append((bg + "fg:#4ade80 bold", "   ● Final Answer:\n\n"))
-            for line in final_lines:
+            focus_marker = " [final ◂]" if self._iter_scroll_focus == "final" else ""
+            out.append((bg + "fg:#4ade80 bold", f"   ● Final Answer:{focus_marker}\n\n"))
+
+            visible_final = 12
+            max_final_scroll = self._max_scroll(len(final_lines_all), visible_final)
+            # Begrenzen (für Fall dass Nachricht kürzer wird)
+            if self._iter_scroll_focus == "final":
+                pass  # scroll wird über keys gesetzt
+            final_scroll = getattr(self, "_final_scroll", 0)
+            final_scroll = min(final_scroll, max_final_scroll)
+            self._final_scroll = final_scroll
+
+            visible_slice = final_lines_all[final_scroll: final_scroll + visible_final]
+            for line in visible_slice:
                 out.append((bg + "fg:#e5e7eb", f"   {line}\n"))
+
+            if len(final_lines_all) > visible_final:
+                out.append((bg + "fg:#6b7280",
+                            f"   ── final {min(final_scroll + visible_final, len(final_lines_all))}/"
+                            f"{len(final_lines_all)}\n"))
 
         if not tv.iterations and not tv.final_answer:
             out.append((bg + "fg:#6b7280", "   waiting for first iteration...\n"))
@@ -985,21 +1164,23 @@ class TaskOverlay:
             iv = tv._iter_map.get(self._selected_iter) if tv else None
             n_tools = len(iv.tools) if iv else 0
             cur_tool = min(self._selected_tool_idx, n_tools - 1) + 1 if n_tools else 0
-            hint = (f" ←/→=prev/next tool ({cur_tool}/{n_tools})"
-                    f"  Backspace=back  j/k=scroll result")
+            hint = (f" ↑↓=scroll  o/l=input/result  ^←/^→=prev/next tool ({cur_tool}/{n_tools})"
+                    f"  Backspace=back")
         elif self._selected_iter is not None:
             iv = tv._iter_map.get(self._selected_iter) if tv else None
             n_tools = len(iv.tools) if iv else 0
             cur_tool = self._selected_tool_idx % n_tools + 1 if n_tools else 0
             hint = (f" ↑↓=select tool ({cur_tool}/{n_tools})"
-                    f"  Enter=tool detail  Backspace=iter list  j/k=scroll")
+                    f"  Enter=detail  Backspace=back")
         elif self._focus == "left":
-            hint = " ↑↓=navigate  →/Enter=focus right  Tab=switch"
+            hint = " ↑↓=navigate  →/Enter=right  Tab=switch"
         else:
             n_iters = len(tv.iterations) if tv else 0
             cur_iter = self._right_iter_cursor + 1 if n_iters else 0
-            hint = (f" ↑↓=select iter ({cur_iter}/{n_iters})"
-                    f"  Enter=drill-in  ←/Backspace=left  Tab=switch")
+            region = "iter" if self._iter_scroll_focus == "iter" else "final"
+            has_final = " │ o/l=iter/final" if tv and tv.final_answer else ""
+            hint = (f" ↑↓=scroll {region} ({cur_iter}/{n_iters}){has_final}"
+                    f"  Enter=drill-in  ←=back")
 
         return FormattedText([(
             "bg:#111827 fg:#6b7280",
@@ -1023,68 +1204,6 @@ class TaskOverlay:
             ov._focus = "right" if ov._focus == "left" else "left"
             ov._selected_iter = None
             ov._tool_view = "list"
-
-        # ── Links: Task/Sub-Agent navigieren ────────────────────────────────
-        @kb.add("up")
-        def _nav_up(event):
-            if ov._focus == "right":
-                if ov._selected_iter is not None:
-                    if ov._tool_view == "detail":
-                        if ov._scroll_focus == "input":
-                            ov._input_scroll = max(0, ov._input_scroll - 1)
-                        else:
-                            ov._right_scroll = max(0, ov._right_scroll - 1)
-                    else:
-                        # Tool-Cursor hoch
-                        ov._selected_tool_idx = max(0, ov._selected_tool_idx - 1)
-                else:
-                    # Iter-Cursor hoch (= neuere Iter, da reversed)
-                    tv = ov._effective_view()
-                    n = len(tv.iterations) if tv else 0
-                    ov._right_iter_cursor = max(0, ov._right_iter_cursor - 1)
-                return
-            items = ov._left_items()
-            if not items:
-                return
-            cur = (ov._selected, ov._selected_sub)
-            idx = items.index(cur) if cur in items else 0
-            ov._selected, ov._selected_sub = items[(idx - 1) % len(items)]
-            ov._selected_iter = None
-            ov._tool_view = "list"
-            ov._right_scroll = 0
-            ov._right_iter_cursor = 0
-
-        @kb.add("down")
-        def _nav_down(event):
-            if ov._focus == "right":
-                if ov._selected_iter is not None:
-                    if ov._tool_view == "detail":
-                        if ov._scroll_focus == "input":
-                            ov._input_scroll += 1
-                        else:
-                            ov._right_scroll += 1
-                    else:
-                        # Tool-Cursor runter
-                        tv = ov._effective_view()
-                        iv = tv._iter_map.get(ov._selected_iter) if tv else None
-                        max_idx = len(iv.tools) - 1 if iv and iv.tools else 0
-                        ov._selected_tool_idx = min(max_idx, ov._selected_tool_idx + 1)
-                else:
-                    # Iter-Cursor runter (= ältere Iter)
-                    tv = ov._effective_view()
-                    n = len(tv.iterations) if tv else 0
-                    ov._right_iter_cursor = min(max(n - 1, 0), ov._right_iter_cursor + 1)
-                return
-            items = ov._left_items()
-            if not items:
-                return
-            cur = (ov._selected, ov._selected_sub)
-            idx = items.index(cur) if cur in items else -1
-            ov._selected, ov._selected_sub = items[(idx + 1) % len(items)]
-            ov._selected_iter = None
-            ov._tool_view = "list"
-            ov._right_scroll = 0
-            ov._right_iter_cursor = 0
 
         # ── Enter: Drill-In ──────────────────────────────────────────────────
         @kb.add("right")
@@ -1150,36 +1269,142 @@ class TaskOverlay:
                     ov._selected_tool_idx = (ov._selected_tool_idx - 1) % len(iv.tools)
                     ov._right_scroll = 0
 
-        # ── Scroll ──────────────────────────────────────────────────────────
-        @kb.add("j")
-        @kb.add("pagedown")
-        def _sd(event):
-            if ov._tool_view == "detail" and ov._scroll_focus == "input":
-                ov._input_scroll += 5
-            else:
-                ov._right_scroll += 5
+        # ── ↑↓ kontextabhängig ──────────────────────────────────────────────
+        @kb.add("up")
+        def _nav_up(event):
+            if ov._focus == "right":
+                # Tool-Detail
+                if ov._selected_iter is not None and ov._tool_view == "detail":
+                    if ov._scroll_focus == "input":
+                        ov._input_scroll = max(0, ov._input_scroll - 1)
+                    else:
+                        ov._right_scroll = max(0, ov._right_scroll - 1)
+                    return
 
-        @kb.add("k")
-        @kb.add("pageup")
-        def _su(event):
-            if ov._tool_view == "detail" and ov._scroll_focus == "input":
-                ov._input_scroll = max(0, ov._input_scroll - 5)
-            else:
-                ov._right_scroll = max(0, ov._right_scroll - 5)
+                # Tool-Liste innerhalb Iter
+                if ov._selected_iter is not None:
+                    ov._selected_tool_idx = max(0, ov._selected_tool_idx - 1)
+                    return
 
+                # Iter-Liste: zwei Modi
+                if ov._iter_scroll_focus == "final":
+                    # In Final Answer scrollen
+                    ov._final_scroll = max(0, ov._final_scroll - 1)
+                else:
+                    # Iter-Cursor hoch + Content-Scroll anpassen
+                    ov._right_iter_cursor = max(0, ov._right_iter_cursor - 1)
+                    ov._right_scroll = max(0, ov._right_scroll - 1)
+                return
+
+            # Links: Task-Nav
+            items = ov._left_items()
+            if not items:
+                return
+            cur = (ov._selected, ov._selected_sub)
+            idx = items.index(cur) if cur in items else 0
+            ov._selected, ov._selected_sub = items[(idx - 1) % len(items)]
+            ov._selected_iter = None
+            ov._tool_view = "list"
+            ov._right_scroll = 0
+            ov._right_iter_cursor = 0
+            ov._final_scroll = 0
+
+        @kb.add("down")
+        def _nav_down(event):
+            if ov._focus == "right":
+                # Tool-Detail
+                if ov._selected_iter is not None and ov._tool_view == "detail":
+                    if ov._scroll_focus == "input":
+                        ov._input_scroll += 1  # Begrenzung via render
+                    else:
+                        ov._right_scroll += 1
+                    return
+
+                # Tool-Liste
+                if ov._selected_iter is not None:
+                    tv = ov._effective_view()
+                    iv = tv._iter_map.get(ov._selected_iter) if tv else None
+                    max_idx = len(iv.tools) - 1 if iv and iv.tools else 0
+                    ov._selected_tool_idx = min(max_idx, ov._selected_tool_idx + 1)
+                    return
+
+                # Iter-Liste
+                if ov._iter_scroll_focus == "final":
+                    max_fs = ov._max_scroll(ov._last_final_lines, 12)
+                    ov._final_scroll = min(max_fs, ov._final_scroll + 1)
+                else:
+                    tv = ov._effective_view()
+                    n = len(tv.iterations) if tv else 0
+                    ov._right_iter_cursor = min(max(n - 1, 0), ov._right_iter_cursor + 1)
+                    max_is = ov._max_scroll(ov._last_content_lines, ov._visible_height)
+                    ov._right_scroll = min(max_is, ov._right_scroll + 1)
+                return
+
+            # Links
+            items = ov._left_items()
+            if not items:
+                return
+            cur = (ov._selected, ov._selected_sub)
+            idx = items.index(cur) if cur in items else -1
+            ov._selected, ov._selected_sub = items[(idx + 1) % len(items)]
+            ov._selected_iter = None
+            ov._tool_view = "list"
+            ov._right_scroll = 0
+            ov._right_iter_cursor = 0
+            ov._final_scroll = 0
+
+        # ── o/l: Scroll-Fokus wechseln ──────────────────────────────────────
         @kb.add("o")
         @kb.add("s-up")
         @kb.add("s-left")
-        def _focus_input(event):
+        def _focus_prev_region(event):
             if ov._tool_view == "detail":
                 ov._scroll_focus = "input"
+            elif ov._selected_iter is None:
+                # Iter-Liste: toggle iter ↔ final
+                ov._iter_scroll_focus = "iter"
 
         @kb.add("l")
         @kb.add("s-down")
         @kb.add("s-right")
-        def _focus_result(event):
+        def _focus_next_region(event):
             if ov._tool_view == "detail":
                 ov._scroll_focus = "result"
+            elif ov._selected_iter is None:
+                tv = ov._effective_view()
+                # Nur in final wechseln wenn's was gibt
+                if tv and tv.final_answer:
+                    ov._iter_scroll_focus = "final"
+
+        # ── j/k: 5-Zeilen-Jumps (Power-User) ────────────────────────────────
+        @kb.add("j")
+        @kb.add("pagedown")
+        def _sd(event):
+            if ov._tool_view == "detail":
+                if ov._scroll_focus == "input":
+                    ov._input_scroll += 5
+                else:
+                    ov._right_scroll += 5
+            elif ov._selected_iter is None and ov._iter_scroll_focus == "final":
+                max_fs = ov._max_scroll(ov._last_final_lines, 12)
+                ov._final_scroll = min(max_fs, ov._final_scroll + 5)
+            else:
+                max_is = ov._max_scroll(ov._last_content_lines, ov._visible_height)
+                ov._right_scroll = min(max_is, ov._right_scroll + 5)
+
+        @kb.add("k")
+        @kb.add("pageup")
+        def _su(event):
+            if ov._tool_view == "detail":
+                if ov._scroll_focus == "input":
+                    ov._input_scroll = max(0, ov._input_scroll - 5)
+                else:
+                    ov._right_scroll = max(0, ov._right_scroll - 5)
+            elif ov._selected_iter is None and ov._iter_scroll_focus == "final":
+                ov._final_scroll = max(0, ov._final_scroll - 5)
+            else:
+                ov._right_scroll = max(0, ov._right_scroll - 5)
+
 
         # ── Direkt zu Iter 1-9 springen ─────────────────────────────────────
         for n in range(1, 10):
@@ -4204,6 +4429,16 @@ class ISAA_Host:
         for feature in ALL_FEATURES.values():
             feature(self.feature_manager)
 
+        try:
+            from toolboxv2.mods.icli_web import IcliWebClient
+            c_print("="*20)
+            IcliWebClient.get().attach(self)
+            c_print("="*20)
+        except Exception as e:
+            from traceback import format_exc
+            c_print(f"WEB ERRRO {format_exc()}")
+            self.app.logger.warning(f"icli_web not available: {e}")
+
     def _build_audio_player(self) -> AudioStreamPlayer:
         """(Re)baut den AudioStreamPlayer aus den aktuellen icli-Einstellungen."""
         cfg = TTSConfig(
@@ -4284,29 +4519,26 @@ class ISAA_Host:
         sub_id = chunk.get("_sub_agent_id", "")
 
         if sub_id:
-            # Sicherstellen dass Eltern-TV den Sub-Agent kennt (für linkes Panel)
+            # Nicht-Swarm-Subagents: wie bisher als geschachtelte TaskView
+            # (nur in Detail-View sichtbar, nicht im Footer)
             tv._sub_color(sub_id)
-
-            # Eigene TaskView für Sub-Agent anlegen falls noch nicht vorhanden
             sub_task_id = tv.sub_task_ids.get(sub_id)
             if sub_task_id is None:
                 sub_task_id = f"{task_id}__sub__{sub_id}"
                 tv.sub_task_ids[sub_id] = sub_task_id
-                sub_tv = TaskView(
+                self._task_views[sub_task_id] = TaskView(
                     task_id=sub_task_id,
                     agent_name=sub_id,
                     query=f"[sub] {tv.query[:60]}",
+                    is_swarm_sub=False,  # kein Swarm — normaler Sub
+                    swarm_parent_id=task_id,
                 )
-                self._task_views[sub_task_id] = sub_tv
 
             sub_tv = self._task_views[sub_task_id]
-            # _sub_agent_id entfernen → ingest behandelt es als direkten Chunk
             chunk_for_sub = {k: v for k, v in chunk.items() if k != "_sub_agent_id"}
             ingest_chunk(sub_tv, chunk_for_sub)
-            # Eltern-TV bekommt KEINEN Iterations-Eintrag mehr für Sub-Chunks
         else:
-            ingest_chunk(tv, chunk)  # normale Chunks
-            # Wenn Haupt-Task terminal → Sub-TaskViews mitabschließen
+            ingest_chunk(tv, chunk)
             if tv.status in ("completed", "failed", "error") and chunk.get("type") in ("done", "error", "final_answer"):
                 for sub_task_id in tv.sub_task_ids.values():
                     sub_tv = self._task_views.get(sub_task_id)
@@ -5997,7 +6229,23 @@ class ISAA_Host:
         )
 
         # Coder Mode Indicator
+        # Cleanup: Sub-TaskViews + Executions entfernen
         if self.active_coder:
+            parent_tv = None
+            for tid, tv in list(self._task_views.items()):
+                if tv.is_swarm_summary and not tv.is_swarm_sub:
+                    parent_tv = tv
+                    break
+
+            if parent_tv:
+                for sub_tid in list(parent_tv.sub_task_ids.values()):
+                    # Aus TaskViews + Executions entfernen
+                    self._task_views.pop(sub_tid, None)
+                    exc = self.all_executions.get(sub_tid)
+                    if exc:
+                        if exc.status == "running":
+                            exc.status = "cancelled"
+                        # Nach kurzer Zeit aus all_executions entfernen oder als done markieren
             mode_indicator = f"<style fg='ansimagenta'>[CODER:{Path(self.active_coder_path).name}]</style>"
             agent_indicator = ""
         else:
@@ -9258,7 +9506,8 @@ class ISAA_Host:
             if not self.active_coder:
                 print_status("Coder Mode is not active.", "warning")
                 return
-            # Warn about pending changes
+
+            # Warn about pending changes (bestehender Code)
             try:
                 pending = await self.active_coder.worktree.changed_files()
                 if pending:
@@ -9266,14 +9515,30 @@ class ISAA_Host:
                     for f in pending[:10]:
                         c_print(f"  - {f}")
                     if len(pending) > 10:
-                        c_print(f"  ... and {len(pending)-10} more")
+                        c_print(f"  ... and {len(pending) - 10} more")
             except Exception:
                 pass
+
             try:
                 await self.active_coder.cleanup_agents()
             except Exception:
                 pass
-            # ── Cleanup child task views ──
+
+            # ── NEU: Swarm-Sub-TaskViews bereinigen ──
+            parent_tv = None
+            for tid, tv in list(self._task_views.items()):
+                if tv.is_swarm_summary and not tv.is_swarm_sub:
+                    parent_tv = tv
+                    break
+
+            if parent_tv:
+                for sub_tid in list(parent_tv.sub_task_ids.values()):
+                    self._task_views.pop(sub_tid, None)
+                    exc = self.all_executions.get(sub_tid)
+                    if exc and exc.status == "running":
+                        exc.status = "cancelled"
+
+            # Bestehender Cleanup
             parent_prefix = None
             for tid, exc in list(self.all_executions.items()):
                 if exc.kind == "coder_sub":
@@ -9335,59 +9600,119 @@ class ISAA_Host:
                 # Sub-Agent Task-View Management
                 _sub_task_ids: dict[str, str] = {}  # agent_name → child_task_id
 
+                # ── Summary-Flag auf Parent-TaskView setzen ──
+                # (passiert NACHDEM _create_execution die TaskView angelegt hat)
+
                 def _coder_chunk_router(chunk: dict):
                     parent_tid = _tid_holder[0]
                     if not parent_tid:
                         return
 
-                    sub_agent = chunk.get("sub_agent")
-                    chunk_type = chunk.get("type", "")
-
-                    # Sub-agent lifecycle
-                    if chunk_type == "sub_agent_start" and sub_agent:
-                        # Create child TaskView
-                        child_tid = f"{parent_tid}::{sub_agent}"
-                        _sub_task_ids[sub_agent] = child_tid
-
-                        self._task_views[child_tid] = TaskView(
-                            task_id=child_tid,
-                            agent_name=sub_agent,
-                            query=chunk.get("query", "")[:80],
-                        )
-                        # Register as lightweight execution (no async_task — parent owns lifecycle)
-                        self.all_executions[child_tid] = ExecutionTask(
-                            task_id=child_tid,
-                            agent_name=sub_agent,
-                            query=chunk.get("query", "")[:80],
-                            kind="coder_sub",
-                            async_task=None,  # Parent controls lifecycle
-                            is_focused=False,
-                        )
-                        self._ingest_chunk(child_tid, {"type": "status", "status": "running"})
+                    parent_tv = self._task_views.get(parent_tid)
+                    if parent_tv is None:
                         return
 
-                    if chunk_type == "sub_agent_done" and sub_agent:
-                        child_tid = _sub_task_ids.get(sub_agent)
-                        if child_tid:
-                            exc = self.all_executions.get(child_tid)
+                    # Summary-Flag lazy setzen (beim ersten Chunk ist die TaskView garantiert da)
+                    if not parent_tv.is_swarm_summary:
+                        parent_tv.is_swarm_summary = True
+                        parent_tv.agent_name = "coder_swarm"
+                        parent_tv.swarm_phase = "init"
+
+                    ctype = chunk.get("type", "")
+                    sub_agent = chunk.get("_sub_agent_id", "")
+
+                    # ═══ Swarm-Phase auf Summary ═══
+                    if ctype == "swarm_phase":
+                        parent_tv.swarm_phase = chunk.get("swarm_phase", "")
+                        info = chunk.get("swarm_info", "")
+                        parent_tv.narrator_msg = (f"🐝 {parent_tv.swarm_phase}: {info}"
+                                                  if info else f"🐝 {parent_tv.swarm_phase}")
+                        # No-op ingest auf Parent → triggert invalidate
+                        self._ingest_chunk(parent_tid, {"type": "status", "status": parent_tv.status})
+                        return
+
+                    # ═══ Sub-Agent Start: eigene Top-Level-TaskView ═══
+                    if ctype == "swarm_sub_start" and sub_agent:
+                        sub_tid = f"swarm_sub::{sub_agent}"
+                        if sub_tid not in self._task_views:
+                            self._task_views[sub_tid] = TaskView(
+                                task_id=sub_tid,
+                                agent_name=sub_agent,
+                                query=chunk.get("query", "")[:80],
+                                is_swarm_sub=True,
+                                swarm_parent_id=parent_tid,
+                                max_iter=chunk.get("max_iter", 0),
+                            )
+                            parent_tv.sub_task_ids[sub_agent] = sub_tid
+                            parent_tv.sub_agents[sub_agent] = 0  # 0 = running
+                            parent_tv._sub_color(sub_agent)
+
+                            # Lightweight execution (kein async_task — Parent kontrolliert Lifecycle)
+                            self.all_executions[sub_tid] = ExecutionTask(
+                                task_id=sub_tid,
+                                agent_name=sub_agent,
+                                query=chunk.get("query", "")[:80],
+                                kind="coder_sub",
+                                async_task=None,
+                                is_focused=False,
+                            )
+                        self._ingest_chunk(sub_tid, {"type": "status", "status": "running"})
+                        return
+
+                    # ═══ Sub-Agent Done ═══
+                    if ctype == "swarm_sub_done" and sub_agent:
+                        sub_tid = parent_tv.sub_task_ids.get(sub_agent)
+                        if sub_tid:
+                            parent_tv.sub_agents[sub_agent] = 1  # 1 = done
+                            sub_tv = self._task_views.get(sub_tid)
+                            if sub_tv and sub_tv.status == "running":
+                                sub_tv.status = "completed"
+                                sub_tv.completed_at = time.time()
+                            exc = self.all_executions.get(sub_tid)
                             if exc:
                                 exc.status = "completed"
-                            tv = self._task_views.get(child_tid)
-                            if tv:
-                                tv.status = "completed"
-                            # safe ascii-only chunk
-                            self._ingest_chunk(child_tid, {"type": "done", "success": True})
+                            self._ingest_chunk(sub_tid, {"type": "status", "status": "completed"})
                         return
 
-                    # Route regular chunks to both parent AND child
+                    # ═══ Reguläre Chunks mit Sub-Agent-Tag ═══
+                    if sub_agent:
+                        sub_tid = parent_tv.sub_task_ids.get(sub_agent)
+                        if sub_tid:
+                            clean_chunk = {k: v for k, v in chunk.items()
+                                           if k not in ("_sub_agent_id", "_swarm_phase")}
+                            self._ingest_chunk(sub_tid, clean_chunk)
+
+                            # ── Aggregation: Parent-Summary aus allen Sub-TaskViews ableiten ──
+                            sub_tvs = [
+                                self._task_views[stid]
+                                for stid in parent_tv.sub_task_ids.values()
+                                if stid in self._task_views
+                            ]
+                            if sub_tvs:
+                                parent_tv.iteration = sum(s.iteration for s in sub_tvs)
+                                parent_tv.max_iter = sum(s.max_iter for s in sub_tvs)
+                                parent_tv.tokens_used = sum(s.tokens_used for s in sub_tvs)
+                                parent_tv.tokens_max = sum(s.tokens_max for s in sub_tvs)
+
+                                # Phase/Tool vom aktivsten Sub übernehmen
+                                active = next((s for s in sub_tvs if s.status == "running"), None)
+                                if active:
+                                    parent_tv.phase = active.phase
+                                    parent_tv.last_tool = active.last_tool
+                                    parent_tv.last_tool_ok = active.last_tool_ok
+                                    parent_tv.last_tool_info = active.last_tool_info
+
+                            # Sub-Status-Flag pflegen
+                            if ctype in ("done", "final_answer"):
+                                parent_tv.sub_agents[sub_agent] = 1
+                            elif ctype == "error":
+                                parent_tv.sub_agents[sub_agent] = 2
+                        return
+
+                    # ═══ Chunks ohne Sub-Tag → Parent direkt ═══
                     self._ingest_chunk(parent_tid, chunk)
 
-                    if sub_agent and sub_agent in _sub_task_ids:
-                        child_tid = _sub_task_ids[sub_agent]
-                        self._ingest_chunk(child_tid, chunk)
-
                 self.active_coder.row_chunk_fun = _coder_chunk_router
-
                 # 3. Hintergrund-Task Wrapper für den Coder
                 async def _run_coder_bg():
                     result = await self.active_coder.execute(task_prompt)
@@ -9420,7 +9745,12 @@ class ISAA_Host:
                 )
                 _tid_holder[0] = exc.task_id
 
-                # 5. Standard ISAA Task-Lifecycle anhängen (verarbeitet Focus & UI Updates bei Abschluss)
+                parent_tv = self._task_views.get(exc.task_id)
+                if parent_tv:
+                    parent_tv.is_swarm_summary = True
+                    parent_tv.agent_name = "coder_swarm"
+
+                    # 5. Standard ISAA Task-Lifecycle anhängen (verarbeitet Focus & UI Updates bei Abschluss)
                 async_task.add_done_callback(
                     lambda fut: self._on_agent_task_done(exc.task_id, fut)
                 )
@@ -10348,6 +10678,102 @@ class ISAA_Host:
             print_status(f"Error: {e}", "error")
             import traceback
             c_print(traceback.format_exc())
+
+    # ─── Add to ICli class ────────────────────────────────────────────────────────
+
+    async def run_agent_for_web(self, agent_name: str, query: str):
+        """
+        Web-facing agent entry point.
+
+        Uses the same execution pipeline as _handle_agent_interaction but:
+          - kind="web" (Zen+ / monitor filtering)
+          - take_focus=False (web queries don't steal terminal focus)
+          - should_speak=False (TTS is done web-side via AudioStreamPlayer
+                                in icli_web.client, not self.audio_player)
+
+        Yields raw stream chunks to the caller (icli_web.client.IcliWebClient)
+        while simultaneously feeding _drain_agent_stream which updates
+        _task_views and publishes to the registry.
+
+        Cancellation: if the caller cancels (browser disconnect), we cancel
+        the drain task too so the agent stops burning tokens.
+        """
+        try:
+            agent = await self.isaa_tools.get_agent(agent_name)
+        except Exception as e:
+            # Surface the error through the stream protocol
+            yield {"type": "error", "message": f"agent '{agent_name}': {e}"}
+            return
+
+        # Original agent stream
+        original_stream = agent.a_stream(
+            query=query,
+            session_id=self.active_session_id,
+            max_iterations=self.max_iteration,
+        )
+
+        # Tee: both _drain_agent_stream AND our caller see every chunk.
+        import asyncio
+        web_queue: asyncio.Queue = asyncio.Queue(maxsize=512)
+
+        async def tee_stream():
+            try:
+                async for chunk in original_stream:
+                    try:
+                        web_queue.put_nowait(chunk)
+                    except asyncio.QueueFull:
+                        # Drop oldest to make room — web view is best-effort,
+                        # monitor is authoritative
+                        try:
+                            web_queue.get_nowait()
+                        except Exception:
+                            pass
+                        try:
+                            web_queue.put_nowait(chunk)
+                        except Exception:
+                            pass
+                    yield chunk
+            finally:
+                await web_queue.put(None)  # sentinel
+
+        stream = tee_stream()
+
+        # Register execution via the canonical factory — same as chat path.
+        exc = self._create_execution(
+            kind="web",
+            agent_name=agent_name,
+            query=query,
+            async_task=None,
+            stream=stream,
+            take_focus=False,
+        )
+        task_id = exc.task_id
+
+        # Drain consumer (handles _ingest_chunk → registry → monitor SSE)
+        async_task = asyncio.create_task(
+            self._drain_agent_stream(task_id, stream, should_speak=False)
+        )
+        exc.async_task = async_task
+        async_task.add_done_callback(
+            lambda fut: self._on_agent_task_done(task_id, fut)
+        )
+
+        # Yield chunks to the web client until sentinel or cancellation
+        try:
+            while True:
+                chunk = await web_queue.get()
+                if chunk is None:
+                    break
+                yield chunk
+        except asyncio.CancelledError:
+            # Browser disconnected or orb explicitly cancelled
+            if not async_task.done():
+                async_task.cancel()
+            raise
+        except Exception:
+            if not async_task.done():
+                async_task.cancel()
+            raise
 
     # =========================================================================
     # UNIFIED EXECUTION FACTORY

@@ -32,6 +32,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
@@ -107,8 +108,370 @@ class GlobalVFSManager:
         # Registry: welche VFS Instanzen haben /global/ gemountet
         self._mounted_vfs: dict[str, "VirtualFileSystemV2"] = {}
 
+        # EBENE 3: In-Memory Shared Store für /global/
+        # relative_path (z.B. "data/config.json") → {content, mtime, author, version}
+        # Alle VFS-Instanzen die /global/ gemountet haben, sehen denselben Dict.
+        # Verhindert Disk-Roundtrip für Multi-Agent-Reads im selben Prozess.
+        self._shared_store: dict[str, dict] = {}
+        self._store_lock = threading.RLock()
+
+        # Monotone Version für Change-Detection ohne mtime-Granularität
+        self._version_counter = 0
+
+        # Subscribers für reaktive Benachrichtigung (optional)
+        # key: relative_path or "*" for all | value: list of callables(event_dict)
+        self._subscribers: dict[str, list] = {}
+
+        # Ebene 3b: Registry für zusätzliche Shared-Mounts (nicht /global/)
+        # local_path → {"mount_key": str, "hydrated": bool}
+        self._extra_mounts: dict[str, dict] = {}
+
+        # Initial-Load: Disk-Content in Shared-Store ziehen
+        self._hydrate_from_disk()
+
         self._initialized = True
 
+    # =====================================================================
+    # EBENE 3: Shared-Store Internals
+    # =====================================================================
+
+    def _hydrate_from_disk(self) -> None:
+        """Beim Start: vorhandene Disk-Dateien in den Shared-Store laden."""
+        if not self.data_dir.exists():
+            return
+        with self._store_lock:
+            for root, _, files in os.walk(self.data_dir):
+                for filename in files:
+                    full = os.path.join(root, filename)
+                    try:
+                        rel = os.path.relpath(full, self.data_dir).replace(os.sep, "/")
+                        stat = os.stat(full)
+                        content = Path(full).read_text(encoding="utf-8", errors="replace")
+                        self._version_counter += 1
+                        self._shared_store[rel] = {
+                            "content": content,
+                            "mtime": stat.st_mtime,
+                            "author": None,
+                            "version": self._version_counter,
+                        }
+                    except (OSError, UnicodeError):
+                        continue
+
+    def _bump_version(self) -> int:
+        with self._store_lock:
+            self._version_counter += 1
+            return self._version_counter
+
+    def _notify(self, event: dict) -> None:
+        """Broadcast an alle passenden Subscribers. Exceptions werden geschluckt."""
+        path = event.get("path", "")
+        targets = []
+        with self._store_lock:
+            if path in self._subscribers:
+                targets.extend(self._subscribers[path])
+            if "*" in self._subscribers:
+                targets.extend(self._subscribers["*"])
+        for cb in targets:
+            try:
+                cb(event)
+            except Exception:
+                pass
+
+    def subscribe(self, path: str, callback) -> None:
+        """
+        Registriere Callback für Shared-Store-Events.
+
+        path: relativer /global/-Pfad (z.B. "tasks.md") oder "*" für alle
+        callback: callable(event_dict) — event hat keys: type, path, author, version
+        """
+        with self._store_lock:
+            self._subscribers.setdefault(path, []).append(callback)
+
+    def unsubscribe(self, path: str, callback) -> None:
+        with self._store_lock:
+            if path in self._subscribers:
+                try:
+                    self._subscribers[path].remove(callback)
+                except ValueError:
+                    pass
+                if not self._subscribers[path]:
+                    del self._subscribers[path]
+
+    def get_shared(self, relative_path: str) -> dict | None:
+        """Thread-safe getter auf den Shared-Store. Gibt Copy zurück."""
+        with self._store_lock:
+            entry = self._shared_store.get(relative_path)
+            return dict(entry) if entry else None
+
+    def has_shared(self, relative_path: str) -> bool:
+        with self._store_lock:
+            return relative_path in self._shared_store
+
+    def invalidate_vfs_caches(self, relative_path: str) -> None:
+        """
+        Markiere die entsprechende Datei in allen gemounteten VFS-Instanzen
+        als invalid (Content = None). Nächstes read() zieht aus Shared-Store.
+        """
+        vfs_file_path = f"{GLOBAL_VFS_PATH}/{relative_path}"
+        for vfs in list(self._mounted_vfs.values()):
+            f = vfs.files.get(vfs_file_path)
+            if f is None:
+                continue
+            if getattr(f, "is_dirty", False):
+                continue  # Agent-Arbeit nicht überschreiben
+            try:
+                f._content = None
+                from toolboxv2.mods.isaa.base.Agent.vfs_v2 import FileBackingType
+                f.backing_type = FileBackingType.SHADOW
+                vfs._dirty = True
+            except Exception:
+                pass
+
+    # =====================================================================
+    # EBENE 3b: Generic Shared-Mount API (für CoderAgent Worktrees etc.)
+    # =====================================================================
+
+    def register_shared_mount(
+        self,
+        local_path: str,
+        mount_key: str | None = None,
+        hydrate: bool = True,
+    ) -> str:
+        """
+        Registriert einen lokalen Pfad als Shared-Mount.
+
+        Mehrere VFS-Instanzen die denselben local_path mounten, teilen
+        dann den Content-Cache im Shared-Store — Reads/Writes gehen durch
+        den gemeinsamen RAM-Store, kein Disk-Roundtrip im selben Prozess.
+
+        Args:
+            local_path: Absoluter lokaler Pfad
+            mount_key: Identifier (default: hash des Pfads)
+            hydrate: Wenn True, werden vorhandene Disk-Dateien sofort geladen
+
+        Returns:
+            mount_key (zum Referenzieren in get/write/read Operations)
+        """
+        abs_path = str(Path(local_path).resolve())
+        if mount_key is None:
+            mount_key = "mnt-" + hashlib.sha256(abs_path.encode()).hexdigest()[:12]
+
+        with self._store_lock:
+            if abs_path in self._extra_mounts:
+                return self._extra_mounts[abs_path]["mount_key"]
+            self._extra_mounts[abs_path] = {
+                "mount_key": mount_key,
+                "hydrated": False,
+            }
+
+        if hydrate:
+            self._hydrate_extra_mount(abs_path)
+
+        return mount_key
+
+    def unregister_shared_mount(self, local_path: str) -> None:
+        """Entferne Shared-Mount + alle zugehörigen Store-Einträge."""
+        abs_path = str(Path(local_path).resolve())
+        with self._store_lock:
+            info = self._extra_mounts.pop(abs_path, None)
+            if info is None:
+                return
+            prefix = f"{info['mount_key']}::"
+            keys_to_drop = [k for k in self._shared_store if k.startswith(prefix)]
+            for k in keys_to_drop:
+                del self._shared_store[k]
+
+    def get_mount_key_for(self, local_path: str) -> str | None:
+        """Finde mount_key für einen lokalen Pfad. None wenn nicht registriert."""
+        abs_path = str(Path(local_path).resolve())
+        with self._store_lock:
+            info = self._extra_mounts.get(abs_path)
+            return info["mount_key"] if info else None
+
+    def _hydrate_extra_mount(self, abs_path: str) -> None:
+        """Lade vorhandene Disk-Dateien eines Extra-Mounts in den Store."""
+        info = self._extra_mounts.get(abs_path)
+        if not info:
+            return
+        mount_key = info["mount_key"]
+        base = Path(abs_path)
+        if not base.exists():
+            return
+
+        exclude = {".git", "__pycache__", "node_modules", ".venv", "venv",
+                   ".pytest_cache", ".mypy_cache"}
+
+        with self._store_lock:
+            for root, dirs, files in os.walk(base):
+                dirs[:] = [d for d in dirs if d not in exclude]
+                for filename in files:
+                    full = Path(root) / filename
+                    try:
+                        rel = str(full.relative_to(base)).replace(os.sep, "/")
+                        stat = full.stat()
+                        if stat.st_size > 1024 * 1024 * 5:  # Skip >5MB
+                            continue
+                        content = full.read_text(encoding="utf-8", errors="replace")
+                        self._version_counter += 1
+                        self._shared_store[f"{mount_key}::{rel}"] = {
+                            "content": content,
+                            "mtime": stat.st_mtime,
+                            "author": None,
+                            "version": self._version_counter,
+                        }
+                    except (OSError, UnicodeError):
+                        continue
+            info["hydrated"] = True
+
+    def shared_write(
+        self,
+        mount_key: str,
+        relative_path: str,
+        content: str,
+        local_base: str,
+        author: str | None = None,
+    ) -> dict:
+        """
+        Write in einen generischen Shared-Mount.
+
+        Analog zu write_file() aber für nicht-global-Mounts.
+        Schreibt auf Disk UND in den Store, broadcasted, invalidiert Caches.
+        """
+        if ".." in relative_path:
+            return {"success": False, "error": "Path traversal not allowed"}
+
+        full_path = Path(local_base) / relative_path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            full_path.write_text(content, encoding="utf-8")
+            stat = full_path.stat()
+
+            store_key = f"{mount_key}::{relative_path}"
+            with self._store_lock:
+                self._version_counter += 1
+                version = self._version_counter
+                self._shared_store[store_key] = {
+                    "content": content,
+                    "mtime": stat.st_mtime,
+                    "author": author,
+                    "version": version,
+                }
+
+            # Invalidate VFS caches für alle Instanzen die diesen Mount haben
+            self._invalidate_extra_mount_caches(mount_key, relative_path)
+
+            # Broadcast
+            self._notify({
+                "type": "write",
+                "mount_key": mount_key,
+                "path": relative_path,
+                "author": author,
+                "version": version,
+            })
+
+            return {"success": True, "version": version, "path": relative_path}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def shared_read(self, mount_key: str, relative_path: str) -> dict | None:
+        """Read aus generischem Shared-Mount. None wenn kein Store-Hit."""
+        store_key = f"{mount_key}::{relative_path}"
+        with self._store_lock:
+            entry = self._shared_store.get(store_key)
+            return dict(entry) if entry else None
+
+    def shared_delete(
+        self,
+        mount_key: str,
+        relative_path: str,
+        local_base: str,
+    ) -> dict:
+        """Delete aus generischem Shared-Mount."""
+        if ".." in relative_path:
+            return {"success": False, "error": "Path traversal not allowed"}
+
+        full_path = Path(local_base) / relative_path
+
+        try:
+            if full_path.exists():
+                if full_path.is_dir():
+                    shutil.rmtree(full_path)
+                else:
+                    full_path.unlink()
+
+            store_key = f"{mount_key}::{relative_path}"
+            with self._store_lock:
+                self._shared_store.pop(store_key, None)
+                # Sub-pfade bei Dir-Delete
+                prefix = f"{mount_key}::{relative_path}/"
+                to_drop = [k for k in self._shared_store if k.startswith(prefix)]
+                for k in to_drop:
+                    del self._shared_store[k]
+                self._version_counter += 1
+                version = self._version_counter
+
+            self._invalidate_extra_mount_caches(mount_key, relative_path, is_delete=True)
+
+            self._notify({
+                "type": "delete",
+                "mount_key": mount_key,
+                "path": relative_path,
+                "version": version,
+            })
+
+            return {"success": True, "deleted": relative_path}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def _invalidate_extra_mount_caches(
+        self,
+        mount_key: str,
+        relative_path: str,
+        is_delete: bool = False,
+    ) -> None:
+        """
+        Alle VFS-Instanzen die einen Mount mit passendem local_path haben,
+        bekommen den entsprechenden File-Cache invalidiert bzw. entfernt.
+        """
+        # Finde abs_path zu mount_key
+        target_abs = None
+        with self._store_lock:
+            for abs_path, info in self._extra_mounts.items():
+                if info["mount_key"] == mount_key:
+                    target_abs = abs_path
+                    break
+        if target_abs is None:
+            return
+
+        # Iteriere über alle registrierten VFS-Instanzen
+        for vfs in list(self._mounted_vfs.values()):
+            # Finde den Mount-Point in diesem VFS der auf target_abs zeigt
+            for vfs_path, mount in list(vfs.mounts.items()):
+                try:
+                    if str(Path(mount.local_path).resolve()) != target_abs:
+                        continue
+                except Exception:
+                    continue
+
+                vfs_file_path = f"{vfs_path.rstrip('/')}/{relative_path}"
+                f = vfs.files.get(vfs_file_path)
+
+                if is_delete:
+                    if f is not None and not getattr(f, "is_dirty", False):
+                        vfs.files.pop(vfs_file_path, None)
+                        vfs._shadow_index.pop(vfs_file_path, None)
+                        vfs._dirty = True
+                else:
+                    if f is None or getattr(f, "is_dirty", False):
+                        continue
+                    try:
+                        from toolboxv2.mods.isaa.base.Agent.vfs_v2 import FileBackingType
+                        f._content = None
+                        f.backing_type = FileBackingType.SHADOW
+                        vfs._dirty = True
+                    except Exception:
+                        pass
     @property
     def local_path(self) -> str:
         """Lokaler Pfad für den globalen Ordner"""
@@ -128,18 +491,22 @@ class GlobalVFSManager:
         """Gibt alle registrierten VFS Instanzen zurück"""
         return list(self._mounted_vfs.values())
 
-    def write_file(self, relative_path: str, content: str) -> dict:
+    def write_file(self, relative_path: str, content: str, author: str | None = None) -> dict:
         """
         Schreibt eine Datei in den globalen Ordner.
+
+        EBENE 3: Schreibt in Shared-Store (RAM) UND auf Disk.
+        Andere Agents sehen die Änderung sofort über den Shared-Store,
+        ohne auf den nächsten Poll-Tick warten zu müssen.
 
         Args:
             relative_path: Pfad relativ zu /global/ (z.B. "data/config.json")
             content: Dateiinhalt
+            author: Optional Agent-Name für Audit-Trail
 
         Returns:
             Result dict
         """
-        # Sicherheitscheck
         if ".." in relative_path:
             return {"success": False, "error": "Path traversal not allowed"}
 
@@ -147,12 +514,38 @@ class GlobalVFSManager:
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
+            # 1. Disk-Write zuerst (Crash-Safety — RAM ohne Disk wäre verloren)
             file_path.write_text(content, encoding="utf-8")
+            stat = file_path.stat()
+
+            # 2. Shared-Store updaten unter Lock
+            with self._store_lock:
+                self._version_counter += 1
+                version = self._version_counter
+                self._shared_store[relative_path] = {
+                    "content": content,
+                    "mtime": stat.st_mtime,
+                    "author": author,
+                    "version": version,
+                }
+
+            # 3. VFS-Caches anderer Agents invalidieren
+            self.invalidate_vfs_caches(relative_path)
+
+            # 4. Subscribers benachrichtigen
+            self._notify({
+                "type": "write",
+                "path": relative_path,
+                "author": author,
+                "version": version,
+            })
+
             return {
                 "success": True,
                 "path": f"{GLOBAL_VFS_PATH}/{relative_path}",
                 "local_path": str(file_path),
                 "size": len(content),
+                "version": version,
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -161,27 +554,48 @@ class GlobalVFSManager:
         """
         Liest eine Datei aus dem globalen Ordner.
 
-        Args:
-            relative_path: Pfad relativ zu /global/
-
-        Returns:
-            Result dict mit content
+        EBENE 3: Shared-Store wird zuerst geprüft (In-Process-Cache).
+        Disk ist Fallback für uninitialisierte Dateien.
         """
         if ".." in relative_path:
             return {"success": False, "error": "Path traversal not allowed"}
 
-        file_path = self.data_dir / relative_path
+        # 1. Shared-Store zuerst (schneller, keine Disk-IO)
+        with self._store_lock:
+            entry = self._shared_store.get(relative_path)
+            if entry is not None:
+                return {
+                    "success": True,
+                    "path": f"{GLOBAL_VFS_PATH}/{relative_path}",
+                    "content": entry["content"],
+                    "size": len(entry["content"]),
+                    "version": entry.get("version"),
+                    "author": entry.get("author"),
+                }
 
+        # 2. Fallback: von Disk laden und in Store einfügen
+        file_path = self.data_dir / relative_path
         if not file_path.exists():
             return {"success": False, "error": f"File not found: {relative_path}"}
 
         try:
             content = file_path.read_text(encoding="utf-8")
+            stat = file_path.stat()
+            with self._store_lock:
+                self._version_counter += 1
+                version = self._version_counter
+                self._shared_store[relative_path] = {
+                    "content": content,
+                    "mtime": stat.st_mtime,
+                    "author": None,
+                    "version": version,
+                }
             return {
                 "success": True,
                 "path": f"{GLOBAL_VFS_PATH}/{relative_path}",
                 "content": content,
                 "size": len(content),
+                "version": version,
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -230,6 +644,25 @@ class GlobalVFSManager:
                 shutil.rmtree(file_path)
             else:
                 file_path.unlink()
+            # EBENE 3: Shared-Store aufräumen + Broadcast
+            with self._store_lock:
+                removed = self._shared_store.pop(relative_path, None)
+                # Auch alle Sub-Pfade wenn es ein Dir war
+                to_drop = [
+                    k for k in self._shared_store
+                    if k.startswith(relative_path + "/")
+                ]
+                for k in to_drop:
+                    del self._shared_store[k]
+                self._version_counter += 1
+                version = self._version_counter
+
+            self._notify({
+                "type": "delete",
+                "path": relative_path,
+                "author": None,
+                "version": version,
+            })
 
             # VFS-Sync: alle registrierten Instanzen updaten
             vfs_path = f"{GLOBAL_VFS_PATH}/{relative_path}"

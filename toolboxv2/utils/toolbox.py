@@ -240,6 +240,7 @@ class App(AppType, metaclass=Singleton):
                    f"\n  {'ID':<8} -> {self.id}"
                    f"\n  {'Version':<8} -> {self.version}"
                    f"\n  {'PID':<8} -> {os.getpid()}"
+                   f"\n  {'Logger':<8} -> {logger_info_str}"
                    )
 
 
@@ -918,8 +919,7 @@ class App(AppType, metaclass=Singleton):
             instance = get_app(from_=f"fuction {specification}.{modular_id}.{function_id}")
 
         if instance is None and self.alive:
-            self.inplace_load_instance(modular_id, spec=specification)
-            instance = self.functions[modular_id].get(f"{specification}_instance")
+            instance = self.inplace_load_instance(modular_id, spec=specification)
 
         if instance is None:
             self.logger.warning("No live Instance found")

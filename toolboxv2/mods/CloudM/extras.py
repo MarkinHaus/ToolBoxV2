@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import quote
 from typing import Optional
 
-from toolboxv2 import TBEF, App, Code, Result, Style, get_app
+from toolboxv2 import TBEF, App, Code, Result, Style, get_app, tb_root_dir
 
 Name = 'CloudM'
 version = '0.1.0'
@@ -20,7 +20,6 @@ export = get_app(f"{Name}.EXPORT").tb
 no_test = export(mod_name=Name, test=False, version=version)
 test_only = export(mod_name=Name, test=True, version=version, test_only=True)
 to_api = export(mod_name=Name, api=True, version=version)
-
 
 # =================== UI Management ===================
 
@@ -204,7 +203,6 @@ from pathlib import Path
 @no_test
 def update_core(self, backup=False, name=""):
     """Update ToolBox core"""
-    from toolboxv2 import tb_root_dir
 
     # Sicherstellen, dass tb_home_dir ein Path-Objekt ist
     tb_home_dir = Path(tb_root_dir).parent
@@ -221,10 +219,11 @@ def update_core(self, backup=False, name=""):
         return (tb_home_dir / '.git').is_dir()
 
     if is_git_installed() and is_git_repository():
-        self.update_core_git(backup, name, tb_home_dir)
-    else:
-        self.update_core_pip(tb_home_dir)
 
+        update_core_git(self, backup, name, tb_home_dir)
+    else:
+
+        update_core_pip(self, tb_home_dir)
 
 def update_core_pip(self, tb_home_dir):
     """Update via pip"""
@@ -239,7 +238,6 @@ def update_core_pip(self, tb_home_dir):
         self.app.print_ok()
     except subprocess.CalledProcessError as e:
         print(f"Error updating via pip: {e}")
-
 
 def update_core_git(self, backup=False, name="base", tb_home_dir=None):
     """Update via git"""

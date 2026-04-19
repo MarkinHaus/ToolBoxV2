@@ -493,7 +493,7 @@ class ShadowMount:
             "*.log",
         ]
     )
-    max_file_size: int = 1024 * 1024  # 1MB
+    max_file_size: int = 1024 * 1024 * 1024  # 1GB
     readonly: bool = False
     auto_sync: bool = True  # Änderungen sofort schreiben
 
@@ -1402,10 +1402,11 @@ Session: {self.session_id}
     def create(self, path: str, content: str = "") -> dict:
         """
         Create a new file with mount-aware local file creation.
+
+        Note: content is written 1:1 — no escape-unescaping. Agent-input from
+        vfs_shell is already decoded via _decode_content before reaching here.
         """
         path = self._normalize_path(path)
-
-        content = unescape_string(content)
 
         if self._path_exists(path):
             if self._is_file(path) and self.files[path].readonly:
@@ -1481,7 +1482,44 @@ Session: {self.session_id}
             return {"success": False, "error": f"File not found: {path}"}
 
         f = self.files[path]
-
+        # EBENE 3: Für /global/-Pfade zuerst den Shared-Store prüfen.
+        # Das ist der schnellste Pfad für Multi-Agent-Reads im selben Prozess —
+        # keine Disk-IO, keine Poll-Wartezeit.
+        # EBENE 3: Für Shared-Mount-Pfade zuerst den Shared-Store prüfen.
+        # Gilt für /global/ UND für CoderAgent-Worktrees etc. die via
+        # GlobalVFSManager.register_shared_mount() registriert wurden.
+        if isinstance(f, VFSFile) and not f.is_dirty:
+            shared_info = self._get_shared_store_info(path)
+            if shared_info is not None:
+                mount_key, relative, _ = shared_info
+                try:
+                    from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
+                    gvfs = get_global_vfs()
+                    if mount_key == "global":
+                        shared = gvfs.get_shared(relative)
+                    else:
+                        shared = gvfs.shared_read(mount_key, relative)
+                    if shared is not None:
+                        f._content = shared["content"]
+                        f.local_mtime = shared["mtime"]
+                        f.size_bytes = len(shared["content"])
+                        f.line_count = len(shared["content"].splitlines())
+                        content = shared["content"]
+                        if len(content) > max_chars * 2.1:
+                            return {
+                                "success": True,
+                                "content": (
+                                    content[:max_chars]
+                                    + f"\n\n... [TRUNCATED: File is {len(content)} chars. "
+                                      "Use 'view' for specific lines] ..."
+                                    + content[-max_chars:]
+                                ),
+                                "truncated": True,
+                                "total_chars": len(content),
+                            }
+                        return {"success": True, "content": content}
+                except Exception:
+                    pass
         # Auto-refresh for system files with auto-refresh enabled
         if (isinstance(f, VFSFile) and f.readonly
             and getattr(f, "_auto_refresh", False)
@@ -1490,11 +1528,37 @@ Session: {self.session_id}
             if not refresh_result["success"]:
                 return refresh_result
 
-        # Auto-load for shadow files
+        # Auto-load for shadow files that were never loaded
         elif isinstance(f, VFSFile) and f.backing_type == FileBackingType.SHADOW and not f.is_loaded:
             load_result = self._load_shadow_content(path)
             if not load_result["success"]:
                 return load_result
+
+        # FIX #3: Auto-refresh for already-loaded shadow/modified files.
+        # Detects external changes (another agent wrote to disk).
+        # Does NOT refresh dirty files — agent has unsynced changes.
+        elif (
+            isinstance(f, VFSFile)
+            and f.local_path
+            and not f.is_dirty
+            and f.backing_type in (FileBackingType.SHADOW, FileBackingType.MODIFIED)
+            and f.is_loaded
+        ):
+            try:
+                disk_mtime = os.path.getmtime(f.local_path)
+                if f.local_mtime is None or disk_mtime > f.local_mtime:
+                    # Disk has newer version — reload
+                    reload_result = self._load_shadow_content(path)
+                    if reload_result.get("success"):
+                        # Restore MODIFIED→SHADOW since we just took disk as truth
+                        f.backing_type = FileBackingType.SHADOW
+            except OSError:
+                # File disappeared from disk — surface as error
+                return {
+                    "success": False,
+                    "error": f"Backing file missing: {f.local_path}",
+                    "hint": "File was deleted externally. Use vfs_refresh_mount to clean up."
+                }
 
         content = f.content
         if len(content) > max_chars*2.1:
@@ -1520,11 +1584,94 @@ Session: {self.session_id}
         if self._is_directory(path):
             return {"success": False, "error": f"Cannot write to directory: {path}"}
 
+        # EBENE 3: Writes auf Shared-Mounts (inkl. /global/ und Worktrees)
+        # gehen durch den Shared-Store → instant visible für alle Agents
+        # im selben Prozess.
+        shared_info = self._get_shared_store_info(path)
+        if shared_info is not None:
+            mount_key, relative, local_base = shared_info
+            try:
+                from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
+                gvfs = get_global_vfs()
+                if mount_key == "global":
+                    result = gvfs.write_file(
+                        relative, content, author=self.agent_name
+                    )
+                else:
+                    result = gvfs.shared_write(
+                        mount_key, relative, content,
+                        local_base=local_base,
+                        author=self.agent_name,
+                    )
+                if result.get("success"):
+                    f = self.files.get(path)
+                    if isinstance(f, VFSFile):
+                        f._content = content
+                        f.is_dirty = False
+                        f.backing_type = FileBackingType.SHADOW
+                        f.size_bytes = len(content)
+                        f.updated_at = datetime.now().isoformat()
+                    self._dirty = True
+                    return {
+                        "success": True,
+                        "message": f"Updated '{path}' via shared store",
+                        "version": result.get("version"),
+                    }
+            except Exception:
+                pass
+
+
         if self._is_file(path):
             f = self.files[path]
 
             if f.readonly:
                 return {"success": False, "error": f"Read-only: {path}"}
+
+            # FIX #4: Optimistic concurrency check.
+            # Detect external disk changes before overwriting.
+            if isinstance(f, VFSFile) and f.local_path and not f.is_dirty:
+                try:
+                    disk_mtime = os.path.getmtime(f.local_path)
+                    if (
+                        f.local_mtime is not None
+                        and disk_mtime > f.local_mtime
+                    ):
+                        # Disk has newer version — another writer modified it.
+                        # Reload transparently since we have no local changes
+                        # to lose. This gives the agent the latest baseline.
+                        reload_result = self._load_shadow_content(path)
+                        if reload_result.get("success"):
+                            f.backing_type = FileBackingType.SHADOW
+                except OSError:
+                    pass  # Disk file gone — write will re-create it
+
+            # FIX #4b: Hard conflict — agent has dirty content AND disk changed.
+            # Do not silently overwrite. Return a conflict error so the agent
+            # can decide (force-write by deleting-and-recreating, merge manually,
+            # or abort).
+            if isinstance(f, VFSFile) and f.local_path and f.is_dirty:
+                try:
+                    disk_mtime = os.path.getmtime(f.local_path)
+                    if (
+                        f.local_mtime is not None
+                        and disk_mtime > f.local_mtime
+                    ):
+                        return {
+                            "success": False,
+                            "error": f"Write conflict: {path} was modified externally",
+                            "conflict": True,
+                            "hint": (
+                                "Another agent or process modified this file on disk "
+                                "while you had unsynced changes. To resolve: "
+                                "(a) use vfs_shell('rm <path>') then re-create with your content "
+                                "to force-overwrite, or "
+                                "(b) vfs_shell('cat <path>') to see current disk content first."
+                            ),
+                            "disk_mtime": disk_mtime,
+                            "local_mtime": f.local_mtime,
+                        }
+                except OSError:
+                    pass
 
             # Update content
             if isinstance(f, VFSFile):
@@ -1594,6 +1741,46 @@ Session: {self.session_id}
             if path.startswith(mount_path):
                 return mount
         return None
+
+    def _get_shared_store_info(self, path: str) -> tuple[str, str, str] | None:
+        """
+        Prüft ob *path* zu einem Shared-Mount gehört.
+
+        Returns:
+            (mount_key, relative_path, local_base) — oder None wenn nicht shared.
+        """
+        # Spezialfall /global/ — immer shared via GlobalVFSManager
+        if path.startswith("/global/"):
+            try:
+                from toolboxv2.mods.isaa.base.patch.power_vfs import (
+                    get_global_vfs,
+                    GLOBAL_VFS_PATH,
+                )
+                relative = path[len(GLOBAL_VFS_PATH):].lstrip("/")
+                if not relative:
+                    return None
+                gvfs = get_global_vfs()
+                return ("global", relative, str(gvfs.data_dir))
+            except Exception:
+                return None
+
+        # Generische Shared-Mounts (Worktrees etc.)
+        mount = self._get_mount_for_path(path)
+        if mount is None:
+            return None
+        try:
+            from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
+            gvfs = get_global_vfs()
+            mount_key = gvfs.get_mount_key_for(mount.local_path)
+            if mount_key is None:
+                return None
+            # relative_path = path minus mount.vfs_path
+            relative = path[len(mount.vfs_path):].lstrip("/")
+            if not relative:
+                return None
+            return (mount_key, relative, mount.local_path)
+        except Exception:
+            return None
 
     def sync_all(self) -> dict:
         """
@@ -1718,6 +1905,30 @@ Session: {self.session_id}
             if self._is_directory(path):
                 return self.rmdir(path)
             return {"success": False, "error": f"File not found: {path}"}
+
+        # EBENE 3: /global/-Deletes gehen durch den Shared-Store
+        shared_info = self._get_shared_store_info(path)
+        if shared_info is not None:
+            mount_key, relative, local_base = shared_info
+            try:
+                from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
+                gvfs = get_global_vfs()
+                if mount_key == "global":
+                    result = gvfs.delete_file(relative)
+                else:
+                    result = gvfs.shared_delete(
+                        mount_key, relative, local_base=local_base
+                    )
+                if result.get("success"):
+                    self.files.pop(path, None)
+                    self._shadow_index.pop(path, None)
+                    self._dirty = True
+                    return {
+                        "success": True,
+                        "message": f"Deleted '{path}' via shared store",
+                    }
+            except Exception:
+                pass
 
         f = self.files[path]
 
@@ -2404,6 +2615,26 @@ Session: {self.session_id}
         self.mounts[vfs_path] = mount
         self._dirty = True
 
+        # EBENE 2: Subscribe to the poll registry for external-change detection.
+        # Other agents / editors / git modifying local_path will be reflected
+        # lazily in this VFS via invalidation.
+        try:
+            from toolboxv2.mods.isaa.base.patch.mount_poll_registry import (
+                get_mount_poll_registry,
+            )
+            get_mount_poll_registry().subscribe(
+                local_path=local_path,
+                vfs=self,
+                exclude_patterns=list(mount.exclude_patterns),
+            )
+        except Exception as _poll_err:
+            # Polling is a nice-to-have; don't fail the mount if the
+            # registry is unavailable (e.g. during tests).
+            import logging
+            logging.getLogger("vfs.poll").warning(
+                f"Could not subscribe to poll registry: {_poll_err}"
+            )
+
         return {
             "success": True,
             "mount_point": vfs_path,
@@ -2424,7 +2655,16 @@ Session: {self.session_id}
         import time
 
         start = time.perf_counter()
-        stats = {"files": 0, "dirs": 0, "total_size": 0, "skipped": 0}
+        stats = {
+            "files": 0,
+            "dirs": 0,
+            "total_size": 0,
+            "skipped": 0,
+            "removed": 0,
+            "seen": 0,
+        }
+        seen_file_paths: set[str] = set()
+        seen_dir_paths: set[str] = set()
 
         def should_include(path: str, is_dir: bool) -> bool:
             name = os.path.basename(path)
@@ -2456,7 +2696,7 @@ Session: {self.session_id}
                     readonly=mount.readonly,
                 )
                 stats["dirs"] += 1
-
+            seen_dir_paths.add(vfs_dir)
             # Create shadow file entries (metadata only!)
             for filename in files:
                 local_file = os.path.join(root, filename)
@@ -2468,14 +2708,48 @@ Session: {self.session_id}
                 try:
                     file_stat = os.stat(local_file)
 
+                    vfs_file_path = f"{vfs_dir}/{filename}"
                     # Skip too large files
                     if file_stat.st_size > mount.max_file_size:
+                        seen_file_paths.add(vfs_file_path)
                         stats["skipped"] += 1
                         continue
 
-                    vfs_file_path = f"{vfs_dir}/{filename}"
 
-                    # Create shadow entry (NO content loading!)
+                    # FIX #1: Respect existing MODIFIED entries.
+                    # If the file already exists in the VFS and has unsynced
+                    # in-memory changes, do NOT overwrite — the agent is editing.
+                    existing = self.files.get(vfs_file_path)
+                    if isinstance(existing, VFSFile):
+                        if existing.is_dirty:
+                            # Agent has unsynced changes — preserve them.
+                            # Only update the disk-mtime reference so the next
+                            # sync can detect external changes.
+                            seen_file_paths.add(vfs_file_path)
+                            stats["seen"] = stats.get("seen", 0) + 1
+                            stats["files"] += 1
+                            continue
+
+                        # Not dirty: disk may have newer version. If content is
+                        # already loaded but mtime changed, invalidate the cache
+                        # so the next read() reloads from disk.
+                        if (
+                            existing.is_loaded
+                            and existing.local_mtime is not None
+                            and file_stat.st_mtime > existing.local_mtime
+                        ):
+                            existing._content = None
+                            existing.backing_type = FileBackingType.SHADOW
+
+                        existing.local_mtime = file_stat.st_mtime
+                        existing.size_bytes = file_stat.st_size
+                        stats["seen"] = stats.get("seen", 0) + 1
+                        stats["files"] += 1
+                        stats["total_size"] += file_stat.st_size
+                        seen_file_paths.add(vfs_file_path)
+                        continue
+
+                    # New file: create fresh shadow entry
                     file_type = get_file_type(filename)
 
                     self.files[vfs_file_path] = VFSFile(
@@ -2491,12 +2765,57 @@ Session: {self.session_id}
                     )
 
                     self._shadow_index[vfs_file_path] = local_file
+                    seen_file_paths.add(vfs_file_path)
                     stats["files"] += 1
                     stats["total_size"] += file_stat.st_size
 
                 except (OSError, IOError):
                     stats["skipped"] += 1
+        # FIX #2: Remove zombie entries — files/dirs that are in VFS but
+        # no longer exist on disk. Protect dirty files (agent's unsynced work).
+        mount_prefix_file = mount.vfs_path if mount.vfs_path.endswith("/") else mount.vfs_path + "/"
+        mount_prefix_dir = mount_prefix_file
 
+        for path in list(self.files.keys()):
+            # Only consider files under this mount
+            if not (path == mount.vfs_path or path.startswith(mount_prefix_file)):
+                continue
+            if path in seen_file_paths:
+                continue
+            f = self.files[path]
+            if not isinstance(f, VFSFile):
+                continue
+            # Safety: never remove dirty (unsynced) files, even if disk-gone.
+            # Surface as error instead — agent must decide.
+            if f.is_dirty:
+                continue
+            # Safety: never remove readonly/system files
+            if f.readonly:
+                continue
+            del self.files[path]
+            self._shadow_index.pop(path, None)
+            stats["removed"] += 1
+
+        for path in list(self.directories.keys()):
+            if not (path == mount.vfs_path or path.startswith(mount_prefix_dir)):
+                continue
+            if path in seen_dir_paths:
+                continue
+            d = self.directories[path]
+            if d.readonly:
+                continue
+            # Only remove empty dirs (files under it were removed above,
+            # but shared dirs with other mounts should survive)
+            has_remaining = any(
+                p.startswith(path + "/") for p in self.files
+            ) or any(
+                p.startswith(path + "/") for p in self.directories if p != path
+            )
+            if not has_remaining:
+                del self.directories[path]
+                stats["removed"] += 1
+
+        self._dirty = True
         stats["scan_time_ms"] = (time.perf_counter() - start) * 1000
         return stats
 
@@ -2510,6 +2829,15 @@ Session: {self.session_id}
             return {"success": False, "error": f"Not mounted: {vfs_path}"}
 
         mount = self.mounts[vfs_path]
+        # EBENE 2: Unsubscribe from poll registry
+        try:
+            from toolboxv2.mods.isaa.base.patch.mount_poll_registry import (
+                get_mount_poll_registry,
+            )
+            get_mount_poll_registry().unsubscribe(mount.local_path, self)
+        except Exception as e:
+            print(e)
+            pass
 
         # Save dirty files if requested
         saved = []
@@ -2670,6 +2998,15 @@ Session: {self.session_id}
                 except:
                     pass
 
+    def __del__(self):
+        """Safety net: ensure poll registry doesn't hold dangling refs."""
+        try:
+            from toolboxv2.mods.isaa.base.patch.mount_poll_registry import (
+                get_mount_poll_registry,
+            )
+            get_mount_poll_registry().unsubscribe_all(self)
+        except Exception:
+            pass  # Destructor must never raise
 
 import os
 

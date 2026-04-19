@@ -522,6 +522,14 @@ class AgentSessionV2:
         except Exception:
             pass
 
+        try:
+            from toolboxv2.mods.isaa.base.patch.mount_poll_registry import (
+                get_mount_poll_registry,
+            )
+            get_mount_poll_registry().unsubscribe_all(self.vfs)
+        except Exception:
+            pass
+
         self._closed = True
 
     async def cleanup(self):

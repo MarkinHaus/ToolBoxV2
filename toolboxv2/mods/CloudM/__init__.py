@@ -5,7 +5,7 @@ from .LogInSystem import Name as LoginSystemName, open_web_login_web
 from .mini import *
 from .ModManager import Name as ModManagerName
 from .ModManager_tests import run_mod_manager_tests
-from .module import Tools
+from .module import Tools as _Tools
 from .RegistryServer import Name as RegistryServerName
 from .types import User
 from .UI.widget import get_widget
@@ -14,7 +14,7 @@ from .UserDashboard import Name as UserDashboardName
 from .UserInstances import UserInstances
 from .FolderSync import Name as FolderSyncName
 
-tools = Tools
+Tools = _Tools
 Name = "CloudM"
-version = Tools.version
+version = _Tools.version
 __all__ = ["mini"]
