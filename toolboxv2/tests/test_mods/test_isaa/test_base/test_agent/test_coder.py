@@ -698,7 +698,7 @@ class TestFixQueryBuilding(unittest.TestCase):
     def test_fix_query_has_strict_mode_markers(self):
         subtask = {"description": "Undefined var", "files": ["bug.py"]}
         q = self.coder._build_fix_query(subtask)
-        self.assertIn("STRICT FIX MODE", q)
+        self.assertIn("DU BIST DER MASTER-FIXER", q)
         self.assertIn("bug.py", q)
         self.assertIn("Undefined var", q)
 

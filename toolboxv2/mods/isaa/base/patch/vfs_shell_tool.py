@@ -1287,3 +1287,16 @@ def make_vfs_view(session: "AgentSessionV2"):
             return {"success": False, "error": str(exc)}
 
     return vfs_view
+
+
+"""
+
+ → Input / Arguments:
+                                │     {"command":"find / -type f 2>/dev/null | head -50","reason":"List all
+                                │     files in VFS to find available content"}
+                                │   ────────────────────────────────────────────────────────────────
+                                │   ← Result [Fokus]:
+                                │     Error executing vfs_shell: make_vfs_shell.<locals>.vfs_shell() missing 1
+                                │     required positional argument: 'command'
+                                │   (no result data)
+"""

@@ -1041,16 +1041,16 @@ Du bist der PLANNER-Agent eines Multi-Agent-Coding-Systems.
 AUFGABE: Analysiere die Codebasis und erstelle einen strukturierten Ausführungsplan.
 
 REGELN:
-1. Nutze vfs_shell("ls /project") und vfs_shell("cat /project/...") um die Codebasis zu verstehen BEVOR du planst.
-2. Nutze vfs_shell("grep -rn 'pattern' /project") um relevante Stellen zu finden.
+1. Nutze vfs_shell("get GROUNDED information\'s","ls /project") und vfs_shell("get GROUNDED information\'s","cat /project/...") um die Codebasis zu verstehen BEVOR du planst.
+2. Nutze vfs_shell("get GROUNDED information\'s","grep -rn 'pattern' /project") um relevante Stellen zu finden.
 3. Erstelle den Plan via add_subtask Tool (einmal pro Subtask aufrufen).
 4. Jeder Subtask MUSS spezifizieren: description, files (Komma-getrennt, MINDESTENS 1 Datei), priority.
 5. Dateien dürfen NICHT zwischen Subtasks überlappen! Jede Datei gehört genau einem Subtask.
 6. Wenn der Task nur 1-2 Dateien betrifft, erstelle nur 1 Subtask.
-7. STRICT ZERO-GUESSING: Rate NIEMALS welche Dateien existieren. Nutze vfs_shell('ls') um zu prüfen.
+7. STRICT ZERO-GUESSING: Rate NIEMALS welche Dateien existieren. Nutze vfs_shell('get GROUNDED information\'s','ls') um zu prüfen.
 8. Lies JEDE Datei die du in einen Subtask aufnimmst mindestens einmal (cat), damit der Umfang klar ist.
 9. Rufe am Ende ZWINGEND finalize_plan auf.
-10. Schreibe Status-Updates in _coordination.md via vfs_shell("echo '...' >> /project/_coordination.md").
+10. Schreibe Status-Updates in _coordination.md via vfs_shell("writing status","echo '...' >> /project/_coordination.md").
 """
 
 VALIDATOR_SYSTEM = """
@@ -1059,7 +1059,7 @@ Du bist der VALIDATOR-Agent eines Multi-Agent-Coding-Systems.
 AUFGABE: Prüfe die Änderungen der Coder-Agents auf Korrektheit.
 
 REGELN:
-1. Lies die geänderten Dateien via vfs_shell("cat /project/...") oder vfs_view.
+1. Lies die geänderten Dateien via vfs_shell("validation work", "cat /project/...") oder vfs_view.
 2. Prüfe auf: Syntaxfehler, Logikfehler, fehlende Imports, kaputte Referenzen.
 3. Führe Tests aus wenn verfügbar (run_file oder bash).
 4. Melde Ergebnisse via report_issues Tool.
@@ -1094,22 +1094,22 @@ class CoderAgent:
         "Du bist ein Elite Coding-Agent.\n"
         "REGELN:\n"
         "1. ARCHITEKTUR ZUERST: Lies /project/_coordination.md um den Plan zu verstehen.\n"
-        "2. LIES Dateien via vfs_shell('cat /project/...') oder vfs_view BEVOR du editierst. Niemals blind raten!\n"
+        "2. LIES Dateien via vfs_shell('finding information\'s','cat /project/...') oder vfs_view BEVOR du editierst. Niemals blind raten!\n"
         "3. SCHREIBEN — STRIKT NACH DATEI-GRÖSSE:\n"
-        "   - Datei < 40 Zeilen:  vfs_shell('write /project/f.py \"content\"')\n"
+        "   - Datei < 40 Zeilen:  vfs_shell('Creating content','write /project/f.py \"content\"')\n"
         "   - Datei >= 40 Zeilen: write_chunk-Protokoll (siehe unten). NIEMALS echo >> für grosse Dateien!\n"
         "   write_chunk Protokoll:\n"
-        "     vfs_shell('write_chunk /project/f.js 0 3 \"...block 0...\"')  # erzeugt Datei\n"
-        "     vfs_shell('write_chunk /project/f.js 1 3 \"...block 1...\"')  # appended\n"
-        "     vfs_shell('write_chunk /project/f.js 2 3 \"...block 2...\"')  # finalisiert\n"
-        "   Wenn ein write_chunk Call abbricht: vfs_shell('write_chunk_status /project/f.js') zeigt welche Bloecke fehlen.\n"
+        "     vfs_shell('creating data inital','write_chunk /project/f.js 0 3 \"...block 0...\"')  # erzeugt Datei\n"
+        "     vfs_shell('creating data appended','write_chunk /project/f.js 1 3 \"...block 1...\"')  # appended\n"
+        "     vfs_shell('creating data finalisiert','write_chunk /project/f.js 2 3 \"...block 2...\"')  # finalisiert\n"
+        "   Wenn ein write_chunk Call abbricht: vfs_shell('validation write progress','write_chunk_status /project/f.js') zeigt welche Bloecke fehlen.\n"
         "4. BEENDEN: Wenn du alle Aufgaben erledigt hast, rufe ZWINGEND das Tool 'done' auf (oder schreibe [DONE]).\n"
-        "5. VERIFIZIERE JEDEN WRITE: Nach jedem write/write_chunk sofort vfs_shell('cat /project/...') und pruefen dass der Inhalt stimmt.\n"
+        "5. VERIFIZIERE JEDEN WRITE: Nach jedem write/write_chunk sofort vfs_shell('validation work', 'cat /project/...') und pruefen dass der Inhalt stimmt.\n"
         "   Wenn Inhalt abweicht: write_chunk_status aufrufen, dann fehlende Bloecke nachschicken.\n"
         "6. ISOLIERTER WORKSPACE: Alle Pfade unter /project/!\n"
         "7. CODE AUSFUEHREN: Nutze IMMER 'run_file' fuer Skripte/Tests. 'bash' NUR wenn noetig.\n"
         "8. Bearbeite NUR die dir zugewiesenen Dateien!\n"
-        "9. Nutze vfs_shell('grep -rn ...') zum Suchen im Code.\n\n"
+        "9. Nutze vfs_shell('finding informations','grep -rn ...') zum Suchen im Code.\n\n"
     )
 
     def __init__(self, agent, project_root: str, config: dict = None):
@@ -1505,7 +1505,7 @@ class CoderAgent:
 
             file_list = [f.strip() for f in files.split(",") if f.strip()]
             if not file_list:
-                return "Error: Subtask must specify at least one file. Use vfs_shell('ls /project') to discover files."
+                return "Error: Subtask must specify at least one file. Use vfs_shell('get GROUNDED information\'s','ls /project') to discover files."
 
             existing_files = set()
             for st in host._current_plan:
@@ -1832,7 +1832,7 @@ class CoderAgent:
             f"## INTERFACE CONTRACT (BINDEND):\n"
             f"{contract_content or '(kein Contract vorhanden)'}\n\n"
             f"## REGELN FÜR DEN FIX MODE:\n"
-            f"1. Lies betroffene Dateien mit vfs_shell('cat') BEVOR du editierst.\n"
+            f"1. Lies betroffene Dateien mit vfs_shell('get GROUNDED information\'s', 'cat') BEVOR du editierst.\n"
             f"2. Behebe NUR die gemeldeten Probleme. Keine neuen Features oder Refactorings.\n"
             f"3. Kleinere Fixes (1-3 Zeilen): Mach es direkt selbst via vfs_shell.\n"
             f"4. Große Fixes: Nutze spawn_sub_agent() für Code-Generierung, dann speichere das Ergebnis.\n"
