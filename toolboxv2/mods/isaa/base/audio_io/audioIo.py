@@ -528,12 +528,26 @@ class AudioStreamPlayer:
                 pass
         await self.player.stop()
 
-    async def queue_text(self, text: str, emotion=None) -> None:
-        """Enqueue text for TTS synthesis + delivery. Non-blocking."""
+    async def queue_text(
+        self,
+        text: str,
+        emotion=None,
+        style_prompt: Optional[str] = None,
+    ) -> None:
+        """
+        Enqueue text for TTS synthesis + delivery. Non-blocking.
+
+        Args:
+            text: Text to speak.
+            emotion: TTSEmotion. Defaults to NEUTRAL.
+            style_prompt: Per-call override for Qwen3-TTS `instruct`.
+                Ignored by other backends. Takes precedence over any
+                style_prompt configured on the player's TTSConfig.
+        """
         if emotion is None:
             emotion = TTSEmotion.NEUTRAL
         if text.strip():
-            await self._text_queue.put((text.strip(), emotion))
+            await self._text_queue.put((text.strip(), emotion, style_prompt))
 
     async def _tts_worker(self):
         """
@@ -545,16 +559,27 @@ class AudioStreamPlayer:
         while not self._stop_event.is_set():
             try:
                 try:
-                    text, emotion = await asyncio.wait_for(
+                    item = await asyncio.wait_for(
                         self._text_queue.get(), timeout=0.5
                     )
                 except asyncio.TimeoutError:
                     continue
 
+                    # Queue items: (text, emotion) legacy, (text, emotion, style_prompt) new.
+                    # Tolerate both so an in-flight queue across a restart won't break.
+                if len(item) == 3:
+                    text, emotion, style_prompt = item
+                else:
+                    text, emotion = item
+                    style_prompt = None
+
                 self._synthesizing = True
                 try:
                     import dataclasses
-                    cfg = dataclasses.replace(self.tts_config, emotion=emotion)
+                    replace_kwargs = {"emotion": emotion}
+                    if style_prompt is not None:
+                        replace_kwargs["qwen3_style_prompt"] = style_prompt
+                    cfg = dataclasses.replace(self.tts_config, **replace_kwargs)
 
                     result = await loop.run_in_executor(
                         None, lambda t=text, c=cfg: synthesize(t, config=c)
@@ -575,6 +600,7 @@ class AudioStreamPlayer:
                     metadata = {
                         "text": text,
                         "emotion": emotion.value if hasattr(emotion, "value") else str(emotion),
+                        "style_prompt": style_prompt,
                         "duration_s": duration_s,
                         "session_id": self.session_id,
                         "chunk_index": self._chunk_index,
@@ -602,6 +628,147 @@ class AudioStreamPlayer:
     @property
     def pending_texts(self) -> int:
         return self._text_queue.qsize()
+
+
+# =============================================================================
+# AUDIO STREAM RECORDER (symmetric to AudioStreamPlayer)
+# =============================================================================
+
+class AudioStreamRecorder:
+    """
+    Orchestrator for the input side.
+
+    Pipeline:
+        AudioRecorder → LiveModeEngine (VAD + wake + end + partial)
+                      → STT (final pass, in executor)
+                      → on_transcript(text, speaker, wav_bytes)
+
+    UI-agnostic: optional on_partial(text) callback lets the caller show
+    a live spinner / streaming display.
+    """
+
+    def __init__(
+        self,
+        recorder: Any,                         # AudioRecorder
+        live_config: Any,                      # LiveModeConfig
+        stt_config: Any,                       # STTConfig — final pass
+        on_transcript: Callable,               # async (text, speaker, wav) -> None
+        on_partial: Optional[Callable] = None,  # async (partial_text,) -> None
+        speaker_store: Optional[Any] = None,
+        require_wake_word: bool = True,
+        partial_stt_config: Optional[Any] = None,  # typically Parakeet fast
+    ):
+        from toolboxv2.mods.isaa.base.audio_io.audio_live import LiveModeEngine
+        from toolboxv2.mods.isaa.base.audio_io.Stt import (
+            transcribe, transcribe_partial, STTConfig, STTBackend,
+        )
+        self._recorder = recorder
+        self._live_config = live_config
+        self._stt_config = stt_config
+        self._partial_stt_config = partial_stt_config or STTConfig(
+            backend=STTBackend.PARAKEET, device="cpu", parakeet_preset="fast",
+        )
+        self._on_transcript = on_transcript
+        self._on_partial = on_partial
+        self._speaker_store = speaker_store
+        self._require_wake = require_wake_word
+        self._transcribe = transcribe
+        self._transcribe_partial = transcribe_partial
+
+        partial_cb = self._make_partial_cb() if on_partial else None
+        partial_fn = self._make_partial_fn() if on_partial else None
+
+        self._engine = LiveModeEngine(
+            config=live_config,
+            on_utterance=self._on_utterance_internal,
+            speaker_store=speaker_store,
+            recorder=recorder,
+            on_partial=partial_cb,
+            partial_transcriber=partial_fn,
+            require_wake_word=require_wake_word,
+        )
+        self._active = False
+
+    def _make_partial_cb(self) -> Callable:
+        async def _cb(text: str):
+            try:
+                await self._on_partial(text)
+            except Exception as e:
+                print(f"[AudioStreamRecorder] on_partial error: {e}")
+        return _cb
+
+    def _make_partial_fn(self) -> Callable[[bytes], str]:
+        cfg = self._partial_stt_config
+        fn = self._transcribe_partial
+        # This is called inside run_in_executor by the engine.
+        def _fn(pcm: bytes) -> str:
+            return fn(pcm, config=cfg)
+        return _fn
+
+    async def _on_utterance_internal(self, wav_bytes: bytes, speaker: Optional[str]):
+        """Engine's final callback → run STT → fire public on_transcript."""
+        import asyncio
+        loop = asyncio.get_event_loop()
+        try:
+            result = await loop.run_in_executor(
+                None,
+                lambda: self._transcribe(wav_bytes, config=self._stt_config),
+            )
+            text = (result.text or "").strip()
+            if not text:
+                return
+            await self._on_transcript(text, speaker, wav_bytes)
+        except Exception as e:
+            print(f"[AudioStreamRecorder] STT error: {e}")
+
+    async def start(self) -> None:
+        self._active = True
+        await self._engine.start()
+
+    async def stop(self) -> None:
+        await self._engine.stop()
+        self._active = False
+
+    @property
+    def is_active(self) -> bool:
+        return self._active
+
+    @property
+    def state(self) -> str:
+        return self._engine.state
+
+    def status_line(self) -> str:
+        return self._engine.status_line()
+
+
+def create_listen_tool(recorder: AudioStreamRecorder):
+    """
+    Create an agent tool that toggles hands-free listening.
+
+    Usage:
+        agent.add_tool(create_listen_tool(recorder), name="listen")
+    """
+    async def listen(action: str = "status") -> str:
+        """
+        Control hands-free voice input.
+
+        Args:
+            action: "start" / "stop" / "status"
+        """
+        a = (action or "status").lower().strip()
+        if a == "start":
+            if recorder.is_active:
+                return "[already listening]"
+            await recorder.start()
+            return "[listening started]"
+        if a == "stop":
+            if not recorder.is_active:
+                return "[not listening]"
+            await recorder.stop()
+            return "[listening stopped]"
+        return recorder.status_line()
+
+    return listen
 
 
 # =============================================================================
@@ -811,7 +978,11 @@ def create_speak_tool(player: AudioStreamPlayer):
     The player's backend handles delivery (local / web / null).
     """
 
-    async def speak(text: str, emotion: str = "neutral") -> str:
+    async def speak(
+        text: str,
+        emotion: str = "neutral",
+        style_prompt: Optional[str] = None,
+    ) -> str:
         """
         Speak text aloud through the audio output system.
 
@@ -819,9 +990,14 @@ def create_speak_tool(player: AudioStreamPlayer):
         Returns immediately — audio plays/streams in background.
 
         Args:
-            text: Text to speak. One or two sentences per call works best.
+            text: Text to speak.
             emotion: Tone preset — neutral / calm / excited / serious /
-                     friendly / empathetic / urgent
+                     friendly / empathetic / urgent / custom.
+                     Use "custom" together with style_prompt for Qwen3-TTS.
+            style_prompt: Qwen3-TTS only. Natural-language voice/tone
+                     description, e.g. "panicked robot, glitchy" or
+                     "elderly professor, slightly amused".
+                     Ignored by other TTS backends.
 
         Returns:
             "[queued for speech]"
@@ -831,8 +1007,17 @@ def create_speak_tool(player: AudioStreamPlayer):
         except ValueError:
             emo = TTSEmotion.NEUTRAL
 
-        for sentence in split_sentences(text):
-            await player.queue_text(sentence, emotion=emo)
+        # Qwen3 benefits from full-text context. Check active config.
+        split = True
+        cfg = getattr(player, "tts_config", None)
+        if cfg is not None and cfg.backend == TTSBackend.QWEN3_TTS:
+            split = cfg.qwen3_split_sentences
+
+        if split:
+            for sentence in split_sentences(text):
+                await player.queue_text(sentence, emotion=emo, style_prompt=style_prompt)
+        else:
+            await player.queue_text(text, emotion=emo, style_prompt=style_prompt)
 
         return "[queued for speech]"
 

@@ -1388,28 +1388,6 @@ class CoderAgent:
                   f"Sub-agents ready (shared worktree): {self._planner_name}, {self._coder_names}, {self._validator_name}",
                   "green")
 
-    async def _spawn_extra_coder(self, index: int) -> str:
-        """Spawn an additional coder agent for parallel work."""
-        from toolboxv2 import get_app
-        isaa = get_app().get_mod("isaa")
-
-        coder_name = f"coder_{self._agent_uid}_{index}"
-        if coder_name in self._coder_names:
-            return coder_name
-
-        cb = isaa.get_agent_builder(
-            name=coder_name, add_base_tools=False, with_dangerous_shell=False
-        )
-        cb.with_system_message(self.SYSTEM_PROMPT)
-        cb.with_models(self.model)
-        self._register_coder_tools(cb, self, coder_name)
-        await isaa.register_agent(cb)
-        await self._mount_shared_worktree(coder_name)
-
-        self._coder_names.append(coder_name)
-        self._log("AGENTS", f"Spawned extra coder: {coder_name}", "cyan")
-        return coder_name
-
     async def _mount_shared_worktree(self, agent_name: str):
         """Mount worktree als Shared-Mount. Alle Agents teilen RAM-State + Disk."""
         from toolboxv2 import get_app
@@ -1442,7 +1420,11 @@ class CoderAgent:
         try:
             agent = await isaa.get_agent(agent_name)
             session = await agent.session_manager.get_or_create("default")
+            session.vfs.sync_all()
+
+            session.vfs.unmount("/project", save_changes=True)
             session.vfs.refresh_mount("/project")
+            await self._mount_shared_worktree(agent_name)
             self._log("SYNC", f"Refreshed VFS for {agent_name}", "cyan")
         except Exception as e:
             self._log("SYNC-WARN", f"Refresh failed for {agent_name}: {e}", "yellow")
@@ -1535,6 +1517,8 @@ class CoderAgent:
 
             subtask = {"description": description, "files": file_list, "priority": priority}
             host._current_plan.append(subtask)
+
+            await self._refresh_agent_vfs(self._planner_name)
             return f"Subtask {len(host._current_plan)} added: {description} ({len(file_list)} files, {priority})"
 
         async def finalize_plan() -> str:
@@ -1553,7 +1537,7 @@ class CoderAgent:
 
             coord_path = host.worktree.path / "_coordination.md"
             coord_path.write_text(plan_md, encoding="utf-8")
-
+            await self._refresh_agent_vfs(self._planner_name)
             return f"Plan finalized: {len(host._current_plan)} subtask(s). Written to _coordination.md."
 
         # NO read_file, grep, list_files, write_md — agents use vfs_shell instead
@@ -1565,13 +1549,11 @@ class CoderAgent:
     def _register_coder_tools(self, builder, host: "CoderAgent", coder_name: str):
         """Register coder-specific tools. VFS tools (read, write, grep, ls) come from FlowAgent."""
 
-        async def bash(command: str) -> str:
-            """Run a shell command in the worktree. Do NOT use for writing files!"""
-            return await host._smart_bash(command, [])
-
         async def run_file(file_path: str, args: str = "") -> str:
             """Run a script/test file in the worktree."""
-            return await host._run_file(file_path, args, [])
+            res = await host._run_file(file_path, args, [])
+            await self._refresh_agent_vfs(coder_name)
+            return res
 
         async def update_status(status: str) -> str:
             """Append a status line to _coordination.md."""
@@ -1580,6 +1562,7 @@ class CoderAgent:
             ts = datetime.datetime.now().strftime("%H:%M:%S")
             existing += f"\n[{ts}] {coder_name}: {status}"
             coord_path.write_text(existing, encoding="utf-8")
+            await self._refresh_agent_vfs(coder_name)
             return "Status updated."
 
         async def done() -> str:
@@ -1587,8 +1570,7 @@ class CoderAgent:
             return "[DONE]"
 
         # NO read_file, grep — agents use vfs_shell("cat ..."), vfs_shell("grep ...") instead
-        builder.add_tool(bash, "bash", "Run shell command (NOT for writing files!)", category=["shell"],flags={"system_tool_by_name": True} )
-        builder.add_tool(run_file, "run_file", "Run a script or test file", category=["execution"],flags={"system_tool_by_name": True} )
+        builder.add_tool(run_file, "run_file", "Run a script or test file only valid for project dir!", category=["execution"],flags={"system_tool_by_name": True} )
         builder.add_tool(update_status, "update_status", "Update coordination status", category=["coordination"],flags={"system_tool_by_name": True} )
         builder.add_tool(done, "done", "Signal task completion", category=["control"],flags={"system_tool_by_name": True} )
 
@@ -1597,11 +1579,15 @@ class CoderAgent:
 
         async def bash(command: str) -> str:
             """Run a shell command for testing/linting."""
-            return await host._smart_bash(command, [])
+            res = await host._smart_bash(command, [])
+            await self._refresh_agent_vfs(self._validator_name)
+            return res
 
         async def run_file(file_path: str, args: str = "") -> str:
             """Run a test or script file."""
-            return await host._run_file(file_path, args, [])
+            res = await host._run_file(file_path, args, [])
+            await self._refresh_agent_vfs(self._validator_name)
+            return res
 
         async def report_issues(issues_json: str) -> str:
             """Report validation results. Argument: JSON array.
@@ -1618,10 +1604,11 @@ class CoderAgent:
                 f"- [{i.get('severity', '?')}] {i.get('file', '?')}:{i.get('line', '?')}: {i.get('message', '?')}"
                 for i in host._validation_issues
             )
+            await self._refresh_agent_vfs(self._validator_name)
             return f"Found {len(host._validation_issues)} issue(s):\n{report}"
 
         # NO read_file, grep — agents use vfs_shell instead
-        builder.add_tool(bash, "bash", "Run shell command for testing", category=["shell"], flags={"system_tool_by_name": True})
+        builder.add_tool(bash, "bash", "Run shell command for testing no vfs ops!", category=["shell"], flags={"system_tool_by_name": True})
         builder.add_tool(run_file, "run_file", "Run a test file", category=["execution"], flags={"system_tool_by_name": True})
         builder.add_tool(report_issues, "report_issues", "Report validation results (JSON)", category=["validation"], flags={"system_tool_by_name": True})
 
@@ -1646,6 +1633,10 @@ class CoderAgent:
             })
 
         full_response = []
+        try:
+            await self._refresh_agent_vfs(agent_name)
+        except Exception as e:
+            print(e)
         try:
             async for chunk in agent.a_stream(
                 query=query,
@@ -1703,24 +1694,37 @@ class CoderAgent:
     # Orchestration Phases
     # ─────────────────────────────────────────────────────────────────
     async def _run_planner(self, task: str) -> list[dict]:
-        self._current_plan = []
+        self._current_plan =[]
 
-        planner_query = (
-            f"Analysiere das Projekt und erstelle einen Plan für folgende Aufgabe:\n\n"
-            f"{task}\n\n"
-            f"Schritte:\n"
-            f"1. Nutze vfs_shell('ls /project') und vfs_shell('cat /project/...') um die Struktur zu verstehen.\n"
-            f"2. Nutze vfs_shell('grep -rn \"pattern\" /project') um relevante Stellen zu finden.\n"
-            f"3. Füge Subtasks hinzu via add_subtask (einmal pro Subtask aufrufen).\n"
-            f"   - description: Was getan werden soll\n"
-            f"   - files: Komma-getrennte Liste der betroffenen Dateien\n"
-            f"   - priority: high/normal/low\n"
-            f"   ACHTUNG: Dateien dürfen NICHT zwischen Subtasks überlappen!\n"
-            f"4. Wenn nur 1-2 Dateien betroffen: 1 Subtask reicht.\n"
-            f"5. Rufe am Ende finalize_plan auf.\n"
+        # Phase 1a: Specs & Data Model
+        self._log("PLANNER", "Phase 1a: Interface Contract & Data Model generieren", "cyan")
+        spec_query = (
+            f"Aufgabe:\n{task}\n\n"
+            f"PHASE 1a - SYSTEM-ARCHITEKTUR & SPECS:\n"
+            f"1. Analysiere das Projekt (vfs_shell 'ls' / 'cat').\n"
+            f"2. Erstelle falls nötig /project/_specs/ (vfs_shell 'bash' -> 'mkdir -p /project/_specs').\n"
+            f"3. Schreibe einen Interface-Contract als JSON nach /project/_specs/interface_contract.json mit:\n"
+            f"   - dom_ids: Alle HTML-Element-IDs\n"
+            f"   - css_classes: Alle CSS-Klassen\n"
+            f"   - dom_structure: Verschachtelung als Baum\n"
+            f"   - state_keys: Key-Namen für JS-State\n"
+            f"   - shared_constants: Projektweite Konstanten\n"
+            f"4. Schreibe das Datenmodell als Markdown nach /project/_specs/data_model.md.\n"
+            f"REGELN: Alle IDs/Klassen/Keys müssen EXPLIZIT definiert sein, keine Duplikate."
         )
+        await self._collect_stream(self._planner_name, spec_query, prefix="PLANNER-SPEC")
 
-        await self._collect_stream(self._planner_name, planner_query, prefix="PLANNER")
+        # Phase 1b: Task Planning basierend auf Specs
+        self._log("PLANNER", "Phase 1b: Subtasks erstellen", "cyan")
+        task_query = (
+            f"PHASE 1b - PLANUNG BASIEREND AUF SPECS:\n"
+            f"1. Lade deinen Contract aus /project/_specs/interface_contract.json (via vfs_shell 'cat').\n"
+            f"2. Erstelle Subtasks via add_subtask() Tool.\n"
+            f"3. Jeder Subtask MUSS die relevanten IDs/Klassen aus dem Contract in der 'description' referenzieren.\n"
+            f"4. Beachte strikte Trennung der Dateien zwischen Subtasks.\n"
+            f"5. Rufe am Ende finalize_plan() auf."
+        )
+        await self._collect_stream(self._planner_name, task_query, prefix="PLANNER-TASKS")
 
         if not self._current_plan:
             self._log("PLANNER", "No plan created, falling back to single subtask", "yellow")
@@ -1729,82 +1733,34 @@ class CoderAgent:
         return self._current_plan
 
     async def _run_coders(self, subtasks: list[dict]) -> list[str]:
-        """Phase 2: Main coder orchestrates; for multiple subtasks spawn sub-coders in parallel."""
+        """Phase 2: Master-Coder übernimmt alle Subtasks synchron und delegiert bei Bedarf."""
         if not subtasks:
             return []
 
-        # Einfacher Fall: 1 Subtask → Main-Coder macht es direkt
-        if len(subtasks) == 1:
-            coder_name = self._coder_names[0]
-            query = self._build_coder_query(subtasks[0])
-            response = await self._collect_stream(coder_name, query, prefix="CODER")
-            return [response]
+        coder_name = self._coder_names[0]
+        query = self._build_coder_query(subtasks)
 
-        # Komplexer Fall: Mehrere Subtasks → Main-Coder delegiert an Sub-Coder
-        # Spawne zusätzliche Coder (einer pro Subtask, minus der Main-Coder)
-        spawn_coros = [self._spawn_extra_coder(i + 1) for i in range(len(subtasks) - 1)]
-        extra_names = await asyncio.gather(*spawn_coros)
-        all_coders = [self._coder_names[0]] + list(extra_names)
+        self._log("MASTER-CODER", f"Starte Bearbeitung von {len(subtasks)} Subtasks", "cyan")
+        response = await self._collect_stream(coder_name, query, prefix="MASTER-CODER")
 
-        # Weise jedem Coder genau einen Subtask zu und starte parallel
-        async def _run_one(coder_name: str, subtask: dict, idx: int) -> str:
-            query = self._build_coder_query(subtask)
-            # Prefix mit Index für klare Unterscheidung im Stream
-            return await self._collect_stream(coder_name, query, prefix=f"CODER-{idx + 1}")
+        return [response]
 
-        tasks = [
-            _run_one(coder_name, st, i)
-            for i, (coder_name, st) in enumerate(zip(all_coders, subtasks))
-        ]
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Exceptions in Logs umwandeln, nicht crashen
-        cleaned = []
-        for i, r in enumerate(responses):
-            if isinstance(r, Exception):
-                self._log("CODER-ERROR", f"Subtask {i + 1} failed: {r}", "red")
-                cleaned.append(f"[ERROR in subtask {i + 1}: {r}]")
-            else:
-                cleaned.append(r)
-        return cleaned
 
     async def _run_fix_coders(self, fix_subtasks: list[dict]) -> list[str]:
-        """Run coder(s) in FIX mode. Parallel wenn mehrere unabhängige Fixes."""
+        """Run Master-Fixer to resolve all remaining validation issues."""
         if not fix_subtasks:
             return []
 
-        if len(fix_subtasks) == 1:
-            coder_name = self._coder_names[0]
-            query = self._build_fix_query(fix_subtasks[0])
-            return [await self._collect_stream(coder_name, query, prefix="FIXER")]
+        coder_name = self._coder_names[0]
+        query = self._build_fix_query(fix_subtasks)
 
-        # Stelle sicher dass genug Sub-Coder existieren
-        needed = len(fix_subtasks) - len(self._coder_names)
-        if needed > 0:
-            spawn_coros = [
-                self._spawn_extra_coder(len(self._coder_names) + i)
-                for i in range(needed)
-            ]
-            await asyncio.gather(*spawn_coros)
+        self._log("MASTER-FIXER", f"Starte Bearbeitung von {len(fix_subtasks)} Fixes", "yellow")
+        response = await self._collect_stream(coder_name, query, prefix="MASTER-FIXER")
 
-        all_coders = self._coder_names[:len(fix_subtasks)]
+        return [response]
 
-        async def _run_one(coder_name: str, subtask: dict, idx: int) -> str:
-            query = self._build_fix_query(subtask)
-            return await self._collect_stream(coder_name, query, prefix=f"FIXER-{idx + 1}")
-
-        tasks = [
-            _run_one(coder_name, st, i)
-            for i, (coder_name, st) in enumerate(zip(all_coders, fix_subtasks))
-        ]
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
-        return [f"[ERROR: {r}]" if isinstance(r, Exception) else r for r in responses]
-
-    def _build_coder_query(self, subtask: dict) -> str:
-        files = subtask.get("files", [])
-        desc = subtask.get("description", "")
-        # Pull the full _coordination.md contents so the coder sees the
-        # complete spec, not just this subtask's one-line description.
+    def _build_coder_query(self, subtasks: list[dict]) -> str:
+        contract_content = self._load_interface_contract()
         coord_content = ""
         try:
             coord_path = self.worktree.path / "_coordination.md"
@@ -1812,77 +1768,89 @@ class CoderAgent:
                 coord_content = coord_path.read_text(encoding="utf-8")
         except Exception:
             pass
-        if not files:
-            files_line = "Keine spezifischen Dateien zugewiesen — arbeite minimal."
-            boundary = ""
-        else:
-            files_line = f"ZUGEWIESENE DATEIEN (NUR DIESE BEARBEITEN): {', '.join(files)}"
-            # Harte Datei-Grenze als strict rule
-            boundary = (
-                f"\n\nSTRICT ZERO-SCOPE-DRIFT POLICY:\n"
-                f"- Du darfst AUSSCHLIESSLICH diese Dateien bearbeiten: {', '.join(files)}\n"
-                f"- Jede andere Datei ist TABU. Lesen ist OK (zum Kontext), aber NIEMALS editieren.\n"
-                f"- Wenn du merkst dass du eine andere Datei ändern müsstest: STOP, rufe done() "
-                f"auf und notiere via update_status() was fehlt.\n"
-                f"- Wenn Informationen fehlen: Nutze vfs_shell('cat ...') oder vfs_shell('grep ...'). "
-                f"NIEMALS raten, was in einer Datei stehen könnte.\n"
-            )
+
+        tasks_dump = json.dumps(subtasks, indent=2)
 
         return (
-            f"Aufgabe: {desc}\n\n"
-            f"{files_line}\n\n"
-            f"## VOLLSTAENDIGER PLAN (aus _coordination.md):\n"
+            f"## DU BIST DER MASTER-CODER\n\n"
+            f"Hier sind ALLE anstehenden Subtasks für dich:\n{tasks_dump}\n\n"
+            f"## INTERFACE CONTRACT (BINDEND):\n"
+            f"{contract_content or '(kein Contract generiert)'}\n\n"
+            f"## VOLLSTÄNDIGER PLAN (aus _coordination.md):\n"
             f"{coord_content or '(leer)'}\n\n"
-            f"## WICHTIG:\n"
-            f"- Oben siehst du den kompletten Plan. Dein Subtask ist oben beschrieben.\n"
-            f"- Lies jede zugewiesene Datei mit vfs_shell('cat /project/...') BEVOR du editierst.\n"
-            f"- Rufe update_status() auf wenn du einen Teilschritt abschließt.\n"
-            f"- Rufe done() auf wenn ALLE deine zugewiesenen Dateien fertig sind."
-            f"{boundary}"
+            f"## REGELN FÜR DEN MASTER-CODER:\n"
+            f"1. Lies ALLE betroffenen Dateien (vfs_shell 'cat') BEVOR du etwas änderst.\n"
+            f"2. Kleinere Änderungen (1-3 Zeilen): Mach es direkt selbst via vfs_shell.\n"
+            f"3. Große Änderungen / neue Dateien: Nutze spawn_sub_agent() für Code-Generierung, dann schreibe das Ergebnis in die Datei.\n"
+            f"4. NACH jedem Subtask: Lies die geänderte Datei neu und prüfe sie.\n"
+            f"5. NACH allen Subtasks: Lies ALLE Dateien, prüfe Querverweise (IDs, Klassen, Keys).\n"
+            f"6. Behebe gefundene Probleme SOFORT selbst.\n"
+            f"7. IDs/Klassen/Keys MÜSSEN exakt dem Interface-Contract entsprechen.\n"
+            f"8. Du bist ALLEIN verantwortlich für die Integration. Wenn etwas nicht passt: Repariere es.\n"
+            f"9. Rufe done() auf, wenn ALLE Aufgaben erledigt und integriert sind.\n"
+            f"10. alle äderungen und bearbitungen validiren nicht bild vertruen fehler in den tools transparent im final answer melden.!\n"
         )
 
     async def _run_validator(self, changed_files: list[str]) -> list[dict]:
-        """Phase 3: Validator checks changed files for issues."""
+        """Phase 3: Validator prüft gegen Specs und repariert kleine Issues selbst."""
         self._validation_issues = []
 
         if not changed_files:
             return []
 
+        contract_content = self._load_interface_contract()
+
         query = (
             f"Validiere die folgenden geänderten Dateien:\n"
             f"{', '.join(changed_files)}\n\n"
-            f"Schritte:\n"
-            f"1. Lies jede geänderte Datei mit read_file.\n"
+            f"## INTERFACE CONTRACT:\n"
+            f"{contract_content or '(kein Contract vorhanden)'}\n\n"
+            f"Schritte & Regeln:\n"
+            f"1. Lies jede geänderte Datei (vfs_shell 'cat').\n"
             f"2. Prüfe auf Syntaxfehler, fehlende Imports, Logikfehler.\n"
-            f"3. Führe vorhandene Tests aus (z.B. run_file tests/...).\n"
-            f"4. Lies _coordination.md für Kontext.\n"
-            f"5. Melde Ergebnisse via report_issues Tool.\n"
-            f"   Leere Liste [] = alles OK.\n"
+            f"3. Prüfe STRIKT auf ID/Klassen-Mismatch gegen den Interface Contract!\n"
+            f"4. Führe vorhandene Tests aus (run_file).\n"
+            f"5. REPARATUR-MODUS:\n"
+            f"   - KLEINE FIXES (Tippfehler, falsche ID, fehlender Import): Repariere SOFORT mit vfs_shell.\n"
+            f"   - Lies die reparierte Datei danach neu und VERIFIZIERE den Fix.\n"
+            f"   - GROSSE PROBLEME (Architekturfehler): NICHT selbst reparieren.\n"
+            f"6. ABSCHLUSS:\n"
+            f"   - Rufe report_issues() auf mit NUR NOCH UNGELÖSTEN Problemen.\n"
+            f"   - Leere Liste [] = alles OK.\n"
         )
 
         await self._collect_stream(self._validator_name, query, prefix="VALIDATOR")
         return self._validation_issues
 
-    def _build_fix_query(self, subtask: dict) -> str:
-        files = subtask.get("files", [])
-        desc = subtask.get("description", "")
-        files_str = ', '.join(files) if files else "(siehe Beschreibung)"
+    def _build_fix_query(self, fix_subtasks: list[dict]) -> str:
+        contract_content = self._load_interface_contract()
+        tasks_dump = json.dumps(fix_subtasks, indent=2)
 
         return (
-            f"## STRICT FIX MODE - NUR DAS BESCHRIEBENE PROBLEM BEHEBEN!\n\n"
-            f"Problem: {desc}\n"
-            f"Betroffene Dateien: {files_str}\n\n"
-            f"REGELN FÜR FIX MODE:\n"
-            f"- Bearbeite AUSSCHLIESSLICH: {files_str}. Jede andere Datei ist TABU.\n"
-            f"- Lies die betroffene(n) Datei(en) mit vfs_shell('cat /project/...').\n"
-            f"- Behebe NUR das beschriebene Problem. NICHTS ANDERES ändern!\n"
-            f"- Keine Refactorings, keine neuen Features, keine Verbesserungen.\n"
-            f"- Minimale Änderung: So wenig Zeilen wie möglich.\n"
-            f"- Wenn Infos fehlen: NICHT RATEN. Datei lesen oder done() aufrufen.\n"
-            f"- Rufe SOFORT done() auf wenn der Fix angewendet ist.\n"
-            f"- Wenn du mehr als 1-2 Edits brauchst, stimmt etwas nicht — done() und update_status().\n"
+            f"## DU BIST DER MASTER-FIXER\n\n"
+            f"Der Validator hat folgende ungelöste Probleme gefunden:\n{tasks_dump}\n\n"
+            f"## INTERFACE CONTRACT (BINDEND):\n"
+            f"{contract_content or '(kein Contract vorhanden)'}\n\n"
+            f"## REGELN FÜR DEN FIX MODE:\n"
+            f"1. Lies betroffene Dateien mit vfs_shell('cat') BEVOR du editierst.\n"
+            f"2. Behebe NUR die gemeldeten Probleme. Keine neuen Features oder Refactorings.\n"
+            f"3. Kleinere Fixes (1-3 Zeilen): Mach es direkt selbst via vfs_shell.\n"
+            f"4. Große Fixes: Nutze spawn_sub_agent() für Code-Generierung, dann speichere das Ergebnis.\n"
+            f"5. NACH dem Fix: Lies die Datei neu und VERIFIZIERE, ob das Problem behoben ist.\n"
+            f"6. IDs/Klassen/Keys MÜSSEN dem Interface-Contract entsprechen.\n"
+            f"7. Rufe SOFORT done() auf, wenn alle Fixes verifiziert und angewendet sind.\n"
         )
 
+
+    def _load_interface_contract(self) -> str:
+        """Lädt den Interface Contract aus Phase 1a falls vorhanden."""
+        try:
+            contract_path = self.worktree.path / "_specs" / "interface_contract.json"
+            if contract_path.exists():
+                return contract_path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+        return ""
     # ─────────────────────────────────────────────────────────────────
     # UPDATED: Main Execute (orchestrates planner → coder → validator)
     # ─────────────────────────────────────────────────────────────────

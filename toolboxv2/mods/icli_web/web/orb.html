@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f1ea" media="(prefers-color-scheme: light)">
 <title>icli // orb</title>
 <style>
   :root, html[data-theme="light"] {
@@ -145,9 +148,18 @@
       linear-gradient(var(--paper-bg), var(--paper-bg)) 0 26px/2px 6px no-repeat;
   }
   .drag-handle:hover { background: var(--primary); }
-  main.chat-closed  .drag-handle { display: none; }
+  main.chat-closed  #chat-resize { display: none; }
   main.chat-full    .orb-pane,
-  main.chat-full    .drag-handle { display: none; }
+  main.chat-full    #chat-resize { display: none; }
+  /* Panel resize handle — only visible when panel is open */
+  main:not(.panel-open) #panel-resize { display: none; }
+  main.chat-full #panel-resize { display: none; }
+  /* Panel fullscreen — panel takes the whole row, orb + chat hidden */
+  main.panel-full .orb-pane,
+  main.panel-full .chat-pane,
+  main.panel-full #chat-resize,
+  main.panel-full #panel-resize { display: none; }
+  main.panel-full .panel-pane { flex: 1 1 0; border-left: none; }
   /* While dragging, disable transitions and user-select everywhere */
   body.dragging, body.dragging * { user-select: none !important; cursor: col-resize !important; }
   /* Snap animation on mouseup */
@@ -412,6 +424,36 @@
           margin-top: 6px; padding-left: 140px; }
   textarea.txt { font-family: var(--font-body); resize: vertical; min-height: 70px; }
 
+  /* ── Wake-word preset checkboxes ─────────────────────────────────────
+     These are dynamically generated inside a .field > div#wake-presets
+     container. The drawer's generic `.field label` rule targets *any*
+     descendant label and will squish our preset labels if we don't opt
+     out with a specific override. */
+  .field #wake-presets {
+    display: flex !important;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    align-items: center;
+  }
+  .field .wake-preset {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--ink);
+    text-transform: none;
+    letter-spacing: normal;
+    margin: 0;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .field .wake-preset input[type="checkbox"] {
+    width: 16px; height: 16px; margin: 0; padding: 0;
+    flex-shrink: 0;
+    accent-color: var(--primary);
+  }
+
   /* ── Status bar ──────────────────────────────────────────────────── */
   .status-bar {
     position: fixed; bottom: 0; left: 0; right: 0; height: 28px;
@@ -421,6 +463,131 @@
   }
   .status-bar .seg + .seg::before {
     content: "│"; color: var(--ink-faint); margin-right: 14px;
+  }
+
+  /* ── Help overlay for wake-words / processing state hints ─────────── */
+  .processing .particle {
+    /* Mid-speed oscillation to signal "thinking" — CSS class added/removed
+       by JS; movement math stays the same, only the visual tempo differs
+       through a subtle pulse transform. */
+    animation: particle-pulse 900ms ease-in-out infinite;
+  }
+  @keyframes particle-pulse {
+    0%, 100% { filter: brightness(1); }
+    50%      { filter: brightness(1.35); }
+  }
+  /* Wake-listening: slow, subtle breathing — less attention-grabbing than
+     the processing state because it's an idle/passive mode. */
+  .wake-listening .particle {
+    animation: wake-breathe 2400ms ease-in-out infinite;
+  }
+  @keyframes wake-breathe {
+    0%, 100% { opacity: 0.55; }
+    50%      { opacity: 1.0; }
+  }
+
+  /* ── Mobile layout (≤ 768px) ─────────────────────────────────────────
+     - main switches to column (orb on top, chat below)
+     - chat-resize becomes a horizontal bar (row-resize)
+     - panel becomes a bottom-sheet with its own top-edge drag handle      */
+  @media (max-width: 768px) {
+    main {
+      flex-direction: column;
+    }
+    .orb-pane {
+      flex: 0 0 var(--orb-h, 50vh);
+      min-height: 0;
+      padding: 14px;
+      gap: 14px;
+    }
+    .chat-pane {
+      flex: 1 1 0;
+      border-left: none;
+      border-top: 2px solid var(--ink);
+    }
+    main.chat-closed .orb-pane { flex: 1 1 0; }
+    main.chat-full   .orb-pane { display: none; }
+
+    /* Flip handle into a horizontal bar */
+    #chat-resize {
+      flex: 0 0 6px;
+      width: 100%; height: 6px;
+      cursor: row-resize;
+    }
+    #chat-resize::before {
+      top: -6px; bottom: -6px; left: 0; right: 0;
+    }
+    #chat-resize::after {
+      width: 32px; height: 2px;
+      background:
+        linear-gradient(var(--paper-bg), var(--paper-bg)) 0 0/6px 2px no-repeat,
+        linear-gradient(var(--paper-bg), var(--paper-bg)) 13px 0/6px 2px no-repeat,
+        linear-gradient(var(--paper-bg), var(--paper-bg)) 26px 0/6px 2px no-repeat;
+    }
+    body.dragging, body.dragging * { cursor: row-resize !important; }
+
+    /* Panel becomes a bottom-sheet overlay */
+    .panel-pane {
+      position: fixed;
+      left: 0; right: 0; bottom: 28px;  /* sits above status bar */
+      height: var(--panel-h, 60vh);
+      max-height: calc(100vh - 80px);
+      min-height: 140px;
+      border-left: none;
+      border-top: 3px solid var(--ink);
+      box-shadow: 0 -6px 0 var(--ink);
+      z-index: 70;
+      transform: translateY(100%);
+      transition: transform 220ms ease-out;
+      flex: 0 0 auto;
+    }
+    main.panel-open .panel-pane {
+      transform: translateY(0);
+    }
+    body.dragging-panel .panel-pane {
+      transition: none;
+    }
+    /* Top-edge drag handle for the bottom-sheet */
+    .panel-pane::before {
+      content: "";
+      position: absolute; top: -3px; left: 0; right: 0; height: 18px;
+      cursor: row-resize;
+    }
+    .panel-pane::after {
+      content: "";
+      position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+      width: 44px; height: 4px;
+      background: var(--ink); border-radius: 2px;
+      pointer-events: none;
+    }
+
+    /* Panel-resize divider hidden on mobile — the sheet has its own handle */
+    #panel-resize { display: none !important; }
+
+    /* Nav shrink */
+    .nav { padding: 8px 10px; gap: 6px; font-size: 11px; }
+    .nav .stat { font-size: 10px; margin-left: 4px; }
+    .nav a, .nav .current { padding: 2px 3px; }
+
+    /* Edge tabs: push panel-tab to bottom-right so it's reachable with thumb */
+    .edge-tab.chat-tab {
+      right: 8px; top: auto; bottom: 40px; transform: none;
+      padding: 8px 6px;
+    }
+    .panel-empty-tab {
+      right: 8px; top: auto; bottom: 88px; transform: none;
+      padding: 8px 6px;
+    }
+
+    /* Drawer full-width on mobile */
+    .drawer { width: 100vw; right: -100vw; }
+
+    /* Keep orb visualizer from pushing the page around */
+    #audioVisualizer { width: min(240px, 70vw); }
+
+    /* Settings drawer field grid tighter */
+    .field { grid-template-columns: 100px 1fr; gap: 6px; }
+    .hint { padding-left: 100px; }
   }
 </style>
 </head>
@@ -434,7 +601,7 @@
   <span class="stat" id="stat-mic">mic idle</span>
   <span class="stat" id="stat-icli">icli ?</span>
   <span class="spacer"></span>
-  <button class="btn small ghost" id="theme-toggle" title="toggle light/dark">☀</button>
+  <button class="btn small ghost" id="theme-toggle" title="theme: auto/light/dark">◐</button>
   <button class="btn small" id="settings-btn">settings</button>
 </nav>
 
@@ -443,11 +610,6 @@
     <div id="audioVisualizer"></div>
     <p id="infos">Connecting…</p>
     <div class="controls">
-      <select class="sel" id="agent-sel">
-        <option value="self">self</option>
-        <option value="isaa">isaa</option>
-        <option value="coder">coder</option>
-      </select>
       <button class="btn" id="microphoneButton">mic</button>
     </div>
   </section>
@@ -470,6 +632,8 @@
       <button class="btn small primary" id="chat-send">send</button>
     </div>
   </aside>
+
+  <div class="drag-handle" id="panel-resize" title="drag to resize panel (double-click: 50/50)"></div>
 
   <aside class="panel-pane" id="panel-pane">
     <div class="panel-head">
@@ -561,6 +725,34 @@
       </div>
     </div>
 
+    <div class="section" id="wake-section">
+      <h3>Hands-free (wake word)</h3>
+      <div class="hint" id="wake-unsupported" style="display:none; padding-left: 0;">
+        Only available with browser STT in a browser that supports the Web Speech API (Chrome, Edge, Safari).
+      </div>
+      <div id="wake-controls">
+        <div class="checkbox-row">
+          <input type="checkbox" id="wake-enabled">
+          <label for="wake-enabled">Always-listen for wake word</label>
+        </div>
+        <div class="hint" style="padding-left: 0;">
+          Mic stays open in the background. Say one of the wake words to start a real turn.
+        </div>
+        <div class="field">
+          <label>presets</label>
+          <div id="wake-presets">
+            <!-- filled by JS -->
+          </div>
+        </div>
+        <div class="field">
+          <label for="wake-custom">custom</label>
+          <input class="txt" id="wake-custom" type="text"
+                 placeholder="comma-separated: orb, computer, …" autocomplete="off">
+        </div>
+        <div class="hint">Matching is case-insensitive. Keep to 1–3 short words for best recognition.</div>
+      </div>
+    </div>
+
     <div class="section">
       <h3>TTS (voice)</h3>
       <div class="field">
@@ -645,7 +837,12 @@
     ttsBackend: "piper", ttsVoice: "de_DE-thorsten-high",
     ttsLanguage: "de", ttsEmotion: "neutral", ttsSpeed: 1.0,
     stylePrompt: "",
+    // Wake-word (hands-free) — browser STT only
+    wakeEnabled: false,
+    wakePresets: ["orb"],          // subset of WAKE_PRESET_WORDS
+    wakeCustom: "",                // comma-separated free text
   };
+  const WAKE_PRESET_WORDS = ["orb", "hey orb", "computer", "jarvis", "assistant"];
   let settings = Object.assign({}, DEFAULT_SETTINGS,
     JSON.parse(localStorage.getItem("icli_orb_settings") || "{}"));
   let capabilities = null;
@@ -755,8 +952,12 @@
           const m = 0.6 + intensity * 10;
           p.x += p.speedX * m; p.y += p.speedY * m;
         } else {
-          // Idle: slow drift, reset to baseline size
-          p.x += p.speedX * 0.6; p.y += p.speedY * 0.6;
+          // Idle: slow drift, reset to baseline size.
+          // In the quick-response window we boost the drift ~4× so the
+          // particles are visibly faster — a quiet visual cue that the
+          // user can talk right now without the wake word.
+          const idleMult = viz.classList.contains("quick-response") ? 2.4 : 0.6;
+          p.x += p.speedX * idleMult; p.y += p.speedY * idleMult;
           p.style.width = "10px"; p.style.height = "10px";
         }
         const d = Math.hypot(p.x - 150, p.y - 150);
@@ -769,17 +970,59 @@
 
   function resetParticles() {
     isError = false;
+    viz.classList.remove("processing");
+    viz.classList.remove("wake-listening");
+    viz.classList.remove("quick-response");
     particles.forEach(p => p.style.backgroundColor = "var(--ink)");
   }
   function playingParticles() {
+    viz.classList.remove("processing");
+    viz.classList.remove("wake-listening");
+    viz.classList.remove("quick-response");
     particles.forEach(p => p.style.backgroundColor = "var(--success)");
   }
   function recordingParticles() {
+    viz.classList.remove("processing");
+    viz.classList.remove("wake-listening");
+    viz.classList.remove("quick-response");
     particles.forEach(p => p.style.backgroundColor = "var(--primary)");
   }
   function redParticles() {
     isError = true;
+    viz.classList.remove("processing");
+    viz.classList.remove("wake-listening");
+    viz.classList.remove("quick-response");
     particles.forEach(p => p.style.backgroundColor = "var(--error)");
+  }
+  // Processing: user finished speaking, waiting for the agent's first
+  // chunk of text/audio. Purple (oklch-picked plum) + mid-speed pulse
+  // via the .processing class on the visualizer.
+  function processingParticles() {
+    isError = false;
+    viz.classList.remove("wake-listening");
+    viz.classList.add("processing");
+    particles.forEach(p => p.style.backgroundColor = "oklch(55% 0.20 305)");
+  }
+  // Wake-listening: background recognition is running, no user action yet.
+  // Muted grey so it's visually "quiet" compared to the recording/speaking
+  // states but still clearly distinct from idle black.
+  function wakeListeningParticles() {
+    isError = false;
+    viz.classList.remove("processing");
+    viz.classList.remove("quick-response");
+    viz.classList.add("wake-listening");
+    particles.forEach(p => p.style.backgroundColor = "oklch(62% 0.01 230)");
+  }
+  // Quick-response window: the 3s right after the agent finished where the
+  // user can talk back without saying the wake word. Warm amber + faster
+  // particle drift (driven by the .quick-response class + idleBoostFactor
+  // in the anim loop) to make the window obviously visible.
+  function quickResponseParticles() {
+    isError = false;
+    viz.classList.remove("processing");
+    viz.classList.remove("wake-listening");
+    viz.classList.add("quick-response");
+    particles.forEach(p => p.style.backgroundColor = "oklch(72% 0.16 60)");
   }
 
   // ═══ Audio init (one-time, persistent) ═════════════════════════════════
@@ -803,6 +1046,14 @@
     ensureContext();
     if (audioContext.state === "suspended") {
       try { await audioContext.resume(); } catch {}
+    }
+    // First user gesture unlocks SpeechRecognition.start() too. If wake
+    // was waiting to be armed, reconcile now.
+    if (!firstGestureReceived) {
+      firstGestureReceived = true;
+      console.log("[wake] first gesture received — reconciling");
+      // defer one tick so callers finish their own state updates first
+      setTimeout(reconcileWake, 0);
     }
   }
 
@@ -855,16 +1106,23 @@
       if (!isRecording || !settings.endSilence) return;
       const level = rmsLevel();
       const now = performance.now();
+      // Route: "capturing" mode is driven by the wake recognizer, so use
+      // finalizeCaptured() which reads capturedFinal/Interim. Plain mic
+      // recording uses stopRecording() as before.
+      const endTurn = () => {
+        if (wakeMode === "capturing") finalizeCaptured();
+        else stopRecording();
+      };
       if (utteranceStart &&
           (now - utteranceStart) / 1000 > settings.maxUtterance) {
-        stopRecording(); return;
+        endTurn(); return;
       }
       if (level > VAD_THRESHOLD) {
         if (!vadSpeaking) { vadSpeaking = true; utteranceStart = now; }
         vadSilenceStart = null;
       } else if (vadSpeaking) {
         if (vadSilenceStart === null) vadSilenceStart = now;
-        else if (now - vadSilenceStart >= settings.silenceMs) stopRecording();
+        else if (now - vadSilenceStart >= settings.silenceMs) endTurn();
       }
     }, 60);
   }
@@ -941,6 +1199,476 @@
     return r;
   }
 
+  // ═══ Wake-word (hands-free) ════════════════════════════════════════════
+  // A second, always-on SpeechRecognition instance that listens in the
+  // background. When a configured wake word appears in the transcript we
+  // kick off a real recording turn. Only runs when:
+  //   - settings.wakeEnabled is true
+  //   - settings.sttLocation === "browser"
+  //   - Web Speech API is available
+  //   - we're not already recording or playing
+  //
+  // Lives on its own recog instance because the "real" browserRecog has
+  // its own onend restart logic tied to isRecording — mixing the two
+  // caused doubled-text duplicates during earlier iterations.
+  let wakeRecog = null;
+  let wakeActive = false;       // desired state
+  let wakeStarting = false;     // reentrancy guard against start() while running
+  let wakeRunning = false;      // actual state — set in onstart/onend
+  // SpeechRecognition.start() needs a user gesture for the very first
+  // call on a page. We track whether one has been seen so reconcileWake()
+  // can defer auto-start until the user clicks/types something.
+  let firstGestureReceived = false;
+  // Quick-response window: right after the agent finishes streaming, we
+  // keep the mic "hot" for 3 seconds so the user can talk back without
+  // saying the wake word. Wake auto-starts when the window expires.
+  const QUICK_RESPONSE_MS = 3000;
+  let quickResponseTimer = null;
+
+  function isWebSpeechAvailable() {
+    return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  }
+
+  // Wake-recognizer state machine ───────────────────────────────────────
+  //
+  // The SR instance stays alive continuously and switches between three
+  // modes via `wakeMode`:
+  //
+  //   "listening" — background, looking for a wake word in transcripts.
+  //                 Does NOT forward text to the agent.
+  //   "capturing" — a trigger fired (wake word OR quick-response window).
+  //                 All subsequent transcript is the real user query. The
+  //                 existing VAD loop (startVadLoop/stopVadLoop) gates
+  //                 the end, exactly like a normal mic-click turn.
+  //   "idle"      — fully off.
+  //
+  // Critical: we do NOT stop+restart the SR instance when transitioning
+  // listening → capturing. Doing that dropped whatever the user was
+  // saying after the wake word ("hey orb was geht" lost "was geht"). We
+  // just flip the mode flag and start using the same onresult events as
+  // real transcription.
+  let wakeMode = "idle";
+  // Text captured since the trigger fired. Finals are appended. Sent to
+  // the agent when VAD detects silence or a final comes in that closes
+  // the utterance.
+  let capturedFinal = "";
+  let capturedInterim = "";
+  // Where in the SR results array the capture starts. Web Speech API
+  // delivers cumulative results — an interim at index i may later be
+  // promoted to final at the same index i. To avoid double-counting or
+  // double-appending ("hey orb kannst du mich hören kannst du mich
+  // hören"), we recompute capturedFinal/Interim from scratch on every
+  // event using this anchor, instead of appending deltas.
+  let captureStartResultIndex = 0;
+  // Wake word that triggered the capture — stripped from the leading
+  // transcript if it happened to be in the same result item as the
+  // actual query ("hey orb was geht").
+  let captureWakeWord = "";
+  // While the agent is speaking, the mic picks up the TTS output as a
+  // loopback echo — and the SpeechRecognition buffer may still have a
+  // few hundred ms of TTS audio queued when the agent finishes. If we
+  // accept that as "captured" text, the agent ends up transcribing
+  // itself and replying to its own words. We handle this in two ways:
+  //
+  //  1) `wakePaused` — set true while isPlaying. Stops the SR instance
+  //     entirely during TTS playback and re-arms it when playback ends.
+  //
+  //  2) `captureArmed` — a short initial dead-zone when a capture begins
+  //     (via wake word or quick-response window). Any result events
+  //     during the dead-zone are dropped. This clears residual TTS echo
+  //     from the SR buffer before we start trusting its output.
+  let wakePaused = false;
+  let captureArmed = true;
+  let captureArmTimer = null;
+  const CAPTURE_ARM_DELAY_MS = 500;
+
+  function stripWakePrefix(text, word) {
+    // Remove everything up to and including the matched wake word (first
+    // occurrence) so the query doesn't contain "hey orb" as a prefix.
+    const idx = text.toLowerCase().indexOf(word);
+    if (idx < 0) return text.trim();
+    const after = text.slice(idx + word.length);
+    return after.replace(/^[\s,.!?:;]+/, "").trim();
+  }
+
+  // Strip the wake word ONLY if it appears within the first ~30 chars
+  // of the text. Prevents mid-sentence occurrences from being eaten —
+  // e.g. if the user says "kannst du den orb größer machen", we don't
+  // want to drop everything before "orb".
+  function stripWakePrefixIfLeads(text, word) {
+    if (!text) return "";
+    const idx = text.toLowerCase().indexOf(word);
+    if (idx < 0 || idx > 30) return text.trim();
+    const after = text.slice(idx + word.length);
+    return after.replace(/^[\s,.!?:;]+/, "").trim();
+  }
+
+  function makeWakeRecog() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return null;
+    const r = new SR();
+    r.continuous = true;
+    r.interimResults = true;
+    r.lang = settings.sttLanguage === "de" ? "de-DE" : "en-US";
+
+    r.onstart = () => {
+      wakeRunning = true;
+      console.log("[live] recog started, mode:", wakeMode);
+      if (wakeMode === "listening") {
+        wakeListeningParticles();
+        statMic.textContent = "mic wake"; statMic.className = "stat on";
+      }
+    };
+
+    r.onresult = (ev) => {
+      if (wakeMode === "listening") {
+        // Rebuild just the current event's text for wake-word scanning.
+        let interim = "", final = "";
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          const t = ev.results[i][0].transcript;
+          if (ev.results[i].isFinal) final += t;
+          else interim += t;
+        }
+        // Echo suppression in listening mode: ignore wake matches that
+        // land in the first few hundred ms after TTS ended.
+        if (!captureArmed) return;
+        const combined = (final + " " + interim).trim();
+        if (!combined) return;
+        info.innerText = "wake: " + combined.toLowerCase();
+        const lower = combined.toLowerCase();
+        const words = getWakeWords();
+        for (const w of words) {
+          if (!w) continue;
+          if (lower.includes(w)) {
+            // Trigger — switch to capturing mode WITHOUT stopping the
+            // recognizer.
+            //
+            // Anchor the capture at the first result index in this
+            // event. Every subsequent onresult call will rebuild
+            // capturedFinal/Interim from results[captureStartResultIndex..]
+            // minus the wake-word prefix. This avoids duplicate appends
+            // when a result item transitions interim → final in a later
+            // event.
+            console.log("[live] wake detected:", w);
+            wakeMode = "capturing";
+            captureStartResultIndex = ev.resultIndex;
+            captureWakeWord = w;
+            rebuildCaptured(ev.results);
+            beginCaptureVisuals();
+            return;
+          }
+        }
+        return;
+      }
+
+      if (wakeMode === "capturing") {
+        // Echo suppression: drop result events before the dead-zone
+        // timer elapses. The TTS tail bleeds into the SR buffer for a
+        // short moment after playback ends.
+        if (!captureArmed) {
+          // Still, advance the start index so we don't accidentally pick
+          // up dropped text once armed — only count results that arrive
+          // fresh post-arm.
+          captureStartResultIndex = ev.results.length;
+          return;
+        }
+        rebuildCaptured(ev.results);
+        const display = (capturedFinal + " " + capturedInterim).trim();
+        if (display) info.innerText = display;
+      }
+    };
+
+    // Reconstruct capturedFinal + capturedInterim from the full results
+    // array (idempotent — safe to call on every onresult event).
+    function rebuildCaptured(results) {
+      let f = "", iText = "";
+      for (let i = captureStartResultIndex; i < results.length; i++) {
+        const t = results[i][0].transcript;
+        if (results[i].isFinal) f += (f ? " " : "") + t.trim();
+        else                    iText += (iText ? " " : "") + t.trim();
+      }
+      // Strip the wake word (and anything before it, e.g. "um, hey orb")
+      // from the leading text — only relevant when it was in the same
+      // result item as the actual query.
+      if (captureWakeWord) {
+        f     = stripWakePrefixIfLeads(f, captureWakeWord);
+        iText = stripWakePrefixIfLeads(iText, captureWakeWord);
+      }
+      capturedFinal = f;
+      capturedInterim = iText;
+    }
+
+    r.onerror = (e) => {
+      if (e.error === "no-speech" || e.error === "aborted") return;
+      console.warn("[live] err:", e.error, e);
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        wakeActive = false;
+        wakeMode = "idle";
+        info.innerText = "Wake: microphone permission denied";
+      }
+    };
+
+    r.onend = () => {
+      wakeRunning = false;
+      // Don't auto-restart while TTS is playing — we intentionally
+      // paused the recognizer to prevent echo transcription. The
+      // playback-end path resumes it.
+      if (wakePaused || isPlaying) {
+        console.log("[live] onend while paused — no restart");
+        return;
+      }
+      // Chrome stops the recognizer after ~60s of silence on its own.
+      // If we're still supposed to be active in either mode, restart.
+      const shouldRestart = wakeActive
+                         && (wakeMode === "listening" || wakeMode === "capturing");
+      if (shouldRestart) {
+        setTimeout(() => {
+          if (wakeActive && !wakeRunning && !wakePaused && !isPlaying
+              && (wakeMode === "listening" || wakeMode === "capturing")) {
+            try { r.start(); }
+            catch (e) { console.warn("[live] restart failed:", e.message); }
+          }
+        }, 200);
+      } else {
+        if (viz.classList.contains("wake-listening")) {
+          viz.classList.remove("wake-listening");
+          if (!isRecording && !isPlaying) resetParticles();
+        }
+      }
+    };
+    return r;
+  }
+
+  // Arm the capture after a short delay. Called when:
+  //  • wake-recog starts fresh after TTS playback ended
+  //  • A capture begins (so we skip any TTS tail still in the SR buffer)
+  function armCaptureDelayed(delayMs) {
+    captureArmed = false;
+    if (captureArmTimer) clearTimeout(captureArmTimer);
+    captureArmTimer = setTimeout(() => {
+      captureArmed = true;
+      captureArmTimer = null;
+      console.log("[live] capture armed");
+    }, delayMs);
+  }
+
+  // Called when a wake word hits OR the quick-response window opens.
+  // Sets up the recording-turn state (isRecording, VAD loop, particles)
+  // WITHOUT starting a new SR instance — the wake recog keeps running.
+  function beginCaptureVisuals() {
+    isRecording = true;
+    utteranceStart = performance.now();
+    recordingParticles();
+    statMic.textContent = "mic live"; statMic.className = "stat on";
+    sbState.textContent = "listening";
+    micBtn.textContent = "stop";
+    info.innerText = settings.captureMode === "vad"
+      ? "Listening… (silence ends)" : "Listening…";
+    // Start VAD silence detection — needs a live mic stream for RMS.
+    // The wake recognizer has its own mic but initMic() gives us the
+    // parallel analyser we need for rmsLevel().
+    (async () => {
+      await gestureUnlock();
+      await initMic();
+      if (settings.captureMode !== "ptt" && settings.endSilence) startVadLoop();
+    })();
+  }
+
+  // Called by the VAD loop when silence ends the utterance, OR when the
+  // user clicks mic/stop during a captured turn. Sends captured text to
+  // the agent and flips mode back to "listening".
+  function finalizeCaptured() {
+    if (wakeMode !== "capturing") return;
+    const text = (capturedFinal + " " + capturedInterim).trim();
+    capturedFinal = "";
+    capturedInterim = "";
+    captureStartResultIndex = 0;
+    captureWakeWord = "";
+    wakeMode = "listening";
+    isRecording = false;
+    stopVadLoop();
+    micBtn.textContent = "mic";
+    if (text) {
+      addMsg("user", text);
+      sendQuery(text);
+      sbState.textContent = "thinking";
+      processingParticles();
+    } else {
+      // Nothing captured — resume listening visuals
+      if (wakeActive) wakeListeningParticles();
+      else resetParticles();
+      sbState.textContent = "idle";
+    }
+  }
+
+  function getWakeWords() {
+    const list = [];
+    for (const w of (settings.wakePresets || [])) {
+      if (w && typeof w === "string") list.push(w.toLowerCase().trim());
+    }
+    const custom = (settings.wakeCustom || "").split(",");
+    for (const w of custom) {
+      const s = w.toLowerCase().trim();
+      if (s) list.push(s);
+    }
+    return [...new Set(list)].filter(Boolean);
+  }
+
+  function startWakeListen() {
+    if (!settings.wakeEnabled) return;
+    if (settings.sttLocation !== "browser") return;
+    if (!isWebSpeechAvailable()) return;
+    if (isRecording || isPlaying) return;
+    if (wakeStarting) return;
+    if (wakePaused) return;                   // respect playback pause
+    // SpeechRecognition.start() requires a user gesture on first call.
+    // If we haven't seen one yet, silently defer — the gesture wiring
+    // below calls reconcileWake() on the first click/keypress.
+    if (!firstGestureReceived) {
+      console.log("[live] deferred until first user gesture");
+      return;
+    }
+    wakeStarting = true;
+    try {
+      if (!wakeRecog) wakeRecog = makeWakeRecog();
+      if (!wakeRecog) return;
+      wakeActive = true;
+      wakeMode = "listening";
+      // Echo dead-zone so the first burst of SR results (possibly a
+      // TTS tail from the previous turn) doesn't spuriously match a
+      // wake word. Harmless for fresh starts — just a short warm-up.
+      armCaptureDelayed(CAPTURE_ARM_DELAY_MS);
+      if (!wakeRunning) {
+        try { wakeRecog.start(); }
+        catch (e) {
+          // Most common: InvalidStateError when already started
+          console.warn("[live] start() threw:", e.message);
+        }
+      }
+    } finally {
+      wakeStarting = false;
+    }
+  }
+
+  function stopWakeListen() {
+    wakeActive = false;
+    wakeMode = "idle";
+    if (wakeRecog) {
+      try { wakeRecog.stop(); } catch {}
+    }
+    if (viz.classList.contains("wake-listening")) {
+      viz.classList.remove("wake-listening");
+      if (!isRecording && !isPlaying) resetParticles();
+    }
+    if (!isRecording) {
+      statMic.textContent = "mic idle"; statMic.className = "stat off";
+    }
+  }
+
+  // Quick-response window ───────────────────────────────────────────────
+  // Right after the agent's final stream, the user often wants to reply
+  // immediately without saying the wake word again. We reuse the same
+  // SR instance as wake-listen but start it directly in "capturing"
+  // mode. The bewährte VAD-silence pipeline then decides when the
+  // utterance is complete.
+  //
+  // If no speech arrives within QUICK_RESPONSE_MS, we flip back to
+  // "listening" mode and the wake word becomes required again.
+  //
+  // Only applicable with browser STT. With server STT we skip the
+  // window entirely — the server-side pipeline can't hold a mic open
+  // this lightly.
+  function startQuickResponseWindow() {
+    if (!settings.wakeEnabled) return;
+    if (settings.sttLocation !== "browser") return;
+    if (!isWebSpeechAvailable()) return;
+    if (isRecording || isPlaying) return;
+    if (!firstGestureReceived) return;
+    stopQuickResponseWindow({ silent: true });
+
+    if (!wakeRecog) wakeRecog = makeWakeRecog();
+    if (!wakeRecog) return;
+
+    // Enter capturing mode directly — any speech is now a query.
+    wakeActive = true;
+    wakeMode = "capturing";
+    capturedFinal = "";
+    capturedInterim = "";
+    // No wake-word in quick-response — user is just continuing. After
+    // the playback pause the recognizer was stopped, so on restart the
+    // result buffer is empty and captureStartResultIndex=0 is correct.
+    captureWakeWord = "";
+    captureStartResultIndex = 0;
+    // Dead-zone: the SR buffer may still contain a tail of the TTS
+    // audio from the agent. Drop the first CAPTURE_ARM_DELAY_MS of
+    // result events so we don't transcribe the agent's own voice.
+    armCaptureDelayed(CAPTURE_ARM_DELAY_MS);
+    quickResponseParticles();
+    statMic.textContent = "mic quick"; statMic.className = "stat on";
+    info.innerText = "Reply window (3s)…";
+
+    if (!wakeRunning) {
+      try { wakeRecog.start(); }
+      catch (e) { console.warn("[quick] start threw:", e.message); }
+    }
+    // Also begin capture visuals + VAD so silence will end the utterance
+    // via finalizeCaptured(). We cannot reuse beginCaptureVisuals()
+    // fully here because it overwrites particle/info state we just set;
+    // instead do the essential parts inline.
+    isRecording = true;
+    utteranceStart = performance.now();
+    (async () => {
+      await gestureUnlock();
+      await initMic();
+      if (settings.captureMode !== "ptt" && settings.endSilence) startVadLoop();
+    })();
+
+    // If no actual speech arrives in QUICK_RESPONSE_MS, drop back to
+    // plain wake-listening. This is checked by watching capturedFinal +
+    // capturedInterim — if both are still empty when the timer fires,
+    // the user didn't talk.
+    if (quickResponseTimer) clearTimeout(quickResponseTimer);
+    quickResponseTimer = setTimeout(() => {
+      quickResponseTimer = null;
+      const hasText = (capturedFinal + capturedInterim).trim().length > 0;
+      if (hasText) {
+        // User already started talking — let the VAD loop finish normally
+        console.log("[quick] speech in progress, letting VAD close it");
+        return;
+      }
+      console.log("[quick] expired without speech — arm wake-listening");
+      // Flip back to listening without restarting the recognizer
+      isRecording = false;
+      stopVadLoop();
+      wakeMode = "listening";
+      wakeListeningParticles();
+      statMic.textContent = "mic wake"; statMic.className = "stat on";
+      info.innerText = "Say a wake word…";
+    }, QUICK_RESPONSE_MS);
+  }
+
+  function stopQuickResponseWindow({ silent = false } = {}) {
+    if (quickResponseTimer) {
+      clearTimeout(quickResponseTimer);
+      quickResponseTimer = null;
+    }
+    if (viz.classList.contains("quick-response")) {
+      viz.classList.remove("quick-response");
+      if (!isRecording && !isPlaying && !silent) resetParticles();
+    }
+  }
+
+  // Called after settings change or after a real turn completes, to re-arm
+  // the wake listener if it's still the user's desired state.
+  function reconcileWake() {
+    if (settings.wakeEnabled && settings.sttLocation === "browser"
+        && !isRecording && !isPlaying && isWebSpeechAvailable()) {
+      startWakeListen();
+    } else {
+      stopWakeListen();
+    }
+  }
+
   // ═══ WebSocket ══════════════════════════════════════════════════════════
   let wsBackoff = 1000;           // ms
   const WS_BACKOFF_MAX = 30000;
@@ -960,6 +1688,8 @@
       wsBackoff = 1000;     // reset backoff on success
       await fetchCapabilities();
       buildSettingsUI();
+      // Arm wake-word listener if user had it enabled in a previous session
+      reconcileWake();
 
       // Resume if a query was in flight when we got disconnected
       if (activeCid) {
@@ -1055,9 +1785,13 @@
       currentAgentMsg.querySelector(".text").textContent += msg.text || "";
       trBody.scrollTop = trBody.scrollHeight;
       sbState.textContent = "thinking";
+      // First agent output arrived — leave "processing" (purple) state.
+      // If TTS audio follows, enqueueAudio() will switch to green.
+      if (viz.classList.contains("processing") && !isPlaying) resetParticles();
     } else if (msg.type === "response") {
       if (!currentAgentMsg) addMsg("agent", msg.text);
       else currentAgentMsg.querySelector(".text").textContent = msg.text;
+      if (viz.classList.contains("processing") && !isPlaying) resetParticles();
     } else if (msg.type === "reasoning") {
       addMsg("sys", "› " + (msg.text || ""));
     } else if (msg.type === "tool_start") {
@@ -1079,12 +1813,29 @@
       activeCid = null;
       lastPlayedIndex = -1;
       sbState.textContent = "idle";
+      if (viz.classList.contains("processing") && !isPlaying) resetParticles();
+      // If audio is still draining, the final source.onended handles the
+      // hand-off. If not, the stream is fully done now — open the 3s
+      // quick-response window, then fall back to the wake listener.
+      if (!isPlaying) {
+        setTimeout(() => {
+          if (!isRecording && !isPlaying) {
+            if (settings.wakeEnabled && settings.sttLocation === "browser"
+                && firstGestureReceived && isWebSpeechAvailable()) {
+              startQuickResponseWindow();
+            } else {
+              reconcileWake();
+            }
+          }
+        }, 350);
+      }
     } else if (msg.type === "error") {
       addMsg("sys", msg.error || "error");
       info.innerText = "Error: " + (msg.error || "?");
       redParticles();
       activeCid = null;
       sbState.textContent = "idle";
+      setTimeout(reconcileWake, 350);
     }
   }
 
@@ -1097,6 +1848,17 @@
     }
   }
 
+  // Agent-selection used to be a user-facing dropdown. Removed per user
+  // request; always use the first available agent from the server caps,
+  // falling back to "self". Kept as a function so the call sites in
+  // sendQuery/sendAudioStart need no further changes if we ever want
+  // per-turn agent switching back.
+  function currentAgent() {
+    const agents = capabilities?.agents;
+    if (Array.isArray(agents) && agents.length) return agents[0];
+    return "self";
+  }
+
   function sendQuery(text) {
     if (ws?.readyState !== WebSocket.OPEN) return;
     // Barge-in: if something is currently speaking or an agent task is
@@ -1104,12 +1866,16 @@
     // does a server-side cancel on "query" action, but doing it here too
     // is free and guarantees the particle/audio state resets now.
     if (isPlaying || activeCid) stopPlayback({ fullCancel: true });
+    // Also close any open quick-response window
+    if (quickResponseTimer) {
+      stopQuickResponseWindow({ silent: true });
+    }
     activeCid = null;
     currentAgentMsg = null;
     lastPlayedIndex = -1;
     ws.send(JSON.stringify({
       action: "query", text, query: text,
-      agent: $("agent-sel").value,
+      agent: currentAgent(),
       tts: ttsConfig(), stt: sttConfig(),
       context: panelContext(),
     }));
@@ -1123,7 +1889,7 @@
     lastPlayedIndex = -1;
     ws.send(JSON.stringify({
       action: "audio_start",
-      agent: $("agent-sel").value,
+      agent: currentAgent(),
       tts: ttsConfig(), stt: sttConfig(),
       context: panelContext(),
     }));
@@ -1227,6 +1993,14 @@
       isPlaying = true;
       sbState.textContent = "speaking";
       playingParticles();
+      // Pause the wake recognizer so it doesn't transcribe the agent's
+      // own TTS output via mic loopback. Gets re-armed in the onended
+      // path after the last chunk plays out.
+      if (wakeRunning || wakeActive) {
+        wakePaused = true;
+        console.log("[live] pausing wake during playback");
+        if (wakeRecog) { try { wakeRecog.stop(); } catch {} }
+      }
       // Open the mic quietly and listen for the user talking over the
       // agent — barge-in without a mic click.
       startBargeMonitor();
@@ -1252,6 +2026,22 @@
         resetParticles();
         micBtn.textContent = "mic";
         if (sbState.textContent === "speaking") sbState.textContent = "idle";
+        // Clear the playback pause and let the wake recognizer resume.
+        wakePaused = false;
+        // Final audio chunk played out — open the 3s quick-response
+        // window, then fall back to the wake listener on timeout.
+        // The startQuickResponseWindow() / reconcileWake() calls both
+        // handle echo suppression via armCaptureDelayed().
+        setTimeout(() => {
+          if (!isRecording && !isPlaying) {
+            if (settings.wakeEnabled && settings.sttLocation === "browser"
+                && firstGestureReceived && isWebSpeechAvailable()) {
+              startQuickResponseWindow();
+            } else {
+              reconcileWake();
+            }
+          }
+        }, 350);
       }
     };
   }
@@ -1269,6 +2059,10 @@
     pendingChunks = 0;
     nextPlayTime = 0;
     isPlaying = false;
+    // Stop forced — clear the playback-pause flag. The caller (e.g.
+    // startRecording barge-in) is about to reconcile wake state on its
+    // own terms; we just make sure we're not stuck in "paused" land.
+    wakePaused = false;
 
     if (ws?.readyState === WebSocket.OPEN) {
       const action = fullCancel ? "cancel" : "stop_tts";
@@ -1293,6 +2087,13 @@
   async function startRecording() {
     // User gesture — unlock audio context for playback too
     await gestureUnlock();
+    // If wake is listening in the background, release its mic first so
+    // the real recognizer can grab it cleanly.
+    if (wakeActive) stopWakeListen();
+    // Quick-response window also shares the recognizer — cancel it
+    if (quickResponseTimer) {
+      stopQuickResponseWindow({ silent: true });
+    }
     if (!await initMic()) return;
     // Barge-in: interrupting the agent by starting to talk = full cancel.
     if (isPlaying || activeCid) stopPlayback({ fullCancel: true });
@@ -1336,7 +2137,9 @@
     micBtn.textContent = "mic";
     statMic.textContent = "mic idle"; statMic.className = "stat off";
     sbState.textContent = "thinking";
-    playingParticles();   // switch to success color while agent is processing
+    // Purple "processing" state — held until the agent's first text_chunk
+    // or audio arrives. handleMsg flips to green (playingParticles) then.
+    processingParticles();
   }
 
   // Mic button: playing → full cancel (interrupt agent's monologue);
@@ -1344,8 +2147,14 @@
   micBtn.addEventListener("click", async () => {
     await gestureUnlock();
     if (isPlaying) { stopPlayback({ fullCancel: true }); return; }
-    if (isRecording) stopRecording();
-    else startRecording();
+    if (isRecording) {
+      // Route the stop through the right finalizer depending on which
+      // flow owns the current turn.
+      if (wakeMode === "capturing") finalizeCaptured();
+      else stopRecording();
+    } else {
+      startRecording();
+    }
   });
 
   document.addEventListener("keydown", (e) => {
@@ -1381,16 +2190,8 @@
       console.warn("caps fetch failed", e);
       capabilities = { tts: {}, stt: {}, agents: [] };
     }
-    // Populate the agent dropdown from the discovered list. Keep the
-    // user's current selection if it's still available; otherwise fall
-    // back to the first available agent (usually "self").
-    const agents = Array.isArray(capabilities.agents) && capabilities.agents.length
-      ? capabilities.agents
-      : ["self", "isaa", "coder"];
-    const sel = $("agent-sel");
-    const prev = sel.value;
-    const keep = agents.includes(prev) ? prev : agents[0];
-    fillSelect(sel, agents, keep);
+    // Agent selection is no longer a UI dropdown — currentAgent() reads
+    // capabilities.agents[0] at query time. Nothing to populate here.
   }
 
   function fillSelect(sel, values, current) {
@@ -1438,9 +2239,45 @@
     $("style-prompt").value = settings.stylePrompt || "";
     toggleStylePromptField();
 
+    buildWakeUI();
+
     sbMode.textContent = settings.captureMode;
     sbStt.textContent = `stt:${settings.sttLocation}`;
     sbTts.textContent = `tts:${settings.ttsBackend}`;
+  }
+
+  // Populate wake-word section: preset checkboxes + custom input.
+  // Disables and hides controls if Web Speech API is unavailable OR
+  // sttLocation is "server" (no interim-transcript source to match on).
+  function buildWakeUI() {
+    const supported = isWebSpeechAvailable()
+                   && settings.sttLocation === "browser";
+    $("wake-unsupported").style.display = supported ? "none" : "";
+    $("wake-controls").style.display    = supported ? ""     : "none";
+
+    const presetsBox = $("wake-presets");
+    presetsBox.innerHTML = "";
+    const chosen = new Set(settings.wakePresets || []);
+    for (const w of WAKE_PRESET_WORDS) {
+      const id = "wake-p-" + w.replace(/\s+/g, "-");
+      const wrap = document.createElement("label");
+      wrap.className = "wake-preset";
+      wrap.setAttribute("for", id);
+      const cb = document.createElement("input");
+      cb.type = "checkbox"; cb.id = id; cb.value = w;
+      cb.checked = chosen.has(w);
+      cb.onchange = () => {
+        const set = new Set(settings.wakePresets || []);
+        if (cb.checked) set.add(w); else set.delete(w);
+        settings.wakePresets = [...set];
+        saveSettings();
+      };
+      wrap.appendChild(cb);
+      wrap.appendChild(document.createTextNode(w));
+      presetsBox.appendChild(wrap);
+    }
+    $("wake-enabled").checked = !!settings.wakeEnabled;
+    $("wake-custom").value = settings.wakeCustom || "";
   }
 
   function updateSttModels() {
@@ -1462,6 +2299,9 @@
     $("stt-backend-field").style.display = server ? "" : "none";
     $("stt-model-field").style.display = server ? "" : "none";
     $("stt-device-field").style.display = server ? "" : "none";
+    // Wake word controls only meaningful with browser STT
+    const wakeSection = $("wake-section");
+    if (wakeSection) buildWakeUI();
   }
 
   function toggleStylePromptField() {
@@ -1488,6 +2328,8 @@
     $("stt-location").onchange = e => {
       settings.sttLocation = e.target.value; toggleSttFields();
       sbStt.textContent = `stt:${settings.sttLocation}`;
+      saveSettings();
+      reconcileWake();
     };
     $("stt-backend").onchange = e => {
       settings.sttBackend = e.target.value; updateSttModels();
@@ -1496,6 +2338,11 @@
     $("stt-device").onchange = e => settings.sttDevice = e.target.value;
     $("stt-language").onchange = e => {
       settings.sttLanguage = e.target.value; browserRecog = null;
+      // Wake recognizer binds its .lang at construction too — drop it so
+      // reconcileWake() rebuilds with the new language
+      if (wakeActive) stopWakeListen();
+      wakeRecog = null;
+      reconcileWake();
     };
     $("tts-backend").onchange = e => {
       settings.ttsBackend = e.target.value;
@@ -1510,6 +2357,26 @@
       $("tts-speed-val").textContent = settings.ttsSpeed.toFixed(2) + "x";
     };
     $("style-prompt").oninput = e => settings.stylePrompt = e.target.value;
+
+    // Wake-word inputs (presets are wired inside buildWakeUI; here only
+    // the toggle + custom freetext).
+    $("wake-enabled").onchange = e => {
+      settings.wakeEnabled = e.target.checked;
+      saveSettings();
+      // The click itself is a user gesture — Speech Recognition can now
+      // be started without deferral.
+      firstGestureReceived = true;
+      reconcileWake();
+    };
+    $("wake-custom").oninput = e => {
+      settings.wakeCustom = e.target.value;
+      // Debounce-save would be nicer but inputs are cheap; rely on apply
+      // or auto-save below.
+    };
+    $("wake-custom").onchange = e => {
+      settings.wakeCustom = e.target.value;
+      saveSettings();
+    };
 
     $("apply-btn").onclick = () => {
       saveSettings();
@@ -1602,29 +2469,48 @@
   };
 
   // ═══ Theme toggle ════════════════════════════════════════════════════
-  // Two modes only: light ↔ dark. Initial value respects system pref but
-  // after the user clicks once, we pin to their explicit choice.
+  // Three modes: auto (follow system) / light / dark. First-visit default
+  // is "auto"; clicking cycles auto → light → dark → auto. When "auto",
+  // we leave data-theme off and let the @media (prefers-color-scheme)
+  // rule do the work — and live-update if the OS pref changes.
+  const THEME_ICONS = { auto: "◐", light: "☀", dark: "☾" };
   function applyTheme(name) {
-    document.documentElement.setAttribute("data-theme", name);
+    if (name === "auto") {
+      document.documentElement.removeAttribute("data-theme");
+    } else {
+      document.documentElement.setAttribute("data-theme", name);
+    }
     const btn = $("theme-toggle");
-    btn.textContent = name === "dark" ? "☾" : "☀";
-    btn.title = `theme: ${name} (click to toggle)`;
+    btn.textContent = THEME_ICONS[name] || "◐";
+    btn.title = `theme: ${name} (click to cycle)`;
   }
   (function initTheme() {
     let saved = localStorage.getItem("icli_orb_theme");
-    if (saved !== "light" && saved !== "dark") {
-      // First visit: fall back to system pref, then persist
-      saved = window.matchMedia("(prefers-color-scheme: dark)").matches
-            ? "dark" : "light";
+    if (saved !== "light" && saved !== "dark" && saved !== "auto") {
+      saved = "auto";  // first-visit default
     }
     applyTheme(saved);
     localStorage.setItem("icli_orb_theme", saved);
+    // Broadcast an event when the system pref changes AND we're in auto
+    // mode, so any CSS-var readers (particle palette, etc.) repaint.
+    try {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      const onChange = () => {
+        if ((localStorage.getItem("icli_orb_theme") || "auto") === "auto") {
+          window.dispatchEvent(new Event("theme-change"));
+        }
+      };
+      if (mq.addEventListener) mq.addEventListener("change", onChange);
+      else if (mq.addListener) mq.addListener(onChange);  // Safari < 14
+    } catch {}
   })();
   $("theme-toggle").onclick = () => {
-    const cur = localStorage.getItem("icli_orb_theme") || "light";
-    const next = cur === "dark" ? "light" : "dark";
+    const cur = localStorage.getItem("icli_orb_theme") || "auto";
+    const next = cur === "auto" ? "light"
+               : cur === "light" ? "dark" : "auto";
     localStorage.setItem("icli_orb_theme", next);
     applyTheme(next);
+    window.dispatchEvent(new Event("theme-change"));
   };
 
   // ═══ Chat drag-resize with snap ═══════════════════════════════════════
@@ -1642,28 +2528,147 @@
     let mainRect = null;
     let lastCustomRatio = 0.35;   // restored by double-click
 
+    // Mobile layout puts chat BELOW the orb with the handle as a horizontal
+    // bar — so the axis for computing chat ratio flips to Y there.
+    function isMobile() {
+      return window.matchMedia("(max-width: 768px)").matches;
+    }
+
     function applyRatio(r) {
       r = Math.max(0, Math.min(1, r));
       if (r <= 0.01) {
         mainLayout.classList.add("chat-closed");
         mainLayout.classList.remove("chat-full");
         $("chat-open").style.display = "";
+        chatPane.style.flexBasis = "";
         return;
       }
       if (r >= 0.99) {
         mainLayout.classList.remove("chat-closed");
         mainLayout.classList.add("chat-full");
         $("chat-open").style.display = "none";
+        chatPane.style.flexBasis = "";
         return;
       }
       mainLayout.classList.remove("chat-closed", "chat-full");
       $("chat-open").style.display = "none";
-      // Translate ratio of main width → chat-pane flex-basis in px
+      // On desktop: ratio of main width → chat-pane flex-basis in px.
+      // On mobile: ratio of main height → orb-pane height (chat takes
+      // the remainder via flex:1), because flipping the chat-pane flex
+      // would fight with the bottom-sheet panel that sits on top of it.
+      if (isMobile()) {
+        const h = (mainRect || mainLayout.getBoundingClientRect()).height;
+        const orbH = Math.round(h * (1 - r)) - 6;  // minus handle
+        mainLayout.style.setProperty("--orb-h", Math.max(60, orbH) + "px");
+        chatPane.style.flexBasis = "";
+      } else {
+        const w = (mainRect || mainLayout.getBoundingClientRect()).width;
+        const panelW = mainLayout.classList.contains("panel-open")
+          ? (chatPane.nextElementSibling?.getBoundingClientRect().width || 0) : 0;
+        const available = w - panelW - 6; // minus handle
+        chatPane.style.flexBasis = Math.round(available * r) + "px";
+      }
+    }
+
+    function snapTo(ratio) {
+      let best = ratio, bestDist = Infinity;
+      for (const s of SNAPS) {
+        const d = Math.abs(s - ratio);
+        if (d < bestDist) { best = s; bestDist = d; }
+      }
+      return bestDist < SNAP_THRESHOLD ? best : ratio;
+    }
+
+    // Extract chat ratio from an event — accounts for desktop (X) vs
+    // mobile (Y) and for both mouse and touch.
+    function ratioFromEvent(e) {
+      const rect = mainRect;
+      const pt = e.touches ? e.touches[0]
+               : (e.changedTouches ? e.changedTouches[0] : e);
+      if (isMobile()) {
+        const chatH = rect.bottom - pt.clientY;
+        return chatH / rect.height;
+      } else {
+        const chatW = rect.right - pt.clientX;
+        return chatW / rect.width;
+      }
+    }
+
+    function startDrag(e) {
+      if (e.preventDefault) e.preventDefault();
+      dragging = true;
+      mainRect = mainLayout.getBoundingClientRect();
+      document.body.classList.add("dragging");
+    }
+    function moveDrag(e) {
+      if (!dragging) return;
+      if (e.cancelable) e.preventDefault();
+      applyRatio(ratioFromEvent(e));
+    }
+    function endDrag(e) {
+      if (!dragging) return;
+      dragging = false;
+      document.body.classList.remove("dragging");
+      const r = snapTo(ratioFromEvent(e));
+      if (r > 0.01 && r < 0.99) lastCustomRatio = r;
+      applyRatio(r);
+    }
+
+    handle.addEventListener("mousedown", startDrag);
+    window.addEventListener("mousemove", moveDrag);
+    window.addEventListener("mouseup", endDrag);
+    // Touch variant for mobile row-resize handle
+    handle.addEventListener("touchstart", startDrag, { passive: false });
+    window.addEventListener("touchmove", moveDrag, { passive: false });
+    window.addEventListener("touchend", endDrag);
+
+    handle.addEventListener("dblclick", () => {
+      let cur;
+      if (isMobile()) {
+        const rect = mainLayout.getBoundingClientRect();
+        cur = chatPane.getBoundingClientRect().height / rect.height;
+      } else {
+        cur = chatPane.getBoundingClientRect().width
+            / mainLayout.getBoundingClientRect().width;
+      }
+      applyRatio(Math.abs(cur - 0.5) < 0.02 ? lastCustomRatio : 0.5);
+    });
+  })();
+
+  // ═══ Panel drag-resize (mirror of chat-resize) ════════════════════════
+  // Same snap behavior as the chat divider, but controls the panel-pane
+  // on desktop. Hidden by CSS on mobile (panel is a bottom-sheet there
+  // with its own top-edge drag handle — see wirePanelSheetDrag below).
+  (function wirePanelResize() {
+    const handle = $("panel-resize");
+    const panelPane = $("panel-pane");
+    if (!handle || !panelPane) return;
+
+    const SNAPS = [0, 0.25, 0.50, 0.75, 1.0];
+    const SNAP_THRESHOLD = 0.06;
+    let dragging = false;
+    let mainRect = null;
+    let lastCustomRatio = 0.28;
+
+    function applyPanelRatio(r) {
+      r = Math.max(0, Math.min(1, r));
+      if (r <= 0.01) {
+        // Close the panel — matches the × button behavior
+        mainLayout.classList.remove("panel-open", "panel-full");
+        panelPane.style.flexBasis = "";
+        return;
+      }
+      if (r >= 0.99) {
+        // Fullscreen panel — hides orb and chat, panel takes everything.
+        // .panel-full is handled alongside .chat-full via a new CSS rule.
+        mainLayout.classList.add("panel-open", "panel-full");
+        panelPane.style.flexBasis = "";
+        return;
+      }
+      mainLayout.classList.add("panel-open");
+      mainLayout.classList.remove("panel-full");
       const w = (mainRect || mainLayout.getBoundingClientRect()).width;
-      const panelW = mainLayout.classList.contains("panel-open")
-        ? (chatPane.nextElementSibling?.getBoundingClientRect().width || 0) : 0;
-      const available = w - panelW - 6; // minus handle
-      chatPane.style.flexBasis = Math.round(available * r) + "px";
+      panelPane.style.flexBasis = Math.round(w * r) + "px";
     }
 
     function snapTo(ratio) {
@@ -1683,26 +2688,104 @@
     });
     window.addEventListener("mousemove", (e) => {
       if (!dragging) return;
-      const w = mainRect.width;
-      // Chat width = distance from mouse X to right edge of main
-      const chatW = mainRect.right - e.clientX;
-      const r = chatW / w;
-      applyRatio(r);
+      const panelW = mainRect.right - e.clientX;
+      applyPanelRatio(panelW / mainRect.width);
     });
     window.addEventListener("mouseup", (e) => {
       if (!dragging) return;
       dragging = false;
       document.body.classList.remove("dragging");
-      const w = mainRect.width;
-      const chatW = mainRect.right - e.clientX;
-      const r = snapTo(chatW / w);
+      const panelW = mainRect.right - e.clientX;
+      const r = snapTo(panelW / mainRect.width);
       if (r > 0.01 && r < 0.99) lastCustomRatio = r;
-      applyRatio(r);
+      applyPanelRatio(r);
     });
     handle.addEventListener("dblclick", () => {
-      const cur = chatPane.getBoundingClientRect().width
+      const cur = panelPane.getBoundingClientRect().width
                 / mainLayout.getBoundingClientRect().width;
-      applyRatio(Math.abs(cur - 0.5) < 0.02 ? lastCustomRatio : 0.5);
+      applyPanelRatio(Math.abs(cur - 0.5) < 0.02 ? lastCustomRatio : 0.5);
+    });
+  })();
+
+  // ═══ Mobile panel bottom-sheet drag (touch + mouse) ═══════════════════
+  // On mobile the panel slides up from the bottom. The top edge of the
+  // sheet (a 18px zone injected via .panel-pane::before in CSS) is a
+  // drag handle — drag it up/down to resize, or drag past the bottom
+  // to dismiss.
+  (function wirePanelSheetDrag() {
+    const panelPane = $("panel-pane");
+    if (!panelPane) return;
+    let dragging = false;
+    let startY = 0;
+    let startH = 0;
+    let winH = 0;
+
+    function isMobile() {
+      return window.matchMedia("(max-width: 768px)").matches;
+    }
+    function setHeight(px) {
+      const min = 140;
+      const max = Math.max(min + 20, winH - 80);
+      const clamped = Math.max(min, Math.min(max, px));
+      panelPane.style.setProperty("--panel-h", clamped + "px");
+      panelPane.style.height = clamped + "px";
+    }
+
+    function onStart(y) {
+      if (!isMobile()) return;
+      dragging = true;
+      startY = y;
+      winH = window.innerHeight;
+      startH = panelPane.getBoundingClientRect().height;
+      document.body.classList.add("dragging-panel");
+    }
+    function onMove(y) {
+      if (!dragging) return;
+      const delta = startY - y;        // drag up → positive → grow
+      setHeight(startH + delta);
+    }
+    function onEnd(y) {
+      if (!dragging) return;
+      dragging = false;
+      document.body.classList.remove("dragging-panel");
+      // Dismiss if height below threshold
+      const h = panelPane.getBoundingClientRect().height;
+      if (h < 160) {
+        mainLayout.classList.remove("panel-open");
+        setHeight(Math.max(220, winH * 0.6));  // reset for next open
+      }
+    }
+
+    // Touch
+    panelPane.addEventListener("touchstart", (e) => {
+      if (!isMobile()) return;
+      // Only the top handle area (first 22px) starts a drag
+      const rect = panelPane.getBoundingClientRect();
+      if (e.touches[0].clientY - rect.top > 22) return;
+      onStart(e.touches[0].clientY);
+    }, { passive: true });
+    panelPane.addEventListener("touchmove", (e) => {
+      if (!dragging) return;
+      e.preventDefault();
+      onMove(e.touches[0].clientY);
+    }, { passive: false });
+    panelPane.addEventListener("touchend", (e) => {
+      onEnd(e.changedTouches[0]?.clientY || 0);
+    });
+
+    // Mouse (useful for devtools responsive mode)
+    panelPane.addEventListener("mousedown", (e) => {
+      if (!isMobile()) return;
+      const rect = panelPane.getBoundingClientRect();
+      if (e.clientY - rect.top > 22) return;
+      e.preventDefault();
+      onStart(e.clientY);
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (dragging) onMove(e.clientY);
+    });
+    window.addEventListener("mouseup", (e) => {
+      if (dragging) onEnd(e.clientY);
     });
   })();
 
@@ -1984,6 +3067,10 @@
   createParticles(100);   // build the particle field immediately
   visualizeAudio();       // start the animation loop — it self-gates on state
   $("chat-open").style.display = "none";  // hidden while chat is open
+  // Render wake-word presets immediately — they don't need capabilities,
+  // so don't gate on the WS handshake. Otherwise opening settings before
+  // the backend responded leaves the preset container empty.
+  buildWakeUI();
   if (!API_KEY) {
     info.innerHTML = 'No API key. Add <span class="m">?key=YOUR_KEY</span> to URL.';
     return;

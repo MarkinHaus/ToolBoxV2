@@ -99,8 +99,24 @@ R = Router()
 
 # ─── App ─────────────────────────────────────────────────────────────────────
 
+from contextlib import asynccontextmanager
+
 def build_app(api_key: str) -> FastAPI:
-    app = FastAPI(title="icli_web", version="0.5.0")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        yield  # Server läuft
+        # Shutdown-Phase: Verbindungen kappen
+        if R.icli_ws:
+            try: await R.icli_ws.close()
+            except Exception: pass
+        for ws in list(R.orbs):
+            try: await ws.close()
+            except Exception: pass
+        for q in list(R.monitor_subs):
+            try: q.put_nowait(None)  # Sentinel-Signal für SSE-Abbruch
+            except asyncio.QueueFull: pass
+
+    app = FastAPI(title="icli_web", version="0.5.0", lifespan=lifespan)
 
     def require_key(
         x_api_key: Optional[str] = Header(None),
@@ -190,6 +206,8 @@ def build_app(api_key: str) -> FastAPI:
                 while True:
                     try:
                         payload = await asyncio.wait_for(q.get(), timeout=15.0)
+                        if payload is None:
+                            break
                         yield f"data: {payload}\n\n".encode()
                     except asyncio.TimeoutError:
                         yield b": ping\n\n"
@@ -722,7 +740,7 @@ def _broadcast_monitor(event: dict):
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 def main():
-    host = os.environ.get("ICLI_WEB_HOST", "0.0.0.0")
+    host = os.environ.get("ICLI_WEB_HOST", "127.0.0.1")
     port = int(os.environ.get("ICLI_WEB_PORT", "5055"))
     key = load_key()
     os.environ["ICLI_WEB_API_KEY"] = key  # propagate if reloaded

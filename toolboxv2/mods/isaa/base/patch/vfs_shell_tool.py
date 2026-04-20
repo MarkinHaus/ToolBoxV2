@@ -5,7 +5,7 @@ Unix-like shell interface and context manager for VirtualFileSystemV2.
 
 Provides exactly TWO primary agent tools that replace ~18 individual VFS tools:
 
-  vfs_shell(command)      — All filesystem operations via unix-like commands
+  vfs_shell(reason, command)      — All filesystem operations via unix-like commands
   vfs_view(path, ...)     — Scroll / focus control for the context window
 
 Usage in init_session_tools():
@@ -362,7 +362,7 @@ def _pipe_exec(cmd: str, stdin_text: str) -> dict:
     # ── Unknown: dispatch normally via vfs_shell ──────────────────────────
     return {"success": None, "__needs_dispatch": True, "__cmd": cmd}
 
-def _run_compound(command: str, single_fn) -> dict:
+def _run_compound(command: str, _single_fn) -> dict:
     """
     Execute a compound command string, handling all batch operators.
 
@@ -376,6 +376,8 @@ def _run_compound(command: str, single_fn) -> dict:
                only the final stage of each pipe chain contributes to stdout.
     """
     segments = _split_compound(command)
+
+    single_fn = lambda x:_single_fn("",x)
 
     if not segments:
         return {"success": False, "stdout": "", "stderr": "empty command", "returncode": 1}
@@ -429,7 +431,7 @@ def make_vfs_shell(session: "AgentSessionV2"):
     """
     vfs = session.vfs
 
-    def vfs_shell(command: str) -> dict:
+    def vfs_shell(reason: str, command: str) -> dict:
         """
         Unix-like shell interface for VFS operations.
 
@@ -461,10 +463,12 @@ def make_vfs_shell(session: "AgentSessionV2"):
           NIEMALS: \\\\n   ← das erzeugt einen Backslash + n im File!
         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+        Reason for the action
+        ------------------
         Supported commands
         ------------------
         NAVIGATION  ls [-la] [-R] [path]  |  pwd  |  tree [path] [-L depth]
-        READ        cat <path>  |  head [-n N] <path>  |  tail [-n N] <path>
+        READ        cat <path>  |  head [-n N] <path>  |  tail [-n N] <path>  |  sed -n 'X,Yp' <path>
                     wc [-lwc] <path>  |  stat <path>
         SEARCH      find [path] [-name pattern] [-type f|d]
                     grep [-rniIlC N] <pattern> [path|file_pattern]
@@ -486,11 +490,12 @@ def make_vfs_shell(session: "AgentSessionV2"):
 
         Examples
         --------
-        vfs_shell("ls -la /src")
-        vfs_shell("grep -rn 'def train' /src")
-        vfs_shell("write /src/config.py 'HOST = \\"localhost\\"\\nPORT = 8080'")
-        vfs_shell("edit /src/main.py 10 14 'def main():\\n    pass'")
-        vfs_shell("close /src/utils.py")
+        vfs_shell("get an initial vow of the project", "ls -la /src")
+        vfs_shell("i need to edit the train logic therefor i search for train", "grep -rn 'def train' /src")
+        vfs_shell("setting the app config to finalize the work", "write /src/config.py 'HOST = \\"localhost\\"\\nPORT = 8080'")
+        vfs_shell("the main function is an artefact for other modules to entry", "edit /src/main.py 10 14 'def main():\\n    pass'")
+        vfs_shell("read specific line range for analysis", "sed -n '100,150p' /src/app.py")
+        vfs_shell("the close file i am don working on it. closing its keeps my context clean and im mor focused. this is good", "close /src/utils.py")
         """
         command = command.strip()
         if not command:
@@ -695,6 +700,36 @@ def make_vfs_shell(session: "AgentSessionV2"):
                     lines_out.append(f"  {k:20}: {v}")
             return _ok("\n".join(lines_out))
 
+        # ═══════════════════════════════════════════════════════════════════
+        # sed -n 'X,Yp' <path>
+        # ═══════════════════════════════════════════════════════════════════
+        elif cmd == "sed":
+            # Simple support for sed -n 'start,endp' path
+            path = rest[-1] if rest else None
+            script = next((a for a in rest if 'p' in a and not a.startswith('-')), "")
+
+            if not path or not script:
+                return _err("sed: usage: sed -n 'X,Yp' <path>")
+
+            # Extract numbers from '100,154p'
+            match = re.search(r"(\d+),(\d+)p", script)
+            if not match:
+                # Fallback: check for single line '100p'
+                match = re.search(r"(\d+)p", script)
+                if not match:
+                    return _err("sed: only line range printing supported, e.g., -n '10,20p'")
+                start = end = int(match.group(1))
+            else:
+                start, end = int(match.group(1)), int(match.group(2))
+
+            r = vfs.read(path)
+            if not r.get("success"):
+                return _err(f"sed: {path}: {r.get('error', 'not found')}")
+
+            lines = r["content"].splitlines()
+            # sed is 1-indexed, inclusive
+            sliced = lines[max(0, start - 1):end]
+            return _ok("\n".join(sliced))
         # ═══════════════════════════════════════════════════════════════════
         # find [path] [-name pattern] [-type f|d]
         # ═══════════════════════════════════════════════════════════════════
@@ -1077,8 +1112,8 @@ def make_vfs_shell(session: "AgentSessionV2"):
         else:
             return _err(
                 f"vfs_shell: {cmd}: command not found\n"
-                "Try: ls cat head tail wc stat tree find grep "
-                "touch write edit echo mkdir rm mv cp close exec"
+                "Try: ls cat head tail wc stat tree find grep sync "
+                "touch write edit echo mkdir rm mv cp close exec write_chunk write_chunk_status sed"
             )
 
     return vfs_shell
@@ -1108,19 +1143,19 @@ def make_vfs_view(session: "AgentSessionV2"):
         Open or scroll to a specific section of a file in the VFS context window.
 
         Files opened here are **permanently visible** in every subsequent prompt
-        until explicitly closed (via `vfs_shell("close <path>")` or close_others=True).
+        until explicitly closed (via `vfs_shell("to keep my context cleen a focused, I only close unimportant files", "close <path>")` or close_others=True).
 
         Core Workflow — Finding two related things x and y
         ---------------------------------------------------
         # 1. Locate x
-        vfs_shell("grep -rn 'ClassX' /src")
+        vfs_shell("find the specific class X so i understand its connections to Class Y", "grep -rn 'class X' /src")
         # → /src/models.py:42:class ClassX:
 
         # 2. Focus on x  →  opens models.py, shows ~22 lines around ClassX
         vfs_view("/src/models.py", scroll_to="ClassX", context_lines=60)
 
         # 3. Locate y
-        vfs_shell("grep -rn 'method_y' /src")
+        vfs_shell("initial find locations and information abut method_y", "grep -rn 'method_y' /src")
         # → /src/services.py:88:    def method_y(self):
 
         # 4. Add y to context  →  now BOTH sections are visible
@@ -1216,7 +1251,7 @@ def make_vfs_view(session: "AgentSessionV2"):
                         "error": f"pattern '{scroll_to}' not found in {path}",
                         "hint": (
                             f"File has {total} lines. "
-                            f"Try vfs_shell(\"grep -n '{scroll_to}' {path}\") first."
+                            f"Try vfs_shell(\"find specif section to work focussed and persist.\", \"grep -n '{scroll_to}' {path}\") first."
                         ),
                     }
 

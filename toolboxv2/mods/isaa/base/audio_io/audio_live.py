@@ -66,7 +66,12 @@ class LiveModeConfig:
     # End detection
     end_mode:          EndMode = EndMode.AUTO
     silence_ms:        int   = 800            # ms of silence before send
+    partial_interval_s: float = 1.5  # Live transcript re-run cadence
+    max_partial_duration_s: float = 8.0  # After this, finalize-current + start new segment
     max_utterance_s:   float = 30.0           # hard cap
+
+    # STT preset (resolved at live-mode start via resolve_stt_preset)
+    stt_preset: str = "default"  # STTPreset.value
 
     # Stop keywords (any language — checked post-VAD on the raw text buffer)
     stop_keywords: list = field(default_factory=lambda: [
@@ -321,22 +326,33 @@ class LiveModeEngine:
         config: LiveModeConfig,
         on_utterance: Callable,
         speaker_store: Optional[SpeakerProfileStore] = None,
+        recorder: Optional[Any] = None,  # AudioRecorder; None = local mic
+        on_partial: Optional[Callable] = None,  # async (text: str) -> None
+        partial_transcriber: Optional[Callable[[bytes], str]] = None,
+        require_wake_word: bool = True,
     ):
-        self.config        = config
-        self.on_utterance  = on_utterance
+        self.config = config
+        self.on_utterance = on_utterance
+        self.on_partial = on_partial
+        self._partial_transcriber = partial_transcriber
         self.speaker_store = speaker_store
-        self._vad          = SileroVAD(threshold=config.vad_threshold)
+        self._vad = SileroVAD(threshold=config.vad_threshold)
         self._end_detector = EndDetector(config)
-        self._running      = False
-        self._task         = None
-        self._state        = "idle"   # idle | listening | recording
-        self._buffer: list = []       # PCM int16 bytes per frame
-        self._oww_model    = None
-        self._embed_model  = None     # pyannote embedding model
+        self._running = False
+        self._task = None
+        self._state = "idle"  # idle | listening | recording
+        self._buffer: list = []  # PCM int16 bytes per frame
+        self._oww_model = None
+        self._embed_model = None  # pyannote embedding model
+        self._recorder = recorder
+        self._require_wake_word = require_wake_word
+        self._last_partial_at: float = 0.0
+        self._segment_start_idx: int = 0  # where the "current" partial starts
+        self._last_partial_text: str = ""
 
         # Stats
         self.utterances_captured = 0
-        self.wake_activations    = 0
+        self.wake_activations = 0
         self.current_speaker: Optional[str] = None
 
     # ── Wake word model ────────────────────────────────────────────────────────
@@ -427,61 +443,123 @@ class LiveModeEngine:
 
     async def _run(self):
         """
-        Main capture loop. Runs sounddevice InputStream in a thread,
-        feeds frames to wake word + VAD, dispatches complete utterances.
+        Main capture loop. Reads frames from self._recorder, routes via
+        wake-word + VAD. If no recorder was injected, we spin up a default
+        LocalMicRecorder for backwards compat.
         """
+        if self._require_wake_word:
+            self._load_oww()
+
+        if self._recorder is None:
+            from toolboxv2.mods.isaa.base.audio_io.audio_recorder import (
+                LocalMicRecorder,
+            )
+            self._recorder = LocalMicRecorder(
+                device=self.config.device,
+                sample_rate=self.config.sample_rate,
+                frame_ms=self.config.frame_ms,
+            )
+
+        await self._recorder.start()
         try:
-            import sounddevice as sd
-        except ImportError:
-            raise ImportError("sounddevice required: pip install sounddevice")
-
-        self._load_oww()
-        frame_samples = int(self.config.sample_rate * self.config.frame_ms / 1000)
-        loop = asyncio.get_event_loop()
-        q: asyncio.Queue = asyncio.Queue()
-
-        def sd_callback(indata, frames, time_info, status):
-            pcm = (indata[:, 0] * 32767).astype(np.int16).tobytes()
-            loop.call_soon_threadsafe(q.put_nowait, pcm)
-
-        with sd.InputStream(
-            samplerate=self.config.sample_rate,
-            channels=1,
-            dtype="float32",
-            blocksize=frame_samples,
-            device=self.config.device,
-            callback=sd_callback,
-        ):
-            while self._running:
-                try:
-                    pcm = await asyncio.wait_for(q.get(), timeout=1.0)
-                except asyncio.TimeoutError:
-                    continue
-
+            async for pcm in self._recorder.frames():
+                if not self._running:
+                    break
                 await self._process_frame(pcm)
+        finally:
+            await self._recorder.stop()
 
     async def _process_frame(self, pcm: bytes):
         vad_prob = self._vad.is_speech(pcm)
 
         if self._state == "idle":
-            # Check wake word
-            if self._oww_predict(pcm):
-                self._state = "listening"
-                self.wake_activations += 1
-                self._vad.reset()
-                self._end_detector.reset()
-                self._buffer = []
+            if self._require_wake_word:
+                if self._oww_predict(pcm):
+                    self._enter_listening()
+            else:
+                # Push-to-talk / manual start: VAD-edge triggers listening
+                if vad_prob >= self.config.vad_threshold:
+                    self._enter_listening()
+                    self._buffer.append(pcm)
 
         elif self._state == "listening":
-            # Accumulate speech, watch for end
             self._buffer.append(pcm)
             should_end = self._end_detector.update(vad_prob, pcm)
 
             if should_end and len(self._buffer) >= 3:
                 await self._dispatch_utterance()
-            elif len(self._buffer) == 0 and vad_prob < 0.1:
-                # No speech at all after wake word → back to idle
+                return
+
+            if len(self._buffer) == 0 and vad_prob < 0.1:
                 self._state = "idle"
+                return
+
+            # Partial transcribe cadence — rolling re-transcribe up to
+            # max_partial_duration_s; after that, cap the segment and
+            # continue accumulating from a new anchor.
+            await self._maybe_emit_partial()
+
+    def _enter_listening(self) -> None:
+        self._state = "listening"
+        self.wake_activations += 1
+        self._vad.reset()
+        self._end_detector.reset()
+        self._buffer = []
+        self._last_partial_at = time.monotonic()
+        self._segment_start_idx = 0
+        self._last_partial_text = ""
+
+    async def _maybe_emit_partial(self) -> None:
+        if self.on_partial is None or self._partial_transcriber is None:
+            return
+
+        now = time.monotonic()
+        if (now - self._last_partial_at) < self.config.partial_interval_s:
+            return
+
+        # Window = frames since current segment anchor
+        window_frames = self._buffer[self._segment_start_idx:]
+        if not window_frames:
+            return
+
+        # Duration of current partial window (frames × frame_ms)
+        window_s = len(window_frames) * self.config.frame_ms / 1000.0
+        pcm_window = b"".join(window_frames)
+
+        # Run transcribe in executor — never block the capture loop
+        loop = asyncio.get_event_loop()
+        try:
+            text = await loop.run_in_executor(
+                None, lambda b=pcm_window: self._partial_transcriber(b)
+            )
+        except Exception as e:
+            # Partial is best-effort; don't tear the session down
+            print(f"[LiveMode] partial transcribe error: {e}")
+            self._last_partial_at = now
+            return
+
+        text = (text or "").strip()
+        if text and text != self._last_partial_text:
+            self._last_partial_text = text
+            try:
+                await self.on_partial(text)
+            except Exception as e:
+                print(f"[LiveMode] on_partial error: {e}")
+
+        self._last_partial_at = now
+
+        # Intelligent segment cap: if we hit max duration AND the current
+        # partial ends in sentence-terminator punctuation, close the segment
+        # and continue with a fresh anchor (rolling window).
+        if window_s >= self.config.max_partial_duration_s:
+            try:
+                from toolboxv2.mods.isaa.base.audio_io.Stt import is_sentence_end
+                at_boundary = is_sentence_end(text)
+            except Exception:
+                at_boundary = False
+            if at_boundary:
+                self._segment_start_idx = len(self._buffer)
+                self._last_partial_text = ""
 
     async def _dispatch_utterance(self):
         """Convert buffer to WAV, identify speaker, fire callback."""

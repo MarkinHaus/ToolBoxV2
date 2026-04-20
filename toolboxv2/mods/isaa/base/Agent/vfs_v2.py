@@ -632,7 +632,7 @@ class VirtualFileSystemV2:
 
 | Tool | Zweck |
 |------|-------|
-| `vfs_shell(command)` | Alle Datei-Operationen (lesen, schreiben, suchen, navigieren) |
+| `vfs_shell(reason, command)` | Alle Datei-Operationen (lesen, schreiben, suchen, navigieren) |
 | `vfs_view(path, ...)` | Kontext-Fenster steuern — was du im nächsten Prompt **siehst** |
 
 ---
@@ -650,14 +650,14 @@ Geschlossene Dateien sind unsichtbar — nur Metadaten bleiben erhalten.
 
 ```
 # 1. x suchen
-vfs_shell("grep -rn 'ClassX' /src")
+vfs_shell("find specif section to work focussed and persist.", "grep -rn 'ClassX' /src")
 # → /src/models.py:42:class ClassX:
 
 # 2. Auf x einzoomen  →  models.py erscheint ab jetzt im Kontext
 vfs_view("/src/models.py", scroll_to="ClassX", context_lines=60)
 
 # 3. y suchen
-vfs_shell("grep -rn 'method_y' /src")
+vfs_shell("initial find locations and information abut method_y","grep -rn 'method_y' /src")
 # → /src/services.py:88:    def method_y(self):
 
 # 4. y zum Kontext hinzufügen  →  jetzt sind BEIDE Abschnitte sichtbar
@@ -668,8 +668,8 @@ vfs_view("/src/services.py", scroll_to="method_y", context_lines=40)
 # 6. Aufräumen  →  alles schließen, neu starten
 vfs_view("/src/neue_datei.py", scroll_to="...", close_others=True)
 # ODER einzeln:
-vfs_shell("close /src/models.py")
-vfs_shell("close /src/services.py")
+vfs_shell("I done wit working on models and do not need any references to this files or ist information's","close /src/models.py")
+vfs_shell("focusing on the next section this file is project relayed i'm now working on an web research as requested by the user","close /src/services.py")
 ```
 
 ---
@@ -1678,9 +1678,9 @@ Session: {self.session_id}
                             "hint": (
                                 "Another agent or process modified this file on disk "
                                 "while you had unsynced changes. To resolve: "
-                                "(a) use vfs_shell('rm <path>') then re-create with your content "
+                                "(a) use vfs_shell('reason','rm <path>') then re-create with your content "
                                 "to force-overwrite, or "
-                                "(b) vfs_shell('cat <path>') to see current disk content first."
+                                "(b) vfs_shell('reason','cat <path>') to see current disk content first."
                             ),
                             "disk_mtime": disk_mtime,
                             "local_mtime": f.local_mtime,
@@ -1822,6 +1822,40 @@ Session: {self.session_id}
 
         if not self._is_file(path):
             return self.create(path, content)
+
+        # EBENE 3: Shared-Store Support für Append
+        shared_info = self._get_shared_store_info(path)
+        if shared_info is not None:
+            mount_key, relative, local_base = shared_info
+            try:
+                from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
+                gvfs = get_global_vfs()
+
+                # Wir holen den aktuellen Stand via VFS Read (liest direkt aus RAM-Store)
+                current = self.read(path)
+                new_content = (current["content"] if current.get("success") else "") + content
+
+                if mount_key == "global":
+                    result = gvfs.write_file(relative, new_content, author=self.agent_name)
+                else:
+                    result = gvfs.shared_write(
+                        mount_key, relative, new_content,
+                        local_base=local_base, author=self.agent_name
+                    )
+
+                if result.get("success"):
+                    f = self.files.get(path)
+                    if isinstance(f, VFSFile):
+                        f._content = new_content
+                        f.is_dirty = False
+                        f.backing_type = FileBackingType.SHADOW
+                        f.size_bytes = len(new_content)
+                        f.updated_at = datetime.now().isoformat()
+                    self._dirty = True
+                    return {"success": True, "message": f"Appended to '{path}' via shared store"}
+                return {"success": False, "error": f"shared_write failed: {result.get('error')}"}
+            except Exception as e:
+                return {"success": False, "error": f"shared_append exception: {e}"}
 
         f = self.files[path]
 

@@ -623,6 +623,8 @@ class TaskOverlay:
         self._right_iter_cursor: int = 0  # Index in reversed(tv.iterations) — welche Iter ist im Cursor
         self._selected_tool_idx: int = 0  # Welches Tool ist im Drill-Down ausgewählt
         self._tool_view: str = "list"  # "list" | "detail" — detail zeigt raw args+result
+        self._jump_buffer = ""
+        self._last_jump_time = 0.0
         self._app: Optional[Application] = None
         self._last_content_lines: int = 0
         self._last_final_lines: int = 0
@@ -663,7 +665,7 @@ class TaskOverlay:
                         seen_tids.add(sub_tid)
 
             # ── Non-Swarm mit nested subs (legacy): als (parent_tid, sub_name) ──
-            elif tv.status == "running" and tv.sub_agents:
+            elif tv.sub_agents:
                 for sub in tv.sub_agents:
                     items.append((tid, sub))
 
@@ -863,7 +865,7 @@ class TaskOverlay:
             out.append((bg + "fg:#f472b6", "  ✦ sub-agent"))
 
         out.append((bg + "fg:#6b7280", f"  {_short(tv.query, 52)}\n"))
-        out.append((bg + "fg:#374151", f"  {_short(tv.narrator_msg, 52)}\n"))
+        out.append((bg + "fg:#89c9c0", f"{_short(tv.narrator_msg, 252)}\n"))
 
         if tv.persona and tv.persona != "default":
             out.append((bg + "fg:#a78bfa", f"   Persona: {tv.persona}"))
@@ -917,12 +919,18 @@ class TaskOverlay:
                     marker = " [Fokus]" if self._scroll_focus == "input" else ""
                     out.append((bg + "fg:#a78bfa bold", f"   → Input / Arguments{marker}:\n"))
 
+                    # Im raw_input Block:
                     display_lines = []
                     for line in raw_input.split("\n"):
                         display_lines.extend(_tw.wrap(line, width=72) or [""])
 
+                    max_input = max(0, len(display_lines) - 20)
+                    self._max_input_scroll = max_input
+
+                    if self._scroll_focus == "input":
+                        self._input_scroll = min(self._input_scroll, max_input)
+
                     skip = self._input_scroll
-                    # Input auf max. 15 Zeilen begrenzen, damit Result sichtbar bleibt
                     visible_lines = display_lines[skip: skip + 20]
 
                     # Nach dem Rendern: max_scroll merken für bounded up/down
@@ -942,15 +950,19 @@ class TaskOverlay:
                 import textwrap as _tw
 
                 if raw_result:
-                    marker = " [Fokus]" if self._scroll_focus == "result" else ""
-                    out.append((bg + "fg:#4ade80 bold", f"   ← Result{marker}:\n"))
+                    out.append((bg + "fg:#4ade80 bold", f"   ← Result:\n"))
 
                     display_lines: list[str] = []
                     for line in raw_result.split("\n"):
                         display_lines.extend(_tw.wrap(line, width=72) or [""])
 
+                    max_result = max(0, len(display_lines) - 20)
+                    self._max_result_scroll = max_result
+
+                    if self._scroll_focus == "result":
+                        self._right_scroll = min(self._right_scroll, max_result)
+
                     skip = self._right_scroll
-                    # Result auf max. 20 Zeilen begrenzen
                     visible_lines = display_lines[skip: skip + 20]
 
                     for line in visible_lines:
@@ -964,15 +976,16 @@ class TaskOverlay:
 
                     out.append((bg + "fg:#374151", "\n   " + "─" * 64 + "\n"))
                     out.append((bg + "fg:#6b7280",
-                                "   ←/→=prev/next  Backspace=list  j/k=scroll  o/l=focus input/result\n"))
+                                "   ←/→=prev/next  Backspace=list  ↑/↓=scroll\n"))
                     return FormattedText(out)
                 else:
                     out.append((bg + "fg:#6b7280", "   (no result data)\n"))
 
                 out.append((bg + "fg:#374151", "\n   " + "─" * 64 + "\n"))
                 out.append((bg + "fg:#6b7280",
-                            "   ←/→ = prev/next tool  Backspace = tool list  j/k = scroll result\n"))
+                            "   ←/→=prev/next tool  Backspace=tool list  ↑/↓=scroll\n"))
                 return FormattedText(out)
+
 
             # ── Tool-Liste innerhalb der Iter ────────────────────────────────
             out.append((bg + "fg:#6b7280",
@@ -1058,25 +1071,25 @@ class TaskOverlay:
                                     f"   {cursor_sym}── iter {iv.n}{hint} " + "─" * 28 + "\n"))
 
             for thought in iv.thoughts:
-                iter_lines_flat.append((bg + "fg:#6b7280", "      ◎ "))
-                iter_lines_flat.append((bg + "fg:#e5e7eb",
+                iter_lines_flat.append((iter_bg + "fg:#6b7280", "      ◎ "))
+                iter_lines_flat.append((iter_bg + "fg:#e5e7eb",
                                         _short(thought.replace("\n", " "), 68) + "\n"))
 
             for tname, tok, elapsed, info in iv.tools:
                 ok_col = C["green"] if tok else C["red"]
                 ok_sym = SYM["ok"] if tok else SYM["fail"]
                 elapsed_s = f"{elapsed:.2f}s" if elapsed > 0 else "     "
-                iter_lines_flat.append((bg + "fg:#60a5fa", "      ◇ "))
-                iter_lines_flat.append((bg + "fg:#e5e7eb", f"{_short(tname, 16):<16} "))
-                iter_lines_flat.append((bg + f"fg:{ok_col}", f"{ok_sym}  "))
-                iter_lines_flat.append((bg + "fg:#6b7280", f"{elapsed_s:>7}  "))
+                iter_lines_flat.append((iter_bg + "fg:#60a5fa", "      ◇ "))
+                iter_lines_flat.append((iter_bg + "fg:#e5e7eb", f"{_short(tname, 16):<16} "))
+                iter_lines_flat.append((iter_bg + f"fg:{ok_col}", f"{ok_sym}  "))
+                iter_lines_flat.append((iter_bg + "fg:#6b7280", f"{elapsed_s:>7}  "))
                 if info:
-                    iter_lines_flat.append((bg + "fg:#9ca3af", _short(info, 36)))
-                iter_lines_flat.append((bg, "\n"))
+                    iter_lines_flat.append((iter_bg + "fg:#9ca3af", _short(info, 36)))
+                iter_lines_flat.append((iter_bg, "\n"))
 
             if iv.pending_tool:
-                iter_lines_flat.append((bg + "fg:#60a5fa", "      ◇ "))
-                iter_lines_flat.append((bg + "fg:#fbbf24",
+                iter_lines_flat.append((iter_bg + "fg:#60a5fa", "      ◇ "))
+                iter_lines_flat.append((iter_bg + "fg:#fbbf24",
                                         f"{_short(iv.pending_tool, 16):<16} ⋯ running...\n"))
 
         # Zähle Zeilen anhand "\n"-Vorkommen in den Text-Fragmenten
@@ -1164,23 +1177,19 @@ class TaskOverlay:
             iv = tv._iter_map.get(self._selected_iter) if tv else None
             n_tools = len(iv.tools) if iv else 0
             cur_tool = min(self._selected_tool_idx, n_tools - 1) + 1 if n_tools else 0
-            hint = (f" ↑↓=scroll  o/l=input/result  ^←/^→=prev/next tool ({cur_tool}/{n_tools})"
-                    f"  Backspace=back")
+            hint = (f" ↑↓=scroll  ^←/^→=prev/next tool ({cur_tool}/{n_tools})  Backspace=back")
         elif self._selected_iter is not None:
             iv = tv._iter_map.get(self._selected_iter) if tv else None
             n_tools = len(iv.tools) if iv else 0
             cur_tool = self._selected_tool_idx % n_tools + 1 if n_tools else 0
-            hint = (f" ↑↓=select tool ({cur_tool}/{n_tools})"
-                    f"  Enter=detail  Backspace=back")
+            hint = (f" ↑↓=select tool ({cur_tool}/{n_tools})  Enter=detail  Backspace=back")
         elif self._focus == "left":
             hint = " ↑↓=navigate  →/Enter=right  Tab=switch"
         else:
             n_iters = len(tv.iterations) if tv else 0
             cur_iter = self._right_iter_cursor + 1 if n_iters else 0
             region = "iter" if self._iter_scroll_focus == "iter" else "final"
-            has_final = " │ o/l=iter/final" if tv and tv.final_answer else ""
-            hint = (f" ↑↓=scroll {region} ({cur_iter}/{n_iters}){has_final}"
-                    f"  Enter=drill-in  ←=back")
+            hint = (f" ↑↓=scroll {region} ({cur_iter}/{n_iters})  Enter=drill-in  ←=back")
 
         return FormattedText([(
             "bg:#111827 fg:#6b7280",
@@ -1273,33 +1282,32 @@ class TaskOverlay:
         @kb.add("up")
         def _nav_up(event):
             if ov._focus == "right":
-                # Tool-Detail
                 if ov._selected_iter is not None and ov._tool_view == "detail":
-                    if ov._scroll_focus == "input":
-                        ov._input_scroll = max(0, ov._input_scroll - 1)
+                    if ov._scroll_focus == "result":
+                        if ov._right_scroll > 0:
+                            ov._right_scroll -= 1
+                        else:
+                            ov._scroll_focus = "input"
                     else:
-                        ov._right_scroll = max(0, ov._right_scroll - 1)
+                        ov._input_scroll = max(0, ov._input_scroll - 1)
                     return
 
-                # Tool-Liste innerhalb Iter
                 if ov._selected_iter is not None:
                     ov._selected_tool_idx = max(0, ov._selected_tool_idx - 1)
                     return
 
-                # Iter-Liste: zwei Modi
                 if ov._iter_scroll_focus == "final":
-                    # In Final Answer scrollen
-                    ov._final_scroll = max(0, ov._final_scroll - 1)
+                    if getattr(ov, "_final_scroll", 0) > 0:
+                        ov._final_scroll -= 1
+                    else:
+                        ov._iter_scroll_focus = "iter"
                 else:
-                    # Iter-Cursor hoch + Content-Scroll anpassen
                     ov._right_iter_cursor = max(0, ov._right_iter_cursor - 1)
                     ov._right_scroll = max(0, ov._right_scroll - 1)
                 return
-
-            # Links: Task-Nav
+            # (Links: Task-Nav Code bleibt hier unangetastet - kopiere den alten drunter)
             items = ov._left_items()
-            if not items:
-                return
+            if not items: return
             cur = (ov._selected, ov._selected_sub)
             idx = items.index(cur) if cur in items else 0
             ov._selected, ov._selected_sub = items[(idx - 1) % len(items)]
@@ -1312,15 +1320,19 @@ class TaskOverlay:
         @kb.add("down")
         def _nav_down(event):
             if ov._focus == "right":
-                # Tool-Detail
                 if ov._selected_iter is not None and ov._tool_view == "detail":
                     if ov._scroll_focus == "input":
-                        ov._input_scroll += 1  # Begrenzung via render
+                        max_in = getattr(ov, "_max_input_scroll", 0)
+                        if ov._input_scroll < max_in:
+                            ov._input_scroll += 1
+                        else:
+                            ov._scroll_focus = "result"
                     else:
-                        ov._right_scroll += 1
+                        max_res = getattr(ov, "_max_result_scroll", 0)
+                        if ov._right_scroll < max_res:
+                            ov._right_scroll += 1
                     return
 
-                # Tool-Liste
                 if ov._selected_iter is not None:
                     tv = ov._effective_view()
                     iv = tv._iter_map.get(ov._selected_iter) if tv else None
@@ -1328,22 +1340,23 @@ class TaskOverlay:
                     ov._selected_tool_idx = min(max_idx, ov._selected_tool_idx + 1)
                     return
 
-                # Iter-Liste
                 if ov._iter_scroll_focus == "final":
                     max_fs = ov._max_scroll(ov._last_final_lines, 12)
-                    ov._final_scroll = min(max_fs, ov._final_scroll + 1)
+                    ov._final_scroll = min(max_fs, getattr(ov, "_final_scroll", 0) + 1)
                 else:
                     tv = ov._effective_view()
                     n = len(tv.iterations) if tv else 0
-                    ov._right_iter_cursor = min(max(n - 1, 0), ov._right_iter_cursor + 1)
                     max_is = ov._max_scroll(ov._last_content_lines, ov._visible_height)
-                    ov._right_scroll = min(max_is, ov._right_scroll + 1)
+                    if ov._right_iter_cursor < max(n - 1, 0) or ov._right_scroll < max_is:
+                        ov._right_iter_cursor = min(max(n - 1, 0), ov._right_iter_cursor + 1)
+                        ov._right_scroll = min(max_is, ov._right_scroll + 1)
+                    else:
+                        if tv and tv.final_answer:
+                            ov._iter_scroll_focus = "final"
                 return
-
-            # Links
+            # (Links: Task-Nav)
             items = ov._left_items()
-            if not items:
-                return
+            if not items: return
             cur = (ov._selected, ov._selected_sub)
             idx = items.index(cur) if cur in items else -1
             ov._selected, ov._selected_sub = items[(idx + 1) % len(items)]
@@ -1353,71 +1366,102 @@ class TaskOverlay:
             ov._right_iter_cursor = 0
             ov._final_scroll = 0
 
-        # ── o/l: Scroll-Fokus wechseln ──────────────────────────────────────
-        @kb.add("o")
-        @kb.add("s-up")
-        @kb.add("s-left")
-        def _focus_prev_region(event):
-            if ov._tool_view == "detail":
-                ov._scroll_focus = "input"
-            elif ov._selected_iter is None:
-                # Iter-Liste: toggle iter ↔ final
-                ov._iter_scroll_focus = "iter"
-
-        @kb.add("l")
-        @kb.add("s-down")
-        @kb.add("s-right")
-        def _focus_next_region(event):
-            if ov._tool_view == "detail":
-                ov._scroll_focus = "result"
-            elif ov._selected_iter is None:
-                tv = ov._effective_view()
-                # Nur in final wechseln wenn's was gibt
-                if tv and tv.final_answer:
-                    ov._iter_scroll_focus = "final"
-
-        # ── j/k: 5-Zeilen-Jumps (Power-User) ────────────────────────────────
-        @kb.add("j")
         @kb.add("pagedown")
         def _sd(event):
             if ov._tool_view == "detail":
                 if ov._scroll_focus == "input":
-                    ov._input_scroll += 5
+                    max_in = getattr(ov, "_max_input_scroll", 0)
+                    if ov._input_scroll + 5 <= max_in:
+                        ov._input_scroll += 5
+                    else:
+                        ov._input_scroll = max_in
+                        ov._scroll_focus = "result"
                 else:
-                    ov._right_scroll += 5
+                    max_res = getattr(ov, "_max_result_scroll", 0)
+                    ov._right_scroll = min(max_res, ov._right_scroll + 5)
             elif ov._selected_iter is None and ov._iter_scroll_focus == "final":
                 max_fs = ov._max_scroll(ov._last_final_lines, 12)
-                ov._final_scroll = min(max_fs, ov._final_scroll + 5)
+                ov._final_scroll = min(max_fs, getattr(ov, "_final_scroll", 0) + 5)
             else:
+                tv = ov._effective_view()
+                n = len(tv.iterations) if tv else 0
                 max_is = ov._max_scroll(ov._last_content_lines, ov._visible_height)
-                ov._right_scroll = min(max_is, ov._right_scroll + 5)
+                if ov._right_iter_cursor + 5 <= max(n - 1, 0) or ov._right_scroll + 5 <= max_is:
+                    ov._right_iter_cursor = min(max(n - 1, 0), ov._right_iter_cursor + 5)
+                    ov._right_scroll = min(max_is, ov._right_scroll + 5)
+                else:
+                    ov._right_iter_cursor = max(n - 1, 0)
+                    ov._right_scroll = max_is
+                    if tv and tv.final_answer:
+                        ov._iter_scroll_focus = "final"
 
-        @kb.add("k")
         @kb.add("pageup")
         def _su(event):
             if ov._tool_view == "detail":
-                if ov._scroll_focus == "input":
-                    ov._input_scroll = max(0, ov._input_scroll - 5)
+                if ov._scroll_focus == "result":
+                    if ov._right_scroll - 5 >= 0:
+                        ov._right_scroll -= 5
+                    else:
+                        ov._right_scroll = 0
+                        ov._scroll_focus = "input"
                 else:
-                    ov._right_scroll = max(0, ov._right_scroll - 5)
+                    ov._input_scroll = max(0, ov._input_scroll - 5)
             elif ov._selected_iter is None and ov._iter_scroll_focus == "final":
-                ov._final_scroll = max(0, ov._final_scroll - 5)
+                if getattr(ov, "_final_scroll", 0) - 5 >= 0:
+                    ov._final_scroll -= 5
+                else:
+                    ov._final_scroll = 0
+                    ov._iter_scroll_focus = "iter"
             else:
+                ov._right_iter_cursor = max(0, ov._right_iter_cursor - 5)
                 ov._right_scroll = max(0, ov._right_scroll - 5)
 
+        # ── Direkt zu Iter 1-9999 springen ─────────────────────────────────────
+        @kb.add("0")
+        @kb.add("1")
+        @kb.add("2")
+        @kb.add("3")
+        @kb.add("4")
+        @kb.add("5")
+        @kb.add("6")
+        @kb.add("7")
+        @kb.add("8")
+        @kb.add("9")
+        def _handle_digits(event):
+            import time
+            key = event.data
+            now = time.time()
 
-        # ── Direkt zu Iter 1-9 springen ─────────────────────────────────────
-        for n in range(1, 10):
-            def _jump_iter(event, _n=n):
+            # Buffer zurücksetzen, wenn die letzte Eingabe länger als 1.2s her ist
+            if now - ov._last_jump_time > 1.2:
+                ov._jump_buffer = ""
+            ov._last_jump_time = now
+
+            # ── Sonderfall: 0 zum Zurückgehen ──
+            # Nur wenn Buffer leer ist und wir gerade in einem Drill-Down sind
+            if key == "0" and not ov._jump_buffer and ov._selected_iter is not None:
+                ov._selected_iter = None
+                ov._tool_view = "list"
+                ov._right_scroll = 0
+                ov._jump_buffer = ""
+                return
+
+            # ── Normalfall: Nummer aufbauen ──
+            ov._jump_buffer = (ov._jump_buffer + key)[-4:]  # Max 4 Stellen (9999)
+
+            try:
+                target_n = int(ov._jump_buffer)
                 tv = ov._effective_view()
-                if tv and _n in tv._iter_map and ov._selected_iter is None:
-                    ov._selected_iter = _n
+                if tv and target_n in tv._iter_map:
+                    ov._selected_iter = target_n
                     ov._selected_tool_idx = 0
                     ov._tool_view = "list"
                     ov._right_scroll = 0
                     ov._focus = "right"
-
-            kb.add(str(n))(_jump_iter)
+                    # Wir löschen den Buffer hier NICHT, damit man z.B.
+                    # von "1" auf "11" weiter-tippen kann
+            except ValueError:
+                ov._jump_buffer = ""
 
         return kb
 
@@ -6055,6 +6099,23 @@ class ISAA_Host:
         except Exception as e:
             print(e)
             pass
+        presets = {
+            "default": None,
+            "speed_local": None,
+            "speed_api": None,
+            "quality_local": None,
+            "quality_api": None,
+        }
+        try:
+            from toolboxv2.mods.isaa.base.audio_io.Stt import STTPreset
+            p = STTPreset._member_names_
+            presets = {
+                _:None for _ in p
+            }
+        except Exception as e:
+            print(e)
+            pass
+
 
         path_compl = PathCompleter(expanduser=True)
 
@@ -6106,6 +6167,11 @@ class ISAA_Host:
                     "groq": None,
                     "piper": None,
                     "elevenlabs": None,
+                },
+                "live":{
+                    "presets": None,
+                    "preset": presets,
+                    "stop": None,
                 },
                 "lang": None,
             },
@@ -6771,6 +6837,11 @@ class ISAA_Host:
         print_box_content("Tip: append  #audio  to any message for one-time spoken response", "info")
         print_separator()
 
+        print_box_content("/audio live                  - Start hands-free live mode", "")
+        print_box_content("/audio live stop             - Stop live mode", "")
+        print_box_content("/audio live preset <name>    - default/speed_local/speed_api/quality_local/quality_api", "")
+        print_box_content("/audio live presets          - Show preset availability", "")
+
         print_status("Shortcuts", "info")
         print_box_content("F2 - ZEN/ZEN+ mode toggle", "")
         print_box_content("F4 - Toggle audio recording", "")
@@ -7384,7 +7455,10 @@ class ISAA_Host:
             if not ctx and engine._active_executions:
                 ctx = list(engine._active_executions.values())[-1]
 
-            if not ctx:
+            if ctx is None:
+                print_status("No working context found", "info")
+
+            if not hasattr(ctx, "working_history"):
                 print_status("No working context found", "info")
 
             history = ctx.working_history
@@ -9107,9 +9181,39 @@ class ISAA_Host:
                 if self._live_engine:
                     await self._live_engine.stop()
                     self._live_engine = None
+                    spin = getattr(self, "_live_spinner", None)
+                    if spin is not None:
+                        try:
+                            spin.__exit__(None, None, None)
+                        except Exception:
+                            pass
+                        self._live_spinner = None
                     print_status("Live mode stopped", "success")
                 else:
                     print_status("Live mode not running", "error")
+            elif sub == "preset" and len(args) > 2:
+                from toolboxv2.mods.isaa.base.audio_io.Stt import (
+                    STTPreset, resolve_stt_preset,
+                )
+                name = args[2].lower()
+                try:
+                    p = STTPreset(name)
+                except ValueError:
+                    valid = ", ".join(x.value for x in STTPreset)
+                    print_status(f"Valid presets: {valid}", "error")
+                    return
+                try:
+                    _, _, desc = resolve_stt_preset(p)
+                except RuntimeError as e:
+                    print_status(str(e), "error")
+                    return
+                self._live_config.stt_preset = p.value
+                print_status(f"STT preset → {p.value} ({desc})", "success")
+
+            elif sub == "presets":
+                from toolboxv2.mods.isaa.base.audio_io.Stt import describe_stt_presets
+                for line in describe_stt_presets().splitlines():
+                    print_status(line, "info")
 
             elif sub == "status":
                 if self._live_engine:
@@ -9156,64 +9260,86 @@ class ISAA_Host:
                     print_status("Live mode already running. /audio live stop to stop.", "info")
                     return
 
-                # Sicherstellen dass player läuft
                 if self.audio_player._task is None or self.audio_player._task.done():
                     await self.audio_player.start()
 
-                async def on_utterance(wav_bytes: bytes, speaker: Optional[str]):
-                    """Called when a complete utterance is captured."""
-                    # Speaker-Tag für den Agent
+                from toolboxv2.mods.isaa.base.audio_io.audio_recorder import LocalMicRecorder
+                from toolboxv2.mods.isaa.base.audio_io.Stt import STTConfig, STTBackend
+                from toolboxv2.mods.isaa.base.audio_io.audioIo import AudioStreamRecorder
+
+                # Spinner-as-live-subtitle: the engine fires on_partial every
+                # ~1.5s; we repaint the spinner message with the latest text.
+                live_spinner = Spinner("🎤 listening…")
+                live_spinner.__enter__()
+
+                async def on_partial(text: str):
+                    # Keep it terse — spinner has limited horizontal space.
+                    snippet = text if len(text) <= 80 else "…" + text[-77:]
+                    live_spinner.message = f"🎤 {snippet}"
+
+                async def on_transcript(text: str, speaker: Optional[str], wav: bytes):
+                    # Stop-keyword swallow: if utterance IS the keyword, ignore.
+                    if self._live_engine and self._live_engine._engine._end_detector.check_keyword(text):
+                        live_spinner.message = "🎤 listening…"
+                        return
                     speaker_tag = f"[{speaker}]: " if speaker else ""
-
-                    # STT → agent (reuse existing pipeline)
+                    full_query = speaker_tag + text
+                    # Pause spinner during agent work; resume afterwards.
+                    live_spinner.message = "🎤 processing…"
                     try:
-                        from toolboxv2.mods.isaa.base.audio_io.Stt import (
-                            transcribe, STTConfig, STTBackend,
-                        )
-                        stt_result = await asyncio.get_event_loop().run_in_executor(
-                            None,
-                            lambda: transcribe(
-                                wav_bytes,
-                                config=STTConfig(
-                                    backend=STTBackend.FASTER_WHISPER,
-                                    model="small",
-                                    device="cpu",
-                                    compute_type="int8",
-                                    language=None,
-                                ),
-                            )
-                        )
-                        text = stt_result.text.strip()
-                        if not text:
-                            return
-
-                        # Stop keyword check
-                        if self._live_engine and self._live_engine._end_detector.check_keyword(text):
-                            # Keyword was the entire utterance → ignore, just acknowledged
-                            return
-
-                        full_query = speaker_tag + text
                         print(f"\n🎤 {full_query}")
-
-                        # In die normale Agent-Pipeline einspeisen
                         await self._handle_agent_interaction(full_query)
+                    finally:
+                        live_spinner.message = "🎤 listening…"
 
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as e:
-                        print_status(f"Live STT error: {e}", "error")
-
-                self._live_engine = LiveModeEngine(
-                    config=self._live_config,
-                    on_utterance=on_utterance,
-                    speaker_store=self._speaker_store,
+                recorder_impl = LocalMicRecorder(
+                    device=getattr(self, "_audio_device", None),
+                    sample_rate=self._live_config.sample_rate,
+                    frame_ms=self._live_config.frame_ms,
                 )
+                from toolboxv2.mods.isaa.base.audio_io.Stt import (
+                    STTPreset, resolve_stt_preset,
+                )
+                preset_name = getattr(self._live_config, "stt_preset", "default")
+                try:
+                    preset = STTPreset(preset_name)
+                except ValueError:
+                    preset = STTPreset.DEFAULT
+
+                try:
+                    partial_stt, final_stt, preset_desc = resolve_stt_preset(
+                        preset, language=None,
+                    )
+                except RuntimeError as e:
+                    # Close the spinner we already opened so terminal is clean.
+                    try:
+                        live_spinner.__exit__(None, None, None)
+                    except Exception:
+                        pass
+                    print_status(str(e), "error")
+                    return
+
+                self._live_engine = AudioStreamRecorder(
+                    recorder=recorder_impl,
+                    live_config=self._live_config,
+                    stt_config=final_stt,
+                    partial_stt_config=partial_stt,
+                    on_transcript=on_transcript,
+                    on_partial=on_partial,
+                    speaker_store=self._speaker_store,
+                    require_wake_word=True,
+                )
+                # Park the spinner so /audio live stop can close it.
+                self._live_spinner = live_spinner
+
                 await self._live_engine.start()
                 cfg = self._live_config
                 print_status(
                     f"Live mode active | wake: {cfg.wake_word_model} "
                     f"| end: {cfg.end_mode.value} "
-                    f"| silence: {cfg.silence_ms}ms",
+                    f"| silence: {cfg.silence_ms}ms "
+                    f"| partial: {cfg.partial_interval_s}s "
+                    f"| stt: {preset_desc}",
                     "success",
                 )
                 print_status("Say the wake word to start speaking.", "info")

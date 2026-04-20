@@ -37,6 +37,7 @@ class TTSBackend(Enum):
     GROQ_TTS = "groq_tts"
     ELEVENLABS = "elevenlabs"
     INDEX_TTS = "index_tts"  # Zero-shot voice cloning, emotion-aware
+    QWEN3_TTS = "qwen3_tts"
 
 
 class TTSQuality(Enum):
@@ -62,11 +63,13 @@ class TTSEmotion(Enum):
     FRIENDLY = "friendly"  # Warm, conversational
     EMPATHETIC = "empathetic"  # Soft, understanding
     URGENT = "urgent"      # Fast, tense
+    CUSTOM = "custom"       # Qwen3-TTS: use TTSConfig.style_prompt verbatim
 
 
 # Prompt prefixes injected before text for emotion-aware models
 _EMOTION_PREFIXES: dict[TTSEmotion, str] = {
     TTSEmotion.NEUTRAL:    "",
+    TTSEmotion.CUSTOM:    "",
     TTSEmotion.CALM:       "[calm, slow] ",
     TTSEmotion.EXCITED:    "[excited, energetic] ",
     TTSEmotion.SERIOUS:    "[serious, formal] ",
@@ -140,6 +143,27 @@ class TTSConfig:
     # cfg_scale: Classifier-free guidance strength (1.0 = no guidance, 3.0 = strong)
     index_tts_cfg_scale: float = 3.0
 
+    # Qwen3-TTS specific
+    # style_prompt: Natural-language description of voice/tone.
+    #   VoiceDesign mode: used as `instruct` — e.g.
+    #     "Male, 17yo, gaining confidence, slight vocal tightness when nervous"
+    #   Clone mode: passed as `instruct` on top of cloned voice, if non-None.
+    #   Per-call override via speak() tool is supported.
+    qwen3_style_prompt: Optional[str] = None
+    # ref_audio: If set → Base/clone mode. If None → VoiceDesign mode.
+    #   Path, URL, base64, or (np.ndarray, sr) tuple accepted by qwen-tts.
+    qwen3_ref_audio: Optional[str] = None
+    # ref_text: Transcript of ref_audio. Improves clone quality.
+    #   If None and ref_audio is set → x_vector_only_mode=True.
+    qwen3_ref_text: Optional[str] = None
+    # model_id override. None → auto: VoiceDesign for design, Base for clone.
+    qwen3_model_id: Optional[str] = None
+    # device: "cuda" or "cpu". CPU works but is slow; warning is emitted.
+    qwen3_device: str = "cuda"
+    # split_sentences: If True, caller splits text at sentence boundaries
+    #   before queueing. Default False — Qwen3 benefits from full-text context.
+    qwen3_split_sentences: bool = False
+
     def __post_init__(self):
         if not 0.25 <= self.speed <= 4.0:
             raise ValueError("Speed must be between 0.25 and 4.0")
@@ -151,6 +175,7 @@ class TTSConfig:
                 TTSBackend.GROQ_TTS: "Fritz-PlayAI",
                 TTSBackend.ELEVENLABS: "21m00Tcm4TlvDq8ikWAM",
                 TTSBackend.INDEX_TTS: "",  # Uses reference audio, no named voice
+                TTSBackend.QWEN3_TTS: ""
             }
             object.__setattr__(self, "voice", defaults.get(self.backend, "default"))
 
@@ -224,8 +249,9 @@ def _synthesize_piper(text: str, config: TTSConfig) -> TTSResult:
             "piper-tts not installed. Install with: pip install piper-tts"
         )
 
+    from toolboxv2.mods.isaa.base.audio_io.model_registry import get_piper
     model_path = _resolve_piper_model_path(config)
-    voice = PiperVoice.load(model_path)
+    voice = get_piper(model_path)
 
     audio_buffer = io.BytesIO()
     with wave.open(audio_buffer, "wb") as wav_file:
@@ -268,8 +294,10 @@ def _stream_piper(text: str, config: TTSConfig) -> Generator[bytes, None, None]:
     except ImportError:
         raise ImportError("piper-tts not installed")
 
+    from toolboxv2.mods.isaa.base.audio_io.model_registry import get_piper
     model_path = _resolve_piper_model_path(config)
-    voice = PiperVoice.load(model_path)
+    voice = get_piper(model_path)
+
     any_chunk = False
     for chunk in voice.synthesize(text):
         payload = getattr(chunk, "audio_int16_bytes", None)
@@ -317,7 +345,9 @@ def _synthesize_vibevoice(text: str, config: TTSConfig) -> TTSResult:
     if not torch.cuda.is_available():
         raise RuntimeError("VibeVoice requires NVIDIA GPU with CUDA.")
 
-    model = VibeVoice.from_pretrained("microsoft/VibeVoice-Streaming-0.5B")
+    from toolboxv2.mods.isaa.base.audio_io.model_registry import get_vibevoice
+    model = get_vibevoice("microsoft/VibeVoice-Streaming-0.5B")
+
     speaker = (
         model.load_speaker(config.vibevoice_reference_audio)
         if config.vibevoice_reference_audio
@@ -346,7 +376,9 @@ def _stream_vibevoice(text: str, config: TTSConfig) -> Generator[bytes, None, No
         raise ImportError("vibevoice not installed")
     if not torch.cuda.is_available():
         raise RuntimeError("VibeVoice requires NVIDIA GPU")
-    model = VibeVoice.from_pretrained("microsoft/VibeVoice-Streaming-0.5B")
+    from toolboxv2.mods.isaa.base.audio_io.model_registry import get_vibevoice
+    model = get_vibevoice("microsoft/VibeVoice-Streaming-0.5B")
+
     for chunk in model.synthesize_stream(text=text, speaker=config.voice):
         yield chunk.cpu().numpy().tobytes()
 
@@ -590,102 +622,135 @@ def _stream_index_tts(text: str, config: TTSConfig) -> Generator[bytes, None, No
 
 
 # =============================================================================
-# PUBLIC API
-# =============================================================================
-
-
-def synthesize(text: str, config: Optional[TTSConfig] = None, **kwargs) -> TTSResult:
-    """
-    Synthesize speech from text.
-
-    Main entry point for TTS. Routes to the configured backend.
-
-    Args:
-        text: Text to convert to speech
-        config: TTSConfig object with all settings
-        **kwargs: Override config settings (e.g. emotion=TTSEmotion.CALM)
-
-    Returns:
-        TTSResult with audio bytes and metadata
-
-    Examples:
-        # Local IndexTTS with custom voice
-        result = synthesize(
-            "Hello! I can speak with emotion.",
-            config=TTSConfig(
-                backend=TTSBackend.INDEX_TTS,
-                index_tts_reference_audio="./my_voice.wav",
-                index_tts_model_dir="./checkpoints",
-                emotion=TTSEmotion.FRIENDLY,
-            )
-        )
-
-        # Groq with excited tone (prefix injected)
-        result = synthesize(
-            "This is amazing!",
-            config=TTSConfig(
-                backend=TTSBackend.GROQ_TTS,
-                voice="autumn",
-                emotion=TTSEmotion.EXCITED,
-            )
-        )
-    """
-    if config is None:
-        config = TTSConfig(**kwargs)
-    elif kwargs:
-        config_dict = {k: v for k, v in config.__dict__.items()}
-        config_dict.update(kwargs)
-        config = TTSConfig(**config_dict)
-
-    backends = {
-        TTSBackend.PIPER: _synthesize_piper,
-        TTSBackend.VIBEVOICE: _synthesize_vibevoice,
-        TTSBackend.GROQ_TTS: _synthesize_groq_tts,
-        TTSBackend.ELEVENLABS: _synthesize_elevenlabs,
-        TTSBackend.INDEX_TTS: _synthesize_index_tts,
-    }
-
-    handler = backends.get(config.backend)
-    if handler is None:
-        raise ValueError(f"Unknown backend: {config.backend}")
-
-    return handler(text, config)
-
-
-def synthesize_stream(
-    text: str, config: Optional[TTSConfig] = None, **kwargs
-) -> Generator[bytes, None, None]:
-    """
-    Stream audio synthesis from text.
-
-    Yields audio chunks as they become available.
-    For IndexTTS, yields the full audio in one chunk.
-    """
-    if config is None:
-        config = TTSConfig(**kwargs)
-    elif kwargs:
-        config_dict = {k: v for k, v in config.__dict__.items()}
-        config_dict.update(kwargs)
-        config = TTSConfig(**config_dict)
-
-    stream_handlers = {
-        TTSBackend.PIPER: _stream_piper,
-        TTSBackend.VIBEVOICE: _stream_vibevoice,
-        TTSBackend.GROQ_TTS: _stream_groq_tts,
-        TTSBackend.ELEVENLABS: _stream_elevenlabs,
-        TTSBackend.INDEX_TTS: _stream_index_tts,
-    }
-
-    handler = stream_handlers.get(config.backend)
-    if handler is None:
-        raise ValueError(f"Unknown backend: {config.backend}")
-
-    yield from handler(text, config)
-
-
-# =============================================================================
 # CONVENIENCE FUNCTIONS
 # =============================================================================
+
+# =============================================================================
+# QWEN3-TTS BACKEND (LOCAL GPU, VOICE DESIGN + ZERO-SHOT CLONE)
+# =============================================================================
+#
+# Qwen3-TTS covers two modes, selected implicitly from TTSConfig fields:
+#   - VoiceDesign: qwen3_ref_audio is None
+#     Pure prompt-driven synthesis. `style_prompt` = instruct.
+#   - Base/Clone:  qwen3_ref_audio is set
+#     Zero-shot voice clone from 3-10s reference audio.
+#
+# Setup:
+#   pip install -U qwen-tts
+#   # (optional) pip install -U flash-attn --no-build-isolation
+#
+# Model weights auto-download via `from_pretrained(model_id)` on first use.
+# No manual snapshot_download needed.
+#
+# GPU strongly recommended (BF16/FP16 only). CPU works but is slow; a warning
+# is emitted if CUDA is unavailable.
+
+
+def _qwen3_select_model_id(config: TTSConfig) -> str:
+    """Pick HF model id from config — explicit override wins."""
+    if config.qwen3_model_id:
+        return config.qwen3_model_id
+    if config.qwen3_ref_audio is not None:
+        return "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+    return "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+
+
+def _qwen3_resolve_instruct(config: TTSConfig) -> Optional[str]:
+    """
+    Resolve the `instruct` string for Qwen3.
+
+    Priority: style_prompt (verbatim) > emotion-derived phrase > None.
+    """
+    if config.qwen3_style_prompt:
+        return config.qwen3_style_prompt
+    if config.emotion == TTSEmotion.CUSTOM:
+        return None  # CUSTOM without style_prompt is a no-op instruct
+    if config.emotion == TTSEmotion.NEUTRAL:
+        return None
+    emotion_map = {
+        TTSEmotion.CALM: "Speak calmly, slowly, reassuringly.",
+        TTSEmotion.EXCITED: "Speak with excitement and high energy.",
+        TTSEmotion.SERIOUS: "Speak with a serious, formal, authoritative tone.",
+        TTSEmotion.FRIENDLY: "Speak warmly, like a friend.",
+        TTSEmotion.EMPATHETIC: "Speak softly, with empathy and understanding.",
+        TTSEmotion.URGENT: "Speak urgently, with tension.",
+    }
+    return emotion_map.get(config.emotion)
+
+
+def _synthesize_qwen3_tts(text: str, config: TTSConfig) -> TTSResult:
+    """
+    Synthesize speech using Qwen3-TTS.
+
+    Mode is picked implicitly:
+      - qwen3_ref_audio set → voice clone (Base model)
+      - otherwise           → voice design (prompt-driven)
+
+    Requirements:
+        pip install -U qwen-tts
+        CUDA GPU with BF16 support recommended. CPU fallback with warning.
+    """
+    from toolboxv2.mods.isaa.base.audio_io.model_registry import get_qwen3  # noqa: E501
+
+    model_id = _qwen3_select_model_id(config)
+    model = get_qwen3(model_id, device=config.qwen3_device)
+
+    instruct = _qwen3_resolve_instruct(config)
+    language = config.language if config.language else "Auto"
+
+    if config.qwen3_ref_audio is not None:
+        # Base / clone mode
+        clone_kwargs = {
+            "text": text,
+            "language": language,
+            "ref_audio": config.qwen3_ref_audio,
+        }
+        if config.qwen3_ref_text:
+            clone_kwargs["ref_text"] = config.qwen3_ref_text
+        else:
+            clone_kwargs["x_vector_only_mode"] = True
+        wavs, sr = model.generate_voice_clone(**clone_kwargs)
+    else:
+        # Voice Design mode
+        wavs, sr = model.generate_voice_design(
+            text=text,
+            language=language,
+            instruct=instruct or "Normal, clear speech.",
+        )
+
+    # Convert np.ndarray (float32) → WAV bytes
+    import soundfile as sf
+    buffer = io.BytesIO()
+    sf.write(buffer, wavs[0], sr, format="WAV")
+    audio_bytes = buffer.getvalue()
+
+    # Parse metadata
+    with io.BytesIO(audio_bytes) as buf:
+        with wave.open(buf, "rb") as wav:
+            sample_rate = wav.getframerate()
+            duration = wav.getnframes() / sample_rate
+            channels = wav.getnchannels()
+
+    return TTSResult(
+        audio=audio_bytes,
+        format="wav",
+        sample_rate=sample_rate,
+        duration=duration,
+        channels=channels,
+        emotion=config.emotion,
+    )
+
+
+def _stream_qwen3_tts(text: str, config: TTSConfig) -> Generator[bytes, None, None]:
+    """
+    Stream Qwen3-TTS synthesis.
+
+    qwen-tts high-level API does not expose token-level streaming yet.
+    We synthesize the full clip and yield it in one chunk. Real streaming
+    will land together with audio_live latency work.
+    """
+    result = _synthesize_qwen3_tts(text, config)
+    yield result.audio
 
 
 def synthesize_piper(text: str, voice: str = "de_DE-thorsten-high", **kwargs) -> TTSResult:
@@ -747,3 +812,153 @@ def synthesize_index_tts(
             **kwargs,
         ),
     )
+
+def synthesize_qwen3(
+    text: str,
+    style_prompt: Optional[str] = None,
+    ref_audio: Optional[str] = None,
+    ref_text: Optional[str] = None,
+    language: str = "Auto",
+    device: str = "cuda",
+    **kwargs,
+) -> TTSResult:
+    """
+    Synthesize using Qwen3-TTS (local, voice design or clone).
+
+    Mode is picked implicitly:
+      - ref_audio set  → Base/clone mode (1.7B-Base)
+      - ref_audio None → VoiceDesign mode (1.7B-VoiceDesign)
+
+    Args:
+        text: Text to speak (full paragraphs preferred over sentence splits).
+        style_prompt: Natural-language voice/tone description.
+            VoiceDesign: drives the whole timbre.
+            Clone: optional instruct layered on cloned voice.
+        ref_audio: Path / URL / base64 / (np.ndarray, sr) of target speaker.
+        ref_text: Transcript of ref_audio — better clone quality.
+            If None, x_vector_only_mode is used.
+        language: ISO code ("en", "de", ...) or "Auto".
+        device: "cuda" or "cpu" (CPU emits warning, very slow).
+
+    Example:
+        # Voice Design
+        synthesize_qwen3(
+            "Warning! Overheat detected!",
+            style_prompt="Panicked robot, glitchy voice",
+        ).save("alert.wav")
+
+        # Clone
+        synthesize_qwen3(
+            "Hello in your voice.",
+            ref_audio="./me.wav",
+            ref_text="This is me speaking normally.",
+        ).save("clone.wav")
+    """
+    return synthesize(
+        text,
+        config=TTSConfig(
+            backend=TTSBackend.QWEN3_TTS,
+            language=language,
+            qwen3_style_prompt=style_prompt,
+            qwen3_ref_audio=ref_audio,
+            qwen3_ref_text=ref_text,
+            qwen3_device=device,
+            emotion=TTSEmotion.CUSTOM if style_prompt else TTSEmotion.NEUTRAL,
+            **kwargs,
+        ),
+    )
+
+# =============================================================================
+# PUBLIC API
+# =============================================================================
+
+
+def synthesize(text: str, config: Optional[TTSConfig] = None, **kwargs) -> TTSResult:
+    """
+    Synthesize speech from text.
+
+    Main entry point for TTS. Routes to the configured backend.
+
+    Args:
+        text: Text to convert to speech
+        config: TTSConfig object with all settings
+        **kwargs: Override config settings (e.g. emotion=TTSEmotion.CALM)
+
+    Returns:
+        TTSResult with audio bytes and metadata
+
+    Examples:
+        # Local IndexTTS with custom voice
+        result = synthesize(
+            "Hello! I can speak with emotion.",
+            config=TTSConfig(
+                backend=TTSBackend.INDEX_TTS,
+                index_tts_reference_audio="./my_voice.wav",
+                index_tts_model_dir="./checkpoints",
+                emotion=TTSEmotion.FRIENDLY,
+            )
+        )
+
+        # Groq with excited tone (prefix injected)
+        result = synthesize(
+            "This is amazing!",
+            config=TTSConfig(
+                backend=TTSBackend.GROQ_TTS,
+                voice="autumn",
+                emotion=TTSEmotion.EXCITED,
+            )
+        )
+    """
+    if config is None:
+        config = TTSConfig(**kwargs)
+    elif kwargs:
+        config_dict = {k: v for k, v in config.__dict__.items()}
+        config_dict.update(kwargs)
+        config = TTSConfig(**config_dict)
+
+    backends = {
+        TTSBackend.PIPER: _synthesize_piper,
+        TTSBackend.VIBEVOICE: _synthesize_vibevoice,
+        TTSBackend.GROQ_TTS: _synthesize_groq_tts,
+        TTSBackend.ELEVENLABS: _synthesize_elevenlabs,
+        TTSBackend.INDEX_TTS: _synthesize_index_tts,
+        TTSBackend.QWEN3_TTS: _synthesize_qwen3_tts,
+    }
+
+    handler = backends.get(config.backend)
+    if handler is None:
+        raise ValueError(f"Unknown backend: {config.backend}")
+
+    return handler(text, config)
+
+
+def synthesize_stream(
+    text: str, config: Optional[TTSConfig] = None, **kwargs
+) -> Generator[bytes, None, None]:
+    """
+    Stream audio synthesis from text.
+
+    Yields audio chunks as they become available.
+    For IndexTTS, yields the full audio in one chunk.
+    """
+    if config is None:
+        config = TTSConfig(**kwargs)
+    elif kwargs:
+        config_dict = {k: v for k, v in config.__dict__.items()}
+        config_dict.update(kwargs)
+        config = TTSConfig(**config_dict)
+
+    stream_handlers = {
+        TTSBackend.PIPER: _stream_piper,
+        TTSBackend.VIBEVOICE: _stream_vibevoice,
+        TTSBackend.GROQ_TTS: _stream_groq_tts,
+        TTSBackend.ELEVENLABS: _stream_elevenlabs,
+        TTSBackend.INDEX_TTS: _stream_index_tts,
+        TTSBackend.QWEN3_TTS: _stream_qwen3_tts,
+    }
+
+    handler = stream_handlers.get(config.backend)
+    if handler is None:
+        raise ValueError(f"Unknown backend: {config.backend}")
+
+    yield from handler(text, config)
