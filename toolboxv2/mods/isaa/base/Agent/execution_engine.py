@@ -23,6 +23,7 @@ import contextlib
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 import hashlib
@@ -85,7 +86,11 @@ STATIC_TOOLS = [
                     "thought": {
                         "type": "string",
                         "description": "Your reasoning, plan, or analysis",
-                    }
+                    },
+                    "effort": {
+                        "type": "string",
+                        "description": "the effort for the situation assessment [fast|complex]",
+                    },
                 },
                 "required": ["thought"],
             },
@@ -2349,14 +2354,8 @@ BEISPIELE:
 
         # === STATIC TOOLS ===
         if f_name == "think":
-            #  TODO : effort arg und #
-            """
-            ● think — ## Situation Assessment
-The agent is stuck in a loop trying to find `/userpaste/1776690773_paste.txt` in VFS. It doesn't exist there, and `find` across all mounted paths returned nothing. The agent ha
-sys
-bad escape \h at position 263 fix
-            """
             thought = f_args.get("thought", "")
+            effort = f_args.get("effort", "fast")
             working_history = str(ctx.working_history[-25:])
             vfs_content = ""
             if self._current_session is not None:
@@ -2394,38 +2393,39 @@ bad escape \h at position 263 fix
             ]
             try:
 
-                self._narrator.schedule_skills_update(
-                    ctx.query, ctx.working_history, self.skills_manager, ctx=ctx
-                )
-                self.live.status_msg = f"Skills updated successfully scheduled"
+                def _():
+                    self._narrator.schedule_skills_update(
+                        ctx.query, ctx.working_history, self.skills_manager, ctx=ctx
+                    )
+                    self.live.status_msg = f"Skills updated successfully scheduled"
 
-                self._narrator.schedule_memory_extraction(
-                    query=ctx.query,
-                    history=ctx.working_history,
-                    ctx=ctx,
-                    session=self._current_session,
-                )
+                    self._narrator.schedule_memory_extraction(
+                        query=ctx.query,
+                        history=ctx.working_history,
+                        ctx=ctx,
+                        session=self._current_session,
+                    )
 
-                self.live.status_msg = f"Memory updated successfully scheduled"
-                self._narrator.schedule_ruleset_update(
-                    history=ctx.working_history,
-                    session=self._current_session,
-                    ctx=ctx,
-                )
+                    self.live.status_msg = f"Memory updated successfully scheduled"
+                    self._narrator.schedule_ruleset_update(
+                        history=ctx.working_history,
+                        session=self._current_session,
+                        ctx=ctx,
+                    )
 
-                self.live.status_msg = f"Ruleset updated successfully scheduled"
+                    self.live.status_msg = f"Ruleset updated successfully scheduled"
+                threading.Thread(target=_).start()
             except Exception as e:
                 print(e)
-                pass
 
             thought_acc = ""
 
             try:
                 kwargs = {}
-                if len(thought) < 120 and not '?' in thought or not '/' in thought:
-                    kwargs["model"] = os.getenv("BLITZMODEL", self.agent.amd.fast_llm_model)
+                if effort == "fast":
+                    kwargs["model"] = os.getenv("BLITZMODEL", self.agent.amd.fast_llm_model) if len(thought) < 320 else os.getenv("LIGHNIGMODEL", self.agent.amd.fast_llm_model)
                 else:
-                    kwargs["model_preference"] = "complex" if '?' in thought else 'fast'
+                    kwargs["model_preference"] = "complex" if  len(thought) < 520 else 'fast'
                 stream_response = await self.agent.a_run_llm_completion(
                     messages=messages,
                     max_tokens=2048,

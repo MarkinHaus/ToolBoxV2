@@ -2086,17 +2086,14 @@ def main_runner():
                         if asyncio.iscoroutine(res):
                             await res
                     except KeyboardInterrupt:
-                        sys.exit(0)
+                        return
                 elif runner_name and not app.alive and runner_name != "default":
                     raise ValueError(f"FIX DAS SOFORT WENN RUNNER {runner_name} muss {app.alive=} == TRUE sein")
 
 
             loop.run_until_complete(main_helper(runner_name))
         except KeyboardInterrupt:
-            import traceback
-
-            traceback.print_exc()
-            pass
+            return
 
 
 import ctypes

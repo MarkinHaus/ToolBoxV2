@@ -701,7 +701,41 @@ class FlowAgent:
                 chunk_tool_calls = []
                 finish_reason = None
                 current_usage = None
+                # TODO: make stael
+                r"""
+Traceback (most recent call last):
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\litellm_core_utils\streaming_handler.py", line 2025, in __anext__
+    async for chunk in self.completion_stream:  # type: ignore[union-attr]
+  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\base\IntelligentRateLimiter\zai_litellm_provider.py", line 357, in astreaming
+    stream = await self.async_client.chat.completions.create(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\openai\resources\chat\completions\completions.py", line 2700, in create
+    return await self._post(
+           ^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\openai\_base_client.py", line 1884, in post
+    return await self.request(cast_to, opts, stream=stream, stream_cls=stream_cls)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\openai\_base_client.py", line 1669, in request
+    raise self._make_status_error_from_response(err.response) from None
+openai.InternalServerError: Error code: 500 - {'error': {'code': '1234', 'message': 'Network error, error id: 2026042123060659d40950940f44ff, please try again later'}}
 
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\base\Agent\skills.py", line 1676, in learn_from_run
+    response = await llm_completion_func(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\base\Agent\flow_agent.py", line 707, in a_run_llm_completion
+    result_obj, current_usage, finish_reason = await self._process_streaming_response(
+                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\base\Agent\flow_agent.py", line 1029, in _process_streaming_response
+    async for chunk in response:
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\litellm_core_utils\streaming_handler.py", line 2248, in __anext__
+    self._handle_stream_fallback_error(e)
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\litellm_core_utils\streaming_handler.py", line 2316, in _handle_stream_fallback_error
+    raise MidStreamFallbackError(
+litellm.exceptions.MidStreamFallbackError: litellm.MidStreamFallbackError: litellm.APIConnectionError: ZglmException - Error code: 500 - {'error': {'code': '1234', 'message': 'Network error, error id: 2026042123060659d40950940f44ff, please try again later'}} Original exception: APIConnectionError: litellm.APIConnectionError: ZglmException - Error code: 500 - {'error': {'code': '1234', 'message': 'Network error, error id: 2026042123060659d40950940f44ff, please try again later'}}
+"""
                 # Datenextrahierung abhängig davon, ob es ein Stream ist oder nicht
                 if use_stream:
                     result_obj, current_usage, finish_reason = await self._process_streaming_response(

@@ -924,7 +924,7 @@ class TaskOverlay:
                     for line in raw_input.split("\n"):
                         display_lines.extend(_tw.wrap(line, width=72) or [""])
 
-                    max_input = max(0, len(display_lines) - 20)
+                    max_input = len(display_lines)
                     self._max_input_scroll = max_input
 
                     if self._scroll_focus == "input":
@@ -933,17 +933,13 @@ class TaskOverlay:
                     skip = self._input_scroll
                     visible_lines = display_lines[skip: skip + 20]
 
-                    # Nach dem Rendern: max_scroll merken für bounded up/down
-                    if self._scroll_focus == "input":
-                        max_input = max(0, len(display_lines) - 20)
-                        self._input_scroll = min(self._input_scroll, max_input)
-
                     for line in visible_lines:
                         out.append((bg + "fg:#d1d5db", f"     {line}\n"))
 
                     if len(display_lines) > 15:
+                        current_pos = min(skip + len(visible_lines), len(display_lines))
                         out.append((bg + "fg:#6b7280",
-                                    f"     ... ({min(skip + 15, len(display_lines))}/{len(display_lines)} lines)\n"))
+                                    f"     ... ({current_pos}/{len(display_lines)} lines)\n"))
 
                     out.append((bg + "fg:#374151", "   " + "─" * 64 + "\n"))
 
@@ -1216,6 +1212,7 @@ class TaskOverlay:
 
         # ── Enter: Drill-In ──────────────────────────────────────────────────
         @kb.add("right")
+        @kb.add("d")
         @kb.add("enter")
         def _enter_or_drill(event):
             if ov._focus == "left":
@@ -1243,6 +1240,7 @@ class TaskOverlay:
 
         # ── ← / Backspace: einen Level zurück ───────────────────────────────
         @kb.add("left")
+        @kb.add("a")
         @kb.add("backspace")
         def _back(event):
             if ov._tool_view == "detail":
@@ -1280,6 +1278,8 @@ class TaskOverlay:
 
         # ── ↑↓ kontextabhängig ──────────────────────────────────────────────
         @kb.add("up")
+        @kb.add("w")
+        @kb.add("k")
         def _nav_up(event):
             if ov._focus == "right":
                 if ov._selected_iter is not None and ov._tool_view == "detail":
@@ -1318,6 +1318,8 @@ class TaskOverlay:
             ov._final_scroll = 0
 
         @kb.add("down")
+        @kb.add("s")
+        @kb.add("j")
         def _nav_down(event):
             if ov._focus == "right":
                 if ov._selected_iter is not None and ov._tool_view == "detail":
@@ -8332,7 +8334,7 @@ class ISAA_Host:
                 cmd_args = []
 
             env_line = (await ps.prompt_async(
-                HTML("<style fg='grey'>Env vars (KEY=VAL KEY2=VAL2, empty=none): </style>")
+                HTML("<style fg='grey'>Env vars (KEY=VAL KEY2=VAL2 KEY3=VAL3 ...): </style>")
             )).strip()
             env = {}
             if env_line:

@@ -17,13 +17,15 @@ Environment:
 """
 from __future__ import annotations
 
+import threading
+
 from toolboxv2 import get_app, MainTool
 
 from .client import IcliWebClient
 
 MOD_NAME = "icli_web"
 VERSION = "0.5.0"
-
+Name = MOD_NAME
 
 class Tools(MainTool):
     version = VERSION
@@ -31,13 +33,22 @@ class Tools(MainTool):
     color = "CYAN"
 
     def __init__(self, app=None):
-        self.app = app or get_app()
-        self.tools = {"name": MOD_NAME, "Version": self.show_version}
+        self.tools = {"name": MOD_NAME, "Version": self.show_version, "server": self.start_server}
         MainTool.__init__(self, v=self.version, tool=self.tools,
                           name=self.name, color=self.color)
 
     def show_version(self):
         return self.version
 
+    def start_server(self, host="127.0.0.1", port=5055):
+        from toolboxv2.mods.icli_web.server import main as server_main
+        import os, sys, subprocess
+        os.environ["ICLI_WEB_HOST"] = host
+        os.environ["ICLI_WEB_PORT"] = str(port)
+        self.print("Starting server")
+        subprocess.run(f"{sys.executable} -m toolboxv2.mods.icli_web.server")
+
+        self.print("Server Exit")
 
 __all__ = ["IcliWebClient"]
+tools = Tools

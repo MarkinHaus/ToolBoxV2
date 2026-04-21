@@ -1138,6 +1138,8 @@ def make_vfs_view(session: "AgentSessionV2"):
         scroll_to: str | None = None,
         context_lines: int = 40,
         close_others: bool = False,
+        is_media: bool = False,
+        focus_on_media_section: str | None = None,
     ) -> dict:
         """
         Open or scroll to a specific section of a file in the VFS context window.
@@ -1212,6 +1214,81 @@ def make_vfs_view(session: "AgentSessionV2"):
                 vfs._dirty = True
 
             f = vfs.files[np]
+
+            # ── MEDIA / VISION MODEL PIPELINE ──────────────────────────────
+            ext = os.path.splitext(f.filename)[1].lower()
+            is_media_auto = is_media or ext in [".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif"]
+
+            force_reanalyze = is_media_auto and focus_on_media_section is not None
+            already_analyzed = f._content and f._content.startswith("--- MEDIA ANALYSIS")
+
+            if is_media_auto and (force_reanalyze or not already_analyzed):
+                local_path = getattr(f, "local_path", None)
+                if not local_path or not os.path.exists(local_path):
+                    return {"success": False, "error": f"Media file needs a local backing file: {path}"}
+
+                import litellm
+                import base64
+
+                model = os.getenv("VISIONMODEL", "openrouter/openai/gpt-4.1-mini")
+                prompt = focus_on_media_section or "Please describe this media file in detail. Check state, content, and anomalies."
+
+                try:
+                    text_result = ""
+                    if ext == ".pdf":
+                        # Attempt 1: Native PDF support via litellm (z.B. für Gemini/Anthropic)
+                        try:
+                            with open(local_path, "rb") as pf:
+                                b64_pdf = base64.b64encode(pf.read()).decode("utf-8")
+                            messages = [{"role": "user", "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": f"data:application/pdf;base64,{b64_pdf}"}}
+                            ]}]
+                            resp = litellm.completion(model=model, messages=messages)
+                            text_result = resp.choices[0].message.content
+                        except Exception as native_err:
+                            # Attempt 2: Fallback to PyMuPDF (fitz) converting pages to images
+                            import fitz
+                            doc = fitz.open(local_path)
+
+                            # Map line_start/end to PDF pages (0-indexed)
+                            p_start = max(0, int(line_start) - 1)
+                            p_end = int(line_end) if int(line_end) > 0 else len(doc)
+
+                            content_arr = [{"type": "text", "text": prompt}]
+                            for i in range(p_start, min(p_end, len(doc))):
+                                page = doc.load_page(i)
+                                pix = page.get_pixmap()
+                                img_b64 = base64.b64encode(pix.tobytes("png")).decode("utf-8")
+                                content_arr.append(
+                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}})
+
+                            messages = [{"role": "user", "content": content_arr}]
+                            resp = litellm.completion(model=model, messages=messages)
+                            text_result = resp.choices[0].message.content
+                    else:
+                        # Standard Images
+                        mime = "image/jpeg" if ext in [".jpg", ".jpeg"] else f"image/{ext.strip('.')}"
+                        with open(local_path, "rb") as imf:
+                            img_b64 = base64.b64encode(imf.read()).decode("utf-8")
+                        messages = [{"role": "user", "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}}
+                        ]}]
+                        resp = litellm.completion(model=model, messages=messages)
+                        text_result = resp.choices[0].message.content
+
+                    # Overwrite VFS memory with the text analysis directly
+                    # (bypass setter so it doesn't set is_dirty=True and corrupt local disk on sync)
+                    f._content = f"--- MEDIA ANALYSIS RESULT ({model}) ---\nPrompt: {prompt}\n\n{text_result}"
+                    f.size_bytes = len(f._content)
+                    f.line_count = len(f._content.splitlines())
+
+                except ImportError as ie:
+                    return {"success": False,
+                            "error": f"Missing library for media processing: {ie} (try: pip install pymupdf litellm)"}
+                except Exception as e:
+                    return {"success": False, "error": f"Vision Model Error: {e}"}
 
             # ── Lazy-load shadow files ─────────────────────────────────────
             try:
