@@ -2802,6 +2802,8 @@
   //   "choice" — content.prompt, content.options: [{value,label}]
   //   "info"   — content.title, content.body (sanitized text)
   //   "html"   — content.html (raw; needs trusted=true or it renders as text)
+  //   "markdown" — content.md (or content.markdown); safe escaped-first renderer
+  //   "file"   — content.prompt, content.max_size_mb, content.vfs_target
   //
   // Unknown templates fall back to a JSON dump so nothing is lost.
   const activePanels = new Map();  // panel_id → {template, state, content, el, collapsed}
@@ -2894,6 +2896,8 @@
           pre.textContent = msg.content.html;
           cbody.appendChild(pre);
         }
+      } else if (msg.template === "markdown") {
+        renderMarkdownTemplate(cbody, msg.content);
       } else {
         const pre = document.createElement("pre");
         pre.style.whiteSpace = "pre-wrap";
@@ -3030,6 +3034,30 @@
     body.style.fontSize = "14px";
     el.appendChild(body);
   }
+
+  // ── Markdown renderer (safe, escaped-first) ───────────────────────
+  // Escapes all HTML first, then applies markdown patterns.
+  // Supports: headings, bold, italic, inline code, fenced code blocks,
+  // links, unordered/ordered lists, blockquotes, paragraphs.
+  function renderMarkdownTemplate(el, content) {
+    const md = content?.md || content?.markdown || "";
+    const wrap = document.createElement("div");
+    wrap.style.fontSize = "14px";
+    wrap.style.lineHeight = "1.6";
+    wrap.style.whiteSpace = "pre-wrap";
+    wrap.innerHTML = parseMarkdown(md);
+    el.appendChild(wrap);
+  }
+
+  function parseMarkdown(src) {
+    // 1) Escape HTML to prevent injection
+    let html = src
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+    // 2) Fenced code blocks (triple-backtick ... triple-backtick)
+    html = html.replace(/```\x28\w*\x29
 
   // Read all form inputs inside a panel and return {fieldName: value}
   function collectPanelState(pid) {

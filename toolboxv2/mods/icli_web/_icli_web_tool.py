@@ -541,6 +541,7 @@ def show_interactive_panel(template: str,
 
     Args:
         template: "form" | "choice" | "info" | "html"
+        template: "form" | "choice" | "info" | "html" | "markdown" | "file"
         content:  Template-specific payload (see list_panel_templates).
         state:    Optional initial field values.
         panel_id: Stable id to update an existing panel. Auto-generated if omitted.

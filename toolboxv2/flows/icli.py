@@ -4475,9 +4475,7 @@ class ISAA_Host:
 
         try:
             from toolboxv2.mods.icli_web import IcliWebClient
-            c_print("="*20)
             IcliWebClient.get().attach(self)
-            c_print("="*20)
         except Exception as e:
             from traceback import format_exc
             c_print(f"WEB ERRRO {format_exc()}")

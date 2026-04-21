@@ -35,7 +35,7 @@ import wave
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Any
 
 import numpy as np
 

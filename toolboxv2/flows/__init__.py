@@ -46,6 +46,7 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None, ui=False)
                     try:
                         module = GistLoader(f"{name}/{url}").load_module(name)
                     except Exception as e:
+                        print(f"Error flow init {name}/{url}: {e}")
                         continue
 
                     if not ui:
@@ -74,6 +75,8 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None, ui=False)
                     try:
                         spec.loader.exec_module(module)
                     except Exception:
+                        import traceback
+                        print(f"Error flow init {name}:\n{traceback.format_exc()}")
                         continue
 
                     # Füge das Modul der Dictionary hinzu

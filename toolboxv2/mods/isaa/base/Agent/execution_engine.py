@@ -2349,6 +2349,13 @@ BEISPIELE:
 
         # === STATIC TOOLS ===
         if f_name == "think":
+            #  TODO : effort arg und #
+            """
+            ● think — ## Situation Assessment
+The agent is stuck in a loop trying to find `/userpaste/1776690773_paste.txt` in VFS. It doesn't exist there, and `find` across all mounted paths returned nothing. The agent ha
+sys
+bad escape \h at position 263 fix
+            """
             thought = f_args.get("thought", "")
             working_history = str(ctx.working_history[-25:])
             vfs_content = ""

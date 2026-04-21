@@ -9,5 +9,4 @@ try:
 except ImportError:
     import traceback
     print(traceback.format_exc())
-    pass
 
