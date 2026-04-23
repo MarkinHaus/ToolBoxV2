@@ -872,7 +872,7 @@
   let ws;
   let particles = [];
   let isRecording = false, isPlaying = false, isError = false;
-  let msgCount = 0, currentAgentMsg = null;
+  let msgCount = 0, currentAgentMsg = null, currentReasoningMsg = null;
   let activeCid = null;               // cid of in-flight query
   let vadSpeaking = false, vadSilenceStart = null, vadTimer = null;
   let utteranceStart = 0;
@@ -1733,6 +1733,7 @@
       // brings us back quickly. lastPlayedIndex stays so resume starts
       // at the right chunk.
       currentAgentMsg = null;
+      currentReasoningMsg = null;
       if (ev.code === 4401) {
         info.innerHTML = 'Auth failed. Check <span class="m">?key=</span>';
         return;
@@ -1781,6 +1782,7 @@
       addMsg("user", msg.text);
       info.innerText = msg.text;
     } else if (msg.type === "text_chunk") {
+      currentReasoningMsg = null;
       if (!currentAgentMsg) currentAgentMsg = addMsg("agent", "");
       currentAgentMsg.querySelector(".text").textContent += msg.text || "";
       trBody.scrollTop = trBody.scrollHeight;
@@ -1789,14 +1791,22 @@
       // If TTS audio follows, enqueueAudio() will switch to green.
       if (viz.classList.contains("processing") && !isPlaying) resetParticles();
     } else if (msg.type === "response") {
+      currentReasoningMsg = null;
       if (!currentAgentMsg) addMsg("agent", msg.text);
       else currentAgentMsg.querySelector(".text").textContent = msg.text;
       if (viz.classList.contains("processing") && !isPlaying) resetParticles();
     } else if (msg.type === "reasoning") {
-      addMsg("sys", "› " + (msg.text || ""));
+      if (!currentReasoningMsg) {
+        currentReasoningMsg = addMsg("sys", "› " + (msg.text || ""));
+      } else {
+        currentReasoningMsg.querySelector(".text").textContent += (msg.text || "");
+      }
+      trBody.scrollTop = trBody.scrollHeight;
     } else if (msg.type === "tool_start") {
+      currentReasoningMsg = null;
       addMsg("sys", "→ " + (msg.name || "tool"));
     } else if (msg.type === "tool_result") {
+      currentReasoningMsg = null;
       const icon = msg.success ? "●" : "✕";
       const info_str = msg.info ? ` — ${msg.info}` : "";
       addMsg("sys", `${icon} ${msg.name || "tool"}${info_str}`);
@@ -1810,6 +1820,7 @@
       renderInteractivePanel(msg);
     } else if (msg.type === "done") {
       currentAgentMsg = null;
+      currentReasoningMsg = null;
       activeCid = null;
       lastPlayedIndex = -1;
       sbState.textContent = "idle";
@@ -1872,6 +1883,7 @@
     }
     activeCid = null;
     currentAgentMsg = null;
+    currentReasoningMsg = null;
     lastPlayedIndex = -1;
     ws.send(JSON.stringify({
       action: "query", text, query: text,
@@ -1886,6 +1898,8 @@
     if (ws?.readyState !== WebSocket.OPEN) return;
     if (isPlaying || activeCid) stopPlayback({ fullCancel: true });
     currentAgentMsg = null;
+    currentReasoningMsg = null;
+    currentReasoningMsg = null;
     lastPlayedIndex = -1;
     ws.send(JSON.stringify({
       action: "audio_start",
@@ -2079,30 +2093,49 @@
       // Treat as new turn — drop cid so nothing resumes.
       activeCid = null;
       currentAgentMsg = null;
+      currentReasoningMsg = null;
       lastPlayedIndex = -1;
     }
   }
 
   // ═══ Recording ═════════════════════════════════════════════════════════
   async function startRecording() {
-    // User gesture — unlock audio context for playback too
     await gestureUnlock();
-    // If wake is listening in the background, release its mic first so
-    // the real recognizer can grab it cleanly.
-    if (wakeActive) stopWakeListen();
-    // Quick-response window also shares the recognizer — cancel it
-    if (quickResponseTimer) {
-      stopQuickResponseWindow({ silent: true });
+
+    // BUGFIX: Wenn Wake-Word aktiv ist, kapern wir die laufende Instanz
+    // anstatt eine neue zu starten. Das verhindert Mic-Ressourcen-Fehler.
+    if (settings.wakeEnabled && settings.sttLocation === "browser" && wakeRecog && wakeRunning) {
+      if (quickResponseTimer) stopQuickResponseWindow({ silent: true });
+      if (isPlaying || activeCid) stopPlayback({ fullCancel: true });
+
+      console.log("[manual] hijacking active wake-recog");
+      activeCid = null;
+      currentAgentMsg = null;
+      currentReasoningMsg = null;
+
+      wakeMode = "capturing";
+      captureStartResultIndex = 0; // Ab sofort alles als Query werten
+      captureWakeWord = "";        // Kein Präfix zu entfernen
+      captureArmed = true;         // Sofort zuhören
+      beginCaptureVisuals();
+      return;
     }
+
+    // Fallback für non-wake oder server-STT
+    if (wakeActive) stopWakeListen();
+    if (quickResponseTimer) stopQuickResponseWindow({ silent: true });
     if (!await initMic()) return;
-    // Barge-in: interrupting the agent by starting to talk = full cancel.
     if (isPlaying || activeCid) stopPlayback({ fullCancel: true });
+
     activeCid = null;
     currentAgentMsg = null;
+    currentReasoningMsg = null;
     utteranceStart = performance.now();
     recordingParticles();
 
     if (settings.sttLocation === "browser") {
+      // Kleiner Delay falls wakeRecog doch gerade erst gestoppt wurde
+      await new Promise(r => setTimeout(r, 50));
       if (!browserRecog) browserRecog = makeBrowserRecog();
       if (!browserRecog) {
         info.innerText = "Web Speech not supported — use server STT";
@@ -2396,6 +2429,7 @@
       if (isPlaying || activeCid) stopPlayback({ fullCancel: true });
       activeCid = null;
       currentAgentMsg = null;
+      currentReasoningMsg = null;
       lastPlayedIndex = -1;
       // Direct TTS bypass — server routes this straight to Piper
       // without waking the agent. Keeps feedback loop fast.
@@ -3050,14 +3084,64 @@
   }
 
   function parseMarkdown(src) {
-    // 1) Escape HTML to prevent injection
-    let html = src
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
+      if (!src) return "";
 
-    // 2) Fenced code blocks (triple-backtick ... triple-backtick)
-    html = html.replace(/```\x28\w*\x29
+      // 1) Escape HTML (XSS Protection)
+      let html = src
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+
+      // Placeholder-Store um Code-Fragmente vor weiterer Regex-Mutation zu schützen
+      const placeholders =[];
+      const pushPlaceholder = (replacement) => {
+        placeholders.push(replacement);
+        return `__PH_${placeholders.length - 1}__`;
+      };
+
+      // 2) Fenced Code Blocks
+      html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
+        pushPlaceholder(`<pre><code class="language-${lang}">${code}</code></pre>`)
+      );
+
+      // 3) Inline Code
+      html = html.replace(/`([^`\n]+)`/g, (_, code) =>
+        pushPlaceholder(`<code>${code}</code>`)
+      );
+
+      // 4) Headings (H1 - H6 dynamisch)
+      html = html.replace(/^(#{1,6})\s+(.+)$/gm, (_, hashes, text) =>
+        `<h${hashes.length}>${text}</h${hashes.length}>`
+      );
+
+      // 5) Blockquotes & Lists (inkl. automatischem Listen-Merge)
+      html = html.replace(/^>\s+(.+)$/gm, '<blockquote>$1</blockquote>');
+      html = html.replace(/^[*-]\s+(.+)$/gm, '<ul><li>$1</li></ul>').replace(/<\/ul>\n?<ul>/g, '');
+      html = html.replace(/^\d+\.\s+(.+)$/gm, '<ol><li>$1</li></ol>').replace(/<\/ol>\n?<ol>/g, '');
+
+      // 6) Formatierung (Bold, Italic)
+      html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+      // 7) Links (mit Safe-Protocol Check gegen XSS)
+      html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
+        const safeUrl = url.trim().toLowerCase().startsWith('javascript:') ? '#' : url;
+        return `<a href="${safeUrl}" target="_blank" rel="noopener">${text}</a>`;
+      });
+
+      // 8) Paragraphs & Linebreaks
+      html = html.split(/\n\n+/).map(part => {
+        const trimmed = part.trim();
+        // Block-Elemente oder Code-Placeholder nicht extra in <p> wrappen
+        if (/^(<h|<blockquote|<ul|<ol|__PH_)/.test(trimmed)) return trimmed;
+        return `<p>${trimmed.replace(/\n/g, '<br>')}</p>`;
+      }).join('\n');
+
+      // 9) Code-Fragmente wiederherstellen
+      html = html.replace(/__PH_(\d+)__/g, (_, i) => placeholders[i]);
+
+      return html;
+    }
 
   // Read all form inputs inside a panel and return {fieldName: value}
   function collectPanelState(pid) {

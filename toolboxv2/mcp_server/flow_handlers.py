@@ -360,7 +360,7 @@ class FlowHandlers:
                 content += f"\n✅ **Flow completed**"
                 if result.get("result"):
                     content += f"\n\n**Result:**\n```json\n{json.dumps(result['result'], indent=2)}\n```"
-            elif state == "error":
+            elif "Error" in state:
                 content += f"\n❌ **Error**: {result.get('error', 'Unknown error')}"
 
             return FlowToolResult(
@@ -410,7 +410,7 @@ class FlowHandlers:
                     content += f": {prompt}"
             elif state == "completed":
                 content += f"\n✅ **Completed**"
-            elif state == "error":
+            elif "Error" in state:
                 content += f"\n❌ **Error**: {status.get('error', 'Unknown')}"
             elif state == "running":
                 content += f"\n🔄 **Running**"

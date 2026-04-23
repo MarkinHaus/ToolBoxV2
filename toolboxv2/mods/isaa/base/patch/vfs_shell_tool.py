@@ -525,7 +525,16 @@ def make_vfs_shell(session: "AgentSessionV2"):
         try:
             args = shlex.split(command)
         except ValueError as e:
-            return _err(f"parse error: {e}")
+            # Fallback for raw-content commands with unbalanced quotes
+            parts = command.split(maxsplit=1)
+            if parts and parts[0].lower() in ("write", "write_mini", "write_chunk", "edit"):
+                cmd_name = parts[0].lower()
+                if cmd_name in ("write", "write_mini"):
+                    args = command.split(maxsplit=2)
+                else:
+                    args = command.split(maxsplit=4)
+            else:
+                return _err(f"parse error: {e}")
 
         if not args:
             return _err("empty command")

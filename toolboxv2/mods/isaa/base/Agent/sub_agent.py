@@ -46,9 +46,9 @@ class SubAgentStatus(Enum):
 @dataclass
 class SubAgentConfig:
     """Configuration for sub-agent execution"""
-    max_tokens: int = os.getenv("SUB_AGENT_MAX_TOKENS", 32000)  # Token budget for this sub-agent
-    max_iterations: int = os.getenv("SUB_AGENT_MAX_ITERATIONS", 25)  # Max execution iterations
-    timeout_seconds: int = os.getenv("SUB_AGENT_MAX_TIMEOUT", 600)  # Timeout in seconds
+    max_tokens: int = os.getenv("SUB_AGENT_MAX_TOKENS", 512000)  # Token budget for this sub-agent
+    max_iterations: int = os.getenv("SUB_AGENT_MAX_ITERATIONS", 65)  # Max execution iterations
+    timeout_seconds: int = os.getenv("SUB_AGENT_MAX_TIMEOUT", 1200)  # Timeout in seconds
 
     # Inherited from parent (set at spawn time)
     model_preference: str = "fast"

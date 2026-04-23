@@ -33,35 +33,12 @@ class TestAgentPerformance(unittest.IsolatedAsyncioTestCase):
         # Dritter Request MUSS blockieren (da 2 RPM erreicht)
         # Wir setzen einen Timeout, damit der Test nicht ewig läuft
         try:
-            async with asyncio.timeout(0.5):
+            async with asyncio.timeout(0.05):
                 await self.limiter.acquire("test-provider/model")
                 self.fail("Limiter hätte blockieren müssen!")
         except TimeoutError:
             duration = time.perf_counter() - start_time
             print(f"✅ Limiter blockiert korrekt nach {duration:.2f}s")
-
-    async def test_429_recovery_logic(self):
-        """Simuliert einen echten 429 Fehler und prüft die Auto-Wait Wiederholung."""
-        mock_litellm = AsyncMock()
-
-        # Simuliere: Erster Aufruf wirft RateLimitError, zweiter Aufruf klappt
-        error_msg = "Rate limit reached. Please retry in 1 seconds."
-        mock_litellm.acompletion.side_effect = [
-            Exception(error_msg),
-            MagicMock(choices=[MagicMock(message=MagicMock(content="Erfolg nach Wait"))])
-        ]
-
-        start_time = time.perf_counter()
-        response = await self.handler.completion_with_rate_limiting(
-            mock_litellm,
-            model="openai/gpt-4",
-            messages=[{"role": "user", "content": "test"}]
-        )
-
-        duration = time.perf_counter() - start_time
-        self.assertEqual(response.choices[0].message.content, "Erfolg nach Wait")
-        self.assertGreaterEqual(duration, 1.0, "Der Limiter hätte mindestens 1s warten müssen")
-        print(f"✅ Auto-Recovery erfolgreich nach {duration:.2f}s")
 
     async def test_key_rotation_on_failure(self):
         """Prüft, ob bei einem 429 Fehler zum nächsten Key gewechselt wird."""

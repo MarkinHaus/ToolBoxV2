@@ -18,6 +18,7 @@ NEW v2:
 
 import asyncio
 import os
+import sys
 import time
 import re
 import json
@@ -1069,6 +1070,7 @@ class IntelligentRateLimiter:
         error: Exception,
         response_body: Optional[str] = None,
         api_key_hash: Optional[str] = None,
+        is_rate_limit: bool = True,
     ) -> Tuple[float, Optional[str]]:
         """
         Verarbeite einen Rate-Limit-Fehler.
@@ -1098,33 +1100,36 @@ class IntelligentRateLimiter:
         backoff_time = self._calculate_backoff(retry_delay, state.consecutive_failures)
         state.backoff_until = time.time() + backoff_time
 
-        limits.rate_limit_hits += 1
-        if retry_delay:
-            limits.observed_retry_delays.append(retry_delay)
-            limits.observed_retry_delays = limits.observed_retry_delays[-10:]
+        if is_rate_limit:
+            limits.rate_limit_hits += 1
+            if retry_delay:
+                limits.observed_retry_delays.append(retry_delay)
+                limits.observed_retry_delays = limits.observed_retry_delays[-10:]
 
-        # Mark API key as exhausted if applicable
-        if self.enable_key_rotation and api_key_hash:
-            self.key_manager.mark_key_exhausted(
-                provider=provider,
-                key_hash=api_key_hash,
-                duration=backoff_time,
-            )
+            # Mark API key as exhausted ONLY if applicable
+            if self.enable_key_rotation and api_key_hash:
+                self.key_manager.mark_key_exhausted(
+                    provider=provider,
+                    key_hash=api_key_hash,
+                    duration=backoff_time,
+                )
 
         # Try model fallback
         fallback_model = None
         if self.enable_model_fallback:
+            reason = FallbackReason.RATE_LIMIT if is_rate_limit else FallbackReason.ERROR
             fallback_model = await self.fallback_manager.trigger_fallback(
                 model=model,
-                reason=FallbackReason.RATE_LIMIT,
+                reason=reason,
                 duration=backoff_time * 2,  # Fallback bleibt länger aktiv
             )
 
         if self.persist_learned_limits:
             self._save_limits()
 
+        log_msg = "Rate limit hit" if is_rate_limit else "Transient/Mid-stream error"
         logger.warning(
-            f"[RateLimiter] Rate limit hit for {key}. "
+            f"[RateLimiter] {log_msg} for {key}. "
             f"Retry delay: {retry_delay}s, Backoff: {backoff_time:.1f}s, "
             f"Fallback: {fallback_model}"
         )
@@ -1500,6 +1505,209 @@ class LiteLLMRateLimitHandler:
         """Hole Statistiken"""
         return self.rate_limiter.get_stats(model)
 
+
+    async def _wrap_stream_with_retry(
+        self,
+        stream,
+        original_kwargs: Dict[str, Any],
+        original_model: str,
+        current_model: str,
+        current_api_key_hash: Optional[str],
+        litellm_module,
+        wait_callback: Optional[Callable],
+        attempt_offset: int,
+    ):
+        """Yield chunks from stream; on mid-stream error, restart full request
+        via same retry/fallback logic. Consumed chunks from a failed attempt
+        are discarded — caller's continuation loop handles partial-output recovery."""
+        max_continuations = int(os.environ.get("AGENT_INTERN_MAX_CONTINUATIONS", 15))
+        attempt = attempt_offset
+
+        accumulated_content = ""
+        accumulated_tool_calls: Dict[int, Dict[str, str]] = {}
+        while attempt <= max_continuations:
+            try:
+                async for chunk in stream:
+                    if not chunk:
+                        continue
+                    yield chunk
+                    # Accumulate for mid-stream restart recovery
+                    try:
+                        if hasattr(chunk, "choices") and chunk.choices:
+                            delta = chunk.choices[0].delta
+                            if delta:
+                                if hasattr(delta, "content") and delta.content:
+                                    accumulated_content += delta.content
+                                if hasattr(delta, "tool_calls") and delta.tool_calls:
+                                    for tc in delta.tool_calls:
+                                        idx = tc.index
+                                        if idx not in accumulated_tool_calls:
+                                            accumulated_tool_calls[idx] = {
+                                                "id": tc.id or "",
+                                                "name": "",
+                                                "arguments": "",
+                                            }
+                                        if tc.function.name:
+                                            accumulated_tool_calls[idx]["name"] += tc.function.name
+                                        if tc.function.arguments:
+                                            accumulated_tool_calls[idx]["arguments"] += tc.function.arguments
+                    except Exception:
+                        pass
+                return  # clean end of stream
+
+            except Exception as e:
+                error_str = str(e).lower()
+                get_logger().warning(f"Error: {e}")
+                is_rate_limit = any(
+                    x in error_str for x in [
+                        "rate_limit", "ratelimit", "429", "quota",
+                        "resource_exhausted", "too many requests",
+                        "rate", "limit", "exhausted", "too many",
+                    ]
+                )
+                is_tool_validation_fail = (
+                    "tool_use_failed" in error_str
+                    or "was not in request.tools" in error_str
+                    or "tool call validation failed" in error_str
+                )
+
+                if is_tool_validation_fail:
+                    from toolboxv2.mods.isaa.base.Agent.execution_engine import ToolValidationError  # lazy import
+                    raise ToolValidationError(str(e)) from e
+
+                is_midstream = any(
+                    x in error_str for x in [
+                        "midstreamfallback",
+                        "mid-stream",
+                    ]
+                )
+
+                is_transient = any(
+                    x in error_str for x in [
+                        "500", "502", "503", "504", "internalservererror",
+                        "network error", "apiconnectionerror", "timeout",
+                    ]
+                )
+
+                should_retry = (
+                    is_rate_limit
+                    or is_midstream
+                    or is_transient
+                    or (self.fallback_on_any_error and attempt < self.max_retries)
+                )
+
+                if not should_retry or attempt >= self.max_retries:
+                    raise
+
+                wait_time, fallback_model = await self.rate_limiter.handle_rate_limit_error(
+                    model=current_model,
+                    error=e,
+                    api_key_hash=current_api_key_hash,
+                    is_rate_limit=is_rate_limit,  # Neu
+                )
+
+                if fallback_model and self.enable_model_fallback:
+                    logger.info(
+                        f"[Handler] Mid-stream error, switching: {current_model} -> {fallback_model}"
+                    )
+                    current_model = fallback_model
+                elif self.wait_if_all_exhausted:
+                    if not is_midstream:
+                        logger.warning(
+                            f"[Handler] Rate limit hit (attempt {attempt + 1}), "
+                            f"waiting {wait_time:.1f}s"
+                        )
+                        if wait_callback:
+                            await wait_callback(wait_time)
+                        await asyncio.sleep(wait_time)
+                    else:
+                        logger.info(f"[Handler] Mid-stream error (attempt {attempt + 1}), retrying immediately")
+
+                    current_model = original_model
+                else:
+                    raise
+
+                attempt += 1
+
+                if not should_retry or attempt > max_continuations:
+                    raise
+
+                # Re-acquire and re-issue the request
+                estimated_tokens = self._estimate_input_tokens(original_kwargs.get("messages", []))
+                if self.enable_rate_limiting:
+                    current_model, api_key = await self.rate_limiter.acquire(
+                        model=current_model,
+                        estimated_input_tokens=estimated_tokens,
+                    )
+                    if api_key:
+                        current_api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:12]
+                        original_kwargs = self._inject_api_key(original_kwargs, current_model, api_key)
+
+                original_kwargs["model"] = current_model
+
+                # Determinismus-Loop aufbrechen: Bei einem Tool-Fehler den Prompt leicht ändern
+                if is_midstream and "messages" in original_kwargs:
+                    messages = list(original_kwargs.get("messages", []))
+                    warning_msg = (
+                        "System Override: The last tool call failed schema validation. "
+                        "Do not pass null for string parameters. "
+                        "For list_tools, omit 'category' entirely if unused. "
+                        "Do not repeat the same output."
+                    )
+                    if not messages or messages[-1].get("content") != warning_msg:
+                        messages.append({"role": "user", "content": warning_msg})
+                        original_kwargs["messages"] = messages
+
+                    # Append partial assistant output so model continues instead of restarting from zero
+                    if accumulated_content or accumulated_tool_calls:
+                        assistant_msg: Dict[str, Any] = {
+                            "role": "assistant",
+                            "content": accumulated_content or None,
+                        }
+                        if accumulated_tool_calls:
+                            assistant_msg["tool_calls"] = [
+                                {
+                                    "id": tc["id"],
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc["name"],
+                                        "arguments": tc["arguments"],
+                                    },
+                                }
+                                for tc in accumulated_tool_calls.values()
+                            ]
+                        messages.append(assistant_msg)
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "You were interrupted. Continue EXACTLY where you left off. "
+                                "Do not repeat already generated output or tool calls."
+                            ),
+                        })
+                        accumulated_content = ""
+                        accumulated_tool_calls = {}
+
+                    # Warnung nur anhängen, wenn sie nicht schon der letzte Eintrag ist
+                    if not messages or messages[-1].get("content") != warning_msg:
+                        messages.append({"role": "user", "content": warning_msg})
+                        original_kwargs["messages"] = messages
+
+                try:
+                    devnull = open(os.devnull, "w")
+                except Exception:
+                    devnull = io.StringIO()
+
+                with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+                    logging.getLogger("litellm").setLevel(logging.CRITICAL)
+                    logging.getLogger().setLevel(logging.CRITICAL)
+                    stream = await litellm_module.acompletion(**original_kwargs)
+
+                if self.enable_rate_limiting:
+                    self.rate_limiter.report_success(
+                        model=current_model,
+                        api_key_hash=current_api_key_hash,
+                    )
+
     async def completion_with_rate_limiting(
         self,
         litellm_module,
@@ -1581,17 +1789,24 @@ class LiteLLMRateLimitHandler:
                     logging.getLogger().setLevel(logging.CRITICAL)
                     response = await litellm_module.acompletion(**kwargs)
 
-                # if os.getenv("AGENT_VERBOSE", "f").lower() == "true":
-                #     if not kwargs.get("stream", False):
-                #         print_prompt(kwargs["messages"]+[{"role": "assistant", "content": response.choices[0].message.content}])
-                #     else:
-                #         print_prompt(kwargs["messages"] + [{"role": "assistant", "content": "streaming"}])
-
                 # Report success
                 if self.enable_rate_limiting:
                     self.rate_limiter.report_success(
                         model=current_model,
                         api_key_hash=current_api_key_hash,
+                    )
+
+                # Stream: wrap so mid-stream errors go through the same retry path
+                if kwargs.get("stream", False):
+                    return self._wrap_stream_with_retry(
+                        response,
+                        original_kwargs=kwargs,
+                        original_model=original_model,
+                        current_model=current_model,
+                        current_api_key_hash=current_api_key_hash,
+                        litellm_module=litellm_module,
+                        wait_callback=wait_callback,
+                        attempt_offset=attempt,
                     )
 
                 return response
@@ -1615,6 +1830,7 @@ class LiteLLMRateLimitHandler:
                         model=current_model,
                         error=e,
                         api_key_hash=current_api_key_hash,
+                        is_rate_limit=is_rate_limit,
                     )
 
                     # Try fallback model if available
@@ -1638,6 +1854,9 @@ class LiteLLMRateLimitHandler:
                         raise
                 else:
                     raise
+
+
+
 
     def _inject_api_key(
         self,

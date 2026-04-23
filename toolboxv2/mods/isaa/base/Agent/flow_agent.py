@@ -49,15 +49,19 @@ try:
 except ImportError:
     LITELLM_AVAILABLE = False
 try:
-    # from python_a2a import A2AServer, AgentCard
+
+    A2A_AVAILABLE = False
+    if os.getenv("A2A_AVAILABLE", "fasle") == "true":
+        from python_a2a import A2AServer, AgentCard
+
+        A2A_AVAILABLE = True
+except ImportError:
+    A2A_AVAILABLE = False
     class A2AServer:
         pass
 
     class AgentCard:
         pass
-    A2A_AVAILABLE = True
-except ImportError:
-    A2A_AVAILABLE = False
 
 try:
     #from mcp.server.fastmcp import FastMCP
@@ -3236,8 +3240,10 @@ litellm.exceptions.MidStreamFallbackError: litellm.MidStreamFallbackError: litel
 
     def setup_a2a_server(self, host: str = "0.0.0.0", port: int = 5000):
         try:
-            from python_a2a import A2AServer, AgentCard
-            A2A_AVAILABLE = True
+            A2A_AVAILABLE = False
+            if os.getenv("A2A_AVAILABLE", "fasle") == "true":
+                from python_a2a import A2AServer, AgentCard
+                A2A_AVAILABLE = True
         except ImportError:
             A2A_AVAILABLE = False
 

@@ -545,7 +545,7 @@ class ZenRendererV2:
         meta = ""
 
         try:
-            rd = anything_from_str_to_dict(result)[0] if isinstance(result, str) else result
+            rd = json.loads(result) if isinstance(result, str) else result
             if not rd:
                 rd = result
             if isinstance(rd, dict):

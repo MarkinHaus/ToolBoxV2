@@ -751,5 +751,6 @@ class Spinner:
         self.manager.unregister_spinner(self)
         # Clear the spinner's line if it was the primary spinner.
         if self._is_primary:
-            sys.stdout.buffer.write("\r\033[K".encode('utf-8'))
-            sys.stdout.buffer.flush()
+            if hasattr(sys.stdout, "buffer"):
+                sys.stdout.buffer.write("\r\033[K".encode('utf-8'))
+                sys.stdout.buffer.flush()

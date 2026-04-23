@@ -247,8 +247,12 @@ _user_templates_loaded = False
 def _templates_dir() -> Path:
     """Resolve the directory for user-contributed templates."""
     env = os.environ.get("ICLI_WEB_TEMPLATES_DIR", "").strip()
-    if env: return Path(env).expanduser()
-    return Path.home() / ".toolbox" / "icli_web" / "templates"
+    if env:
+        p = Path(env)
+        if p.exists() and p.is_dir():
+            return Path(env)
+    from toolboxv2 import tb_root_dir
+    return tb_root_dir / "mods" / "icli_web" / "templates"
 
 
 def _load_user_templates_once() -> None:

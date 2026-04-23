@@ -781,11 +781,41 @@ class ToolManager:
                 if "=" in type_part:
                     type_part = type_part.split("=")[0].strip()
 
-                # Map Python types to JSON Schema types
-                json_type = self._python_type_to_json(type_part)
+                # Detect nullable wrappers that Python's typing produces:
+                #   Optional[X]        -> nullable X
+                #   X | None           -> nullable X  (PEP 604)
+                #   None | X           -> nullable X
+                #   Union[X, None]     -> nullable X
+                is_nullable = False
+                inner_type = type_part
+                stripped = type_part.replace(" ", "")
+
+                if stripped.startswith("Optional[") and stripped.endswith("]"):
+                    is_nullable = True
+                    inner_type = stripped[len("Optional["):-1]
+                elif "|" in stripped:
+                    union_parts = [p.strip() for p in stripped.split("|")]
+                    if "None" in union_parts:
+                        is_nullable = True
+                        non_none = [p for p in union_parts if p != "None"]
+                        # If multiple non-None alternatives, fall back to first; JSON Schema
+                        # can't express arbitrary unions for tool params reliably across providers.
+                        inner_type = non_none[0] if non_none else "str"
+                elif stripped.startswith("Union[") and stripped.endswith("]"):
+                    union_inner = stripped[len("Union["):-1]
+                    union_parts = [p.strip() for p in self._split_args(union_inner)]
+                    if "None" in union_parts or "NoneType" in union_parts:
+                        is_nullable = True
+                        non_none = [p for p in union_parts if p not in ("None", "NoneType")]
+                        inner_type = non_none[0] if non_none else "str"
+
+                json_type = self._python_type_to_json(inner_type)
+
+                # Groq/OpenAI strict mode requires nullable params to use
+                type_field = [json_type, "null"] if is_nullable else json_type
 
                 properties[name_part] = {
-                    "type": json_type,
+                    "type": type_field,
                     "description": f"Parameter: {name_part}"
                 }
 
@@ -795,8 +825,11 @@ class ToolManager:
                 # No type annotation
                 name_part = part.split("=")[0].strip() if "=" in part else part.strip()
 
+                # If param has a default (typically None), treat as optional + nullable
+                type_field = ["string", "null"] if has_default else "string"
+
                 properties[name_part] = {
-                    "type": "string",
+                    "type": type_field,
                     "description": f"Parameter: {name_part}"
                 }
 
@@ -829,24 +862,22 @@ class ToolManager:
         return parts
 
     def _python_type_to_json(self, type_str: str) -> str:
-        """Map Python type string to JSON Schema type"""
         type_map = {
-            "str": "string",
-            "string": "string",
-            "int": "integer",
-            "integer": "integer",
-            "float": "number",
-            "number": "number",
-            "bool": "boolean",
-            "boolean": "boolean",
-            "list": "array",
-            "array": "array",
-            "dict": "object",
-            "object": "object",
+            "str": "string", "string": "string",
+            "int": "integer", "integer": "integer",
+            "float": "number", "number": "number",
+            "bool": "boolean", "boolean": "boolean",
+            "list": "array", "array": "array",
+            "dict": "object", "object": "object",
             "any": "string",
         }
-
-        type_lower = type_str.lower().split("[")[0]  # Remove generic part
+        type_lower = type_str.lower().split("[")[0].strip()
+        if type_lower not in type_map:
+            # Surface unknown types instead of silently defaulting to string
+            from toolboxv2 import get_logger
+            get_logger().debug(
+                f"_python_type_to_json: unknown type {type_str!r}, defaulting to string"
+            )
         return type_map.get(type_lower, "string")
 
     def _schema_to_args_string(self, input_schema: dict) -> str:

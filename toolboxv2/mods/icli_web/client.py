@@ -367,6 +367,7 @@ class IcliWebClient:
             log.propagate = False
 
         self._icli = icli
+        icli.client_sop = self.stop
         self._install_task_hook()
 
         if url is None:

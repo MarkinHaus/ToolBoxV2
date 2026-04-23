@@ -598,9 +598,12 @@ class FlowAgentBuilder:
     ) -> "FlowAgentBuilder":
         """Enable A2A server for agent-to-agent communication"""
         try:
-            from python_a2a import A2AServer, AgentCard
 
-            A2A_AVAILABLE = True
+            A2A_AVAILABLE = False
+            if os.getenv("A2A_AVAILABLE", "fasle") == "true":
+                from python_a2a import A2AServer, AgentCard
+
+                A2A_AVAILABLE = True
         except ImportError:
             A2A_AVAILABLE = False
 
@@ -889,9 +892,12 @@ class FlowAgentBuilder:
     def validate_config(self) -> dict[str, list[str]]:
         """Validate the current configuration"""
         try:
-            from python_a2a import A2AServer, AgentCard
 
-            A2A_AVAILABLE = True
+            A2A_AVAILABLE = False
+            if os.getenv("A2A_AVAILABLE", "fasle") == "true":
+                from python_a2a import A2AServer, AgentCard
+
+                A2A_AVAILABLE = True
         except ImportError:
             A2A_AVAILABLE = False
 

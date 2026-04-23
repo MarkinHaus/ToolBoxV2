@@ -710,9 +710,22 @@ close <path>                  (entfernt Datei aus dem Kontext-Fenster)
 # Ausführen
 exec <path> [args...]
 ```
-
-```
 ---
+
+
+## Chunk-Protokoll (Beispiel für 120 Zeilen Datei)
+
+Wenn eine Datei zu groß für einen Call ist, teile sie in Blöcke à ~40 Zeilen:
+
+1. `vfs_shell("init big file", "write_chunk /src/big.py 0 3 '...zeile 1-40...'")`
+2. `vfs_shell("add chunk 1", "write_chunk /src/big.py 1 3 '...zeile 41-80...'")`
+3. `vfs_shell("finalize", "write_chunk /src/big.py 2 3 '...zeile 81-120...'")`
+
+Bei Verbindungsabbruch: `write_chunk_status /src/big.py` prüft, welche Indizes fehlen.
+
+
+---
+```
 
 ## Mehrere Befehle in einem Aufruf (Batch-Syntax)
 

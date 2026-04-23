@@ -33,7 +33,8 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, Corou
 
 from litellm import max_tokens
 
-from mods.isaa.base.Agent.narrator import AgentLiveNarrator
+
+from toolboxv2.mods.isaa.base.Agent.narrator import AgentLiveNarrator
 from toolboxv2 import get_app, get_logger
 
 # Import Live State Management
@@ -150,7 +151,7 @@ DISCOVERY_TOOLS = [
                 "type": "object",
                 "properties": {
                     "category": {
-                        "type": "string",
+                        "type": ["string", "null"],
                         "description": "Optional category filter (e.g., 'discord', 'vfs', 'memory')",
                     }
                 },
@@ -187,6 +188,11 @@ _VFS_PERSONAS = "/global/.memory/dreamer/personas.json"
 # HELPER COMPONENTS
 # =============================================================================
 
+class ToolValidationError(Exception):
+    """Raised when the LLM provider rejects a tool call as invalid
+    (unknown tool name, schema violation). Permanent per-request error —
+    must be handled at the agent loop level, not retried mid-stream."""
+    pass
 
 @dataclass
 class AutoFocusTracker:
@@ -518,7 +524,7 @@ class PersonaProfile:
     stats: PersonaStats = field(default_factory=PersonaStats)
 
     def apply_max_iterations(self, base: int) -> int:
-        return int(min(base*0.6 ,int(base * self.max_iterations_factor)))
+        return int(min(base*5 ,int(base * self.max_iterations_factor)))
 
 from toolboxv2.mods.isaa.base.Agent.default_personas import _BUILTIN_PERSONAS, _PERSONA_KEYWORDS
 
@@ -710,7 +716,7 @@ class ExecutionContext:
             return None
 
         sorted_tools = sorted(self.dynamic_tools, key=lambda t: t.relevance_score)
-        return sorted_tools[0].name if sorted_tools else None
+        return sorted_tools[-1].name if sorted_tools else None
 
     def get_majority_category(self) -> Optional[str]:
         """Get the most common category among loaded tools"""
@@ -842,38 +848,19 @@ class HistoryCompressor:
         reads = []  # Erkenntnisse (Read-Only)
         writes = []  # State Changes (Write/Create/Edit)
         errors = []  # Fehler & Blocker
-        findings = []  # Aus think-Blöcken extrahierte Erkenntnisse
+        last_think_result = None  # Nur das letzte think-Tool-Result (informationsdichteste Stelle)
         tools_used = set()
 
         for i, msg in enumerate(working_history):
             role = msg.get("role", "")
 
             if role == "assistant":
-                # Think-Ergebnisse aus dem nächsten tool-result extrahieren
                 tool_calls = msg.get("tool_calls", [])
                 for tc in tool_calls:
                     if hasattr(tc, "function"):
-                        name = tc.function.name
-                        tools_used.add(name)
-                        if name == "think":
-                            try:
-                                args = json.loads(tc.function.arguments)
-                                thought = args.get("thought", "")[:200]
-                                if thought:
-                                    findings.append(thought)
-                            except:
-                                pass
+                        tools_used.add(tc.function.name)
                     elif isinstance(tc, dict) and "function" in tc:
-                        name = tc["function"].get("name", "")
-                        tools_used.add(name)
-                        if name == "think":
-                            try:
-                                args = json.loads(tc["function"].get("arguments", "{}"))
-                                thought = args.get("thought", "")[:200]
-                                if thought:
-                                    findings.append(thought)
-                            except:
-                                pass
+                        tools_used.add(tc["function"].get("name", ""))
 
             elif role == "tool":
                 name = msg.get("name", "")
@@ -899,17 +886,16 @@ class HistoryCompressor:
                         size = len(content)
                         reads.append(f"{name} ({size} chars)")
                 elif name == "think":
-                    pass  # Schon oben verarbeitet
+                    last_think_result = content
                 else:
                     reads.append(f"{name}")
 
         # Build Semantic Ledger
         lines = [f"📋 SEMANTIC LEDGER [Run {run_id}]:"]
 
-        if findings:
-            lines.append(f"\n🔍 KEY FINDINGS ({len(findings)}):")
-            for f in findings[-3:]:  # Letzte 3 Erkenntnisse
-                lines.append(f"  • {f}")
+        if last_think_result:
+            lines.append(f"\n🔍 LAST THINK RESULT:")
+            lines.append(last_think_result)
 
         if writes:
             lines.append(f"\n✏️ STATE CHANGES ({len(writes)}):")
@@ -971,10 +957,18 @@ class HistoryCompressor:
             to_process = working_history[:split_idx]
             to_keep = working_history[split_idx:]
 
+        # Finde Index des letzten think-Tool-Results in to_process → vor Kompression schützen
+        last_think_idx = -1
+        for idx in range(len(to_process) - 1, -1, -1):
+            m = to_process[idx]
+            if m.get("role") == "tool" and m.get("name") == "think":
+                last_think_idx = idx
+                break
+
         compressed_msgs = []
         stats = {"kept": 0, "summarized": 0, "dropped": 0}
 
-        for msg in to_process:
+        for idx, msg in enumerate(to_process):
             role = msg.get("role", "")
             name = msg.get("name", "")
             content = msg.get("content", "") or ""
@@ -1004,12 +998,17 @@ class HistoryCompressor:
             elif role == "tool":
                 # P2: ZUSAMMENFASSEN (think, write, exec)
                 if name == "think":
-                    compressed_msgs.append({
-                        "role": "tool", "tool_call_id": msg.get("tool_call_id", ""),
-                        "name": name,
-                        "content": f"Think: {content[:100]}..." if len(content) > 100 else content,
-                    })
-                    stats["summarized"] += 1
+                    if idx == last_think_idx:
+                        # Letztes think vollständig behalten
+                        compressed_msgs.append(msg)
+                        stats["kept"] += 1
+                    else:
+                        compressed_msgs.append({
+                            "role": "tool", "tool_call_id": msg.get("tool_call_id", ""),
+                            "name": name,
+                            "content": f"Think: {content[:100]}..." if len(content) > 100 else content,
+                        })
+                        stats["summarized"] += 1
 
                 elif any(kw in name_lower for kw in ("write", "create", "edit", "exec", "shell", "run")):
                     first_line = content.split("\n")[0][:80]
@@ -1066,6 +1065,131 @@ class HistoryCompressor:
 # EXECUTION ENGINE V3
 # =============================================================================
 
+def _parse_tool_arguments(args_str: str) -> dict:
+    """
+    Robust parser für LLM-tool-call arguments.
+
+    Handles in order:
+      1. Strict json.loads (fast path, normalerweise 99% der Fälle).
+      2. Strip markdown code fences (``` / ```json) falls das Modell sie mitschickt.
+      3. Common escape mistakes: \\' (unnötig escaped single quote).
+      4. Raw control chars inside strings (newlines/tabs die nicht escaped wurden)
+         — häufig bei Modellen die Markdown/Code als Tool-Arg schicken.
+      5. Python-literal fallback (ast.literal_eval) für single-quoted dicts.
+
+    Raises ValueError if nothing works. Never returns partial results.
+    """
+    if not isinstance(args_str, str):
+        raise ValueError(f"Expected str, got {type(args_str).__name__}")
+
+    s = args_str.strip()
+    if not s:
+        return {}
+
+    # --- Pass 1: strict ---
+    try:
+        result = json.loads(s)
+        if isinstance(result, dict):
+            return result
+        raise ValueError(f"Expected JSON object, got {type(result).__name__}")
+    except json.JSONDecodeError:
+        pass
+
+    # --- Pass 2: strip ``` / ```json fences ---
+    stripped = s
+    if stripped.startswith("```"):
+        # remove leading fence line
+        nl = stripped.find("\n")
+        if nl != -1:
+            stripped = stripped[nl + 1:]
+        if stripped.endswith("```"):
+            stripped = stripped[:-3]
+        stripped = stripped.strip()
+        try:
+            result = json.loads(stripped)
+            if isinstance(result, dict):
+                return result
+        except json.JSONDecodeError:
+            pass
+
+    # --- Pass 3: unescape \' (invalid per JSON spec, common LLM bug) ---
+    if r"\'" in stripped:
+        fixed = stripped.replace(r"\'", "'")
+        try:
+            result = json.loads(fixed)
+            if isinstance(result, dict):
+                return result
+        except json.JSONDecodeError:
+            pass
+
+    # --- Pass 4: escape raw control chars inside string literals ---
+    # Models frequently dump markdown/code into string values with literal \n,
+    # \t, and even unescaped \r. JSON forbids these raw; escape them only
+    # when they appear INSIDE a "..." string (outside strings they're fine).
+    repaired = _escape_raw_controls_in_json_strings(stripped)
+    if repaired != stripped:
+        try:
+            result = json.loads(repaired)
+            if isinstance(result, dict):
+                return result
+        except json.JSONDecodeError:
+            pass
+
+    # --- Pass 5: Python literal fallback (single-quoted dicts from small models) ---
+    try:
+        import ast
+        result = ast.literal_eval(stripped)
+        if isinstance(result, dict):
+            return result
+    except (ValueError, SyntaxError):
+        pass
+
+    # --- Give up ---
+    raise ValueError(
+        f"Could not parse tool arguments as JSON. "
+        f"Length={len(args_str)}, first 200 chars: {args_str[:200]!r}"
+    )
+
+
+def _escape_raw_controls_in_json_strings(s: str) -> str:
+    """
+    Walk the JSON source char-by-char. Inside "..." string literals,
+    replace raw control chars (\\n, \\r, \\t, \\b, \\f) with their escaped
+    equivalents. Outside strings, leave everything alone.
+
+    Respects backslash escapes so that already-valid \\" is not miscounted.
+    Does NOT attempt to fix unescaped internal quotes — that's ambiguous
+    and would need a proper tokenizer. For tool calls, unescaped " inside
+    strings is rare; unescaped newlines in markdown content is common.
+    """
+    out = []
+    in_string = False
+    escape_next = False
+    replacements = {
+        "\n": "\\n",
+        "\r": "\\r",
+        "\t": "\\t",
+        "\b": "\\b",
+        "\f": "\\f",
+    }
+    for ch in s:
+        if escape_next:
+            out.append(ch)
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            out.append(ch)
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            out.append(ch)
+            continue
+        if in_string and ch in replacements:
+            out.append(replacements[ch])
+            continue
+        out.append(ch)
+    return "".join(out)
 
 class ExecutionEngine(SubAgentResumeExtension):
     """
@@ -1336,7 +1460,7 @@ BEISPIELE:
         self,
         query: str,
         session_id: str,
-        max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30),
+        max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 60),
         ctx: "ExecutionContext | None" = None,
         get_ctx: bool = False,
         persist_blocking: bool = False,
@@ -1580,7 +1704,7 @@ BEISPIELE:
         self,
         query: str,
         session_id: str,
-        max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30),
+        max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 60),
         ctx: "ExecutionContext | None" = None,
         model=None,
         persist_blocking: bool = False,
@@ -1887,11 +2011,12 @@ BEISPIELE:
 
                     pumper_task = asyncio.create_task(pump_llm(stream_response))
 
+                    tool_validation_fail_msg = None  # set if LLM hallucinated a tool name
+
                     try:
                         while True:
                             item = await multiplex_queue.get()
 
-                            # Sofortiges Yielding des Narrators!
                             if item["_type"] == "narrator":
                                 yield enrich({"type": "narrator", "narrator_msg": item["msg"]})
                                 continue
@@ -1900,7 +2025,18 @@ BEISPIELE:
                                 break
 
                             if item["_type"] == "error":
-                                raise item["error"]
+                                err = item["error"]
+                                # Provider rejected the tool call (unknown name / bad schema).
+                                # Don't crash — turn it into a synthetic tool-result so the
+                                # LLM sees the failure in the next iteration and can correct.
+                                if isinstance(err, ToolValidationError):
+                                    tool_validation_fail_msg = str(err)
+                                    self.live.log(
+                                        f"[Engine] Provider rejected tool call: {tool_validation_fail_msg[:200]}",
+                                        logging.WARNING,
+                                    )
+                                    break
+                                raise err
 
                             chunk = item["chunk"]
                             delta = (
@@ -1992,6 +2128,30 @@ BEISPIELE:
                         self._narrator._set_thought(collected_content[:250], moc=False)
                         if not pumper_task.done():
                             pumper_task.cancel()
+
+                    if tool_validation_fail_msg is not None:
+                        correction = (
+                            "System: your previous tool call was rejected by the provider. "
+                            f"Reason: {tool_validation_fail_msg[:400]}\n\n"
+                            "Most likely cause: you called a tool name that is not currently "
+                            "loaded/available. Before retrying:\n"
+                            "  1. Call `list_tools` (optionally with a category) to see what exists.\n"
+                            "  2. Call `load_tools(names=[...])` with the exact names you need.\n"
+                            "  3. Then call the tool.\n"
+                            "Do NOT repeat the exact same tool call. Either load the missing tool "
+                            "first, or pick a different already-loaded tool."
+                        )
+                        ctx.working_history.append({"role": "system", "content": correction})
+                        yield enrich({
+                            "type": "warning",
+                            "message": "Tool rejected by provider — injected correction, continuing.",
+                        })
+                        # Discard any partially-buffered tool calls from this failed stream
+                        tool_calls_buffer.clear()
+                        collected_content = ""
+                        # Skip continuation-resume logic and go straight to next iteration
+                        continue  # continues the outer `while ctx.current_iteration < ctx.max_iterations` loop
+
                     # --- Ende des Chunks. Prüfen auf Token Limit ---
                     if finish_reason not in ["length", "max_tokens"]:
                         break  # Generierung natürlich beendet
@@ -2333,12 +2493,19 @@ BEISPIELE:
         f_id = tool_call.id
 
         try:
-            f_args = json.loads(tool_call.function.arguments)
-        except:
-            f_args = {}
+            args_str = tool_call.function.arguments or "{}"
+            f_args = _parse_tool_arguments(args_str)
+        except Exception as e:
+            return (
+                f"System-Error: Invalid JSON in tool arguments: {e}\n"
+                r"Your tool arguments must be a single valid JSON object. "
+                r"Inside string values, write long text / code / markdown naturally — "
+                r'only \" and \\ and control chars (\n, \t) need escaping. '
+                r"Do NOT escape single quotes (\'). Do NOT wrap the JSON in ``` fences. "
+                f"Raw args received (first 500 chars): {args_str[:500]}"
+            ), False
 
-
-        self._narrator.on_tool_start(f_name+" "+(f_args.get(list(f_args.keys())[0], "") if f_args else ""))
+        self._narrator.on_tool_start(f_name+" "+str(f_args.get(list(f_args.keys())[0], "") if f_args else ""))
 
         # Track tool usage
         ctx.tools_used.append(f_name)
@@ -2478,6 +2645,7 @@ BEISPIELE:
                 result = thought
             except Exception as e:
                 result = thought_acc if 'thought_acc' in locals() and thought_acc else str(e)
+                result += str(e)
                 thought = result
             self.live.thought = thought[-200:] if thought else str(result)[:200]
             # Record in AutoFocus
@@ -3259,6 +3427,30 @@ BEISPIELE:
         # ----------------------------------------------------------------
 
         prompt_parts = [self.agent.amd.system_message]
+
+        prompt_parts.append(
+            "\nIf the task has exceeded 10 iterations and prior summaries exist in the history, "
+            "use your second-to-last tool call to invoke `think` — assess your progress so far, "
+            "identify what remains, and leave a clear handoff note so work can seamlessly continue "
+            "if the run is resumed later."
+        )
+
+        prompt_parts.append(
+            "\n## Tool Loading Protocol (STRICT)\n"
+            "Only statically available tools (e.g. `think`, `list_tools`, `load_tools`, `shift_focus`, "
+            "`final_answer`, VFS tools, sub-agent tools) and tools you explicitly loaded via `load_tools` "
+            "may be called. Calling any other tool name will fail with `tool_use_failed` and waste an iteration.\n"
+            "Required order before using a non-static tool:\n"
+            "  1. `list_tools(category=...)` — discover what exists. Use a category if you know the domain "
+            "(e.g. `memory`, `vfs`, `web`), otherwise omit it.\n"
+            "  2. `load_tools(names=[...])` — activate the exact tools you need. Load proactively: "
+            "if you already know from context which tools the task requires, skip step 1 and load them directly "
+            "in your first iteration.\n"
+            "  3. Call the loaded tool.\n"
+            "Never guess tool names. Never call a tool before it appears in your active tool list. "
+            "If a call fails because the tool is not loaded, do NOT retry the same call — load it first, then retry."
+        )
+
         # Base prompt - different for sub-agents
         if self.is_sub_agent:
             prompt_parts.append("\n".join([

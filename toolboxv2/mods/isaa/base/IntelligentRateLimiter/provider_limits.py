@@ -457,21 +457,21 @@ def get_limits_for_model(
 
     return None
 
-
+all_providers = {
+    "OpenAI": OPENAI_LIMITS,
+    "Anthropic": ANTHROPIC_LIMITS,
+    "Google/Vertex": GOOGLE_LIMITS,
+    "Groq": GROQ_LIMITS,
+    "Together AI": TOGETHER_LIMITS,
+    "Mistral": MISTRAL_LIMITS,
+    "Cohere": COHERE_LIMITS,
+    "MiniMax": MINIMAX_LIMITS,
+    "Zhipu AI / GLM (Z.AI)": ZHIPU_LIMITS,
+    "Inception Labs / Mercury": INCEPTION_LIMITS,
+}
 def print_all_limits():
     """Drucke alle bekannten Limits übersichtlich"""
-    all_providers = {
-        "OpenAI": OPENAI_LIMITS,
-        "Anthropic": ANTHROPIC_LIMITS,
-        "Google/Vertex": GOOGLE_LIMITS,
-        "Groq": GROQ_LIMITS,
-        "Together AI": TOGETHER_LIMITS,
-        "Mistral": MISTRAL_LIMITS,
-        "Cohere": COHERE_LIMITS,
-        "MiniMax": MINIMAX_LIMITS,
-        "Zhipu AI / GLM (Z.AI)": ZHIPU_LIMITS,
-        "Inception Labs / Mercury": INCEPTION_LIMITS,
-    }
+
 
     for provider, limits in all_providers.items():
         print(f"\n{'=' * 60}")

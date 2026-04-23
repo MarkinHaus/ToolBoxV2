@@ -18,7 +18,7 @@ Version: 4.0.0
 import asyncio
 import dataclasses
 import logging
-import os
+import sys
 import shutil
 import subprocess
 import threading
@@ -29,6 +29,7 @@ from typing import Any
 import requests
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import is_done
+from prompt_toolkit.output.win32 import NoConsoleScreenBufferError
 
 from toolboxv2.utils.workers import get_registry
 from toolboxv2.utils.extras.Style import SpinnerManager, Spinner
@@ -1665,13 +1666,21 @@ def c_print(*args, **kwargs):
     if len(text) == len(args) == 0:
         print()
     elif isinstance(args[0], HTML):
-        print_formatted_text(*args, **kwargs)
+        try:
+            print_formatted_text(*args, **kwargs)
+        except NoConsoleScreenBufferError:
+            if hasattr(args[0], "value"):
+                print(args[0].value)
     elif isinstance(args[0], ANSI):
-        print_formatted_text(*args, **kwargs)
+        try:
+            print_formatted_text(*args, **kwargs)
+        except NoConsoleScreenBufferError:
+            if hasattr(args[0], "value"):
+                print(args[0].value)
     else:
         try:
             print_formatted_text(text, **kwargs)
-        except:
+        except NoConsoleScreenBufferError:
             print(text)
 
 def ansi_c_print(*a, **kw):
@@ -2314,6 +2323,8 @@ def load_web_auto_feature(fm):
     proxy = PlaywrightProxy(full=False, headless=True)
     tools_set = [None]
     def enable(agent):
+        if sys.platform == "win32":
+            asyncio.set_event_loop(asyncio.ProactorEventLoop())
         proxy.start()
         tools_set[0] = proxy.build_agent_tools()
         agent.add_tools(tools_set[0])
@@ -2332,6 +2343,8 @@ def load_full_web_auto_feature(fm):
     proxy = PlaywrightProxy(full=True, headless=True)
     tools_set = [None]
     def enable(agent):
+        if sys.platform == "win32":
+            asyncio.set_event_loop(asyncio.ProactorEventLoop())
         proxy.start()
         tools_set[0] = proxy.build_agent_tools()
         agent.add_tools(tools_set[0])
@@ -7116,6 +7129,7 @@ class ISAA_Host:
             persona = " ".join(args[2:]) if len(args) > 2 else "general assistant"
             result = await self._tool_spawn_agent(name, persona)
             print_status(result, "success" if "✓" in result else "error")
+            await self._cmd_agent(["switch", name])
 
         elif action == "stop":
             if len(args) < 2:
@@ -11565,6 +11579,8 @@ class ISAA_Host:
 
         # Cleanup
         self._save_state()
+        if hasattr(self, "client_sop"):
+            self.client_sop()
 
         # Stop job scheduler
         if self.job_scheduler:

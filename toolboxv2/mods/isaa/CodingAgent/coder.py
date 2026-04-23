@@ -1456,8 +1456,8 @@ class CoderAgent:
                 # Agent entfernen — je nach isaa API
                 if hasattr(isaa, "unregister_agent"):
                     await isaa.unregister_agent(name)
-                elif hasattr(isaa, "remove_agent"):
-                    await isaa.remove_agent(name)
+                elif hasattr(isaa, "delete_agent"):
+                    await isaa.delete_agent(name)
                 self._log("CLEANUP", f"Removed agent: {name}", "grey")
             except Exception as e:
                 logger.debug(f"Cleanup {name}: {e}")
