@@ -2262,6 +2262,7 @@ class AgentInfo:
     is_self_agent: bool = False
     has_shell_access: bool = False
     mcp_servers: list[str] = field(default_factory=list)
+    cli_tools: list[str] = field(default_factory=list)
     bound_agents: list[str] = field(default_factory=list)
 
 
@@ -4096,6 +4097,13 @@ _help_text = {
 /mcp reload               - Alle MCP Tools neu indizieren
     """,
 
+# CLI Tools Management (Live)
+    "cli": """/cli list                 - Zeige registrierte CLI Tools
+/cli add                  - Interaktiver Wizard für neues CLI Tool
+/cli remove <name>        - CLI Tool entfernen
+/cli reload               - CLI Tools aus agent.json neu laden
+    """,
+
     # Task Management
     "task": """/task                     - Show all background tasks
 /task view [id]           - Live view of task (auto‑selects if 1)
@@ -4369,6 +4377,7 @@ class ISAA_Host:
     def __init__(self, app_instance: Any = None):
         """Initialize the ISAA Host system."""
 
+        self._cli_tools = []
         self.auto_paste_text = False
         self.dynamic_interval = [1]
         from toolboxv2.mods.isaa.extras.isaa_branding import FlowMatrixAnimation, print_isaa_header
@@ -4679,6 +4688,7 @@ class ISAA_Host:
                             is_self_agent=info.get("is_self_agent", False),
                             has_shell_access=info.get("has_shell_access", False),
                             mcp_servers=info.get("mcp_servers", []),
+                            cli_tools=info.get("cli_tools", []),
                             bound_agents=info.get("bound_agents", []),
                         )
             except Exception as e:
@@ -4697,6 +4707,7 @@ class ISAA_Host:
                         "persona": info.persona,
                         "is_self_agent": info.is_self_agent,
                         "has_shell_access": info.has_shell_access,
+                        "cli_tools": getattr(info, "cli_tools", []),
                         "mcp_servers": info.mcp_servers,
                         "bound_agents": info.bound_agents,
                     }
@@ -6134,7 +6145,7 @@ class ISAA_Host:
 
         d = {
             "/agent": None, "/audio": None, "/coder": None, "/job": None,
-            "/mcp": None, "/session": None, "/skill": None, "/task": None,
+            "/mcp": None,"/cli": None, "/session": None, "/skill": None, "/task": None,
             "/tools": None, "/vfs": None, "/feature": None, "/chain": None,
             "/set_max_iterations": None
         }
@@ -6222,6 +6233,15 @@ class ISAA_Host:
                 "remove": {s: None for s in getattr(self, 'current_mcp_servers', [])},
                 "reload": None,  # Re-connectet alle Server
                 "info": None,  # Details zu einem Server
+            },
+            "/cli": {
+                "list": None,
+                "add": None,
+                "remove": {
+                    t.name: None
+                    for t in self._cli_tools
+                },
+                "reload": None,
             },
             "/session": {
                 "switch": {},
@@ -6608,8 +6628,7 @@ class ISAA_Host:
         print_separator()
         print_box_content("Erweiterte Hilfe:", "info")
         print_box_content("/help all        - Alle Befehle (Referenz)", "")
-        print_box_content("/help chain      - Chain DSL Referenz", "")  # ← NEU
-        print_box_content("/help autofix    - AutoFix CI Pipeline", "")  # ← NEU
+        print_box_content("/help chain      - Chain DSL Referenz", "")
         print_box_content("/help guide      - Beispiele & Start-Prompts", "")
         print_box_content("/help discord    - Discord Integration Guide", "")
         print_box_footer()
@@ -6704,6 +6723,14 @@ class ISAA_Host:
         print_box_content("/mcp add <n> <cmd> [args]                    - Server hinzufügen & Tools laden", "")
         print_box_content("/mcp remove <name>                           - Server trennen & Tools löschen", "")
         print_box_content("/mcp reload                                  - Alle MCP Tools neu indizieren", "")
+
+        print_separator()
+
+        print_status("CLI Tools Management (Live)", "info")
+        print_box_content("/cli list                                    - Zeige registrierte CLI Tools", "")
+        print_box_content("/cli add                                     - Interaktiver Wizard für neues CLI Tool", "")
+        print_box_content("/cli remove <name>                           - CLI Tool entfernen", "")
+        print_box_content("/cli reload                                  - CLI Tools aus agent.json neu laden", "")
 
         print_separator()
 
@@ -6855,6 +6882,8 @@ class ISAA_Host:
         print_box_content("/audio live preset <name>    - default/speed_local/speed_api/quality_local/quality_api", "")
         print_box_content("/audio live presets          - Show preset availability", "")
 
+        print_separator()
+
         print_status("Shortcuts", "info")
         print_box_content("F2 - ZEN/ZEN+ mode toggle", "")
         print_box_content("F4 - Toggle audio recording", "")
@@ -6992,6 +7021,9 @@ class ISAA_Host:
         elif cmd == "/mcp":
             await self._cmd_mcp(args)
 
+        elif cmd == "/cli":
+            await self._cmd_cli(args)
+
         elif cmd == "/tools":
             await self._cmd_tools(args)
 
@@ -7012,6 +7044,7 @@ class ISAA_Host:
 
         elif cmd == "/context":
             await self._cmd_context(args)
+
         elif cmd == "/feature":
             await self._cmd_feature(args)
 
@@ -7058,6 +7091,196 @@ class ISAA_Host:
         else:
             print_status(f"Unknown command: {cmd}. Type /help for help.", "error")
 
+    async def _cmd_cli(self, args: list[str]):
+        """Handle live CLI tool management commands."""
+        if not args:
+            print_status(
+                "Usage: /cli <list|add|remove|reload> [args]", "warning"
+            )
+            return
+
+        action = args[0].lower()
+        agent = await self.isaa_tools.get_agent(self.active_agent_name)
+        tool_mgr = agent.tool_manager
+        agent_cfg_path = Path(self.app.data_dir) / "Agents" / self.active_agent_name / "agent.json"
+
+        # ── LIST ──────────────────────────────────────────────────────────────
+        if action == "list":
+            print_box_header(f"CLI Tools: {self.active_agent_name}", "🛠")
+            cli_tools = tool_mgr.get_by_category("cli")
+            self._cli_tools = cli_tools
+            if not cli_tools:
+                print_box_content("Keine aktiven CLI Tools.", "info")
+            else:
+                columns = [("Name", 20), ("Command", 35), ("Calls", 8)]
+                widths = [20, 35, 8]
+                print_table_header(columns, widths)
+                for t in cli_tools:
+                    # Extrahiere base description für Preview
+                    cmd_preview = t.description.splitlines()[0].replace("CLI Tool wrapper for ", "").strip("'")
+                    print_table_row(
+                        [t.name, cmd_preview[:35], str(t.call_count)],
+                        widths,
+                        ["cyan", "grey", "green"],
+                    )
+            print_box_footer()
+
+        # ── ADD (wizard) ──────────────────────────────────────────────────────
+        elif action == "add":
+            cfg = await self._cli_add_wizard()
+            if not cfg:
+                return
+
+            try:
+                print_status(f"Validating & Fetching docs for '{cfg['name']}'...", "progress")
+                tool_mgr.register_cli_tool(
+                    name=cfg["name"],
+                    executable=cfg["executable"],
+                    cli_tool_executable=cfg["cli_tool_executable"],
+                    executable_args=cfg["executable_args"],
+                    post_script_args=cfg.get("post_script_args")
+                )
+                self._cli_tools = tool_mgr.get_by_category("cli")
+                print_status(f"✓ '{cfg['name']}' registriert.", "success")
+
+                # Persist to agent.json
+                if agent_cfg_path.exists():
+                    with open(agent_cfg_path, "r+", encoding="utf-8") as f:
+                        agent_data = json.load(f)
+                        agent_data.setdefault("cli_tools", [])
+                        # Überschreibe existierendes
+                        agent_data["cli_tools"] = [t for t in agent_data["cli_tools"] if t.get("name") != cfg["name"]]
+                        agent_data["cli_tools"].append(cfg)
+                        f.seek(0)
+                        json.dump(agent_data, f, indent=2)
+                        f.truncate()
+            except Exception as e:
+                print_status(f"Fehler beim Registrieren: {e}", "error")
+
+        # ── REMOVE ────────────────────────────────────────────────────────────
+        elif action == "remove":
+            if len(args) < 2:
+                print_status("Usage: /cli remove <name>", "warning")
+                return
+            name = args[1]
+
+            if tool_mgr.unregister(name):
+                # Remove from agent.json
+                if agent_cfg_path.exists():
+                    with open(agent_cfg_path, "r+", encoding="utf-8") as f:
+                        agent_data = json.load(f)
+                        if "cli_tools" in agent_data:
+                            agent_data["cli_tools"] = [t for t in agent_data["cli_tools"] if t.get("name") != name]
+                            f.seek(0)
+                            json.dump(agent_data, f, indent=2)
+                            f.truncate()
+                print_status(f"Removed '{name}'.", "success")
+            else:
+                print_status(f"Tool '{name}' nicht gefunden.", "error")
+
+        # ── RELOAD ────────────────────────────────────────────────────────────
+        elif action == "reload":
+            if not agent_cfg_path.exists():
+                print_status("No agent.json found.", "error")
+                return
+            print_status("Reloading CLI tools from agent.json...", "progress")
+
+            with open(agent_cfg_path, encoding="utf-8") as f:
+                agent_data = json.load(f)
+
+            cli_tools_cfg = agent_data.get("cli_tools", [])
+            count = 0
+            for t_cfg in cli_tools_cfg:
+                name = t_cfg.get("name")
+                if not name:
+                    continue
+                try:
+                    tool_mgr.register_cli_tool(
+                        name=name,
+                        executable=t_cfg.get("executable"),
+                        cli_tool_executable=t_cfg.get("cli_tool_executable"),
+                        executable_args=t_cfg.get("executable_args", [])
+                    )
+                    count += 1
+                except Exception as e:
+                    print_status(f"Fehler beim Laden von '{name}': {e}", "warning")
+
+            print_status(f"✓ {count} CLI Tool(s) geladen.", "success")
+        else:
+            print_status(
+                f"Unknown CLI action: {action}. Use: list, add, remove, reload", "error"
+            )
+
+    async def _cli_add_wizard(self) -> dict | None:
+        """
+        Interactive wizard for /cli add.
+        Returns a dict with kwargs for register_cli_tool or None on cancel.
+        """
+        from prompt_toolkit import HTML
+
+        print_box_header("Add CLI Tool", "🛠")
+        print_box_content("Beispiel: Executable=python, Script=main.py, Args=-v", "info")
+        print_box_footer()
+
+        try:
+            ps = self.prompt_session
+
+            name = (await ps.prompt_async(
+                HTML("<style fg='ansicyan'>Tool Name (z.B. my_script_runner): </style>")
+            )).strip()
+            if not name:
+                print_status("Cancelled.", "warning")
+                return None
+
+            executable = (await ps.prompt_async(
+                HTML("<style fg='ansicyan'>Executable (z.B. python / npx / uv): </style>")
+            )).strip()
+            if not executable:
+                print_status("Cancelled.", "warning")
+                return None
+
+            args_line = (await ps.prompt_async(
+                HTML("<style fg='grey'>Feste Argumente für die Executable (Optional, z.B. -m): </style>")
+            )).strip()
+            import shlex
+            exec_args = shlex.split(args_line) if args_line else []
+
+            cli_tool = (await ps.prompt_async(
+                HTML("<style fg='ansicyan'>CLI Tool/Script (z.B. format.py / eslint): </style>")
+            )).strip()
+            if not cli_tool:
+                print_status("Cancelled.", "warning")
+                return None
+
+            args_line = (await ps.prompt_async(
+                HTML("<style fg='grey'>Feste Argumente für das >CLI Tool/Script (Optional, z.B. --verbose): </style>")
+            )).strip()
+            import shlex
+            post_script_args = shlex.split(args_line) if args_line else []
+
+            print_box_header("Confirm", "✓")
+            print_box_content(f"Name:       {name}", "")
+            print_box_content(f"Base Cmd:   {executable} {' '.join(exec_args)} {cli_tool} {' '.join(post_script_args)}", "")
+            print_box_footer()
+
+            ok = (await ps.prompt_async(
+                HTML("<style fg='ansicyan'>Registrieren?[Y/n]: </style>")
+            )).strip().lower()
+            if ok in ("n", "no"):
+                print_status("Cancelled.", "warning")
+                return None
+
+            return {
+                "name": name,
+                "executable": executable,
+                "cli_tool_executable": cli_tool,
+                "executable_args": exec_args,
+                "post_script_args": post_script_args
+            }
+
+        except (EOFError, KeyboardInterrupt):
+            print_status("Cancelled.", "warning")
+            return None
 
     async def _cmd_agent(self, args: list[str]):
         """Handle /agent commands."""

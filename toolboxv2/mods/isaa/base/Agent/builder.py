@@ -144,6 +144,7 @@ class AgentConfig(BaseModel):
     a2a: A2AConfig = Field(default_factory=A2AConfig)
     checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
     rate_limiter: RateLimiterConfig = Field(default_factory=RateLimiterConfig)
+    cli_tools: list[dict[str, Any]] = Field(default_factory=list)
 
     # Agent behavior
     max_parallel_tasks: int = 3
@@ -874,7 +875,23 @@ class FlowAgentBuilder:
             text_length="table-conversation",
         ).set_active_persona("executive")
 
-
+    def with_cli_tool(
+        self,
+        name: str,
+        executable: str,
+        cli_tool_executable: str,
+        executable_args: list[str] | None = None,
+        **kwargs
+    ) -> "FlowAgentBuilder":
+        """Register a CLI tool to be added to the agent."""
+        self.config.cli_tools.append({
+            "name": name,
+            "executable": executable,
+            "cli_tool_executable": cli_tool_executable,
+            "executable_args": executable_args or [],
+            **kwargs,
+        })
+        return self
 
     # =========================================================================
     # RULE CONFIG
@@ -1064,6 +1081,27 @@ class FlowAgentBuilder:
                     except Exception as e:
                         eprint(f"Failed to add tool {tool_name}: {e}")
 
+                # Step 6.5: Add CLI tools
+                cli_tools_added = 0
+                for cli_tool_cfg in self.config.cli_tools:
+                    name = cli_tool_cfg.get("name")
+                    if not name:
+                        continue
+                    try:
+                        # Nutzt die neue native ToolManager Funktion
+                        agent.tool_manager.register_cli_tool(
+                            name=cli_tool_cfg.pop("name"),
+                            executable=cli_tool_cfg.pop("executable"),
+                            cli_tool_executable=cli_tool_cfg.pop("cli_tool_executable"),
+                            **cli_tool_cfg
+                        )
+                        cli_tools_added += 1
+                    except Exception as e:
+                        eprint(f"Failed to add CLI tool {name}: {e}")
+
+                if cli_tools_added > 0:
+                    iprint(f"{cli_tools_added} CLI tools registered")
+
                 # Step 7: Process MCP configuration
                 with Spinner(message="Loading MCP", symbols="w"):
                     if self._mcp_needs_loading:
@@ -1093,10 +1131,11 @@ class FlowAgentBuilder:
                 # Step 11: Apply persona patterns to RuleSet
                 await self._apply_persona_to_ruleset(agent)
 
-                # Step 13: Patch FlowAgent - REMOVED
                 # Step 12: Checkpoint loding
                 if self.config.checkpoint.enabled:
                     res = await agent.checkpoint_manager.auto_restore()
+
+                agent._config_chash = self.config
 
                 # Final summary
                 iprint("✓ FlowAgent built successfully!")

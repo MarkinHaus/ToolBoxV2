@@ -302,11 +302,11 @@ class MCPSessionManager:
     async def _create_http_session(self, server_name: str, server_config: dict[str, Any]) -> ClientSession | None:
         """Create HTTP MCP session with timeout"""
         try:
-            from mcp.client.streamable_http import streamablehttp_client
+            from mcp.client.streamable_http import streamable_http_client
 
             url = server_config.get('url', f"http://localhost:{server_config.get('port', 8000)}/mcp")
 
-            connection = streamablehttp_client(url)
+            connection = streamable_http_client(url)
             read_stream, write_stream, cleanup = await asyncio.wait_for(
                 connection.__aenter__(),
                 timeout=self.connection_timeout

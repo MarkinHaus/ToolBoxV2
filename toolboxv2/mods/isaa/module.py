@@ -1862,6 +1862,7 @@ uncertain_about_X
         message_history: list | None = None,
         agent_name="TaskCompletion",
         use_complex: bool = False,
+        use_blitz: bool = False,
         request: RequestData | None = None,
         form_data: dict | None = None,
         data: dict | None = None,
@@ -1916,7 +1917,7 @@ uncertain_about_X
             llm_params = {"model": agent.amd.complex_llm_model, "messages": messages}
         else:
             llm_params = {
-                "model": agent.amd.fast_llm_model
+                "model": (agent.amd.fast_llm_model if not use_blitz else os.getenv("BLITZMODEL", agent.amd.fast_llm_model))
                 if agent.amd.use_fast_response
                 else agent.amd.complex_llm_model,
                 "messages": messages,

@@ -149,6 +149,7 @@ class TTSConfig:
     #     "Male, 17yo, gaining confidence, slight vocal tightness when nervous"
     #   Clone mode: passed as `instruct` on top of cloned voice, if non-None.
     #   Per-call override via speak() tool is supported.
+    style_prompt: Optional[str] = None
     qwen3_style_prompt: Optional[str] = None
     # ref_audio: If set → Base/clone mode. If None → VoiceDesign mode.
     #   Path, URL, base64, or (np.ndarray, sr) tuple accepted by qwen-tts.

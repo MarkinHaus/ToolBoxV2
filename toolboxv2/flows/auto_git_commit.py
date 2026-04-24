@@ -103,7 +103,8 @@ async def run(app, _, tags: str | None = None, summarize: bool = False, **kwargs
             commit_message = await isaa.mini_task_completion(
                 mini_task=str_file_changes,
                 user_task="Generate a git commit message based on the following file content changes. with key details!",
-                agent_name="GitCommitMessageGenerator"
+                agent_name="GitCommitMessageGenerator",
+                use_blitz=True,
             )
         if isinstance(commit_message, ApiResult):
             commit_message = commit_message.as_result().get()

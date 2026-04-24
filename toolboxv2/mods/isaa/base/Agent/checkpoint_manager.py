@@ -305,6 +305,20 @@ class CheckpointManager:
                 'custom_instructions': self.agent.amd.persona.custom_instructions,
             }
 
+        if self.agent._config_chash is not None:
+            agent_cfg = self.agent._config_chash
+
+            # MCP Config
+            if hasattr(agent_cfg, 'mcp'):
+                # Handle Pydantic Modelle oder einfache dicts
+                mcp_val = agent_cfg.mcp
+                checkpoint.agent_config['mcp'] = mcp_val.model_dump() if hasattr(mcp_val, 'model_dump') else (
+                    mcp_val if isinstance(mcp_val, dict) else vars(mcp_val))
+
+            # CLI Tools Config
+            if hasattr(agent_cfg, 'cli_tools'):
+                checkpoint.agent_config['cli_tools'] = agent_cfg.cli_tools
+
         # Sessions
         if hasattr(self.agent, 'session_manager') and self.agent.session_manager:
             checkpoint.sessions_data = self.agent.session_manager.to_checkpoint()

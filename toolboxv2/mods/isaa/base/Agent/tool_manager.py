@@ -36,7 +36,7 @@ class ToolEntry:
     # Categorization
     category: list[str] = field(default_factory=list)  # ['local', 'discord', 'mcp_filesystem']
     flags: dict[str, bool] = field(default_factory=dict)  # read, write, dangerous, etc.
-    source: str = "local"                     # 'local', 'mcp', 'a2a'
+    source: str = "local"                     # 'local', 'mcp', 'a2a', 'cli
 
     # Function reference (None when serialized/restored)
     function: Callable | None = None
@@ -1387,6 +1387,114 @@ class ToolManager:
                 lines.append("")
 
         return "\n".join(lines)
+
+    def register_cli_tool(
+        self,
+        name: str,
+        executable: str,
+        cli_tool_executable: str,
+        executable_args: list[str] | None = None,
+        category: list[str] | str | None = None,
+        flags: dict[str, bool] | None = None,
+        post_script_args: list[str] | None = None,
+        **kwargs
+    ) -> ToolEntry:
+        """
+        Registers a CLI command as a native tool. Validates existence,
+        fetches --help for documentation, and provides a string-argument interface.
+        """
+        import shutil
+        import subprocess
+        import shlex
+
+        # 1. Validate executable exists
+        if not shutil.which(executable):
+            raise FileNotFoundError(f"Executable not found in PATH: {executable}")
+
+        # 2. Generate documentation by calling --help / -h
+        doc_text = ""
+        base_cmd = [executable]
+        if executable_args:
+            base_cmd.extend(executable_args)
+        base_cmd.append(cli_tool_executable)
+        for help_flag in ["--help", "-h"]:
+            try:
+                result = subprocess.run(
+                    base_cmd + [help_flag],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                doc_text = (result.stdout or result.stderr).strip()
+                if doc_text:
+                    break
+            except Exception:
+                continue
+
+        base_desc = f"CLI Tool wrapper for '{name} {cli_tool_executable}'."
+        full_description = f"{base_desc}\n\nDocumentation:\n{doc_text}" if doc_text else base_desc
+
+        # 3. Create the native async wrapper function for execution
+        async def cli_wrapper(cli_arguments: str = "") -> str:
+            """Executes the CLI tool with the provided arguments string."""
+            cmd_list = [executable]
+            if executable_args:
+                cmd_list.extend(executable_args)
+
+            cmd_list.append(cli_tool_executable)
+
+            if post_script_args:
+                cmd_list.extend(post_script_args)
+
+            if cli_arguments:
+                cmd_list.extend(shlex.split(cli_arguments))
+
+
+            print(cmd_list)
+            def _run_sync():
+                return subprocess.run(
+                    cmd_list,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace'
+                )
+
+            # Führe den blockierenden Subprocess-Aufruf in einem Thread aus
+            result = await asyncio.to_thread(_run_sync)
+
+            if result.returncode != 0:
+                error_msg = f"Command failed with exit code {result.returncode}"
+                if result.stderr:
+                    error_msg += f"\nSTDERR:\n{result.stderr.strip()}"
+                if result.stdout:
+                    error_msg += f"\nSTDOUT:\n{result.stdout.strip()}"
+                raise RuntimeError(error_msg)
+
+            return result.stdout.strip() if result.stdout else result.stderr.strip()
+
+        # 4. Normalize categories
+        cat_list = ["cli"]
+        if category:
+            if isinstance(category, str):
+                cat_list.append(category)
+            else:
+                cat_list.extend(category)
+
+        # flags_dict = {"no_thread":True}
+        # if flags:
+        #     flags_dict = {**flags, **flags_dict}
+
+        # 5. Register using the existing unified registry
+        return self.register(
+            func=cli_wrapper,
+            name=name,
+            description=full_description,
+            category=cat_list,
+            flags=flags,
+            source="cli",
+            **kwargs
+        )
 
 
 # =============================================================================

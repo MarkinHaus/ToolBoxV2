@@ -371,6 +371,8 @@ class FlowAgent:
         self._init_managers(auto_load_checkpoint)
         self._init_rate_limiter()
 
+        self._config_chash = None
+
         logger.info(f"FlowAgent '{amd.name}' initialized")
 
     def _init_managers(self, auto_load_checkpoint: bool):
