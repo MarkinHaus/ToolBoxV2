@@ -1,0 +1,5730 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/mods/isaa/web_toolkit/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>WebAgentToolkit - ToolBoxV2 Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#webagenttoolkit" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="ToolBoxV2 Docs" class="md-header__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ToolBoxV2 Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              WebAgentToolkit
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ToolBoxV2
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../.." class="md-tabs__link">
+          
+  
+  
+  Home
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../new/analysis/installation/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../guides/howto_consumer/" class="md-tabs__link">
+          
+  
+  
+  How-To Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../CloudM/" class="md-tabs__link">
+          
+  
+  
+  CloudM
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+  ISAA Agent Framework
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../devdocs/dev_architecture/" class="md-tabs__link">
+          
+  
+  
+  Module Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../workers/" class="md-tabs__link">
+          
+  
+  
+  Technical Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../core/toolboxv2/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../core/tbjs/" class="md-tabs__link">
+          
+  
+  
+  Frontend & Interfaces
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../registry/" class="md-tabs__link">
+          
+  
+  
+  Infrastructure
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../core/changelog/" class="md-tabs__link">
+          
+  
+  
+  Misc
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="ToolBoxV2 Docs" class="md-nav__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ToolBoxV2 Docs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ToolBoxV2
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_1" id="__nav_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Home
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../new/analysis/installation/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/howto_consumer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-To Guides
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CloudM/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CloudM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ISAA
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../devdocs/dev_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../workers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Technical Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../core/toolboxv2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../core/tbjs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Frontend & Interfaces
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Infrastructure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../new/old_docs/obsidian_setup.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Misc
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../new/analysis/installation/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../foundations/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../foundations/first_run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run & Profile
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../new/analysis/installation/stack/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    System Stack
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../new/analysis/installation/usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../manifest/manifest_intro/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Manifest Intro
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../core/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-To Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How-To Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/howto_consumer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-To Guides
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/howto_server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Server Admins
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/howto_developer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/howto_features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Feature Packs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../flows/minicli/howto_minicli_macros/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MiniCLI & Macros
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../flows/icli/howto/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ISAA Host CLI (icli)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CloudM
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    CloudM
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CloudM/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CloudM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CloudM/auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Auth System (OAuth2 / Passkeys / JWT)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CloudM/login_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Login System (CLI + Web Sessions)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CloudM/user_data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Data API (Scoped Storage)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CloudM/mod_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mod Manager (Packages)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CloudM/folder_sync/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Folder Sync (Encrypted MinIO)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CloudM/dashboards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dashboards (Admin + User)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ISAA Agent Framework
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ISAA Agent Framework
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ISAA
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../core/isaa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Full Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../01_GETTING_STARTED/QUICKSTART/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ISAAMODUL_INIT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module Init
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../AGENT_MANAGEMENT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../IMPORT_EXPORT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Import / Export
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../02_ARCHITECTURE/OVERVIEW/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../core/agent.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FlowAgent V3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../02_ARCHITECTURE/DETAILED/AGENT_ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../02_ARCHITECTURE/DETAILED/CHAIN_ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chain Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../02_ARCHITECTURE/DETAILED/MEMORY_ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CHAIN_SYSTEM/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chain System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Subsystems
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Subsystems
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../07_JOBS/JOBS_SYSTEM/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Job Scheduling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../06_EXTRAS/ZEN_SYSTEM/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Zen Meta-Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../09_DEEP_ANALYSIS/RL_SYSTEM/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reinforcement Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../04_CODING_AGENT/DETAILED/CODING_AGENT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coding Agent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../06_EXTRAS/WEB_HELPER/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web Helper
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../06_EXTRAS/DISCORD_INTERFACE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_6" id="__nav_5_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../03_API_REFERENCE/MODULE_API/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MINITASK_FORMATCLASS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MiniTask FormatClass
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_7" id="__nav_5_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../08_EXAMPLES/INDEX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../08_EXAMPLES/EXAMPLES/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../08_EXAMPLES/01_BASIC_AGENT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basic Agent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../08_EXAMPLES/02_CHAIN_PIPELINE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chain Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../08_EXAMPLES/03_TOOL_INTEGRATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../08_EXAMPLES/04_MEMORY_USAGE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../08_EXAMPLES/05_ERROR_HANDLING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Error Handling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../08_EXAMPLES/06_PRODUCTION_SETUP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Module Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../devdocs/dev_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../devdocs/dev_mod_creation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Creating a Mod
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../core/module_creation_guide.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module Creation Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../devdocs/dev_features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Feature Packs & ZIPs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../devdocs/dev_registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry & Publishing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../new/analysis/features/feature_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Feature System (Analysis)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../new/analysis/features/feature_system_next_todos/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Feature System TODOs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../core/toolbox_guidelines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coding Guidelines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Technical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Technical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../workers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Technical Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../manifest/ref_manifest/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Manifest Schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../storage/ref_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database Modes (LC/LR/RR/CB)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../core/db_usage_guide.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DB Usage Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../storage/ref_filehandler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FileHandler V2
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../storage/ref_blobdb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    BlobDB & Offline Fallback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../new/analysis/storage/blob_sharing_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blob Sharing API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../storage/blob_watch_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blob Watch API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../services/ref_cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../services/ref_mcp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../core/logs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logging & Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../core/toolboxv2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Frontend & Interfaces
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Frontend & Interfaces
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../core/tbjs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Frontend & Interfaces
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../core/TauriApp_Architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tauri App Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../core/p2p_rpc_protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P2P RPC Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../core/clis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLIs Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tb_browser/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    tb_browser Extension
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Infrastructure
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Infrastructure
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Infrastructure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../llm_gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM Gateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Misc
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Misc
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../core/changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../new/analysis/installation/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../new/old_docs/simplecore_analysis_report.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Simplecore Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../new/old_docs/db_cli_sharing_guide.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DB CLI Sharing Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../new/old_docs/obsidian_setup.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Obsidian Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../new/old_docs/desktop_interface_plan.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Interface Plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../new/old_docs/refactor_plan.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Refactor Plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../new/old_docs/build_pipeline.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Build Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://github.com/MarkinHaus/ToolBoxV2/issues" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Report Issues
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#architektur" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architektur
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setup
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-referenz" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool-Referenz
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tool-Referenz">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#browser-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BROWSER CONTROL
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="BROWSER CONTROL">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#browser_start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        browser_start
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#browser_stop" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        browser_stop
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#browser_status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        browser_status
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#browser_set_headless" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        browser_set_headless
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#search" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SEARCH
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SEARCH">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#web_search" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        web_search
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#search_site" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        search_site
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#search_files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        search_files
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#navigation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NAVIGATION
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="NAVIGATION">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#goto" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        goto
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#back" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        back
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#refresh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        refresh
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#current_url" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        current_url
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        INTERACTION
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="INTERACTION">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#click" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        click
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        type
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#select" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        select
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scroll" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        scroll
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scroll_to_bottom" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        scroll_to_bottom
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wait" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        wait
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hover" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        hover
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#extraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        EXTRACTION
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="EXTRACTION">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#extract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        extract
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#extract_text" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        extract_text
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#extract_html" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        extract_html
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#extract_links" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        extract_links
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#extract_attribute" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        extract_attribute
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scrape_url" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        scrape_url
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SESSION
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SESSION">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#session_save" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        session_save
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session_load" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        session_load
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session_list" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        session_list
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#login" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        login
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#utility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UTILITY
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="UTILITY">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#screenshot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        screenshot
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execute_js" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        execute_js
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get_logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_logs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workflows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workflows
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workflows">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#einfaches-scraping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Einfaches Scraping
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#login-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Login + Session
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#suchen-top-ergebnisse-scrapen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Suchen + Top-Ergebnisse scrapen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#formular-ausfullen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Formular ausfüllen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lazy-load-seite-vollstandig-laden" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lazy-Load Seite vollständig laden
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dynamischen-inhalt-abfragen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dynamischen Inhalt abfragen
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-kategorien" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool-Kategorien
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bekannte-grenzen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bekannte Grenzen
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+
+
+
+                  
+
+
+  
+  
+
+
+<h1 id="webagenttoolkit">WebAgentToolkit<a class="headerlink" href="#webagenttoolkit" title="Permanent link">&para;</a></h1>
+<p>Playwright-basierter Browser-Agent. Gibt dir vollständige Web-Kontrolle:
+navigieren, klicken, tippen, scrapen, suchen, Session speichern.</p>
+<hr />
+<h2 id="architektur">Architektur<a class="headerlink" href="#architektur" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>WebAgentToolkit
+├── ManagedBrowser          ← Browser-Lifecycle (in-process oder subprocess)
+│   └── WebAgent            ← Playwright-Wrapper (direkte Page-Ops)
+│       └── SearXNGClient   ← Meta-Suche
+└── Tools []                ← Alle Operationen als aufrufbare Funktionen
+</code></pre></div>
+<p><strong>Wichtig für Planung:</strong>
+- Der Browser hat <strong>eine aktive Page</strong>. Alle Tools operieren auf dieser Page.
+- <code>goto()</code> ändert die aktive Page — danach zeigen <code>extract</code>, <code>click</code> etc. auf die neue URL.
+- Session-State (Cookies, LocalStorage) überlebt zwischen <code>goto()</code>-Calls.
+- <code>out_of_process=True</code> → Browser läuft in separatem Prozess (kein Event-Loop-Konflikt mit dem Agent).</p>
+<hr />
+<h2 id="setup">Setup<a class="headerlink" href="#setup" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.isaa.extras.web_helper.tooklit</span><span class="w"> </span><span class="kn">import</span> <span class="n">WebAgentToolkit</span>
+
+<span class="n">toolkit</span> <span class="o">=</span> <span class="n">WebAgentToolkit</span><span class="p">(</span>
+    <span class="n">headless</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>           <span class="c1"># False = sichtbarer Browser (Debug)</span>
+    <span class="n">out_of_process</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>    <span class="c1"># True = Browser in eigenem Prozess</span>
+    <span class="n">auto_start</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>         <span class="c1"># Browser startet beim ersten Tool-Call</span>
+    <span class="n">keep_open</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>          <span class="c1"># Browser bleibt zwischen Calls offen</span>
+    <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>           <span class="c1"># Interne Logs</span>
+<span class="p">)</span>
+
+<span class="c1"># Tools an Agent übergeben</span>
+<span class="n">tools</span> <span class="o">=</span> <span class="n">toolkit</span><span class="o">.</span><span class="n">get_tools</span><span class="p">()</span>
+<span class="n">agent</span><span class="o">.</span><span class="n">add_tools</span><span class="p">(</span><span class="n">tools</span><span class="p">)</span>
+
+<span class="c1"># Oder bestimmte Kategorien:</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.isaa.extras.web_helper.tooklit</span><span class="w"> </span><span class="kn">import</span> <span class="n">ToolCategory</span>
+<span class="n">tools</span> <span class="o">=</span> <span class="n">toolkit</span><span class="o">.</span><span class="n">get_tools</span><span class="p">(</span><span class="n">categories</span><span class="o">=</span><span class="p">[</span><span class="n">ToolCategory</span><span class="o">.</span><span class="n">SEARCH</span><span class="p">,</span> <span class="n">ToolCategory</span><span class="o">.</span><span class="n">EXTRACTION</span><span class="p">])</span>
+</code></pre></div>
+<p><strong>Convenience-Funktionen:</strong></p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.isaa.extras.web_helper.tooklit</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_full_tools</span><span class="p">,</span> <span class="n">get_minimal_tools</span>
+
+<span class="n">toolkit</span><span class="p">,</span> <span class="n">tools</span> <span class="o">=</span> <span class="n">get_full_tools</span><span class="p">(</span><span class="n">headless</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">out_of_process</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">toolkit</span><span class="p">,</span> <span class="n">tools</span> <span class="o">=</span> <span class="n">get_minimal_tools</span><span class="p">(</span><span class="n">headless</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># Nur 8 Essential-Tools</span>
+</code></pre></div>
+<hr />
+<h2 id="tool-referenz">Tool-Referenz<a class="headerlink" href="#tool-referenz" title="Permanent link">&para;</a></h2>
+<h3 id="browser-control">BROWSER CONTROL<a class="headerlink" href="#browser-control" title="Permanent link">&para;</a></h3>
+<hr />
+<h4 id="browser_start"><code>browser_start</code><a class="headerlink" href="#browser_start" title="Permanent link">&para;</a></h4>
+<p>Browser starten.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Default</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>headless</code></td>
+<td>bool</td>
+<td><code>True</code></td>
+<td><code>False</code> = sichtbarer Browser für Debugging</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> <code>{"status": "started", "headless": bool, "message": str}</code></p>
+<p><strong>Wann nutzen:</strong> Wenn <code>auto_start=False</code> gesetzt wurde, oder um zwischen headless/sichtbar zu wechseln.</p>
+<hr />
+<h4 id="browser_stop"><code>browser_stop</code><a class="headerlink" href="#browser_stop" title="Permanent link">&para;</a></h4>
+<p>Browser stoppen und Ressourcen freigeben.</p>
+<p><strong>Returns:</strong> <code>{"status": "stopped", "message": str}</code></p>
+<hr />
+<h4 id="browser_status"><code>browser_status</code><a class="headerlink" href="#browser_status" title="Permanent link">&para;</a></h4>
+<p>Aktuellen Browser-Zustand abfragen.</p>
+<p><strong>Returns:</strong> <code>{"running": bool, "headless": bool, "auto_start": bool, "keep_open": bool}</code></p>
+<hr />
+<h4 id="browser_set_headless"><code>browser_set_headless</code><a class="headerlink" href="#browser_set_headless" title="Permanent link">&para;</a></h4>
+<p>Zwischen sichtbar/unsichtbar wechseln. Erfordert Browser-Neustart.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Required</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>headless</code></td>
+<td>bool</td>
+<td>✓</td>
+<td><code>True</code> = unsichtbar, <code>False</code> = sichtbar</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> <code>{"headless": bool, "message": str}</code></p>
+<hr />
+<h3 id="search">SEARCH<a class="headerlink" href="#search" title="Permanent link">&para;</a></h3>
+<hr />
+<h4 id="web_search"><code>web_search</code><a class="headerlink" href="#web_search" title="Permanent link">&para;</a></h4>
+<p>Web-Suche via SearXNG mit Google Dorks Support.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Default</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>query</code></td>
+<td>str</td>
+<td>required</td>
+<td>Suchbegriff</td>
+</tr>
+<tr>
+<td><code>site</code></td>
+<td>str</td>
+<td><code>""</code></td>
+<td>Nur diese Domain, z.B. <code>"github.com"</code></td>
+</tr>
+<tr>
+<td><code>filetype</code></td>
+<td>str</td>
+<td><code>""</code></td>
+<td>Nur dieser Dateityp, z.B. <code>"pdf"</code>, <code>"md"</code></td>
+</tr>
+<tr>
+<td><code>inurl</code></td>
+<td>str</td>
+<td><code>""</code></td>
+<td>URL muss diesen String enthalten</td>
+</tr>
+<tr>
+<td><code>intitle</code></td>
+<td>str</td>
+<td><code>""</code></td>
+<td>Titel muss diesen String enthalten</td>
+</tr>
+<tr>
+<td><code>exclude</code></td>
+<td>str</td>
+<td><code>""</code></td>
+<td>Ausschließen, komma-separiert, z.B. <code>"beginner,tutorial"</code></td>
+</tr>
+<tr>
+<td><code>max_results</code></td>
+<td>int</td>
+<td><code>10</code></td>
+<td>Anzahl Ergebnisse</td>
+</tr>
+<tr>
+<td><code>engines</code></td>
+<td>str</td>
+<td><code>""</code></td>
+<td>Engines komma-separiert, z.B. <code>"google,bing,duckduckgo"</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;query&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Python async site:github.com&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;total&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">10</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;engines&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;google&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;bing&quot;</span><span class="p">],</span>
+<span class="w">  </span><span class="nt">&quot;results&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span><span class="nt">&quot;title&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;url&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;https://...&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;snippet&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;engine&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;google&quot;</span><span class="p">}</span>
+<span class="w">  </span><span class="p">]</span>
+<span class="p">}</span>
+</code></pre></div></p>
+<p><strong>Beispiele:</strong>
+<div class="highlight"><pre><span></span><code>web_search(query=&quot;Python async&quot;)
+web_search(query=&quot;REST API docs&quot;, site=&quot;github.com&quot;)
+web_search(query=&quot;machine learning paper&quot;, filetype=&quot;pdf&quot;)
+web_search(query=&quot;FastAPI&quot;, exclude=&quot;tutorial,beginner&quot;, max_results=5)
+</code></pre></div></p>
+<hr />
+<h4 id="search_site"><code>search_site</code><a class="headerlink" href="#search_site" title="Permanent link">&para;</a></h4>
+<p>Suche innerhalb einer bestimmten Website.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Default</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>site</code></td>
+<td>str</td>
+<td>required</td>
+<td>Domain, z.B. <code>"docs.python.org"</code></td>
+</tr>
+<tr>
+<td><code>query</code></td>
+<td>str</td>
+<td><code>""</code></td>
+<td>Suchbegriff</td>
+</tr>
+<tr>
+<td><code>max_results</code></td>
+<td>int</td>
+<td><code>10</code></td>
+<td>Anzahl Ergebnisse</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> Identisch mit <code>web_search</code>.</p>
+<hr />
+<h4 id="search_files"><code>search_files</code><a class="headerlink" href="#search_files" title="Permanent link">&para;</a></h4>
+<p>Suche nach bestimmten Dateitypen.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Required</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>filetype</code></td>
+<td>str</td>
+<td>✓</td>
+<td><code>pdf</code>, <code>doc</code>, <code>xls</code>, <code>ppt</code>, <code>md</code>, <code>txt</code>, ...</td>
+</tr>
+<tr>
+<td><code>query</code></td>
+<td>str</td>
+<td>✓</td>
+<td>Suchbegriff</td>
+</tr>
+<tr>
+<td><code>max_results</code></td>
+<td>int</td>
+<td>—</td>
+<td>Default: 10</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> Identisch mit <code>web_search</code>.</p>
+<hr />
+<h3 id="navigation">NAVIGATION<a class="headerlink" href="#navigation" title="Permanent link">&para;</a></h3>
+<hr />
+<h4 id="goto"><code>goto</code><a class="headerlink" href="#goto" title="Permanent link">&para;</a></h4>
+<p>Zu URL navigieren und warten bis geladen.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Default</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>url</code></td>
+<td>str</td>
+<td>required</td>
+<td>Ziel-URL</td>
+</tr>
+<tr>
+<td><code>wait_until</code></td>
+<td>str</td>
+<td><code>"networkidle"</code></td>
+<td><code>"load"</code>, <code>"domcontentloaded"</code>, <code>"networkidle"</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> <code>{"url": "https://...", "title": "Seitentitel"}</code></p>
+<p><strong>Hinweis:</strong> <code>"networkidle"</code> wartet bis keine Netzwerk-Requests mehr aktiv sind — sicher aber langsamer. Für schnelle Seiten reicht <code>"domcontentloaded"</code>.</p>
+<hr />
+<h4 id="back"><code>back</code><a class="headerlink" href="#back" title="Permanent link">&para;</a></h4>
+<p>Zur vorherigen Seite zurück (basiert auf internem History-Stack).</p>
+<p><strong>Returns:</strong> <code>{"url": "https://..."}</code></p>
+<hr />
+<h4 id="refresh"><code>refresh</code><a class="headerlink" href="#refresh" title="Permanent link">&para;</a></h4>
+<p>Aktuelle Seite neu laden.</p>
+<p><strong>Returns:</strong> <code>{"status": "refreshed", "url": "https://..."}</code></p>
+<hr />
+<h4 id="current_url"><code>current_url</code><a class="headerlink" href="#current_url" title="Permanent link">&para;</a></h4>
+<p>Aktuelle URL und Titel abfragen ohne Navigation.</p>
+<p><strong>Returns:</strong> <code>{"url": "https://...", "title": "..."}</code></p>
+<hr />
+<h3 id="interaction">INTERACTION<a class="headerlink" href="#interaction" title="Permanent link">&para;</a></h3>
+<hr />
+<h4 id="click"><code>click</code><a class="headerlink" href="#click" title="Permanent link">&para;</a></h4>
+<p>Element klicken.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Default</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>selector</code></td>
+<td>str</td>
+<td>required</td>
+<td>CSS Selector</td>
+</tr>
+<tr>
+<td><code>wait_after</code></td>
+<td>float</td>
+<td><code>0.5</code></td>
+<td>Wartezeit in Sekunden nach dem Klick</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> <code>{"status": "clicked", "selector": "..."}</code></p>
+<p><strong>Selector-Beispiele:</strong>
+<div class="highlight"><pre><span></span><code>&quot;#submit-button&quot;
+&quot;.btn-primary&quot;
+&quot;button[type=&#39;submit&#39;]&quot;
+&quot;a[href*=&#39;login&#39;]&quot;
+&quot;nav &gt; ul &gt; li:first-child &gt; a&quot;
+</code></pre></div></p>
+<hr />
+<h4 id="type"><code>type</code><a class="headerlink" href="#type" title="Permanent link">&para;</a></h4>
+<p>Text in Eingabefeld eingeben.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Default</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>selector</code></td>
+<td>str</td>
+<td>required</td>
+<td>CSS Selector des Eingabefelds</td>
+</tr>
+<tr>
+<td><code>text</code></td>
+<td>str</td>
+<td>required</td>
+<td>Einzugebender Text</td>
+</tr>
+<tr>
+<td><code>clear</code></td>
+<td>bool</td>
+<td><code>True</code></td>
+<td>Feld vorher leeren</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> <code>{"status": "typed", "selector": "...", "length": int}</code></p>
+<hr />
+<h4 id="select"><code>select</code><a class="headerlink" href="#select" title="Permanent link">&para;</a></h4>
+<p>Option in Dropdown auswählen. Eines der drei Identifikations-Parameter angeben.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Default</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>selector</code></td>
+<td>str</td>
+<td>required</td>
+<td>CSS Selector des <code>&lt;select&gt;</code></td>
+</tr>
+<tr>
+<td><code>value</code></td>
+<td>str</td>
+<td><code>""</code></td>
+<td>Option-<code>value</code>-Attribut</td>
+</tr>
+<tr>
+<td><code>label</code></td>
+<td>str</td>
+<td><code>""</code></td>
+<td>Sichtbarer Text der Option</td>
+</tr>
+<tr>
+<td><code>index</code></td>
+<td>int</td>
+<td><code>-1</code></td>
+<td>Null-basierter Index</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> <code>{"status": "selected", "selector": "..."}</code></p>
+<hr />
+<h4 id="scroll"><code>scroll</code><a class="headerlink" href="#scroll" title="Permanent link">&para;</a></h4>
+<p>Seite scrollen.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Default</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>direction</code></td>
+<td>str</td>
+<td><code>"down"</code></td>
+<td><code>"down"</code> oder <code>"up"</code></td>
+</tr>
+<tr>
+<td><code>amount</code></td>
+<td>int</td>
+<td><code>500</code></td>
+<td>Pixel</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> <code>{"status": "scrolled", "direction": "...", "amount": int}</code></p>
+<hr />
+<h4 id="scroll_to_bottom"><code>scroll_to_bottom</code><a class="headerlink" href="#scroll_to_bottom" title="Permanent link">&para;</a></h4>
+<p>Zum Seitenende scrollen. Löst Lazy-Loading aus (Social Media, Infinite Scroll).</p>
+<p><strong>Returns:</strong> <code>{"status": "scrolled_to_bottom"}</code></p>
+<hr />
+<h4 id="wait"><code>wait</code><a class="headerlink" href="#wait" title="Permanent link">&para;</a></h4>
+<p>Auf Element warten oder bis Seite vollständig geladen.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Default</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>selector</code></td>
+<td>str</td>
+<td><code>""</code></td>
+<td>CSS Selector — leer = auf <code>networkidle</code> warten</td>
+</tr>
+<tr>
+<td><code>timeout</code></td>
+<td>int</td>
+<td><code>30</code></td>
+<td>Max Wartezeit in Sekunden</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> <code>{"status": "ready", "selector": "..."}</code></p>
+<hr />
+<h4 id="hover"><code>hover</code><a class="headerlink" href="#hover" title="Permanent link">&para;</a></h4>
+<p>Maus über Element bewegen. Für Tooltips und Dropdown-Menüs.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Required</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>selector</code></td>
+<td>str</td>
+<td>✓</td>
+<td>CSS Selector</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> <code>{"status": "hovered", "selector": "..."}</code></p>
+<hr />
+<h3 id="extraction">EXTRACTION<a class="headerlink" href="#extraction" title="Permanent link">&para;</a></h3>
+<hr />
+<h4 id="extract"><code>extract</code><a class="headerlink" href="#extract" title="Permanent link">&para;</a></h4>
+<p>Aktuellen Seiteninhalt als strukturiertes Markdown extrahieren. <strong>Haupt-Scraping-Tool.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Default</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>include_links</code></td>
+<td>bool</td>
+<td><code>True</code></td>
+<td>Links mit extrahieren (max 100)</td>
+</tr>
+<tr>
+<td><code>include_headings</code></td>
+<td>bool</td>
+<td><code>True</code></td>
+<td>Überschriften-Struktur mit extrahieren</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;url&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;https://...&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;title&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Seitentitel&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;markdown&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;# Überschrift\n\nText...&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;meta&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;description&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;lang&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;de&quot;</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;headings&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">&quot;level&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Überschrift&quot;</span><span class="p">}],</span>
+<span class="w">  </span><span class="nt">&quot;links&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Linktext&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;href&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;https://...&quot;</span><span class="p">}]</span>
+<span class="p">}</span>
+</code></pre></div></p>
+<p><strong>Hinweis:</strong> Entfernt automatisch Navigation, Sidebar, Ads, Scripts. Extrahiert Hauptinhalt.</p>
+<hr />
+<h4 id="extract_text"><code>extract_text</code><a class="headerlink" href="#extract_text" title="Permanent link">&para;</a></h4>
+<p>Reinen Text aus einem Element extrahieren.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Default</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>selector</code></td>
+<td>str</td>
+<td><code>"body"</code></td>
+<td>CSS Selector</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> <code>{"text": "...", "length": int}</code></p>
+<hr />
+<h4 id="extract_html"><code>extract_html</code><a class="headerlink" href="#extract_html" title="Permanent link">&para;</a></h4>
+<p>Rohes HTML aus einem Element extrahieren.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Default</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>selector</code></td>
+<td>str</td>
+<td><code>"body"</code></td>
+<td>CSS Selector</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> <code>{"html": "...", "length": int}</code></p>
+<hr />
+<h4 id="extract_links"><code>extract_links</code><a class="headerlink" href="#extract_links" title="Permanent link">&para;</a></h4>
+<p>Alle Links von der aktuellen Seite extrahieren.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Default</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>filter_pattern</code></td>
+<td>str</td>
+<td><code>""</code></td>
+<td>Regex-Pattern für URL oder Linktext</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;total&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">42</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;links&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">&quot;text&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;GitHub&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;href&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;https://github.com/...&quot;</span><span class="p">}]</span>
+<span class="p">}</span>
+</code></pre></div></p>
+<hr />
+<h4 id="extract_attribute"><code>extract_attribute</code><a class="headerlink" href="#extract_attribute" title="Permanent link">&para;</a></h4>
+<p>Einzelnes HTML-Attribut aus einem Element extrahieren.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Required</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>selector</code></td>
+<td>str</td>
+<td>✓</td>
+<td>CSS Selector</td>
+</tr>
+<tr>
+<td><code>attribute</code></td>
+<td>str</td>
+<td>✓</td>
+<td>Attributname: <code>href</code>, <code>src</code>, <code>data-id</code>, <code>value</code>, ...</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> <code>{"attribute": "href", "value": "https://..."}</code></p>
+<hr />
+<h4 id="scrape_url"><code>scrape_url</code><a class="headerlink" href="#scrape_url" title="Permanent link">&para;</a></h4>
+<p>URL öffnen und Inhalt in einem Schritt extrahieren. Kombination aus <code>goto</code> + <code>extract</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Required</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>url</code></td>
+<td>str</td>
+<td>✓</td>
+<td>Ziel-URL</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> Identisch mit <code>extract</code>.</p>
+<hr />
+<h3 id="session">SESSION<a class="headerlink" href="#session" title="Permanent link">&para;</a></h3>
+<hr />
+<h4 id="session_save"><code>session_save</code><a class="headerlink" href="#session_save" title="Permanent link">&para;</a></h4>
+<p>Browser-Session speichern (Cookies, LocalStorage, IndexedDB).</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Required</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>str</td>
+<td>✓</td>
+<td>Session-Name (ohne Extension)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> <code>{"status": "saved", "name": "...", "path": "/path/to/session.json"}</code></p>
+<hr />
+<h4 id="session_load"><code>session_load</code><a class="headerlink" href="#session_load" title="Permanent link">&para;</a></h4>
+<p>Gespeicherte Session laden. Stellt Login-Zustand wieder her.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Required</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>str</td>
+<td>✓</td>
+<td>Session-Name</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> <code>{"status": "loaded"|"failed", "name": "...", "success": bool}</code></p>
+<hr />
+<h4 id="session_list"><code>session_list</code><a class="headerlink" href="#session_list" title="Permanent link">&para;</a></h4>
+<p>Alle gespeicherten Sessions auflisten.</p>
+<p><strong>Returns:</strong> <code>{"sessions": ["session_a", "github_session", ...]}</code></p>
+<hr />
+<h4 id="login"><code>login</code><a class="headerlink" href="#login" title="Permanent link">&para;</a></h4>
+<p>Automatischen Login durchführen und optional Session speichern.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Default</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>url</code></td>
+<td>str</td>
+<td>required</td>
+<td>Login-URL</td>
+</tr>
+<tr>
+<td><code>username_selector</code></td>
+<td>str</td>
+<td>required</td>
+<td>CSS Selector für Username-Feld</td>
+</tr>
+<tr>
+<td><code>password_selector</code></td>
+<td>str</td>
+<td>required</td>
+<td>CSS Selector für Passwort-Feld</td>
+</tr>
+<tr>
+<td><code>submit_selector</code></td>
+<td>str</td>
+<td>required</td>
+<td>CSS Selector für Submit-Button</td>
+</tr>
+<tr>
+<td><code>username</code></td>
+<td>str</td>
+<td>required</td>
+<td>Benutzername</td>
+</tr>
+<tr>
+<td><code>password</code></td>
+<td>str</td>
+<td>required</td>
+<td>Passwort</td>
+</tr>
+<tr>
+<td><code>success_indicator</code></td>
+<td>str</td>
+<td><code>""</code></td>
+<td>CSS Selector der nach Login erscheint (Verifikation)</td>
+</tr>
+<tr>
+<td><code>save_as</code></td>
+<td>str</td>
+<td><code>""</code></td>
+<td>Session-Name zum Speichern (leer = nicht speichern)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> <code>{"success": bool, "url": "...", "session_saved"?: "name"}</code></p>
+<hr />
+<h3 id="utility">UTILITY<a class="headerlink" href="#utility" title="Permanent link">&para;</a></h3>
+<hr />
+<h4 id="screenshot"><code>screenshot</code><a class="headerlink" href="#screenshot" title="Permanent link">&para;</a></h4>
+<p>Screenshot der aktuellen Seite machen.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Default</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>str</td>
+<td><code>""</code></td>
+<td>Dateiname ohne <code>.png</code> (leer = Timestamp)</td>
+</tr>
+<tr>
+<td><code>full_page</code></td>
+<td>bool</td>
+<td><code>False</code></td>
+<td><code>True</code> = gesamte Seite (auch nicht sichtbarer Teil)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> <code>{"path": "/path/to/screenshot.png"}</code></p>
+<hr />
+<h4 id="execute_js"><code>execute_js</code><a class="headerlink" href="#execute_js" title="Permanent link">&para;</a></h4>
+<p>JavaScript auf der aktuellen Seite ausführen.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Typ</th>
+<th>Required</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>script</code></td>
+<td>str</td>
+<td>✓</td>
+<td>JavaScript-Code</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Returns:</strong> <code>{"result": &lt;Rückgabewert des Scripts&gt;}</code></p>
+<p><strong>Beispiele:</strong>
+<div class="highlight"><pre><span></span><code><span class="c1">// DOM abfragen</span>
+<span class="s2">&quot;return document.querySelector(&#39;h1&#39;).textContent&quot;</span>
+
+<span class="c1">// Alle Links extrahieren</span>
+<span class="s2">&quot;return Array.from(document.links).map(a =&gt; a.href)&quot;</span>
+
+<span class="c1">// Seiten-Metadaten</span>
+<span class="s2">&quot;return {title: document.title, url: location.href}&quot;</span>
+
+<span class="c1">// Element-Existenz prüfen</span>
+<span class="s2">&quot;return !!document.querySelector(&#39;#login-form&#39;)&quot;</span>
+</code></pre></div></p>
+<hr />
+<h4 id="get_logs"><code>get_logs</code><a class="headerlink" href="#get_logs" title="Permanent link">&para;</a></h4>
+<p>Agent-Logs und Session-Statistiken abfragen.</p>
+<p><strong>Returns:</strong> Log-Summary-Dict mit Timings, Error-Counts, etc.</p>
+<hr />
+<h2 id="workflows">Workflows<a class="headerlink" href="#workflows" title="Permanent link">&para;</a></h2>
+<h3 id="einfaches-scraping">Einfaches Scraping<a class="headerlink" href="#einfaches-scraping" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>scrape_url(url=&quot;https://example.com&quot;)
+</code></pre></div>
+<h3 id="login-session">Login + Session<a class="headerlink" href="#login-session" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>1. login(url, username_sel, password_sel, submit_sel, user, pass,
+         success_indicator=&quot;.dashboard&quot;, save_as=&quot;my_session&quot;)
+2. goto(url=&quot;https://app.example.com/data&quot;)
+3. extract()
+</code></pre></div>
+<p><strong>Nächste Session:</strong>
+<div class="highlight"><pre><span></span><code>1. session_load(name=&quot;my_session&quot;)
+2. goto(url=&quot;https://app.example.com/data&quot;)
+3. extract()
+</code></pre></div></p>
+<h3 id="suchen-top-ergebnisse-scrapen">Suchen + Top-Ergebnisse scrapen<a class="headerlink" href="#suchen-top-ergebnisse-scrapen" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>1. web_search(query=&quot;FastAPI tutorial&quot;, max_results=3)
+2. scrape_url(url=results[0].url)
+3. scrape_url(url=results[1].url)
+</code></pre></div>
+<h3 id="formular-ausfullen">Formular ausfüllen<a class="headerlink" href="#formular-ausfullen" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>1. goto(url=&quot;https://example.com/form&quot;)
+2. type(selector=&quot;#name&quot;, text=&quot;Max Mustermann&quot;)
+3. type(selector=&quot;#email&quot;, text=&quot;max@example.com&quot;)
+4. select(selector=&quot;#country&quot;, label=&quot;Germany&quot;)
+5. click(selector=&quot;button[type=&#39;submit&#39;]&quot;)
+6. wait(selector=&quot;.success-message&quot;)
+7. extract_text(selector=&quot;.success-message&quot;)
+</code></pre></div>
+<h3 id="lazy-load-seite-vollstandig-laden">Lazy-Load Seite vollständig laden<a class="headerlink" href="#lazy-load-seite-vollstandig-laden" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>1. goto(url=&quot;https://social.example.com/feed&quot;)
+2. scroll_to_bottom()
+3. extract()
+</code></pre></div>
+<h3 id="dynamischen-inhalt-abfragen">Dynamischen Inhalt abfragen<a class="headerlink" href="#dynamischen-inhalt-abfragen" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>1. goto(url=&quot;https://app.example.com&quot;)
+2. wait(selector=&quot;.data-loaded&quot;, timeout=10)
+3. execute_js(script=&quot;return window.__APP_STATE__&quot;)
+</code></pre></div>
+<hr />
+<h2 id="tool-kategorien">Tool-Kategorien<a class="headerlink" href="#tool-kategorien" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Kategorie</th>
+<th>Tools</th>
+<th>Flags</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>browser</code></td>
+<td><code>browser_start</code>, <code>browser_stop</code>, <code>browser_status</code>, <code>browser_set_headless</code></td>
+<td><code>no_thread: True</code></td>
+</tr>
+<tr>
+<td><code>search</code></td>
+<td><code>web_search</code>, <code>search_site</code>, <code>search_files</code></td>
+<td><code>read: True</code></td>
+</tr>
+<tr>
+<td><code>navigation</code></td>
+<td><code>goto</code>, <code>back</code>, <code>refresh</code>, <code>current_url</code></td>
+<td><code>read+write</code></td>
+</tr>
+<tr>
+<td><code>interaction</code></td>
+<td><code>click</code>, <code>type</code>, <code>select</code>, <code>scroll</code>, <code>scroll_to_bottom</code>, <code>wait</code>, <code>hover</code></td>
+<td><code>write: True</code></td>
+</tr>
+<tr>
+<td><code>extraction</code></td>
+<td><code>extract</code>, <code>extract_text</code>, <code>extract_html</code>, <code>extract_links</code>, <code>extract_attribute</code>, <code>scrape_url</code></td>
+<td><code>read: True</code></td>
+</tr>
+<tr>
+<td><code>session</code></td>
+<td><code>session_save</code>, <code>session_load</code>, <code>session_list</code>, <code>login</code></td>
+<td><code>write: True</code></td>
+</tr>
+<tr>
+<td><code>utility</code></td>
+<td><code>screenshot</code>, <code>execute_js</code>, <code>get_logs</code></td>
+<td><code>no_thread: True</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="bekannte-grenzen">Bekannte Grenzen<a class="headerlink" href="#bekannte-grenzen" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Eine Page:</strong> Kein Multi-Tab. Parallele Navigation nicht möglich.</li>
+<li><strong>execute_js</strong> hat Zugriff auf den vollen DOM, aber kein Netzwerk (kein <code>fetch</code> aus dem Script heraus).</li>
+<li><strong>session_load</strong> erstellt einen neuen Browser-Context — Event-Listener auf der alten Page gehen verloren.</li>
+<li><strong>SearXNG:</strong> Wenn keine eigene Instanz konfiguriert, wird eine Public-Instanz genutzt (Rate-Limits möglich).</li>
+<li><strong>Timeouts:</strong> <code>goto</code> mit <code>wait_until="networkidle"</code> kann auf SPAs hängen — dann <code>"domcontentloaded"</code> + explizites <code>wait(selector=...)</code> nutzen.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.tabs", "navigation.sections", "navigation.expand", "search.highlight", "content.code.copy"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
