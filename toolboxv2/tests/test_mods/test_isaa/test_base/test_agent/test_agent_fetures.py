@@ -631,32 +631,32 @@ class TestDesktopAutoFeatureLive(_FeatureEnableTestBase):
 class TestWebAgentToolsLive(unittest.TestCase):  # Nutze _FeatureEnableTestBase falls vorhanden
 
     @classmethod
-    def setUpClass(cls):
+    async def setUpClass(cls):
         """Startet den PlaywrightProxy einmalig für alle Tests."""
         # Setup ToolManager Mock (falls du nicht von _FeatureEnableTestBase erbst)
-        from toolboxv2.mods.isaa.extras.web_helper.tooklit import PlaywrightProxy
+        from toolboxv2.mods.isaa.extras.web_helper.tooklit import WebAgentToolkit
         from toolboxv2.mods.isaa.base.Agent.tool_manager import ToolManager
         cls.tool_manager = ToolManager()
 
         # Wir nutzen den Proxy, um das echte Verhalten der App zu simulieren
-        cls.proxy = PlaywrightProxy(full=True, headless=True)
+        cls.proxy = WebAgentToolkit(headless=True)
         try:
-            cls.proxy.start(timeout=60)
+            await cls.proxy.start_browser()
 
             # Tools registrieren
-            tools = cls.proxy.build_agent_tools()
+            tools = cls.proxy.get_tools()
             for tool in tools:
                 cls.tool_manager.register(**tool)
 
         except Exception as e:
-            cls.proxy.shutdown()
+            await cls.proxy.stop_browser()
             raise unittest.SkipTest(f"Konnte WebAgent Proxy nicht starten: {e}")
 
     @classmethod
     def tearDownClass(cls):
         """Stoppt den Proxy nach den Tests sicher."""
         if hasattr(cls, 'proxy'):
-            cls.proxy.shutdown()
+            cls.proxy.stop_browser()
 
     def test_all_tools_have_health_coverage(self):
         """Prüft, ob wirklich jedes Tool im Feature eine Test-Strategie hat."""

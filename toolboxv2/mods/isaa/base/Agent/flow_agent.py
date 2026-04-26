@@ -546,8 +546,6 @@ class FlowAgent:
                     self._vison[model_preference] = False
                     return self._vison[model_preference]
 
-
-
     async def a_run_llm_completion(
         self,
         messages: list[dict],
@@ -643,6 +641,28 @@ class FlowAgent:
                     {"role": "system", "content": f"{system_msg}"}
                 ] + llm_kwargs["messages"]
 
+        # Repair orphaned tool messages (required by Cerebras strict template validation)
+        known_tool_ids = set()
+        for m in llm_kwargs["messages"]:
+            if m.get("role") == "assistant":
+                for tc in m.get("tool_calls", []) or []:
+                    tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                    if tc_id:
+                        known_tool_ids.add(tc_id)
+
+        for i, m in enumerate(llm_kwargs["messages"]):
+            if m.get("role") == "tool" and m.get("tool_call_id") not in known_tool_ids:
+                tool_content = m.get("content", "")
+                tool_id = m.get("tool_call_id", "unknown")
+                # transmute into user message – keeps information instead of dropping it
+                llm_kwargs["messages"][i] = {
+                    "role": "user",
+                    "content": f"[Orphaned tool result (call_id={tool_id})]: {tool_content}"
+                }
+                if AGENT_VERBOSE or os.getenv("AGENT_VERBOSE", "false") == "true":
+                    logger.warning(
+                        f"Repair: orphaned tool message (id={tool_id}) converted to user message."
+                    )
         # NEU: Prompt Hash für Audit-Log
         import hashlib
         import json
@@ -709,12 +729,20 @@ class FlowAgent:
                 current_usage = None
                 # TODO: make stael
                 r"""
-Traceback (most recent call last):
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\litellm_core_utils\streaming_handler.py", line 2025, in __anext__
-    async for chunk in self.completion_stream:  # type: ignore[union-attr]
-  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\base\IntelligentRateLimiter\zai_litellm_provider.py", line 357, in astreaming
-    stream = await self.async_client.chat.completions.create(
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+litellm.BadRequestError: CerebrasException - Failed to apply chat template to messages due to error: Tool call withTraceback (most recent call last):
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\llms\openai\openai.py", line 1113, in async_streaming
+    headers, response = await self.make_openai_chat_completion_request(
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\litellm_core_utils\logging_utils.py", line 297, in async_wrapper
+    result = await func(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\llms\openai\openai.py", line 461, in make_openai_chat_completion_request
+    raise e
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\llms\openai\openai.py", line 438, in make_openai_chat_completion_request
+    await openai_aclient.chat.completions.with_raw_response.create(
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\openai\_legacy_response.py", line 384, in wrapped
+    return cast(LegacyAPIResponse[R], await func(*args, **kwargs))
+                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\openai\resources\chat\completions\completions.py", line 2700, in create
     return await self._post(
            ^^^^^^^^^^^^^^^^^
@@ -723,28 +751,49 @@ Traceback (most recent call last):
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\openai\_base_client.py", line 1669, in request
     raise self._make_status_error_from_response(err.response) from None
-openai.InternalServerError: Error code: 500 - {'error': {'code': '1234', 'message': 'Network error, error id: 2026042123060659d40950940f44ff, please try again later'}}
+openai.BadRequestError: Error code: 400 - {'message': 'Failed to apply chat template to messages due to error: Tool call with id "c940efb60" was not found in the messages.', 'type': 'invalid_request_error', 'param': 'messages', 'code': 'wrong_api_format', 'id': ''}
 
 During handling of the above exception, another exception occurred:
 
 Traceback (most recent call last):
-  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\base\Agent\skills.py", line 1676, in learn_from_run
-    response = await llm_completion_func(
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\base\Agent\flow_agent.py", line 707, in a_run_llm_completion
-    result_obj, current_usage, finish_reason = await self._process_streaming_response(
-                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\base\Agent\flow_agent.py", line 1029, in _process_streaming_response
-    async for chunk in response:
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\litellm_core_utils\streaming_handler.py", line 2248, in __anext__
-    self._handle_stream_fallback_error(e)
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\litellm_core_utils\streaming_handler.py", line 2316, in _handle_stream_fallback_error
-    raise MidStreamFallbackError(
-litellm.exceptions.MidStreamFallbackError: litellm.MidStreamFallbackError: litellm.APIConnectionError: ZglmException - Error code: 500 - {'error': {'code': '1234', 'message': 'Network error, error id: 2026042123060659d40950940f44ff, please try again later'}} Original exception: APIConnectionError: litellm.APIConnectionError: ZglmException - Error code: 500 - {'error': {'code': '1234', 'message': 'Network error, error id: 2026042123060659d40950940f44ff, please try again later'}}
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\main.py", line 622, in acompletion
+    response = await init_response
+               ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\llms\openai\openai.py", line 1163, in async_streaming
+    raise OpenAIError(
+litellm.llms.openai.common_utils.OpenAIError: Error code: 400 - {'message': 'Failed to apply chat template to messages due to error: Tool call with id "c940efb60" was not found in the messages.', 'type': 'invalid_request_error', 'param': 'messages', 'code': 'wrong_api_format', 'id': ''}
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\base\Agent\flow_agent.py", line 1521, in a_stream
+    async for chunk in stream_func(ctx):
+  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\base\Agent\execution_engine.py", line 1983, in stream_generator
+    stream_response = await self.agent.a_run_llm_completion(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\base\Agent\flow_agent.py", line 694, in a_run_llm_completion
+    return await self.llm_handler.completion_with_rate_limiting(litellm, **llm_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\base\IntelligentRateLimiter\intelligent_rate_limiter.py", line 1790, in completion_with_rate_limiting
+    response = await litellm_module.acompletion(**kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\utils.py", line 2097, in wrapper_async
+    raise e
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\utils.py", line 1896, in wrapper_async
+    result = await original_function(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\main.py", line 641, in acompletion
+    raise exception_type(
+          ^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\litellm_core_utils\exception_mapping_utils.py", line 2456, in exception_type
+    raise e
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\litellm_core_utils\exception_mapping_utils.py", line 478, in exception_type
+    raise BadRequestError(
+litellm.exceptions.BadRequestError: litellm.BadRequestError: CerebrasException - Failed to apply chat template to messages due to error: Tool call with id "c940efb60" was not found in the messages.
 """
                 # Datenextrahierung abhängig davon, ob es ein Stream ist oder nicht
                 if use_stream:
-                    result_obj, current_usage, finish_reason = await self._process_streaming_response(
+                    result_obj, current_usage, finish_reason = await self._process_streaming_response( # add custom strem collector so not evey one needs to implmt ther onw streming collection fuction as callback generator or narmal callback..
                         response, task_id, model, get_response_message=True
                     )
                     chunk_text = result_obj.content or ""
@@ -1271,7 +1320,7 @@ litellm.exceptions.MidStreamFallbackError: litellm.MidStreamFallbackError: litel
     # =========================================================================
     def _get_execution_engine(
         self,
-        human_online: bool = False,
+        human_online: bool = None,
     ) -> "ExecutionEngine":
         """
         Get or create ExecutionEngine instance.
@@ -1290,7 +1339,8 @@ litellm.exceptions.MidStreamFallbackError: litellm.MidStreamFallbackError: litel
         # Check if we can reuse cached engine
         if self._execution_engine_cache is not None:
             # Update dynamic parameters
-            self._execution_engine_cache.human_online = human_online
+            if human_online is not None:
+                self._execution_engine_cache.human_online = human_online
             return self._execution_engine_cache
 
         # Create new engine
@@ -1961,8 +2011,6 @@ litellm.exceptions.MidStreamFallbackError: litellm.MidStreamFallbackError: litel
             else:
                 print(f"not local player player is {player.player.__class__.__name__}")
 
-
-
     async def a_stream_audio(
         self,
         audio_chunks: Generator[bytes, None, None],
@@ -2141,7 +2189,7 @@ litellm.exceptions.MidStreamFallbackError: litellm.MidStreamFallbackError: litel
         if _session:
             _session.clear_history()
 
-    def init_session_tools(self, session: "AgentSession"):
+    def init_session_tools(self, session: "AgentSessionV2"):
         """
         Register VFS tools for the agent session.
 

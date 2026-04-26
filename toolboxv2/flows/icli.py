@@ -2320,40 +2320,60 @@ def load_desktop_auto_feature(fm: SimpleFeatureManager):
     fm.add_feature("desktop_auto", activation_f=enable_desktop_auto, deactivation_f=disable_desktop_auto)
 
 def load_web_auto_feature(fm):
-    from toolboxv2.mods.isaa.extras.web_helper.tooklit import PlaywrightProxy
-    proxy = PlaywrightProxy(full=False, headless=True)
+    from toolboxv2.mods.isaa.extras.web_helper.tooklit import get_minimal_tools
     tools_set = [None]
-    def enable(agent):
-        if sys.platform == "win32":
-            asyncio.set_event_loop(asyncio.ProactorEventLoop())
-        proxy.start()
-        tools_set[0] = proxy.build_agent_tools()
+    toolkit, tools_set[0] = get_minimal_tools(out_of_process=True, headless=True)
+    async def enable(agent):
+        await toolkit.start_browser()
         agent.add_tools(tools_set[0])
         print_status("Mini Web Automation enabled.", "success")
 
-    def disable(agent):
-        proxy.shutdown()
+    async def disable(agent):
+        await toolkit.stop_browser()
         agent.remove_tools(tools_set[0])
         print_status("Mini Web Automation disabled.", "success")
 
     fm.add_feature("mini_web_auto", activation_f=enable, deactivation_f=disable)
 
 
-def load_full_web_auto_feature(fm):
-    from toolboxv2.mods.isaa.extras.web_helper.tooklit import PlaywrightProxy
-    proxy = PlaywrightProxy(full=True, headless=True)
+def load_isis_feature(fm):
+    from toolboxv2.mods.isaa.extras.toolkit.isis_toolkit import IsisToolkit
+
+    toolkit = IsisToolkit(out_of_process=True, headless=True)
     tools_set = [None]
-    def enable(agent):
+
+    async def enable(agent):
+        await toolkit.start()
+        tools_set[0] = toolkit.get_tools()
+        agent.add_tools(tools_set[0])
+        print_status("ISIS Toolkit enabled.", "success")
+
+    async def disable(agent):
+        await toolkit.stop()
+        agent.remove_tools(tools_set[0])
+        print_status("ISIS Toolkit disabled.", "success")
+
+    fm.add_feature("isis_auto", activation_f=enable, deactivation_f=disable)
+
+def load_full_web_auto_feature(fm):
+    from toolboxv2.mods.isaa.extras.web_helper.tooklit import WebAgentToolkit
+    toolkit  = WebAgentToolkit(out_of_process=True, headless=True)
+    tools_set = [None]
+    async def enable(agent):
         if sys.platform == "win32":
             asyncio.set_event_loop(asyncio.ProactorEventLoop())
-        proxy.start()
-        tools_set[0] = proxy.build_agent_tools()
+        await toolkit.start_browser()
+        tools_set[0] = toolkit.get_tools()
         agent.add_tools(tools_set[0])
+        session = await agent.session_manager.get_or_create(agent.active_session)
+        session.vfs.add_system_file(str(tb_root_dir.parent/"docs"/"mods"/"isaa"/"web_toolkit.md"),"web_toolkit.md",open_state=True)
         print_status("Full Web Automation enabled.", "success")
 
-    def disable(agent):
-        proxy.shutdown()
+    async def disable(agent):
+        await toolkit.stop_browser()
         agent.remove_tools(tools_set[0])
+        session = await agent.session_manager.get_or_create(agent.active_session)
+        session.vfs.remove_system_file("web_toolkit.md")
         print_status("Full Web Automation disabled.", "success")
 
     fm.add_feature("full_web_auto", activation_f=enable, deactivation_f=disable)
@@ -3690,6 +3710,7 @@ ALL_FEATURES = {
     "autodoc": load_autodoc_feature,
     "autotest": load_autotest_feature,
     "autofix": load_autofix_feature,
+    "isis": load_isis_feature,
 }
 
 

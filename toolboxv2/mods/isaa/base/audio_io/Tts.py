@@ -664,6 +664,8 @@ def _qwen3_resolve_instruct(config: TTSConfig) -> Optional[str]:
     """
     if config.qwen3_style_prompt:
         return config.qwen3_style_prompt
+    if config.style_prompt:
+        return config.style_prompt
     if config.emotion == TTSEmotion.CUSTOM:
         return None  # CUSTOM without style_prompt is a no-op instruct
     if config.emotion == TTSEmotion.NEUTRAL:
@@ -697,7 +699,19 @@ def _synthesize_qwen3_tts(text: str, config: TTSConfig) -> TTSResult:
     model = get_qwen3(model_id, device=config.qwen3_device)
 
     instruct = _qwen3_resolve_instruct(config)
-    language = config.language if config.language else "Auto"
+    language = {
+          "zh": "chinese",
+          "en": "english",
+          "fr": "french",
+          "de": "german",
+          "it": "italian",
+          "ja": "japanese",
+          "ko": "korean",
+          "pt": "portuguese",
+          "ru": "russian",
+          "es": "spanish",
+         "Auto":"Auto"
+}.get(config.language if config.language else "Auto")
 
     if config.qwen3_ref_audio is not None:
         # Base / clone mode
@@ -802,6 +816,14 @@ def synthesize_index_tts(
         )
         result.save("response.wav")
     """
+    if not reference_audio:
+        reference_audio = None
+    if reference_audio is not None and not os.path.exists(reference_audio):
+        reference_audio = None
+    if reference_audio is None:
+        reference_audio = os.getenv("TTS_REF_AUDIO")
+    if reference_audio is None:
+        reference_audio = ""
     return synthesize(
         text,
         config=TTSConfig(

@@ -1553,6 +1553,8 @@ class LiteLLMRateLimitHandler:
                                             accumulated_tool_calls[idx]["arguments"] += tc.function.arguments
                     except Exception:
                         pass
+                if self.enable_rate_limiting:
+                    self.rate_limiter.report_success(model=current_model, api_key_hash=current_api_key_hash)
                 return  # clean end of stream
 
             except Exception as e:
@@ -1591,7 +1593,6 @@ class LiteLLMRateLimitHandler:
 
                 should_retry = (
                     is_rate_limit
-                    or is_midstream
                     or is_transient
                     or (self.fallback_on_any_error and attempt < self.max_retries)
                 )
@@ -1603,7 +1604,7 @@ class LiteLLMRateLimitHandler:
                     model=current_model,
                     error=e,
                     api_key_hash=current_api_key_hash,
-                    is_rate_limit=is_rate_limit,  # Neu
+                    is_rate_limit=is_rate_limit,
                 )
 
                 if fallback_model and self.enable_model_fallback:
@@ -1612,7 +1613,7 @@ class LiteLLMRateLimitHandler:
                     )
                     current_model = fallback_model
                 elif self.wait_if_all_exhausted:
-                    if not is_midstream:
+                    if is_rate_limit:
                         logger.warning(
                             f"[Handler] Rate limit hit (attempt {attempt + 1}), "
                             f"waiting {wait_time:.1f}s"
@@ -1632,33 +1633,13 @@ class LiteLLMRateLimitHandler:
                 if not should_retry or attempt > max_continuations:
                     raise
 
-                # Re-acquire and re-issue the request
-                estimated_tokens = self._estimate_input_tokens(original_kwargs.get("messages", []))
-                if self.enable_rate_limiting:
-                    current_model, api_key = await self.rate_limiter.acquire(
-                        model=current_model,
-                        estimated_input_tokens=estimated_tokens,
-                    )
-                    if api_key:
-                        current_api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:12]
-                        original_kwargs = self._inject_api_key(original_kwargs, current_model, api_key)
-
-                original_kwargs["model"] = current_model
-
-                # Determinismus-Loop aufbrechen: Bei einem Tool-Fehler den Prompt leicht ändern
-                if is_midstream and "messages" in original_kwargs:
-                    messages = list(original_kwargs.get("messages", []))
-                    warning_msg = (
-                        "System Override: The last tool call failed schema validation. "
-                        "Do not pass null for string parameters. "
-                        "For list_tools, omit 'category' entirely if unused. "
-                        "Do not repeat the same output."
-                    )
-                    if not messages or messages[-1].get("content") != warning_msg:
-                        messages.append({"role": "user", "content": warning_msg})
-                        original_kwargs["messages"] = messages
-
-                    # Append partial assistant output so model continues instead of restarting from zero
+                # Immer – nicht nur bei is_midstream – die messages um den bisherigen
+                # Assistant-Output ergänzen, damit das Modell fortsetzt statt wiederholt.
+                if "messages" in original_kwargs:
+                    messages = list(original_kwargs["messages"])
+                    continue_msg = "You were interrupted. Continue EXACTLY where you left off. Do not repeat already generated output or tool calls."
+                    if messages and messages[-1].get("content") == continue_msg:
+                        messages.pop()  # vorherige identische Nachricht entfernen
                     if accumulated_content or accumulated_tool_calls:
                         assistant_msg: Dict[str, Any] = {
                             "role": "assistant",
@@ -1687,10 +1668,29 @@ class LiteLLMRateLimitHandler:
                         accumulated_content = ""
                         accumulated_tool_calls = {}
 
-                    # Warnung nur anhängen, wenn sie nicht schon der letzte Eintrag ist
+                    # System-Override nur einmal einfügen, falls noch nicht am Ende
+                    warning_msg = (
+                        "System Override: The last tool call failed schema validation. "
+                        "Do not pass null for string parameters. "
+                        "For list_tools, omit 'category' entirely if unused. "
+                        "Do not repeat the same output."
+                    )
                     if not messages or messages[-1].get("content") != warning_msg:
                         messages.append({"role": "user", "content": warning_msg})
-                        original_kwargs["messages"] = messages
+
+                    original_kwargs["messages"] = messages
+                    original_kwargs["model"] = current_model
+
+                    estimated_tokens = self._estimate_input_tokens(original_kwargs.get("messages", []))
+                    if self.enable_rate_limiting:
+                        current_model, api_key = await self.rate_limiter.acquire(
+                            model=current_model,
+                            estimated_input_tokens=estimated_tokens,
+                        )
+                        if api_key:
+                            current_api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:12]
+                            original_kwargs = self._inject_api_key(original_kwargs, current_model, api_key)
+                        original_kwargs["model"] = current_model
 
                 try:
                     devnull = open(os.devnull, "w")

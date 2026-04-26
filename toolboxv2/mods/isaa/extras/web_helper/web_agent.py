@@ -1451,20 +1451,30 @@ async def minimal_web_agent_integration():
             content = await agent.extract_markdown()
             return content.to_dict()
 
-    async def tool_web_navigate(url: str, actions: list[dict]) -> dict:
-        """🧭 Navigieren und Aktionen ausführen."""
+    async def tool_web_navigate(url: str, actions_type: str
+                                , action_selector: Optional[str] = None
+                                , action_type_text: Optional[str] = None
+                                , action_direction: Optional[str] =None
+                                , action_scroll_amount: Optional[int] =None
+                                ) -> dict:
+        """🧭 Navigieren und Aktionen ausführen. actions_type[click|type|scroll|wait]"""
         async with WebAgent(headless=True, verbose=False) as agent:
             await agent.goto(url)
 
-            for action in actions:
-                if action["type"] == "click":
-                    await agent.click(action["selector"])
-                elif action["type"] == "type":
-                    await agent.type(action["selector"], action["text"])
-                elif action["type"] == "scroll":
-                    await agent.scroll(action.get("direction", "down"))
-                elif action["type"] == "wait":
-                    await agent.wait(action.get("selector", ""))
+            if actions_type== "click":
+                await agent.click(action_selector)
+            elif actions_type == "type":
+                await agent.type(action_selector, action_type_text)
+            elif actions_type== "scroll":
+                if action_direction is None:
+                    action_direction = "down"
+                if action_scroll_amount is None:
+                    action_scroll_amount = 500
+                await agent.scroll(action_direction, action_scroll_amount)
+            elif actions_type== "wait":
+                if action_selector is None:
+                    action_selector = ""
+                await agent.wait(action_selector)
 
             content = await agent.extract_markdown()
             return content.to_dict()

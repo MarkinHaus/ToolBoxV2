@@ -847,6 +847,7 @@ Session: {self.session_id}
         local_path: str,
         vfs_path: str | None = None,
         auto_refresh: bool = False,
+        open_state: bool = False,
     ) -> dict:
         """
         Füge eine lokale Datei als permanente Read-Only System-Datei zum VFS hinzu.
@@ -899,7 +900,7 @@ Session: {self.session_id}
             self.files[vfs_path] = VFSFile(
                 filename=filename,
                 _content=content,
-                state="closed",  # Start closed, user can open if needed
+                state="open" if open_state else "closed",
                 readonly=True,
                 local_path=local_path,  # Store reference for refresh
                 size_bytes=file_size,

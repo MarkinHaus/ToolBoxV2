@@ -2666,7 +2666,7 @@ BEISPIELE:
             ctx.max_iterations += 1
 
         elif f_name == "load_tools":
-            tools_input = f_args.get("tools") or f_args.get("names")
+            tools_input = f_args.get("tools")
             result = await self._tool_load_tools(ctx, tools_input)
             ctx.auto_focus.record(f_name, f_args, result)
             ctx.max_iterations += 1
@@ -3284,17 +3284,17 @@ BEISPIELE:
             else:
                 failed.append(f"{name} (limit erreicht)")
 
-           # Build response message with slot usage
-            msg_parts = []
-            if loaded:
-                msg_parts.append(f"Geladen: {', '.join(loaded)}")
-            if removed:
-                msg_parts.append(f"Auto-entfernt (niedrige Relevanz): {', '.join(removed)}")
-            if failed:
-                msg_parts.append(f"Fehlgeschlagen: {', '.join(failed)}")
-            msg_parts.append(f"Slots: {len(ctx.dynamic_tools)}/{ctx.max_dynamic_tools} used")
+       # Build response message with slot usage
+        msg_parts = []
+        if loaded:
+            msg_parts.append(f"Geladen: {', '.join(loaded)}")
+        if removed:
+            msg_parts.append(f"Auto-entfernt (niedrige Relevanz): {', '.join(removed)}")
+        if failed:
+            msg_parts.append(f"Fehlgeschlagen: {', '.join(failed)}")
+        msg_parts.append(f"Slots: {len(ctx.dynamic_tools)}/{ctx.max_dynamic_tools} used")
 
-            return "\n".join(msg_parts) if msg_parts else "Keine Änderungen"
+        return "\n".join(msg_parts) if msg_parts else "Keine Änderungen"
 
     def _tool_list_tools(self, category: Optional[str] = None) -> str:
         """List available tools with optional category filter"""

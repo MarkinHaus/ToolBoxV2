@@ -24,13 +24,12 @@ Usage:
 """
 
 import asyncio
+import functools
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Optional
-
-from toolboxv2.mods.isaa.extras.web_helper.web_agent import WebAgent
-
+from typing import Callable, Optional, Any
+import multiprocessing as mp
 
 # ============================================================================
 # TOOL DEFINITIONS
@@ -64,8 +63,8 @@ class ToolDefinition:
         return {
             "name": self.name,
             "description": self.description,
-            "func": self.func,
-            "category": self.category.value,
+            "tool_func": self.func,
+            "category": [self.category.value]+["web"],
             "args_schema": self.parameters,
             "returns": self.returns,
             "flags": self.flags,
@@ -73,6 +72,58 @@ class ToolDefinition:
             "source": "web-toolkit"
         }
 
+
+# ================================================================
+# Worker — runs in subprocess, owns the event loop + browser
+# ================================================================
+
+def _playwright_worker_main(cmd_q: mp.Queue, result_q: mp.Queue, config: dict):
+    """Entry point for the browser subprocess."""
+
+    async def _run():
+        # Lazy import to avoid pulling playwright into the parent process
+
+        toolkit = WebAgentToolkit(
+            headless=config.get("headless", True),
+            auto_start=True,
+            keep_open=True,
+            verbose=config.get("verbose", False),
+            out_of_process=False,  # worker runs in-process
+        )
+        await toolkit.start_browser()
+
+        tool_map = {t.name: t.func for t in toolkit._tools}
+
+        result_q.put({"type": "ready"})
+
+        while True:
+            try:
+                cmd = cmd_q.get(timeout=0.5)
+            except Exception:
+                continue
+
+            if cmd.get("type") == "shutdown":
+                break
+
+            if cmd.get("type") == "call":
+                req_id = cmd["id"]
+                tool_name = cmd["tool"]
+                kwargs = cmd.get("kwargs", {})
+                try:
+                    result = await tool_map[tool_name](**kwargs)
+                    result_q.put({"type": "result", "id": req_id, "data": result})
+                except Exception as e:
+                    result_q.put({
+                        "type": "result",
+                        "id": req_id,
+                        "error": str(e),
+                        "traceback": traceback.format_exc(),
+                    })
+
+        await toolkit.stop_browser()
+        result_q.put({"type": "stopped"})
+
+    asyncio.run(_run())
 
 # ============================================================================
 # MANAGED BROWSER
@@ -95,16 +146,25 @@ class ManagedBrowser:
         headless: bool = True,
         auto_start: bool = True,
         keep_open: bool = True,
-        verbose: bool = False
+        verbose: bool = False,
+        out_of_process: bool = False,
     ):
         self.headless = headless
         self.auto_start = auto_start
         self.keep_open = keep_open
         self.verbose = verbose
+        self.out_of_process = out_of_process
 
-        self._agent: Optional[WebAgent] = None
+        self._agent= None #Optional[WebAgent]
         self._started = False
         self._lock = asyncio.Lock()
+
+        # Out-of-process state
+        self._cmd_q: Optional[mp.Queue] = None
+        self._result_q: Optional[mp.Queue] = None
+        self._worker: Optional[mp.Process] = None
+        self._oop_lock: Optional[asyncio.Lock] = None
+        self._call_counter = 0
 
     @classmethod
     def get_instance(cls, **kwargs) -> "ManagedBrowser":
@@ -116,8 +176,6 @@ class ManagedBrowser:
     @classmethod
     def reset_instance(cls):
         """Reset Singleton (für Tests)."""
-        if cls._instance and cls._instance._agent:
-            asyncio.create_task(cls._instance.stop())
         cls._instance = None
 
     async def start(self):
@@ -125,24 +183,79 @@ class ManagedBrowser:
         async with self._lock:
             if self._started:
                 return
+            if self.out_of_process:
+                await self._start_oop()
+            else:
+                await self._start_in_process()
 
-            self._agent = WebAgent(
-                headless=self.headless,
-                verbose=self.verbose
-            )
-            await self._agent.start()
-            self._started = True
+    async def _start_in_process(self):
+        from toolboxv2.mods.isaa.extras.web_helper.web_agent import WebAgent
+        self._agent = WebAgent(headless=self.headless, verbose=self.verbose)
+        await self._agent.start()
+        self._started = True
+
+    async def _start_oop(self):
+        ctx = mp.get_context("spawn")  # safe across platforms
+        self._cmd_q = ctx.Queue()
+        self._result_q = ctx.Queue()
+        self._oop_lock = asyncio.Lock()
+        self._call_counter = 0
+
+        self._worker = ctx.Process(
+            target=_playwright_worker_main,
+            args=(self._cmd_q, self._result_q, {
+                "headless": self.headless,
+                "verbose": self.verbose,
+            }),
+            daemon=True,
+            name="playwright-worker",
+        )
+        self._worker.start()
+
+        msg = await asyncio.to_thread(self._result_q.get, timeout=30)
+        if msg.get("type") != "ready":
+            raise RuntimeError(f"Browser worker startup failed: {msg}")
+        self._started = True
 
     async def stop(self):
-        """Browser stoppen."""
         async with self._lock:
-            if self._agent and self._started:
-                await self._agent.stop()
-                self._started = False
-                self._agent = None
+            if not self._started:
+                return
+            if self.out_of_process:
+                await self._stop_oop()
+            else:
+                await self._stop_in_process()
 
-    async def get_agent(self) -> WebAgent:
+    async def _stop_in_process(self):
+        if self._agent:
+            await self._agent.stop()
+            self._agent = None
+        self._started = False
+
+    async def _stop_oop(self):
+        if not self._worker or not self._worker.is_alive():
+            self._started = False
+            return
+        self._cmd_q.put({"type": "shutdown"})
+        try:
+            await asyncio.to_thread(self._result_q.get, timeout=15)
+        except Exception:
+            pass
+        self._worker.join(timeout=5)
+        if self._worker.is_alive():
+            self._worker.kill()
+        self._worker = None
+        self._cmd_q = None
+        self._result_q = None
+        self._started = False
+
+    async def get_agent(self) -> 'WebAgent':
         """Agent holen (startet automatisch wenn nötig)."""
+        if self.out_of_process:
+            raise RuntimeError(
+                "No direct agent access in out_of_process mode. "
+                "Tools route through IPC automatically."
+            )
         if self.auto_start and not self._started:
             await self.start()
 
@@ -151,20 +264,56 @@ class ManagedBrowser:
 
         return self._agent
 
-    @property
-    def is_running(self) -> bool:
-        return self._started
+    # ── OOP tool dispatch ──
+
+    async def call_tool(self, name: str, **kwargs) -> Any:
+        """Route a tool call through IPC to the worker process.
+
+        Serialized via asyncio.Lock — one call at a time,
+        which matches browser semantics (single page).
+        """
+        if not self.out_of_process:
+            raise RuntimeError("call_tool() is only for out_of_process mode")
+
+        if not self._started:
+            if self.auto_start:
+                await self.start()
+            else:
+                raise RuntimeError("Browser not started")
+
+        async with self._oop_lock:
+            self._call_counter += 1
+            req_id = self._call_counter
+
+            self._cmd_q.put({
+                "type": "call",
+                "id": req_id,
+                "tool": name,
+                "kwargs": kwargs,
+            })
+
+            resp = await asyncio.to_thread(self._result_q.get, timeout=120)
+
+        if resp.get("error"):
+            raise RuntimeError(
+                f"Tool '{name}' failed in worker: {resp['error']}\n"
+                f"{resp.get('traceback', '')}"
+            )
+        return resp["data"]
+
+    # ── Headless toggle (works for both modes) ──
 
     async def set_headless(self, headless: bool):
-        """Headless-Modus ändern (erfordert Neustart)."""
         was_running = self._started
         if was_running:
             await self.stop()
-
         self.headless = headless
-
         if was_running:
             await self.start()
+
+    @property
+    def is_running(self) -> bool:
+        return self._started
 
 
 # ============================================================================
@@ -197,17 +346,21 @@ class WebAgentToolkit:
         auto_start: bool = True,
         keep_open: bool = True,
         verbose: bool = False,
-        state_dir: str = "agent_states"
+        state_dir: str = "agent_states",
+        out_of_process: bool = False
     ):
         self.browser = ManagedBrowser(
             headless=headless,
             auto_start=auto_start,
             keep_open=keep_open,
-            verbose=verbose
+            verbose=verbose,
+            out_of_process=out_of_process,
         )
         self.state_dir = state_dir
         self._tools: list[ToolDefinition] = []
         self._build_tools()
+        if out_of_process:
+            self._wrap_tools_for_oop()
 
     def _build_tools(self):
         """Baut alle Tool-Definitionen."""
@@ -1126,6 +1279,28 @@ class WebAgentToolkit:
             ),
         ])
 
+    @staticmethod
+    def _make_oop_wrapper(browser_ref, tool_name: str, original_func):
+        """Create an async wrapper that routes through IPC.
+
+        Uses functools.wraps so inspect.signature() returns the
+        original function's signature — no reconstruction needed.
+        """
+
+        @functools.wraps(original_func)
+        async def wrapper(**kwargs):
+            return await browser_ref.call_tool(tool_name, **kwargs)
+
+        return wrapper
+
+    def _wrap_tools_for_oop(self):
+        """Replace all tool funcs with OOP-routing wrappers.
+
+        Call this once after _build_tools() when out_of_process=True.
+        """
+        for tool in self._tools:
+            tool.func = self._make_oop_wrapper(self.browser, tool.name, tool.func)
+
     # ========================================================================
     # PUBLIC API
     # ========================================================================
@@ -1163,7 +1338,7 @@ class WebAgentToolkit:
                 t_dict["flags"]["guaranteed_healthy"] = False
             result_tools.append(t_dict)
 
-        return [t.to_dict() for t in tools]
+        return result_tools
 
     def get_tool_names(self) -> list[str]:
         """Liste aller Tool-Namen."""
@@ -1226,6 +1401,13 @@ _TOOL_HEALTH_EXTENSIONS = {
         "result_contract": {
             "expected_type": dict,
             "semantic_check_hint": "Muss 'query', 'total', 'engines' und eine Liste 'results' enthalten."
+        }
+    },
+    "web_navigate": {
+        "live_test_inputs": [{"url": "https://example.com", "actions_type": "wait"}],
+        "result_contract": {
+            "expected_type": dict,
+            "semantic_check_hint": "Muss 'url', 'actions_type' und eine Liste 'results' enthalten."
         }
     },
     "search_site": {
@@ -1337,7 +1519,8 @@ def get_full_tools(
     headless: bool = True,
     auto_start: bool = True,
     keep_open: bool = True,
-    verbose: bool = False
+    verbose: bool = False,
+    out_of_process: bool = False,
 ) -> tuple[WebAgentToolkit, list[dict]]:
     """
     🔧 Gibt ALLE WebAgent Tools zurück (Full Pack).
@@ -1358,7 +1541,8 @@ def get_full_tools(
         headless=headless,
         auto_start=auto_start,
         keep_open=keep_open,
-        verbose=verbose
+        verbose=verbose,
+        out_of_process=out_of_process,
     )
     return toolkit, toolkit.get_tools()
 
@@ -1367,7 +1551,8 @@ def get_minimal_tools(
     headless: bool = True,
     auto_start: bool = True,
     keep_open: bool = True,
-    verbose: bool = False
+    verbose: bool = False,
+    out_of_process: bool = False,
 ) -> tuple[WebAgentToolkit, list[dict]]:
     """
     🔧 Gibt minimale WebAgent Tools zurück (Minimal Pack).
@@ -1389,7 +1574,8 @@ def get_minimal_tools(
         headless=headless,
         auto_start=auto_start,
         keep_open=keep_open,
-        verbose=verbose
+        verbose=verbose,
+        out_of_process=out_of_process,
     )
 
     minimal_names = [
@@ -1406,7 +1592,7 @@ def get_minimal_tools(
     return toolkit, [t for t in toolkit.get_tools() if t["name"] in minimal_names]
 
 
-def get_search_only_tools() -> list[dict]:
+def get_search_only_tools( out_of_process: bool = False) -> list[dict]:
     """
     🔍 Nur Such-Tools (kein Browser nötig).
 
@@ -1415,204 +1601,9 @@ def get_search_only_tools() -> list[dict]:
     - search_site
     - search_files
     """
-    toolkit = WebAgentToolkit(auto_start=False)
+    toolkit = WebAgentToolkit(auto_start=False,
+        out_of_process=out_of_process,)
     return toolkit.get_tools(categories=[ToolCategory.SEARCH])
-
-
-import multiprocessing as mp
-import asyncio
-import traceback
-import threading
-from typing import Any
-from dataclasses import dataclass, field
-
-# ================================================================
-# Protocol: Messages zwischen Proxy ↔ Worker
-# ================================================================
-
-MSG_READY = "ready"
-MSG_CALL = "call"
-MSG_RESULT = "result"
-MSG_SHUTDOWN = "shutdown"
-MSG_STOPPED = "stopped"
-
-# ================================================================
-# Worker – eigener Prozess, eigener Main-Thread
-# ================================================================
-
-def _playwright_worker_main(
-    cmd_queue: mp.Queue,
-    result_queue: mp.Queue,
-    config: dict,
-):
-    """Entry point für den Browser-Prozess."""
-
-    async def _async_main():
-        # ── Setup ──
-        if config.get("full"):
-            from toolboxv2.mods.isaa.extras.web_helper.tooklit import WebAgentToolkit
-            toolkit = WebAgentToolkit(
-                headless=config.get("headless", True),
-                auto_start=True,
-                keep_open=True,
-            )
-            await toolkit.start_browser()
-            tool_map = {t.name: t.func for t in toolkit._tools}
-            tool_meta = [t.to_dict() for t in toolkit._tools]
-            # Entferne nicht-serialisierbare Felder
-            for meta in tool_meta:
-                meta.pop("func", None)
-        else:
-            from toolboxv2.mods.isaa.extras.web_helper.web_agent import (
-                minimal_web_agent_integration,
-            )
-            raw = await minimal_web_agent_integration()
-            tool_map = {t["name"]: t["func"] for t in raw}
-            tool_meta = [{k: v for k, v in t.items() if k != "func"} for t in raw]
-            toolkit = None
-
-        # ── Ready Signal mit Metadaten ──
-        result_queue.put({
-            "type": MSG_READY,
-            "tools": tool_meta,
-        })
-
-        # ── Command Loop ──
-        while True:
-            try:
-                cmd = cmd_queue.get(timeout=0.5)
-            except Exception:
-                continue
-
-            if cmd.get("type") == MSG_SHUTDOWN:
-                break
-
-            req_id = cmd["id"]
-            tool_name = cmd["tool"]
-            kwargs = cmd.get("kwargs", {})
-
-            try:
-                result = await tool_map[tool_name](**kwargs)
-                result_queue.put({
-                    "type": MSG_RESULT,
-                    "id": req_id,
-                    "data": result,
-                })
-            except Exception as e:
-                result_queue.put({
-                    "type": MSG_RESULT,
-                    "id": req_id,
-                    "error": str(e),
-                    "traceback": traceback.format_exc(),
-                })
-
-        # ── Cleanup ──
-        if toolkit:
-            await toolkit.stop_browser()
-        result_queue.put({"type": MSG_STOPPED})
-
-    asyncio.run(_async_main())
-
-
-# ================================================================
-# Proxy – läuft im Agent-Prozess, beliebiger Thread
-# ================================================================
-
-class PlaywrightProxy:
-    """Thread-safe proxy zum Browser-Worker-Prozess."""
-
-    def __init__(self, full: bool = True, headless: bool = True):
-        self._config = {"full": full, "headless": headless}
-        self._cmd_q = mp.Queue()
-        self._result_q = mp.Queue()
-        self._proc: mp.Process | None = None
-        self._tool_meta: list[dict] = []
-        self._lock = threading.Lock()
-        self._counter = 0
-
-    # ── Lifecycle ──
-
-    def start(self, timeout: float = 30):
-        self._proc = mp.Process(
-            target=_playwright_worker_main,
-            args=(self._cmd_q, self._result_q, self._config),
-            daemon=True,
-            name="playwright-worker",
-        )
-        self._proc.start()
-
-        msg = self._result_q.get(timeout=timeout)
-        if msg.get("type") != MSG_READY:
-            raise RuntimeError(f"Worker startup failed: {msg}")
-
-        self._tool_meta = msg["tools"]
-
-    def shutdown(self):
-        if not self._proc or not self._proc.is_alive():
-            return
-        self._cmd_q.put({"type": MSG_SHUTDOWN})
-        try:
-            self._result_q.get(timeout=15)
-        except Exception:
-            pass
-        self._proc.join(timeout=5)
-        if self._proc.is_alive():
-            self._proc.kill()
-        self._proc = None
-
-    # ── Tool Calls ──
-
-    def call_tool(self, tool_name: str, **kwargs) -> Any:
-        """Thread-safe synchroner Tool-Call."""
-        name = tool_name
-        with self._lock:
-            self._counter += 1
-            req_id = self._counter
-
-        self._cmd_q.put({
-            "type": MSG_CALL,
-            "id": req_id,
-            "tool": name,
-            "kwargs": kwargs,
-        })
-
-        resp = self._result_q.get(timeout=120)
-
-        if resp.get("error"):
-            raise RuntimeError(
-                f"Tool '{name}' failed: {resp['error']}\n{resp.get('traceback', '')}"
-            )
-        return resp["data"]
-
-    # ── Tool Definitions für Agent ──
-
-    def build_agent_tools(self) -> list[dict]:
-        """Baut vollständige Tool-Dicts mit sync callables."""
-        tools = []
-        for meta in self._tool_meta:
-            name = meta["name"]
-
-            def _make_fn(tool_name: str):
-                def fn(**kw):
-                    print("AGRNT PW:", kw)
-                    return self.call_tool(tool_name=tool_name, **kw)
-                fn.__name__ = tool_name
-                fn.__doc__ = meta.get("description", "")
-                return fn
-
-            tool_dict = {
-                **meta,
-                "func": _make_fn(name),
-            }
-            if name in _TOOL_HEALTH_EXTENSIONS:
-                tool_dict.update(_TOOL_HEALTH_EXTENSIONS[name])
-
-            tools.append(tool_dict)
-
-        return tools
-
-
-
 
 # ============================================================================
 # CLI / TEST
@@ -1627,10 +1618,10 @@ if __name__ == "__main__":
     kit, full = get_full_tools()
     print(f"\n📦 Full Pack: {len(full)} Tools\n")
 
-    for tool in full:
-        flags = "R" if tool["flags"]["read"] else "-"
-        flags += "W" if tool["flags"]["write"] else "-"
-        print(f"  [{flags}] {tool['name']:20} - {tool['description'][:50]}...")
+    for _tool in full:
+        flags = "R" if _tool["flags"]["read"] else "-"
+        flags += "W" if _tool["flags"]["write"] else "-"
+        print(f"  [{flags}] {_tool['name']:20} - {_tool['description'][:50]}...")
 
     print("\n" + "=" * 70)
     print("  WebAgent Tools - Minimal Pack")
@@ -1639,8 +1630,8 @@ if __name__ == "__main__":
     _, minimal = get_minimal_tools()
     print(f"\n📦 Minimal Pack: {len(minimal)} Tools\n")
 
-    for tool in minimal:
-        print(f"  • {tool['name']:20} - {tool['description'][:50]}...")
+    for _tool in minimal:
+        print(f"  • {_tool['name']:20} - {_tool['description'][:50]}...")
 
     print("\n" + "=" * 70)
     print("  Categories")
@@ -1648,10 +1639,10 @@ if __name__ == "__main__":
 
     toolkit = kit
     for cat in ToolCategory:
-        tools = [t for t in toolkit._tools if t.category == cat]
-        if tools:
-            print(f"\n  {cat.value.upper()} ({len(tools)} tools):")
-            for t in tools:
+        _tool = [t for t in toolkit._tools if t.category == cat]
+        if _tool:
+            print(f"\n  {cat.value.upper()} ({len(_tool)} tools):")
+            for t in _tool:
                 print(f"    - {t.name}")
     async def test():
         await toolkit.start_browser(False)

@@ -302,24 +302,30 @@ class MCPSessionManager:
     async def _create_http_session(self, server_name: str, server_config: dict[str, Any]) -> ClientSession | None:
         """Create HTTP MCP session with timeout"""
         try:
+            import httpx
             from mcp.client.streamable_http import streamable_http_client
 
-            url = server_config.get('url', f"http://localhost:{server_config.get('port', 8000)}/mcp")
+            url = server_config.get("url", f"http://localhost:{server_config.get('port', 8000)}/mcp")
+            headers = server_config.get("headers", {})
+            timeout = server_config.get("timeout", self.connection_timeout)
 
-            connection = streamable_http_client(url)
-            read_stream, write_stream, cleanup = await asyncio.wait_for(
-                connection.__aenter__(),
-                timeout=self.connection_timeout
+            # Build httpx client with configurable headers/auth/timeout
+            http_client = httpx.AsyncClient(
+                headers=headers,
+                timeout=httpx.Timeout(float(timeout)),
+            )
+            # streamable_http_client() yields (read_stream, write_stream)
+            streams = streamable_http_client(url, http_client=http_client)
+            read_stream, write_stream = await asyncio.wait_for(
+                streams.__aenter__(), timeout=self.connection_timeout
             )
 
             session = ClientSession(read_stream, write_stream)
             await session.__aenter__()
-            await asyncio.wait_for(
-                session.initialize(),
-                timeout=self.connection_timeout
-            )
+            await asyncio.wait_for(session.initialize(), timeout=self.connection_timeout)
 
-            self.connections[server_name] = connection
+            # Store http_client for cleanup
+            self.connections[server_name] = (streams, http_client)
             return session
 
         except Exception as e:
@@ -443,8 +449,9 @@ class MCPSessionManager:
             # Clean up connection
             if server_name in self.connections:
                 try:
-                    connection = self.connections[server_name]
-                    await asyncio.wait_for(connection.__aexit__(None, None, None), timeout=2.0)
+                    streams, http_client = self.connections[server_name]
+                    await asyncio.wait_for(streams.__aexit__(None, None, None), timeout=2.0)
+                    await http_client.aclose()
                 except (TimeoutError, Exception) as e:
                     wprint(f"Connection cleanup warning for {server_name}: {e}")
                 finally:
