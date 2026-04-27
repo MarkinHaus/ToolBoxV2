@@ -9,6 +9,7 @@ Tests cover:
 """
 
 import asyncio
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -200,7 +201,7 @@ class TestRegistryClientInit(unittest.TestCase):
     def test_default_initialization(self):
         """Test default client initialization."""
         client = RegistryClient()
-        self.assertEqual(client.registry_url, "https://registry.simplecore.app")
+        self.assertEqual(client.registry_url, os.getenv("REGISTRY_BASE_URL","https://registry.simplecore.app"))
         self.assertIsNone(client.auth_token)
 
     def test_custom_url(self):

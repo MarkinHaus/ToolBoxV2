@@ -1,0 +1,20 @@
+id: logic-chain-001
+complexity: extended
+modality: [text]
+tags: [logic, deductive]
+prompt: |
+  Rules:
+  - If the budget is exceeded -> approval is needed
+  - If approval is needed -> no spending is allowed
+  - Either spending occurs OR the project pauses
+
+  Fact: The budget was exceeded.
+  What happens next?
+ground_truth: "The project pauses."
+checks:
+  - type: any_of
+    values: ["pause", "pauses", "project pauses", "put on hold"]
+  - type: any_of
+    values: ["no spending", "cannot spend", "spending is not allowed"]
+  - type: judge
+    question: "Does the model logically conclude that the project must pause because spending is blocked?"

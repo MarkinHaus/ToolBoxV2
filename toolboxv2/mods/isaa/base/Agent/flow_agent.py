@@ -393,7 +393,7 @@ class FlowAgent:
             docker_config=self.amd.docker_config
             or DockerConfig(memory_limit="4g", timeout_seconds=600),
             toolboxv2_wheel_path=os.getenv(
-                "TOOLBV2_WHEEL_PATH",
+                "TOOLBOXV2_WHEEL_PATH",
                 "C:/Users/Markin/Workspace/ToolBoxV2/dist/toolboxv2-0.1.24-py2.py3-none-any.whl",
             ),
         )
@@ -573,13 +573,14 @@ class FlowAgent:
         )
         use_stream = stream if stream is not None else self.stream
 
-        # NEU: Verarbeite Media in Messages
+        # Verarbeite Media in Messages
         if await self.save_supports_vision(messages, model_preference):
             processed_messages = self._process_media_in_messages(messages.copy())
         else:
+            # optional mutate media to text only ???
             processed_messages = messages.copy()
 
-        # NEU: Entferne bereits bekannte problematische Typen
+        # Entferne bereits bekannte problematische Typen
         if _removed_types:
             processed_messages, newly_removed = _remove_media_by_type(
                 processed_messages, _removed_types
@@ -1224,7 +1225,6 @@ litellm.exceptions.BadRequestError: litellm.BadRequestError: CerebrasException -
         enhanced_prompt = f"{prompt}"
 
         try:
-            from litellm import supports_response_schema
 
             for mp in [
                 model_preference,
@@ -1527,6 +1527,7 @@ litellm.exceptions.BadRequestError: litellm.BadRequestError: CerebrasException -
             - {"type": "final_answer", "answer": "..."}
             - {"type": "paused", "run_id": "..."}
             - {"type": "done", "success": bool, "final_answer": "..."}
+            - {"type": "status", "status_msg": "..."}
         """
         if not session_id:
             session_id = "default"
@@ -1602,6 +1603,9 @@ litellm.exceptions.BadRequestError: litellm.BadRequestError: CerebrasException -
             **kwargs,
         ):
             chunk_type = chunk.get("type", "")
+
+            if chunk_type == "final_answer":
+                yield chunk["answer"]
 
             if chunk_type == "content":
                 yield chunk["chunk"]

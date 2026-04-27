@@ -1,0 +1,29 @@
+id: logic-master-001
+complexity: extended
+modality: [text]
+tags: [logic, multi_step]
+prompt: |
+  Resource planning - need quick help.
+  CONTEXT:
+  Nova Corp has three teams: Alpha (12 people), Beta (8 people), Gamma (?).
+  Alpha + Beta = twice the size of Gamma.
+  Project Phoenix needs 5 people from Alpha OR 3 from Beta.
+  Start date: [MISSING]. Gamma-Lead: "Without Phoenix, Q4 is ruined."
+
+  QUESTIONS:
+  1) Size of Gamma? (Show math)
+  2) Can the project be staffed exclusively with Beta?
+  3) What is the exact start date?
+  4) What does the note say about priority?
+  5) What is missing to answer question 3?
+checks:
+  - type: contains
+    value: "10"
+  - type: any_of
+    values: ["yes", "can be staffed", "beta has 8", "8 is greater than 3"]
+  - type: any_of
+    values: ["not provided", "missing", "unknown", "cannot tell"]
+  - type: none_of
+    values: ["January", "Q4 start", "Monday"]
+  - type: judge
+    question: "Does the model correctly deduce the size of Gamma as 10 and admit the start date is missing?"

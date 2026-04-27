@@ -1,0 +1,17 @@
+id: logic-chain-001
+complexity: extended
+modality: [text]
+tags: [logic, reasoning]
+prompt: |
+  A farmer has 3 fields. Field A produces twice as much as Field B.
+  Field C produces 10 tons more than Field A.
+  If Field B produces 15 tons, how many tons does Field C produce?
+  Reply with only the number.
+ground_truth: "40"
+checks:
+  - type: contains
+    value: "40"
+  - type: not_contains
+    value: "35"
+  - type: not_contains
+    value: "45"

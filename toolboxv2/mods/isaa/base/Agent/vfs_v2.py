@@ -692,8 +692,34 @@ grep -rn "pattern" /src      grep -in "pattern" /file.py
 touch <path>
 echo "content" > <path>      echo "line" >> <path>
 
-# Schreiben (groß / mehrzeilig)
-write <path> "zeile1\\nzeile2\\nzeile3"
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WICHTIG: SCHREIB-LIMITS & CHUNK-PROTOKOLL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Ein einzelner Tool-Call darf max ~40 Zeilen Content enthalten.
+Grund: JSON-Tool-Calls können bei Längenbeschränkung abbrechen.
+Ein abgebrochener Call = keine Wirkung. Kein partial-write.
+
+REGEL:
+  < 40 Zeilen  →  write <path> "..."   (ein Call)
+  ≥ 40 Zeilen  →  write_chunk          (ein Call pro Block)
+
+CHUNK-PROTOKOLL:
+  write_chunk <path> 0 <N> "<block_0_content>"   ← erzeugt/überschreibt Datei
+  write_chunk <path> 1 <N> "<block_1_content>"   ← hängt an
+  ...
+  write_chunk <path> N-1 <N> "<block_N-1>"       ← finalisiert
+
+Nach Abbruch / Wiederaufnahme:
+  write_chunk_status <path>   →  zeigt welche Blöcke fehlen
+  Dann nur die fehlenden Blöcke erneut senden.
+
+Content-Encoding (alle Varianten funktionieren):
+  "line1\\nline2"   ← \\n wird zu Newline (Standard in JSON)
+  "line1\nline2"    ← echter Newline (auch ok)
+  NIEMALS: \\\\n   ← das erzeugt einen Backslash + n im File!
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 
 # Zeilen ersetzen (präzises Editieren)
 edit <path> <start> <end> "neuer inhalt\\nzeile2"
@@ -832,6 +858,18 @@ Session: {self.session_id}
         if path not in self.files:
             self.files[path] = VFSFile(
                 filename="active_rules.md", _content=content, state="open", readonly=True
+            )
+        else:
+            self.files[path].content = content
+            self.files[path].updated_at = datetime.now().isoformat()
+        self._dirty = True
+
+    def set_memory_index_file(self, content: str):
+        """Set the memory_index.md file content (from RuleSet)"""
+        path = "/memory_index.md"
+        if path not in self.files:
+            self.files[path] = VFSFile(
+                filename="memory_index.md", _content=content, state="open", readonly=True
             )
         else:
             self.files[path].content = content

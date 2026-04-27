@@ -13,7 +13,7 @@ Run:
 import unittest
 from unittest.mock import MagicMock, patch, AsyncMock
 
-from base.Agent.rule_set import RuleResult
+from toolboxv2.mods.isaa.base.Agent.rule_set import RuleResult
 
 
 # =============================================================================

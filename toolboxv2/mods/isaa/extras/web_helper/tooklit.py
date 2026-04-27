@@ -113,6 +113,7 @@ def _playwright_worker_main(cmd_q: mp.Queue, result_q: mp.Queue, config: dict):
                     result = await tool_map[tool_name](**kwargs)
                     result_q.put({"type": "result", "id": req_id, "data": result})
                 except Exception as e:
+                    import traceback
                     result_q.put({
                         "type": "result",
                         "id": req_id,
@@ -266,12 +267,13 @@ class ManagedBrowser:
 
     # ── OOP tool dispatch ──
 
-    async def call_tool(self, name: str, **kwargs) -> Any:
+    async def call_tool(self, tool_name: str, **kwargs) -> Any:
         """Route a tool call through IPC to the worker process.
 
         Serialized via asyncio.Lock — one call at a time,
         which matches browser semantics (single page).
         """
+        name = tool_name
         if not self.out_of_process:
             raise RuntimeError("call_tool() is only for out_of_process mode")
 
@@ -1289,7 +1291,7 @@ class WebAgentToolkit:
 
         @functools.wraps(original_func)
         async def wrapper(**kwargs):
-            return await browser_ref.call_tool(tool_name, **kwargs)
+            return await browser_ref.call_tool(tool_name=tool_name, **kwargs)
 
         return wrapper
 

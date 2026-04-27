@@ -113,6 +113,11 @@ class BeastCLI:
         self.macro_context = MacroContext()
         self._load_macros()
 
+        # NLP / Agent state
+        self._agent = None
+        self._agent_init_lock = asyncio.Lock()
+        self._isaa = None
+
         self._setup_quick_commands()
         self._setup_key_bindings()
 
@@ -455,6 +460,9 @@ class BeastCLI:
             ":macro": QuickCommand(":macro", "Macro manager", self._macro_manager, "⚡"),
             ":record": QuickCommand(":record", "Record macro", self._record_macro, "🎬"),
             ":play": QuickCommand(":play", "Play macro", self._play_macro, "▶️"),
+
+            ":agent": QuickCommand(":agent", "Send to admin agent", self._agent_query, "🤖"),
+            ":ask": QuickCommand(":ask", "Send to admin agent", self._agent_query, "🤖"),
         }
 
 
@@ -595,6 +603,8 @@ class BeastCLI:
             ":play": {
                 "macro_name": {k: None for k in self.macros.keys()},
             },
+            ":agent": None,
+            ":ask": None,
         }
         # Quick commands
         for cmd, qc in self.quick_commands.items():
@@ -840,6 +850,197 @@ class BeastCLI:
         finally:
             current_process = None
 
+    # =================== NLP / Agent Integration ===================
+
+    _SHELL_INDICATORS = frozenset({
+        "ls", "cd", "pwd", "cat", "grep", "find", "mkdir", "rm", "cp", "mv",
+        "echo", "git", "docker", "pip", "npm", "python", "node", "curl", "wget",
+        "ssh", "scp", "tar", "zip", "unzip", "chmod", "chown", "kill", "ps",
+        "top", "htop", "df", "du", "head", "tail", "wc", "sort", "awk", "sed",
+        "make", "cargo", "rustc", "gcc", "java", "go", "uv", "tb",
+        "dir", "cls", "type", "copy", "del", "ren", "move", "set", "where",
+        "systemctl", "journalctl", "nginx", "certbot",
+    })
+
+    def _is_nlp_input(self, command: str) -> bool:
+        """Detect if input is natural language rather than a shell command."""
+        first_token = command.split()[0].lower().rstrip(".,!?")
+
+        # Explicit shell indicators
+        if first_token in self._SHELL_INDICATORS:
+            return False
+        # Paths, flags, pipes, redirects → shell
+        if first_token.startswith(("/", "./", "\\")) or first_token.startswith("-"):
+            return False
+        if any(c in command for c in ("|", ">>", "&&", "||")):
+            return False
+        # Contains spaces + no file-like patterns → likely NLP
+        words = command.split()
+        if len(words) >= 2 and not any("/" in w or "\\" in w or "." in w.split("=")[-1] for w in words[:2]):
+            return True
+        # Single word that isn't shell-like → NLP
+        if len(words) == 1 and not first_token.isascii():
+            return True
+        # Multi-word with question mark or common NLP starters
+        nlp_starters = {
+            "was", "wie", "wer", "wo", "wann", "warum", "welche", "welcher",
+            "zeige", "liste", "erstelle", "mache", "hilf", "erklaere", "starte",
+            "stoppe", "konfiguriere", "setze", "finde", "suche", "pruefe",
+            "what", "how", "who", "where", "when", "why", "which",
+            "show", "list", "create", "make", "help", "explain", "start",
+            "stop", "configure", "check", "find", "search", "please",
+            "kannst", "koenntest", "bitte", "can", "could", "would",
+            "hallo", "hey", "hi", "hello",
+        }
+        if first_token in nlp_starters or command.rstrip().endswith("?"):
+            return True
+        # Fallback: if more than 3 words and no obvious shell pattern → NLP
+        if len(words) > 3:
+            return True
+        return False
+
+    async def _init_agent(self):
+        """Lazy-init the tb-admin agent. Returns agent or None."""
+        async with self._agent_init_lock:
+            if self._agent is not None:
+                return self._agent
+
+            self._isaa = self.app.get_mod("isaa")
+            if self._isaa is None:
+                return None
+
+            print(Style.YELLOW("🤖 Initializing admin agent..."))
+            try:
+                await self._isaa.init_isaa(name="cli_admin")
+                builder = self._isaa.get_agent_builder(
+                    "cli_admin",
+                    add_base_tools=True,
+                    with_dangerous_shell=True,
+                )
+                builder.with_stream(True)
+
+                # Import and register toolbox_admin tools
+                from toolboxv2.flows.toolbox_admin import (
+                    _build_toolbox_tools, _build_docs_tools, _build_manifest_tools,
+                    SYSTEM_PROMPT,
+                )
+                for func, name, desc, cats in _build_toolbox_tools(self._isaa, self.app):
+                    builder.add_tool(func, name, desc, category=cats,
+                                     flags={"system_tool_by_name": True})
+                for func, name, desc, cats in _build_docs_tools(self.app):
+                    builder.add_tool(func, name, desc, category=cats,
+                                     flags={"system_tool_by_name": True})
+                for func, name, desc, cats in _build_manifest_tools(self.app):
+                    builder.add_tool(func, name, desc, category=cats,
+                                     flags={"system_tool_by_name": True})
+
+                # Macro tools for the agent
+                for func, name, desc, cats in self._build_macro_tools():
+                    builder.add_tool(func, name, desc, category=cats,
+                                     flags={"system_tool_by_name": True})
+
+                builder.config.system_message = SYSTEM_PROMPT
+
+                await self._isaa.register_agent(builder)
+                self._agent = await self._isaa.get_agent("cli_admin")
+                print(Style.GREEN(f"🤖 Agent ready ({self._agent.amd.fast_llm_model})"))
+                return self._agent
+            except Exception as e:
+                print(Style.RED(f"🤖 Agent init failed: {e}"))
+                return None
+
+    def _build_macro_tools(self):
+        """Build macro management tools for the agent."""
+        tools = []
+
+        async def macro_list() -> str:
+            """List all available macros with their descriptions."""
+            if not self.macros:
+                return "No macros defined."
+            lines = []
+            for name, macro in sorted(self.macros.items()):
+                tags = f" [{', '.join(macro.tags)}]" if macro.tags else ""
+                lines.append(f"  {name}{tags} - {macro.description or 'no description'} "
+                             f"({len(macro.commands)} cmds, used {macro.usage_count}x)")
+            return "Macros:\n" + "\n".join(lines)
+
+        async def macro_create(name: str, commands: str, description: str = "",
+                               tags: str = "", loop_count: int = 1) -> str:
+            """Create a new macro. commands = newline-separated command strings."""
+            if name in self.macros:
+                return f"Macro '{name}' already exists. Delete first or use a different name."
+            cmd_list = [c.strip() for c in commands.split("\n") if c.strip()]
+            if not cmd_list:
+                return "No commands provided."
+            tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+            self.macros[name] = Macro(
+                name=name, commands=cmd_list, description=description,
+                tags=tag_list, loop_count=loop_count,
+            )
+            self._save_macros()
+            return f"Macro '{name}' created with {len(cmd_list)} commands."
+
+        async def macro_execute(name: str, args: str = "") -> str:
+            """Execute a macro by name with optional space-separated args."""
+            cmd = f"{name} {args}".strip() if args else name
+            await self._handle_macro_command(cmd)
+            return f"Macro '{name}' executed."
+
+        async def macro_delete(name: str) -> str:
+            """Delete a macro."""
+            if name not in self.macros:
+                return f"Macro '{name}' not found."
+            del self.macros[name]
+            self._save_macros()
+            return f"Macro '{name}' deleted."
+
+        tools.extend([
+            (macro_list, "macro_list", "List all CLI macros", ["cli", "read"]),
+            (macro_create, "macro_create",
+             "Create a CLI macro (name, commands as newline-separated string, description, tags, loop_count)",
+             ["cli", "write"]),
+            (macro_execute, "macro_execute",
+             "Execute a CLI macro by name with optional args",
+             ["cli", "execute"]),
+            (macro_delete, "macro_delete", "Delete a CLI macro", ["cli", "write"]),
+        ])
+        return tools
+
+    async def _handle_nlp_command(self, command: str):
+        """Route natural language input to the admin agent."""
+        agent = await self._init_agent()
+        if agent is None:
+            print(Style.YELLOW("🤖 Agent not available (ISAA not loaded)."))
+            print(Style.GREY("   Falling back to shell..."))
+            await self._handle_shell_command(command)
+            return
+
+        print(Style.CYAN("🤖 Agent:"))
+        try:
+            async for chunk in agent.a_stream_verbose(
+                query=command,
+                session_id="cli_admin",
+                human_online=True,
+            ):
+                if chunk:
+                    print(chunk, end="", flush=True)
+            print()  # final newline
+        except Exception as e:
+            print(Style.RED(f"\n🤖 Agent error: {e}"))
+            if self.app.debug:
+                import traceback
+                traceback.print_exc()
+
+    async def _agent_query(self, args=""):
+        """Explicit agent query via :agent or :ask commands."""
+        if not args:
+            try:
+                args = await self.session.prompt_async("🤖 Ask: ")
+            except (EOFError, KeyboardInterrupt):
+                return
+        if args.strip():
+            await self._handle_nlp_command(args.strip())
+
     async def _handle_variable_command(self, command: str):
         """Handle variable operations - unified with macro system"""
         # $var = value
@@ -915,6 +1116,8 @@ class BeastCLI:
                        if module_name.lower() in m.lower()]
             if similar:
                 print(f"💡 Did you mean: {', '.join(similar[:5])}")
+            elif self._is_nlp_input(command):
+                await self._handle_nlp_command(command)
             else:
                 await self._handle_shell_command(command)
             return
@@ -1404,6 +1607,13 @@ class BeastCLI:
         """Cleanup before exit"""
         # Save history, state, etc.
         print("\n🧹 Cleaning up...")
+
+        # Agent cleanup
+        if self._isaa is not None:
+            try:
+                await self._isaa.on_exit()
+            except Exception:
+                pass
 
         # Save context
         with BlobFile("cli/context.c", key=Code.DK()(), mode="w") as f:

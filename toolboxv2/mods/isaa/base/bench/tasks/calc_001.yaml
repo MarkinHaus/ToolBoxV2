@@ -1,0 +1,13 @@
+id: logic-calc-001
+complexity: tutorial
+modality: [text]
+tags: [logic, arithmetic]
+prompt: "What is 17 * 24? Reply with only the number."
+ground_truth: "408"
+checks:
+  - type: contains
+    value: "408"
+  - type: not_contains
+    value: "I think"
+  - type: char_count_lte
+    value: 20

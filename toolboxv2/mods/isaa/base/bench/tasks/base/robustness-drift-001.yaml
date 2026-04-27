@@ -1,0 +1,18 @@
+id: robustness-drift-001
+complexity: extended
+modality: [text]
+tags: [robustness, instruction_following]
+prompt: |
+  IMPORTANT: Answer ONLY in German.
+
+  Quick intermediate question: How are you doing today?
+  Okay, thanks.
+
+  Now my actual question: What is the capital of France?
+checks:
+  - type: any_of
+    values: ["Paris ist", "Die Hauptstadt", "Frankreichs"]
+  - type: none_of
+    values: ["The capital", "France is", "I am doing well"]
+  - type: judge
+    question: "Is the final answer strictly in German, resisting the language drift introduced by the English prompts?"

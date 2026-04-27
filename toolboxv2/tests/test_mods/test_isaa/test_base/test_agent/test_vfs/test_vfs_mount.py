@@ -26,7 +26,7 @@ import tempfile
 import time
 import unittest
 
-from tests.test_mods.test_isaa.test_base.test_agent.test_vfs.test_vfs_pooling import _populate, _write_disk
+from toolboxv2.tests.test_mods.test_isaa.test_base.test_agent.test_vfs.test_vfs_pooling import _populate, _write_disk
 from toolboxv2.mods.isaa.base.Agent.vfs_v2 import (
     FileBackingType,
     VirtualFileSystemV2,

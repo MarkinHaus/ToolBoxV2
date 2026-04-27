@@ -424,6 +424,7 @@ RUNNER_KEYS = [
     "docksh",
     "docker-image",
     "fl",
+    "jsx",
     "ytss",
     "LiveSync",
 ]
@@ -1192,7 +1193,7 @@ def edit_logs():
 
 def run_tests(test_path, args=None, cwd=None, venv=None):
     if args is None:
-        args = []
+        args = ["-n", "auto"]
 
     # Eigene venv nutzen wenn angegeben
     if venv:
@@ -1907,6 +1908,9 @@ def runner_setup():
         "docksh": _run_docksh,
         "docker-image": lambda: __import__(
             "toolboxv2.utils.clis.docker_image_cli", fromlist=["main"]
+        ).main(),
+        "jsx": lambda: __import__(
+            "toolboxv2.utils.clis.cli_jsx_server", fromlist=["main"]
         ).main(),
         "fl": lambda: __import__(
             "toolboxv2.feature_loader", fromlist=["main"]

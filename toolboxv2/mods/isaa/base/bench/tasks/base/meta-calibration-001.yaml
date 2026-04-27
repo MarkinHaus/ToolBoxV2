@@ -1,0 +1,19 @@
+id: meta-calibration-001
+complexity: tutorial
+modality: [text]
+tags: [meta, calibration]
+prompt: |
+  Answer the following question. AFTER your answer, provide your confidence level on a scale of 1-10 (1=guessing, 10=absolutely sure).
+
+  Format:
+  ANSWER: [your answer]
+  CONFIDENCE: [1-10]
+
+  Question: What is 14 * 16?
+checks:
+  - type: contains
+    value: "224"
+  - type: any_of
+    values: ["CONFIDENCE: 9", "CONFIDENCE: 10", "CONFIDENCE: 8"]
+  - type: not_contains
+    value: "CONFIDENCE: 1"

@@ -1,0 +1,17 @@
+id: logic-calc-001
+complexity: tutorial
+modality: [text]
+tags: [logic, arithmetic]
+prompt: |
+  Event planning:
+  20 people are definitely coming. 30 people are unsure (historically 60% of unsure people show up).
+  We need 2 portions per person.
+  How many portions should we order in total?
+ground_truth: "76"
+checks:
+  - type: contains
+    value: "76"
+  - type: not_contains
+    value: "100"
+  - type: judge
+    question: "Does the model correctly calculate 20 + (30 * 0.6) = 38 people, and 38 * 2 = 76 portions?"

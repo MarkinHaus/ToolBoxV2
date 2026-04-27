@@ -743,7 +743,7 @@ class AgentLiveNarrator:
         self._history_cursor: int = 0
 
         # Print Toggle (Default True, CLI kann es auf False setzen)
-        self.enable_console_print = os.getenv("NARRATOR_CONSOLE_PRINT", "true").lower() == "true"
+        self.enable_console_print = os.getenv("NARRATOR_CONSOLE_PRINT", "false").lower() == "true"
 
         #  Callback für Live-Streaming
         self.on_live_update_callback = None

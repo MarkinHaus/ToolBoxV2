@@ -1,0 +1,21 @@
+id: logic-master-002
+complexity: phd
+modality: [text]
+tags: [logic, constraint_satisfaction]
+prompt: |
+  We have 3 tasks (Design, Code, Test) to distribute among 3 people:
+  - Anna: only does Design or Test
+  - Ben: only does Code
+  - Cara: does anything except Code
+
+  Everyone must take exactly 1 task. Who does what?
+ground_truth: "Ben: Code, Anna: Design/Test, Cara: Test/Design"
+checks:
+  - type: contains
+    value: "Ben"
+  - type: contains
+    value: "Code"
+  - type: none_of
+    values: ["Anna: Code", "Cara: Code", "Ben: Design", "Ben: Test"]
+  - type: judge
+    question: "Does the model assign Code to Ben, and correctly distribute Design and Test between Anna and Cara?"

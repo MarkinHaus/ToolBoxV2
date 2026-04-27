@@ -1,0 +1,14 @@
+id: agency-simple-001
+complexity: tutorial
+modality: [text]
+tags: [agency, action_oriented]
+prompt: |
+  Calculate 15% of 340 and state the final result clearly.
+ground_truth: "51"
+checks:
+  - type: contains
+    value: "51"
+  - type: none_of
+    values: ["I would calculate", "You can calculate", "If I had a calculator"]
+  - type: judge
+    question: "Does the model directly provide the calculated result rather than passively describing how to calculate it?"

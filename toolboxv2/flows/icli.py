@@ -215,6 +215,7 @@ class TaskView:
     status: str = "running"
     persona: str = ""
     narrator_msg: str = ""
+    narrator_plan: str = ""
     status_msg: str = ""
     skills: list[str] = field(default_factory=list)
     iteration: int = 0
@@ -264,6 +265,8 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
         tv.skills = chunk["skills"]
     if chunk.get("narrator_msg"):
         tv.narrator_msg = chunk["narrator_msg"]
+    if chunk.get("narrator_mini_plan"):
+        tv.narrator_plan = chunk["narrator_mini_plan"]
     if chunk.get("status_msg"):
         tv.status_msg = chunk["status_msg"]
     if chunk.get("iter") is not None:
@@ -595,7 +598,7 @@ def _append_task_line(out: list, tv: TaskView, focused: bool, pad: str = " " * 1
             narrator_msg = tv.narrator_msg
             if len(narrator_msg) > len(pad) - 15:
                 narrator_msg = narrator_msg[:len(pad) - 15] + "..."
-            out.append((bg + n_col, f"{icon}{narrator_msg} "))
+            out.append((bg + n_col, f"{icon}{narrator_msg} | {tv.narrator_plan.replace(narrator_msg, '')}"))
 
     # Nested-Sub-Counter (nur für Non-Summary, Non-Swarm-Sub mit nested Kindern)
     if tv.sub_agents and not tv.is_swarm_summary and not tv.is_swarm_sub:
@@ -7715,6 +7718,7 @@ class ISAA_Host:
 
             if ctx is None:
                 print_status("No working context found", "info")
+                return
 
             if not hasattr(ctx, "working_history"):
                 print_status("No working context found", "info")

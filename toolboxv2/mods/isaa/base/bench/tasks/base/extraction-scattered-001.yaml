@@ -1,0 +1,23 @@
+id: extraction-scattered-001
+complexity: extended
+modality: [text]
+tags: [extraction, synthesis]
+prompt: |
+  Notes:
+  1: "Müller joined in 2015, IT"
+  2: "IT and Support merged to Tech-Services in 2023"
+  3: "The employee with the longest tenure leads Tech-Services"
+  4: "Schmidt joined Support in 2018"
+  5: "Weber joined IT in 2020"
+
+  Who leads Tech-Services?
+ground_truth: "Müller"
+checks:
+  - type: contains
+    value: "Müller"
+  - type: not_contains
+    value: "Schmidt"
+  - type: not_contains
+    value: "Weber"
+  - type: judge
+    question: "Does the model deduce that Müller leads the team because they have the longest tenure (2015)?"

@@ -1,0 +1,20 @@
+id: extract-scattered-001
+complexity: tutorial
+modality: [text]
+tags: [extraction, text]
+prompt: |
+  Read the following text and extract the person's age and city.
+  Reply in JSON format: {"age": ..., "city": "..."}
+
+  "My name is Clara. I moved to Munich three years ago when I turned 28.
+  Now I work at a startup downtown. I'm 31 years old and love the city."
+checks:
+  - type: json_valid
+  - type: json_has_key
+    key: age
+  - type: json_has_key
+    key: city
+  - type: contains
+    value: "31"
+  - type: any_of
+    values: ["Munich", "munich", "München"]

@@ -57,6 +57,11 @@ from .base.AgentUtils import (
 )
 from .base.ai_semantic_memory import AISemanticMemory
 
+from toolboxv2.mods.isaa.memory_index import (
+    MemoryIndex, MemoryIndexEdit, MemoryIndexEntry,
+    load_index, save_index, render_index, filter_spaces_by_query,
+    build_initial_index, update_index_after_save,
+)
 # Optional dill import for tool serialization
 try:
     import dill
@@ -1532,6 +1537,42 @@ uncertain_about_X
         if self.default_setter:
             builder = self.default_setter(builder, name)
 
+        async def get_ac_vfs_helper():
+            agent = await self.get_agent(name)
+            session = await agent.session_manager.get_or_create(agent.active_session)
+            return session.vfs
+
+        # ── Memory Index: load or build ────────────────────────────
+        _data_dir = get_app().data_dir
+        _memory_index: MemoryIndex = load_index(_data_dir, name)
+        _index_built = len(_memory_index.entries) > 0
+
+        async def _ensure_index() -> MemoryIndex:
+            nonlocal _memory_index, _index_built
+            if not _index_built:
+                _memory_index = await build_initial_index(self, name, _data_dir)
+                _index_built = True
+                # push to VFS
+                try:
+                    vfs = await get_ac_vfs_helper()
+                    vfs.set_memory_index_file(render_index(_memory_index))
+                except Exception as e:
+                    print(e)
+                    import traceback
+                    traceback.print_exc()
+                    pass
+            return _memory_index
+
+        async def _sync_index_to_vfs():
+            try:
+                vfs = await get_ac_vfs_helper()
+                vfs.set_memory_index_file(render_index(_memory_index))
+            except Exception as e:
+                print(e)
+                import traceback
+                traceback.print_exc()
+                pass
+
         async def memory_recall(query: str, search_type: str = "auto") -> str:
             """
             Ruft persistentes Wissen, Architektur-Dokus oder Projekt-Kontext ab.
@@ -1540,16 +1581,28 @@ uncertain_about_X
                 query: Wonach gesucht wird (z.B. "Wie funktioniert das Auth-System?")
                 search_type: "auto" (Vektor+BM25), "concept" (Sucht nach Konzept-Schlagwort) oder "relations" (Graph-Verbindungen für eine Entity)
             """
+            # index-based space filter (local keyword match, no LLM)
+            idx = await _ensure_index()
+            relevant_spaces = filter_spaces_by_query(idx, query)
+            # if we found relevant spaces and search_type is auto, use the top match
+            effective_space = name
+            if relevant_spaces and search_type == "auto":
+                effective_space = relevant_spaces[0]
+
             mem_instance = self.get_memory()
-            # MKA initialisieren (nutzt den default space des Agenten)
-            mka = MemoryKnowledgeActor(memory=mem_instance, space_name=name)
+            mka = MemoryKnowledgeActor(memory=mem_instance, space_name=effective_space)
 
             if search_type == "concept":
-                return await mka.search_by_concept(query, k=5)
+                result = await mka.search_by_concept(query, k=5)
             elif search_type == "relations":
-                return await mka.get_related_entities(query, depth=2)
+                result = await mka.get_related_entities(query, depth=2)
             else:
-                return await mka.search(query, k=4, min_similarity=0.4)
+                result = await mka.search(query, k=4, min_similarity=0.4)
+
+            if relevant_spaces and len(relevant_spaces) > 1:
+                result += f"\n\n[Index: auch relevant in Spaces: {', '.join(relevant_spaces[1:4])}]"
+
+            return result
 
         async def memory_save(content: str, concepts: list[str] = None, entity_name: str = None) -> str:
             """
@@ -1558,18 +1611,23 @@ uncertain_about_X
             Args:
                 content: Der Text/Fakt, der gespeichert werden soll.
                 concepts: Liste von Schlagwörtern (z.B. ["auth", "database", "api"]).
-                entity_name: Optional. Wenn es eine Code-Komponente ist, benenne sie hier (z.B. "AuthService"), um den Graphen aufzubauen.
+                entity_name: Optional. Komponenten-Name für den Graphen (z.B. "AuthService").
             """
             mem_instance = self.get_memory()
             mka = MemoryKnowledgeActor(memory=mem_instance, space_name=name)
 
-            # Punkt hinzufügen
             res = await mka.add_data_point(text=content, content_type="fact", concepts=concepts)
 
-            # Wenn es eine Entity ist, direkt in den Graphen einhängen
             if entity_name:
                 await mka.add_entity(entity_id=entity_name.lower(), entity_type="component", name=entity_name)
                 res += f"\nEntity '{entity_name}' zum Architektur-Graphen hinzugefügt."
+
+            # index update
+            nonlocal _memory_index
+            _memory_index = await update_index_after_save(
+                self, name, _data_dir, _memory_index, name, content, concepts
+            )
+            await _sync_index_to_vfs()
 
             return res
 
@@ -1654,7 +1712,12 @@ uncertain_about_X
                     category=["local", "shell", "commands"],
                     flags={"shell": True, "detect_shell": True, "dangerous":True}
                 )
-
+        if not _index_built:
+            import asyncio
+            try:
+                asyncio.get_running_loop().create_task(_ensure_index())
+            except RuntimeError:
+                pass
         builder.with_budget_manager(max_cost=100.0)
         builder.save_config(str(agent_config_path), format="json")
         return builder
@@ -2006,7 +2069,7 @@ uncertain_about_X
         form_data: dict | None = None,
         data: dict | None = None,
         **kwargs,
-    ):
+    ) -> dict[str, Any] | None:
         if request is not None or form_data is not None or data is not None:
             data_dict = (request.request.body if request else None) or form_data or data
             format_schema = format_schema or data_dict.get("format_schema")
@@ -2026,7 +2089,8 @@ uncertain_about_X
         else:
             raise TypeError("agent_name must be str or FlowAgent instance")
 
-        return await agent.a_format_class(format_schema, task, auto_context=auto_context)
+        res = await agent.a_format_class(format_schema, task, auto_context=auto_context)
+        return res
 
     async def run_agent(
         self,

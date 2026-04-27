@@ -1,0 +1,11 @@
+id: cal-018
+complexity: phd
+modality: [text]
+tags: [math, reasoning]
+prompt: |
+  How many distinct ways can you arrange the letters in the word "MISSISSIPPI"?
+  Reply with only the number.
+ground_truth: "34650"
+checks:
+  - type: contains
+    value: "34650"

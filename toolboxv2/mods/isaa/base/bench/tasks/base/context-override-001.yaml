@@ -1,0 +1,20 @@
+id: context-override-001
+complexity: extended
+modality: [text]
+tags: [context, attention]
+prompt: |
+  Here are some project updates:
+  [Monday] The deadline is March 15th.
+  [Tuesday] We hired a new designer.
+  [Wednesday] ATTENTION: Deadline pushed to March 22nd!
+  [Thursday] Server maintenance scheduled.
+
+  What is the current deadline for the project?
+ground_truth: "March 22nd"
+checks:
+  - type: contains
+    value: "March 22"
+  - type: not_contains
+    value: "March 15"
+  - type: judge
+    question: "Does the model correctly identify March 22nd as the updated deadline, ignoring the outdated March 15th?"

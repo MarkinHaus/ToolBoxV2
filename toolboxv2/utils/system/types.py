@@ -2811,7 +2811,7 @@ class AppType:
                                 if not isinstance(result, Result):
                                     result = Result.ok(result)
                                 if test_class is not None:
-                                    test_class.assertTrue(not result.is_error())
+                                    test_class.assertTrue(not result.is_error(), result.print(show=False, full_data=True))
                                 if result.info.exec_code == 0:
                                     infos['calls'][function_name] = [test_kwargs, str(result)]
                                     infos['functions_sug'] += 1

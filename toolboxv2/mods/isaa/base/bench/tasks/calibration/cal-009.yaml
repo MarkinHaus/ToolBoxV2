@@ -1,0 +1,15 @@
+id: cal-009
+complexity: extended
+modality: [text]
+tags: [extraction, json]
+prompt: |
+  Extract the name and age from this text and reply in JSON format: {"name": "...", "age": ...}
+
+  "My name is Elena and I am 27 years old."
+ground_truth: '{"name": "Elena", "age": 27}'
+checks:
+  - type: json_valid
+  - type: contains
+    value: "Elena"
+  - type: contains
+    value: "27"

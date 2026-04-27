@@ -107,6 +107,8 @@ def _decode_content(raw: str) -> str:
     Idempotent: mehrfaches Aufrufen = selbes Ergebnis.
     NIEMALS selbst \\\\n schreiben — das erzeugt Backslash+n im File.
     """
+    if True:
+        return raw
     # Schritt 1: double-escaped abbauen (\\\\n -> \\n), max 3 Durchlaeufe
     for _ in range(3):
         if '\\\\' not in raw:
@@ -930,7 +932,7 @@ def make_vfs_shell(session: "AgentSessionV2"):
                 # Start: Sidecar anlegen, Datei leeren
                 state = {"total": total, "received": [], "size": 0}
                 vfs.write(state_path, json.dumps(state))
-                r = vfs.write(path, content)
+                r = vfs.write(path, content  if content.endswith("\n") else content + "\n")
             else:
                 # Folge-Block: Sidecar lesen, anhängen
                 sr = vfs.read(state_path)
@@ -944,7 +946,7 @@ def make_vfs_shell(session: "AgentSessionV2"):
                 if state["total"] != total:
                     return _err(f"write_chunk: total mismatch (expected {state['total']}, got {total})")
 
-                r = vfs.append(path, content)
+                r = vfs.append(path, content  if content.endswith("\n") else content + "\n")
 
             if not r.get("success"):
                 return _err(r.get("error", "write failed"))

@@ -1,0 +1,8 @@
+{
+  "model": "zglm/glm-5-turbo",
+  "disqualified": true,
+  "batch_sizes": {},
+  "accuracy": {
+    "tutorial": 0.0
+  }
+}

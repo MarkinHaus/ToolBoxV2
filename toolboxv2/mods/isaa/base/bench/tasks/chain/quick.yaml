@@ -1,0 +1,7 @@
+id: quick
+name: Quick Smoke Test
+description: Minimal task set for fast validation
+tasks:
+  - logic-calc-001
+  - extract-scattered-001
+  - honest-impossible-001

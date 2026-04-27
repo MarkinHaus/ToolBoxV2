@@ -1,0 +1,9 @@
+id: cal-001
+complexity: tutorial
+modality: [text]
+tags: [math, logic]
+prompt: "What is 7 * 8? Reply with only the number."
+ground_truth: "56"
+checks:
+  - type: contains
+    value: "56"

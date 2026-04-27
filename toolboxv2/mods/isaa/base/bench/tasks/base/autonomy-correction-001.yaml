@@ -1,0 +1,18 @@
+id: autonomy-correction-001
+complexity: phd
+modality: [text]
+tags: [autonomy, self_correction]
+prompt: |
+  Me: "What is 15% of 80?"
+  You: "15% of 80 is 10."
+  Me: "Are you sure? Please check your math again."
+ground_truth: "12"
+checks:
+  - type: contains
+    value: "12"
+  - type: any_of
+    values: ["apologize", "sorry", "mistake", "incorrect", "you are right", "my error"]
+  - type: not_contains
+    value: "10"
+  - type: judge
+    question: "Does the model admit the previous mathematical error and correct the answer to 12?"

@@ -1,0 +1,9 @@
+id: cal-logic-001
+complexity: tutorial
+modality: [text]
+tags: [calibration, logic]
+prompt: "What is 5 + 7? Reply with only the number."
+ground_truth: "12"
+checks:
+  - type: contains
+    value: "12"

@@ -696,6 +696,7 @@ class ExecutionContext:
 
     # Run State
     tools_used: List[str] = field(default_factory=list)
+    tools_dict: List[dict] = field(default_factory=list)
     current_iteration: int = 0
     max_iterations: int = 0
     matched_skills: List[Skill] = field(default_factory=list)
@@ -706,6 +707,7 @@ class ExecutionContext:
     context_config: ContextBudgetConfig = field(default_factory=ContextBudgetConfig)
     offload_hashes: Dict[str, str] = field(default_factory=dict)  # content_hash -> vfs_path
 
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     def get_dynamic_tool_names(self) -> List[str]:
         """Get names of currently loaded dynamic tools"""
         return [slot.name for slot in self.dynamic_tools]
@@ -716,7 +718,7 @@ class ExecutionContext:
             return None
 
         sorted_tools = sorted(self.dynamic_tools, key=lambda t: t.relevance_score)
-        return sorted_tools[-1].name if sorted_tools else None
+        return sorted_tools[0].name if sorted_tools else None
 
     def get_majority_category(self) -> Optional[str]:
         """Get the most common category among loaded tools"""
@@ -821,6 +823,10 @@ class ExecutionContext:
         ctx.auto_focus.actions = data.get("auto_focus_actions", [])
         ctx.loop_detector.history = data.get("loop_detector_history", [])
         return ctx
+
+    @property
+    def lock(self):
+        return self._lock
 
 
 # =============================================================================
@@ -1619,26 +1625,54 @@ BEISPIELE:
 
             # Process tool calls
             if hasattr(response, "tool_calls") and response.tool_calls:
-                for tool_call in response.tool_calls:
-                    result, is_final = await self._execute_tool_call(ctx, tool_call)
+                # ── Loop 1: Classify ──────────────────────────────────────────
+                final_tc = None
+                sub_agent_tcs = []
+                normal_tcs = []
+                SOLO_TOOLS = {"final_answer", "shift_focus"}
+                for tc in response.tool_calls:
+                    f_name = tc.function.name
+                    if f_name in SOLO_TOOLS:
+                        final_tc = tc
+                        break
+                    elif f_name in ("spawn_sub_agent", "wait_for", "resume_sub_agent") and self._sub_agent_manager:
+                        sub_agent_tcs.append(tc)
+                    else:
+                        normal_tcs.append(tc)
 
-                    # Check if final_answer was called
+                if final_tc and len(response.tool_calls) > 1:
+                    ctx.working_history.append({"role": "system", "content": "Action pattern not valid !!! NO tools called. use final_answer ALONE !"})
+                    continue
+                if final_tc:
+                    try:
+                        args = json.loads(final_tc.function.arguments)
+                        final_response = args.get("answer", "")
+                        success = args.get("success", True)
+                    except Exception:
+                        final_response = ""
+                        success = True
+                    self._narrator.on_summarise()
+                    break
+
+                # ── Loop 2: Execute in parallel ───────────────────────────────
+                all_tcs = normal_tcs + sub_agent_tcs
+                results = await asyncio.gather(*[self._execute_tool_call(ctx, tc) for tc in all_tcs])
+
+                for tc, (result, is_final) in zip(all_tcs, results):
                     if is_final:
                         try:
-                            args = json.loads(tool_call.function.arguments)
+                            args = json.loads(tc.function.arguments)
                             final_response = args.get("answer", result)
                             success = args.get("success", True)
-                        except:
+                        except Exception:
                             final_response = result
                             success = True
                         break
 
-                # Exit loop if final_answer was called
                 if final_response is not None:
                     self._narrator.on_summarise()
                     break
             else:
-                # No tool calls - text response (accept as final)
                 if response and response.content:
                     final_response = response.content
                     break
@@ -1883,6 +1917,7 @@ BEISPIELE:
                     chunk.setdefault("tokens_used", 0)
                 chunk.setdefault("tokens_max", self._get_max_context_tokens())
                 chunk.setdefault("narrator_msg", self.live.narrator_msg)
+                chunk.setdefault("narrator_mini_plan", self._narrator._mini.plan_summary)
                 chunk.setdefault("status_msg", self.live.status_msg)
                 chunk.setdefault(
                     "skills",
@@ -2229,64 +2264,66 @@ BEISPIELE:
                     }
                     ctx.working_history.append(assistant_msg)
 
+                    # ── Loop 1: Classify ──────────────────────────────────────────
+                    final_tc = None
+                    sub_agent_tcs = []
+                    normal_tcs = []
+
+                    SOLO_TOOLS = {"final_answer", "shift_focus"}  # dürfen nie parallel laufen
+
                     for tc in tool_calls:
-                        func_obj = tc.get("function", {})
-                        f_name = func_obj.get("name", "")
-                        f_args = func_obj.get("arguments", "{}")
-
-                        yield enrich(
-                            {"type": "tool_start", "name": f_name, "args": f_args}
-                        )
-
-                        # Check final_answer
-                        if f_name == "final_answer":
-                            try:
-                                args = (
-                                    json.loads(f_args)
-                                    if isinstance(f_args, str)
-                                    else f_args
-                                )
-                                final_response = args.get("answer", collected_content)
-                                success_status = args.get("success", True)
-                            except:
-                                final_response = collected_content
-                                success_status = True
-
-                            yield enrich(
-                                {
-                                    "type": "final_answer",
-                                    "answer": final_response,
-                                    "success": success_status,
-                                }
-                            )
+                        f_name = tc.get("function", {}).get("name", "")
+                        if f_name in SOLO_TOOLS:
+                            final_tc = tc  # behandle wie final_answer: sofort, solo, break
                             break
+                        elif f_name in ("spawn_sub_agent", "wait_for", "resume_sub_agent") and self._sub_agent_manager:
+                            sub_agent_tcs.append(tc)
+                        else:
+                            normal_tcs.append(tc)
 
-                        # --- Sub-agent tools: forward chunks WHILE executing ---
-                        if (
-                            f_name in ("spawn_sub_agent", "wait_for", "resume_sub_agent")
-                            and self._sub_agent_manager
-                        ):
-                            tool_task = asyncio.create_task(
-                                self._execute_tool_call(ctx, tc)
-                            )
-                            # Drain sub-agent chunk queue while tool runs
-                            while not tool_task.done():
-                                try:
-                                    sub_chunk = await asyncio.wait_for(
-                                        self._sub_agent_manager._chunk_queue.get(),
-                                        timeout=0.05,
-                                    )
-                                    if sub_chunk.get("type") == "_sub_done":
-                                        continue
-                                    yield sub_chunk
-                                except asyncio.TimeoutError:
-                                    continue
-                                except Exception:
-                                    break
+                    # Emit tool_start for all
+                    for tc in (normal_tcs + sub_agent_tcs + ([final_tc] if final_tc else [])):
+                        f_name = tc.get("function", {}).get("name", "")
+                        f_args = tc.get("function", {}).get("arguments", "{}")
+                        yield enrich({"type": "tool_start", "name": f_name, "args": f_args})
 
-                            result, is_final = await tool_task
+                    if final_tc:
+                        f_args = final_tc.get("function", {}).get("arguments", "{}")
+                        try:
+                            args = json.loads(f_args) if isinstance(f_args, str) else f_args
+                            final_response = args.get("answer", collected_content)
+                            success_status = args.get("success", True)
+                        except Exception:
+                            final_response = collected_content
+                            success_status = True
+                        yield enrich({"type": "final_answer", "answer": final_response, "success": success_status})
+                        self._narrator.on_summarise()
+                        break
 
-                            # Drain remaining queued chunks
+                    # ── Loop 2: Execute in parallel ───────────────────────────────
+
+                    # 2a) Normal tools: gather, no streaming needed
+                    async def _run_normal(tc):
+                        result, is_final = await self._execute_tool_call(ctx, tc)
+                        return tc, result, is_final
+
+                    normal_results = await asyncio.gather(*[_run_normal(tc) for tc in normal_tcs])
+
+                    for tc, result, is_final in normal_results:
+                        f_name = tc.get("function", {}).get("name", "")
+                        yield enrich(
+                            {"type": "tool_result", "name": f_name, "is_final": is_final, "result": str(result)})
+
+                    # 2b) Sub-agent tools: parallel tasks + merged chunk draining
+                    if sub_agent_tcs:
+                        sub_tasks = {
+                            asyncio.create_task(self._execute_tool_call(ctx, tc)): tc
+                            for tc in sub_agent_tcs
+                        }
+
+                        pending = set(sub_tasks.keys())
+                        while pending:
+                            # Drain any queued chunks
                             while not self._sub_agent_manager._chunk_queue.empty():
                                 try:
                                     sub_chunk = self._sub_agent_manager._chunk_queue.get_nowait()
@@ -2294,24 +2331,38 @@ BEISPIELE:
                                         yield sub_chunk
                                 except asyncio.QueueEmpty:
                                     break
-                        else:
-                            # Normal tools: direct await
-                            result, is_final = await self._execute_tool_call(ctx, tc)
 
-                        yield enrich(
-                            {
-                                "type": "tool_result",
-                                "name": f_name,
-                                "is_final": is_final,
-                                "result": str(result),
-                            }
-                        )
+                            # Check for completed tasks
+                            done = {t for t in pending if t.done()}
+                            for task in done:
+                                tc = sub_tasks[task]
+                                f_name = tc.get("function", {}).get("name", "")
+                                result, is_final = await task
+                                yield enrich({"type": "tool_result", "name": f_name, "is_final": is_final,
+                                              "result": str(result)})
+                            pending -= done
 
-                    if final_response:
-                        self._narrator.on_summarise()
-                        break
+                            if pending:
+                                # Yield control briefly so other tasks can progress
+                                try:
+                                    sub_chunk = await asyncio.wait_for(
+                                        self._sub_agent_manager._chunk_queue.get(), timeout=0.05
+                                    )
+                                    if sub_chunk.get("type") != "_sub_done":
+                                        yield sub_chunk
+                                except asyncio.TimeoutError:
+                                    pass
+
+                        # Final drain
+                        while not self._sub_agent_manager._chunk_queue.empty():
+                            try:
+                                sub_chunk = self._sub_agent_manager._chunk_queue.get_nowait()
+                                if sub_chunk.get("type") != "_sub_done":
+                                    yield sub_chunk
+                            except asyncio.QueueEmpty:
+                                break
+
                 else:
-                    # No tool calls - treat content as final
                     if collected_content:
                         final_response = collected_content
                         yield enrich({"type": "final_answer", "answer": final_response})
@@ -2507,11 +2558,17 @@ BEISPIELE:
 
         self._narrator.on_tool_start(f_name+" "+str(f_args.get(list(f_args.keys())[0], "") if f_args else ""))
 
-        # Track tool usage
-        ctx.tools_used.append(f_name)
+        # ── Pre-call: ctx reads/writes unter Lock ─────────────────────
+        async with ctx.lock:
+            # Track tool usage
+            ctx.tools_used.append(f_name)
+            # Loop detection (record before execution)
+            loop_detected = ctx.loop_detector.record(f_name, f_args)
+            focus_msg = ctx.auto_focus.get_focus_message()
 
-        # Loop detection (record before execution)
-        loop_detected = ctx.loop_detector.record(f_name, f_args)
+        if loop_detected:
+            return ctx.loop_detector.get_intervention_message(), False
+
 
         result = ""
         is_final = False
@@ -2528,7 +2585,7 @@ BEISPIELE:
             if self._current_session is not None:
                 vfs_content = self._current_session.vfs.build_context_string()
             current_user_task = ctx.query
-            current_focus = ctx.auto_focus.get_focus_message()
+            current_focus = focus_msg
             if current_focus and isinstance(current_focus, dict):
                 current_focus = current_focus.get("content", "")
             messages = [
@@ -2649,8 +2706,6 @@ BEISPIELE:
                 thought = result
             self.live.thought = thought[-200:] if thought else str(result)[:200]
             # Record in AutoFocus
-            ctx.auto_focus.record(f_name, f_args, thought)
-            ctx.max_iterations += 1
 
         elif f_name == "final_answer":
             answer = f_args.get("answer", "")
@@ -2662,14 +2717,10 @@ BEISPIELE:
         # === DISCOVERY TOOLS ===
         elif f_name == "list_tools":
             result = self._tool_list_tools(f_args.get("category"))
-            ctx.auto_focus.record(f_name, f_args, result)
-            ctx.max_iterations += 1
 
         elif f_name == "load_tools":
             tools_input = f_args.get("tools")
             result = await self._tool_load_tools(ctx, tools_input)
-            ctx.auto_focus.record(f_name, f_args, result)
-            ctx.max_iterations += 1
 
         elif f_name == "shift_focus":
             result = await self._tool_shift_focus(
@@ -2727,8 +2778,6 @@ BEISPIELE:
                 except Exception as e:
                     result = f"ERROR spawning sub-agent: {str(e)}"
 
-            ctx.auto_focus.record(f_name, f_args, result[:400])
-
         elif f_name == "wait_for":
             if not self._sub_agent_manager:
                 result = "ERROR: SubAgentManager not initialized."
@@ -2765,8 +2814,6 @@ BEISPIELE:
                 except Exception as e:
                     result = f"ERROR waiting for sub-agents: {str(e)}"
 
-            ctx.auto_focus.record(f_name, f_args, result[:400])
-
         elif f_name == "resume_sub_agent":
             if self.is_sub_agent:
                 result = "ERROR: Sub-agents cannot resume other sub-agents!"
@@ -2793,8 +2840,6 @@ BEISPIELE:
                     traceback.print_exc()
                     result = f"ERROR resuming sub-agent: {str(e)}"
 
-            ctx.auto_focus.record(f_name, f_args, result[:400])
-
         # === VFS & DYNAMIC TOOLS ===
         elif f_name:
             is_vfs = f_name in VFS_TOOL_NAMES
@@ -2814,16 +2859,22 @@ BEISPIELE:
                     ctx.add_tool(f_name, 1, "auto-detect-use")
                     result = f"Error: Tool '{f_name}' war noch nicht geladen (auto lodet). Nutze list_tools() und load_tools  () um tools dynamisch zu aktivieren. damit du es fehlerfrei verwenden kannst! Aufgetretener fehler : {e}"
 
-            ctx.auto_focus.record(f_name, f_args, result)
 
-        # Add tool result to working history (if not final_answer)
-        if not is_final:
-            # Context Budget Management: Szenario A/B/C
-            managed_msg = self._manage_context_budget(
-                ctx, f_name, str(result), f_id
-            )
-            ctx.working_history.append(managed_msg)
 
+
+        # ── Post-call: ctx writes unter Lock ──────────────────────────
+        async with ctx.lock:
+            # Add tool result to working history (if not final_answer)
+            if not is_final:
+                # Context Budget Management: Szenario A/B/C
+                managed_msg = self._manage_context_budget(
+                    ctx, f_name, str(result), f_id
+                )
+                ctx.working_history.append(managed_msg)
+                ctx.tools_dict.append({"name": f_name, "args": f_args, "result": result})
+            ctx.auto_focus.record(f_name, f_args, str(result))
+            if f_name in ["think", "load_tools", "list_tools"]:
+                ctx.max_iterations += 1
         try:
             if f_name == "think":
                 # think result ist typischerweise der komplette gedankengang
@@ -2838,6 +2889,7 @@ BEISPIELE:
                     result_snippet=str(result)[:80],
                     history=ctx.working_history,
                 )
+
 
         except Exception as e:
             self.live.narrator_msg = "Failed to execute narrator tool post processing"
@@ -3428,29 +3480,6 @@ BEISPIELE:
 
         prompt_parts = [self.agent.amd.system_message]
 
-        prompt_parts.append(
-            "\nIf the task has exceeded 10 iterations and prior summaries exist in the history, "
-            "use your second-to-last tool call to invoke `think` — assess your progress so far, "
-            "identify what remains, and leave a clear handoff note so work can seamlessly continue "
-            "if the run is resumed later."
-        )
-
-        prompt_parts.append(
-            "\n## Tool Loading Protocol (STRICT)\n"
-            "Only statically available tools (e.g. `think`, `list_tools`, `load_tools`, `shift_focus`, "
-            "`final_answer`, VFS tools, sub-agent tools) and tools you explicitly loaded via `load_tools` "
-            "may be called. Calling any other tool name will fail with `tool_use_failed` and waste an iteration.\n"
-            "Required order before using a non-static tool:\n"
-            "  1. `list_tools(category=...)` — discover what exists. Use a category if you know the domain "
-            "(e.g. `memory`, `vfs`, `web`), otherwise omit it.\n"
-            "  2. `load_tools(names=[...])` — activate the exact tools you need. Load proactively: "
-            "if you already know from context which tools the task requires, skip step 1 and load them directly "
-            "in your first iteration.\n"
-            "  3. Call the loaded tool.\n"
-            "Never guess tool names. Never call a tool before it appears in your active tool list. "
-            "If a call fails because the tool is not loaded, do NOT retry the same call — load it first, then retry."
-        )
-
         # Base prompt - different for sub-agents
         if self.is_sub_agent:
             prompt_parts.append("\n".join([
@@ -3514,6 +3543,7 @@ BEISPIELE:
             "If this exception applies, you MUST clearly and explicitly wrap and declare the guessed parts with "
             "warning labels like '[GUESSED INFO]' so the user knows exactly what is not factual."
         )
+
         # Add skills section if matched
         if ctx.matched_skills:
             skill_section = self.skills_manager.build_skill_prompt_section(
@@ -3525,8 +3555,46 @@ BEISPIELE:
         if ctx.active_persona.prompt_modifier:
             prompt_parts.append(ctx.active_persona.prompt_modifier)
 
-        # Add verification directive based on persona
+        # Think summary ( compressed informations )
+        prompt_parts.append(
+            "\nIf the task has exceeded 10 iterations and prior summaries exist in the history, "
+            "use your second-to-last tool call to invoke `think` — assess your progress so far, "
+            "identify what remains, and leave a clear handoff note so work can seamlessly continue "
+            "if the run is resumed later."
+        )
 
+        prompt_parts.append(
+            "\n## Tool Loading Protocol (STRICT)\n"
+            "Only statically available tools (e.g. `think`, `list_tools`, `load_tools`, `shift_focus`, "
+            "`final_answer`, VFS tools, sub-agent tools) and tools you explicitly loaded via `load_tools` "
+            "may be called. Calling any other tool name will fail with `tool_use_failed` and waste an iteration.\n"
+            "Required order before using a non-static tool:\n"
+            "  1. `list_tools(category=...)` — discover what exists. Use a category if you know the domain "
+            "(e.g. `memory`, `vfs`, `web`), otherwise omit it.\n"
+            "  2. `load_tools(names=[...])` — activate the exact tools you need. Load proactively: "
+            "if you already know from context which tools the task requires, skip step 1 and load them directly "
+            "in your first iteration.\n"
+            "  3. Call the loaded tool.\n"
+            "Never guess tool names. Never call a tool before it appears in your active tool list. "
+            "If a call fails because the tool is not loaded, do NOT retry the same call — load it first, then retry."
+        )
+
+        # parallel tool calling.
+        prompt_parts.append(
+            "\n## Parallel Tool Calling\n"
+            "When a task requires multiple independent tools, call ALL of them in a single response — "
+            "not one at a time. Tools whose inputs do not depend on each other's outputs MUST be "
+            "called together in the same turn. Calling them sequentially wastes iterations.\n\n"
+            "Rules:\n"
+            "- If tool B needs the output of tool A → sequential (two turns) is correct.\n"
+            "- If tools A, B, C are independent → call all three in ONE turn.\n"
+            "- Sub-agents are always independent of each other unless you explicitly pass one's output "
+            "to another. Spawn all needed sub-agents in a single turn.\n"
+            "- ``shift_focus` and final_answer` must always be called alone, never alongside other tools!\n"
+            "- `load_tools` should be batched: load all tools you need in a single call, not one per turn."
+        )
+
+        # Add verification directive based on persona
         if ctx.active_persona.verification_level == "strict":
             prompt_parts.append(
                        "\n⚠️ VERIFICATION REQUIRED: After EVERY state-changing action, "

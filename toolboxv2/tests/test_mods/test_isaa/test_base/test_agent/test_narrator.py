@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock, patch
 import os
 
-from tests.a_util import async_test
+from toolboxv2.tests.a_util import async_test
 
 os.environ["TOOLBOX_TESTING"] = "true"
 
