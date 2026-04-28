@@ -432,30 +432,6 @@ class MockIPython:
         except OSError:
             pass
 
-    def _virtual_open(self, filepath, mode='r', *args, **kwargs):
-        """Custom open function that uses virtual filesystem"""
-        abs_path = self.vfs._resolve_path(filepath)
-
-        if 'w' in mode or 'a' in mode:
-            # Ensure parent directory exists
-            abs_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Use actual filesystem but track in virtual fs
-        real_file = open(abs_path, mode, *args, **kwargs)
-
-        if 'r' in mode:
-            # Track file content in virtual filesystem when reading
-            rel_path = str(abs_path.relative_to(self.vfs.base_dir))
-            if rel_path not in self.vfs.virtual_files:
-                try:
-                    self.vfs.virtual_files[rel_path] = real_file.read()
-                    real_file.seek(0)
-                except UnicodeDecodeError:
-                    # Handle binary files
-                    pass
-
-        return real_file
-
     def reset(self):
         """Reset the interpreter state"""
         self.user_ns = {

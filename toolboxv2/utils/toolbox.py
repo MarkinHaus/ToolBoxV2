@@ -294,7 +294,10 @@ class App(AppType, metaclass=Singleton):
             return
 
         from toolboxv2.utils.system.tb_logger import enable_live_observability, get_logger
-        if await self._obs_adapter.health_check():
+        res = self._obs_adapter.health_check()
+        if asyncio.iscoroutine(res):
+            res = await res
+        if res:
             enable_live_observability(
                 self._obs_adapter,
                 system_stream=obs.dashboard.system_stream,

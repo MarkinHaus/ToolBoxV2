@@ -1,8 +1,8 @@
 # API Reference - ToolBoxV2 Registry
 
 **Base URL**: `https://registry.simplecore.app/api/v1`
-**Version**: 1.0
-**Authentication**: Bearer Token (JWT)
+**Version**: 1.1
+**Authentication**: Bearer Token (JWT via CloudM.Auth)
 
 ---
 
@@ -13,8 +13,12 @@
 3. [Artifacts](#artifacts)
 4. [Publishers](#publishers)
 5. [Search](#search)
-6. [Health](#health)
-7. [Error Codes](#error-codes)
+6. [Versions (Update-Ping)](#versions-update-ping)
+7. [Dependency Resolution](#dependency-resolution)
+8. [Diff (Incremental Updates)](#diff-incremental-updates)
+9. [Admin](#admin)
+10. [Health](#health)
+11. [Error Codes](#error-codes)
 
 ---
 
@@ -39,6 +43,8 @@ Authorization: Bearer <token>
 }
 ```
 
+**Hinweis**: Users werden automatisch beim ersten Login erstellt.
+
 ### Get Publisher Info
 
 ```http
@@ -50,26 +56,24 @@ Authorization: Bearer <token>
 ```json
 {
   "id": "pub_xyz789",
-  "name": "My Publisher",
-  "slug": "my-publisher",
-  "status": "verified",
-  "packages_count": 5
+  "name": "my-publisher",
+  "display_name": "My Publisher",
+  "verification_status": "verified"
 }
 ```
 
-### Create Publisher
+### Register as Publisher
 
 ```http
-POST /api/v1/auth/publisher
+POST /api/v1/auth/register-publisher
 Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "name": "My Publisher",
-  "slug": "my-publisher",
+  "name": "my-publisher",
+  "display_name": "My Publisher",
   "email": "contact@example.com",
-  "website": "https://example.com",
-  "github": "mygithub"
+  "homepage": "https://example.com"
 }
 ```
 
@@ -77,9 +81,9 @@ Content-Type: application/json
 ```json
 {
   "id": "pub_new123",
-  "name": "My Publisher",
-  "slug": "my-publisher",
-  "status": "unverified"
+  "name": "my-publisher",
+  "display_name": "My Publisher",
+  "verification_status": "unverified"
 }
 ```
 
@@ -98,7 +102,7 @@ GET /api/v1/packages?page=1&per_page=20&package_type=mod
 |-----------|------|---------|-------------|
 | page | integer | 1 | Page number |
 | per_page | integer | 20 | Items per page (1-100) |
-| package_type | string | - | Filter: `mod`, `library`, `artifact` |
+| package_type | string | - | Filter: `mod`, `library`, `artifact`, `theme`, `plugin` |
 
 **Response (200 OK):**
 ```json
@@ -107,15 +111,10 @@ GET /api/v1/packages?page=1&per_page=20&package_type=mod
     {
       "name": "CloudM",
       "display_name": "CloudM Module",
-      "version": "2.0.0",
       "package_type": "mod",
       "description": "Cloud management module",
-      "author": "ToolBoxV2",
-      "license": "MIT",
-      "homepage": "https://github.com/toolboxv2/cloudm",
-      "downloads": 1234,
-      "visibility": "public",
-      "created_at": "2025-01-15T10:00:00Z"
+      "latest_version": "2.0.0",
+      "total_downloads": 1234
     }
   ],
   "total": 1,
@@ -128,7 +127,6 @@ GET /api/v1/packages?page=1&per_page=20&package_type=mod
 
 ```http
 GET /api/v1/packages/{name}
-Authorization: Bearer <token> (optional)
 ```
 
 **Response (200 OK):**
@@ -136,21 +134,12 @@ Authorization: Bearer <token> (optional)
 {
   "name": "CloudM",
   "display_name": "CloudM Module",
-  "version": "2.0.0",
   "package_type": "mod",
-  "description": "Full description here...",
-  "readme": "# CloudM\n\n...",
-  "author": "ToolBoxV2",
-  "license": "MIT",
-  "homepage": "https://github.com/toolboxv2/cloudm",
-  "repository": "https://github.com/toolboxv2/cloudm.git",
-  "keywords": ["cloud", "management", "automation"],
+  "description": "Cloud management module",
   "latest_version": "2.0.0",
-  "downloads": 1234,
-  "visibility": "public",
-  "versions": ["1.0.0", "1.5.0", "2.0.0"],
-  "created_at": "2025-01-15T10:00:00Z",
-  "updated_at": "2025-02-01T15:30:00Z"
+  "total_downloads": 1234,
+  "homepage": "https://github.com/MarkinHaus/ToolBoxV2",
+  "repository": "https://github.com/MarkinHaus/ToolBoxV2.git"
 }
 ```
 
@@ -165,23 +154,15 @@ Content-Type: application/json
   "name": "my-mod",
   "display_name": "My Awesome Mod",
   "description": "This mod does awesome things",
-  "package_type": "mod",
-  "visibility": "unlisted",
-  "homepage": "https://github.com/user/my-mod",
-  "repository": "https://github.com/user/my-mod.git",
-  "license": "MIT",
-  "keywords": ["utility", "automation"]
+  "package_type": "mod"
 }
 ```
 
 **Response (201 Created):**
 ```json
 {
-  "name": "my-mod",
-  "display_name": "My Awesome Mod",
-  "version": null,
-  "visibility": "unlisted",
-  "created_at": "2025-02-25T10:00:00Z"
+  "id": "my-mod",
+  "name": "my-mod"
 }
 ```
 
@@ -194,12 +175,9 @@ Content-Type: application/json
 
 {
   "description": "Updated description",
-  "readme": "# Updated readme\n\n...",
   "visibility": "public"
 }
 ```
-
-**Response (200 OK):** Updated package object
 
 ### Delete Package
 
@@ -208,7 +186,7 @@ DELETE /api/v1/packages/{name}
 Authorization: Bearer <token>
 ```
 
-**Response (204 No Content):** Package deleted
+**Response (204 No Content)**
 
 ### Upload Package Version
 
@@ -226,36 +204,30 @@ changelog: "Initial release"
 ```bash
 curl -X POST https://registry.simplecore.app/api/v1/packages/my-mod/upload \
   -H "Authorization: Bearer $TOKEN" \
-  -F "file=@my-mod-1.0.0.tbx" \
+  -F "file=@my-mod-1.0.0.zip" \
   -F "version=1.0.0" \
   -F "changelog=Initial release"
-```
-
-**Response (201 Created):**
-```json
-{
-  "name": "my-mod",
-  "version": "1.0.0",
-  "released_at": "2025-02-25T10:00:00Z",
-  "checksum": "abc123...",
-  "size_bytes": 12345
-}
 ```
 
 ### Get Download URL
 
 ```http
 GET /api/v1/packages/{name}/versions/{version}/download
-Authorization: Bearer <token> (optional, required for private)
+Authorization: Bearer <token> (required for private/unlisted)
 ```
 
 **Response (200 OK):**
 ```json
 {
-  "url": "https://minio.simplecore.app/bucket/my-mod-1.0.0.tbx?signature=...",
+  "url": "https://minio.simplecore.app/bucket/my-mod-1.0.0.zip?signature=...",
   "expires_in": 3600
 }
 ```
+
+**Download-Berechtigungen:**
+- **Public**: Jeder kann downloaden
+- **Unlisted**: Nur authentifizierte User
+- **Private**: Nur der Owner
 
 ### Yank Version
 
@@ -273,28 +245,36 @@ Content-Type: application/json
 
 ## Artifacts
 
+Artifacts sind kompilierte Binaries und Apps (z.B. SimpleCore Desktop, TB CLI).
+
+### Artifact Types
+
+| Type | Beschreibung |
+|------|-------------|
+| `tauri_app` | Tauri Desktop Application |
+| `cli_executable` | CLI Binary |
+| `browser_extension` | Browser Extension |
+| `mobile_app` | Mobile App |
+| `library` | Compiled Library |
+
 ### List Artifacts
 
 ```http
-GET /api/v1/artifacts?page=1&per_page=20
+GET /api/v1/artifacts?page=1&per_page=20&artifact_type=tauri_app
 ```
 
-**Response (200 OK):**
-```json
+### Create Artifact
+
+```http
+POST /api/v1/artifacts
+Authorization: Bearer <token>
+Content-Type: application/json
+
 {
-  "artifacts": [
-    {
-      "id": "art_abc123",
-      "name": "TBCompiler",
-      "artifact_type": "compiler",
-      "description": "ToolBox compiler",
-      "version": "1.0.0",
-      "publisher": "ToolBoxV2"
-    }
-  ],
-  "total": 1,
-  "page": 1,
-  "per_page": 20
+  "name": "SimpleCore",
+  "artifact_type": "tauri_app",
+  "description": "SimpleCore Desktop Application",
+  "homepage": "https://simplecore.app"
 }
 ```
 
@@ -304,28 +284,69 @@ GET /api/v1/artifacts?page=1&per_page=20
 GET /api/v1/artifacts/{name}
 ```
 
-### Get Latest Build
+### Upload Build
 
 ```http
-GET /api/v1/artifacts/{name}/latest?platform=windows&architecture=x86_64
+POST /api/v1/artifacts/{name}/builds
+Authorization: Bearer <token>
+Content-Type: multipart/form-data
+
+version: "1.0.0"
+platform: "windows"
+architecture: "x64"
+changelog: "Initial release"
+installer_type: "msi"
+min_os_version: "10.0"
+file: <binary>
 ```
 
-**Query Parameters:**
-- `platform`: `windows`, `linux`, `macos`
-- `architecture`: `x86_64`, `arm64`, `universal`
+**cURL Example:**
+```bash
+curl -X POST https://registry.simplecore.app/api/v1/artifacts/SimpleCore/builds \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "version=1.0.0" \
+  -F "platform=windows" \
+  -F "architecture=x64" \
+  -F "installer_type=msi" \
+  -F "file=@SimpleCore-1.0.0-win-x64.msi"
+```
+
+**Platforms**: `all`, `windows`, `linux`, `macos`, `android`, `ios`
+**Architectures**: `all`, `x64`, `x86`, `arm64`, `arm32`
+
+### Get Latest Build for Platform
+
+```http
+GET /api/v1/artifacts/{name}/latest?platform=windows&architecture=x64
+```
 
 **Response (200 OK):**
 ```json
 {
-  "artifact_name": "TBCompiler",
   "version": "1.0.0",
-  "platform": "windows",
-  "architecture": "x86_64",
-  "filename": "tb-compiler-1.0.0-win-x64.exe",
-  "size_bytes": 25600000,
-  "checksum": "def456...",
-  "downloads": 0,
-  "released_at": "2025-02-25T10:00:00Z"
+  "released_at": "2025-02-25T10:00:00Z",
+  "changelog": "Initial release",
+  "build": {
+    "platform": "windows",
+    "architecture": "x64",
+    "filename": "SimpleCore-1.0.0-win-x64.msi",
+    "size_bytes": 25600000,
+    "checksum_sha256": "def456..."
+  }
+}
+```
+
+### Get Build Download URL
+
+```http
+GET /api/v1/artifacts/{name}/versions/{version}/download?platform=windows&architecture=x64
+```
+
+**Response (200 OK):**
+```json
+{
+  "url": "https://minio.simplecore.app/bucket/SimpleCore-1.0.0.msi?signature=...",
+  "expires_in": 3600
 }
 ```
 
@@ -336,7 +357,7 @@ GET /api/v1/artifacts/{name}/latest?platform=windows&architecture=x86_64
 ### List Publishers
 
 ```http
-GET /api/v1/publishers?page=1&per_page=20
+GET /api/v1/publishers?page=1&per_page=20&verified_only=true
 ```
 
 ### Get Publisher
@@ -349,15 +370,34 @@ GET /api/v1/publishers/{slug}
 ```json
 {
   "id": "pub_xyz789",
-  "name": "My Publisher",
-  "slug": "my-publisher",
-  "email": "contact@example.com",
-  "website": "https://example.com",
-  "github": "mygithub",
-  "status": "verified",
-  "packages_count": 5,
-  "total_downloads": 50000,
-  "created_at": "2025-01-01T00:00:00Z"
+  "name": "my-publisher",
+  "display_name": "My Publisher",
+  "verification_status": "verified",
+  "package_count": 5,
+  "total_downloads": 50000
+}
+```
+
+### Submit Verification Request
+
+```http
+POST /api/v1/publishers/verify
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "method": "github",
+  "data": {
+    "username": "mygithub"
+  }
+}
+```
+
+**Response (202 Accepted):**
+```json
+{
+  "status": "submitted",
+  "message": "Verification request submitted"
 }
 ```
 
@@ -371,11 +411,6 @@ GET /api/v1/publishers/{slug}
 GET /api/v1/search?q=discord&page=1&per_page=20
 ```
 
-**Query Parameters:**
-- `q`: Search query
-- `page`: Page number
-- `per_page`: Items per page
-
 **Response (200 OK):**
 ```json
 {
@@ -384,12 +419,12 @@ GET /api/v1/search?q=discord&page=1&per_page=20
       "name": "discord-mod",
       "display_name": "Discord Integration",
       "description": "Integrate with Discord",
-      "version": "1.0.0",
-      "author": "ToolBoxV2",
-      "relevance": 0.95
+      "latest_version": "1.0.0",
+      "total_downloads": 100
     }
   ],
   "total": 1,
+  "query": "discord",
   "page": 1,
   "per_page": 20
 }
@@ -403,13 +438,158 @@ GET /api/v1/search/suggest?q=disc&limit=5
 
 **Response (200 OK):**
 ```json
+["discord-mod", "discord-utils"]
+```
+
+---
+
+## Versions (Update-Ping)
+
+Batch-Abfrage der neuesten Versionen — genutzt von ToolBoxV2 für Update-Checks.
+
+```http
+GET /api/v1/versions?names=CloudM&names=discord-mod
+```
+
+**Response (200 OK):**
+```json
 {
-  "suggestions": [
-    "discord-mod",
-    "discord-utils",
-    "discord-bot"
-  ]
+  "versions": {
+    "CloudM": "2.0.0",
+    "discord-mod": "1.0.0"
+  }
 }
+```
+
+Leere `names` → gibt alle Packages zurück.
+
+---
+
+## Dependency Resolution
+
+### Resolve Dependencies
+
+```http
+POST /api/v1/resolve
+Content-Type: application/json
+
+{
+  "requirements": ["CloudM>=2.0.0", "discord-mod>=1.0.0"],
+  "toolbox_version": "0.1.25"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "resolved": {
+    "CloudM": {
+      "name": "CloudM",
+      "version": "2.0.0",
+      "download_url": "https://...",
+      "checksum": "abc123..."
+    }
+  },
+  "conflicts": [],
+  "warnings": []
+}
+```
+
+### Check Compatibility
+
+```http
+GET /api/v1/resolve/check?package=CloudM&version=2.0.0&toolbox_version=0.1.25
+```
+
+**Response (200 OK):**
+```json
+{
+  "compatible": true,
+  "warnings": [],
+  "conflicts": []
+}
+```
+
+---
+
+## Diff (Incremental Updates)
+
+Diffs ermöglichen inkrementelle Updates — nur die Änderungen zwischen zwei Versionen werden übertragen.
+
+### Get Diff Info
+
+```http
+GET /api/v1/packages/{name}/diff/{from_version}/{to_version}
+```
+
+**Response (200 OK):**
+```json
+{
+  "package_name": "CloudM",
+  "from_version": "1.0.0",
+  "to_version": "2.0.0",
+  "patch_size": 12345,
+  "full_size": 98765,
+  "compression_ratio": 0.125,
+  "patch_storage_path": "diffs/CloudM/1.0.0-2.0.0.patch",
+  "patch_checksum": "abc123..."
+}
+```
+
+### Download Diff Patch
+
+```http
+GET /api/v1/packages/{name}/diff/{from_version}/{to_version}/download
+```
+
+### Create Diff (Pre-generation)
+
+```http
+POST /api/v1/packages/{name}/diff/create?from_version=1.0.0&to_version=2.0.0&force=false
+```
+
+---
+
+## Admin
+
+Alle Admin-Endpoints erfordern `is_admin = true`.
+
+### List Pending Publishers
+
+```http
+GET /api/v1/packages/admin/pending?page=1&per_page=50
+Authorization: Bearer <admin-token>
+```
+
+### Verify Publisher
+
+```http
+POST /api/v1/packages/admin/{publisher_id}/verify
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{"notes": "Verified via API"}
+```
+
+### Reject Publisher
+
+```http
+POST /api/v1/packages/admin/{publisher_id}/reject
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{"notes": "Reason for rejection"}
+```
+
+### Revoke Verification
+
+```http
+POST /api/v1/packages/admin/{publisher_id}/revoke
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{"notes": "Reason for revocation"}
 ```
 
 ---
@@ -424,9 +604,7 @@ GET /api/v1/health
 
 **Response (200 OK):**
 ```json
-{
-  "status": "healthy"
-}
+{"status": "healthy"}
 ```
 
 ### Readiness Check
@@ -439,8 +617,10 @@ GET /api/v1/ready
 ```json
 {
   "status": "ready",
-  "database": "connected",
-  "storage": "connected"
+  "details": {
+    "database": true,
+    "storage": {"healthy": true}
+  }
 }
 ```
 
@@ -452,7 +632,7 @@ GET /api/v1/ready
 |--------|------|-------------|
 | 400 | BAD_REQUEST | Invalid request parameters |
 | 401 | UNAUTHORIZED | Missing or invalid authentication |
-| 403 | FORBIDDEN | Insufficient permissions |
+| 403 | FORBIDDEN | Insufficient permissions / Admin required |
 | 404 | NOT_FOUND | Resource not found |
 | 409 | CONFLICT | Resource already exists |
 | 422 | UNPROCESSABLE_ENTITY | Validation error |
@@ -484,41 +664,6 @@ X-RateLimit-Reset: 1740447600
 
 ---
 
-## Webhooks (Coming Soon)
-
-### Webhook Events
-
-| Event | Description |
-|-------|-------------|
-| `package.created` | New package created |
-| `package.updated` | Package updated |
-| `package.deleted` | Package deleted |
-| `version.published` | New version published |
-| `version.yanked` | Version yanked |
-
-### Webhook Delivery
-
-Webhooks are delivered as POST requests:
-
-```http
-POST https://your-webhook-url
-X-Webhook-Signature: sha256=signature
-X-Webhook-Event: package.created
-Content-Type: application/json
-
-{
-  "event": "package.created",
-  "timestamp": "2025-02-25T10:00:00Z",
-  "data": {
-    "name": "my-mod",
-    "version": "1.0.0",
-    "publisher": "my-publisher"
-  }
-}
-```
-
----
-
 ## Examples
 
 ### Python (httpx)
@@ -543,57 +688,34 @@ async def upload_package(token: str, file_path: str):
         return response.json()
 ```
 
-### JavaScript (fetch)
-
-```javascript
-// Get packages
-async function getPackages() {
-  const response = await fetch('https://registry.simplecore.app/api/v1/packages');
-  return await response.json();
-}
-
-// Upload package
-async function uploadPackage(token, file) {
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('version', '1.0.0');
-
-  const response = await fetch(
-    'https://registry.simplecore.app/api/v1/packages/my-mod/upload',
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`
-      },
-      body: formData
-    }
-  );
-  return await response.json();
-}
-```
-
 ### cURL
 
 ```bash
-# Get packages
+# List packages
 curl https://registry.simplecore.app/api/v1/packages
 
 # Get package
 curl https://registry.simplecore.app/api/v1/packages/CloudM
 
-# Upload package
+# Upload package version
 curl -X POST https://registry.simplecore.app/api/v1/packages/my-mod/upload \
   -H "Authorization: Bearer $TOKEN" \
-  -F "file=@my-mod.tbx" \
+  -F "file=@my-mod.zip" \
   -F "version=1.0.0"
 
-# Download package
-curl -O -J $(curl -s https://registry.simplecore.app/api/v1/packages/my-mod/versions/1.0.0/download \
+# Check for updates (batch)
+curl "https://registry.simplecore.app/api/v1/versions?names=CloudM&names=discord-mod"
+
+# Upload artifact build
+curl -X POST https://registry.simplecore.app/api/v1/artifacts/SimpleCore/builds \
   -H "Authorization: Bearer $TOKEN" \
-  | jq -r '.url')
+  -F "version=1.0.0" \
+  -F "platform=linux" \
+  -F "architecture=x64" \
+  -F "file=@simplecore-linux-x64.deb"
 ```
 
 ---
 
-**Letzte Aktualisierung**: 2026-02-25
-**API Version**: 1.0
+**Letzte Aktualisierung**: 2026-04-28
+**API Version**: 1.1

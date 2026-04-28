@@ -4,7 +4,6 @@ from .extras import Name as ExtrasName
 from .LogInSystem import Name as LoginSystemName, open_web_login_web
 from .mini import *
 from .ModManager import Name as ModManagerName
-from .ModManager_tests import run_mod_manager_tests
 from .module import Tools as _Tools
 from .RegistryServer import Name as RegistryServerName
 from .types import User

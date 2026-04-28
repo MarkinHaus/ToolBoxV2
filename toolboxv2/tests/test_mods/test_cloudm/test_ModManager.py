@@ -9,7 +9,7 @@ import yaml
 
 from toolboxv2 import App, get_app
 
-from .ModManager import (
+from mods.CloudM.ModManager import (
     create_and_pack_module,
     increment_version,
     install_from_zip,

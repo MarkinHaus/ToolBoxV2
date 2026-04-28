@@ -322,6 +322,64 @@ async def restart_registry(
     return await start_registry(app, host, port, debug, registry_path, background=True)
 
 
+@export(mod_name=Name, name="admin", version=version, test=False)
+async def run_admin_cli(
+    app: App,
+    registry_path: Optional[str] = None,
+    db_path: Optional[str] = None,
+) -> Result:
+    """Launch the server-side admin CLI for direct DB management.
+
+    Runs admin_cli.py in the tb-registry venv via uv.
+    This is an interactive tool — must be run from a terminal.
+
+    Args:
+        app: ToolBoxV2 application instance.
+        registry_path: Path to tb-registry installation.
+        db_path: Path to registry SQLite database.
+
+    Returns:
+        Result with exit status.
+    """
+    reg_path = Path(registry_path) if registry_path else _find_registry_path()
+
+    if not reg_path or not reg_path.exists():
+        return Result.custom_error(
+            exec_code=-1,
+            info="TB-Registry not found. Set TB_REGISTRY_PATH or install to default location.",
+        )
+
+    admin_script = reg_path / "admin_cli.py"
+    if not admin_script.exists():
+        return Result.custom_error(
+            exec_code=-1,
+            info=f"admin_cli.py not found in {reg_path}",
+        )
+
+    effective_db = db_path or str(reg_path / "data" / "registry.db")
+
+    app.print(f"[RegistryServer] Launching admin CLI")
+    app.print(f"[RegistryServer] Registry: {reg_path}")
+    app.print(f"[RegistryServer] Database: {effective_db}")
+
+    try:
+        process = subprocess.run(
+            ["uv", "run", "python", "admin_cli.py", "--db", effective_db],
+            cwd=str(reg_path),
+            env=os.environ.copy(),
+        )
+        return Result.ok(data={"exit_code": process.returncode})
+
+    except FileNotFoundError:
+        return Result.custom_error(
+            exec_code=-2,
+            info="'uv' not found. Install with: pip install uv",
+        )
+    except KeyboardInterrupt:
+        return Result.ok(info="Admin CLI closed")
+    except Exception as e:
+        return Result.custom_error(exec_code=-3, info=f"Failed to launch: {e}")
+
 @export(
     mod_name=Name,
     name="cli",

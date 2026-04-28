@@ -394,7 +394,7 @@ class HybridMemoryStore:
 
         # ── 2. BM25 via FTS5 ──
         if "bm25" in search_modes:
-            safe_query = self._fts_escape(re.sub(r'[\\/"\'(){}\[\]^~*:!]', ' ', query_text).strip())
+            safe_query = self._fts_escape(re.sub(r'[\\/.:"\'(){}\[\]^~*!@#$&|<>=,;]', ' ', query_text).strip())
             _fts5_unsafe = re.compile(r'[\\/.:"\'(){}\[\]^~*!@#$&|<>=,;]')
             safe_query_text = _fts5_unsafe.sub(' ', query_text).strip()  # oder wie die Variable heißt
             safe_query_text = ' '.join(safe_query_text.split())  # doppelte Spaces entfernen
@@ -1370,7 +1370,7 @@ class HybridMemoryStore:
     def _fts_escape(self, query: str) -> str:
         """Escape FTS5 special characters"""
         # Remove or escape special FTS5 characters (Fix #4: added apostrophe)
-        special_chars = ["*", "^", "-", '"', "(", ")", "{", "}", "[", "]", "'", ":", "~", "+"]
+        special_chars = ["*", "^", "-", '"', "(", ")", "{", "}", "[", "]", "'", ":", "~", "+", "."]
         for char in special_chars:
             query = query.replace(char, " ")
         # FTS5-Keywords neutralisieren

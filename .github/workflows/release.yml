@@ -229,7 +229,7 @@ jobs:
         id: eval
         run: |
           tag="${{ github.event.release.tag_name }}"
-          if [[ "$tag" == *"App"* ]]; then
+          if [[ "$tag" == *"app"* ]]; then
             echo "should_build=true" >> $GITHUB_OUTPUT
           else
             echo "should_build=false" >> $GITHUB_OUTPUT
@@ -566,11 +566,11 @@ jobs:
         run: |
           echo "=== Packing Features for Distribution ==="
           python build_package.py
-          
+
           echo ""
           echo "=== Verifying Package Structure ==="
           python build_package.py --verify
-          
+
           echo ""
           echo "=== Contents of features_packed/ ==="
           ls -la toolboxv2/features_packed/
@@ -579,7 +579,7 @@ jobs:
         run: |
           echo "=== Building Python Package ==="
           python -m build --outdir dist
-          
+
           echo ""
           echo "=== Built Packages ==="
           ls -la dist/
@@ -587,12 +587,12 @@ jobs:
       - name: Verify Package Contents
         run: |
           echo "=== Verifying Package includes Feature ZIPs ==="
-          
+
           # Check wheel contents
           WHEEL=$(ls dist/*.whl | head -1)
           echo "Checking wheel: $WHEEL"
           python -m zipfile -l "$WHEEL" | grep -E "(features_packed|\.zip)" || echo "Warning: No feature ZIPs found in wheel"
-          
+
           # Check tarball contents
           TAR=$(ls dist/*.tar.gz | head -1)
           echo "Checking tarball: $TAR"

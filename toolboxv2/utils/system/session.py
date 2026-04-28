@@ -475,8 +475,12 @@ class Session(metaclass=Singleton):
             except ClientError as e:
                 get_logger().warning(f"Client error: {e}")
                 return False
+            except TimeoutError as e:
+                get_logger().warning(f"Client TimeoutError: {kwargs.get('timeout')=}{e}")
+                return False
             except Exception as e:
-                get_logger().error(f"Error: in session fetch {e}")
+                import traceback
+                get_logger().error(f"Error: in session fetch {e} {traceback.format_exc()}")
                 return requests.request(method, url, json=data if method.upper() == 'POST' else None, headers=headers)
         else:
             return requests.request(

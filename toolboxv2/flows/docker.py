@@ -2,7 +2,7 @@ import os
 import subprocess
 import sys
 
-from toolboxv2 import AppArgs, Result
+from toolboxv2 import AppArgs, Result, tb_root_dir
 
 NAME = 'docker'
 
@@ -51,7 +51,7 @@ def run_image_build(app, args: AppArgs) -> Result:
     app.print("")
 
     # Prüfe ob Dockerfile.toolbox existiert
-    dockerfile_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "Dockerfile.toolbox")
+    dockerfile_path = str(tb_root_dir.parent/ "Dockerfile.toolbox")
     if not os.path.exists(dockerfile_path):
         dockerfile_path = "Dockerfile.toolbox"
 

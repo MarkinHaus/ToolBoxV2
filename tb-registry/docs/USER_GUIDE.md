@@ -1,7 +1,7 @@
 # ToolBoxV2 Registry - Benutzerhandbuch
 
-**Version**: 1.0
-**Stand**: 2026-02-25
+**Version**: 1.1
+**Stand**: 2026-04-28
 
 ---
 
@@ -9,10 +9,12 @@
 
 1. [Über das Registry](#über-das-registry)
 2. [Schnellstart](#schnellstart)
-3. [Mods herunterladen](#mods-herunterladen)
-4. [Mods installieren](#mods-installieren)
-5. [Mods aktualisieren](#mods-aktualisieren)
-6. [Sichtbarkeit von Mods](#sichtbarkeit-von-mods)
+3. [Module verwalten (CloudM)](#module-verwalten-cloudm)
+4. [Registry CLI](#registry-cli)
+5. [Sichtbarkeit von Mods](#sichtbarkeit-von-mods)
+6. [Publishing Kurzanleitung](#publishing-kurzanleitung)
+7. [Troubleshooting](#troubleshooting)
+8. [Häufige Fragen (FAQ)](#häufige-fragen-faq)
 
 ---
 
@@ -22,7 +24,7 @@ Die ToolBoxV2 Registry ist die zentrale Verwaltungsplattform für alle ToolBoxV2
 
 - **Mods**: Erweiterungen für die ToolBoxV2
 - **Libraries**: Nützliche Code-Bibliotheken
-- **Artifacts**: Kompilierte Binaries und Assets
+- **Artifacts**: Kompilierte Binaries und Apps (SimpleCore Desktop, TB CLI)
 
 ---
 
@@ -32,109 +34,123 @@ Die ToolBoxV2 Registry ist die zentrale Verwaltungsplattform für alle ToolBoxV2
 
 ```bash
 # ToolBoxV2 muss installiert sein
+pip install toolboxv2
 tb --version
-
-# Registry-Client ist integriert
-tb registry --help
 ```
 
-### Registry konfigurieren
+### Einloggen (für Contributors)
 
 ```bash
-# Registry-URL setzen (standard: https://registry.tb2.app)
-tb config set registry.url https://registry.tb2.app
-
-# Authentifizierung mit CloudM.Auth
-tb login
+# Login über CloudM.Auth
+tb registry login
 ```
 
 ---
 
-## Mods herunterladen
+## Module verwalten (CloudM)
 
-### Suche nach Mods
+Die primäre Art Module zu installieren und verwalten ist über das CloudM-Modul.
+
+### Interaktiver Manager (empfohlen)
 
 ```bash
+tb -c CloudM mods manager
+```
+
+### Module installieren
+
+```bash
+# Über CloudM
+tb -c CloudM mods install <module-name>
+
+# Shortcut
+tb --install <module-name>
+```
+
+### Module auflisten
+
+```bash
+tb -c CloudM mods list
+```
+
+### Module aktualisieren
+
+```bash
+tb --update <module-name>
+```
+
+### Module entfernen
+
+```bash
+tb --remove <module-name>
+```
+
+### Config generieren (für Publishing)
+
+```bash
+tb -c CloudM mods gen-config <module-name>
+```
+
+---
+
+## Registry CLI
+
+Die Registry-CLI bietet direkten Zugriff auf die Registry-API.
+
+### Mods suchen
+
+```bash
+# Suche nach Mods
+tb registry search discord
+
 # Alle Mods auflisten
 tb registry list
 
-# Suche nach bestimmten Mods
-tb registry search discord
+# Nach Typ filtern und sortieren
+tb registry list --type mod --sort downloads --limit 20
+```
 
-# Infos zu einem Mod
+### Mod-Details anzeigen
+
+```bash
+# Mod-Infos
 tb registry info CloudM
+
+# Mit Versionshistorie
+tb registry info CloudM --versions
 ```
 
 ### Mod herunterladen
 
 ```bash
-# Mod herunterladen
+# Neueste Version herunterladen
 tb registry download CloudM
 
 # Spezifische Version
 tb registry download CloudM --version 2.0.0
 
-# In bestimmten Ordner herunterladen
+# In bestimmten Ordner
 tb registry download CloudM --output ./mods/
 ```
 
----
-
-## Mods installieren
-
-### Installation aus Registry
+### Versionen auflisten
 
 ```bash
-# Mod direkt installieren
-tb install CloudM
-
-# Mit Abhängigkeiten
-tb install CloudM --with-deps
-
-# Update erzwingen
-tb install CloudM --force
+tb registry versions CloudM
 ```
 
-### Lokale Installation
+### Aktueller User
 
 ```bash
-# Aus .tbx Datei installieren
-tb install ./my_mod.tbx
-
-# Aus Ordner installieren
-tb install ./my_mod/
+# Anzeigen wer eingeloggt ist
+tb registry whoami
 ```
 
----
-
-## Mods aktualisieren
-
-### Alle Mods aktualisieren
+### Health Check
 
 ```bash
-# Check for updates
-tb registry check-updates
-
-# Update alle Mods
-tb update --all
-```
-
-### Spezifisches Mod aktualisieren
-
-```bash
-# Ein bestimmtes Mod aktualisieren
-tb update CloudM
-
-# Auf bestimmte Version
-tb update CloudM --version 2.1.0
-```
-
-### Rollback bei Fehlern
-
-```bash
-# Wenn ein Update fehlschlägt, wird automatisch ein Rollback durchgeführt
-# Manuell auf vorherige Version:
-tb rollback CloudM --to-version 2.0.0
+# Registry-Status prüfen
+tb registry health
 ```
 
 ---
@@ -142,8 +158,6 @@ tb rollback CloudM --to-version 2.0.0
 ## Sichtbarkeit von Mods
 
 ### Sichtbarkeitsstufen
-
-Mods können drei Sichtbarkeitsstufen haben:
 
 | Stufe | Beschreibung | Zugriff |
 |-------|-------------|---------|
@@ -167,160 +181,107 @@ tb registry download MyUtilityMod
 # Nicht in der Suche gelistet
 # Aber herunterladen mit Name funktioniert:
 tb registry download MyUnlistedMod
-
-# Nützlich für Beta-Tests oder Invite-Only Mods
 ```
 
 ### Private Mods
 
 ```bash
 # Private Mods benötigen Authentifizierung
-tb login
+tb registry login
 
 # Download nur für den Owner
 tb registry download MyPrivateMod
-
 # Andere bekommen: 403 Forbidden
 ```
 
 ---
 
-## Contributors Guide
+## Publishing Kurzanleitung
 
-### Registrierung als Contributor
-
-1. **Account erstellen**
-   ```bash
-   #TODO fill
-   ```
-
-2. **Publisher erstellen**
-   ```bash
-   #TODO fill
-   ```
-
-3. **Verification beantragen** (optional, für Public Mods)
-   ```bash
-   #TODO fill
-   ```
-
-### Mod hochladen
-
-#### Mod vorbereiten
+### 1. Einloggen
 
 ```bash
-# Mod-Verzeichnis strukturieren
-my-mod/
-├── mod.py              # Hauptdatei
-├── mod.yaml            # Metadaten
-├── requirements.txt    # Abhängigkeiten
-├── README.md           # Dokumentation
-└── assets/             # Bilder, Icons, etc.
+tb registry login
 ```
 
-#### mod.yaml Beispiel
+### 2. Publisher werden
 
-```yaml
-name: my_mod
-display_name: My Awesome Mod
-version: 1.0.0
-description: Eine tolle Mod für ToolBoxV2
-author: MyPublisher
-license: MIT
-homepage: https://github.com/user/my-mod
-
-# Plattformen
-platforms:
-  server:
-    files: ["*.py"]
-    required: true
-  client:
-    files: ["assets/**"]
-    required: false
-
-# Abhängigkeiten
-dependencies:
-  - CloudM >= 2.0.0
-  - isaa_core >= 1.5.0
-```
-
-#### Mod hochladen
+Ein Publisher-Account wird über die API erstellt:
 
 ```bash
-# Mod registrieren (erster Upload)
-tb registry upload ./my-mod/
-
-# Update hochladen
-tb registry upload ./my-mod/ --new-version 1.1.0
-
-# Mit Changelog
-tb registry upload ./my-mod/ --new-version 1.1.0 --changelog "Fixed bugs"
+# Via HTTP API
+curl -X POST https://registry.simplecore.app/api/v1/auth/register-publisher \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-publisher",
+    "display_name": "My Publisher",
+    "email": "contact@example.com"
+  }'
 ```
 
-### Sichtbarkeit festlegen
-
-#### Public Mod
+Oder über den interaktiven Manager:
 
 ```bash
-# Public Mods sind für jeden sichtbar
+tb -c CloudM mods manager
+# → REGISTRY → Register as Publisher
+```
+
+### 3. Package erstellen und hochladen
+
+```bash
+# metadata.json erstellen:
+# {
+#   "name": "my-mod",
+#   "display_name": "My Awesome Mod",
+#   "package_type": "mod",
+#   "version": "1.0.0",
+#   "description": "What my mod does",
+#   "visibility": "unlisted"
+# }
+
+# Package erstellen
+tb registry publish ./my-mod --create --metadata metadata.json
+
+# Version hochladen
+tb registry publish ./my-mod --upload --metadata metadata.json
+```
+
+### 4. Sichtbarkeit festlegen
+
+```bash
+# Auf Public (erfordert verifizierten Publisher)
 tb registry publish my-mod --visibility public
-```
 
-**Voraussetzungen:**
-- Publisher muss verifiziert sein
-- Mod muss Beschreibung und README haben
-- Mod muss getestet sein
-
-#### Unlisted Mod
-
-```bash
-# Unlisted Mods sind nicht in der Suche
+# Auf Unlisted (für Beta/Testing)
 tb registry publish my-mod --visibility unlisted
 
-# Kann mit direktem Link geteilt werden:
-# https://registry.tb2.app/packages/my-mod
-```
-
-#### Private Mod
-
-```bash
-# Private Mods nur für dich
+# Auf Private
 tb registry publish my-mod --visibility private
-
-# Nur du (der Owner) kann herunterladen
-tb registry download my-mod  # Funktioniert für dich
 ```
 
-### Mod verwalten
+### 5. Verification beantragen
 
-#### Infos anzeigen
+Für Public-Mods muss der Publisher verifiziert sein:
 
 ```bash
-# Mod-Details
-tb registry info my-mod
-
-# Versionen auflisten
-tb registry versions my-mod
+# Via HTTP API
+curl -X POST https://registry.simplecore.app/api/v1/publishers/verify \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"method": "github", "data": {"username": "dein-github"}}'
 ```
 
-#### Mod löschen
+Ein Admin prüft den Antrag und verifiziert den Publisher.
+
+### 6. Mod verwalten
 
 ```bash
-# Mod vollständig löschen (Vorsicht!)
-tb registry delete my-mod --force
+# Mod löschen (Vorsicht!)
+tb registry delete my-mod
 
-# Bestimmte Version löschen
-tb registry delete my-mod --version 1.0.0
-```
-
-#### Yank (Zurückziehen)
-
-```bash
-# Version als "yanked" markieren (bleibt gelistet, aber nicht downloadbar)
-tb registry yank my-mod --version 1.0.0 --reason "Critical bug"
-
-# Yank aufheben
-tb registry yank my-mod --version 1.0.0 --undo
+# Version zurückziehen
+tb registry yank my-mod 1.0.0 --reason "Critical bug"
 ```
 
 ---
@@ -331,49 +292,28 @@ tb registry yank my-mod --version 1.0.0 --undo
 
 ```bash
 # Nicht eingeloggt?
-Error: Authentication required
-
+# Error: Authentication required
 # Lösung:
-tb login
+tb registry login
 
 # Token abgelaufen?
-Error: Token expired
-
+# Error: Token expired / 401
 # Lösung:
-tb login --refresh
+tb registry login
 ```
 
 ### Download-Probleme
 
 ```bash
 # Mod nicht gefunden?
-Error: Package not found
-
+# Error: Package not found
 # Lösung: Name prüfen (case-sensitive!)
 tb registry search mod-name
 
 # Version nicht gefunden?
-Error: Version not found
-
+# Error: Version not found
 # Lösung: Verfügbare Versionen prüfen
 tb registry versions mod-name
-```
-
-### Installationsprobleme
-
-```bash
-# Abhängigkeiten fehlen?
-Error: Missing dependencies
-
-# Lösung: Mit --with-deps installieren
-tb install mod-name --with-deps
-
-# Datei beschädigt?
-Error: Checksum mismatch
-
-# Lösung: Cache leeren und neu downloaden
-tb cache clear
-tb registry download mod-name --force
 ```
 
 ---
@@ -382,36 +322,34 @@ tb registry download mod-name --force
 
 ### Wie werde ich Publisher?
 
-```bash
-#TODO fill
-```
+1. Bei der Registry einloggen: `tb registry login`
+2. Publisher registrieren via API (`POST /api/v1/auth/register-publisher`)
+3. Optional: Verification beantragen für Public-Mods
 
 ### Was ist der Unterschied zwischen Public und Unlisted?
 
 | Public | Unlisted |
 |--------|----------|
 | In Suche sichtbar | Nicht in Suche |
-| Jeder kann downloaden | Jeder mit Link kann downloaden |
+| Jeder kann downloaden | Jeder mit Name kann downloaden |
 | Verification benötigt | Keine Verification nötig |
 
 ### Kann ich meinen Mod später von Private auf Public ändern?
 
+Ja:
 ```bash
-# Ja, mit re-publish:
 tb registry publish my-mod --visibility public
 ```
 
-### Wie teile ich einen Unlisted Mod?
+(Erfordert verifizierten Publisher.)
 
-Teile den direkten Link:
-```
-https://registry.tb2.app/packages/my-mod
-```
+### Was ist der Unterschied zwischen `tb registry` und `tb -c CloudM mods`?
 
-Oder den Namen für CLI-Download:
-```bash
-tb registry download my-mod
-```
+- `tb -c CloudM mods` — installiert/verwaltet Module lokal auf deinem System
+- `tb registry` — interagiert direkt mit der Registry-API (suchen, hochladen, herunterladen)
+
+Für alltägliches Modmanagement nutze `tb -c CloudM mods manager`.
+Für Publishing und Registry-Verwaltung nutze `tb registry`.
 
 ---
 
@@ -419,10 +357,10 @@ tb registry download my-mod
 
 - [Contributors Guide](CONTRIBUTORS_GUIDE.md) - Ausführliche Anleitung für Contributors
 - [Developers Guide](DEVELOPERS_GUIDE.md) - Für System-Entwickler
-- [API Documentation](https://registry.tb2.app/api/docs) - Interaktive API-Doku
-- [GitHub Repository](https://github.com/toolboxv2/registry) - Source Code
+- [API Reference](API_REFERENCE.md) - HTTP-API Endpunkte
+- [GitHub Repository](https://github.com/MarkinHaus/ToolBoxV2) - Source Code
 
 ---
 
-**Letzte Aktualisierung**: 2026-02-25
+**Letzte Aktualisierung**: 2026-04-28
 **Kontakt**: support@toolboxv2.app

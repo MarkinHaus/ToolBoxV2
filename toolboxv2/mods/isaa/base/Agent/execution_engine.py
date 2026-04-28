@@ -2211,6 +2211,7 @@ BEISPIELE:
                     # ── Loop 1: Classify ──────────────────────────────────────────
                     final_tc = None
                     sub_agent_tcs = []
+                    think_tcs = []
                     normal_tcs = []
 
                     SOLO_TOOLS = {"final_answer", "shift_focus"}  # dürfen nie parallel laufen
@@ -2222,11 +2223,13 @@ BEISPIELE:
                             break
                         elif f_name in ("spawn_sub_agent", "wait_for", "resume_sub_agent") and self._sub_agent_manager:
                             sub_agent_tcs.append(tc)
+                        elif f_name == "think":
+                            think_tcs.append(tc)
                         else:
                             normal_tcs.append(tc)
 
                     # Emit tool_start for all
-                    for tc in (normal_tcs + sub_agent_tcs + ([final_tc] if final_tc else [])):
+                    for tc in (normal_tcs + think_tcs + sub_agent_tcs + ([final_tc] if final_tc else [])):
                         f_name = tc.get("function", {}).get("name", "")
                         f_args = tc.get("function", {}).get("arguments", "{}")
                         yield enrich({"type": "tool_start", "name": f_name, "args": f_args})
@@ -2258,6 +2261,17 @@ BEISPIELE:
                         yield enrich(
                             {"type": "tool_result", "name": f_name, "is_final": is_final, "result": str(result)})
 
+                    # 2a- Think tools: stream chunks as events
+                    for tc in think_tcs:
+                        f_name = tc.get("function", {}).get("name", "")
+                        f_args_raw = tc.get("function", {}).get("arguments", "{}")
+                        try:
+                            f_args = json.loads(f_args_raw) if isinstance(f_args_raw, str) else f_args_raw
+                        except Exception:
+                            f_args = {}
+
+                        async for chunk_event in self._execute_think_streaming(ctx, tc.get("id"), f_args):
+                            yield chunk_event
                     # 2b) Sub-agent tools: parallel tasks + merged chunk draining
                     if sub_agent_tcs:
                         sub_tasks = {
@@ -2482,6 +2496,147 @@ BEISPIELE:
     # =========================================================================
     # TOOL EXECUTION
     # =========================================================================
+    async def _execute_think_streaming(self, ctx: ExecutionContext, f_id, f_args: dict):
+        """Execute think tool with streaming — yields chunk events, then final tool_result."""
+        f_name = "think"
+
+        # ── Pre-call bookkeeping (same as _execute_tool_call) ──
+        async with ctx.lock:
+            ctx.tools_used.append(f_name)
+            loop_detected = ctx.loop_detector.record(f_name, f_args)
+            focus_msg = ctx.auto_focus.get_focus_message()
+
+        if loop_detected:
+            yield {"type": "tool_result", "name": f_name, "is_final": False,
+                   "result": ctx.loop_detector.get_intervention_message()}
+            return
+
+        self.live.tool = ToolExecution(name=f_name, args_summary=str(f_args)[:120], t_start=time.time())
+        self.live.enter(AgentPhase.TOOL_EXEC)
+        self.live.status_msg = f"Calling tool {f_name}"
+        self._narrator.on_tool_start(f_name + " " + str(f_args.get("thought", "")[:80]))
+
+        thought = f_args.get("thought", "")
+        effort = f_args.get("effort", "fast")
+        working_history = str(ctx.working_history[-25:])
+        vfs_content = ""
+        if self._current_session is not None:
+            vfs_content = self._current_session.vfs.build_context_string()
+        current_user_task = ctx.query
+        current_focus = focus_msg
+        if current_focus and isinstance(current_focus, dict):
+            current_focus = current_focus.get("content", "")
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a strategic reasoning assistant embedded inside an AI agent execution loop.\n"
+                    "Your role is NOT to execute tasks — you analyze the current situation and guide the agent.\n\n"
+                    "## Your output must include:\n"
+                    "1. **Situation Assessment** — What has happened so far? Where is the agent stuck or making progress?\n"
+                    "2. **Key Insights** — Patterns, risks, or opportunities visible in the history.\n"
+                    "3. **Concrete Tips** — Actionable next steps the agent can directly attempt.\n"
+                    "4. **Partial Solutions / Hints** — Sketch approaches, pseudo-steps, or known-good patterns relevant to the task.\n"
+                    "5. **Pitfalls to Avoid** — Common mistakes or dead ends visible from the current trajectory.\n\n"
+                    "Be direct and dense. No filler. The agent will act on your output.\n\n"
+                    f"All available tools : {self._tool_list_tools()}"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"## Original User Task:\n{current_user_task}\n---\n\n"
+                    f"## Current Focus:\n{current_focus}\n---\n\n"
+                    f"## Vfs Content:\n{vfs_content}\n---\n\n"
+                    f"## Agent's Working History:\n{working_history}\n---\n\n"
+                    f"## Agent's Current Thought:\n{thought}\n---\n\n"
+                    "Based on the above, provide your situation assessment, tips, hints, and partial solutions."
+                ),
+            },
+        ]
+
+        # Schedule background tasks
+        try:
+            def _():
+                self._narrator.schedule_skills_update(ctx.query, ctx.working_history, self.skills_manager, ctx=ctx)
+                self._narrator.schedule_memory_extraction(query=ctx.query, history=ctx.working_history, ctx=ctx,
+                                                          session=self._current_session)
+                self._narrator.schedule_ruleset_update(history=ctx.working_history, session=self._current_session,
+                                                       ctx=ctx)
+
+            threading.Thread(target=_).start()
+        except Exception as e:
+            print(e)
+
+        thought_acc = ""
+        try:
+            stream_response = await self.agent.a_run_llm_completion(
+                messages=messages, max_tokens=2048, stream=True, true_stream=True, with_context=False,
+            )
+            if asyncio.iscoroutine(stream_response):
+                stream_response = await stream_response
+
+            chunk_buffer = ""
+            pause_chars = {".", "\n", ":", ";", "?"}
+
+            async for chunk in stream_response:
+                delta = chunk.choices[0].delta if hasattr(chunk, "choices") and chunk.choices else None
+                if delta and hasattr(delta, "content") and delta.content:
+                    content = delta.content
+                    thought_acc += content
+                    chunk_buffer += content
+                    self.live.thought = thought_acc[-200:]
+
+                    # ── YIELD CHUNK EVENT ──
+                    yield {"type": "reasoning", "content": content}
+
+                    if any(pc in content for pc in pause_chars) and len(chunk_buffer) > 40:
+                        clean_sentence = chunk_buffer.strip().replace("\n", " ")
+                        self._narrator._inspier += " " + clean_sentence
+                        self._narrator.mock("llm_pre")
+                        chunk_buffer = ""
+
+            result = thought_acc
+        except Exception as e:
+            result = thought_acc + str(e) if thought_acc else str(e)
+
+        self.live.thought = result[-200:] if result else ""
+
+        # ── Post-call: ctx writes unter Lock ──────────────────────────
+        async with ctx.lock:
+            # Add tool result to working history (if not final_answer)
+            # Context Budget Management: Szenario A/B/C
+            managed_msg = self._manage_context_budget(
+                ctx, f_name, str(result), f_id
+            )
+            ctx.working_history.append(managed_msg)
+            ctx.tools_dict.append({"name": f_name, "args": f_args, "result": result})
+            ctx.auto_focus.record(f_name, f_args, str(result))
+            if f_name in ["think", "load_tools", "list_tools"]:
+                ctx.max_iterations += 1
+        try:
+            if f_name == "think":
+                # think result ist typischerweise der komplette gedankengang
+                thinking_content = str(result)
+                self._narrator.schedule_think_result(
+                    thinking_content=thinking_content,
+                    history=ctx.working_history,
+                )
+            else:
+                self._narrator.schedule_tool_end(
+                    tool_name=f_name,
+                    result_snippet=str(result)[:80],
+                    history=ctx.working_history,
+                )
+
+        except Exception as e:
+            self.live.narrator_msg = "Failed to execute narrator tool post processing"
+            get_app().debug_rains(e)
+            get_app().print(e)
+
+        # Final tool_result with complete thought
+        yield {"type": "tool_result", "name": f_name, "is_final": False, "result": result}
 
     async def _execute_tool_call(
         self, ctx: ExecutionContext, tool_call
@@ -2811,9 +2966,6 @@ BEISPIELE:
                     ctx.add_tool(f_name, 1, "auto-detect-use")
                     result = f"Error: Tool '{f_name}' war noch nicht geladen (auto lodet). Nutze list_tools() und load_tools  () um tools dynamisch zu aktivieren. damit du es fehlerfrei verwenden kannst! Aufgetretener fehler : {e}"
 
-
-
-
         # ── Post-call: ctx writes unter Lock ──────────────────────────
         async with ctx.lock:
             # Add tool result to working history (if not final_answer)
@@ -2841,7 +2993,6 @@ BEISPIELE:
                     result_snippet=str(result)[:80],
                     history=ctx.working_history,
                 )
-
 
         except Exception as e:
             self.live.narrator_msg = "Failed to execute narrator tool post processing"

@@ -20,7 +20,7 @@ from packaging import version as pv
 from packaging.version import Version
 from tqdm import tqdm
 
-from toolboxv2 import App, Spinner, __version__, get_app
+from toolboxv2 import App, Spinner, __version__, get_app, tb_root_dir
 from toolboxv2.utils.extras.reqbuilder import generate_requirements
 from toolboxv2.utils.system.state_system import find_highest_zip_version
 from toolboxv2.utils.system.state_system import get_state_from_app
@@ -273,7 +273,7 @@ def create_tb_config_v2(module_name: str, version: str, module_type: ModuleType 
         "author": author,
         "license": license,
         "homepage": homepage,
-        "dependencies_file": f"./mods/{module_name}/requirements.txt",
+        "dependencies_file": f"{tb_root_dir}/mods/{module_name}/requirements.txt",
         "zip": f"RST${module_name}&{__version__}§{version}.zip",
         "platforms": platforms,
         "metadata": metadata
@@ -419,18 +419,17 @@ def create_and_pack_module(path: str, module_name: str = '', version: str = '-.-
     if yaml_data is None:
         yaml_data = {}
 
-    os.makedirs("./mods_sto/temp/", exist_ok=True)
-
+    (tb_root_dir / "mods_sto" / "temp").mkdir(parents=True, exist_ok=True)
     module_path = Path(path) / module_name
 
     if not module_path.exists():
         module_path = Path(f"{path}/{module_name}.py")
 
-    temp_dir = Path(tempfile.mkdtemp(dir="./mods_sto/temp"))
+    temp_dir = Path(tempfile.mkdtemp(dir=f'{tb_root_dir/"mods_sto"/"temp"}'))
 
     platform_suffix = f"_{platform_filter.value}" if platform_filter else ""
     zip_file_name = f"RST${module_name}&{__version__}§{version}{platform_suffix}.zip"
-    zip_path = Path(f"./mods_sto/{zip_file_name}")
+    zip_path = Path(tb_root_dir / "mods_sto"/f"{zip_file_name}")
 
     if not module_path.exists():
         print(f"Module path does not exist: {module_path}")
@@ -691,7 +690,7 @@ def uninstall_module(path: str, module_name: str = '', version: str = '-.-.-',
 
     base_path = Path(path).parent
     module_path = base_path / module_name
-    zip_path = Path(f"./mods_sto/RST${module_name}&{__version__}§{version}.zip")
+    zip_path = Path(tb_root_dir / f"mods_sto"/f"RST${module_name}&{__version__}§{version}.zip")
 
     if not module_path.exists():
         print(f"⚠ Module {module_name} already uninstalled")
@@ -988,7 +987,7 @@ async def get_mod_info(app: App, module_name: str) -> Result:
 # =================== CLI Operations ===================
 @export(mod_name=Name, name="make_install", test=False)
 async def make_installer(app: Optional[App], module_name: str,
-                         base: str = "./mods", upload: Optional[bool] = None,
+                         base: str = None, upload: Optional[bool] = None,
                          platform: Optional[Platform] = None) -> Result:
     """
     Creates an installer package for a module.
@@ -1003,6 +1002,8 @@ async def make_installer(app: Optional[App], module_name: str,
     Returns:
         Result with package path or upload status
     """
+    if base is None:
+        base = str(tb_root_dir / "mods")
     if app is None:
         app = get_app(f"{Name}.make_install")
 
@@ -1074,7 +1075,7 @@ def uninstaller(app: Optional[App], module_name: str) -> Result:
         if 'y' not in confirm.lower():
             return Result.ok("Uninstallation cancelled")
 
-        success = uninstall_module(f"./mods/{module_name}", module_name, version_)
+        success = uninstall_module(f"{tb_root_dir}/mods/{module_name}", module_name, version_)
 
         if success:
             return Result.ok(f"Module '{module_name}' uninstalled successfully")
@@ -2621,7 +2622,7 @@ class ModernMenuManager:
             )
 
         # Save config
-        default_path = f"./mods/{module_name}/tbConfig.yaml"
+        default_path = f"{tb_root_dir}/mods/{module_name}/tbConfig.yaml"
         save_path = await show_input("Save Location", "Save to:", default_path)
 
         if not save_path:

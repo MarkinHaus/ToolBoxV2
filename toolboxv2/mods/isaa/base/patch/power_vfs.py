@@ -1139,9 +1139,11 @@ def search_vfs(
                 if vfs_file.is_loaded:
                     content = vfs_file.content
                 elif vfs_file.local_path and os.path.exists(vfs_file.local_path):
-                    content = Path(vfs_file.local_path).read_text(
-                        encoding="utf-8", errors="ignore"
-                    )
+                    # Read through VFS to ensure consistency with cat/wc/read
+                    read_result = vfs.read(file_path)
+                    if not read_result.get("success"):
+                        continue
+                    content = read_result["content"]
                 else:
                     continue
 

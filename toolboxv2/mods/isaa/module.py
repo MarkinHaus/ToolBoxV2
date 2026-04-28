@@ -1555,7 +1555,7 @@ uncertain_about_X
                 # push to VFS
                 try:
                     vfs = await get_ac_vfs_helper()
-                    vfs.set_memory_index_file(render_index(_memory_index))
+                    vfs.set_memory_index_file(render_index(_memory_index), name)
                 except Exception as e:
                     print(e)
                     import traceback
@@ -1566,7 +1566,7 @@ uncertain_about_X
         async def _sync_index_to_vfs():
             try:
                 vfs = await get_ac_vfs_helper()
-                vfs.set_memory_index_file(render_index(_memory_index))
+                vfs.set_memory_index_file(render_index(_memory_index), name)
             except Exception as e:
                 print(e)
                 import traceback
@@ -3006,6 +3006,12 @@ async def job_dashboard(self, request: RequestData | None = None) -> dict:
         "jobs_file":       str(self.job_scheduler.jobs_file),
     }
 
+
+
+@export(mod_name="isaa", name="bench")
+async def bench(self) -> dict:
+    from toolboxv2.mods.isaa.base.bench.main import main as b_main
+    await b_main()
 # =============================================================================
 # MAIN
 # =============================================================================

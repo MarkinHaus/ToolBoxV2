@@ -867,7 +867,7 @@ class RegistryClient:
             if filters:
                 params.update(filters)
 
-            response = await client.get("/api/packages/search", params=params)
+            response = await client.get("/api/v1/search", params=params)
 
             if response.status_code != 200:
                 self.logger.warning(f"Search failed: {response.status_code}")
@@ -903,7 +903,7 @@ class RegistryClient:
         """
         try:
             client = await self._get_client()
-            response = await client.get(f"/api/packages/{name}")
+            response = await client.get(f"/api/v1/packages/{name}")
 
             if response.status_code == 404:
                 return None
@@ -968,7 +968,7 @@ class RegistryClient:
         """
         try:
             client = await self._get_client()
-            response = await client.get(f"/api/packages/{name}/versions/{version}")
+            response = await client.get(f"/api/v1/packages/{name}/versions/{version}")
 
             if response.status_code == 404:
                 return None
@@ -1032,7 +1032,7 @@ class RegistryClient:
             if toolbox_version:
                 payload["toolbox_version"] = toolbox_version
 
-            response = await client.post("/api/resolve", json=payload)
+            response = await client.post("/api/v1/resolve", json=payload)
 
             if response.status_code != 200:
                 data = response.json() if response.content else {}
@@ -1369,7 +1369,7 @@ class RegistryClient:
                 data = {"metadata": json.dumps(metadata)}
 
                 response = await client.post(
-                    "/api/packages",
+                    "/api/v1/packages",
                     files=files,
                     data=data,
                 )
@@ -1418,7 +1418,7 @@ class RegistryClient:
                     data["changelog"] = changelog
 
                 response = await client.post(
-                    f"/api/packages/{name}/versions",
+                    f"/api/v1/packages/{name}/versions",
                     files=files,
                     data=data,
                 )
@@ -1452,7 +1452,7 @@ class RegistryClient:
         try:
             client = await self._get_client()
             response = await client.post(
-                f"/api/packages/{name}/versions/{version}/yank",
+                f"/api/v1/packages/{name}/versions/{version}/yank",
                 json={"reason": reason},
             )
 
@@ -1721,7 +1721,7 @@ class RegistryClient:
         """
         try:
             client = await self._get_client()
-            response = await client.get(f"/api/artifacts/{name}")
+            response = await client.get(f"/api/v1/artifacts/{name}")
 
             if response.status_code == 404:
                 return None

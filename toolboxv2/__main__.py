@@ -485,70 +485,187 @@ def show_interactive_guide():
     """Show interactive guide with examples and tips."""
     guide = textwrap.dedent("""
     ╔════════════════════════════════════════════════════════════════════════════╗
-    ║                     🧰 ToolBoxV2 - Interactive Guide 🧰                    ║
+    ║                     🧰 ToolBoxV2 — Interactive Guide 🧰                   ║
     ╚════════════════════════════════════════════════════════════════════════════╝
 
-    ┌─ QUICK START ──────────────────────────────────────────────────────────────┐
+    ┌─ FIRST RUN & PROFILES ─────────────────────────────────────────────────────┐
     │                                                                            │
-    │  First Time Setup:                                                         │
-    │    $ tb -init main                # Initialize ToolBoxV2                   │
-    │    $ tb -init config              # Initialize ToolBoxV2 manifest          │
-    │    $ tb -c helper init_system     # Setup system configuration             │
-    │    $ tb -u main                   # Update to the latest version           │
+    │  On first launch ToolBoxV2 asks you to pick a profile that tailors the     │
+    │  default experience:                                                       │
     │                                                                            │
-    │  Start ToolBoxV2:                                                          │
-    │    $ tb                           # Start in CLI mode                      │
-    │    $ tb --sm                      # Start all Services from config         │
-    │    $ tb gui                       # Start with GUI                         │
-    │    $ tb workers start             # Start API server                       │
+    │    consumer   — opens the GUI automatically                                │
+    │    homelab    — opens the interactive CLI dashboard                        │
+    │    developer  — opens the interactive CLI dashboard                        │
+    │    server     — prints a service overview, then exits                      │
+    │    business   — prints a health summary, then exits                        │
+    │                                                                            │
+    │  Setup commands:                                                           │
+    │    $ tb -init main                # Bootstrap ToolBoxV2 for first use      │
+    │    $ tb -init config              # Run the interactive config wizard      │
+    │    $ tb manifest                  # View / edit the manifest directly      │
+    │                                                                            │
+    │  You can re-run the config wizard at any time with `tb -init config`.      │
     │                                                                            │
     └────────────────────────────────────────────────────────────────────────────┘
 
-    ┌─ EXTENSION COMMANDS ───────────────────────────────────────────────────────┐
+    ┌─ QUICK START ──────────────────────────────────────────────────────────────┐
     │                                                                            │
-    │  🔐 Authentication:                                                        │
-    │    $ tb login                     # Login to ToolBoxV2                     │
-    │    $ tb logout                    # Logout from ToolBoxV2                  │
-    │    $ tb status                    # Check system status                    │
+    │  Start ToolBoxV2:                                                          │
+    │    $ tb                           # Launch default for your profile        │
+    │    $ tb --sm                      # Start all services from manifest       │
+    │    $ tb gui                       # Start the desktop GUI                  │
+    │    $ tb workers start             # Start the API worker system            │
+    │    $ tb status                    # Full system health check               │
     │                                                                            │
-    │  📦 Module Management:                                                     │
-    │    $ tb mods                      # Open module manager (interactive)      │
+    │  Update:                                                                   │
+    │    $ tb -u main                   # Update core to the latest version      │
+    │    $ tb -u [MODULE]               # Update a single module                 │
+    │                                                                            │
+    └────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ FEATURE FLAGS ────────────────────────────────────────────────────────────┐
+    │                                                                            │
+    │  Some runners require optional feature groups to be enabled:               │
+    │                                                                            │
+    │    web     — workers, http_worker, ws_worker                               │
+    │              pip install toolboxv2[web]                                    │
+    │    isaa    — mcp (MCP server for AI agents)                                │
+    │              pip install toolboxv2[isaa]                                   │
+    │    desktop — gui (Tauri desktop app)                                       │
+    │              pip install toolboxv2[desktop]                                │
+    │                                                                            │
+    │  Enable / disable in the manifest:                                         │
+    │    $ tb manifest enable web       # Enable feature group                   │
+    │    $ tb manifest disable isaa     # Disable feature group                  │
+    │                                                                            │
+    │  If a runner's feature is missing, ToolBoxV2 tells you exactly which       │
+    │  feature to enable and which extras to install.                            │
+    │                                                                            │
+    └────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ AUTHENTICATION ───────────────────────────────────────────────────────────┐
+    │                                                                            │
+    │    $ tb login                     # Login (browser-based OAuth)            │
+    │    $ tb login --status            # Show current session info              │
+    │    $ tb logout                    # End current session                    │
+    │    $ tb user                      # Interactive user management            │
+    │                                                                            │
+    └────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ MODULE MANAGEMENT ────────────────────────────────────────────────────────┐
+    │                                                                            │
+    │  Quick install / update / remove:                                          │
     │    $ tb -i [MODULE]               # Install module                         │
     │    $ tb -u [MODULE]               # Update module                          │
     │    $ tb -r [MODULE]               # Remove module                          │
     │                                                                            │
-    │  🌐 Services & Workers:                                                    │
-    │    $ tb workers [start|stop|status]   # Manage worker system               │
-    │    $ tb session [generate-secret|test]# Session management                 │
-    │    $ tb event                         # Event broker management            │
-    │    $ tb access                        # global cli access [install|status] │
-    │    $ tb broker                        # ZMQ event broker                   │
-    │    $ tb http_worker                   # HTTP worker                        │
-    │    $ tb ws_worker                     # WebSocket worker                   │
-    │    $ tb services                      # Service manager                    │
-    │    $ tb manifest                      # Manifest configuration             │
-    │                                                                            │
-    │  🖥️  Interfaces:                                                           │
-    │    $ tb gui                           # Launch GUI interface               │
-    │    $ tb mcp                           # Start MCP server (for agents)      │
-    │    $ tb p2p [start|stop]              # Manage P2P client                  │
-    │                                                                            │
-    │  🗄️  Database:                                                             │
-    │    $ tb db [command]              # Manage DB                              │
-    │                                                                            │
-    │  🌍 Browser Extension:                                                     │
-    │    $ tb browser build             # Build browser extension                │
-    │    $ tb browser install           # Install extension                      │
-    │                                                                            │
-    │  📦 Virtual Environment:                                                   │
-    │    $ tb venv [command]           # Run venv commands                       │
-    │                                                                            │
-    │  ▶️  Flow Execution:                                                       │
-    │    $ tb run              # ToolBox TBX Lang                                │
-    │    $ tb -m [flow name]   # Run Flow from default flow folder               │
-    │    $ tb flow --flow [file] # Execute flows from file or --remote + .gist   │
+    │  Module manager (interactive & scriptable):                                │
+    │    $ tb mods                      # Open interactive module manager        │
+    │    $ tb mods list                 # List all available modules             │
+    │    $ tb mods create MyMod         # Create a new module scaffold           │
+    │    $ tb mods build MyMod          # Build module for distribution          │
+    │    $ tb mods create MyMod --external --type tool                           │
     │                                                                            │
     └────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ SERVICES & WORKERS ───────────────────────────────────────────────────────┐
+    │                                                                            │
+    │  Worker system (requires feature: web):                                    │
+    │    $ tb workers start             # Start all workers                      │
+    │    $ tb workers stop              # Stop all workers                       │
+    │    $ tb workers status            # Show worker status                     │
+    │    $ tb http_worker               # Start a single HTTP worker             │
+    │    $ tb ws_worker                 # Start a single WebSocket worker        │
+    │                                                                            │
+    │  Infrastructure:                                                           │
+    │    $ tb broker                    # Start ZMQ event broker                 │
+    │    $ tb session generate-secret   # Generate session secret                │
+    │    $ tb session test              # Test session configuration             │
+    │                                                                            │
+    │  Service manager:                                                          │
+    │    $ tb services                  # Interactive service management         │
+    │    $ tb --sm                      # Auto-start services from manifest      │
+    │    $ tb --init-sm                 # Install as system service              │
+    │                                                                            │
+    │  Global CLI access:                                                        │
+    │    $ tb access install            # Make `tb` available system-wide        │
+    │    $ tb access status             # Check global access status             │
+    │                                                                            │
+    └────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ INTERFACES ───────────────────────────────────────────────────────────────┐
+    │                                                                            │
+    │    $ tb gui                       # Desktop GUI (feature: desktop)         │
+    │    $ tb mcp                       # MCP server for AI agents (isaa)        │
+    │    $ tb p2p [start|stop|status]   # P2P mesh client                        │
+    │    $ tb jsx                       # JSX dev server (live preview)          │
+    │                                                                            │
+    └────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ DATABASE & REGISTRY ──────────────────────────────────────────────────────┐
+    │                                                                            │
+    │    $ tb db                        # Interactive DB management              │
+    │    $ tb db status                 # Show DB connection status              │
+    │    $ tb registry                  # Package registry management            │
+    │                                                                            │
+    └────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ DOCKER & CONTAINERS ──────────────────────────────────────────────────────┐
+    │                                                                            │
+    │    $ tb --docker -m [test|live|dev] -p 8000   # Run in Docker              │
+    │    $ tb --build                   # Build Docker image from source         │
+    │    $ tb docker-image              # Manage Docker images                   │
+    │    $ tb docksh                    # Open interactive Docker shell          │
+    │                                                                            │
+    └────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ FLOW EXECUTION ───────────────────────────────────────────────────────────┐
+    │                                                                            │
+    │    $ tb run                       # Execute .tbx files (TBX Lang)          │
+    │    $ tb -m [flow]                 # Run a flow from the default folder     │
+    │    $ tb flow --flow [file]        # Run flow from a specific file          │
+    │    $ tb flow --remote             # Run flow from a remote .gist           │
+    │                                                                            │
+    └────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ MANIFEST & CONFIGURATION ─────────────────────────────────────────────────┐
+    │                                                                            │
+    │    $ tb manifest                  # View / edit manifest interactively     │
+    │    $ tb manifest enable [feat]    # Enable a feature group                 │
+    │    $ tb manifest disable [feat]   # Disable a feature group                │
+    │    $ tb -init config              # Re-run the config wizard               │
+    │                                                                            │
+    └────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ OBSERVABILITY & MONITORING ───────────────────────────────────────────────┐
+    │                                                                            │
+    │    $ tb obs                       # Observability layer (metrics, logs)    │
+    │    $ tb --lm                      # Log manager (view / remove / edit)     │
+    │                                                                            │
+    └────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ MEDIA & STREAMING ────────────────────────────────────────────────────────┐
+    │                                                                            │
+    │    $ tb ytss                      # YouTube streaming service              │
+    │    $ tb LiveSync                  # Real-time file synchronization         │
+    │                                                                            │
+    └────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ BUILD & DISTRIBUTION ─────────────────────────────────────────────────────┐
+    │                                                                            │
+    │    $ tb build                     # Build ToolBoxV2 + features + upload    │
+    │    $ tb browser build             # Build browser extension                │
+    │    $ tb browser install           # Install browser extension              │
+    │    $ tb fl                        # Feature loader (load feature packs)    │
+    │                                                                            │
+    └────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ LLM GATEWAY ─────────────────────────────────────────────────────────────┐
+    │                                                                           │
+    │    $ tb llm-gateway               # Start the LLM gateway proxy           │
+    │                                   # (routes to local & remote models)     │
+    │                                                                           │
+    └───────────────────────────────────────────────────────────────────────────┘
 
     ┌─ COMMAND EXECUTION ────────────────────────────────────────────────────────┐
     │                                                                            │
@@ -556,14 +673,13 @@ def show_interactive_guide():
     │    $ tb -c [MODULE] [FUNCTION] [ARGS...]                                   │
     │                                                                            │
     │  Show Module Info:                                                         │
-    │    $ tb -c                        # List all functions and idele           │
-    │    $ tb -c helper                 # List all helper functions              │
+    │    $ tb -c                        # List all modules and functions         │
     │    $ tb -c CloudM                 # List all CloudM functions              │
     │                                                                            │
     │  Execute Functions:                                                        │
     │    $ tb -c CloudM Version         # Get CloudM version                     │
     │    $ tb -c CloudM get_mod_snapshot CloudM                                  │
-    │    $ tb -c helper create-user john john@example.com                        │
+    │    $ tb -c MyMod my_func arg1 arg2                                         │
     │                                                                            │
     │  With Kwargs:                                                              │
     │    $ tb -c CloudM get_mod_snapshot --kwargs mod_name=CloudM                │
@@ -574,42 +690,41 @@ def show_interactive_guide():
     │                                                                            │
     └────────────────────────────────────────────────────────────────────────────┘
 
-    ┌─ ACCOUNT MANAGEMENT ───────────────────────────────────────────────────────┐
+    ┌─ USER MANAGEMENT ──────────────────────────────────────────────────────────┐
     │                                                                            │
-    │  $ tb -c helper init_system                # Initialize system             │
-    │  $ tb -c helper create-user USER EMAIL     # Create new user               │
-    │  $ tb -c helper delete-user USER           # Delete user                   │
-    │  $ tb -c helper list-users                 # List all users                │
-    │  $ tb -c helper create-invitation USER     # Create invitation             │
-    │  $ tb -c helper send-magic-link USER       # Send magic login link         │
+    │    $ tb user list                 # List all users                         │
+    │    $ tb user info --username john # Show user info                         │
+    │    $ tb user set-level john admin # Set user level                         │
+    │    $ tb user rotate-minio john    # Rotate MinIO credentials               │
+    │    $ tb user revoke-minio john    # Revoke MinIO access                    │
+    │    $ tb user delete --username jo # Delete user                            │
+    │                                                                            │
+    │  Levels: guest, user, moderator, admin, root                               │
+    │                                                                            │
+    └────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ VIRTUAL ENVIRONMENT ──────────────────────────────────────────────────────┐
+    │                                                                            │
+    │    $ tb venv                      # Manage Python virtual environments     │
+    │    $ tb venv -h                   # Show venv subcommand help              │
     │                                                                            │
     └────────────────────────────────────────────────────────────────────────────┘
 
     ┌─ ADVANCED USAGE ───────────────────────────────────────────────────────────┐
     │                                                                            │
-    │  Docker Mode:                                                              │
-    │    $ tb --docker -m [test|live|dev] -p 8000                                │
-    │    $ tb --build                   # Build Docker image                     │
-    │                                                                            │
     │  Remote Mode:                                                              │
     │    $ tb --remote -w 0.0.0.0 -p 5000                                        │
     │                                                                            │
     │  Debug Mode:                                                               │
-    │    $ tb --debug --sysPrint        # Enable verbose output                  │
+    │    $ tb --debug --sysPrint        # Enable verbose output + hot-reload     │
     │                                                                            │
     │  Instance Management:                                                      │
-    │    $ tb -n myinstance             # Start with custom name                 │
+    │    $ tb -n myinstance             # Start with custom instance name        │
     │    $ tb --kill                    # Kill running instance                  │
     │                                                                            │
-    └────────────────────────────────────────────────────────────────────────────┘
-
-    ┌─ SERVICE MANAGEMENT ───────────────────────────────────────────────────────┐
-    │                                                                            │
-    │  Service Manager (Windows):                                                │
-    │    $ tb --sm                      # Manage auto-start/restart              │
-    │                                                                            │
-    │  Log Manager:                                                              │
-    │    $ tb --lm                      # Manage log files                       │
+    │  Background Mode:                                                          │
+    │    $ tb -bg                       # Run interface in background            │
+    │    $ tb -fg                       # Run proxy interface in foreground      │
     │                                                                            │
     └────────────────────────────────────────────────────────────────────────────┘
 
@@ -617,8 +732,8 @@ def show_interactive_guide():
     │                                                                            │
     │  ⚠️  WARNING: These operations cause DATA LOSS!                            │
     │                                                                            │
-    │    $ tb --delete-config NAME      # Delete specific config                 │
-    │    $ tb --delete-data NAME        # Delete specific data                   │
+    │    $ tb --delete-config           # Delete named config folder             │
+    │    $ tb --delete-data             # Delete named data folder               │
     │    $ tb --delete-config-all       # Delete ALL configs (!)                 │
     │    $ tb --delete-data-all         # Delete ALL data (!)                    │
     │                                                                            │
@@ -626,42 +741,85 @@ def show_interactive_guide():
 
     ┌─ DEVELOPMENT & TESTING ────────────────────────────────────────────────────┐
     │                                                                            │
-    │  $ tb --test                      # Run test suite                         │
-    │  $ tb --profiler                  # Profile functions                      │
-    │  $ tb -l                          # Load all modules                       │
-    │  $ tb -sfe -l                     # Generate function enums                │
+    │    $ tb --test                    # Run complete test suite                │
+    │    $ tb --test --kwargs registry  # Run only registry tests                │
+    │    $ tb --profiler                # Profile all registered functions       │
+    │    $ tb -l                        # Load all modules from mod directory    │
+    │    $ tb -sfe -l                   # Generate all_function_enums.py         │
+    │    $ tb -v -l                     # Show all module versions               │
     │                                                                            │
     └────────────────────────────────────────────────────────────────────────────┘
 
     ┌─ PRACTICAL EXAMPLES ───────────────────────────────────────────────────────┐
     │                                                                            │
-    │  Install and run module:                                                   │
+    │  Install and run a module:                                                 │
     │    $ tb -i MyModule                                                        │
     │    $ tb -c MyModule my_function                                            │
     │                                                                            │
-    │  Run in Docker with GUI:                                                   │
-    │    $ tb --docker -m dev gui -p 8000 -w 0.0.0.0                             │
+    │  Full status check:                                                        │
+    │    $ tb status                    # DB, API, P2P, workers, services        │
     │                                                                            │
-    │  Check system status:                                                      │
-    │    $ tb status                    # Shows DB, API, P2P status              │
+    │  Create user and manage access:                                            │
+    │    $ tb user list                                                          │
+    │    $ tb user info --username alice                                         │
+    │    $ tb user set-level alice admin                                         │
     │                                                                            │
-    │  Interactive module management:                                            │
-    │    $ tb mods                      # Opens interactive manager              │
+    │  Run in Docker:                                                            │
+    │    $ tb --docker -m dev -p 8000 -w 0.0.0.0                                 │
     │                                                                            │
-    │  Create user and send magic link:                                          │
-    │    $ tb -c helper create-user alice alice@mail.com                         │
-    │    $ tb -c helper send-magic-link alice                                    │
+    │  Start MCP server for AI agents:                                           │
+    │    $ tb mcp                                                                │
+    │                                                                            │
+    │  Start LLM gateway:                                                        │
+    │    $ tb llm-gateway                                                        │
+    │                                                                            │
+    └────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─ ALL RUNNER COMMANDS (A–Z) ────────────────────────────────────────────────┐
+    │                                                                            │
+    │    access        Global CLI access management                              │
+    │    broker        ZMQ event broker                                          │
+    │    browser       Browser extension build / install                         │
+    │    build         Build ToolBoxV2 + features + upload                       │
+    │    db            Database management                                       │
+    │    docksh        Interactive Docker shell                                  │
+    │    docker-image  Docker image management                                   │
+    │    fl            Feature loader                                            │
+    │    flow          Execute flows from file / directory                       │
+    │    gui           Desktop GUI (feature: desktop)                            │
+    │    http_worker   Single HTTP worker (feature: web)                         │
+    │    jsx           JSX dev server                                            │
+    │    LiveSync      Real-time file synchronization                            │
+    │    llm-gateway   LLM gateway proxy                                         │
+    │    login         Login to ToolBoxV2                                        │
+    │    logout        Logout from ToolBoxV2                                     │
+    │    manifest      Manifest configuration                                    │
+    │    mcp           MCP server for agents (feature: isaa)                     │
+    │    mods          Module manager                                            │
+    │    obs           Observability layer                                       │
+    │    p2p           P2P mesh client                                           │
+    │    registry      Package registry management                               │
+    │    run           Execute .tbx files (TBX Lang)                             │
+    │    services      Service manager                                           │
+    │    session       Session management                                        │
+    │    status        System health check                                       │
+    │    user          User management                                           │
+    │    venv          Virtual environment management                            │
+    │    workers       Worker system management (feature: web)                   │
+    │    ws_worker     Single WebSocket worker (feature: web)                    │
+    │    ytss          YouTube streaming service                                 │
     │                                                                            │
     └────────────────────────────────────────────────────────────────────────────┘
 
     ┌─ TIPS & TRICKS ────────────────────────────────────────────────────────────┐
     │                                                                            │
-    │  • Use `tb [command] -h` for detailed help on any command                  │
-    │  • Most commands support tab completion in modern shells                   │
+    │  • Use `tb [command] -h` for detailed help on any runner command           │
     │  • Use `--sysPrint` for verbose output when debugging                      │
-    │  • Runner commands can be combined: `tb workers start -bg`                 │
+    │  • Runner commands can take extra flags: `tb workers start --port 8080`    │
     │  • Use `-n` to run multiple instances with different names                 │
     │  • Module functions are auto-discovered when using `-l`                    │
+    │  • Feature groups control which runners are available — check with         │
+    │    `tb manifest` and enable what you need                                  │
     │                                                                            │
     └────────────────────────────────────────────────────────────────────────────┘
 
@@ -672,9 +830,10 @@ def show_interactive_guide():
     │    $ tb --guide                   # Show this guide                        │
     │                                                                            │
     │  Command-Specific Help:                                                    │
-    │    $ tb workers -h                # API command help                       │
-    │    $ tb venv -h                   # Conda command help                     │
-    │    $ tb db -h                     # Database command help                  │
+    │    $ tb workers -h                # Worker system help                     │
+    │    $ tb mods -h                   # Module manager help                    │
+    │    $ tb db -h                     # Database help                          │
+    │    $ tb venv -h                   # Virtual environment help               │
     │                                                                            │
     │  Module Information:                                                       │
     │    $ tb -c [MODULE]               # List module functions                  │
@@ -683,7 +842,7 @@ def show_interactive_guide():
     └────────────────────────────────────────────────────────────────────────────┘
 
     ╔════════════════════════════════════════════════════════════════════════════╗
-    ║  For more information, visit: https://markinhaus.github.io/ToolBoxV2/      ║
+    ║  For more information visit: https://markinhaus.github.io/ToolBoxV2/       ║
     ╚════════════════════════════════════════════════════════════════════════════╝
     """)
 
@@ -716,7 +875,7 @@ def parse_args():
         A powerful, modular Python framework for building and managing tools.
 
         Quick Start:
-          $ tb                    # Start CLI interface
+          $ tb                    # Launch default for your profile
           $ tb gui                # Launch GUI
           $ tb --guide            # Show guide
           $ tb -c [MOD] [FUNC]    # Execute module function
@@ -727,7 +886,7 @@ def parse_args():
         │                                                                        │
         │  Basic Usage:                                                          │
         │    $ tb gui                              # Start GUI                   │
-        │    $ tb workkers start                   # Start API server            │
+        │    $ tb workers start                   # Start API server             │
         │    $ tb status                           # Check status                │
         │                                                                        │
         │  Module Commands:                                                      │
@@ -740,9 +899,16 @@ def parse_args():
         │    $ tb -c helper create-user bob bob@mail.com                         │
         │    $ tb -c MyMod func --kwargs key=val   # With kwargs                 │
         │                                                                        │
+        │  Services:                                                             │
+        │    $ tb services                         # Manage services             │
+        │    $ tb manifest                         # Edit manifest               │
+        │    $ tb obs                              # Observability               │
+        │    $ tb llm-gateway                      # LLM proxy                   │
+        │                                                                        │
         └────────────────────────────────────────────────────────────────────────┘
 
         For detailed guide: tb --guide
+
         For command help: tb [command] -h
         """),
         formatter_class=ModernHelpFormatter,

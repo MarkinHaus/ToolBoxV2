@@ -5692,6 +5692,31 @@ class ISAA_Host:
             if model:
                 builder.with_models(model, model)
 
+            if name == "icli_admin":
+                try:
+                    # Import and register toolbox_admin tools
+                    from toolboxv2.flows.toolbox_admin import (
+                        _build_toolbox_tools, _build_docs_tools, _build_manifest_tools,
+                        SYSTEM_PROMPT,
+                    )
+                    for func, name, desc, cats in _build_toolbox_tools(self.isaa_tools, self.app):
+                        builder.add_tool(func, name, desc, category=cats,
+                                         flags={"system_tool_by_name": True})
+                    for func, name, desc, cats in _build_docs_tools(self.app):
+                        builder.add_tool(func, name, desc, category=cats,
+                                         flags={"system_tool_by_name": True})
+                    for func, name, desc, cats in _build_manifest_tools(self.app):
+                        builder.add_tool(func, name, desc, category=cats,
+                                         flags={"system_tool_by_name": True})
+
+                    builder.config.system_message = SYSTEM_PROMPT
+                except ImportError as e:
+                    return (f"✗ Failed to spawn agent: {e}\nName: icli_admin is reserved for toolboxv2.flows.toolbox_admin\n"
+                            f"make sure you have toolbox_admin.py flow installed")
+
+                except Exception as e:
+                    return (f"✗ Failed to spawn agent: {e}\nName: icli_admin is reserved")
+
             await self.isaa_tools.register_agent(builder)
 
             self.agent_registry[name] = AgentInfo(

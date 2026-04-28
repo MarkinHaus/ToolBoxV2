@@ -170,7 +170,7 @@ async def build_initial_index(isaa_ref, agent_name: str, data_dir: str) -> Memor
             elif hasattr(mka_temp, 'get_all_concepts'):
                 concepts = await mka_temp.get_all_concepts()
 
-            if entry_count == 0 and not concepts:
+            if entry_count == 0:
                 continue  # skip empty spaces
 
             space_data.append({
@@ -179,7 +179,7 @@ async def build_initial_index(isaa_ref, agent_name: str, data_dir: str) -> Memor
                 "sample_concepts": concepts[:20] if concepts else [],
             })
         except Exception as e:
-            logger.debug(f"Skipping space {space_name} during index build: {e}")
+            logger.error(f"Skipping space {space_name} during index build: {e}")
             continue
 
     if not space_data:
@@ -190,7 +190,7 @@ async def build_initial_index(isaa_ref, agent_name: str, data_dir: str) -> Memor
 
     try:
         result = await isaa_ref.format_class(
-            format_schema=MemoryIndexEdits,
+            format_schema=MemoryIndexEntry,
             task=prompt,
             agent_name=agent_name,
         )
@@ -203,7 +203,7 @@ async def build_initial_index(isaa_ref, agent_name: str, data_dir: str) -> Memor
 
     # result should be a list of dicts matching MemoryIndexEdit
     index = MemoryIndex()
-    edits = result if isinstance(result, list) else result.get("items", [])
+    edits = result if isinstance(result, list) else result.get("items", result.get("edits", []))
     for edit_data in edits:
         try:
             if isinstance(edit_data, dict):

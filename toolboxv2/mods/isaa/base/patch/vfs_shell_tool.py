@@ -41,33 +41,6 @@ def _ok(stdout: str = "", stderr: str = "", returncode=0) -> dict:
 def _err(stderr: Any, returncode: int = 1) -> dict:
     return {"success": False, "stdout": "", "stderr": str(stderr), "returncode": returncode}
 
-
-def _parse_n_flag(args: list[str], default: int = 10) -> tuple[int, list[str]]:
-    """Extract -n N / -nN from args, return (n, remaining_args)."""
-    n = default
-    rest: list[str] = []
-    i = 0
-    while i < len(args):
-        a = args[i]
-        if a == "-n" and i + 1 < len(args):
-            try:
-                n = int(args[i + 1])
-                i += 2
-                continue
-            except ValueError:
-                pass
-        elif a.startswith("-n") and len(a) > 2:
-            try:
-                n = int(a[2:])
-                i += 1
-                continue
-            except ValueError:
-                pass
-        rest.append(a)
-        i += 1
-    return n, rest
-
-
 def _parse_n_flag(args: list[str], default: int = 10) -> tuple[int, list[str]]:
     """Extract -n N / -nN from args, return (n, remaining_args)."""
     n = default
@@ -107,26 +80,6 @@ def _decode_content(raw: str) -> str:
     Idempotent: mehrfaches Aufrufen = selbes Ergebnis.
     NIEMALS selbst \\\\n schreiben — das erzeugt Backslash+n im File.
     """
-    if True:
-        return raw
-    # Schritt 1: double-escaped abbauen (\\\\n -> \\n), max 3 Durchlaeufe
-    for _ in range(3):
-        if '\\\\' not in raw:
-            break
-        raw = raw.replace('\\\\n', '\\n')
-        raw = raw.replace('\\\\t', '\\t')
-        raw = raw.replace('\\\\r', '\\r')
-        new = re.sub(r'\\\\(.)', r'\\\1', raw)
-        if new == raw:
-            break
-        raw = new
-
-    # Schritt 2: JSON-style escapes -> echte Zeichen
-    raw = raw.replace('\\n', '\n')
-    raw = raw.replace('\\t', '\t')
-    raw = raw.replace('\\r', '\r')
-    raw = raw.replace('\\"', '"')
-    raw = raw.replace("\\'", "'")
     return raw
 
 

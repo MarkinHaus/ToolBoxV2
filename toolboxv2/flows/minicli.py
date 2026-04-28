@@ -1114,10 +1114,11 @@ class BeastCLI:
             # Suggest similar
             similar = [m for m in self.app.functions.keys()
                        if module_name.lower() in m.lower()]
-            if similar:
-                print(f"💡 Did you mean: {', '.join(similar[:5])}")
-            elif self._is_nlp_input(command):
+
+            if self._is_nlp_input(command):
                 await self._handle_nlp_command(command)
+            elif similar:
+                print(f"💡 Did you mean: {', '.join(similar[:5])}")
             else:
                 await self._handle_shell_command(command)
             return
@@ -1615,9 +1616,15 @@ class BeastCLI:
             except Exception:
                 pass
 
+        data = self.context.__dict__.copy()
+        quick_vars = data.get('quick_vars', {})
+        for k, v in quick_vars.items():
+            if isinstance(v, Result):
+                quick_vars[k] = v.to_api_result()
+        data['quick_vars'] = quick_vars
         # Save context
         with BlobFile("cli/context.c", key=Code.DK()(), mode="w") as f:
-            f.write_json(self.context.__dict__)
+            f.write_json(data)
 
         print("✓ Done")
 

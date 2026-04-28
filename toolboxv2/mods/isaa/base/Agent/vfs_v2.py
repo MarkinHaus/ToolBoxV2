@@ -889,13 +889,12 @@ Session: {self.session_id}
             self.files[path].updated_at = datetime.now().isoformat()
         self._dirty = True
 
-    def set_memory_index_file(self, content: str):
+    def set_memory_index_file(self, content: str, agent_name="default"):
         """Set the memory_index.md file content (from RuleSet)"""
         path = "/memory_index.md"
         if path not in self.files:
-            self.files[path] = VFSFile(
-                filename="memory_index.md", _content=content, state="open", readonly=True
-            )
+            self.write("/global/default/memory_index.md", content)
+            self.open("/global/default/memory_index.md")
         else:
             self.files[path].content = content
             self.files[path].updated_at = datetime.now().isoformat()
@@ -1559,6 +1558,20 @@ Session: {self.session_id}
             return {"success": False, "error": f"File not found: {path}"}
 
         f = self.files[path]
+        if (
+            isinstance(f, VFSFile)
+            and f.local_path
+            and not f.is_dirty
+            and f.backing_type in (FileBackingType.SHADOW, FileBackingType.MODIFIED)
+        ):
+            try:
+                disk_mtime = os.path.getmtime(f.local_path)
+                if f.local_mtime is None or disk_mtime > f.local_mtime:
+                    reload_result = self._load_shadow_content(path)
+                    if reload_result.get("success"):
+                        f.backing_type = FileBackingType.SHADOW
+            except OSError:
+                pass
         # EBENE 3: Für /global/-Pfade zuerst den Shared-Store prüfen.
         # Das ist der schnellste Pfad für Multi-Agent-Reads im selben Prozess —
         # keine Disk-IO, keine Poll-Wartezeit.
@@ -1843,6 +1856,8 @@ Session: {self.session_id}
             return {"success": True, "synced_to": f.local_path}
 
         except Exception as e:
+            from toolboxv2 import get_app
+            get_app().debug_rains(e)
             return {"success": False, "error": f"Sync error: {e}"}
 
     def _get_mount_for_path(self, path: str) -> ShadowMount | None:
@@ -2203,7 +2218,7 @@ Session: {self.session_id}
             current_mtime = os.path.getmtime(f.local_path)
 
             # Check if changed
-            if f.local_mtime and current_mtime == f.local_mtime:
+            if f.local_mtime and current_mtime == f.local_mtime and f._content is not None:
                 return {"success": True, "skipped": "Unchanged"}
 
             # Load content

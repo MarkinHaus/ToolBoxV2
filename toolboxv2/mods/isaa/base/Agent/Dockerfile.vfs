@@ -1,9 +1,9 @@
 # ToolboxV2 VFS Docker Base Image
 # Based on official Python 3.12 slim image
-# 
+#
 # Usage:
-#   docker build -t toolboxv2-vfs:latest -f Dockerfile.vfs .
-#   
+#   docker build -t toolboxv2:latest -f Dockerfile.vfs .
+#
 # The image expects:
 #   - ToolboxV2 wheel to be mounted at /mnt/toolboxv2.whl
 #   - Or pre-installed during build by uncommenting the COPY/RUN lines

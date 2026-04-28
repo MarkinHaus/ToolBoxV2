@@ -123,16 +123,33 @@ def get_installed_version() -> Optional[str]:
 
 
 def fetch_latest_release_info() -> Optional[Dict[str, Any]]:
-    """Fetch latest release info from GitHub."""
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+    """Fetch the best release that contains app binaries."""
+    # Try all recent releases, not just /latest (which skips prereleases
+    # and may point to a pip-only release with no app assets).
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/releases?per_page=15"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "ToolBoxV2-CLI"})
         with urllib.request.urlopen(req, timeout=10) as response:
-            return json.loads(response.read().decode())
+            releases = json.loads(response.read().decode())
     except Exception as e:
-        print_status(f"Failed to fetch release info: {e}", "warning")
+        print_status(f"Failed to fetch releases: {e}", "warning")
         return None
 
+    # Find first release that has platform-matching app binaries
+    app_keywords = {"windows": ["windows", ".exe", ".msi"],
+                    "darwin": ["macos", "darwin", ".dmg"],
+                    "linux": ["linux", ".appimage", ".deb"]}
+    keywords = app_keywords.get(SYSTEM, [])
+
+    for release in releases:
+        if release.get("draft"):
+            continue
+        assets = release.get("assets", [])
+        for asset in assets:
+            name = asset.get("name", "").lower()
+            if any(kw in name for kw in keywords):
+                return release
+    return None
 
 def fetch_registry_artifacts() -> Optional[Dict[str, Any]]:
     """Fetch artifact info from TB Registry."""
@@ -146,41 +163,49 @@ def fetch_registry_artifacts() -> Optional[Dict[str, Any]]:
         return None
 
 
+# ERSETZE die ganze Funktion
 def get_asset_for_platform(release_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Find the correct asset for current platform."""
     assets = release_info.get("assets", [])
-    target = get_target_triple()
 
-    # Look for matching asset
-    patterns = []
+    # Priority-ordered patterns per platform
+    # Includes both Tauri naming (simple-core_*) and Nuitka naming (toolbox-*)
     if IS_WINDOWS:
-        patterns = [f"{APP_NAME}_{target}.zip", f"{APP_NAME}_x64-setup.exe",f"simple-core_x64_en-US.msi",      # Tauri default MSI name
-        f"simple-core_x64-setup.exe",
-                    f"{APP_NAME}_{target}.msi", "simple-core_x64-setup.exe"]
+        patterns = [
+            "toolbox-windows-x64.exe",        # Nuitka build
+            "simple-core_x64-setup.exe",       # Tauri NSIS
+            "simple-core_x64_en-us.msi",       # Tauri MSI
+        ]
     elif IS_MACOS:
-        if "aarch64" in target:
-            patterns = [f"{APP_NAME}_aarch64.dmg", f"{APP_NAME}_universal.dmg",
-                        f"{APP_NAME}_{target}.dmg"]
+        if "arm" in MACHINE or "aarch64" in MACHINE:
+            patterns = [
+                "toolbox-macos-arm64",           # Nuitka build
+                "simple-core_aarch64.dmg",       # Tauri DMG
+            ]
         else:
-            patterns = [f"{APP_NAME}_x64.dmg", f"{APP_NAME}_universal.dmg",
-                        f"{APP_NAME}_{target}.dmg"]
-    else:
-        patterns = [f"{APP_NAME}_{target}.AppImage", f"{APP_NAME}_{target}.deb",
-                    f"{APP_NAME}_{target}.tar.gz"]
+            patterns = [
+                "toolbox-macos-x64",             # Nuitka build
+                "simple-core_x64.dmg",           # Tauri DMG
+            ]
+    else:  # Linux
+        patterns = [
+            "toolbox-linux-x64",               # Nuitka build
+            "simple-core_amd64.appimage",      # Tauri AppImage
+            "simple-core_amd64.deb",           # Tauri deb
+        ]
 
+    # Exact match first
     for pattern in patterns:
         for asset in assets:
-            if pattern.lower() in asset.get("name", "").lower():
+            if asset.get("name", "").lower() == pattern.lower():
                 return asset
 
-    # Fallback: any matching platform
-    platform_keywords = {"windows": ["windows", ".exe", ".msi"],
-                         "darwin": ["darwin", "macos", ".dmg"],
-                         "linux": ["linux", ".appimage", ".deb"]}
-
-    for keyword in platform_keywords.get(SYSTEM, []):
+    # Substring match (catches versioned names like simple-core_0.1.25_x64-setup.exe)
+    for pattern in patterns:
         for asset in assets:
-            if keyword in asset.get("name", "").lower():
+            # Strip extension for substring matching
+            base = pattern.rsplit(".", 1)[0] if "." in pattern else pattern
+            if base.lower() in asset.get("name", "").lower():
                 return asset
 
     return None
@@ -332,9 +357,21 @@ def download_app(source: str = "auto", version: str = "latest",
             return False
 
         print_status("Installing...", "progress")
-        if not extract_and_install(download_path, install_dir):
-            return False
+        # Bare executables (Nuitka builds) — just copy, don't extract
+        is_bare_exe = asset_name.lower().endswith((".exe",)) and "setup" not in asset_name.lower()
+        is_bare_bin = not any(asset_name.lower().endswith(ext) for ext in
+                              (".zip", ".tar.gz", ".gz", ".msi", ".dmg", ".deb", ".appimage"))
 
+        if is_bare_exe or is_bare_bin:
+            install_dir.mkdir(parents=True, exist_ok=True)
+            dest_name = EXECUTABLE_NAMES.get(SYSTEM, "simple-core")
+            dest = install_dir / dest_name
+            shutil.copy2(download_path, dest)
+            if not IS_WINDOWS:
+                os.chmod(dest, 0o755)
+            print_status(f"Copied executable to: {dest}", "success")
+        elif not extract_and_install(download_path, install_dir):
+            return False
     # Save version info
     version_file = install_dir / "version.json"
     with open(version_file, "w") as f:
@@ -523,6 +560,12 @@ def run_app(with_worker: bool = True, http_port: int = 5000,
     app_path = get_installed_app_path()
 
     # Check if app is installed
+    if not app_path:
+        # Try finding a local build before downloading
+        project_root = get_project_root()
+        if _install_local_build(project_root):
+            app_path = get_installed_app_path()
+
     if not app_path:
         if download_if_missing:
             print_status("App not installed, downloading...", "info")
@@ -734,6 +777,63 @@ def build_frontend(project_root: Path) -> bool:
         print_status("npm not found - please install Node.js", "error")
         return False
 
+def _install_local_build(project_root: Path) -> bool:
+    """Copy built Tauri app to install dir so `tb gui run` finds it."""
+    install_dir = get_app_install_dir()
+    install_dir.mkdir(parents=True, exist_ok=True)
+
+    target_dir = project_root / "toolboxv2" / "simple-core" / "src-tauri" / "target"
+
+    # Platform-specific: find the built executable
+    found = None
+    if IS_WINDOWS:
+        candidates = list(target_dir.rglob("simple-core.exe"))
+        # Prefer release over debug
+        candidates.sort(key=lambda p: (0 if "release" in str(p) else 1))
+        found = candidates[0] if candidates else None
+    elif IS_MACOS:
+        candidates = list(target_dir.rglob("simple-core.app"))
+        candidates.sort(key=lambda p: (0 if "release" in str(p) else 1))
+        if candidates:
+            dest = install_dir / "simple-core.app"
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.copytree(candidates[0], dest)
+            print_status(f"Installed to: {dest}", "success")
+            _save_local_version(install_dir)
+            return True
+    else:
+        # Linux: AppImage or bare binary
+        candidates = list(target_dir.rglob("simple-core"))
+        candidates = [c for c in candidates if c.is_file() and not c.suffix]
+        candidates.sort(key=lambda p: (0 if "release" in str(p) else 1))
+        found = candidates[0] if candidates else None
+
+    if not found:
+        print_status("Built binary not found in target/, skipping local install", "warning")
+        return False
+
+    dest_name = EXECUTABLE_NAMES.get(SYSTEM, "simple-core")
+    dest = install_dir / dest_name
+    shutil.copy2(found, dest)
+    if not IS_WINDOWS:
+        os.chmod(dest, 0o755)
+
+    _save_local_version(install_dir)
+    print_status(f"Installed to: {dest}", "success")
+    return True
+
+
+def _save_local_version(install_dir: Path):
+    """Write version.json for local build."""
+    from toolboxv2.utils.system.main_tool import get_version_from_pyproject
+    try:
+        version = get_version_from_pyproject() or "dev"
+    except Exception:
+        version = "dev"
+    version_file = install_dir / "version.json"
+    with open(version_file, "w") as f:
+        json.dump({"version": version, "source": "local-build"}, f)
 
 def build_tauri_app(project_root: Path, target: Optional[str] = None,
                     debug: bool = False) -> bool:
@@ -755,6 +855,7 @@ def build_tauri_app(project_root: Path, target: Optional[str] = None,
         print_status(f"Building for: {target or 'current platform'}", "info")
         subprocess.run(cmd, cwd=simple_core, check=True, shell=IS_WINDOWS)
         print_status("Tauri app build complete!", "success")
+        _install_local_build(project_root)
         return True
     except subprocess.CalledProcessError as e:
         print_status(f"Tauri build failed: {e}", "error")

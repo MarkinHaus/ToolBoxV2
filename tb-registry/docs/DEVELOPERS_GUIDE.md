@@ -1,7 +1,7 @@
 # Developers Guide - Registry Entwicklung
 
-**Version**: 1.0
-**Stand**: 2026-02-25
+**Version**: 1.1
+**Stand**: 2026-04-28
 
 ---
 
@@ -9,12 +9,13 @@
 
 1. [Architektur](#architektur)
 2. [Setup & Installation](#setup--installation)
-3. [API-Referenz](#api-referenz)
-4. [Datenbank-Schema](#datenbank-schema)
-5. [Authentifizierung](#authentifizierung)
-6. [Testing](#testing)
-7. [Deployment](#deployment)
-8. [Troubleshooting](#troubleshooting)
+3. [Admin Management](#admin-management)
+4. [API-Referenz](#api-referenz)
+5. [Datenbank-Schema](#datenbank-schema)
+6. [Authentifizierung](#authentifizierung)
+7. [Testing](#testing)
+8. [Deployment](#deployment)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -26,19 +27,20 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                       Client Layer                          │
 ├─────────────────────────────────────────────────────────────┤
-│  TB CLI │  Web UI │  HTTP API │  Webhooks                 │
-└─────────────────┬───────────────────────────────────────────┘
-                  │
-┌─────────────────▼───────────────────────────────────────────┐
+│  TB CLI (tb registry)  │  Web UI  │  HTTP API  │  CloudM   │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+┌─────────────────────▼───────────────────────────────────────┐
 │                    Application Layer                        │
 ├─────────────────────────────────────────────────────────────┤
-│  FastAPI │  Routes │  Services │  Auth (CloudM.Auth)        │
-└─────────────────┬───────────────────────────────────────────┘
-                  │
-┌─────────────────▼───────────────────────────────────────────┐
+│  FastAPI  │  Routes  │  Services  │  Auth (CloudM.Auth)     │
+│  Router prefix: /api/v1                                     │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+┌─────────────────────▼───────────────────────────────────────┐
 │                      Data Layer                             │
 ├─────────────────────────────────────────────────────────────┤
-│  SQLite │  Repositories │  MinIO (Storage)                  │
+│  SQLite  │  Repositories  │  MinIO (Storage)                │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -46,35 +48,41 @@
 
 ```
 tb-registry/
+├── admin_cli.py                  # Server-side Admin Tool
 ├── registry/
 │   ├── __init__.py
 │   ├── app.py                    # FastAPI Application
 │   ├── config.py                 # Configuration (Pydantic)
 │   │
 │   ├── api/                      # API Layer
+│   │   ├── __init__.py
 │   │   ├── deps.py               # Dependencies (Auth, DB, etc.)
+│   │   ├── router.py             # Main router configuration
 │   │   └── routes/               # API Routes
 │   │       ├── auth.py           # Authentication endpoints
-│   │       ├── packages.py       # Package CRUD
-│   │       ├── artifacts.py      # Artifacts
-│   │       ├── publishers.py     # Publisher management
+│   │       ├── packages.py       # Package CRUD + Admin endpoints
+│   │       ├── artifacts.py      # Artifact CRUD + Build upload
+│   │       ├── publishers.py     # Publisher management + Verification
 │   │       ├── search.py         # Search functionality
-│   │       ├── health.py         # Health checks
-│   │       └── resolve.py        # Dependency resolution
+│   │       ├── versions.py       # Batch version query (update-ping)
+│   │       ├── diff.py           # Incremental update diffs
+│   │       ├── resolve.py        # Dependency resolution
+│   │       └── health.py         # Health checks
 │   │
 │   ├── auth/                     # Authentication
 │   │   └── cloudm_client.py      # CloudM.Auth JWT client
 │   │
 │   ├── db/                       # Database Layer
 │   │   ├── database.py           # SQLite connection & schema
-│   │   └── repositories/         # Data access layer
+│   │   └── repositories/
 │   │       ├── user_repo.py
 │   │       ├── package_repo.py
 │   │       └── artifact_repo.py
 │   │
 │   ├── models/                   # Data Models
-│   │   ├── user.py               # User, Publisher
-│   │   └── package.py            # Package, Version, etc.
+│   │   ├── user.py               # User, Publisher, VerificationStatus
+│   │   ├── package.py            # Package, Version, PackageType, Visibility
+│   │   └── artifact.py           # Artifact, ArtifactType, ArtifactBuild
 │   │
 │   ├── services/                 # Business Logic
 │   │   ├── package_service.py    # Package operations
@@ -87,18 +95,31 @@ tb-registry/
 │   ├── resolver/                 # Dependency Resolution
 │   │   └── dependency.py         # SemVer resolver
 │   │
+│   ├── diff.py                   # Diff generator for incremental updates
 │   └── exceptions.py             # Custom exceptions
 │
-├── tests/                        # Tests
-│   ├── test_auth.py              # Auth tests
-│   ├── test_packages.py          # Package tests
-│   ├── test_zip_security.py      # ZIP security tests
-│   └── integration/              # E2E tests
-│
-├── migrations/                   # DB migrations
-├── docs/                         # Documentation
-└── pyproject.toml                # Python package config
+├── tests/
+├── migrations/
+└── pyproject.toml
 ```
+
+### Route Mounting
+
+Alle Routes werden unter `/api/v1` gemounted (`app.include_router(router, prefix="/api/v1")`):
+
+| Route File | Prefix | Resultierende URL |
+|---|---|---|
+| `health.py` | (none) | `/api/v1/health`, `/api/v1/ready` |
+| `auth.py` | `/auth` | `/api/v1/auth/me`, `/api/v1/auth/publisher` |
+| `packages.py` | `/packages` | `/api/v1/packages`, `/api/v1/packages/{name}` |
+| `artifacts.py` | `/artifacts` | `/api/v1/artifacts`, `/api/v1/artifacts/{name}` |
+| `publishers.py` | `/publishers` | `/api/v1/publishers`, `/api/v1/publishers/verify` |
+| `search.py` | `/search` | `/api/v1/search`, `/api/v1/search/suggest` |
+| `resolve.py` | `/resolve` | `/api/v1/resolve`, `/api/v1/resolve/check` |
+| `versions.py` | `/versions` | `/api/v1/versions` |
+| `diff.py` | `/api/v1` | `/api/v1/api/v1/packages/{name}/diff/...` |
+
+**Hinweis**: `diff.py` hat prefix `/api/v1` im Router, was zu doppeltem Prefix führt. Dies sollte zu `/diff` oder leerem Prefix korrigiert werden.
 
 ---
 
@@ -108,22 +129,19 @@ tb-registry/
 
 ```bash
 # Repository klonen
-git clone https://github.com/toolboxv2/tb-registry.git
-cd tb-registry
+git clone https://github.com/MarkinHaus/ToolBoxV2.git
+cd ToolBoxV2/tb-registry
 
-# Virtuelle Umgebung erstellen
+# Virtuelle Umgebung
 python -m venv .venv
-source .venv/bin/activate  # Linux/Mac
-.venv\Scripts\activate     # Windows
+source .venv/bin/activate
 
 # Dependencies installieren
 pip install -e ".[dev]"
 
 # Umgebung konfigurieren
 cp .env.example .env
-# .env bearbeiten:
 # CLOUDM_JWT_SECRET=your_secret_here
-# DATABASE_URL=sqlite:///./data/registry.db
 
 # Datenbank initialisieren
 python -c "from registry.db.database import Database; import asyncio; asyncio.run(Database('sqlite:///./data/registry.db').initialize())"
@@ -132,43 +150,75 @@ python -c "from registry.db.database import Database; import asyncio; asyncio.ru
 uvicorn registry.app:app --reload --host 127.0.0.1 --port 4025
 ```
 
-### Docker Setup
+---
+
+## Admin Management
+
+### Erster Admin (Bootstrap)
+
+Der erste Admin wird **direkt auf dem Server** über das Admin-CLI erstellt. Dies ist der einzige Weg einen Admin zu erstellen — es gibt keinen HTTP-Endpoint dafür.
 
 ```bash
-# Docker Compose
-docker-compose up -d
-
-# Oder manuell
-docker build -t tb-registry .
-docker run -p 4025:4025 \
-  -e CLOUDM_JWT_SECRET=secret \
-  -e DATABASE_URL=sqlite:///./data/registry.db \
-  tb-registry
+# Auf dem Registry-Server ausführen
+python admin_cli.py --db ./data/registry.db
 ```
 
-### Entwicklung-Tools
+**Voraussetzung**: Der User muss sich mindestens einmal eingeloggt haben (wird automatisch bei erstem JWT-Login erstellt via `get_current_user` in `deps.py`).
+
+### Admin-CLI Befehle
+
+Das Admin-CLI ist ein interaktives Menü:
+
+| # | Befehl | Beschreibung |
+|---|--------|-------------|
+| 1 | List users | Alle User anzeigen |
+| 2 | List publishers | Alle Publisher anzeigen |
+| 3 | Make publisher | User zum Publisher machen + optional sofort verifizieren |
+| 4 | Remove publisher | Publisher-Status entfernen |
+| 5 | Edit publisher | Publisher-Felder bearbeiten |
+| 6 | Set publisher status | Verification-Status ändern (unverified/pending/verified/rejected/suspended) |
+| 7 | Toggle admin | Admin-Rechte an/aus |
+| 8 | Raw SQL | Direkte SQL-Queries (read-only, `!`-Prefix für write) |
+
+### Admin über API (nach Bootstrap)
+
+Sobald ein Admin existiert, kann dieser über die Registry-CLI Publisher verwalten:
 
 ```bash
-# Code-Formatierung
-ruff format registry/
-ruff check registry/
+# Pending Publisher auflisten
+tb registry admin publisher list --status pending
 
-# Typ-Prüfung
-mypy registry/
+# Oder nur offene Requests
+tb registry admin publisher open
 
-# Tests
-pytest tests/ -v
-pytest tests/integration/ -v
+# Publisher verifizieren
+tb registry admin publisher verify --target <publisher-id>
 
-# Coverage
-pytest --cov=registry --cov-report=html
+# Publisher ablehnen
+tb registry admin publisher reject --target <publisher-id> --notes "Reason"
+
+# Verification widerrufen
+tb registry admin publisher revoke --target <publisher-id>
 ```
+
+### Admin API Endpoints
+
+| Endpoint | Beschreibung |
+|---|---|
+| `GET /api/v1/packages/admin/pending` | Pending Publisher auflisten |
+| `POST /api/v1/packages/admin/{publisher_id}/verify` | Publisher verifizieren |
+| `POST /api/v1/packages/admin/{publisher_id}/reject` | Publisher ablehnen |
+| `POST /api/v1/packages/admin/{publisher_id}/revoke` | Verification widerrufen |
+
+Alle Admin-Endpoints erfordern `is_admin = true` auf dem User.
 
 ---
 
 ## API-Referenz
 
-### Authentication
+Siehe [API Reference](API_REFERENCE.md) für vollständige Endpoint-Dokumentation.
+
+### Authentifizierung
 
 #### JWT Token erstellen (für Tests)
 
@@ -189,92 +239,18 @@ payload = {
 token = jwt.encode(payload, "your_jwt_secret", algorithm="HS256")
 ```
 
-#### API mit Token aufrufen
+### Debug-Mode
 
-```bash
-curl -H "Authorization: Bearer $TOKEN" \
-  https://registry.tb2.app/api/v1/auth/me
-```
+Bei `DEBUG=True` und ohne konfiguriertem JWT-Secret gibt `verify_cloudm_token` einen Mock-User zurück:
 
-### Packages Endpoints
-
-#### Package auflisten
-
-```http
-GET /api/v1/packages?page=1&per_page=20
-```
-
-**Response:**
-```json
-{
-  "packages": [
-    {
-      "name": "CloudM",
-      "display_name": "CloudM Module",
-      "version": "2.0.0",
-      "description": "Cloud management module",
-      "author": "ToolBoxV2",
-      "downloads": 1234,
-      "visibility": "public"
-    }
-  ],
-  "total": 1,
-  "page": 1,
-  "per_page": 20
-}
-```
-
-#### Package erstellen
-
-```http
-POST /api/v1/packages
-Authorization: Bearer $TOKEN
-Content-Type: application/json
-
-{
-  "name": "my-mod",
-  "display_name": "My Mod",
-  "description": "My awesome mod",
-  "package_type": "mod",
-  "visibility": "public"
-}
-```
-
-#### Package upload
-
-```http
-POST /api/v1/packages/{name}/upload
-Authorization: Bearer $TOKEN
-Content-Type: multipart/form-data
-
-file: <binary>
-version: "1.0.0"
-changelog: "Initial release"
-```
-
-#### Package Details
-
-```http
-GET /api/v1/packages/{name}
-```
-
-#### Package downloaden
-
-```http
-GET /api/v1/packages/{name}/versions/{version}/download
-```
-
-### Search Endpoints
-
-```http
-GET /api/v1/search?q=discord&page=1
-```
-
-### Health Endpoints
-
-```http
-GET /api/v1/health
-GET /api/v1/ready
+```python
+TokenPayload(
+    user_id="user_debug",
+    username="debug_user",
+    email="debug@example.com",
+    level=1,
+    provider="debug",
+)
 ```
 
 ---
@@ -307,8 +283,14 @@ CREATE TABLE publishers (
     website TEXT,
     github TEXT,
     status TEXT DEFAULT 'unverified',
+    verified_at TIMESTAMP,
+    verified_by TEXT,
+    verification_notes TEXT,
     can_publish_public BOOLEAN DEFAULT 0,
+    can_publish_artifacts BOOLEAN DEFAULT 0,
+    max_package_size_mb INTEGER DEFAULT 100,
     packages_count INTEGER DEFAULT 0,
+    total_downloads INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
@@ -353,17 +335,30 @@ CREATE TABLE package_versions (
 );
 ```
 
+### Enums im Code
+
+**PackageType**: `mod`, `artifact`, `library`, `theme`, `plugin`
+
+**ArtifactType**: `tauri_app`, `cli_executable`, `browser_extension`, `mobile_app`, `library`
+
+**Visibility**: `public`, `private`, `unlisted`
+
+**VerificationStatus**: `unverified`, `pending`, `verified`, `rejected`, `suspended`
+
+**Platform**: `all`, `windows`, `linux`, `macos`, `android`, `ios`
+
+**Architecture**: `all`, `x64`, `x86`, `arm64`, `arm32`
+
 ---
 
 ## Authentifizierung
 
 ### CloudM.Auth Integration
 
-Die Registry verwendet **CloudM.Auth** für die JWT-Validierung:
-
 1. **Client** bekommt Token von CloudM.Auth (ToolBox Hauptanwendung)
 2. **Client** sendet Token an Registry im `Authorization: Bearer` Header
 3. **Registry** validiert Token lokal mit `CLOUDM_JWT_SECRET`
+4. **User-Erststellung**: Bei erstem Login wird automatisch ein User in der DB erstellt (`deps.py: get_current_user`)
 
 ### JWT Token Struktur
 
@@ -380,32 +375,6 @@ Die Registry verwendet **CloudM.Auth** für die JWT-Validierung:
 }
 ```
 
-### Configuration
-
-```python
-# registry/config.py
-class Settings(BaseSettings):
-    cloudm_jwt_secret: str = Field(
-        default="",
-        description="Shared secret for CloudM.Auth JWT validation"
-    )
-    cloudm_auth_url: Optional[str] = Field(
-        default=None,
-        description="URL to CloudM.Auth service (fallback validation)"
-    )
-```
-
-### Dependency Usage
-
-```python
-from fastapi import Depends
-from registry.api.deps import get_current_user
-
-@router.get("/api/v1/auth/me")
-async def get_my_info(user: User = Depends(get_current_user)):
-    return {"user_id": user.cloudm_user_id, "email": user.email}
-```
-
 ---
 
 ## Testing
@@ -413,41 +382,17 @@ async def get_my_info(user: User = Depends(get_current_user)):
 ### Unit Tests
 
 ```bash
-# Alle Tests
-pytest tests/ -v
+# Alle Tests (unittest, nicht pytest!)
+python -m unittest discover tests/ -v
 
 # Spezifisches Modul
-pytest tests/test_packages.py -v
-
-# Mit Coverage
-pytest --cov=registry --cov-report=html
+python -m unittest tests.test_packages -v
 ```
 
 ### Integration Tests
 
 ```bash
-# E2E Tests
-pytest tests/integration/ -v
-
-# Spezifischer Test
-pytest tests/integration/test_auth_migration.py::test_full_auth_flow -v
-```
-
-### Test-Beispiel
-
-```python
-import pytest
-from httpx import AsyncClient
-from registry.app import create_app
-
-@pytest.mark.asyncio
-async def test_get_package():
-    app = create_app()
-    async with AsyncClient(app=app) as client:
-        response = await client.get("/api/v1/packages/CloudM")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["name"] == "CloudM"
+python -m unittest discover tests/integration/ -v
 ```
 
 ---
@@ -459,116 +404,47 @@ async def test_get_package():
 1. **Environment Variables**
 ```bash
 CLOUDM_JWT_SECRET=<strong-random-secret>
-DATABASE_URL=postgresql://user:pass@host/db
-MINIO_PRIMARY_ENDPOINT=minio.example.com
+DATABASE_URL=sqlite:///./data/registry.db
+MINIO_PRIMARY_ENDPOINT=minio.simplecore.app
 MINIO_PRIMARY_ACCESS_KEY=access_key
 MINIO_PRIMARY_SECRET_KEY=secret_key
 DEBUG=False
 ```
 
-2. **Database Migration**
-```bash
-python migrations/002_add_cloudm_user_id.py
-```
-
-3. **Start Application**
+2. **Start Application**
 ```bash
 uvicorn registry.app:app --host 0.0.0.0 --port 4025 --workers 4
 ```
 
-### Docker Deployment
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-COPY pyproject.toml .
-RUN pip install -e .
-
-COPY registry/ registry/
-
-EXPOSE 4025
-CMD ["uvicorn", "registry.app:app", "--host", "0.0.0.0", "--port", "4025"]
-```
-
-### Kubernetes Deployment
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: tb-registry
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: tb-registry
-  template:
-    metadata:
-      labels:
-        app: tb-registry
-    spec:
-      containers:
-      - name: registry
-        image: tb-registry:latest
-        ports:
-        - containerPort: 4025
-        env:
-        - name: CLOUDM_JWT_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: registry-secrets
-              key: jwt-secret
+3. **Admin Bootstrap**
+```bash
+# Erster Admin muss auf dem Server erstellt werden
+python admin_cli.py --db ./data/registry.db
+# → Option 7: Toggle admin für deinen User
 ```
 
 ---
 
 ## Troubleshooting
 
-### Häufige Fehler
-
-#### "Authentication service not configured"
+### "Authentication service not configured"
 
 ```bash
-# Lösung: CLOUDM_JWT_SECRET setzen
+# CLOUDM_JWT_SECRET nicht gesetzt
 export CLOUDM_JWT_SECRET=your_secret
 ```
 
-#### "No such column: cloudm_user_id"
+### "Admin access required" (403)
 
 ```bash
-# Lösung: Migration ausführen
-python migrations/002_add_cloudm_user_id.py
+# User ist kein Admin
+# Auf dem Server: python admin_cli.py → Option 7
 ```
 
-#### "Package not found"
+### Diff-Route doppelter Prefix
 
-```bash
-# Prüfen: Package existiert?
-curl https://registry.tb2.app/api/v1/packages/{name}
-```
-
-### Debug-Mode
-
-```python
-# config.py
-debug: bool = Field(default=False)
-
-# deps.py
-if settings.debug:
-    # Returns mock user for testing
-    return TokenPayload(user_id="debug_user", ...)
-```
+Die `diff.py` Route ist mit prefix `/api/v1` im Router gemounted, was zu `/api/v1/api/v1/packages/...` führt. Fix: Prefix in `router.py` zu leerem String ändern oder die Pfade in `diff.py` anpassen.
 
 ---
 
-## Weiterführende Links
-
-- [User Guide](USER_GUIDE.md) - Für End-Nutzer
-- [Contributors Guide](CONTRIBUTORS_GUIDE.md) - Für Mod-Entwickler
-- [Security Audit](../migrations/003_security_audit.md) - Security-Checklist
-- [Deployment Checklist](../DEPLOYMENT_CHECKLIST.md) - Production-Deployment
-
----
-
-**Letzte Aktualisierung**: 2026-02-25
+**Letzte Aktualisierung**: 2026-04-28

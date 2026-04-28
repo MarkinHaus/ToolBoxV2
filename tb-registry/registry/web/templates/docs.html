@@ -15,6 +15,8 @@
     .docs code { background: var(--bg-surface); padding: 2px 6px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 0.85em; }
     .docs pre { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); overflow-x: auto; margin: var(--space-3) 0; }
     .docs pre code { background: none; padding: 0; }
+    .docs .note { background: var(--bg-surface); border-left: 3px solid var(--accent, #3b82f6); padding: var(--space-3) var(--space-4); border-radius: var(--radius-sm); margin: var(--space-3) 0; }
+    .docs .note p { margin-bottom: 0; }
   </style>
 </head>
 <body>
@@ -38,6 +40,11 @@
   <main class="docs">
     <h2>Getting Started</h2>
     <p>TB Registry is the package registry for the ToolBox Framework. Install and manage modules using the <code>tb</code> CLI with the CloudM module manager.</p>
+
+    <div class="code-block">
+      <code>pip install toolboxv2</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
 
     <h2>Module Management</h2>
 
@@ -77,12 +84,35 @@
       <button class="copy-btn" onclick="copy(this)">📋</button>
     </div>
 
+    <h2>Registry CLI</h2>
+    <p>Direct access to the registry API for searching, downloading, and publishing.</p>
+
+    <h3>Search &amp; Browse</h3>
+    <div class="code-block">
+      <code>tb registry search &lt;query&gt;</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+    <div class="code-block">
+      <code>tb registry list --type mod --sort downloads</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+    <div class="code-block">
+      <code>tb registry info CloudM --versions</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+
+    <h3>Download</h3>
+    <div class="code-block">
+      <code>tb registry download CloudM --version 2.0.0</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+
     <h2>Publishing</h2>
-    <p>Publish your own modules to share with the community. You need to be a verified publisher.</p>
+    <p>Publish your own modules to share with the community. You need to be a registered publisher.</p>
 
     <h3>1. Login</h3>
     <div class="code-block">
-      <code>tb login</code>
+      <code>tb registry login</code>
       <button class="copy-btn" onclick="copy(this)">📋</button>
     </div>
 
@@ -93,13 +123,35 @@
       <button class="copy-btn" onclick="copy(this)">📋</button>
     </div>
 
-    <h3>3. Publish</h3>
-    <p>Use the interactive manager to publish:</p>
+    <h3>3. Create Package</h3>
+    <p>Register your package in the registry:</p>
+    <div class="code-block">
+      <code>tb registry publish ./my-mod --create --metadata metadata.json</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+
+    <h3>4. Upload Version</h3>
+    <div class="code-block">
+      <code>tb registry publish ./my-mod --upload --metadata metadata.json</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+
+    <h3>5. Publish via Manager</h3>
+    <p>Or use the interactive manager:</p>
     <div class="code-block">
       <code>tb -c CloudM mods manager</code>
       <button class="copy-btn" onclick="copy(this)">📋</button>
     </div>
     <p>Then select <strong>REGISTRY → Publish to registry</strong></p>
+
+    <h3>Set Visibility</h3>
+    <div class="code-block">
+      <code>tb registry publish my-mod --visibility public</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+    <div class="note">
+      <p><strong>Note:</strong> Public visibility requires a verified publisher. Use <code>unlisted</code> for testing.</p>
+    </div>
 
     <h2>Artifacts</h2>
     <p>Download official ToolBox applications and tools.</p>
@@ -119,30 +171,97 @@
       <button class="copy-btn" onclick="copy(this)">📋</button>
     </div>
 
+    <h3>Upload Artifact Builds (Publishers)</h3>
+    <pre><code>curl -X POST https://registry.simplecore.app/api/v1/artifacts/SimpleCore/builds \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "version=1.0.0" \
+  -F "platform=windows" \
+  -F "architecture=x64" \
+  -F "installer_type=msi" \
+  -F "file=@SimpleCore-1.0.0-win-x64.msi"</code></pre>
+
+    <h2>Admin</h2>
+    <p>Admin tools for managing publishers and the registry.</p>
+
+    <h3>Server-Side Admin CLI</h3>
+    <p>Run directly on the registry server (no auth required):</p>
+    <div class="code-block">
+      <code>python admin_cli.py --db ./data/registry.db</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+    <p>Use to create the first admin, manage publishers, and run SQL queries.</p>
+
+    <h3>Remote Admin (via CLI)</h3>
+    <div class="code-block">
+      <code>tb registry admin publisher list --status pending</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+    <div class="code-block">
+      <code>tb registry admin publisher verify --target &lt;publisher-id&gt;</code>
+      <button class="copy-btn" onclick="copy(this)">📋</button>
+    </div>
+
     <h2>API Reference</h2>
-    <p>The registry provides a REST API for programmatic access.</p>
+    <p>The registry provides a REST API for programmatic access. Base URL: <code>https://registry.simplecore.app/api/v1</code></p>
+
+    <h3>Authentication</h3>
+    <ul>
+      <li><code>GET /api/v1/auth/me</code> — Current user info</li>
+      <li><code>GET /api/v1/auth/publisher</code> — Publisher profile</li>
+      <li><code>POST /api/v1/auth/register-publisher</code> — Register as publisher</li>
+    </ul>
 
     <h3>Packages</h3>
     <ul>
-      <li><code>GET /api/v1/packages</code> - List all packages</li>
-      <li><code>GET /api/v1/packages/{name}</code> - Get package details</li>
-      <li><code>GET /api/v1/packages/{name}/versions</code> - List versions</li>
-      <li><code>GET /api/v1/packages/{name}/versions/{v}/download</code> - Get download URL</li>
-      <li><code>POST /api/v1/packages</code> - Create package (auth)</li>
-      <li><code>POST /api/v1/packages/{name}/versions</code> - Upload version (auth)</li>
+      <li><code>GET /api/v1/packages</code> — List all packages</li>
+      <li><code>GET /api/v1/packages/{name}</code> — Get package details</li>
+      <li><code>POST /api/v1/packages</code> — Create package (auth)</li>
+      <li><code>PATCH /api/v1/packages/{name}</code> — Update package (auth)</li>
+      <li><code>DELETE /api/v1/packages/{name}</code> — Delete package (auth)</li>
+      <li><code>POST /api/v1/packages/{name}/upload</code> — Upload version (auth)</li>
+      <li><code>GET /api/v1/packages/{name}/versions/{v}/download</code> — Get download URL</li>
+      <li><code>POST /api/v1/packages/{name}/versions/{v}/yank</code> — Yank version (auth)</li>
     </ul>
 
     <h3>Artifacts</h3>
     <ul>
-      <li><code>GET /api/v1/artifacts</code> - List artifacts</li>
-      <li><code>GET /api/v1/artifacts/{name}</code> - Get artifact details</li>
-      <li><code>GET /api/v1/artifacts/{name}/versions/{v}/download</code> - Get download URL</li>
+      <li><code>GET /api/v1/artifacts</code> — List artifacts</li>
+      <li><code>GET /api/v1/artifacts/{name}</code> — Get artifact details</li>
+      <li><code>POST /api/v1/artifacts</code> — Create artifact (auth)</li>
+      <li><code>POST /api/v1/artifacts/{name}/builds</code> — Upload build (auth)</li>
+      <li><code>GET /api/v1/artifacts/{name}/latest</code> — Latest for platform</li>
+      <li><code>GET /api/v1/artifacts/{name}/versions/{v}/download</code> — Download build</li>
     </ul>
 
-    <h3>Search & Resolve</h3>
+    <h3>Publishers</h3>
     <ul>
-      <li><code>GET /api/v1/search?q={query}</code> - Search packages</li>
-      <li><code>POST /api/v1/resolve</code> - Resolve dependencies</li>
+      <li><code>GET /api/v1/publishers</code> — List publishers</li>
+      <li><code>GET /api/v1/publishers/{slug}</code> — Get publisher</li>
+      <li><code>POST /api/v1/publishers/verify</code> — Submit verification (auth)</li>
+    </ul>
+
+    <h3>Search, Resolve &amp; Versions</h3>
+    <ul>
+      <li><code>GET /api/v1/search?q={query}</code> — Search packages</li>
+      <li><code>GET /api/v1/search/suggest?q={prefix}</code> — Autocomplete</li>
+      <li><code>POST /api/v1/resolve</code> — Resolve dependencies</li>
+      <li><code>GET /api/v1/resolve/check</code> — Compatibility check</li>
+      <li><code>GET /api/v1/versions?names=a&amp;names=b</code> — Batch version query</li>
+    </ul>
+
+    <h3>Diff (Incremental Updates)</h3>
+    <ul>
+      <li><code>GET /api/v1/packages/{name}/diff/{from}/{to}</code> — Diff info</li>
+      <li><code>GET /api/v1/packages/{name}/diff/{from}/{to}/download</code> — Download patch</li>
+      <li><code>POST /api/v1/packages/{name}/diff/create</code> — Pre-generate diff</li>
+    </ul>
+
+    <h3>Admin</h3>
+    <ul>
+      <li><code>GET /api/v1/packages/admin/pending</code> — Pending publishers</li>
+      <li><code>POST /api/v1/packages/admin/{id}/verify</code> — Verify publisher</li>
+      <li><code>POST /api/v1/packages/admin/{id}/reject</code> — Reject publisher</li>
+      <li><code>POST /api/v1/packages/admin/{id}/revoke</code> — Revoke verification</li>
     </ul>
 
     <h3>Example</h3>
@@ -167,4 +286,3 @@
   </script>
 </body>
 </html>
-

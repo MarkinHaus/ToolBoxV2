@@ -117,6 +117,78 @@ async def registry_status(args):
     return 0
 
 
+async def registry_server_admin(args):
+    """Launch the server-side admin CLI (runs in tb-registry venv)."""
+    print_box_header("Registry Admin CLI", "🔧")
+    print_box_content("Launching server-side admin tool", "info")
+    print_box_footer()
+
+    app = get_app("CloudM.RegistryServer")
+
+    # Reuse the same path-finding logic as RegistryServer mod
+    try:
+        from toolboxv2.mods.CloudM.RegistryServer import _find_registry_path
+        reg_path = _find_registry_path()
+    except ImportError:
+        # Fallback: try common locations
+        from pathlib import Path as _Path
+        for candidate in [
+            _Path(__file__).parent.parent.parent.parent / "tb-registry",
+            _Path.home() / "tb-registry",
+            _Path.cwd() / "tb-registry",
+        ]:
+            if candidate.exists() and (candidate / "admin_cli.py").exists():
+                reg_path = candidate
+                break
+        else:
+            reg_path = None
+
+    if not reg_path or not reg_path.exists():
+        print_status("TB-Registry path not found", "error")
+        print_status("Set TB_REGISTRY_PATH or ensure tb-registry is at the default location", "info")
+        return 1
+
+    admin_script = reg_path / "admin_cli.py"
+    if not admin_script.exists():
+        print_status(f"admin_cli.py not found in {reg_path}", "error")
+        return 1
+
+    # Determine DB path
+    db_path = args.db if hasattr(args, 'db') and args.db else str(reg_path / "data" / "registry.db")
+
+    print_status(f"Registry path: {reg_path}", "info")
+    print_status(f"Database: {db_path}", "info")
+
+    import subprocess
+    import os
+
+    env = os.environ.copy()
+
+    try:
+        # Run admin_cli.py via uv in the tb-registry venv (same as start_registry)
+        process = subprocess.run(
+            ["uv", "run", "python", "admin_cli.py", "--db", db_path],
+            cwd=str(reg_path),
+            env=env,
+        )
+
+        if process.returncode != 0:
+            print_status(f"Admin CLI exited with code {process.returncode}", "warning")
+            return process.returncode
+
+        return 0
+
+    except FileNotFoundError:
+        print_status("'uv' not found. Install with: pip install uv", "error")
+        return 1
+    except KeyboardInterrupt:
+        print_status("Admin CLI closed", "info")
+        return 0
+    except Exception as e:
+        print_status(f"Failed to launch admin CLI: {e}", "error")
+        return 1
+
+
 # ==================== Package Commands ====================
 
 async def registry_search(args):
@@ -731,6 +803,217 @@ async def registry_whoami(args):
         await client.close()
 
 
+# ==================== Publisher Commands ====================
+
+async def registry_register_publisher(args):
+    """Register as a publisher."""
+    print_box_header("Register Publisher", "📝")
+    print_box_footer()
+
+    token = await _get_auth_token()
+    if not token:
+        print_status("Authentication required. Please login first.", "error")
+        print_status("Use: tb registry login", "info")
+        return 1
+
+    client = RegistryClient(registry_url=args.registry_url)
+    try:
+        await client.login(token)
+
+        user = await client.get_current_user()
+        if not user:
+            print_status("Authentication failed", "error")
+            return 1
+
+        if user.publisher_id:
+            print_status("Already registered as a publisher", "warning")
+            pub = await client.get_my_publisher()
+            if pub:
+                print_status(f"Publisher: @{pub.name} ({pub.display_name})", "info")
+                print_status(f"Status: {pub.verification_status}", "info")
+            return 0
+
+        # Collect info — use args or prompt interactively
+        name = args.name
+        if not name:
+            name = input("  Publisher slug (unique handle): ").strip()
+        if not name:
+            print_status("Publisher slug is required", "error")
+            return 1
+
+        display_name = args.display_name or input(f"  Display name [{name}]: ").strip() or name
+        email = args.email or input(f"  Contact email [{user.email}]: ").strip() or user.email
+        homepage = args.homepage or input("  Homepage URL (optional): ").strip() or None
+
+        print_status(f"Registering publisher @{name}...", "progress")
+
+        publisher = await client.register_publisher(
+            name=name,
+            display_name=display_name,
+            email=email,
+            homepage=homepage,
+        )
+
+        if publisher:
+            print_status(f"Publisher @{publisher.name} registered!", "success")
+            print_status(f"ID: {publisher.id}", "info")
+            print_status(f"Status: {publisher.verification_status}", "info")
+            print_status("To publish public mods, request verification:", "info")
+            print_status("  tb registry verify-publisher --method github --github <username>", "info")
+        else:
+            print_status("Registration failed", "error")
+            return 1
+
+        return 0
+
+    except RegistryError as e:
+        print_status(f"Registration failed: {e}", "error")
+        return 1
+    finally:
+        await client.close()
+
+
+async def registry_publisher_status(args):
+    """Show current publisher status."""
+    print_box_header("Publisher Status", "📋")
+    print_box_footer()
+
+    token = await _get_auth_token()
+    if not token:
+        print_status("Not logged in to registry", "warning")
+        print_status("Use: tb registry login", "info")
+        return 0
+
+    client = RegistryClient(registry_url=args.registry_url)
+    try:
+        await client.login(token)
+
+        user = await client.get_current_user()
+        if not user:
+            print_status("Authentication failed", "error")
+            return 1
+
+        if not user.publisher_id:
+            print_status("Not registered as a publisher", "warning")
+            print_status("Use: tb registry register-publisher", "info")
+            return 0
+
+        pub = await client.get_my_publisher()
+        if not pub:
+            print_status("Publisher profile not found", "error")
+            return 1
+
+        columns = [("Property", 20), ("Value", 40)]
+        widths = [w for _, w in columns]
+
+        print_table_header(columns, widths)
+        print_table_row(["Publisher ID", pub.id], widths, ["white", "cyan"])
+        print_table_row(["Slug", pub.name], widths, ["white", "white"])
+        print_table_row(["Display Name", pub.display_name], widths, ["white", "white"])
+
+        status_color = {
+            "verified": "green",
+            "pending": "yellow",
+            "rejected": "red",
+            "unverified": "grey",
+            "suspended": "red",
+        }.get(pub.verification_status, "white")
+        print_table_row(["Status", pub.verification_status], widths, ["white", status_color])
+        print_table_row(["Packages", str(pub.package_count)], widths, ["white", "grey"])
+        print_table_row(["Downloads", str(pub.total_downloads)], widths, ["white", "grey"])
+
+        if pub.verification_status == "unverified":
+            c_print(f"\n  {Colors.YELLOW}Tip:{Colors.RESET} Request verification to publish public mods:")
+            c_print(f"  tb registry verify-publisher --method github --github <username>")
+
+        return 0
+
+    except RegistryError as e:
+        print_status(f"Failed: {e}", "error")
+        return 1
+    finally:
+        await client.close()
+
+
+async def registry_verify_publisher(args):
+    """Submit publisher verification request."""
+    print_box_header("Publisher Verification", "🛡️")
+    print_box_footer()
+
+    token = await _get_auth_token()
+    if not token:
+        print_status("Authentication required. Please login first.", "error")
+        print_status("Use: tb registry login", "info")
+        return 1
+
+    client = RegistryClient(registry_url=args.registry_url)
+    try:
+        await client.login(token)
+
+        user = await client.get_current_user()
+        if not user:
+            print_status("Authentication failed", "error")
+            return 1
+
+        if not user.publisher_id:
+            print_status("Not registered as a publisher", "error")
+            print_status("Use: tb registry register-publisher", "info")
+            return 1
+
+        # Check current status
+        pub = await client.get_my_publisher()
+        if pub and pub.verification_status == "verified":
+            print_status("Publisher is already verified", "success")
+            return 0
+        if pub and pub.verification_status == "pending":
+            print_status("Verification request already pending", "warning")
+            return 0
+
+        method = args.method
+        if not method:
+            c_print(f"\n  Available methods: github, domain")
+            method = input("  Verification method: ").strip()
+
+        if method not in ("github", "domain"):
+            print_status(f"Unknown method: {method}. Use 'github' or 'domain'.", "error")
+            return 1
+
+        # Build verification data based on method
+        verification_data = {}
+        if method == "github":
+            github_user = args.github or input("  GitHub username: ").strip()
+            if not github_user:
+                print_status("GitHub username required", "error")
+                return 1
+            verification_data["username"] = github_user
+        elif method == "domain":
+            domain = args.domain or input("  Domain to verify: ").strip()
+            if not domain:
+                print_status("Domain required", "error")
+                return 1
+            verification_data["domain"] = domain
+
+        print_status(f"Submitting {method} verification...", "progress")
+
+        success = await client.submit_verification(method=method, data=verification_data)
+
+        if success:
+            print_status("Verification request submitted!", "success")
+            print_status("An admin will review your request.", "info")
+            print_status("Check status: tb registry publisher-status", "info")
+        else:
+            print_status("Verification request failed", "error")
+            return 1
+
+        return 0
+
+    except RegistryError as e:
+        print_status(f"Verification failed: {e}", "error")
+        return 1
+    finally:
+        await client.close()
+
+
 # ==================== Admin Commands ====================
 
 async def registry_admin_publisher(args):
@@ -1050,6 +1333,9 @@ For more information, see: https://github.com/toolboxv2/tb-registry
     server_subparsers.add_parser("stop", help="Stop registry server")
     server_subparsers.add_parser("status", help="Show server status")
 
+    admin_cli_parser = server_subparsers.add_parser("admin-cli", help="Launch server-side admin CLI")
+    admin_cli_parser.add_argument("--db", help="Path to registry SQLite database")
+
     # ==================== Package Commands ====================
     subparsers.add_parser("search", help="Search for packages").add_argument("query", help="Search query")
 
@@ -1098,6 +1384,20 @@ For more information, see: https://github.com/toolboxv2/tb-registry
     subparsers.add_parser("logout", help="Logout from registry")
     subparsers.add_parser("whoami", help="Show current user")
 
+    # ==================== Publisher Commands ====================
+    reg_pub_parser = subparsers.add_parser("register-publisher", help="Register as a publisher")
+    reg_pub_parser.add_argument("--name", help="Publisher slug (unique handle)")
+    reg_pub_parser.add_argument("--display-name", dest="display_name", help="Display name")
+    reg_pub_parser.add_argument("--email", help="Contact email")
+    reg_pub_parser.add_argument("--homepage", help="Homepage URL")
+
+    subparsers.add_parser("publisher-status", help="Show publisher status")
+
+    verify_pub_parser = subparsers.add_parser("verify-publisher", help="Request publisher verification")
+    verify_pub_parser.add_argument("--method", choices=["github", "domain"], help="Verification method")
+    verify_pub_parser.add_argument("--github", help="GitHub username (for github method)")
+    verify_pub_parser.add_argument("--domain", help="Domain (for domain method)")
+
     # ==================== Admin Commands ====================
     admin_parser = subparsers.add_parser("admin", help="Admin management tools")
     admin_sub = admin_parser.add_subparsers(dest="admin_command")
@@ -1130,6 +1430,7 @@ async def registry():
             "start": registry_start,
             "stop": registry_stop,
             "status": registry_status,
+            "admin-cli": registry_server_admin,
         },
         # Package commands
         "search": registry_search,
@@ -1146,6 +1447,10 @@ async def registry():
         "login": registry_login,
         "logout": registry_logout,
         "whoami": registry_whoami,
+        # Publisher commands
+        "register-publisher": registry_register_publisher,
+        "publisher-status": registry_publisher_status,
+        "verify-publisher": registry_verify_publisher,
         # Admin commands
         "admin": {
             "publisher": registry_admin_publisher,

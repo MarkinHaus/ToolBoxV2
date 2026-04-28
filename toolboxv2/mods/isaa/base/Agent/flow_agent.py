@@ -720,7 +720,6 @@ class FlowAgent:
             accumulated_usage = None
 
             active_cut_off_tool = None
-
             # Edge Case für True-Streaming (wird vom UI-Streaming direkt an Nutzer geleitet)
             if use_stream and true_stream:
                 llm_kwargs["stream_options"] = {"include_usage": True}
@@ -1188,6 +1187,7 @@ class FlowAgent:
                     task_id=f"format_{model_name.lower()}",
                     response_format=pydantic_model,
                 )
+
                 if isinstance(data, str):
                     data = json.loads(data)
                 validated = pydantic_model.model_validate(data)

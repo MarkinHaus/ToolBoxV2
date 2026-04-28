@@ -1,7 +1,7 @@
 # Contributors Guide - Mods veröffentlichen
 
-**Version**: 1.0
-**Stand**: 2026-02-25
+**Version**: 1.1
+**Stand**: 2026-04-28
 
 ---
 
@@ -20,12 +20,18 @@
 
 ### Account erstellen
 
+Accounts werden automatisch beim ersten Login erstellt — kein separater Registrierungsschritt nötig.
+
 ```bash
 # ToolBoxV2 CLI installiert?
 tb --version
 
 # Einloggen (mit CloudM.Auth)
-tb login
+tb registry login
+# → Dein Account wird automatisch erstellt
+
+# Prüfen ob Login erfolgreich
+tb registry whoami
 ```
 
 ### Publisher erstellen
@@ -33,13 +39,32 @@ tb login
 Jeder Mod braucht einen Publisher (Entwickler/Organisation):
 
 ```bash
-#TODO fill
+# Option A: Über den interaktiven Manager
+tb -c CloudM mods manager
+# → REGISTRY → Register as Publisher
+
+# Option B: Via HTTP API
+curl -X POST https://registry.simplecore.app/api/v1/auth/register-publisher \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-publisher",
+    "display_name": "My Publisher",
+    "email": "contact@example.com",
+    "homepage": "https://example.com"
+  }'
 ```
 
 ### Publisher Status prüfen
 
 ```bash
-#TODO fill
+# Eigenen Publisher-Status anzeigen
+tb registry whoami
+# → Zeigt Publisher-ID und ob Admin
+
+# Via API
+curl -H "Authorization: Bearer $TOKEN" \
+  https://registry.simplecore.app/api/v1/auth/publisher
 ```
 
 ---
@@ -119,52 +144,68 @@ visibility: public                # public | unlisted | private
 # Mod lokal entwickeln
 cd my-mod
 
-# Mod testen
-tb test my-mod
-
-# Lokale Installation testen
-tb install .
+# tbConfig generieren
+tb -c CloudM mods gen-config my-mod
 ```
 
-### 2. Mod bauen/packen
+### 2. Metadata-Datei erstellen
 
-```bash
-# Als .tbx packen
-tb pack my-mod
+Erstelle eine `metadata.json` für das Publishing:
 
-# Erzeugt: my-mod-1.0.0.tbx
+```json
+{
+  "name": "my-mod",
+  "display_name": "My Awesome Mod",
+  "package_type": "mod",
+  "version": "1.0.0",
+  "description": "This mod does awesome things",
+  "visibility": "unlisted",
+  "homepage": "https://github.com/user/my-mod",
+  "repository": "https://github.com/user/my-mod.git",
+  "license": "MIT",
+  "keywords": ["utility", "automation"]
+}
 ```
 
-### 3. Mod hochladen
+### 3. Package erstellen (erster Upload)
 
 ```bash
-# Erster Upload (neues Mod)
-tb registry upload ./my-mod/
+# Package in der Registry registrieren
+tb registry publish ./my-mod/ --create --metadata metadata.json
 
 # Output:
-# ✓ Package registered: my-mod v1.0.0
-# ✓ Public URL: https://registry.tb2.app/packages/my-mod
+# ✓ Package 'my-mod' created successfully
 ```
 
-### 4. Update veröffentlichen
+### 4. Version hochladen
 
 ```bash
-# Version erhöhen (in my_mod.yaml)
-# version: 1.0.0 -> 1.1.0
+# Version hochladen
+tb registry publish ./my-mod/ --upload --metadata metadata.json
+
+# Oder mit Diff-Support (spart Bandbreite bei Updates)
+tb registry upload ./my-mod.zip --metadata metadata.json
+```
+
+### 5. Update veröffentlichen
+
+```bash
+# Version in metadata.json erhöhen: 1.0.0 -> 1.1.0
+# changelog hinzufügen
 
 # Update hochladen
-tb registry upload ./my-mod/ --new-version 1.1.0
+tb registry publish ./my-mod/ --upload --metadata metadata.json
 
-# Mit Changelog
-tb registry upload ./my-mod/ \
-  --new-version 1.1.0 \
-  --changelog "Added feature X, fixed bug Y"
+# Mit Diff-Optimierung (nur Änderungen hochladen)
+tb registry upload ./my-mod.zip \
+  --metadata metadata.json \
+  --diff-threshold 50
 ```
 
-### 5. Sichtbarkeit ändern
+### 6. Sichtbarkeit ändern
 
 ```bash
-# Auf Public (nach Verification!)
+# Auf Public (erfordert verifizierten Publisher)
 tb registry publish my-mod --visibility public
 
 # Auf Unlisted (für Beta/Testing)
@@ -185,47 +226,39 @@ tb registry publish my-mod --visibility private
 **Voraussetzungen:**
 - Publisher ist **verifiziert**
 - Mod hat vollständige Metadaten
-- Mod ist getestet
 
 **Verification beantragen:**
 
 ```bash
-#TODO fill
+# Via HTTP API
+curl -X POST https://registry.simplecore.app/api/v1/publishers/verify \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"method": "github", "data": {"username": "dein-github"}}'
 ```
 
 **Verification-Status:**
-- `pending` - Warten auf Review
+- `unverified` - Noch nicht beantragt
+- `pending` - Warten auf Admin-Review
 - `verified` - Kann Public Mods veröffentlichen
 - `rejected` - Grund prüfen und erneut beantragen
+- `suspended` - Temporär gesperrt
 
 ### Unlisted Mods
 
 **Nicht in Suche, aber mit Link/Namen downloadbar.**
 
-**Anwendungsfälle:**
-- Beta-Tests
-- Private Verteilung anselected Users
-- Mods in Entwicklung
-
 ```bash
 # Unlisted Mod
 tb registry publish my-mod --visibility unlisted
 
-# Link teilen:
-# https://registry.tb2.app/packages/my-mod
-
-# Oder CLI-Download:
+# Andere können downloaden wenn sie den Namen kennen:
 tb registry download my-mod
 ```
 
 ### Private Mods
 
 **Nur für den Owner downloadbar.**
-
-**Anwendungsfälle:**
-- Persönliche Tools
-- Mods in früher Entwicklung
-- Mods mit sensiblen Daten
 
 ```bash
 # Private Mod
@@ -255,48 +288,25 @@ MAJOR.MINOR.PATCH
 
 ### Changelog
 
-```bash
-# Gute Changelogs:
-tb registry upload ./my-mod/ \
-  --new-version 1.1.0 \
-  --changelog "
-  Added:
-  - Feature X for doing Y
-  - Integration with Service Z
+Trage den Changelog in die `metadata.json` ein:
 
-  Fixed:
-  - Bug when running on Windows
-  - Memory leak in long-running processes
-
-  Changed:
-  - Improved performance by 50%
-  "
-```
-
-### Testing
-
-```bash
-# Mod vor Upload testen
-tb test my-mod --full
-
-# Auf verschiedenen Plattformen testen
-tb test my-mod --platform windows
-tb test my-mod --platform linux
-tb test my-mod --platform macos
+```json
+{
+  "name": "my-mod",
+  "version": "1.1.0",
+  "changelog": "Added: Feature X for doing Y\nFixed: Bug when running on Windows\nChanged: Improved performance by 50%"
+}
 ```
 
 ### Dokumentation
 
-```markdown
-# README.md sollte enthalten:
+Dein README.md sollte enthalten:
 
 1. Kurze Beschreibung
 2. Installationsanleitung
 3. Konfiguration
 4. Beispiele
 5. Bekannte Issues
-6. Roadmap (optional)
-```
 
 ---
 
@@ -318,34 +328,26 @@ jobs:
       - uses: actions/checkout@v3
 
       - name: Install TB CLI
-        run: |
-          curl -sSL https://install.tb2.app | sh
-          echo "$HOME/.tb/bin" >> $GITHUB_PATH
+        run: pip install toolboxv2
 
-      - name: Pack Mod
-        run: tb pack .
+      - name: Create metadata
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          cat > metadata.json << EOF
+          {
+            "name": "${{ github.event.repository.name }}",
+            "version": "$VERSION",
+            "package_type": "mod",
+            "changelog": "${{ github.event.release.body }}"
+          }
+          EOF
 
       - name: Publish to Registry
         env:
           TB_TOKEN: ${{ secrets.TB_REGISTRY_TOKEN }}
         run: |
-          VERSION=${GITHUB_REF#refs/tags/}
-          tb registry upload ./ \
-            --new-version $VERSION \
-            --token $TB_TOKEN
-```
-
-### GitLab CI Beispiel
-
-```yaml
-publish:
-  stage: deploy
-  only:
-    - tags
-  script:
-    - pip install toolboxv2
-    - tb pack .
-    - tb registry upload ./ --new-version $CI_COMMIT_TAG
+          tb registry login
+          tb registry publish ./ --upload --metadata metadata.json
 ```
 
 ---
@@ -355,70 +357,62 @@ publish:
 ### Upload fehlschlägt
 
 ```bash
-# Error: Package already exists
-# Lösung: Neue Version verwenden
-tb registry upload ./my-mod/ --new-version 1.1.0
+# Error: Package already exists (409 CONFLICT)
+# Lösung: Version erhöhen in metadata.json
 
-# Error: Publisher not verified
-# Lösung: Verification beantragen oder Unlisted verwenden
-tb registry publish my-mod --visibility unlisted
+# Error: Must be a registered publisher (403)
+# Lösung: Publisher registrieren (siehe "Erste Schritte")
 
-# Error: Invalid manifest
-# Lösung: my_mod.yaml prüfen
-tb validate ./my-mod/my_mod.yaml
+# Error: Authentication required (401)
+# Lösung: Einloggen
+tb registry login
 ```
 
 ### Verification abgelehnt
 
 ```bash
 # Status prüfen
-tb publisher status
+tb registry whoami
 
-# Feedback anzeigen
-tb publisher status --verbose
+# Feedback über API abrufen
+curl -H "Authorization: Bearer $TOKEN" \
+  https://registry.simplecore.app/api/v1/auth/publisher
 
 # Erneut beantragen (nach Korrekturen)
-tb publisher verify --reason "Fixed all issues"
+curl -X POST https://registry.simplecore.app/api/v1/publishers/verify \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"method": "github", "data": {"username": "dein-github"}}'
 ```
 
 ---
 
-## API-Referenz
-
-### CLI-Befehle
+## CLI-Befehle Übersicht
 
 | Befehl | Beschreibung |
 |--------|-------------|
-| `tb register` | Account erstellen |
-| `tb login` | Einloggen |
-| `tb publisher create` | Publisher erstellen |
-| `tb publisher verify` | Verification beantragen |
-| `tb registry upload` | Mod hochladen |
-| `tb registry publish` | Sichtbarkeit ändern |
-| `tb registry delete` | Mod löschen |
-
-### HTTP API
-
-```bash
-# Mod hochladen (HTTP API)
-curl -X POST https://registry.tb2.app/api/v1/packages \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@my-mod-1.0.0.tbx"
-
-# Mod infos
-curl https://registry.tb2.app/api/v1/packages/my-mod
-
-# Versionen auflisten
-curl https://registry.tb2.app/api/v1/packages/my-mod/versions
-```
+| `tb registry login` | Einloggen |
+| `tb registry logout` | Ausloggen |
+| `tb registry whoami` | Eigene Info anzeigen |
+| `tb registry search <query>` | Mods suchen |
+| `tb registry list` | Mods auflisten |
+| `tb registry info <name>` | Mod-Details |
+| `tb registry versions <name>` | Versionen auflisten |
+| `tb registry download <name>` | Mod herunterladen |
+| `tb registry publish <path>` | Mod erstellen/updaten/visibility |
+| `tb registry upload <file>` | Upload mit Diff-Support |
+| `tb registry delete <name>` | Mod löschen |
+| `tb registry yank <name> <ver>` | Version zurückziehen |
+| `tb registry health` | Registry-Status prüfen |
+| `tb registry admin publisher` | Publisher-Verwaltung (Admin) |
 
 ---
 
 **Weiterführende Links:**
 - [User Guide](USER_GUIDE.md) - Für Mod-Nutzer
 - [Developers Guide](DEVELOPERS_GUIDE.md) - Für Registry-Entwickler
-- [API Documentation](https://registry.tb2.app/api/docs)
+- [API Reference](API_REFERENCE.md) - HTTP-API Endpunkte
 
 ---
 
-**Letzte Aktualisierung**: 2026-02-25
+**Letzte Aktualisierung**: 2026-04-28
