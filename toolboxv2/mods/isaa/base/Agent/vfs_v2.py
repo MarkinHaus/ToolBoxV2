@@ -714,15 +714,21 @@ Nach Abbruch / Wiederaufnahme:
   write_chunk_status <path>   →  zeigt welche Blöcke fehlen
   Dann nur die fehlenden Blöcke erneut senden.
 
-Content-Encoding (alle Varianten funktionieren):
-  "line1\\nline2"   ← \\n wird zu Newline (Standard in JSON)
-  "line1\nline2"    ← echter Newline (auch ok)
-  NIEMALS: \\\\n   ← das erzeugt einen Backslash + n im File!
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Content-Encoding:
+  "line1\nline2"    ← echter Newline im JSON-String (STANDARD)
+  NIEMALS: \\n      ← erzeugt LITERAL Backslash+n im File, KEINEN Zeilenumbruch!
+  NIEMALS: \\\\n    ← erzeugt ebenfalls Backslash+n im File!
 
+WICHTIG: Der JSON-Parser wandelt \n in echte Newlines um BEVOR
+der Command das VFS erreicht. Das System decodiert NICHT nochmal.
+Nur echte Newlines (JSON-Standard) funktionieren als Zeilenumbruch.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Das LLM muss echte Newlines via JSON senden
 
 # Zeilen ersetzen (präzises Editieren)
-edit <path> <start> <end> "neuer inhalt\\nzeile2"
+edit <path> <start> <end> "neuer inhalt"
+⚠️ **edit schreibt Content 1:1 — keine Escape-Verarbeitung.**
+Mehrzeilige Replacements: echte Newlines im JSON-String verwenden.
 
 # Verzeichnisse
 mkdir -p /src/components      rm -rf /old_dir/
@@ -735,6 +741,25 @@ close <path>                  (entfernt Datei aus dem Kontext-Fenster)
 
 # Ausführen
 exec <path> [args...]
+
+## grep — Hinweise für zuverlässige Suche
+
+**Exakte Patterns:** grep ist Regex-basiert. Spaces, Sonderzeichen und Groß/Kleinschreibung
+zählen. `grep "x=y+z"` matcht NICHT `x = y + z`.
+
+| Wenn kein Match | Lösung |
+|-----------------|--------|
+| Spaces im Code | Kürzeres Pattern: `grep "lastPlatX"` statt `grep "lastPlatX=px+pw"` |
+| Groß/Klein | `-i` Flag: `grep -in "debug" /src` |
+| Sonderzeichen `+.*[]()` | Escapen: `grep "x\+y"` oder kürzeres Pattern ohne Sonderzeichen |
+
+**grep in Pipes vs. direkt:**
+- `grep -rn "pattern" /src` → durchsucht Dateien, Output: `datei:zeile:match`
+- `cat /f.py | grep "pattern"` → durchsucht Text-Stream, Output: `match` (kein Dateiname)
+- `-l` (nur Dateinamen) funktioniert nur bei direktem grep, NICHT in Pipes
+
+**Kein Match ≠ Tool-Fehler.** Wenn grep rc=1 zurückgibt, existiert das Pattern nicht exakt so im Code.
+Prüfe Whitespace und verwende ein kürzeres, eindeutiges Pattern.
 ```
 ---
 
@@ -1668,6 +1693,24 @@ Session: {self.session_id}
                         f.backing_type = FileBackingType.SHADOW
                         f.size_bytes = len(content)
                         f.updated_at = datetime.now().isoformat()
+                    else:
+                        filename = self._get_basename(path)
+                        local_path_on_disk = str(Path(local_base) / relative)
+                        parent = self._get_parent_path(path)
+                        if parent != "/" and not self._is_directory(parent):
+                            self.mkdir(parent, parents=True)
+                        self.files[path] = VFSFile(
+                            filename=filename,
+                            _content=content,
+                            backing_type=FileBackingType.SHADOW,
+                            local_path=local_path_on_disk,
+                            local_mtime=os.path.getmtime(local_path_on_disk) if os.path.exists(
+                                local_path_on_disk) else None,
+                            size_bytes=len(content),
+                            line_count=len(content.splitlines()),
+                            is_dirty=False,
+                        )
+                        self._shadow_index[path] = local_path_on_disk
                     self._dirty = True
                     return {
                         "success": True,
@@ -1983,12 +2026,28 @@ Session: {self.session_id}
             if f.backing_type == FileBackingType.SHADOW:
                 f.backing_type = FileBackingType.MODIFIED
 
-            # Auto-sync — BUG #4 FIX: Rückgabe prüfen und Fehler weitergeben
             mount = self._get_mount_for_path(path)
             if mount and mount.auto_sync and f.local_path:
                 sync_result = self._sync_to_local(path)
                 if not sync_result["success"]:
                     return {"success": False, "error": f"Sync failed: {sync_result['error']}"}
+
+                # FIX: Update Shared-Store nach edit, sonst überschreibt
+                # read() den editierten Content mit dem alten Store-Stand.
+                shared_info = self._get_shared_store_info(path)
+                if shared_info is not None:
+                    mount_key, relative, local_base = shared_info
+                    try:
+                        from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
+                        gvfs = get_global_vfs()
+                        if mount_key == "global":
+                            gvfs.write_file(relative, new_full_content, author=self.agent_name)
+                        else:
+                            gvfs.shared_write(mount_key, relative, new_full_content, local_base=local_base,
+                                              author=self.agent_name)
+                    except Exception as e:
+                        print(f"Error editing file: {e}")
+                        pass  # Disk is already written, shared-store is best-effort
         else:
             f.content = new_full_content
 

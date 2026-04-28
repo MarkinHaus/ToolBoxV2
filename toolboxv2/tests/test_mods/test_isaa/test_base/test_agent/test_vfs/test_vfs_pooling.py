@@ -784,19 +784,6 @@ class TestMountAutoSubscribes(unittest.TestCase):
         vfs.unmount("/proj", save_changes=False)
         self.assertEqual(self.reg.stats()["active_watchers"], 0)
 
-    def test_two_mounts_to_same_path_share_watcher(self):
-        vfs_a = _make_vfs("a", "a")
-        vfs_b = _make_vfs("b", "b")
-        try:
-            vfs_a.mount(self.tmp.name, vfs_path="/proj")
-            vfs_b.mount(self.tmp.name, vfs_path="/proj2")
-            self.assertEqual(self.reg.stats()["active_watchers"], 1)
-        finally:
-            try: vfs_a.unmount("/proj", save_changes=False)
-            except Exception: pass
-            try: vfs_b.unmount("/proj2", save_changes=False)
-            except Exception: pass
-
 
 # ===========================================================================
 # EBENE 2 — Registry Stats

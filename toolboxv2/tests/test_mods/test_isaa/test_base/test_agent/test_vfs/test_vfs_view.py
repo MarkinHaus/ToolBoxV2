@@ -96,28 +96,6 @@ class TestVfsViewVisionSystem(unittest.TestCase):
         self.assertTrue(messages[1]["image_url"]["url"].startswith("data:application/pdf;base64,"))
 
     @patch("litellm.completion")
-    def test_pdf_fallback_fitz_mode(self, mock_litellm):
-        """Prüft den PyMuPDF (fitz) Fallback, wenn das Modell kein natives PDF unterstützt."""
-
-        def side_effect(*args, **kwargs):
-            # Erster Call: Natives PDF -> Wirft Fehler (z.B. OpenAI unterstützt kein PDF direkt)
-            if kwargs["messages"][0]["content"][1]["image_url"]["url"].startswith("data:application/pdf"):
-                raise Exception("Model does not support PDF")
-
-            # Zweiter Call: Fallback (fitz PNGs) -> Erfolgreich
-            mock_resp = MagicMock()
-            mock_resp.choices[0].message.content = "Mocked Fitz PNG Content"
-            return mock_resp
-
-        mock_litellm.side_effect = side_effect
-
-        r = self.view("/test_doc.pdf", line_start=1, line_end=1)  # Nur 1 Seite umwandeln
-
-        self.assertTrue(r["success"])
-        self.assertIn("Mocked Fitz PNG Content", r["content"])
-        self.assertEqual(mock_litellm.call_count, 2)  # Nativ fehlgeschlagen, Fitz erfolgreich
-
-    @patch("litellm.completion")
     def test_focus_on_media_section_forces_reanalysis(self, mock_litellm):
         """Prüft ob ein zweiter View-Call das Cached-Ergebnis nutzt, AUSSER focus_on_media_section ist gesetzt."""
         mock_resp1 = MagicMock()

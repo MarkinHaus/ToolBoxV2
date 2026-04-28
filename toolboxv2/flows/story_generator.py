@@ -1105,7 +1105,7 @@ class AudioGenerator:
                 if not api_key:
                     raise ValueError("ELEVENLABS_API_KEY not found in environment variables")
                 self.elevenlabs_client = ElevenLabs(api_key=api_key)
-            except ImageGenerator:
+            except ImportError:
                 print("install elevenlabs")
                 self.logger.error("ElevenLabs not installed !!! pip install elevenlabs")
                 self.use_elevenlabs = False
@@ -5432,7 +5432,7 @@ class MultiMediaStoryHTMLGenerator:
     def _generate_fixed_javascript(self) -> str:
         """Generate FIXED JavaScript with PROPER modal cleanup to prevent freezing"""
 
-        return """
+        return r"""
         // Global variables
         let audioPlayer = null;
         let isAudioPlaying = false;

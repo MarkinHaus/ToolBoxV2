@@ -556,7 +556,7 @@ class FlowAgent:
         task_id: str = "unknown",
         session_id: str | None = None,
         do_tool_execution: bool = False,
-        # NEU: Parameter für Media-Retry
+        stream_callback: Callable = False,
         _media_retry: int = 0,
         _removed_types: list[str] | None = None,
         **kwargs,
@@ -571,7 +571,19 @@ class FlowAgent:
             if model_preference == "fast"
             else self.amd.complex_llm_model
         )
+
         use_stream = stream if stream is not None else self.stream
+
+        if kwargs.get("tool_choice") is None and (model.startswith("ollama") or model.startswith("cerebras")):
+            _tool_choice = None
+            if model.startswith("ollama"):
+                _tool_choice = "auto"
+                use_stream = False
+            elif model.startswith("cerebras"):
+                _tool_choice = "required"
+            kwargs["tool_choice"] = _tool_choice
+            # if use_stream:
+            #     raise ValueError(f"{model} is not supported. wit this args and tools use in non streaming mode (litellm error)")
 
         # Verarbeite Media in Messages
         if await self.save_supports_vision(messages, model_preference):
@@ -728,70 +740,6 @@ class FlowAgent:
                 chunk_tool_calls = []
                 finish_reason = None
                 current_usage = None
-                # TODO: make stael
-                r"""
-litellm.BadRequestError: CerebrasException - Failed to apply chat template to messages due to error: Tool call withTraceback (most recent call last):
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\llms\openai\openai.py", line 1113, in async_streaming
-    headers, response = await self.make_openai_chat_completion_request(
-                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\litellm_core_utils\logging_utils.py", line 297, in async_wrapper
-    result = await func(*args, **kwargs)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\llms\openai\openai.py", line 461, in make_openai_chat_completion_request
-    raise e
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\llms\openai\openai.py", line 438, in make_openai_chat_completion_request
-    await openai_aclient.chat.completions.with_raw_response.create(
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\openai\_legacy_response.py", line 384, in wrapped
-    return cast(LegacyAPIResponse[R], await func(*args, **kwargs))
-                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\openai\resources\chat\completions\completions.py", line 2700, in create
-    return await self._post(
-           ^^^^^^^^^^^^^^^^^
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\openai\_base_client.py", line 1884, in post
-    return await self.request(cast_to, opts, stream=stream, stream_cls=stream_cls)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\openai\_base_client.py", line 1669, in request
-    raise self._make_status_error_from_response(err.response) from None
-openai.BadRequestError: Error code: 400 - {'message': 'Failed to apply chat template to messages due to error: Tool call with id "c940efb60" was not found in the messages.', 'type': 'invalid_request_error', 'param': 'messages', 'code': 'wrong_api_format', 'id': ''}
-
-During handling of the above exception, another exception occurred:
-
-Traceback (most recent call last):
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\main.py", line 622, in acompletion
-    response = await init_response
-               ^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\llms\openai\openai.py", line 1163, in async_streaming
-    raise OpenAIError(
-litellm.llms.openai.common_utils.OpenAIError: Error code: 400 - {'message': 'Failed to apply chat template to messages due to error: Tool call with id "c940efb60" was not found in the messages.', 'type': 'invalid_request_error', 'param': 'messages', 'code': 'wrong_api_format', 'id': ''}
-
-During handling of the above exception, another exception occurred:
-
-Traceback (most recent call last):
-  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\base\Agent\flow_agent.py", line 1521, in a_stream
-    async for chunk in stream_func(ctx):
-  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\base\Agent\execution_engine.py", line 1983, in stream_generator
-    stream_response = await self.agent.a_run_llm_completion(
-                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\base\Agent\flow_agent.py", line 694, in a_run_llm_completion
-    return await self.llm_handler.completion_with_rate_limiting(litellm, **llm_kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\base\IntelligentRateLimiter\intelligent_rate_limiter.py", line 1790, in completion_with_rate_limiting
-    response = await litellm_module.acompletion(**kwargs)
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\utils.py", line 2097, in wrapper_async
-    raise e
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\utils.py", line 1896, in wrapper_async
-    result = await original_function(*args, **kwargs)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\main.py", line 641, in acompletion
-    raise exception_type(
-          ^^^^^^^^^^^^^^^
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\litellm_core_utils\exception_mapping_utils.py", line 2456, in exception_type
-    raise e
-  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\litellm\litellm_core_utils\exception_mapping_utils.py", line 478, in exception_type
-    raise BadRequestError(
-litellm.exceptions.BadRequestError: litellm.BadRequestError: CerebrasException - Failed to apply chat template to messages due to error: Tool call with id "c940efb60" was not found in the messages.
-"""
                 # Datenextrahierung abhängig davon, ob es ein Stream ist oder nicht
                 if use_stream:
                     result_obj, current_usage, finish_reason = await self._process_streaming_response( # add custom strem collector so not evey one needs to implmt ther onw streming collection fuction as callback generator or narmal callback..
@@ -3320,7 +3268,6 @@ litellm.exceptions.BadRequestError: litellm.BadRequestError: CerebrasException -
     async def close(self):
         """Clean shutdown."""
         self.is_running = False
-        print("\nSaving checkpoint...", end="\r")
         engine = self._get_execution_engine()
         if engine:
             await engine.wait_all_pending_finalizes()

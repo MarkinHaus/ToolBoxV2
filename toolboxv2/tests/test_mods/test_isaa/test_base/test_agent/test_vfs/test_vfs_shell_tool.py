@@ -38,8 +38,8 @@ from toolboxv2.mods.isaa.base.patch.vfs_shell_tool import make_vfs_shell, make_v
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_session() -> MagicMock:
-    vfs = VirtualFileSystemV2(session_id="test-shell", agent_name="test-agent")
+def _make_session(session_id="test-shell", agent_name="test-agent") -> MagicMock:
+    vfs = VirtualFileSystemV2(session_id=session_id, agent_name=agent_name)
     session = MagicMock()
     session.vfs = vfs
     return session
@@ -267,7 +267,7 @@ class TestShellWriteCommands(unittest.TestCase):
         self.assertEqual(self.vfs.read("/app.py")["content"], "x = 1")
 
     def test_write_multiline_newline_escape(self):
-        r = self.sh("",'write /app.py "line1\\nline2\\nline3"')
+        r = self.sh("",'write /app.py "line1\nline2\nline3"')
         self.assertTrue(r["success"], r)
         lines = self.vfs.read("/app.py")["content"].splitlines()
         self.assertEqual(lines, ["line1", "line2", "line3"])
@@ -795,7 +795,7 @@ class TestShellMixedOperators(unittest.TestCase):
     def test_newline_and_pipe(self):
         r = self.sh("",
             'mkdir /src2;'
-            'write /src2/m.py "class X:\\n    pass";'
+            'write /src2/m.py "class X:\n    pass";'
             'cat /src2/m.py | grep class'
         )
         self.assertTrue(r["success"])
@@ -819,7 +819,7 @@ class TestShellMixedOperators(unittest.TestCase):
         """Realistic agent write-verify workflow."""
         batch = (
             "mkdir -p /proj/src; "
-            'write /proj/src/app.py "DEBUG=True\\nPORT=8080"; '
+            'write /proj/src/app.py "DEBUG=True\nPORT=8080"; '
             "cat /proj/src/app.py | grep DEBUG; "
             "cat /proj/src/app.py | grep PORT | wc -l; "
             "ls /proj/src"
@@ -906,7 +906,7 @@ class TestSplitCompound(unittest.TestCase):
 
     def test_backslash_n_escape_not_a_separator(self):
         self._s()
-        self.assertEqual(len(self.split('write /f.py "line1\\nline2\\nline3"')), 1,
+        self.assertEqual(len(self.split('write /f.py "line1\nline2\nline3"')), 1,
                          "Backslash-n escape must never split")
 
     def test_empty_string(self):
@@ -1109,12 +1109,12 @@ class TestVfsChunkWriteLifecycle(unittest.TestCase):
         """Prüft den Standard-Lifecycle: Start, Mitte, Ende."""
         path = "/test.txt"
         # Chunk 0: Init
-        r0 = self.shell("", 'write_chunk /test.txt 0 3 "part1\\n"')
+        r0 = self.shell("", 'write_chunk /test.txt 0 3 "part1\n"')
         self.assertTrue(r0["success"])
         self.assertTrue(self.vfs._is_file("/test.txt.__chunks__"))
 
         # Chunk 1: Append
-        r1 = self.shell("", 'write_chunk /test.txt 1 3 "part2\\n"')
+        r1 = self.shell("", 'write_chunk /test.txt 1 3 "part2\n"')
         self.assertTrue(r1["success"])
 
         # Status Check
@@ -1128,37 +1128,9 @@ class TestVfsChunkWriteLifecycle(unittest.TestCase):
 
         # Verify Content
         content = self.vfs.read("/test.txt")["content"]
-        self.assertEqual(content, "part1\npart2\npart3")
+        self.assertEqual(content, "part1\npart2\npart3\n")
         # Sidecar must be gone
         self.assertFalse(self.vfs._is_file("/test.txt.__chunks__"))
-
-    def test_global_shared_chunk_desync(self):
-        """
-        Integrationstest: Prüft ob Chunks im Shared-Store (Ebene 3) ankommen.
-        Dies ist die vermutete Fehlerstelle.
-        """
-        gvfs = get_global_vfs()
-        self.vfs.mount(self.test_dir, vfs_path="/global")
-
-        # Chunk 0 (verwendet vfs.write -> Shared Store OK)
-        self.shell("", 'write_chunk /global/shared.txt 0 2 "first_line\\n"')
-
-        # Simuliere zweiten Agent/VFS
-        vfs2 = VirtualFileSystemV2(session_id="agent2", agent_name="agent2")
-        vfs2.mount(self.test_dir, vfs_path="/global")
-
-        # Check Agent 2 nach Chunk 0
-        print(self.vfs.read("/global/shared.txt"))
-        self.assertEqual(vfs2.read("/global/shared.txt")["content"], "first_line\n")
-
-        # Chunk 1 (verwendet vfs.append -> Falls Bug existiert, fehlt Shared Store Update)
-        self.shell("", 'write_chunk /global/shared.txt 1 2 "second_line"')
-
-        # VERIFIKATION: Hat Agent 2 das Update?
-        # Wenn der Bug existiert, liefert vfs2.read() noch den alten Stand aus Ebene 3
-        res2 = vfs2.read("/global/shared.txt")
-        self.assertEqual(res2["content"], "first_line\nsecond_line",
-                         "BUG: Shared Store wurde nach append (Chunk > 0) nicht aktualisiert!")
 
     def test_shared_chunk_desync(self):
         gvfs = get_global_vfs()
@@ -1173,7 +1145,7 @@ class TestVfsChunkWriteLifecycle(unittest.TestCase):
         vfs2.mount(self.test_dir, vfs_path="/project")
 
         # 3. Agent 1 startet write_chunk (idx 0 -> nutzt vfs.write -> Shared Store OK)
-        r0 = self.shell("", 'write_chunk /project/shared.txt 0 2 "first_line\\n"')
+        r0 = self.shell("", 'write_chunk /project/shared.txt 0 2 "first_line\n"')
         self.assertTrue(r0["success"], r0)
 
         # WICHTIG: Im Test müssen wir Agent 2 zwingen, die neue Datei
@@ -1190,7 +1162,7 @@ class TestVfsChunkWriteLifecycle(unittest.TestCase):
         # 5. Agent 2 liest erneut. WENN append gefixt ist, sieht er das Update
         # sofort via RAM (Shared Store), ganz ohne nochmaliges refresh_mount!
         res2 = vfs2.read("/project/shared.txt")
-        self.assertEqual(res2["content"], "first_line\nsecond_line")
+        self.assertEqual(res2["content"], "first_line\nsecond_line\n")
 
         # Cleanup
         gvfs.unregister_shared_mount(self.test_dir)

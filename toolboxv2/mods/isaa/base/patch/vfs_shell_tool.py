@@ -520,7 +520,7 @@ def make_vfs_shell(session: "AgentSessionV2"):
         if echo_m:
             raw_content, op, path = echo_m.groups()
             content = _decode_content(_strip_quotes(raw_content))
-            r = vfs.write(path, content) if op == ">" else vfs.append(path, content)
+            r = vfs.write(path, content) if op == ">" else vfs.append(path, '\n'+content)
             return _ok() if r.get("success") else _err(r.get("error", "write failed"))
 
         # ── Parse command ──────────────────────────────────────────────────

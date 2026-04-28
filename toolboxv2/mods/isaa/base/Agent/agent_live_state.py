@@ -10,7 +10,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-logger = logging.getLogger("isaa.engine.live")
+from toolboxv2 import get_logger
+
+logger = get_logger()
 
 
 class AgentPhase(str, Enum):

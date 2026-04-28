@@ -23,6 +23,7 @@ import contextlib
 import json
 import logging
 import os
+import sys
 import threading
 import time
 import uuid
@@ -1414,6 +1415,7 @@ BEISPIELE:
             except Exception as e:
                 self.live.log(f"[Finalize] commit_run_slow failed: {e}", logging.ERROR)
 
+            self.live.log(f"Skills stats", logging.INFO)
             # 2. Skills stats (global shared file → global lock)
             async with self._skills_stats_lock:
                 try:
@@ -1426,6 +1428,7 @@ BEISPIELE:
                 except Exception as e:
                     self.live.log(f"[Finalize] skills record failed: {e}", logging.ERROR)
 
+            self.live.log(f"Persona stats", logging.INFO)
             # 3. Persona stats persist (global shared file → global lock)
             if ctx.active_persona and ctx.active_persona.name != "default":
                 async with self._persona_stats_lock:
@@ -1436,6 +1439,7 @@ BEISPIELE:
                             f"[Finalize] persona persist failed: {e}", logging.ERROR
                         )
 
+            self.live.log(f"{success=}", logging.INFO)
             # 4. Learning task (already internally bg, schedule after commit)
             if success:
                 try:
@@ -1603,10 +1607,10 @@ BEISPIELE:
                     }
                 if ctx.active_persona.temperature is not None:
                     llm_kwargs["temperature"] = ctx.active_persona.temperature
+
                 response = await self.agent.a_run_llm_completion(
                     messages=messages,
                     tools=current_tools,
-                    tool_choice="auto",
                     **llm_kwargs,
                 )
             except Exception as e:
@@ -1778,66 +1782,6 @@ BEISPIELE:
                 yield {"type": "done", "success": True, "final_answer": "Dream cycle complete"}
 
             return _dream_stream_wrapper, ctx
-        '''
-        trigger_kw, trigger_skill = None, None
-        if not is_resume:
-            try:
-                ctx.matched_skills = await self.skills_manager.match_skills_async(
-                    query, max_results=MAX_PARALLEL_SKILLS
-                )
-            except Exception as _skill_err:
-                self.live.log(
-                    f"[Skills] async match failed ({type(_skill_err).__name__}), "
-                    f"falling back to keyword-only: {_skill_err}",
-                    logging.WARNING,
-                )
-                ctx.matched_skills = self.skills_manager.match_skills(query, max_results=MAX_PARALLEL_SKILLS)
-
-            self._calculate_tool_relevance(ctx, query)
-            self._preload_skill_tools(ctx, query)
-
-            if not self._personas_loaded:
-                self._persona_router.load_learned_personas(session)
-                self._personas_loaded = True
-            dreamer_insights = getattr(
-                getattr(self.agent.amd, 'persona', None), '_dream_insights', None)
-            ctx.active_persona, trigger_kw, trigger_skill = self._persona_router.route(
-                query, ctx.matched_skills, dreamer_insights)
-
-            # Apply persona overrides
-
-            if ctx.active_persona.name != "default":
-                max_iterations = ctx.active_persona.apply_max_iterations(max_iterations)
-                self.live.log(
-                    f"Persona: {ctx.active_persona.name} "
-                    f"(model={ctx.active_persona.model_preference}, "
-                    f"temp={ctx.active_persona.temperature}, "
-                    f"max_iter={max_iterations})"
-                )
-
-            system_prompt = self._build_system_prompt(ctx, session)
-            history_depth = 2 if self.is_sub_agent else 6
-            permanent_history = session.get_history_for_llm(last_n=history_depth)
-
-            ctx.working_history = [
-                {"role": "system", "content": system_prompt},
-                *permanent_history,
-                {"role": "user", "content": query},
-            ]
-
-        # Init live state for stream path
-        self.live.run_id = ctx.run_id
-        self.live.max_iterations = max_iterations
-        self.live.t_start = time.time()
-        self.live.skills = [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
-        self.live.tools_loaded = ctx.get_dynamic_tool_names() if ctx.dynamic_tools else []
-        self.live.persona = ctx.active_persona.name
-        self.live.enter(AgentPhase.INIT, f"{'Resume' if is_resume else 'Start'} stream [{ctx.run_id}]")
-        self._narrator.reset(query)
-        self._narrator.on_init(query)
-        self._narrator.schedule_skills_update(query, ctx.working_history, self.skills_manager, ctx=ctx)
-        self._narrator.schedule_ruleset_update(ctx.working_history, session, ctx)
-        '''
         # Init-State wird innerhalb des Generators ausgeführt für sofortiges TTFU
         _init_state = {"trigger_kw": None, "trigger_skill": None, "max_iterations": max_iterations}
         async def stream_generator(ctx: ExecutionContext):
@@ -2412,7 +2356,14 @@ BEISPIELE:
             yield enrich(
                 {"type": "done", "success": success, "final_answer": final_response}
             )
-
+        _model_for_call = (
+            getattr(ctx.active_persona, "model_preference", "fast") == "fast"
+            and self.agent.amd.fast_llm_model
+            or self.agent.amd.complex_llm_model
+        )
+        _is_ollama = _model_for_call.startswith("ollama") or _model_for_call.startswith("cerebras")
+        if _is_ollama:
+            raise ValueError(f"{_model_for_call} Stream wit tools not available for this model")
         return stream_generator, ctx
 
     async def _parallel_init(
@@ -2600,7 +2551,8 @@ BEISPIELE:
                         "3. **Concrete Tips** — Actionable next steps the agent can directly attempt.\n"
                         "4. **Partial Solutions / Hints** — Sketch approaches, pseudo-steps, or known-good patterns relevant to the task.\n"
                         "5. **Pitfalls to Avoid** — Common mistakes or dead ends visible from the current trajectory.\n\n"
-                        "Be direct and dense. No filler. The agent will act on your output."
+                        "Be direct and dense. No filler. The agent will act on your output.\n\n"
+                        f"All available tools : {self._tool_list_tools()}"
                     ),
                 },
                 {
@@ -3511,7 +3463,7 @@ BEISPIELE:
                 "IDENTITY: You are FlowAgent, an autonomous execution unit capable of file operations, code execution, and data processing.",
                 "",
                 "OPERATING PROTOCOL:",
-                "1. INITIATIVE: Do not complain about missing tools. If a task requires file access, USE `vfs_list` or `vfs_read`. If you need to search, USE the search tools.",
+                "1. INITIATIVE: Do not complain about missing tools. If a task requires file access, USE `vfs_view` or `vfs_shell`. If you need to search, USE the memory tools.",
                 "2. FORMAT: When asked for data, output ONLY data (JSON/Markdown). Do not use conversational filler ('Here is the data').",
                 "3. HONESTY: Differentiate between 'Information missing in context' (Unknown) and 'Factually non-existent' (False). Never apologize.",
                 "4. ITERATION: If a step fails, analyze the error in `think()`, then try a different approach. Do not give up immediately.",
@@ -3688,9 +3640,11 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
 
             # Log formatieren
             full_log = [f"# Execution Log: {ctx.run_id}", f"Query: {query}", "-" * 40]
-            for msg in ctx.working_history:
+
+            for msg in ctx.working_history[1:]:
                 role = msg.get("role", "unknown")
                 content = msg.get("content", "")
+                content = f"{content}"
                 full_log.append(f"\n### {role.upper()}")
                 if "tool_calls" in msg:
                     for tc in msg["tool_calls"]:
@@ -3701,12 +3655,16 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                         )
                         name = fn.get("name", "") if isinstance(fn, dict) else fn.name
                         full_log.append(f"`Tool Call: {name}`")
+
                 full_log.append(content)
             if ctx.active_persona.name != "default":
                 full_log.append(f"Persona: {ctx.active_persona.name} (source: {ctx.active_persona.source})")
-            await asyncio.to_thread(session.vfs.write, log_file, "\n".join(full_log))
+            def helper(__full_log):
+                session.vfs.write(log_file, "\n".join(__full_log))
+            helper(full_log)
         except Exception as e:
-            self.live.log(f"Failed to write execution log: {e}", logging.WARNING)
+            import traceback
+            self.live.log(f"Failed to write execution log: {e} {traceback.format_exc()}", logging.WARNING)
 
         # 2. LLM Summarization (Dynamisch statt Regelbasiert)
         summary_text = "Keine Zusammenfassung."
@@ -3743,6 +3701,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                 system=summary_prompt,
                 messages=ctx.working_history[-20:]
             )
+
             if not summary_text:
                 summary_text = await self.agent.a_run_llm_completion(
                     messages=ctx.working_history[-20:]

@@ -1043,7 +1043,7 @@ class TestVfsShellWrite(unittest.TestCase):
         self.assertEqual(self.vfs.read("/data.txt")["content"], "hello")
 
     def test_write_multiline(self):
-        r = self.shell("",r'write /multi.py line1\nline2\nline3')
+        r = self.shell("",'write /multi.py line1\nline2\nline3')
         self.assertTrue(r["success"])
         content = self.vfs.read("/multi.py")["content"]
         print(content)

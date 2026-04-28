@@ -16,6 +16,8 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime
 
+from toolboxv2.tests.a_util import async_test
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -405,9 +407,12 @@ class TestSelfAgentToolHealth(unittest.IsolatedAsyncioTestCase):
             self.agent = await isaa.get_agent("self")
             self.tm = self.agent.tool_manager
             self.available = True
+            return True
         except Exception as e:
             self.available = False
-            self.skip_reason = str(e)
+            import traceback
+            self.skip_reason = traceback.format_exc()
+            return traceback.format_exc()
 
     async def test_33_self_agent_tools_registered(self):
         if not self.available:

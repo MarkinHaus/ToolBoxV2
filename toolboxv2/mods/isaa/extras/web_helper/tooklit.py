@@ -1253,17 +1253,17 @@ class WebAgentToolkit:
             return agent.logger.get_summary()
 
         self._tools.extend([
-            ToolDefinition(
-                name="screenshot",
-                description="Macht Screenshot (für Debugging/Dokumentation).",
-                func=tool_screenshot,
-                category=ToolCategory.UTILITY,
-                parameters={
-                    "name": {"type": "str", "default": ""},
-                    "full_page": {"type": "bool", "default": False}
-                },
-                flags={"read": True, "write": True,"no_thread": True}
-            ),
+            # ToolDefinition(
+            #     name="screenshot",
+            #     description="Macht Screenshot (für Debugging/Dokumentation).",
+            #     func=tool_screenshot,
+            #     category=ToolCategory.UTILITY,
+            #     parameters={
+            #         "name": {"type": "str", "default": ""},
+            #         "full_page": {"type": "bool", "default": False}
+            #     },
+            #     flags={"read": True, "write": True,"no_thread": True}
+            # ),
             ToolDefinition(
                 name="execute_js",
                 description="Führt JavaScript auf der Seite aus.",

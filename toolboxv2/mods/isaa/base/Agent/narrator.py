@@ -549,36 +549,37 @@ async def _call_blitz(system: str, messages: list[dict], max_tokens: int = 60) -
     try:
         all_messages = [{"role": "system", "content": system}] + messages
 
-        if _blitz_handler is not None:
+        if False and _blitz_handler is not None:
             import litellm as _litellm_mod
-
-            response = await asyncio.wait_for(
-                _blitz_handler.completion_with_rate_limiting(
+            async def helper():
+                return await _blitz_handler.completion_with_rate_limiting(
                     _litellm_mod,
-                    model = BLITZ_MODEL,
-                    messages = all_messages,
-                    max_tokens = max_tokens,
-                    temperature = 0.3,
-                    stream = False,
-                    drop_params = True,
-                ),
-                timeout = 10.0  # ← HARD TIMEOUT
-            )
+                    model=BLITZ_MODEL,
+                    messages=all_messages,
+                    max_tokens=max_tokens,
+                    temperature=0.3,
+                    stream=False,
+                    drop_params=True,
+                )
+            # system stürtzt einfach ab...
+            response = await helper() # asyncio.wait_for(helper(),timeout = 10.0)
         else:
             # Fallback: direkt litellm ohne handler
             import litellm  # type: ignore
 
-            response = await asyncio.wait_for(
-                litellm.acompletion(
+            async def helper():
+                return await litellm.acompletion(
                     model = BLITZ_MODEL,
                     messages = all_messages,
                     max_tokens = max_tokens,
                     temperature = 0.3,
                     stream = False,
                     drop_params = True,
-                ),
-                timeout = 10.0  # ← HARD TIMEOUT
-            )
+                )
+
+            # system stürtzt einfach ab...
+            response = await helper() # await asyncio.wait_for(helper(),timeout = 10.0)  # ← HARD TIMEOUT
+
 
         raw = response.choices[0].message.content or ""
         raw = raw.strip().strip("```json").strip("```").strip()
@@ -936,6 +937,7 @@ class AgentLiveNarrator:
 
         if respect_ratelimit:
             if not self._budget_ok(history or []):
+                logger.debug("Blitz _budget_ok False")
                 return None
         with Spinner(message="calling blitz", symbols="q"):
             result = await _call_blitz(system, messages)
