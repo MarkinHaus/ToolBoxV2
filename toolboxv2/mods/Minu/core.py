@@ -182,6 +182,7 @@ class ComponentType(str, Enum):
     WIDGET = "widget"
     FORM = "form"
     CUSTOM = "custom"
+    MARKDOWN = "markdown"
 
     DYNAMIC = "dynamic"
 
@@ -479,12 +480,11 @@ def Button(
     children = []
     if icon:
         children.append(Icon(icon))
-    children.append(Text(label))
 
     return Component(
         type=ComponentType.BUTTON,
-        children=children if len(children) > 1 else [],
-        props={"disabled": disabled, **props},
+        children=children,
+        props={"label": label, "disabled": disabled, **props},
         className=class_name,
         events=events,
     )
@@ -918,16 +918,61 @@ def Modal(
     open: bool = False,
     bind_open: str | None = None,
     on_close: str | None = None,
+    buttons: List[Dict[str, Any]] | None = None,
+    close_on_esc: bool = True,
+    close_on_outside_click: bool = True,
+    max_width: str = "max-w-lg",
+    className: str | None = None,
     **props,
 ) -> Component:
-    """Modal dialog component"""
+    """
+    Modal dialog component (maps to TB.ui.Modal).
+
+    Usage:
+        Modal(
+            Text("Are you sure?"),
+            title="Confirm",
+            buttons=[
+                {"text": "Cancel", "variant": "secondary", "action": "on_cancel"},
+                {"text": "OK", "variant": "primary", "action": "on_confirm"},
+            ],
+            on_close="handle_close",
+        )
+
+    Args:
+        children: Content components inside the modal body
+        title: Modal header title
+        open: Whether modal is initially open
+        bind_open: State path to bind open/close to
+        on_close: Handler name called when modal closes
+        buttons: Footer buttons [{text, variant, action (handler name)}]
+        close_on_esc: Allow closing with Escape key
+        close_on_outside_click: Allow closing by clicking overlay
+        max_width: CSS max-width class (e.g. "max-w-lg", "max-w-md")
+    """
     events = {"close": on_close} if on_close else {}
     bindings = {"open": bind_open} if bind_open else {}
+
+    # Convert button action strings to event references
+    if buttons:
+        for btn in buttons:
+            action = btn.get("action")
+            if action and isinstance(action, str):
+                events[f"button_{action}"] = action
 
     return Component(
         type=ComponentType.MODAL,
         children=list(children),
-        props={"title": title, "open": open, **props},
+        props={
+            "title": title,
+            "open": open,
+            "buttons": buttons or [],
+            "closeOnEsc": close_on_esc,
+            "closeOnOutsideClick": close_on_outside_click,
+            "maxWidth": max_width,
+            **props,
+        },
+        className=className,
         events=events,
         bindings=bindings,
     )
@@ -1019,6 +1064,81 @@ def Custom(html: str = "", component_name: str | None = None, **props) -> Compon
     return Component(
         type=ComponentType.CUSTOM,
         props={"html": html, "componentName": component_name, **props},
+    )
+
+
+def Toast(
+    message: str,
+    variant: str = "info",  # info, success, warning, error
+    title: str | None = None,
+    duration: int = 4500,
+    closable: bool = True,
+    position: str = "top-right",
+    actions: List[Dict[str, str]] | None = None,
+    **props,
+) -> Component:
+    """
+    Toast notification component (maps to TB.ui.Toast).
+
+    Renders as an imperative command — the client-side renderer calls
+    TB.ui.Toast.showX() when this component appears in a patch.
+
+    Usage:
+        Toast("Settings saved!", variant="success")
+        Toast(
+            "Connection lost",
+            variant="error",
+            duration=0,  # sticky
+            actions=[{"text": "Retry", "action": "handle_retry"}],
+        )
+
+    Args:
+        message: Toast message text
+        variant: info | success | warning | error
+        title: Optional header title (defaults to variant label)
+        duration: Auto-hide in ms (0 = sticky)
+        closable: Show close button
+        position: top-right | top-center | top-left | bottom-right | bottom-center | bottom-left
+        actions: Footer buttons [{text, action (handler name)}]
+    """
+    return Component(
+        type=ComponentType.TOAST,
+        props={
+            "message": message,
+            "type": variant,
+            "title": title,
+            "duration": duration,
+            "closable": closable,
+            "position": position,
+            "actions": actions or [],
+            **props,
+        },
+        className=f"toast toast-{variant}",
+    )
+
+
+def Markdown(
+    content: str,
+    className: str | None = None,
+    **props,
+) -> Component:
+    """
+    Markdown content component (maps to TB.ui.MarkdownRenderer).
+
+    The client-side renderer passes the raw markdown string through
+    MarkdownRenderer.render() to produce highlighted HTML.
+
+    Usage:
+        Markdown("## Hello\\n\\nThis is **bold** text.")
+        Markdown(api_response_text)
+
+    Args:
+        content: Raw markdown string
+    """
+    return Component(
+        type=ComponentType.MARKDOWN,
+        props={"content": content, **props},
+        className=className or "markdown-content",
     )
 
 
@@ -1244,6 +1364,90 @@ class MinuView:
         """Lokale Shared Section abrufen"""
         return self._shared_sections.get(section_id)
 
+    # =================== Imperative UI Commands ===================
+
+    def show_toast(
+        self,
+        message: str,
+        variant: str = "info",
+        title: str | None = None,
+        duration: int = 4500,
+        position: str = "top-right",
+    ):
+        """
+        Show a toast notification on the client.
+
+        Appends a client command to the pending changes that the renderer
+        picks up and executes via TB.ui.Toast.
+
+        Usage in event handlers:
+            async def on_save(self, event):
+                # ... save logic ...
+                self.show_toast("Saved!", variant="success")
+
+        Args:
+            message: Toast message text
+            variant: info | success | warning | error
+            title: Optional header title
+            duration: Auto-hide in ms (0 = sticky)
+            position: Toast position
+        """
+        cmd = {
+            "type": "toast",
+            "message": message,
+            "variant": variant,
+            "title": title,
+            "duration": duration,
+            "position": position,
+        }
+        if not hasattr(self, "_client_commands"):
+            self._client_commands = []
+        self._client_commands.append(cmd)
+
+    def show_modal(
+        self,
+        content: str,
+        title: str | None = None,
+        buttons: List[Dict[str, Any]] | None = None,
+        max_width: str = "max-w-lg",
+    ):
+        """
+        Show a modal dialog on the client.
+
+        Usage in event handlers:
+            async def on_delete(self, event):
+                self.show_modal(
+                    "Are you sure you want to delete this item?",
+                    title="Confirm Delete",
+                    buttons=[
+                        {"text": "Cancel", "variant": "secondary"},
+                        {"text": "Delete", "variant": "primary", "action": "confirm_delete"},
+                    ],
+                )
+
+        Args:
+            content: HTML or text content for the modal body
+            title: Modal header title
+            buttons: Footer buttons [{text, variant, action?}]
+            max_width: CSS max-width class
+        """
+        cmd = {
+            "type": "modal",
+            "content": content,
+            "title": title,
+            "buttons": buttons or [],
+            "maxWidth": max_width,
+        }
+        if not hasattr(self, "_client_commands"):
+            self._client_commands = []
+        self._client_commands.append(cmd)
+
+    def get_client_commands(self) -> List[Dict[str, Any]]:
+        """Drain and return pending client commands (toast, modal, etc.)."""
+        cmds = getattr(self, "_client_commands", [])
+        self._client_commands = []
+        return cmds
+
     def render(self) -> Component:
         raise NotImplementedError("Subclass must implement render()")
 
@@ -1251,33 +1455,26 @@ class MinuView:
         """Called when any bound state changes"""
         self._pending_changes.append(change)
 
-        # Debug logging
-
         if self._session:
             # Check for structural updates needed
             for dyn in self._dynamic_components:
-                # Check if the changed state is in the dyn component's bindings
-                # Match by full path OR by state name only
-                # change.path could be "view-xxx.input_text" or just "input_text"
-                # s._path is always "view-xxx.state_name"
                 is_bound = False
-                bound_paths = [s._path for s in dyn.bound_states]
-
                 for s in dyn.bound_states:
-                    # Extract just the state name from both paths
                     state_name = s._path.split('.')[-1]
                     change_name = change.path.split('.')[-1]
-
                     if s._path == change.path or state_name == change_name:
                         is_bound = True
                         break
 
                 if is_bound:
                     dyn._update_content()
-                    # Schedule a structural replacement
                     self._session._mark_structure_dirty(dyn)
 
             self._session._mark_dirty(self)
+
+            # Auto-flush if WS callback is set (enables live push during async handlers)
+            if self._session._send_callback is not None:
+                self._session._schedule_flush()
 
     def register_dynamic(self, dyn: Dynamic):
         """Helper to register dynamic components during render"""
@@ -1294,12 +1491,17 @@ class MinuView:
 
         try:
             rendered = self.render()
-            return {
+            result = {
                 "viewId": self._view_id,
                 "component": rendered.to_dict(),
                 "state": {name: state.value for name, state in self._state_attrs.items()},
                 "handlers": self._get_handlers(),
             }
+            # Include any pending imperative commands (toast, modal, etc.)
+            cmds = self.get_client_commands()
+            if cmds:
+                result["commands"] = cmds
+            return result
         finally:
             # Context aufräumen
             try:
@@ -1369,6 +1571,7 @@ class MinuSession:
     def __init__(self, session_id: str | None = None):
         self.session_id = session_id or f"session-{uuid.uuid4().hex[:8]}"
         self._views = {}
+        self._view_keys = {}  # key -> view_id (for path-based lookup)
         self._pending_updates = set()
         self._pending_replacements = set()
         self._send_callback = None
@@ -1380,24 +1583,64 @@ class MinuSession:
     def set_send_callback(self, callback: Callable[[str], Any]):
         self._send_callback = callback
 
-    def register_view(self, view: MinuView, app=None) -> str:
+    def register_view(self, view: MinuView, app=None, key: str | None = None) -> str:
+        """Register a view in this session.
+
+        Args:
+            view: The MinuView instance
+            app: Optional App reference
+            key: Optional lookup key (e.g. "_path:/counter") for view reuse
+        """
         view._session = self
         app = app or get_app(f"minu.register_view.{view._view_id}")
         view.set_app(app)
         self._views[view._view_id] = view
+        if key:
+            self._view_keys[key] = view._view_id
         return view._view_id
 
     def unregister_view(self, view_id: str):
         if view_id in self._views:
             self._views[view_id]._session = None
             del self._views[view_id]
+            # Clean up key mapping
+            self._view_keys = {k: v for k, v in self._view_keys.items() if v != view_id}
 
     def get_view(self, view_id: str) -> MinuView | None:
         return self._views.get(view_id)
 
+    def get_view_by_key(self, key: str) -> MinuView | None:
+        """Look up a view by its registration key (e.g. path)."""
+        view_id = self._view_keys.get(key)
+        if view_id:
+            return self._views.get(view_id)
+        return None
+
     def _mark_dirty(self, view: MinuView):
         """Mark a view as needing updates (Synchronous)"""
         self._pending_updates.add(view)
+
+    def _schedule_flush(self):
+        """Schedule a force_flush on the current event loop.
+
+        Called by _on_state_change when _send_callback is set.
+        Uses call_soon to batch multiple rapid state changes into one flush
+        per event loop tick (debounce).
+        """
+        if getattr(self, '_flush_scheduled', False):
+            return
+        self._flush_scheduled = True
+
+        async def _do_flush():
+            self._flush_scheduled = False
+            await self.force_flush()
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_do_flush())
+        except RuntimeError:
+            # No running loop — flush will happen via explicit force_flush call
+            self._flush_scheduled = False
 
     async def force_flush(self):
         """
@@ -1569,6 +1812,8 @@ __all__ = [
     "Form",
     "Tabs",
     "Custom",
+    "Toast",
+    "Markdown",
     # View System
     "MinuView",
     "MinuSession",

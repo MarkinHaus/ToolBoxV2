@@ -33,7 +33,9 @@ Usage:
     #   uvicorn myapp:app --port 8000
 """
 
+import asyncio
 import inspect
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple, Pattern
@@ -57,6 +59,76 @@ class WSRoute:
     handler_obj: Any             # Class instance or dict with on_connect/on_message/on_disconnect
     pattern: "re.Pattern"
     param_names: List[str]
+
+
+class WebSocketContext:
+    """Context object passed to WebSocket handlers registered via @app.websocket().
+
+    Provides connection info, authenticated user data, and a send() helper.
+    """
+
+    def __init__(
+        self,
+        conn_id: str,
+        channel_id: Optional[str] = None,
+        user: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
+        headers: Optional[Dict[str, Any]] = None,
+        cookies: Optional[Dict[str, Any]] = None,
+        _send_fn: Optional[Callable] = None,
+        _broadcast_fn: Optional[Callable] = None,
+    ):
+        self.conn_id = conn_id
+        self.channel_id = channel_id
+        self.user = user or {}
+        self.session_id = session_id
+        self.headers = headers or {}
+        self.cookies = cookies or {}
+        self._send_fn = _send_fn
+        self._broadcast_fn = _broadcast_fn
+
+    async def send(self, data: dict) -> bool:
+        """Send message back to this connection."""
+        if self._send_fn:
+            return await self._send_fn(self.conn_id, data)
+        return False
+
+    async def broadcast(self, channel: str, data: dict) -> bool:
+        """Broadcast to a channel, excluding this connection."""
+        if self._broadcast_fn:
+            return await self._broadcast_fn(channel, data, self.conn_id)
+        return False
+
+    @property
+    def is_authenticated(self) -> bool:
+        return bool(self.user and (self.user.get("id") or self.user.get("user_id")))
+
+    @property
+    def user_id(self) -> Optional[str]:
+        return self.user.get("id") or self.user.get("user_id")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "conn_id": self.conn_id,
+            "user": self.user,
+            "session_id": self.session_id,
+            "authenticated": self.is_authenticated,
+        }
+
+    @classmethod
+    def from_event_payload(cls, payload: dict, send_fn=None, broadcast_fn=None) -> "WebSocketContext":
+        """Build context from ZMQ WS_MESSAGE event payload."""
+        return cls(
+            conn_id=payload.get("conn_id", ""),
+            user={
+                "user_id": payload.get("user_id", ""),
+                "level": payload.get("level", 0),
+                "cloudm_user_id": payload.get("cloudm_user_id", ""),
+            } if payload.get("authenticated") else {},
+            session_id=payload.get("session_id", ""),
+            _send_fn=send_fn,
+            _broadcast_fn=broadcast_fn,
+        )
 
 
 def _path_to_regex(path: str) -> Tuple["re.Pattern", List[str]]:
@@ -87,6 +159,7 @@ class FastTB:
 
         self._routes: List[Route] = []
         self._ws_routes: List[WSRoute] = []
+        self._static_mounts: List[Tuple[str, str]] = []  # (url_prefix, fs_directory)
 
         # Pre-built index: method -> list of routes (populated on first resolve)
         self._route_index: Dict[str, List[Route]] = {}
@@ -125,6 +198,54 @@ class FastTB:
             return func
         return decorator
 
+    def sse(self, path: str, name: str = ""):
+        """Register SSE (Server-Sent Events) endpoint.
+
+        The decorated function must return an async generator or sync generator.
+        SSE headers (Content-Type, Cache-Control, X-Accel-Buffering) are set automatically.
+
+        Usage:
+            @app.sse("/events")
+            async def stream_events(request: ParsedRequest):
+                for i in range(10):
+                    yield {"event": "tick", "data": {"count": i}}
+                    await asyncio.sleep(1)
+        """
+        def decorator(func):
+            # Wrap the handler to set SSE response format
+            async def sse_wrapper(**kwargs):
+                gen = func(**kwargs)
+                # Import here to avoid circular imports at module level
+                from toolboxv2.utils.workers.server_worker import format_sse_event
+                headers = {
+                    "Content-Type": "text/event-stream",
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "Connection": "keep-alive",
+                }
+
+                async def sse_gen():
+                    if inspect.isasyncgen(gen):
+                        async for item in gen:
+                            yield format_sse_event(item).encode("utf-8")
+                    elif inspect.isgenerator(gen):
+                        for item in gen:
+                            yield format_sse_event(item).encode("utf-8")
+                            await asyncio.sleep(0)
+                    else:
+                        # Single return value — yield once
+                        yield format_sse_event(gen).encode("utf-8")
+
+                return 200, headers, sse_gen()
+
+            sse_wrapper.__name__ = func.__name__
+            sse_wrapper.__qualname__ = func.__qualname__
+            # Preserve original signature for DI
+            sse_wrapper.__wrapped__ = func
+            self._register_route(path, "GET", sse_wrapper, name or func.__name__)
+            return func
+        return decorator
+
     def _route_decorator(self, path: str, method: str, name: str):
         def decorator(func):
             self._register_route(path, method, func, name)
@@ -143,6 +264,55 @@ class FastTB:
         )
         self._routes.append(route)
         self._index_dirty = True
+
+    # =========================================================================
+    # Static File Mounting
+    # =========================================================================
+
+    def mount_static(self, url_prefix: str, directory: str):
+        """Mount a local directory for static file serving.
+
+        Serves files from `directory` under `url_prefix` with path traversal
+        protection (realpath must stay inside directory).
+
+        Args:
+            url_prefix: URL path prefix, e.g. "/static" or "/dist"
+            directory: Absolute filesystem path to serve from
+
+        Usage:
+            app.mount_static("/dist", "/home/user/project/dist")
+            # GET /dist/main.js  →  /home/user/project/dist/main.js
+        """
+        import os
+        url_prefix = url_prefix.rstrip("/")
+        directory = os.path.abspath(directory)
+        self._static_mounts.append((url_prefix, directory))
+
+    def resolve_static(self, path: str) -> "str | None":
+        """Resolve a request path to a local file, or None.
+
+        Returns absolute file path if:
+          1. Path starts with a registered prefix
+          2. Resolved path stays inside the mount directory (no traversal)
+          3. File exists and is a regular file
+        """
+        import os
+        for url_prefix, directory in self._static_mounts:
+            if path.startswith(url_prefix + "/") or path == url_prefix:
+                # Strip prefix to get relative path
+                rel = path[len(url_prefix):].lstrip("/")
+                if not rel:
+                    continue
+
+                # Resolve and verify no traversal
+                candidate = os.path.normpath(os.path.join(directory, rel))
+                if not candidate.startswith(directory + os.sep) and candidate != directory:
+                    continue  # path traversal attempt
+
+                if os.path.isfile(candidate):
+                    return candidate
+
+        return None
 
     # =========================================================================
     # WebSocket Registration
@@ -209,8 +379,12 @@ class FastTB:
         return None
 
     def has_route(self, path: str, method: str) -> bool:
-        """Check if a route exists for this path+method."""
-        return self.resolve_route(path, method) is not None
+        """Check if a route exists for this path+method (including static mounts)."""
+        if self.resolve_route(path, method) is not None:
+            return True
+        if method.upper() == "GET" and self.resolve_static(path) is not None:
+            return True
+        return False
 
     def resolve_ws_route(self, path: str) -> Optional[Tuple[WSRoute, Dict[str, str]]]:
         """Find matching WebSocket route."""

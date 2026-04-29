@@ -39,10 +39,11 @@ Generated endpoints:
 import asyncio
 import json
 import uuid
-import logging
 from typing import Any, Callable, Dict, List, Optional, Type
 
-logger = logging.getLogger(__name__)
+from toolboxv2 import get_logger, get_app
+
+logger = get_logger()
 
 
 class MinuBridge:
@@ -52,35 +53,89 @@ class MinuBridge:
     HTTP + WS endpoints for a MinuView class.
     """
 
+    with_3d = False
+    style_toggle = True   # Show Glass ↔ Paper toggle button in nav
+    default_style = "paper"  # "glass" or "paper" — initial style when no user preference saved
+
     def __init__(self, fast_tb_app, app_instance=None):
         """
         Args:
             fast_tb_app: FastTB instance to register routes on
-            app_instance: Optional ToolBoxV2 App instance (for session verification, mod loading)
+            app_instance: Optional ToolBoxV2 App instance
         """
+        import os
         from toolboxv2.utils.workers.fast_tb import FastTB
-        self._ftb: FastTB = fast_tb_app
-        self._app = app_instance or fast_tb_app.app_instance
-        self._sessions: Dict[str, Any] = {}  # session_id -> MinuSession
-        self._view_registry: Dict[str, Type] = {}  # path -> view class
+        from toolboxv2 import get_app
 
-    def view(self, path: str, require_auth: bool = False):
+        self._ftb: FastTB = fast_tb_app
+        self._app = app_instance or fast_tb_app.app_instance or get_app()
+        self._sessions: Dict[str, Any] = {}  # session_id -> MinuSession
+        self._view_registry: Dict[str, Dict[str, Any]] = {}  # path -> {class, icon, label, ...}
+        self._nav_items: List[Dict[str, str]] = []  # extra static nav items [{path, icon, label}]
+        self._nav_items_bottom: List[Dict[str, str]] = []  # items after views (Terms etc.)
+
+        # Mount dist directory for TBJS assets (static serving)
+        dist_dir = os.getenv("DIST_DIR", os.path.join(
+            self._app.data_dir.split(".data")[0], "dist"
+        )) if hasattr(self._app, "data_dir") else None
+
+        if dist_dir and os.path.isdir(dist_dir):
+            self._ftb.mount_static("/", dist_dir)
+
+    def view(
+        self,
+        path: str,
+        require_auth: bool = False,
+        icon: str | None = None,
+        label: str | None = None,
+        nav: bool = True,
+    ):
         """Register a MinuView as a FastTB route.
 
         Args:
             path: URL path (e.g. "/dashboard")
             require_auth: If True, returns 401 for anonymous users
+            icon: Material Symbols icon name for NavMenu (e.g. "home", "group")
+            label: Display label in NavMenu (defaults to class name)
+            nav: If False, view is excluded from auto-generated NavMenu
 
         Returns:
             Decorator that accepts a MinuView subclass
         """
         def decorator(view_class):
-            self._view_registry[path] = view_class
+            self._view_registry[path] = {
+                "class": view_class,
+                "icon": icon,
+                "label": label or view_class.__name__,
+                "require_auth": require_auth,
+                "nav": nav,
+            }
             self._register_http_routes(path, view_class, require_auth)
             self._register_ws_route(path, view_class)
             return view_class
 
         return decorator
+
+    def add_nav_item(self, path: str, label: str, icon: str = "link", bottom: bool = False):
+        """Add a static navigation item (not backed by a MinuView).
+
+        Use for links to non-Minu pages like Home, Login, Config.
+
+        Args:
+            path: URL path (e.g. "/web/core0/index.html")
+            label: Display label in NavMenu
+            icon: Material Symbols icon name
+            bottom: If True, placed after view items (e.g. Terms & Conditions)
+
+        Usage:
+            minu.add_nav_item("/", "Home", icon="home")
+            minu.add_nav_item("/terms", "Terms", icon="description", bottom=True)
+        """
+        item = {"path": path, "label": label, "icon": icon}
+        if bottom:
+            self._nav_items_bottom.append(item)
+        else:
+            self._nav_items.append(item)
 
     # =========================================================================
     # HTTP Route Generation
@@ -101,12 +156,17 @@ class MinuBridge:
             if require_auth and (not session or not session.is_authenticated):
                 return (401, {"error": "Authentication required"})
 
-            view, minu_session = bridge._create_view(
-                view_class, session, request
+            view, minu_session, is_new = bridge._get_or_create_view(
+                path, view_class, session, request
             )
 
-            # Run on_mount if defined
-            if hasattr(view, "on_mount") and callable(view.on_mount):
+            logger.info(
+                f"[MinuBridge] GET {path}: {'created' if is_new else 'reused'} "
+                f"view {view._view_id} in session {minu_session.session_id}"
+            )
+
+            # Run on_mount only for freshly created views
+            if is_new and hasattr(view, "on_mount") and callable(view.on_mount):
                 try:
                     await view.on_mount()
                 except Exception as e:
@@ -126,12 +186,21 @@ class MinuBridge:
                     "viewId": view._view_id,
                 }
 
-            # HTML: render bootloader page
-            return bridge._render_html(view_class.__name__, view_dict, minu_session)
+            # Return HTML fragment (not full page).
+            # TBJS Router loads this into #MainContent — TBJS is already running.
+            # For direct browser access, TBJS Router redirects to / first, then navigates here.
+            # Detect WS port from config
+            _ws_port = 0
+            try:
+                from toolboxv2.utils.workers.config import load_config
+                _ws_port = load_config().ws_worker.port
+            except Exception:
+                pass
+            return bridge._render_html(view_class.__name__, view_dict, minu_session, ws_port=_ws_port)
 
         # --- POST: Event dispatch ---
         @self._ftb.post(f"{path}/event", name=f"minu_{view_class.__name__}_event")
-        async def handle_event(request: ParsedRequest, session: SessionData):
+        async def handle_event(request: ParsedRequest, session: SessionData, **kwargs):
             if require_auth and (not session or not session.is_authenticated):
                 return (401, {"error": "Authentication required"})
 
@@ -146,8 +215,33 @@ class MinuBridge:
             minu_session = bridge._get_session(session)
             view = minu_session.get_view(view_id) if minu_session else None
 
+            # Fallback: search all sessions by viewId (session cookie may differ between GET and POST)
             if not view:
+                view = bridge._find_view_by_id(view_id)
+
+            if not view:
+                # Debug dump for troubleshooting
+                session_dump = {}
+                for sid, ms in bridge._sessions.items():
+                    session_dump[sid] = list(ms._views.keys()) if hasattr(ms, '_views') else "no _views"
+                logger.error(
+                    f"[MinuBridge] View {view_id} not found. "
+                    f"Session from cookie: {getattr(session, 'session_id', 'N/A')}. "
+                    f"Sessions in bridge: {session_dump}"
+                )
                 return (404, {"error": f"View {view_id} not found in session"})
+
+            # Handle state_update from client-side bindings
+            if handler_name == "__state_update__":
+                state_path = event_data.get("path", "")
+                state_value = event_data.get("value")
+                parts = state_path.split(".")
+                state_name = parts[-1]
+                if hasattr(view, state_name):
+                    attr = getattr(view, state_name)
+                    if hasattr(attr, "value"):
+                        attr.value = state_value
+                return {"ok": True, "patches": view.get_patches()}
 
             handler = getattr(view, handler_name, None)
             if not handler or not callable(handler):
@@ -158,12 +252,23 @@ class MinuBridge:
                 if asyncio.iscoroutine(result):
                     result = await result
 
-                # Collect state patches
+                # Flush pending state changes.
+                # If WS _send_callback is set, this pushes patches live via WS.
+                # If not, patches accumulate and we return them in the HTTP response.
+                await minu_session.force_flush()
+
+                # Collect any remaining patches not yet flushed
                 patches = view.get_patches()
+
+                # Re-render view so client can do a full update if needed
+                view_dict = view.to_dict()
+
                 return {
                     "ok": True,
                     "patches": patches,
-                    "result": result if isinstance(result, (dict, list, str, int, float, bool, type(None))) else str(result),
+                    "view": view_dict,
+                    "result": result if isinstance(result, (dict, list, str, int, float, bool, type(None))) else str(
+                        result),
                 }
             except Exception as e:
                 logger.error(f"[MinuBridge] Event handler error: {e}")
@@ -178,6 +283,9 @@ class MinuBridge:
         bridge = self
         ws_path = f"/ws{path}" if not path.startswith("/ws") else path
 
+        # Track conn_id -> session_id mapping for cleanup
+        _conn_sessions: Dict[str, str] = {}
+
         @self._ftb.websocket(ws_path)
         class MinuWSHandler:
             async def on_connect(self_, conn_id, session):
@@ -187,29 +295,55 @@ class MinuBridge:
                 msg_type = payload.get("type", "")
 
                 if msg_type == "init":
-                    # Client sends init with session info
                     session_id = payload.get("sessionId", conn_id)
                     minu_session = bridge._sessions.get(session_id)
 
-                    if minu_session:
-                        # Set up send callback for this connection
-                        async def ws_send(msg_str, _conn=conn_id):
-                            from toolboxv2 import get_app
-                            app = get_app(from_="minu_bridge_ws")
-                            await app.ws_send(_conn, json.loads(msg_str) if isinstance(msg_str, str) else msg_str)
+                    # Fallback: try conn_id as session key
+                    if not minu_session:
+                        minu_session = bridge._sessions.get(conn_id)
 
-                        minu_session.set_send_callback(ws_send)
-                        return {"type": "init_ok", "sessionId": session_id}
-                    return {"type": "error", "message": "Session not found"}
+                    # Fallback: search for session with a view on this path
+                    if not minu_session:
+                        lookup_key = f"_path:{path}"
+                        for sid, ms in bridge._sessions.items():
+                            if ms.get_view_by_key(lookup_key) is not None:
+                                minu_session = ms
+                                session_id = sid
+                                break
+
+                    if not minu_session:
+                        return {"type": "error", "message": f"Session not found (tried: {session_id})"}
+
+                    _conn_sessions[conn_id] = session_id
+
+                    # Set up send callback bound to this specific conn_id.
+                    # This enables live push: any state change during an async handler
+                    # (e.g. auto_increment with sleep) is pushed immediately.
+                    async def ws_send(msg_str, _conn=conn_id):
+                        from toolboxv2 import get_app
+                        app = get_app(from_="minu_bridge_ws")
+                        data = json.loads(msg_str) if isinstance(msg_str, str) else msg_str
+                        await app.ws_send(_conn, data)
+
+                    minu_session.set_send_callback(ws_send)
+                    return {"type": "init_ok", "sessionId": session_id}
 
                 elif msg_type == "event":
+                    # Enrich payload with session_id from our mapping
+                    if "sessionId" not in payload or not payload["sessionId"]:
+                        payload["sessionId"] = _conn_sessions.get(conn_id, "")
                     return await bridge._handle_ws_event(payload, conn_id)
 
                 elif msg_type == "state_update":
+                    if "sessionId" not in payload or not payload["sessionId"]:
+                        payload["sessionId"] = _conn_sessions.get(conn_id, "")
                     return await bridge._handle_ws_state_update(payload, conn_id)
 
             async def on_disconnect(self_, conn_id, session):
-                logger.info(f"[MinuBridge WS] {conn_id} disconnected")
+                logger.info(f"[MinuBridge WS] {conn_id} disconnected from {ws_path}")
+                # Clean up conn->session mapping
+                sid = _conn_sessions.pop(conn_id, None)
+                # Don't destroy the minu_session — view state should survive reconnects
 
     async def _handle_ws_event(self, payload: dict, conn_id: str) -> dict:
         """Handle event message over WebSocket."""
@@ -224,7 +358,10 @@ class MinuBridge:
 
         view = minu_session.get_view(view_id)
         if not view:
-            return {"type": "error", "message": f"View {view_id} not found"}
+            # Fallback: search all sessions
+            view = self._find_view_by_id(view_id)
+            if not view:
+                return {"type": "error", "message": f"View {view_id} not found"}
 
         handler = getattr(view, handler_name, None)
         if not handler:
@@ -235,9 +372,23 @@ class MinuBridge:
             if asyncio.iscoroutine(result):
                 result = await result
 
+            # Flush any state changes pushed during the handler (incl. async delays).
+            # If _send_callback is set, force_flush already pushed patches via WS.
+            await minu_session.force_flush()
+
+            # Collect remaining patches (for handlers that didn't trigger _send_callback)
             patches = view.get_patches()
-            return {"type": "event_result", "patches": patches}
+
+            # Re-render view for full sync
+            view_dict = view.to_dict()
+
+            return {
+                "type": "event_result",
+                "patches": patches,
+                "view": view_dict,
+            }
         except Exception as e:
+            logger.error(f"[MinuBridge] WS event handler error: {e}")
             return {"type": "error", "message": str(e)}
 
     async def _handle_ws_state_update(self, payload: dict, conn_id: str) -> dict:
@@ -272,22 +423,49 @@ class MinuBridge:
     # Session & View Factory
     # =========================================================================
 
-    def _create_view(self, view_class, session, request=None):
-        """Create view instance and register in session."""
+    def _get_or_create_view(self, path, view_class, session, request=None):
+        """Get existing view for this session+path, or create a new one.
+
+        Searches the current session first, then falls back to all sessions
+        (handles standalone mode where session_id may change between requests).
+
+        Returns:
+            (view, minu_session, is_new) — is_new=True if freshly created
+        """
         from toolboxv2.mods.Minu.core import MinuSession
 
         minu_session = self._get_or_create_session(session)
-        view = view_class()
+        lookup_key = f"_path:{path}"
 
-        # Wire up app reference and request data
+        # 1. Check current session
+        existing_view = minu_session.get_view_by_key(lookup_key)
+        if existing_view is not None:
+            if request:
+                existing_view.request_data = self._build_request_data(session, request)
+            return existing_view, minu_session, False
+
+        # 2. Fallback: search ALL sessions (handles unstable session IDs)
+        for other_session in self._sessions.values():
+            if other_session is minu_session:
+                continue
+            existing_view = other_session.get_view_by_key(lookup_key)
+            if existing_view is not None:
+                # Move view to current session
+                other_session.unregister_view(existing_view._view_id)
+                if request:
+                    existing_view.request_data = self._build_request_data(session, request)
+                minu_session.register_view(existing_view, app=self._app, key=lookup_key)
+                return existing_view, minu_session, False
+
+        # 3. Create new view
+        view = view_class()
         if self._app:
             view.set_app(self._app)
         if request:
-            # Build lightweight RequestData-compatible object
             view.request_data = self._build_request_data(session, request)
 
-        minu_session.register_view(view, app=self._app)
-        return view, minu_session
+        minu_session.register_view(view, app=self._app, key=lookup_key)
+        return view, minu_session, True
 
     def _get_or_create_session(self, session) -> "MinuSession":
         from toolboxv2.mods.Minu.core import MinuSession
@@ -301,6 +479,19 @@ class MinuBridge:
     def _get_session(self, session) -> Optional["MinuSession"]:
         sid = getattr(session, "session_id", "")
         return self._sessions.get(sid)
+
+    def _find_view_by_id(self, view_id: str):
+        """Search all sessions for a view by its viewId.
+
+        Needed because in standalone mode (no persistent cookies),
+        the session_id may differ between the GET that created the view
+        and the POST that dispatches events.
+        """
+        for minu_session in self._sessions.values():
+            view = minu_session.get_view(view_id)
+            if view is not None:
+                return view
+        return None
 
     @staticmethod
     def _build_request_data(session, request=None):
@@ -318,50 +509,299 @@ class MinuBridge:
     # HTML Rendering
     # =========================================================================
 
-    @staticmethod
-    def _render_html(view_name: str, view_dict: dict, minu_session) -> str:
-        """Render HTML bootloader page for a MinuView."""
-        view_json = json.dumps(view_dict, default=str)
-        session_id = minu_session.session_id
+    def _build_nav_items_html(self) -> str:
+        """Build NavMenu list items HTML from static nav items + view registry."""
+        items = []
 
-        return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{view_name}</title>
-    <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{ font-family: system-ui, -apple-system, sans-serif; background: #f9fafb; color: #1e293b; }}
-        #minu-root {{ max-width: 960px; margin: 0 auto; padding: 2rem; }}
-        .minu-loading {{ display: flex; justify-content: center; align-items: center; height: 40vh; color: #6b7280; flex-direction: column; gap: 1rem; }}
-        .spinner {{ width: 2rem; height: 2rem; border: 3px solid #e5e7eb; border-top-color: #3b82f6; border-radius: 50%; animation: spin 1s linear infinite; }}
-        @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
-    </style>
-</head>
-<body>
-    <div id="minu-root">
-        <div class="minu-loading">
-            <div class="spinner"></div>
-            <p>Loading {view_name}...</p>
-        </div>
-    </div>
-    <script>
-        const MINU_VIEW = {view_json};
-        const MINU_SESSION = "{session_id}";
-        // Minu client renderer picks this up
-        document.addEventListener('DOMContentLoaded', () => {{
-            if (window.TB && window.TB.ui) {{
-                window.TB.ui.renderView(document.getElementById('minu-root'), MINU_VIEW, MINU_SESSION);
-            }} else {{
-                document.getElementById('minu-root').innerHTML =
-                    '<pre style="padding:1rem;background:#f1f5f9;border-radius:8px;overflow:auto;font-size:13px;">' +
-                    JSON.stringify(MINU_VIEW, null, 2) + '</pre>';
+        # Static nav items first (Home, Login, Config, etc.)
+        for nav in self._nav_items:
+            items.append(
+                f'<li><a href="{nav["path"]}" class="nav-item">'
+                f'<span class="material-symbols-outlined nav-icon">{nav["icon"]}</span>'
+                f'<span class="nav-text">{nav["label"]}</span>'
+                f'</a></li>'
+            )
+
+        # Separator if both static and view items exist
+        if self._nav_items and self._view_registry:
+            items.append('<li style="border-top:1px solid var(--border-subtle,rgba(255,255,255,0.08));margin:4px 0;"></li>')
+
+        # View items from registry
+        for path, meta in self._view_registry.items():
+            if not meta.get("nav", True):
+                continue
+            icon = meta.get("icon") or "article"
+            label = meta.get("label") or meta["class"].__name__
+            auth_badge = ' <span class="badge badge-default" style="font-size:9px;margin-left:4px;">auth</span>' if meta.get("require_auth") else ""
+            items.append(
+                f'<li><a href="{path}" class="nav-item">'
+                f'<span class="material-symbols-outlined nav-icon">{icon}</span>'
+                f'<span class="nav-text">{label}{auth_badge}</span>'
+                f'</a></li>'
+            )
+
+        # Bottom items (Terms, etc.)
+        if self._nav_items_bottom:
+            items.append('<li style="border-top:1px solid var(--border-subtle,rgba(255,255,255,0.08));margin:4px 0;"></li>')
+            for nav in self._nav_items_bottom:
+                items.append(
+                    f'<li><a href="{nav["path"]}" class="nav-item">'
+                    f'<span class="material-symbols-outlined nav-icon">{nav["icon"]}</span>'
+                    f'<span class="nav-text">{nav["label"]}</span>'
+                    f'</a></li>'
+                )
+
+        return "\n".join(items)
+
+    def _render_html(self, view_name: str, view_dict: dict, minu_session, ws_port: int = 0) -> str:
+        """Render HTML fragment for TBJS Router to inject into #MainContent.
+
+        NOT a full page — no <!DOCTYPE>, no <html>, no web_context().
+        TBJS is already loaded and running. This fragment contains:
+        1. Nav controls: menu trigger (#links) + theme toggle
+        2. NavMenu initialized via TB.ui.NavMenu with auto-generated links
+        3. minu-root container
+        4. View data + boot script + HTTP event dispatch
+        5. Background config (3D or color) applied immediately
+        """
+        from toolboxv2.mods.Minu.core import MinuJSONEncoder
+
+        view_json = json.dumps(view_dict, cls=MinuJSONEncoder, default=str)
+        session_id = minu_session.session_id
+        view_id = view_dict.get("viewId", "")
+        bg_type = "'3d'" if self.with_3d else "'color'"
+        nav_items_html = self._build_nav_items_html()
+
+        # Escape for JS string embedding (single quotes in HTML are fine,
+        # but backticks and ${} would break template literals)
+        nav_html_escaped = nav_items_html.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+
+        default_style = self.default_style or "glass"
+
+        # Style is ALWAYS applied (even without toggle button)
+        # so a dev can ship a paper-only app via default_style="paper"
+
+        style_toggle_btn = ""
+        style_toggle_js = ""
+        if self.style_toggle:
+            style_toggle_btn = """
+    <button id="minuStyleToggle" class="nav-toggle" type="button" aria-label="Toggle style">
+        <span class="material-symbols-outlined" style="font-size: 20px;">palette</span>
+    </button>"""
+            style_toggle_js = """
+    // --- Style toggle (Glass ↔ Paper) ---
+    (function() {
+        var STYLE_KEY = 'tbjs_style_preference';
+        var root = document.documentElement;
+        var btn = document.getElementById('minuStyleToggle');
+        if (btn) {
+            var iconEl = btn.querySelector('.material-symbols-outlined');
+            var updateStyleIcon = function() {
+                var current = root.getAttribute('data-style') || 'glass';
+                if (iconEl) iconEl.textContent = current === 'paper' ? 'blur_on' : 'palette';
+                btn.title = current === 'paper' ? 'Switch to Glass' : 'Switch to Paper';
+            };
+            updateStyleIcon();
+            btn.addEventListener('click', function() {
+                var current = root.getAttribute('data-style') || 'glass';
+                var next = current === 'paper' ? 'glass' : 'paper';
+                root.setAttribute('data-style', next);
+                localStorage.setItem(STYLE_KEY, next);
+                updateStyleIcon();
+            });
+        }
+    })();"""
+
+            # Inject data-style onto <html> via inline script BEFORE any rendering
+            style_attr_script = f"""<script>
+(function(){{var k='tbjs_style_preference',r=document.documentElement;r.setAttribute('data-style',localStorage.getItem(k)||'{default_style}');}})();
+</script>"""
+
+            return get_app().web_context() + style_attr_script + f"""
+<nav class="nav-controls" id="Nav-Main" aria-label="Main navigation">
+    <button id="links" class="nav-toggle" type="button" aria-label="Menu" aria-expanded="false">
+        <span class="material-symbols-outlined" style="font-size: 20px;">menu</span>
+    </button>
+    <button id="minuThemeToggle" class="nav-toggle" type="button" aria-label="Toggle theme">
+        <span class="material-symbols-outlined" style="font-size: 20px;">light_mode</span>
+    </button>{style_toggle_btn}
+</nav>
+
+<div id="minu-root"></div>
+
+<script unSave=true>
+window.__MINU_BRIDGE__ = {{
+    view: {view_json},
+    viewName: "{view_name}",
+    sessionId: "{session_id}",
+    viewId: "{view_id}"
+}};
+(function() {{
+    // --- Theme + background config ---
+    var theme = window.TB && window.TB.ui && window.TB.ui.theme;
+    if (theme) {{
+        if (theme._config && theme._config.background) {{
+            theme._config.background.type = {bg_type};
+        }}
+        if (theme._applyEffectiveTheme) {{
+            theme._applyEffectiveTheme();
+        }} else if (theme._applyBackground) {{
+            theme._applyBackground();
+        }}
+
+        var toggleBtn = document.getElementById('minuThemeToggle');
+        if (toggleBtn) {{
+            var iconEl = toggleBtn.querySelector('.material-symbols-outlined');
+            var updateIcon = function() {{
+                if (!iconEl) return;
+                var mode = theme.getCurrentMode ? theme.getCurrentMode() : 'dark';
+                iconEl.textContent = mode === 'dark' ? 'light_mode' : 'dark_mode';
+            }};
+            updateIcon();
+            toggleBtn.addEventListener('click', function() {{
+                if (theme.togglePreference) theme.togglePreference();
+                setTimeout(updateIcon, 50);
+            }});
+            if (window.TB && window.TB.events) {{
+                window.TB.events.on('theme:changed', updateIcon);
             }}
+        }}
+    }}
+{style_toggle_js}
+    // --- NavMenu from registered views ---
+    var NavMenu = window.TB && window.TB.ui && window.TB.ui.NavMenu;
+    if (NavMenu) {{
+        // Destroy any previous bridge NavMenu instance
+        if (window.__MINU_NAV__) {{
+            window.__MINU_NAV__.destroy();
+            window.__MINU_NAV__ = null;
+        }}
+        // Remove ALL NavMenu DOM artifacts (including TBJS default)
+        var menuId = 'tb-nav-menu-modal';
+        var el;
+        el = document.getElementById(menuId);
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+        el = document.getElementById(menuId + '-overlay');
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+
+        // Clone trigger button to strip old event listeners (TBJS default NavMenu)
+        var oldTrigger = document.getElementById('links');
+        if (oldTrigger) {{
+            var newTrigger = oldTrigger.cloneNode(true);
+            oldTrigger.parentNode.replaceChild(newTrigger, oldTrigger);
+        }}
+
+        window.__MINU_NAV__ = NavMenu.init({{
+            triggerSelector: '#links',
+            menuContentHtml: `<ul class="nav-list" style="list-style:none;padding:0;margin:0;">{nav_html_escaped}</ul>`
         }});
-    </script>
-</body>
-</html>"""
+    }}
+
+    // --- Minu renderer ---
+    var R = window.TB && window.TB.ui && window.TB.ui.MinuRenderer;
+    if (!R) {{ console.error('[MinuBridge] TB.ui.MinuRenderer not available'); return; }}
+    var bridge = window.__MINU_BRIDGE__;
+    var root = document.getElementById('minu-root');
+    var renderer = new R();
+    renderer.container = root;
+    if (renderer._injectStyles) renderer._injectStyles();
+    renderer._renderView(bridge.view);
+
+    // --- WebSocket event dispatch (live mode) ---
+    var eventUrl = window.location.pathname.replace(/\\/$/, '') + '/event';
+    var wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var wsPort = window.__TB_WS_PORT__ || '{ws_port}' || window.location.port;
+    var wsUrl = wsProto + '//' + window.location.hostname + ':' + wsPort + '/ws' + window.location.pathname.replace(/\\/$/, '');
+    var _ws = null;
+    var _wsReady = false;
+    var _wsQueue = [];
+
+    function _wsSend(msg) {{
+        if (_wsReady && _ws && _ws.readyState === 1) {{
+            _ws.send(JSON.stringify(msg));
+        }} else {{
+            _wsQueue.push(msg);
+        }}
+    }}
+
+    function _wsConnect() {{
+        try {{
+            _ws = new WebSocket(wsUrl);
+        }} catch(e) {{
+            console.warn('[MinuBridge] WS connect failed, using HTTP fallback');
+            _wsReady = false;
+            return;
+        }}
+        _ws.onopen = function() {{
+            _wsSend({{ type: 'init', sessionId: bridge.sessionId }});
+        }};
+        _ws.onmessage = function(evt) {{
+            var msg;
+            try {{ msg = JSON.parse(evt.data); }} catch(e) {{ return; }}
+            if (msg.type === 'init_ok') {{
+                _wsReady = true;
+                console.log('[MinuBridge] WS connected, session:', msg.sessionId);
+                // Drain queue
+                while (_wsQueue.length) _ws.send(JSON.stringify(_wsQueue.shift()));
+            }} else if (msg.type === 'patches') {{
+                if (msg.patches && msg.patches.length) renderer._applyPatches(msg.patches);
+            }} else if (msg.type === 'render') {{
+                if (msg.view) renderer._renderView(msg.view);
+            }} else if (msg.type === 'event_result') {{
+                if (msg.patches && msg.patches.length) renderer._applyPatches(msg.patches);
+                if (msg.view) renderer._renderView(msg.view);
+            }}
+        }};
+        _ws.onclose = function() {{
+            _wsReady = false;
+            console.log('[MinuBridge] WS closed, falling back to HTTP');
+        }};
+        _ws.onerror = function() {{ _wsReady = false; }};
+    }}
+
+    // HTTP fallback for when WS is not available
+    function _httpSend(data) {{
+        if (data.type === 'event') {{
+            fetch(eventUrl, {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{
+                    viewId: data.viewId,
+                    handler: data.handler,
+                    data: data.payload || {{}}
+                }})
+            }})
+            .then(function(r) {{ return r.json(); }})
+            .then(function(resp) {{
+                if (resp.patches && resp.patches.length) renderer._applyPatches(resp.patches);
+                if (resp.view) renderer._renderView(resp.view);
+            }})
+            .catch(function(e) {{ console.error('[MinuBridge] HTTP fallback failed:', e); }});
+        }} else if (data.type === 'state_update') {{
+            fetch(eventUrl, {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{
+                    viewId: data.viewId,
+                    handler: '__state_update__',
+                    data: {{ path: data.path, value: data.value }}
+                }})
+            }}).catch(function(e) {{ console.error('[MinuBridge] State sync failed:', e); }});
+        }}
+    }}
+
+    renderer._send = function(data) {{
+        if (_wsReady) {{
+            _wsSend(data);
+        }} else {{
+            _httpSend(data);
+        }}
+    }};
+
+try {{ _wsConnect(); }} catch(e) {{ console.log('[MinuBridge] WS not available, using HTTP'); }}
+    console.log('[MinuBridge] View rendered:', bridge.viewName, '(WS:', wsUrl, ')');
+}})();
+</script>"""
 
     # =========================================================================
     # Utility
@@ -370,6 +810,12 @@ class MinuBridge:
     def list_views(self) -> List[Dict[str, str]]:
         """List all registered Minu views."""
         return [
-            {"path": path, "view": cls.__name__}
-            for path, cls in self._view_registry.items()
+            {
+                "path": path,
+                "view": meta["class"].__name__,
+                "icon": meta.get("icon") or "article",
+                "label": meta.get("label") or meta["class"].__name__,
+                "nav": meta.get("nav", True),
+            }
+            for path, meta in self._view_registry.items()
         ]

@@ -15,12 +15,11 @@ Tests cover:
 
 Run: python -m unittest test_fast_tb -v
 """
-
 import json
 import unittest
 
-from utils.workers.fast_tb import FastTB, _path_to_regex
-from utils.workers.fast_tb_handler import FastTBHandler
+from toolboxv2.utils.workers.fast_tb import FastTB, _path_to_regex, Route, WSRoute
+from toolboxv2.utils.workers.fast_tb_handler import FastTBHandler
 from toolboxv2.utils.workers.server_worker import ParsedRequest
 from toolboxv2.utils.workers.session import SessionData
 
@@ -669,6 +668,107 @@ class TestHandlerHasRoute(unittest.TestCase):
 
 
 # =============================================================================
+# Tests: Static File Mounting
+# =============================================================================
+
+class TestStaticMount(unittest.IsolatedAsyncioTestCase):
+
+    def setUp(self):
+        import tempfile, os
+        self.tmpdir = tempfile.mkdtemp()
+        # Create test files
+        with open(os.path.join(self.tmpdir, "style.css"), "w") as f:
+            f.write("body { color: red; }")
+        with open(os.path.join(self.tmpdir, "main-5d3f7ed2.js"), "w") as f:
+            f.write("console.log('hello');")
+        os.makedirs(os.path.join(self.tmpdir, "sub"), exist_ok=True)
+        with open(os.path.join(self.tmpdir, "sub", "data.json"), "w") as f:
+            f.write('{"ok":true}')
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_mount_static_registers(self):
+        ftb = FastTB()
+        ftb.mount_static("/dist", self.tmpdir)
+        self.assertEqual(len(ftb._static_mounts), 1)
+
+    def test_resolve_static_finds_file(self):
+        ftb = FastTB()
+        ftb.mount_static("/dist", self.tmpdir)
+        result = ftb.resolve_static("/dist/style.css")
+        self.assertIsNotNone(result)
+        self.assertTrue(result.endswith("style.css"))
+
+    def test_resolve_static_finds_subdir(self):
+        ftb = FastTB()
+        ftb.mount_static("/assets", self.tmpdir)
+        result = ftb.resolve_static("/assets/sub/data.json")
+        self.assertIsNotNone(result)
+
+    def test_resolve_static_rejects_traversal(self):
+        ftb = FastTB()
+        ftb.mount_static("/dist", self.tmpdir)
+        result = ftb.resolve_static("/dist/../../../etc/passwd")
+        self.assertIsNone(result)
+
+    def test_resolve_static_rejects_nonexistent(self):
+        ftb = FastTB()
+        ftb.mount_static("/dist", self.tmpdir)
+        result = ftb.resolve_static("/dist/nope.txt")
+        self.assertIsNone(result)
+
+    def test_resolve_static_rejects_wrong_prefix(self):
+        ftb = FastTB()
+        ftb.mount_static("/dist", self.tmpdir)
+        result = ftb.resolve_static("/other/style.css")
+        self.assertIsNone(result)
+
+    def test_has_route_includes_static(self):
+        ftb = FastTB()
+        ftb.mount_static("/dist", self.tmpdir)
+        self.assertTrue(ftb.has_route("/dist/style.css", "GET"))
+        self.assertFalse(ftb.has_route("/dist/style.css", "POST"))
+
+    async def test_handler_serves_static_file(self):
+        ftb = FastTB()
+        ftb.mount_static("/dist", self.tmpdir)
+        handler = FastTBHandler(ftb)
+        req = make_request(path="/dist/style.css")
+        status, headers, body = await handler.handle_request(req)
+        self.assertEqual(status, 200)
+        self.assertIn("text/css", headers["Content-Type"])
+        self.assertEqual(body, b"body { color: red; }")
+
+    async def test_handler_static_hashed_file_immutable_cache(self):
+        ftb = FastTB()
+        ftb.mount_static("/dist", self.tmpdir)
+        handler = FastTBHandler(ftb)
+        req = make_request(path="/dist/main-5d3f7ed2.js")
+        status, headers, body = await handler.handle_request(req)
+        self.assertEqual(status, 200)
+        self.assertIn("immutable", headers["Cache-Control"])
+
+    async def test_handler_static_unhashed_file_short_cache(self):
+        ftb = FastTB()
+        ftb.mount_static("/dist", self.tmpdir)
+        handler = FastTBHandler(ftb)
+        req = make_request(path="/dist/style.css")
+        status, headers, _ = await handler.handle_request(req)
+        self.assertNotIn("immutable", headers["Cache-Control"])
+        self.assertIn("3600", headers["Cache-Control"])
+
+    async def test_handler_static_traversal_returns_404(self):
+        ftb = FastTB()
+        ftb.mount_static("/dist", self.tmpdir)
+        handler = FastTBHandler(ftb)
+        req = make_request(path="/dist/../../etc/passwd")
+        status, _, _ = await handler.handle_request(req)
+        self.assertEqual(status, 404)
+
+
+# =============================================================================
 # Tests: Edge Cases
 # =============================================================================
 
@@ -741,6 +841,35 @@ class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
         data = parse_json_body(body)
         self.assertEqual(data["id"], 42)
         self.assertEqual(data["type"], "int")
+
+
+    async def test_kwargs_in_handler_skipped(self):
+        """**kwargs must be ignored by DI, not treated as required param."""
+        ftb = FastTB()
+
+        @ftb.get("/kw")
+        async def handler(request: ParsedRequest, format: str = "auto", **kwargs):
+            return {"format": format}
+
+        h = FastTBHandler(ftb)
+        req = make_request(path="/kw")
+        status, _, body = await h.handle_request(req)
+        self.assertEqual(status, 200)
+        self.assertEqual(parse_json_body(body)["format"], "auto")
+
+    async def test_args_in_handler_skipped(self):
+        """*args must be ignored by DI."""
+        ftb = FastTB()
+
+        @ftb.get("/va")
+        async def handler(*args, name: str = "world"):
+            return {"name": name}
+
+        h = FastTBHandler(ftb)
+        req = make_request(path="/va")
+        status, _, body = await h.handle_request(req)
+        self.assertEqual(status, 200)
+        self.assertEqual(parse_json_body(body)["name"], "world")
 
 
 if __name__ == "__main__":

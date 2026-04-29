@@ -24,22 +24,22 @@
      Nur die Rohwerte für color-mix() - Keine oklch() Wrapper!
      Damit können wir dynamisch mischen: color-mix(in oklch, var(--raw-primary) 15%, transparent)
   */
-
+    --color-primary-100: oklch(90% 0.05 230);
+    --color-primary-300: oklch(72% 0.12 230);
+    --color-primary-400: oklch(63% 0.15 230);
+    --color-primary-500: oklch(55% 0.18 230);
+    --color-primary-600: oklch(48% 0.18 230);
+    --color-primary-700: oklch(40% 0.16 230);
+    --color-primary-900: oklch(25% 0.10 230);
+    --color-accent: oklch(65% 0.15 195);
   /* --- Raw Primary (Blau-Ton für Deep-Tech) --- */
-  --raw-primary: 55% 0.18 230;
-
-  /* --- Raw Semantic Colors --- */
-  --raw-success: 65% 0.2 145;   /* Grün */
-  --raw-warning: 75% 0.18 85;   /* Orange/Gelb */
-  --raw-error:   55% 0.22 25;   /* Rot */
-  --raw-info:    60% 0.15 230;  /* Info-Blau */
 
   /* --- Generated Primary Colors (via oklch()) --- */
-  --primary: oklch(var(--raw-primary));
-  --success: oklch(var(--raw-success));
-  --warning: oklch(var(--raw-warning));
-  --error:   oklch(var(--raw-error));
-  --info:    oklch(var(--raw-info));
+  --primary: oklch(55% 0.18 230);
+  --success: oklch(65% 0.2 145);
+  --warning: oklch(75% 0.18 85);
+  --error:   oklch(55% 0.22 25);
+  --info:    oklch(60% 0.15 230);
 
 
   /* ========== 3D BACKGROUND VARIABLES ==========
@@ -66,12 +66,12 @@
   --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Consolas, monospace;
 
   /* Gekappte Fluid Typography (Max 22px für h1 - Dashboard-Look) */
-  --text-h1: clamp(18px, 2vw, 22px);
-  --text-h2: clamp(16px, 1.8vw, 19px);
-  --text-h3: clamp(14px, 1.5vw, 16px);
-  --text-base: 13px;           /* Kleinere Basis für Tech-Dashboard */
-  --text-sm:  11px;
-  --text-xs:  9px;              /* Für Micro-Labels */
+  --text-h1: clamp(34px, 4vw, 44px);
+  --text-h2: clamp(26px, 3vw, 34px);
+  --text-h3: clamp(21px, 2.4vw, 26px);
+  --text-base: 18px;
+  --text-sm: 15px;
+  --text-xs: 13px;            /* Für Micro-Labels */
 
 
   /* ========== SPACING SCALE (8pt Grid) ========== */
@@ -219,6 +219,9 @@
   --text-label: #4a5a60;
   --text-muted: #7a8a90;
 
+    /* Fix: hardcoded white text on light surfaces */
+  --text-on-surface: var(--text-main);
+
   /* Glass Tokens (Light - Cyan-Wasser) */
   --glass-bg: rgba(215, 235, 245, 0.7);
   --glass-border: rgba(100, 150, 170, 0.15);
@@ -337,7 +340,7 @@ p {
   margin-block-end: var(--space-4);
   line-height: 1.6;
   max-inline-size: 65ch;
-  color: rgba(255, 255, 255, 0.7);
+   color: color-mix(in oklch, var(--text-main) 80%, transparent);
 }
 
 a {
@@ -684,7 +687,7 @@ input[type="checkbox"]:focus-visible {
 }
 
 .card-content {
-  color: rgba(255, 255, 255, 0.6);
+  color: color-mix(in oklch, var(--text-main) 70%, transparent);
   line-height: 1.5;
   font-size: var(--text-sm);
 }
@@ -1285,9 +1288,9 @@ input[type="checkbox"]:focus-visible {
     border-radius: var(--radius-md);
   }
 
-  h1 { font-size: 19px; }
-  h2 { font-size: 17px; }
-  h3 { font-size: 15px; }
+   h1 { font-size: clamp(26px, 5vw, 34px); }
+   h2 { font-size: clamp(21px, 4vw, 26px); }
+   h3 { font-size: clamp(18px, 3vw, 21px); }
 
   button,
   .btn {
@@ -1329,6 +1332,694 @@ input[type="checkbox"]:focus-visible {
   -webkit-font-smoothing: antialiased;
   vertical-align: middle;
   flex-shrink: 0;
+}
+
+/* ============================================================================
+   TBJS Paper Style v1.0 — Neo-Brutalism Overlay
+   Activates via [data-style="paper"] on <html>.
+   Loads AFTER tbjs-main.css — only overrides what differs.
+
+   Structure:
+   1. Token overrides — shared (both themes)
+   2. Token overrides — Paper Light
+   3. Token overrides — Paper Dark ("Carbon Paper")
+   4. Component overrides (scoped under [data-style="paper"])
+   5. Component-file patches (Desktop, Modal, Toast, CookieBanner)
+   6. Responsive adjustments
+   ============================================================================ */
+
+
+/* ==========================================================================
+   1. SHARED TOKEN OVERRIDES (both themes)
+   ========================================================================== */
+
+[data-style="paper"] {
+  /* --- Typography scale (editorial, generous) --- */
+  /* --- Font role swap --- */
+  --font-display: var(--font-mono);
+  --font-body: var(--font-sans);
+
+  /* --- Borders: sharp, no radius --- */
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  /* --radius-full stays for dots/avatars */
+
+  --border-width: 2px;
+
+  /* --- Glass disabled --- */
+  --glass-blur: 0px;
+
+  /* --- Elevation: hard offset shadows --- */
+  --highlight-inset: none;
+  --shadow-micro: 4px 4px 0 var(--ink);
+
+  /* --- Transition: snappier --- */
+  --duration-fast: 80ms;
+  --ease-default: linear;
+}
+
+
+/* ==========================================================================
+   2. PAPER LIGHT TOKENS
+   ========================================================================== */
+
+[data-style="paper"],
+[data-style="paper"][data-theme="light"] {
+  color-scheme: light;
+
+  --paper-bg: #f4f1ea;
+  --paper-surface: #ffffff;
+  --paper-sunken: #ebe7dc;
+  --ink: #111111;
+  --ink-muted: #555555;
+  --ink-faint: #888888;
+  --rule: #111111;
+
+  /* Map Glass tokens → Paper */
+  --bg-base: var(--paper-bg);
+  --bg-surface: var(--paper-surface);
+  --bg-elevated: var(--paper-surface);
+  --bg-sunken: var(--paper-sunken);
+
+  --text-main: var(--ink);
+  --text-label: var(--ink-muted);
+  --text-muted: var(--ink-faint);
+
+  --glass-bg: var(--paper-surface);
+  --glass-border: var(--ink);
+
+  --border-subtle: var(--ink);
+  --border-active: var(--ink);
+
+  --surface-hover: var(--paper-sunken);
+  --surface-active: var(--paper-sunken);
+  --surface-badge: var(--paper-sunken);
+
+  --input-bg: var(--paper-surface);
+  --input-border: var(--ink);
+
+  --scrollbar-thumb: var(--ink-faint);
+  --scrollbar-track: var(--paper-sunken);
+  --scrollbar-hover: var(--ink-muted);
+
+  --theme-bg-sun: var(--paper-bg);
+  --theme-bg-light: var(--paper-bg);
+}
+
+
+/* ==========================================================================
+   3. PAPER DARK TOKENS ("Carbon Paper")
+   ========================================================================== */
+
+[data-style="paper"][data-theme="dark"] {
+  color-scheme: dark;
+
+  --paper-bg: #111111;
+  --paper-surface: #1e1e1e;
+  --paper-sunken: #080808;
+  --ink: #d4d0c8;
+  --ink-muted: #9a968c;
+  --ink-faint: #636059;
+  --rule: #d4d0c8;
+
+  /* Map Glass tokens → Paper Dark */
+  --bg-base: var(--paper-bg);
+  --bg-surface: var(--paper-surface);
+  --bg-elevated: var(--paper-surface);
+  --bg-sunken: var(--paper-sunken);
+
+  --text-main: var(--ink);
+  --text-label: var(--ink-muted);
+  --text-muted: var(--ink-faint);
+
+  --glass-bg: var(--paper-surface);
+  --glass-border: var(--ink);
+
+  --border-subtle: var(--ink);
+  --border-active: var(--ink);
+
+  --surface-hover: var(--paper-sunken);
+  --surface-active: var(--paper-sunken);
+  --surface-badge: var(--paper-sunken);
+
+  --input-bg: var(--paper-surface);
+  --input-border: var(--ink);
+
+  --scrollbar-thumb: var(--ink-faint);
+  --scrollbar-track: var(--paper-sunken);
+  --scrollbar-hover: var(--ink-muted);
+
+  --theme-bg-sun: var(--paper-bg);
+  --theme-bg-light: var(--paper-bg);
+}
+
+
+/* ==========================================================================
+   4. COMPONENT OVERRIDES — tbjs-main.css
+   ========================================================================== */
+
+/* --- Body --- */
+[data-style="paper"] body {
+  font-family: var(--font-body);
+  background-color: var(--paper-bg);
+}
+
+/* Kill 3D background */
+[data-style="paper"] body::before {
+  display: none;
+}
+
+/* --- Typography --- */
+[data-style="paper"] h1,
+[data-style="paper"] h2,
+[data-style="paper"] h3,
+[data-style="paper"] h4,
+[data-style="paper"] h5,
+[data-style="paper"] h6 {
+  font-family: var(--font-display);
+  letter-spacing: 0;
+}
+
+[data-style="paper"] p {
+  font-family: var(--font-body);
+  color: var(--ink);
+  max-inline-size: 68ch;
+}
+
+[data-style="paper"] .card-content {
+  color: var(--ink-muted);
+}
+
+/* --- Links --- */
+[data-style="paper"] a {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  color: var(--primary);
+}
+
+[data-style="paper"] a:hover {
+  background: var(--primary);
+  color: var(--paper-surface);
+  text-decoration: none;
+}
+
+/* --- Code --- */
+[data-style="paper"] code {
+  background: var(--paper-sunken);
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  color: var(--ink);
+}
+
+[data-style="paper"] pre {
+  background: var(--paper-sunken);
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+[data-style="paper"] pre code {
+  border: none;
+  background: transparent;
+}
+
+/* --- Buttons (base) --- */
+[data-style="paper"] button,
+[data-style="paper"] .btn {
+  font-family: var(--font-display);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 var(--ink);
+  transition: transform 80ms linear, box-shadow 80ms linear, background-color 80ms linear;
+}
+
+[data-style="paper"] button:hover,
+[data-style="paper"] .btn:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+[data-style="paper"] button:active,
+[data-style="paper"] .btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 var(--ink);
+}
+
+/* --- .btn-primary --- */
+[data-style="paper"] .btn-primary,
+[data-style="paper"] button[type="submit"] {
+  background: var(--primary);
+  color: white;
+  border: 2px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+[data-style="paper"] .btn-primary:hover,
+[data-style="paper"] button[type="submit"]:hover {
+  background: var(--primary);
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+[data-style="paper"] .btn-primary:active,
+[data-style="paper"] button[type="submit"]:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 var(--ink);
+}
+
+/* --- .btn-secondary --- */
+[data-style="paper"] .btn-secondary {
+  background: var(--paper-surface);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+}
+
+/* --- .btn-ghost --- */
+[data-style="paper"] .btn-ghost {
+  background: transparent;
+  border: 2px solid var(--ink);
+}
+
+/* --- Form elements --- */
+[data-style="paper"] input,
+[data-style="paper"] textarea,
+[data-style="paper"] select {
+  background: var(--paper-surface);
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 var(--ink);
+  font-family: var(--font-body);
+  color: var(--ink);
+  transition: transform 80ms linear, box-shadow 80ms linear, border-color 80ms linear;
+}
+
+[data-style="paper"] input:focus,
+[data-style="paper"] textarea:focus,
+[data-style="paper"] select:focus {
+  box-shadow: 4px 4px 0 var(--primary);
+  transform: translate(-1px, -1px);
+  border-color: var(--primary);
+  background: var(--paper-surface);
+}
+
+[data-style="paper"] input::placeholder,
+[data-style="paper"] textarea::placeholder {
+  color: var(--ink-faint);
+}
+
+/* Radio/Checkbox: keep functional, strip glass */
+[data-style="paper"] input[type="radio"],
+[data-style="paper"] input[type="checkbox"] {
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper-surface);
+  box-shadow: none;
+}
+
+[data-style="paper"] input[type="radio"] {
+  border-radius: var(--radius-full); /* radios stay round */
+}
+
+[data-style="paper"] input[type="radio"]:checked,
+[data-style="paper"] input[type="checkbox"]:checked {
+  background: var(--primary);
+  border-color: var(--ink);
+  box-shadow: none;
+}
+
+/* --- Label --- */
+[data-style="paper"] label {
+  font-family: var(--font-display);
+  color: var(--ink);
+}
+
+/* --- Cards --- */
+[data-style="paper"] .card {
+  background: var(--paper-surface);
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 6px 6px 0 var(--ink);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-style="paper"] .card:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 8px 8px 0 var(--ink);
+}
+
+/* --- Glass utility --- */
+[data-style="paper"] .glass {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+[data-style="paper"] .glass-effect {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+}
+
+/* --- Main content --- */
+[data-style="paper"] .main-content {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+/* --- Navigation --- */
+[data-style="paper"] .nav-controls {
+  background: var(--paper-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+[data-style="paper"] .nav-toggle {
+  border-radius: 0;
+  color: var(--ink);
+}
+
+[data-style="paper"] .nav-dropdown {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+[data-style="paper"] .nav-dropdown a {
+  border-radius: 0;
+  color: var(--ink-muted);
+}
+
+[data-style="paper"] .nav-dropdown a:hover,
+[data-style="paper"] .nav-dropdown a:focus {
+  color: var(--ink);
+  background: var(--paper-sunken);
+  text-decoration: none;
+}
+
+/* --- Widget --- */
+[data-style="paper"] .widget {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+[data-style="paper"] .widget-btn {
+  border-radius: 0;
+}
+
+/* --- Grid table --- */
+[data-style="paper"] .grid-header .grid-cell {
+  border-bottom: 2px solid var(--ink);
+}
+
+[data-style="paper"] .grid-cell {
+  border-bottom: 2px solid var(--ink);
+}
+
+[data-style="paper"] .grid-row:hover .grid-cell {
+  transform: none;
+}
+
+/* --- Tab nav --- */
+[data-style="paper"] .tab-nav {
+  border-bottom: 2px solid var(--ink);
+}
+
+[data-style="paper"] .tab-item {
+  border-radius: 0;
+}
+
+[data-style="paper"] .tab-item.is-active {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+  background: var(--paper-sunken);
+}
+
+/* --- Score blocks (no LED glow) --- */
+[data-style="paper"] .score-block.is-active {
+  box-shadow: none;
+}
+
+/* --- Badge --- */
+[data-style="paper"] .badge {
+  border: 2px solid var(--ink);
+  border-radius: 0;
+}
+
+[data-style="paper"] .badge--success {
+  background: var(--success);
+}
+
+/* --- hr --- */
+[data-style="paper"] hr {
+  border: none;
+  border-block-start: 2px solid var(--ink);
+}
+
+/* --- Overlay --- */
+[data-style="paper"] .overlay {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* --- Modal (tbjs-main.css .modal) --- */
+[data-style="paper"] .modal {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 8px 8px 0 var(--ink);
+}
+
+/* --- Scrollbar radius --- */
+[data-style="paper"] ::-webkit-scrollbar-track {
+  border-radius: 0;
+}
+
+[data-style="paper"] ::-webkit-scrollbar-thumb {
+  border-radius: 0;
+  border: 1px solid var(--paper-sunken);
+}
+
+
+/* ==========================================================================
+   5. COMPONENT-FILE PATCHES (Desktop, Modal, Toast, CookieBanner)
+   ========================================================================== */
+
+/* ----- Desktop: Status bar ----- */
+[data-style="paper"] .tb-status-bar {
+  background: var(--paper-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-top: 2px solid var(--ink);
+  font-family: var(--font-display);
+  color: var(--ink-faint);
+}
+
+/* ----- Desktop: Bottom nav ----- */
+[data-style="paper"] .tb-bottom-nav {
+  background: var(--paper-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-top: 2px solid var(--ink);
+  box-shadow: none;
+}
+
+[data-style="paper"] .tb-bottom-nav-item {
+  color: var(--ink-muted);
+}
+
+[data-style="paper"] .tb-bottom-nav-item:hover {
+  color: var(--ink);
+}
+
+[data-style="paper"] .tb-bottom-nav-label {
+  font-family: var(--font-display);
+}
+
+/* ----- Desktop: Quick capture ----- */
+[data-style="paper"] .tb-quick-capture {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 8px 8px 0 var(--ink);
+}
+
+[data-style="paper"] .tb-quick-capture-header {
+  border-bottom: 2px solid var(--ink);
+  font-family: var(--font-display);
+  color: var(--ink-muted);
+}
+
+[data-style="paper"] .tb-quick-capture-close {
+  border-radius: 0;
+}
+
+[data-style="paper"] .tb-quick-capture-body textarea {
+  border-radius: 0;
+}
+
+[data-style="paper"] .tb-quick-capture-save {
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+[data-style="paper"] .tb-quick-capture-save:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+/* ----- Modal (component file selectors) ----- */
+[data-style="paper"] [id^="tb-modal-"][id$="-overlay"] {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-style="paper"] [id^="tb-modal-"]:not([id$="-overlay"]) {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 8px 8px 0 var(--ink);
+}
+
+[data-style="paper"] .modal-header,
+[data-style="paper"] [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:not(:only-child) {
+  border-bottom: 2px solid var(--ink);
+}
+
+[data-style="paper"] .modal-footer,
+[data-style="paper"] [id^="tb-modal-"]:not([id$="-overlay"]) > div:last-child:not(:only-child) {
+  border-top: 2px solid var(--ink);
+}
+
+[data-style="paper"] .modal-header button.material-symbols-outlined,
+[data-style="paper"] [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:not(:only-child) button.material-symbols-outlined {
+  border-radius: 0;
+}
+
+/* ----- Toast ----- */
+[data-style="paper"] .tb-toast {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+[data-style="paper"] .tb-toast-close {
+  border-radius: 0;
+}
+
+[data-style="paper"] .tb-toast-action-btn {
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+[data-style="paper"] .tb-toast-action-btn:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+[data-style="paper"] .tb-toast-action-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 var(--ink);
+}
+
+[data-style="paper"] .tb-toast-dot {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+[data-style="paper"] .tb-toast-dot:hover {
+  box-shadow: none;
+}
+
+/* ----- CookieBanner ----- */
+[data-style="paper"] #tbjs-cookie-banner {
+  background-color: var(--paper-bg);
+  border-top: 2px solid var(--ink);
+  box-shadow: 0 -4px 0 var(--ink);
+  color: var(--ink);
+}
+
+[data-style="paper"] #tbjs-cookie-banner #tb-cookie-banner-accept-minimal {
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background-color: var(--primary);
+  color: white;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+[data-style="paper"] #tbjs-cookie-banner #tb-cookie-banner-accept-minimal:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--ink);
+  background-color: var(--primary);
+}
+
+
+/* ==========================================================================
+   6. RESPONSIVE ADJUSTMENTS
+   ========================================================================== */
+
+@media screen and (max-width: 767px) {
+  [data-style="paper"] .main-content {
+    border-radius: 0;
+    box-shadow: 4px 4px 0 var(--ink);
+  }
+
+  [data-style="paper"] .nav-controls {
+    box-shadow: 3px 3px 0 var(--ink);
+  }
+
+  /* Reduce shadow offset on small screens */
+  [data-style="paper"] .card,
+  [data-style="paper"] .glass,
+  [data-style="paper"] .widget {
+    box-shadow: 4px 4px 0 var(--ink);
+  }
+
+  [data-style="paper"] .card:hover {
+    box-shadow: 6px 6px 0 var(--ink);
+  }
+
+  [data-style="paper"] [id^="tb-modal-"]:not([id$="-overlay"]) {
+    border-radius: 0;
+    box-shadow: 6px 6px 0 var(--ink);
+  }
 }
 
 
@@ -1456,578 +2147,556 @@ input[type="checkbox"]:focus-visible {
     background-color:var(--bg-base); /* Example: hover:bg-primary-700 */
 }
 
-/* --- START OF FILE Modal.css --- */
+/* tbjs/ui/components/Modal/Modal.css
+   ============================================================================
+   TBJS Glass Modal — v3.0 conformant
+   Supersedes the Tailwind-replica version with --tb-modal-* tokens.
 
-/*
-    CSS for TB.ui.Modal Component
-    This CSS aims to replicate the Tailwind CSS classes defined in Modal.js.
-    If Tailwind CSS is properly configured and working, these explicit CSS rules
-    might not be necessary, or can serve as a fallback/reference.
-*/
+   Expectations from Modal.js:
+   - Overlay element has ID pattern "tb-modal-{id}-overlay"
+   - Container element has ID pattern "tb-modal-{id}"
+   - Title element has ID pattern "tb-modal-{id}-title"
 
-/* --- General Modal Variables (Optional - for easier theming) --- */
-:root {
-    --tb-modal-overlay-bg-light: rgba(0, 0, 0, 0.3);          /* bg-black/30 */
-    --tb-modal-overlay-bg-dark: rgba(0, 0, 0, 0.6);           /* dark:bg-black/60 */
-    --tb-modal-backdrop-blur: blur(2px);                      /* backdrop-blur-sm on overlay */
+   Recommended JS migration: add explicit classes to header/body/footer
+   (.modal-header, .modal-body, .modal-footer) instead of relying on
+   :first-child / :last-child selectors. CSS below supports both for now.
+   ============================================================================ */
 
-    --tb-modal-bg-light: rgba(255, 255, 255, 0.6);            /* bg-white/60 */
-    --tb-modal-bg-dark: rgba(38, 38, 38, 0.7);              /* dark:bg-neutral-800/70 (approx) */
-    --tb-modal-text-light: #171717;                         /* text-neutral-900 (approx) */
-    --tb-modal-text-dark: #f5f5f5;                          /* text-neutral-100 (approx) */
-    --tb-modal-border-light: rgba(255, 255, 255, 0.4);        /* border-white/40 */
-    --tb-modal-border-dark: rgba(64, 64, 64, 0.5);           /* dark:border-neutral-600/50 (approx) */
-    --tb-modal-container-blur: blur(8px);                    /* backdrop-blur-lg */
-    --tb-modal-container-blur-dark: blur(12px);              /* dark:backdrop-blur-xl */
 
-    --tb-modal-header-border-light: rgba(229, 229, 229, 0.5); /* border-neutral-300/50 (approx) */
-    --tb-modal-header-border-dark: rgba(64, 64, 64, 0.5);    /* dark:border-neutral-700/50 (approx) */
+/* ==========================================================================
+   1. OVERLAY
+   ========================================================================== */
 
-    --tb-modal-close-btn-text-light: #525252;               /* text-neutral-600 */
-    --tb-modal-close-btn-text-dark: #a3a3a3;                /* dark:text-neutral-400 */
-    --tb-modal-close-btn-hover-bg-light: rgba(82, 82, 82, 0.2); /* hover:bg-neutral-500/20 */
-    --tb-modal-close-btn-hover-bg-dark: rgba(212, 212, 212, 0.2);/* dark:hover:bg-neutral-300/20 */
-
-    --tb-modal-transition-duration: 300ms;
-    --tb-modal-transition-timing: ease-in-out;
-    --tb-modal-z-index-overlay: 1050;
-}
-
-/* --- Modal Overlay --- */
-/* Targets elements with IDs like "tb-modal-xxxx-overlay" */
 [id^="tb-modal-"][id$="-overlay"] {
-    /* Core Positioning & Sizing (fixed inset-0 z-[1050]) */
-    position: fixed;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    z-index: var(--tb-modal-z-index-overlay);
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
 
-    /* Background & Blur (bg-black/30 dark:bg-black/60 backdrop-blur-sm) */
-    background-color: var(--tb-modal-overlay-bg-light);
-    backdrop-filter: var(--tb-modal-backdrop-blur);
-    -webkit-backdrop-filter: var(--tb-modal-backdrop-blur); /* Safari */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
 
-    /* Centering Content (flex items-center justify-center) */
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 
-    /* Padding (p-4) */
-    padding: 1rem;
-
-    /* Animation - Initial State (opacity-0 transition-opacity duration-300 ease-in-out) */
-    opacity: 0;
-    transition-property: opacity;
-    transition-duration: var(--tb-modal-transition-duration);
-    transition-timing-function: var(--tb-modal-transition-timing);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--duration-normal) var(--ease-default),
+    visibility var(--duration-normal) var(--ease-default);
 }
 
-.dark [id^="tb-modal-"][id$="-overlay"] {
-    background-color: var(--tb-modal-overlay-bg-dark);
+[id^="tb-modal-"][id$="-overlay"].is-active {
+  opacity: 1;
+  visibility: visible;
 }
 
-/* --- Modal Container --- */
-/* Targets elements with IDs like "tb-modal-xxxx" BUT NOT "tb-modal-xxxx-overlay" */
+[data-theme="light"] [id^="tb-modal-"][id$="-overlay"] {
+  background: rgba(10, 40, 60, 0.5);
+}
+
+
+/* ==========================================================================
+   2. MODAL CONTAINER
+   ========================================================================== */
+
 [id^="tb-modal-"]:not([id$="-overlay"]) {
-    /* Background & Glass Effect (bg-white/60 dark:bg-neutral-800/70 backdrop-blur-lg dark:backdrop-blur-xl) */
-    background-color: var(--tb-modal-bg-light);
-    backdrop-filter: var(--tb-modal-container-blur);
-    -webkit-backdrop-filter: var(--tb-modal-container-blur); /* Safari */
+  width: 100%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 
-    /* Border (border border-white/40 dark:border-neutral-600/50) */
-    border: 1px solid var(--text-color);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    var(--highlight-inset),
+    0 10px 30px rgba(0, 0, 0, 0.7);
 
-    /* Text Color (text-neutral-900 dark:text-neutral-100) */
-    color: var(--tb-modal-text-light);
+  color: var(--text-main);
 
-    /* Shape & Shadow (rounded-2xl shadow-xl) */
-    border-radius: 1rem; /* rounded-2xl */
-    box-shadow: 0 20px 25px -5px rgba(var(--text-color),0.1), 0 10px 10px -5px rgba(var(--text-color),0.04); /* shadow-xl */
-
-    /* Sizing & Layout (w-full ${this.options.maxWidth} p-0 max-h-[90vh] overflow-y-auto flex flex-col) */
-    width: 100%; /* w-full */
-    /* max-width is applied by Tailwind class from options.maxWidth in JS */
-    padding: 0; /* p-0 */
-    max-height: 90vh;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-
-    /* Animation - Initial State (transform transition-all duration-300 ease-in-out scale-95 opacity-0) */
-    opacity: 0;
-    transform: scale(0.95);
-    transition-property: opacity, transform;
-    transition-duration: var(--tb-modal-transition-duration);
-    transition-timing-function: var(--tb-modal-transition-timing);
+  opacity: 0;
+  transform: scale(0.96);
+  transition:
+    opacity var(--duration-normal) var(--ease-default),
+    transform var(--duration-normal) var(--ease-out);
 }
 
-.dark [id^="tb-modal-"]:not([id$="-overlay"]) {
-    background-color: var(--tb-modal-bg-dark);
-    backdrop-filter: var(--tb-modal-container-blur-dark);
-    -webkit-backdrop-filter: var(--tb-modal-container-blur-dark); /* Safari */
-    border-color: var(--tb-modal-border-dark);
-    color: var(--tb-modal-text-dark);
+[id^="tb-modal-"]:not([id$="-overlay"]).is-active {
+  opacity: 1;
+  transform: scale(1);
 }
 
-/* --- Modal Header --- */
-/* Targets the first div child of the modal container IF it's used for the header */
-[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child { /* This selector assumes header is the first div */
-    /* Layout (flex justify-between items-center flex-shrink-0) */
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-shrink: 0;
-
-    /* Padding (p-4 md:p-6) */
-    padding: 1rem; /* p-4 */
-
-    /* Border (border-b border-neutral-300/50 dark:border-neutral-700/50) */
-    border-bottom: 1px solid var(--tb-modal-header-border-light);
-}
-
-.dark [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child {
-    border-bottom-color: var(--tb-modal-header-border-dark);
-}
-
-@media (min-width: 768px) { /* md breakpoint */
-    [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child {
-        padding: 1.5rem; /* md:p-6 */
-    }
-}
-
-/* --- Modal Title (within header) --- */
-/* Targets h3 with id like "tb-modal-xxxx-title" */
-[id^="tb-modal-"][id$="-title"] {
-    /* Typography (text-lg font-semibold) */
-    font-size: 1.125rem; /* text-lg */
-    line-height: 1.75rem;
-    font-weight: 600; /* font-semibold */
-}
-
-/* --- Modal Close Button (within header) --- */
-/* Targets button.material-symbols-outlined within the header-like div */
-[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child button.material-symbols-outlined {
-    /* Icon specific styles are assumed to be handled by .material-symbols-outlined global class */
-    padding: 0.25rem; /* p-1 */
-    border-radius: 0.25rem; /* rounded */
-    color: var(--tb-modal-close-btn-text-light);
-    transition-property: background-color, color;
-    transition-duration: 150ms; /* Common transition duration for interactive elements */
-    background-color: transparent;
-    border: none;
-    cursor: pointer;
-}
-
-.dark [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child button.material-symbols-outlined {
-    color: var(--tb-modal-close-btn-text-dark);
-}
-
-[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child button.material-symbols-outlined:hover {
-    background-color: var(--tb-modal-close-btn-hover-bg-light);
-}
-
-.dark [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child button.material-symbols-outlined:hover {
-    background-color: var(--tb-modal-close-btn-hover-bg-dark);
+/* Scroll container — modal body handles overflow, not container */
+[id^="tb-modal-"]:not([id$="-overlay"]) > * {
+  flex-shrink: 0;
 }
 
 
-/* --- Modal Body --- */
-/* This styling relies on the body being the second div if a header exists,
-   or the first if no header. A more specific class from JS would be better.
-   For now, targeting a div that is a direct child and likely the body:
-*/
-[id^="tb-modal-"]:not([id$="-overlay"]) > div:not(:first-child):not(:last-child), /* If header and footer exist */
-[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:last-child, /* If only body */
-[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:not(:last-child):nth-child(1) ~ div:nth-child(2), /* If header exists, body is 2nd */
-[id^="tb-modal-"]:not([id$="-overlay"]) > div:only-child /* If body is the only child, no header/footer via JS options */
-{
-    /* Layout (flex-grow overflow-y-auto) */
-    flex-grow: 1;
-    /* overflow-y: auto; /* Already on modal container, maybe not needed here unless specific */
+/* ==========================================================================
+   3. HEADER
+   ========================================================================== */
 
-    /* Padding (p-4 md:p-6) */
-    padding: 1rem; /* p-4 */
-}
-/* More robust if body gets a specific class via `customClasses.body` option */
-[id^="tb-modal-"]:not([id$="-overlay"]) .tb-modal-body-js-applied-class { /* Example if you add a class in JS */
-    flex-grow: 1;
-    padding: 1rem;
-}
+/* Preferred: explicit class */
+.modal-header,
+/* Fallback: first div inside modal */
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:not(:only-child) {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
 
-
-@media (min-width: 768px) { /* md breakpoint */
-    [id^="tb-modal-"]:not([id$="-overlay"]) > div:not(:first-child):not(:last-child),
-    [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:last-child,
-    [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:not(:last-child):nth-child(1) ~ div:nth-child(2),
-    [id^="tb-modal-"]:not([id$="-overlay"]) > div:only-child,
-    [id^="tb-modal-"]:not([id$="-overlay"]) .tb-modal-body-js-applied-class {
-        padding: 1.5rem; /* md:p-6 */
-    }
-}
-
-/* --- Modal Footer --- */
-/* Targets the last div child of the modal container IF it's used for the footer */
-[id^="tb-modal-"]:not([id$="-overlay"]) > div:last-child { /* This selector assumes footer is the last div */
-    /* Layout (mt-auto flex flex-wrap justify-end gap-3 flex-shrink-0) */
-    margin-top: auto; /* Pushes footer to bottom if modal body doesn't fill height */
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 0.75rem; /* gap-3 */
-    flex-shrink: 0;
-
-    /* Padding (p-4 md:p-6) */
-    padding: 1rem; /* p-4 */
-
-    /* Border (border-t border-neutral-300/50 dark:border-neutral-700/50) */
-    border-top: 1px solid var(--tb-modal-header-border-light); /* Reusing header border color var */
-}
-
-.dark [id^="tb-modal-"]:not([id$="-overlay"]) > div:last-child {
-    border-top-color: var(--tb-modal-header-border-dark);
-}
-
-@media (min-width: 768px) { /* md breakpoint */
-    [id^="tb-modal-"]:not([id$="-overlay"]) > div:last-child {
-        padding: 1.5rem; /* md:p-6 */
-    }
-}
-
-
-/* --- Material Symbols Outlined (Ensure this is globally available or defined here) --- */
-.material-symbols-outlined {
-  font-variation-settings:
-  'FILL' 0,
-  'wght' 400,
-  'GRAD' 0,
-  'opsz' 24; /* Default size, can be overridden */
-  font-family: 'Material Symbols Outlined'; /* Ensure this font is loaded in your project */
-  font-weight: normal;
-  font-style: normal;
-  font-size: 24px;  /* Default icon size */
-  line-height: 1;
-  letter-spacing: normal;
-  text-transform: none;
-  display: inline-block;
-  white-space: nowrap;
-  word-wrap: normal;
-  direction: ltr;
-  -webkit-font-feature-settings: 'liga';
-  -webkit-font-smoothing: antialiased;
-}
-
-/*
-  NOTE:
-  - Max width for the modal container ([id^="tb-modal-"]:not([id$="-overlay"]))
-    is intended to be applied via a Tailwind class (e.g., 'max-w-lg')
-    passed in `this.options.maxWidth` and added directly to the element's class list in JS.
-    If you remove that from JS, you'd need to add max-width here or via specific classes.
-  - Button styling for buttons within the footer is assumed to be handled by TB.ui.Button.create()
-    and its own styling (variants, custom classes).
-  - The actual animation (changing opacity and transform values) is handled by JavaScript in the
-    show() and close() methods. This CSS sets up the initial state and transition properties.
-  - For more robust styling of header, body, and footer, consider adding specific classes to them
-    via the `customClasses` option in `Modal.js` (e.g., `this.options.customClasses.header`, etc.)
-    and targeting those classes here. The current selectors are based on DOM structure which can be fragile.
-*/
-
-/* --- FOR DEBUGGING: Uncomment this to make elements very obvious if CSS is applying --- */
-/*
-[id^="tb-modal-"][id$="-overlay"] { border: 3px solid blue !important; }
-[id^="tb-modal-"]:not([id$="-overlay"]) { border: 3px solid red !important; }
-[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child { border: 2px dashed green !important; } // Header
-[id^="tb-modal-"]:not([id$="-overlay"]) > div:last-child { border: 2px dashed purple !important; } // Footer
-*/
-
-/* --- END OF FILE Modal.css --- */
-
-/* Modern Toast Styles - Slim, Plastic, Minimalistic */
-
-/* Container for all toasts */
-.tb-toast-container {
-    max-width: 400px;
-    width: 100%;
-}
-
-/* Main toast element */
-.tb-toast {
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    border-radius: 12px;
-    box-shadow:
-        0 8px 32px rgba(0, 0, 0, 0.12),
-        0 2px 8px rgba(0, 0, 0, 0.08);
-    color: #1f2937;
-    font-size: 14px;
-    line-height: 1.4;
-    min-width: 280px;
-    max-width: 380px;
-    overflow: hidden;
-    position: relative;
-    transform: translateY(-20px) scale(0.95);
-    opacity: 0;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    will-change: transform, opacity;
-}
-
-/* Dark mode */
-:root[data-theme="dark"] {
-    .tb-toast {
-        background: rgba(17, 24, 39, 0.95);
-        border-color: rgba(75, 85, 99, 0.3);
-        color: #f9fafb;
-        box-shadow:
-            0 8px 32px rgba(0, 0, 0, 0.3),
-            0 2px 8px rgba(0, 0, 0, 0.2);
-    }
-}
-
-/* Toast states */
-.tb-toast.tb-toast-showing {
-    transform: translateY(0) scale(1);
-    opacity: 1;
-}
-
-.tb-toast.tb-toast-hiding {
-    transform: translateY(-10px) scale(0.98);
-    opacity: 0;
-    transition: all 0.2s ease-in;
-}
-
-.tb-toast.tb-toast-hidden {
-    display: none;
-}
-
-/* Header section */
-.tb-toast-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px 16px 8px;
-    min-height: 40px;
-}
-
-/* Icon */
-.tb-toast-icon {
-    color: var(--toast-color);
-    font-size: 18px !important;
-    flex-shrink: 0;
-    line-height: 1;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 /* Title */
-.tb-toast-title {
-    color: var(--toast-color);
-    font-weight: 600;
-    font-size: 13px;
-    flex: 1;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    opacity: 0.9;
+[id^="tb-modal-"][id$="-title"] {
+  margin: 0;
+  font-size: var(--text-h3);
+  font-weight: 600;
+  color: var(--text-main);
+  letter-spacing: -0.02em;
 }
 
-/* Close button */
+/* Close button — mirrors .nav-toggle */
+.modal-header button.material-symbols-outlined,
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:not(:only-child) button.material-symbols-outlined {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  color: var(--text-muted);
+  cursor: pointer;
+
+  transition:
+    background-color var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default);
+}
+
+.modal-header button.material-symbols-outlined:hover,
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:not(:only-child) button.material-symbols-outlined:hover {
+  background: var(--surface-hover);
+  color: var(--text-main);
+}
+
+.modal-header button.material-symbols-outlined:focus-visible {
+  outline: 1px solid var(--primary);
+  outline-offset: 2px;
+}
+
+
+/* ==========================================================================
+   4. BODY
+   ========================================================================== */
+
+.modal-body,
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:only-child,
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:not(:first-child):not(:last-child) {
+  flex: 1 1 auto;
+  overflow-y: auto;
+
+  padding: var(--space-5);
+  color: var(--text-main);
+  font-size: var(--text-base);
+  line-height: 1.6;
+
+  /* Thin scrollbar inside modal */
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+
+/* ==========================================================================
+   5. FOOTER
+   ========================================================================== */
+
+.modal-footer,
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:last-child:not(:only-child) {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-3);
+
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+  margin-top: auto;
+}
+
+
+/* ==========================================================================
+   6. RESPONSIVE
+   ========================================================================== */
+
+@media (max-width: 767px) {
+  [id^="tb-modal-"]:not([id$="-overlay"]) {
+    border-radius: var(--radius-md);
+    max-height: 95vh;
+  }
+
+  .modal-header,
+  .modal-footer,
+  [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:not(:only-child),
+  [id^="tb-modal-"]:not([id$="-overlay"]) > div:last-child:not(:only-child) {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .modal-body,
+  [id^="tb-modal-"]:not([id$="-overlay"]) > div:only-child,
+  [id^="tb-modal-"]:not([id$="-overlay"]) > div:not(:first-child):not(:last-child) {
+    padding: var(--space-4);
+  }
+}
+
+/* tbjs/ui/components/Toast/Toast.css
+   ============================================================================
+   TBJS Glass Toast — v3.0 conformant
+   Glass panels, quiet elevation, --toast-color set per-instance via JS.
+   ============================================================================ */
+
+
+/* ==========================================================================
+   1. CONTAINER (positioning wrapper)
+   ========================================================================== */
+
+.tb-toast-container {
+  position: fixed;
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  pointer-events: none;
+
+  width: 100%;
+  max-width: 420px;
+}
+
+/* Position variants — JS toggles these */
+.tb-toast-container.pos-top-right    { top: 0; right: 0; align-items: flex-end; }
+.tb-toast-container.pos-top-left     { top: 0; left: 0; align-items: flex-start; }
+.tb-toast-container.pos-top-center   { top: 0; left: 50%; transform: translateX(-50%); align-items: center; }
+.tb-toast-container.pos-bottom-right { bottom: 0; right: 0; align-items: flex-end; }
+.tb-toast-container.pos-bottom-left  { bottom: 0; left: 0; align-items: flex-start; }
+.tb-toast-container.pos-bottom-center{ bottom: 0; left: 50%; transform: translateX(-50%); align-items: center; }
+
+
+/* ==========================================================================
+   2. TOAST PANEL
+   ========================================================================== */
+
+.tb-toast {
+  pointer-events: auto;
+  position: relative;
+  overflow: hidden;
+
+  min-width: 280px;
+  max-width: 380px;
+
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    var(--highlight-inset),
+    0 8px 24px rgba(0, 0, 0, 0.35);
+
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+
+  /* Fallback --toast-color defaults to primary if JS doesn't set one */
+  --toast-color: var(--primary);
+
+  transform: translateY(-8px) scale(0.98);
+  opacity: 0;
+  transition: all var(--duration-normal) var(--ease-default);
+  will-change: transform, opacity;
+}
+
+[data-theme="light"] .tb-toast {
+  box-shadow:
+    var(--highlight-inset),
+    0 8px 24px rgba(50, 100, 120, 0.2);
+}
+
+
+/* ==========================================================================
+   3. STATES
+   ========================================================================== */
+
+.tb-toast.tb-toast-showing {
+  transform: translateY(0) scale(1);
+  opacity: 1;
+}
+
+.tb-toast.tb-toast-hiding {
+  transform: translateY(-4px) scale(0.98);
+  opacity: 0;
+  transition: all var(--duration-fast) var(--ease-default);
+}
+
+.tb-toast.tb-toast-hidden {
+  display: none;
+}
+
+
+/* ==========================================================================
+   4. HEADER (icon + title + close)
+   ========================================================================== */
+
+.tb-toast-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  min-height: 36px;
+}
+
+.tb-toast-icon {
+  color: var(--toast-color);
+  font-size: 18px !important;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.tb-toast-title {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--toast-color);
+}
+
 .tb-toast-close {
-    background: none;
-    border: none;
-    color: inherit;
-    cursor: pointer;
-    opacity: 0.6;
-    padding: 4px;
-    border-radius: 6px;
-    transition: all 0.15s ease;
-    flex-shrink: 0;
-    margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+
+  transition:
+    background-color var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default);
 }
 
 .tb-toast-close:hover {
-    opacity: 1;
-    background: rgba(0, 0, 0, 0.05);
+  background: var(--surface-hover);
+  color: var(--text-main);
 }
 
-@media (prefers-color-scheme: dark) {
-    .tb-toast-close:hover {
-        background: rgba(255, 255, 255, 0.1);
-    }
+.tb-toast-close:focus-visible {
+  outline: 1px solid var(--primary);
+  outline-offset: 1px;
 }
 
 .tb-toast-close .material-symbols-outlined {
-    font-size: 16px !important;
-    line-height: 1;
+  font-size: 16px !important;
+  line-height: 1;
 }
 
-/* Message content */
+
+/* ==========================================================================
+   5. MESSAGE BODY
+   ========================================================================== */
+
 .tb-toast-message {
-    padding: 0 16px 12px;
-    color: inherit;
-    opacity: 0.9;
-    line-height: 1.5;
+  padding: 0 var(--space-4) var(--space-3);
+  color: var(--text-main);
+  font-size: var(--text-base);
+  line-height: 1.5;
 }
 
-/* Action buttons */
+
+/* ==========================================================================
+   6. ACTION BUTTONS
+   ========================================================================== */
+
 .tb-toast-actions {
-    display: flex;
-    gap: 8px;
-    justify-content: flex-end;
-    padding: 8px 16px 12px;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  padding: var(--space-2) var(--space-4) var(--space-3);
 }
 
 .tb-toast-action-btn {
-    background: var(--toast-color);
-    border: none;
-    border-radius: 6px;
-    color: white;
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 500;
-    padding: 6px 12px;
-    transition: all 0.15s ease;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+
+  background: var(--toast-color);
+  color: #000;
+  border: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--highlight-inset);
+  cursor: pointer;
+
+  transition:
+    transform var(--duration-fast) var(--ease-default),
+    background-color var(--duration-fast) var(--ease-default);
 }
 
 .tb-toast-action-btn:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    filter: brightness(1.1);
+  transform: translateY(-1px);
+  background: color-mix(in oklch, var(--toast-color) 90%, white);
 }
 
 .tb-toast-action-btn:active {
-    transform: translateY(0);
+  transform: translateY(0);
 }
 
-/* Progress bar */
+.tb-toast-action-btn:focus-visible {
+  outline: 1px solid var(--primary);
+  outline-offset: 2px;
+}
+
+
+/* ==========================================================================
+   7. PROGRESS BAR
+   ========================================================================== */
+
 .tb-toast-progress {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: rgba(0, 0, 0, 0.05);
-    overflow: hidden;
-}
-
-@media (prefers-color-scheme: dark) {
-    .tb-toast-progress {
-        background: rgba(255, 255, 255, 0.1);
-    }
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--border-subtle);
+  overflow: hidden;
 }
 
 .tb-toast-progress-bar {
-    height: 100%;
-    background: var(--toast-color);
-    transform-origin: left;
-    transition: transform 0.1s linear;
-    will-change: transform;
+  height: 100%;
+  background: var(--toast-color);
+  transform-origin: left;
+  transition: transform 0.1s linear;
+  will-change: transform;
 }
 
-/* Dot indicator (after toast is hidden) */
+
+/* ==========================================================================
+   8. DOT INDICATOR (collapsed toast)
+   ========================================================================== */
+
 .tb-toast-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    cursor: pointer;
-    opacity: 0;
-    transform: scale(0.5);
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    animation: tb-toast-dot-appear 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-    margin: 4px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  pointer-events: auto;
+  width: 10px;
+  height: 10px;
+  margin: var(--space-1);
+
+  background: var(--toast-color);
+  border-radius: var(--radius-full);
+  box-shadow: 0 0 6px color-mix(in oklch, var(--toast-color) 50%, transparent);
+  cursor: pointer;
+
+  opacity: 0;
+  transform: scale(0.5);
+  animation: tb-toast-dot-appear var(--duration-normal) var(--ease-out) forwards;
+  transition:
+    transform var(--duration-fast) var(--ease-default),
+    box-shadow var(--duration-fast) var(--ease-default);
 }
 
 .tb-toast-dot:hover {
-    transform: scale(1.3);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  transform: scale(1.4);
+  box-shadow: 0 0 10px color-mix(in oklch, var(--toast-color) 70%, transparent);
 }
 
 .tb-toast-dot.tb-toast-dot-hiding {
-    animation: tb-toast-dot-disappear 0.2s ease-in forwards;
+  animation: tb-toast-dot-disappear var(--duration-fast) var(--ease-default) forwards;
 }
 
-/* Dot animations */
 @keyframes tb-toast-dot-appear {
-    from {
-        opacity: 0;
-        transform: scale(0.5);
-    }
-    to {
-        opacity: 1;
-        transform: scale(1);
-    }
+  from { opacity: 0; transform: scale(0.5); }
+  to   { opacity: 1; transform: scale(1); }
 }
 
 @keyframes tb-toast-dot-disappear {
-    from {
-        opacity: 1;
-        transform: scale(1);
-    }
-    to {
-        opacity: 0;
-        transform: scale(0.5);
-    }
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.5); }
 }
 
-/* Responsive adjustments */
+
+/* ==========================================================================
+   9. SEMANTIC VARIANTS — set --toast-color via class
+   ========================================================================== */
+
+.tb-toast.is-success,
+.tb-toast-dot.is-success { --toast-color: var(--success); }
+
+.tb-toast.is-warning,
+.tb-toast-dot.is-warning { --toast-color: var(--warning); }
+
+.tb-toast.is-error,
+.tb-toast-dot.is-error   { --toast-color: var(--error); }
+
+.tb-toast.is-info,
+.tb-toast-dot.is-info    { --toast-color: var(--info); }
+
+
+/* ==========================================================================
+   10. RESPONSIVE
+   ========================================================================== */
+
 @media (max-width: 640px) {
-    .tb-toast-container {
-        max-width: calc(100vw - 32px);
-        margin: 0 16px;
-    }
+  .tb-toast-container {
+    max-width: calc(100vw - var(--space-4));
+    padding: var(--space-3);
+  }
 
-    .tb-toast {
-        min-width: 240px;
-        max-width: none;
-        width: 100%;
-    }
+  .tb-toast {
+    min-width: 0;
+    max-width: none;
+    width: 100%;
+  }
 
-    .tb-toast-header {
-        padding: 10px 14px 6px;
-    }
-
-    .tb-toast-message {
-        padding: 0 14px 10px;
-    }
-
-    .tb-toast-actions {
-        padding: 6px 14px 10px;
-    }
+  .tb-toast-close {
+    width: 32px;
+    height: 32px;
+  }
 }
 
-/* Utility classes for positioning (used by JS) */
-.tb-fixed { position: fixed; }
-.tb-z-\[9999\] { z-index: 9999; }
-.tb-flex { display: flex; }
-.tb-flex-col { flex-direction: column; }
-.tb-pointer-events-none { pointer-events: none; }
-.tb-p-4 { padding: 1rem; }
-.tb-gap-2 { gap: 0.5rem; }
-.tb-top-0 { top: 0; }
-.tb-right-0 { right: 0; }
-.tb-bottom-0 { bottom: 0; }
-.tb-left-0 { left: 0; }
-.tb-left-1\/2 { left: 50%; }
-.tb--translate-x-1\/2 { transform: translateX(-50%); }
-.tb-items-end { align-items: flex-end; }
-.tb-items-start { align-items: flex-start; }
-.tb-items-center { align-items: center; }
 
-/* Animation performance optimizations */
+/* ==========================================================================
+   11. PERFORMANCE & PRINT
+   ========================================================================== */
+
 .tb-toast,
 .tb-toast-dot {
-    backface-visibility: hidden;
-    perspective: 1000px;
+  backface-visibility: hidden;
 }
 
-/* Print styles */
 @media print {
-    .tb-toast-container,
-    .tb-toast,
-    .tb-toast-dot {
-        display: none !important;
-    }
+  .tb-toast-container,
+  .tb-toast,
+  .tb-toast-dot {
+    display: none !important;
+  }
 }
 
 /* tbjs/ui/components/Chat/Chat.css */
@@ -2152,277 +2821,300 @@ input[type="checkbox"]:focus-visible {
     border-color: var(--input-focus-border);
 }
 
-/**
- * Desktop/Mobile Platform Styles
- * ===============================
- */
+/* tbjs/ui/components/Desktop/Desktop.css
+   ============================================================================
+   TBJS Glass Desktop/Mobile Platform — v3.0 conformant
+   Removes legacy --tb-* tokens and hardcoded hex colors.
+   Status-bar reads like a tmux status line (mono, 11px, muted).
+   ============================================================================ */
 
-/* Platform-specific body spacing */
+
+/* ==========================================================================
+   1. PLATFORM BODY SPACING
+   ========================================================================== */
+
 body.platform-desktop {
-    padding-bottom: 28px;
+  padding-bottom: 28px; /* status bar height + 4px */
 }
 
 body.platform-mobile {
-    padding-bottom: 64px;
-    padding-bottom: calc(64px + env(safe-area-inset-bottom));
+  padding-bottom: calc(64px + env(safe-area-inset-bottom));
 }
 
 body.platform-mobile .header {
-    padding-top: env(safe-area-inset-top);
+  padding-top: env(safe-area-inset-top);
 }
 
-/* ===== Quick Capture Popup ===== */
+
+/* ==========================================================================
+   2. QUICK CAPTURE POPUP
+   ========================================================================== */
+
 .tb-quick-capture {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%) scale(0.9);
-    width: 400px;
-    max-width: 90vw;
-    background: var(--tb-bg-secondary, #1e1e1e);
-    border: 1px solid var(--tb-border, #333);
-    border-radius: 12px;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-    z-index: 10000;
-    opacity: 0;
-    visibility: hidden;
-    transition: all 0.2s ease;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.96);
+  z-index: var(--z-modal);
+
+  width: 400px;
+  max-width: 90vw;
+  overflow: hidden;
+
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    var(--highlight-inset),
+    0 10px 30px rgba(0, 0, 0, 0.7);
+
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--duration-normal) var(--ease-default),
+    visibility var(--duration-normal) var(--ease-default),
+    transform var(--duration-normal) var(--ease-out);
 }
 
 .tb-quick-capture.visible {
-    opacity: 1;
-    visibility: visible;
-    transform: translate(-50%, -50%) scale(1);
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, -50%) scale(1);
 }
 
 .tb-quick-capture-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--tb-border, #333);
-    font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-label);
 }
 
 .tb-quick-capture-close {
-    background: none;
-    border: none;
-    color: var(--tb-text-secondary, #888);
-    font-size: 20px;
-    cursor: pointer;
-    padding: 4px 8px;
-    border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+
+  transition:
+    background-color var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default);
 }
 
 .tb-quick-capture-close:hover {
-    background: var(--tb-bg-hover, #333);
-    color: var(--tb-text, #fff);
+  background: var(--surface-hover);
+  color: var(--text-main);
 }
 
 .tb-quick-capture-body {
-    padding: 16px;
+  padding: var(--space-4);
 }
 
 .tb-quick-capture-body textarea {
-    width: 100%;
-    background: var(--tb-bg, #121212);
-    border: 1px solid var(--tb-border, #333);
-    border-radius: 8px;
-    color: var(--tb-text, #fff);
-    padding: 12px;
-    font-size: 14px;
-    resize: none;
-    font-family: inherit;
+  width: 100%;
+  min-height: 120px;
+  padding: var(--space-3);
+  margin: 0;
+
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  color: var(--text-main);
+
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-md);
+  resize: none;
 }
 
 .tb-quick-capture-body textarea:focus {
-    outline: none;
-    border-color: var(--tb-primary, #6366f1);
+  outline: none;
+  border-color: var(--input-focus);
+  background: color-mix(in oklch, var(--input-focus) 5%, var(--input-bg));
 }
 
 .tb-quick-capture-actions {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: var(--space-3);
 }
 
 .tb-quick-capture-hint {
-    font-size: 12px;
-    color: var(--tb-text-secondary, #888);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  letter-spacing: 1px;
 }
 
+/* Save button uses global .btn-primary styling via JS; fallback here */
 .tb-quick-capture-save {
-    background: var(--tb-primary, #6366f1);
-    color: white;
-    border: none;
-    padding: 8px 16px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 500;
+  padding: var(--space-2) var(--space-4);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: 500;
+
+  background: var(--primary);
+  color: #000;
+  border: none;
+  border-radius: var(--radius-md);
+  box-shadow: var(--highlight-inset);
+  cursor: pointer;
+
+  transition:
+    transform var(--duration-fast) var(--ease-default),
+    background-color var(--duration-fast) var(--ease-default);
 }
 
 .tb-quick-capture-save:hover {
-    background: var(--tb-primary-hover, #5558e3);
+  background: color-mix(in oklch, var(--primary) 90%, white);
+  transform: translateY(-1px);
 }
 
-/* ===== Desktop Status Bar ===== */
+
+/* ==========================================================================
+   3. DESKTOP STATUS BAR
+   ========================================================================== */
+
 .tb-status-bar {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 24px;
-    background: var(--tb-bg-secondary, #1e1e1e);
-    border-top: 1px solid var(--tb-border, #333);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0 12px;
-    font-size: 12px;
-    color: var(--tb-text-secondary, #888);
-    z-index: 9999;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 24px;
+  z-index: var(--z-sticky);
+
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 var(--space-3);
+
+  background: var(--bg-surface);
+  backdrop-filter: blur(calc(var(--glass-blur) * 0.6));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.6));
+  border-top: 1px solid var(--border-subtle);
+
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
 }
 
 .tb-status-bar-left,
 .tb-status-bar-right {
-    display: flex;
-    align-items: center;
-    gap: 16px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
 }
 
 .tb-status-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.tb-status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--tb-text-secondary, #888);
-}
-
-.tb-status-dot.online {
-    background: #22c55e;
-}
-
-.tb-status-dot.offline {
-    background: #ef4444;
-}
-
-.tb-status-dot.warning {
-    background: #f59e0b;
-}
-
-.tb-status-dot.disabled {
-    background: #6b7280;
-    opacity: 0.5;
-}
-
-.tb-status-info {
-    font-size: 11px;
-    color: var(--tb-text-secondary, #666);
-    opacity: 0.8;
-}
-
-.tb-status-item {
-    cursor: default;
-    transition: opacity 0.2s;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: default;
+  transition: opacity var(--duration-fast) var(--ease-default);
 }
 
 .tb-status-item:hover {
-    opacity: 0.8;
+  opacity: 0.7;
 }
 
-/* ===== Mobile Bottom Navigation ===== */
+.tb-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--text-muted);
+}
+
+.tb-status-dot.online   { background: var(--success); }
+.tb-status-dot.offline  { background: var(--error); }
+.tb-status-dot.warning  { background: var(--warning); }
+.tb-status-dot.disabled { background: var(--text-muted); opacity: 0.4; }
+
+.tb-status-info {
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+
+/* ==========================================================================
+   4. MOBILE BOTTOM NAVIGATION
+   ========================================================================== */
+
 .tb-bottom-nav {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 60px;
-    padding-bottom: env(safe-area-inset-bottom);
-    background: var(--tb-bg-secondary, #1e1e1e);
-    border-top: 1px solid var(--tb-border, #333);
-    display: flex;
-    justify-content: space-around;
-    align-items: center;
-    z-index: 9999;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  padding-bottom: env(safe-area-inset-bottom);
+  z-index: var(--z-sticky);
+
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-top: 1px solid var(--glass-border);
+  box-shadow: var(--highlight-inset);
 }
 
 .tb-bottom-nav-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    background: none;
-    border: none;
-    color: var(--tb-text-secondary, #888);
-    padding: 8px 16px;
-    cursor: pointer;
-    transition: color 0.2s;
-    -webkit-tap-highlight-color: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+
+  padding: var(--space-2) var(--space-4);
+  min-width: 64px;
+
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+
+  transition: color var(--duration-fast) var(--ease-default);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tb-bottom-nav-item:hover {
+  color: var(--text-main);
 }
 
 .tb-bottom-nav-item.active {
-    color: var(--tb-primary, #6366f1);
+  color: var(--primary);
 }
 
 .tb-bottom-nav-icon {
-    font-size: 20px;
+  font-size: 20px;
+  line-height: 1;
 }
 
 .tb-bottom-nav-label {
-    font-size: 10px;
-    font-weight: 500;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
-
-/* ===== Light Theme Overrides ===== */
-@media (prefers-color-scheme: light) {
-    .tb-quick-capture {
-        background: #fff;
-        border-color: #e5e5e5;
-        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
-    }
-
-    .tb-quick-capture-body textarea {
-        background: #f5f5f5;
-        border-color: #e5e5e5;
-        color: #1a1a1a;
-    }
-
-    .tb-status-bar {
-        background: #f5f5f5;
-        border-color: #e5e5e5;
-        color: #666;
-    }
-
-    .tb-bottom-nav {
-        background: #fff;
-        border-color: #e5e5e5;
-    }
-}
-
-/* Theme class overrides */
-[data-theme="light"] .tb-quick-capture,
-.light .tb-quick-capture {
-    background: #fff;
-    border-color: #e5e5e5;
-}
-
-[data-theme="light"] .tb-status-bar,
-.light .tb-status-bar {
-    background: #f5f5f5;
-    border-color: #e5e5e5;
-}
-
-[data-theme="light"] .tb-bottom-nav,
-.light .tb-bottom-nav {
-    background: #fff;
-    border-color: #e5e5e5;
-}
-
 

@@ -24,6 +24,7 @@ from .event_manager import ZMQEventManager, Event, EventType, main as cli_event
 from .server_worker import HTTPWorker, ParsedRequest, json_response, html_response, main as cli_http_worker
 from .ws_worker import WSWorker, ConnectionManager, main as cli_ws_worker
 from .interface_registry import get_registry
+from .fast_tb import FastTB, WebSocketContext
 
 __all__ = [
     # Config
@@ -42,6 +43,9 @@ __all__ = [
     "HTTPWorker",
     "WSWorker",
     "ConnectionManager",
+    # FastTB
+    "FastTB",
+    "WebSocketContext",
     # Helpers
     "ParsedRequest",
     "json_response",

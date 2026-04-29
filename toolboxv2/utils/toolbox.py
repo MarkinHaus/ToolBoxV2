@@ -2281,7 +2281,8 @@ class App(AppType, metaclass=Singleton):
     def web_context(self):
         if self._web_context is None:
             try:
-                self._web_context = open("./dist/helper.html", encoding="utf-8").read()
+                print(os.path.join(self.data_dir.split(".data")[0],"dist","helper.html"), self.data_dir)
+                self._web_context = open(os.path.join(self.data_dir.split(".data")[0],"dist","helper.html"), encoding="utf-8").read()
             except Exception as e:
                 self.logger.error(f"Could not load web context: {e}")
                 self._web_context = "<div><h1>Web Context not found</h1></div>"

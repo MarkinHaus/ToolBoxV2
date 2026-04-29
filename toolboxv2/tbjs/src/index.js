@@ -4,6 +4,7 @@
 
 // Importiere den CSS-Einstiegspunkt, damit Webpack ihn verarbeitet
 import './styles/tbjs-main.css';
+import './styles/tbjs-paper.css';
 
 import * as coreModules from './core/index.js';
 import * as uiModules from './ui/index.js';

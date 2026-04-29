@@ -35,12 +35,18 @@ from toolboxv2.utils.workers.fast_tb_handler import FastTBHandler
 app = FastTB(title="Minu Bridge Demo")
 minu = MinuBridge(app)
 
+# Static navigation items (non-Minu pages)
+minu.add_nav_item("/web/core0/index.html", "Home", icon="home")
+minu.add_nav_item("/web/assets/login.html", "Login", icon="login")
+minu.add_nav_item("/api/CloudM.UI.widget/get_widget", "Config", icon="settings")
+minu.add_nav_item("/web/assets/terms.html", "Terms & Conditions", icon="description", bottom=True)
+
 
 # =============================================================================
 # 1. Counter — Public view, reactive state
 # =============================================================================
 
-@minu.view("/counter")
+@minu.view("/counter", icon="add_circle", label="Counter")
 class CounterView(MinuView):
     count = State(0)
     label = State("Click the button!")
@@ -76,7 +82,7 @@ class CounterView(MinuView):
 # 2. Profile — Auth-gated, user info
 # =============================================================================
 
-@minu.view("/profile", require_auth=True)
+@minu.view("/profile", require_auth=True, icon="person", label="Profile")
 class ProfileView(MinuView):
 
     def render(self):
@@ -101,7 +107,7 @@ class ProfileView(MinuView):
 # 3. Todo — Form with input binding
 # =============================================================================
 
-@minu.view("/todo")
+@minu.view("/todo", icon="checklist", label="Todo")
 class TodoView(MinuView):
     todos = State([])
     input_text = State("")
@@ -177,14 +183,27 @@ class TodoView(MinuView):
 
 
 # =============================================================================
-# 4. Lobby — Shared section (multiplayer-ready)
+# 4. Lobby — Real multiplayer via shared in-memory store
 # =============================================================================
 
-@minu.view("/lobby")
+_lobby_store = {
+    "players": [],
+    "game_state": "waiting",
+}
+
+@minu.view("/lobby", icon="group", label="Lobby")
 class LobbyView(MinuView):
     players = State([])
     game_state = State("waiting")
     my_name = State("")
+    status_msg = State("")
+
+    def _sync_from_store(self):
+        self.players.value = list(_lobby_store["players"])
+        self.game_state.value = _lobby_store["game_state"]
+
+    async def on_mount(self):
+        self._sync_from_store()
 
     def render(self):
         player_items = [
@@ -200,6 +219,10 @@ class LobbyView(MinuView):
             for p in self.players.value
         ]
 
+        status = []
+        if self.status_msg.value:
+            status.append(Alert(self.status_msg.value, variant="info"))
+
         return Column(
             Card(
                 Heading("Game Lobby"),
@@ -212,6 +235,8 @@ class LobbyView(MinuView):
 
                 Divider(),
 
+                *status,
+
                 Row(
                     Input(placeholder="Your name", bind="my_name"),
                     Button("Join", on_click="join_game"),
@@ -220,36 +245,53 @@ class LobbyView(MinuView):
                 Row(
                     Button("Ready", on_click="toggle_ready", variant="primary"),
                     Button("Leave", on_click="leave_game", variant="ghost"),
+                    Button("Refresh", on_click="refresh", variant="secondary"),
                 ),
             ),
         )
 
     async def join_game(self, event):
         name = self.my_name.value.strip() or self.user.name
-        current = self.players.value.copy()
-
-        # Don't add duplicate
-        if any(p["name"] == name for p in current):
+        if not name or name == "anonymous":
+            self.status_msg.value = "Enter a name first"
             return
 
-        current.append({"name": name, "ready": False})
-        self.players.value = current
+        if any(p["name"] == name for p in _lobby_store["players"]):
+            self.status_msg.value = f"{name} already in lobby"
+            self._sync_from_store()
+            return
+
+        _lobby_store["players"].append({"name": name, "ready": False, "uid": self.user.uid})
+        self.status_msg.value = f"{name} joined!"
+        self._sync_from_store()
 
     async def toggle_ready(self, event):
         name = self.my_name.value.strip() or self.user.name
-        current = self.players.value.copy()
-        for p in current:
+        for p in _lobby_store["players"]:
             if p["name"] == name:
                 p["ready"] = not p.get("ready", False)
-        self.players.value = current
+                break
 
-        # Check if all ready
-        if current and all(p.get("ready") for p in current):
-            self.game_state.value = "starting"
+        players = _lobby_store["players"]
+        if players and all(p.get("ready") for p in players):
+            _lobby_store["game_state"] = "starting"
+        else:
+            _lobby_store["game_state"] = "waiting"
+
+        self.status_msg.value = ""
+        self._sync_from_store()
 
     async def leave_game(self, event):
         name = self.my_name.value.strip() or self.user.name
-        self.players.value = [p for p in self.players.value if p["name"] != name]
+        _lobby_store["players"] = [p for p in _lobby_store["players"] if p["name"] != name]
+        if not _lobby_store["players"]:
+            _lobby_store["game_state"] = "waiting"
+        self.status_msg.value = f"{name} left"
+        self._sync_from_store()
+
+    async def refresh(self, event):
+        self.status_msg.value = ""
+        self._sync_from_store()
 
 
 # =============================================================================
@@ -300,6 +342,8 @@ if __name__ == "__main__":
     print("  Run: uvicorn demo_minu_bridge:app --port 8000")
     print("=" * 50 + "\n")
 
+    minu.with_3d = False
+    minu.style_toggle = True
     handler = FastTBHandler(app)
     wsgi_app = handler.as_wsgi_app()
 

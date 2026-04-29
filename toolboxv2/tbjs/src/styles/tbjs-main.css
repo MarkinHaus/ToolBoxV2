@@ -21,22 +21,22 @@
      Nur die Rohwerte für color-mix() - Keine oklch() Wrapper!
      Damit können wir dynamisch mischen: color-mix(in oklch, var(--raw-primary) 15%, transparent)
   */
-
+    --color-primary-100: oklch(90% 0.05 230);
+    --color-primary-300: oklch(72% 0.12 230);
+    --color-primary-400: oklch(63% 0.15 230);
+    --color-primary-500: oklch(55% 0.18 230);
+    --color-primary-600: oklch(48% 0.18 230);
+    --color-primary-700: oklch(40% 0.16 230);
+    --color-primary-900: oklch(25% 0.10 230);
+    --color-accent: oklch(65% 0.15 195);
   /* --- Raw Primary (Blau-Ton für Deep-Tech) --- */
-  --raw-primary: 55% 0.18 230;
-
-  /* --- Raw Semantic Colors --- */
-  --raw-success: 65% 0.2 145;   /* Grün */
-  --raw-warning: 75% 0.18 85;   /* Orange/Gelb */
-  --raw-error:   55% 0.22 25;   /* Rot */
-  --raw-info:    60% 0.15 230;  /* Info-Blau */
 
   /* --- Generated Primary Colors (via oklch()) --- */
-  --primary: oklch(var(--raw-primary));
-  --success: oklch(var(--raw-success));
-  --warning: oklch(var(--raw-warning));
-  --error:   oklch(var(--raw-error));
-  --info:    oklch(var(--raw-info));
+  --primary: oklch(55% 0.18 230);
+  --success: oklch(65% 0.2 145);
+  --warning: oklch(75% 0.18 85);
+  --error:   oklch(55% 0.22 25);
+  --info:    oklch(60% 0.15 230);
 
 
   /* ========== 3D BACKGROUND VARIABLES ==========
@@ -63,12 +63,12 @@
   --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Consolas, monospace;
 
   /* Gekappte Fluid Typography (Max 22px für h1 - Dashboard-Look) */
-  --text-h1: clamp(18px, 2vw, 22px);
-  --text-h2: clamp(16px, 1.8vw, 19px);
-  --text-h3: clamp(14px, 1.5vw, 16px);
-  --text-base: 13px;           /* Kleinere Basis für Tech-Dashboard */
-  --text-sm:  11px;
-  --text-xs:  9px;              /* Für Micro-Labels */
+  --text-h1: clamp(34px, 4vw, 44px);
+  --text-h2: clamp(26px, 3vw, 34px);
+  --text-h3: clamp(21px, 2.4vw, 26px);
+  --text-base: 18px;
+  --text-sm: 15px;
+  --text-xs: 13px;            /* Für Micro-Labels */
 
 
   /* ========== SPACING SCALE (8pt Grid) ========== */
@@ -216,6 +216,9 @@
   --text-label: #4a5a60;
   --text-muted: #7a8a90;
 
+    /* Fix: hardcoded white text on light surfaces */
+  --text-on-surface: var(--text-main);
+
   /* Glass Tokens (Light - Cyan-Wasser) */
   --glass-bg: rgba(215, 235, 245, 0.7);
   --glass-border: rgba(100, 150, 170, 0.15);
@@ -337,7 +340,7 @@ p {
   margin-block-end: var(--space-4);
   line-height: 1.6;
   max-inline-size: 65ch;
-  color: rgba(255, 255, 255, 0.7);
+   color: color-mix(in oklch, var(--text-main) 80%, transparent);
 }
 
 a {
@@ -684,7 +687,7 @@ input[type="checkbox"]:focus-visible {
 }
 
 .card-content {
-  color: rgba(255, 255, 255, 0.6);
+  color: color-mix(in oklch, var(--text-main) 70%, transparent);
   line-height: 1.5;
   font-size: var(--text-sm);
 }
@@ -1285,9 +1288,9 @@ input[type="checkbox"]:focus-visible {
     border-radius: var(--radius-md);
   }
 
-  h1 { font-size: 19px; }
-  h2 { font-size: 17px; }
-  h3 { font-size: 15px; }
+   h1 { font-size: clamp(26px, 5vw, 34px); }
+   h2 { font-size: clamp(21px, 4vw, 26px); }
+   h3 { font-size: clamp(18px, 3vw, 21px); }
 
   button,
   .btn {

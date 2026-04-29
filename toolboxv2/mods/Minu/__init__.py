@@ -919,6 +919,8 @@ from .core import (
     Textarea,
     Custom,
     Dynamic,
+    Toast,
+    Markdown,
 )
 
 __all__ = [
@@ -963,5 +965,7 @@ __all__ = [
     "Form",
     "Tabs",
     "Custom",
-    "Dynamic"
+    "Dynamic",
+    "Toast",
+    "Markdown",
 ]
