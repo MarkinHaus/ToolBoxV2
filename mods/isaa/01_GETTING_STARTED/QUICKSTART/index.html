@@ -4328,30 +4328,47 @@
 <div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>toolboxv2
 </code></pre></div>
 <h2 id="erster-agent">Erster Agent<a class="headerlink" href="#erster-agent" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2</span><span class="w"> </span><span class="kn">import</span> <span class="n">Application</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_app</span>
 
-<span class="n">app</span> <span class="o">=</span> <span class="n">Application</span><span class="p">()</span>
+
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">get_app</span><span class="p">()</span>
+
 <span class="n">isaa</span> <span class="o">=</span> <span class="n">app</span><span class="o">.</span><span class="n">get_mod</span><span class="p">(</span>\<span class="s2">&quot;isaa</span><span class="se">\&quot;</span><span class="s2">)</span>
 
+
+
 <span class="c1"># Agent erstellen</span>
+
 <span class="n">agent</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span>\<span class="s2">&quot;my_first_agent</span><span class="se">\&quot;</span><span class="s2">)</span>
 </code></pre></div>
 <h2 id="agent-ausfuhren">Agent ausführen<a class="headerlink" href="#agent-ausfuhren" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="c1"># Synchrone Ausführung</span>
+
 <span class="n">result</span> <span class="o">=</span> <span class="n">agent</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>\<span class="s2">&quot;Erkläre Python</span><span class="se">\&quot;</span><span class="s2">)</span>
 
+
+
 <span class="c1"># Asynchrone Ausführung</span>
+
 <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">agent</span><span class="o">.</span><span class="n">a_run</span><span class="p">(</span>\<span class="s2">&quot;Erkläre Python</span><span class="se">\&quot;</span><span class="s2">)</span>
 </code></pre></div>
 <h2 id="chain-erstellen">Chain erstellen<a class="headerlink" href="#chain-erstellen" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="n">chain</span> <span class="o">=</span> <span class="n">isaa</span><span class="o">.</span><span class="n">chain_from_agents</span><span class="p">(</span>\<span class="s2">&quot;researcher</span><span class="se">\&quot;</span><span class="s2">, </span><span class="se">\&quot;</span><span class="s2">summarizer</span><span class="se">\&quot;</span><span class="s2">)</span>
+
 <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">chain</span><span class="o">.</span><span class="n">a_run</span><span class="p">(</span>\<span class="s2">&quot;Dein Query hier</span><span class="se">\&quot;</span><span class="s2">)</span>
 </code></pre></div>
 <h2 id="nachste-schritte">Nächste Schritte<a class="headerlink" href="#nachste-schritte" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="../../AGENT_MANAGEMENT/">Agent Management</a> - Agenten konfigurieren</li>
-<li><a href="../../CHAIN_SYSTEM/">Chain System</a> - Pipelines bauen</li>
-<li><a href="../../03_API_REFERENCE/MODULE_API/">API Referenz</a> - Alle Methoden</li>
+<li>
+<p><a href="../../AGENT_MANAGEMENT/">Agent Management</a> - Agenten konfigurieren</p>
+</li>
+<li>
+<p><a href="../../CHAIN_SYSTEM/">Chain System</a> - Pipelines bauen</p>
+</li>
+<li>
+<p><a href="../../03_API_REFERENCE/MODULE_API/">API Referenz</a> - Alle Methoden</p>
+</li>
 </ul>
 
 
