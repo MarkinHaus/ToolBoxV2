@@ -1688,6 +1688,128 @@ uncertain_about_X
             else:
                 return f"Analyse in Space '{space_to_use}' ohne eindeutiges Ergebnis beendet."
 
+        async def memory_update(target_description: str, new_content: str, concepts: list[str] = None) -> str:
+            """
+            Aktualisiert einen bestehenden Memory-Eintrag.
+            Der Agent beschreibt inhaltlich, was geändert werden soll. Das Tool sucht den passenden Eintrag
+            und ersetzt ihn durch den neuen Inhalt. IDs werden nicht benötigt.
+
+            Args:
+                target_description: Wonach gesucht werden soll (Auszug des alten Texts, z.B. "alte Port-Konfiguration").
+                new_content: Der vollständige neue Text, der den alten ersetzt.
+                concepts: Optionale neue Liste von Schlagwörtern (überschreibt die alten, falls angegeben).
+            """
+            mem_instance = self.get_memory()
+            mka = MemoryKnowledgeActor(memory=mem_instance, space_name=name)
+
+            # 1. Semantische Suche nach dem Ziel-Eintrag
+            search_emb = await mka._embed_fn(target_description)
+            results = mka._store.query(
+                query_text=target_description,
+                query_embedding=search_emb,
+                k=1,
+                min_similarity=0.3
+            )
+
+            if not results:
+                return f"Update fehlgeschlagen: Kein passender Eintrag zu '{target_description}' gefunden. Bitte Suchbegriff anpassen."
+
+            target_entry = results[0]
+            entry_id = target_entry["id"]
+            old_content = target_entry.get("content", "")
+
+            # 2. Soft-Delete des alten Eintrags (Historie bleibt via is_active=0 in DB)
+            await mka.remove_data_point(entry_id, hard=False)
+
+            # 3. Neuen Eintrag erzeugen (verknüpft über meta.supersedes)
+            meta = target_entry.get("meta", {})
+            meta["supersedes"] = entry_id
+
+            final_concepts = concepts if concepts is not None else target_entry.get("concepts", [])
+
+            await mka.add_data_point(
+                text=new_content,
+                content_type=target_entry.get("content_type", "fact"),
+                concepts=final_concepts,
+                metadata=meta
+            )
+
+            # 4. Index synchronisieren
+            nonlocal _memory_index
+            _memory_index = await update_index_after_save(
+                self, name, _data_dir, _memory_index, name, new_content, final_concepts
+            )
+            await _sync_index_to_vfs()
+
+            return f"Eintrag erfolgreich aktualisiert.\nErsetzt:\n'{old_content[:100]}...'\nDurch:\n'{new_content[:100]}...'"
+
+        async def memory_remove(target_description: str, item_type: str = "entry") -> str:
+            """
+            Entfernt gezielt Wissen (Einträge, Konzepte oder Relationen) aus dem Gedächtnis.
+            Komplett ohne IDs steuerbar.
+
+            Args:
+                target_description: Was entfernt werden soll.
+                    - Bei item_type="entry": Textausschnitt/Beschreibung (z.B. "Die veraltete API-Route").
+                    - Bei item_type="concept": Das genaue Konzept (z.B. "legacy_auth").
+                    - Bei item_type="relation": "Quelle -> Ziel" (z.B. "AuthService -> UserDB").
+                item_type: "entry" (Standard), "concept" oder "relation".
+            """
+            mem_instance = self.get_memory()
+            mka = MemoryKnowledgeActor(memory=mem_instance, space_name=name)
+            store = mka._store
+
+            if item_type == "entry":
+                # Findet die entry_id via Vektorsuche
+                search_emb = await mka._embed_fn(target_description)
+                results = store.query(
+                    query_text=target_description,
+                    query_embedding=search_emb,
+                    k=1,
+                    min_similarity=0.3
+                )
+                if not results:
+                    return f"Nichts gefunden zum Löschen für '{target_description}'."
+
+                entry_id = results[0]["id"]
+                content_preview = results[0].get("content", "")[:100]
+
+                # Hard-Delete löscht aus SQLite, FAISS und FTS5
+                await mka.remove_data_point(entry_id, hard=True)
+                return f"Eintrag permanent gelöscht: '{content_preview}...'"
+
+            elif item_type == "concept":
+                # Löscht das Tag aus allen Einträgen im aktuellen Space
+                concept = target_description.strip().lower()
+                store._exec(
+                    "DELETE FROM concept_index WHERE concept = ? AND entry_id IN (SELECT id FROM entries WHERE space = ?)",
+                    (concept, store.space)
+                )
+                store._get_conn().commit()
+                return f"Konzept '{concept}' wurde vollständig aus dem Space '{store.space}' entfernt."
+
+            elif item_type == "relation":
+                if "->" not in target_description:
+                    return "Fehler: Für item_type='relation' muss target_description das Format 'Quelle -> Ziel' haben (z.B. 'AuthService -> UserDB')."
+
+                src_str, tgt_str = [x.strip() for x in target_description.split("->", 1)]
+
+                # Sucht nach source/target über Exakten ID-Match ODER fuzzy LIKE match des Entity-Namens
+                store._exec(
+                    """
+                    DELETE
+                    FROM relations
+                    WHERE source_id IN (SELECT id FROM entities WHERE name LIKE ? OR id = ?)
+                      AND target_id IN (SELECT id FROM entities WHERE name LIKE ? OR id = ?)
+                    """,
+                    (f"%{src_str}%", src_str.lower(), f"%{tgt_str}%", tgt_str.lower())
+                )
+                store._get_conn().commit()
+                return f"Graphen-Relationen zwischen '{src_str}' und '{tgt_str}' erfolgreich gelöscht."
+
+            else:
+                return f"Fehler: Unbekannter item_type '{item_type}'. Erlaubt sind 'entry', 'concept', 'relation'."#
+
         if add_base_tools:
             builder.add_tool(memory_recall, "memory_recall", "Wissen, Architektur und Kontext abrufen (Suchen).",
                              category=["memory", "read"])

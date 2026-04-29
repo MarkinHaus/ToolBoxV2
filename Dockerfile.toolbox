@@ -120,18 +120,16 @@ RUN useradd -m -s /bin/bash toolbox && \
 WORKDIR /app
 
 # Copy ToolBoxV2 source
+# Copy ToolBoxV2 package metadata (needed for pip install -e .)
 COPY ./setup.py ./requirements.txt ./README.md ./setup.cfg ./MANIFEST.in ./pyproject.toml ./
-COPY ./toolboxv2/mods ./toolboxv2/mods
-COPY ./toolboxv2/flows ./toolboxv2/flows
-COPY ./toolboxv2/tests ./toolboxv2/tests
-COPY ./toolboxv2/web ./toolboxv2/web
-COPY ./toolboxv2/utils ./toolboxv2/utils
-COPY ./toolboxv2/__init__.py ./toolboxv2/__init__.py
-COPY ./toolboxv2/__main__.py ./toolboxv2/__main__.py
-COPY ./toolboxv2/favicon.ico ./toolboxv2/favicon.ico
-COPY ./toolboxv2/index.html ./toolboxv2/index.html
-COPY ./toolboxv2/index.js ./toolboxv2/index.js
-COPY ./toolboxv2/package.json ./toolboxv2/package.json
+
+# Copy ToolBoxV2 source (bulk copy — .dockerignore filters out ~20K unnecessary files)
+# This includes: mods/, flows/, web/, utils/, dist/, features/, features_packed/,
+#   lib/, prompt_library/, mcp_server/, data_blobs/, resources/, tests/, and all Python files
+COPY ./toolboxv2/ ./toolboxv2/
+
+# Copy root manifest (required at runtime for configuration)
+COPY tb-manifest.yaml ./
 
 # Copy active features info
 COPY --from=requirements-generator /app/active-features.txt /tmp/active-features.txt

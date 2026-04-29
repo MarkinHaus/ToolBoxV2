@@ -2589,7 +2589,7 @@ BEISPIELE:
                     self.live.thought = thought_acc[-200:]
 
                     # ── YIELD CHUNK EVENT ──
-                    yield {"type": "reasoning", "content": content}
+                    yield {"type": "reasoning", "content": content, "chunk": content}
 
                     if any(pc in content for pc in pause_chars) and len(chunk_buffer) > 40:
                         clean_sentence = chunk_buffer.strip().replace("\n", " ")

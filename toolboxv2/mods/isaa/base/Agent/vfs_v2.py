@@ -692,6 +692,12 @@ grep -rn "pattern" /src      grep -in "pattern" /file.py
 touch <path>
 echo "content" > <path>      echo "line" >> <path>
 
+# Heredoc — für Content mit beliebigen Quotes/Sonderzeichen (bevorzugt)
+write <path> <<'_VFS_END_a799'
+content with '''triple quotes''' and "mixed" quotes
+_VFS_END_a799
+# Funktioniert auch mit: write_mini, write_chunk, edit, echo
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 WICHTIG: SCHREIB-LIMITS & CHUNK-PROTOKOLL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -772,8 +778,22 @@ Wenn eine Datei zu groß für einen Call ist, teile sie in Blöcke à ~40 Zeilen
 2. `vfs_shell("add chunk 1", "write_chunk /src/big.py 1 3 '...zeile 41-80...'")`
 3. `vfs_shell("finalize", "write_chunk /src/big.py 2 3 '...zeile 81-120...'")`
 
-Bei Verbindungsabbruch: `write_chunk_status /src/big.py` prüft, welche Indizes fehlen.
+pythonBei Verbindungsabbruch: `write_chunk_status /src/big.py` prüft, welche Indizes fehlen.
 
+## Heredoc-Syntax (empfohlen für komplexen Content)
+
+Wenn Content Quotes, Triple-Quotes oder Sonderzeichen enthält → Heredoc:
+write /src/app.py <<'_VFS_END_a799'
+class App:
+TEMPLATE = """+'''"""<html>{content}</html>"""
+def run(self):
+print('it\'s working')
+_VFS_END_a799
+
+- Bevorzugter Delimiter: `_VFS_END_a799`
+- Delimiter darf NICHT im Content vorkommen
+- Content wird 1:1 übernommen, keine Escape-Verarbeitung
+- Ohne Heredoc wird normal geparst; bei Fehler → Hint in der Fehlermeldung
 
 ---
 ```
@@ -843,7 +863,7 @@ vfs_view(
 | `/global/` | Geteilt zwischen allen Sessions (persistent auf Disk) |
 | `/shared/{id}/` | Cross-Session/Agent Shares  →  `vfs_share_*` Tools |
 | `/project/` | Typischer Einhängepunkt für lokale Projektordner  →  `vfs_mount` |
-"""
+'''
 
     def _init_system_files(self):
         """Initialize read-only system files"""

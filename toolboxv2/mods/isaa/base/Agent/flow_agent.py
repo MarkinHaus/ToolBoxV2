@@ -1552,9 +1552,6 @@ class FlowAgent:
         ):
             chunk_type = chunk.get("type", "")
 
-            if chunk_type == "final_answer":
-                yield chunk["answer"]
-
             if chunk_type == "content":
                 yield chunk["chunk"]
 
@@ -1590,7 +1587,7 @@ class FlowAgent:
             elif chunk_type == "post_processing":
                 msg = chunk.get("status_msg", "")
                 if msg:
-                    yield f"\r💾 {msg}...\r"
+                    yield f"\n💾 {msg}...\n"
 
             elif chunk_type == "narrator":
                 # Mini-Flux: Narrator-Gedanken inline, dezent

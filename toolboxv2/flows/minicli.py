@@ -577,7 +577,7 @@ class BeastCLI:
             completer=FuzzyCompleter(completer),
             complete_while_typing=True,
             clipboard=InMemoryClipboard(),
-            mouse_support=True,
+            mouse_support=False,
             color_depth=ColorDepth.TRUE_COLOR,
             key_bindings=self.bindings,
             rprompt=self._get_rprompt,
@@ -943,7 +943,12 @@ class BeastCLI:
 
                 await self._isaa.register_agent(builder)
                 self._agent = await self._isaa.get_agent("cli_admin")
+                self._agent.tool_manager.register_cli_tool("tb", executable="uv", executable_args=["run"],
+                                                           flags={"system_tool_by_name": True},
+                                                           cli_tool_executable="tb",
+                                                           category="system")
                 print(Style.GREEN(f"🤖 Agent ready ({self._agent.amd.fast_llm_model})"))
+
                 return self._agent
             except Exception as e:
                 print(Style.RED(f"🤖 Agent init failed: {e}"))
@@ -1016,14 +1021,23 @@ class BeastCLI:
             return
 
         print(Style.CYAN("🤖 Agent:"))
+
+        try:
+            from toolboxv2.flows.icli import print_code_block
+        except ImportError:
+            print_code_block = lambda x:print(x, end="", flush=True)
         try:
             async for chunk in agent.a_stream_verbose(
                 query=command,
                 session_id="cli_admin",
                 human_online=True,
+                max_iterations=45,
             ):
                 if chunk:
-                    print(chunk, end="", flush=True)
+                    if len(chunk.split("\n")) > 3:
+                            print_code_block(chunk)
+                    else:
+                        print(chunk, end="", flush=True)
             print()  # final newline
         except Exception as e:
             print(Style.RED(f"\n🤖 Agent error: {e}"))

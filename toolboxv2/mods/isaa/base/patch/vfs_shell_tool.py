@@ -80,7 +80,18 @@ def _decode_content(raw: str) -> str:
     Idempotent: mehrfaches Aufrufen = selbes Ergebnis.
     NIEMALS selbst \\\\n schreiben — das erzeugt Backslash+n im File.
     """
-    return raw
+    if '\\' not in raw:
+        return raw
+        # Only decode \n and \t that are actual backslash+letter pairs
+        # (not already-real newlines/tabs which have no backslash in the string)
+    return (raw
+        .replace('\\\\', '\x00')   # protect real backslashes
+        .replace('\\n', '\n')
+        .replace('\\t', '\t')
+        .replace('\\"', '"')
+        .replace("\\'", "'")
+        .replace('\x00', '\\')     # restore real backslashes
+    )
 
 
 def _strip_quotes(s: str) -> str:
@@ -100,6 +111,49 @@ def _strip_quotes(s: str) -> str:
     if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
         return s[1:-1]
     return s
+
+
+def _extract_heredoc(command: str) -> tuple[str | None, str | None, str]:
+    """
+    Extract heredoc content from a command string.
+
+    Recognizes:
+        cmd path <<'DELIM'        cmd path <<DELIM
+        content lines...          content lines...
+        DELIM                     DELIM
+
+    Also accepts <<'_VFS_END_a799' as preferred delimiter.
+
+    Returns:
+        (content, delimiter, remaining_command)
+        - If heredoc found: (extracted_content, delimiter, command_before_heredoc)
+        - If no heredoc:    (None, None, original_command)
+    """
+    # Match <<'DELIM' or <<DELIM (with optional quotes around delimiter)
+    m = re.search(r'<<\s*([\'"]?)(\S+?)\1\s*$', command.split('\n')[0])
+    if not m:
+        # No heredoc marker on first line
+        return None, None, command
+
+    delimiter = m.group(2)
+    first_line = command.split('\n')[0]
+    cmd_before = first_line[:m.start()].rstrip()
+
+    # Find content between first line and delimiter
+    lines = command.split('\n')[1:]
+    content_lines: list[str] = []
+    found_end = False
+    for line in lines:
+        if line.strip() == delimiter:
+            found_end = True
+            break
+        content_lines.append(line)
+
+    if not found_end:
+        return None, None, command  # Malformed heredoc, fall through
+
+    content = '\n'.join(content_lines)
+    return content, delimiter, cmd_before
 # =============================================================================
 # VFS SHELL FACTORY
 # =============================================================================
@@ -460,6 +514,12 @@ def make_vfs_shell(session: "AgentSessionV2"):
         # Handles: 2>/dev/null  2>&1  >/dev/null  1>/dev/null  >file
         command = re.sub(r'\s+\d+>[&>]?\S*', '', command).strip()
 
+        # ── Heredoc extraction (before any parsing) ───────────────────────
+        heredoc_content, heredoc_delim, cmd_without_heredoc = _extract_heredoc(command)
+        if heredoc_content is not None:
+            command = cmd_without_heredoc
+        _heredoc_payload = heredoc_content
+
         # ── Multi-command batch dispatch ──────────────────────────────────────
         # Operators: && || | ;   (newline is NOT a separator — content safety)
         if len(_split_compound(command)) > 1:
@@ -472,7 +532,7 @@ def make_vfs_shell(session: "AgentSessionV2"):
         )
         if echo_m:
             raw_content, op, path = echo_m.groups()
-            content = _decode_content(_strip_quotes(raw_content))
+            content = _heredoc_payload if _heredoc_payload is not None else _decode_content(_strip_quotes(raw_content))
             r = vfs.write(path, content) if op == ">" else vfs.append(path, '\n'+content)
             return _ok() if r.get("success") else _err(r.get("error", "write failed"))
 
@@ -480,16 +540,28 @@ def make_vfs_shell(session: "AgentSessionV2"):
         try:
             args = shlex.split(command)
         except ValueError as e:
-            # Fallback for raw-content commands with unbalanced quotes
             parts = command.split(maxsplit=1)
             if parts and parts[0].lower() in ("write", "write_mini", "write_chunk", "edit"):
                 cmd_name = parts[0].lower()
-                if cmd_name in ("write", "write_mini"):
+                if _heredoc_payload is not None:
+                    try:
+                        args = shlex.split(command)
+                    except ValueError:
+                        args = command.split()
+                elif cmd_name in ("write", "write_mini"):
                     args = command.split(maxsplit=2)
                 else:
                     args = command.split(maxsplit=4)
             else:
-                return _err(f"parse error: {e}")
+                hint = ""
+                if any(kw in command.lower() for kw in ("write", "edit", "echo")):
+                    hint = (
+                        "\nHint: Use heredoc syntax for complex content:\n"
+                        "  write /path <<'_VFS_END_a799'\n"
+                        "  your content here\n"
+                        "  _VFS_END_a799"
+                    )
+                return _err(f"parse error: {e}{hint}")
 
         if not args:
             return _err("empty command")
@@ -834,13 +906,23 @@ def make_vfs_shell(session: "AgentSessionV2"):
         # write <path> <content>   (multi-line aware, \n \t processed)
         # ═══════════════════════════════════════════════════════════════════
         elif cmd in ("write", "write_mini"):
+            if _heredoc_payload is not None:
+                if not rest:
+                    return _err("write: missing path")
+                path = rest[0]
+                content = _heredoc_payload
+                r = vfs.write(path, content)
+                return _ok(f"written: {path} ({len(content)} chars)") if r.get("success") else _err(r.get("error", ""))
             if len(rest) < 2:
                 return _err("write: usage: write <path> <content>")
             path = rest[0]
             # Extract content from raw command to preserve \n before any tokenizer eats it
-            raw = re.match(r"write(?:_mini)?\s+\S+\s+(.*)", command, re.DOTALL)
-            raw_content = raw.group(1) if raw else " ".join(rest[1:])
-            content = _decode_content(_strip_quotes(raw_content))
+            if _heredoc_payload is not None:
+                content = _heredoc_payload
+            else:
+                raw = re.match(r"write(?:_mini)?\s+\S+\s+(.*)", command, re.DOTALL)
+                raw_content = raw.group(1) if raw else " ".join(rest[1:])
+                content = _decode_content(_strip_quotes(raw_content))
             r = vfs.write(path, content)
             return _ok(f"written: {path} ({len(content)} chars)") if r.get("success") else _err(r.get("error", ""))
 
@@ -862,8 +944,11 @@ def make_vfs_shell(session: "AgentSessionV2"):
             Bei chunk_idx == total-1  → Datei wird finalisiert, Zeilencount gemeldet
             Abbruch mittendrin?       → write_chunk_status <path> zeigt welcher Block fehlt
             """
-            if len(rest) < 4:
+            if _heredoc_payload is None and len(rest) < 4:
                 return _err("write_chunk: usage: write_chunk <path> <idx> <total> <content>")
+            if _heredoc_payload is not None and len(rest) < 3:
+                return _err(
+                    "write_chunk: usage: write_chunk <path> <idx> <total> <<'_VFS_END_a799'\\ncontent\\n_VFS_END_a799")
 
             path = rest[0]
             try:
@@ -872,9 +957,12 @@ def make_vfs_shell(session: "AgentSessionV2"):
             except ValueError:
                 return _err("write_chunk: idx and total must be integers")
 
-            raw = re.match(r"write_chunk\s+\S+\s+\d+\s+\d+\s+(.*)", command, re.DOTALL)
-            raw_content = raw.group(1) if raw else " ".join(rest[3:])
-            content = _decode_content(_strip_quotes(raw_content))
+            if _heredoc_payload is not None:
+                content = _heredoc_payload
+            else:
+                raw = re.match(r"write_chunk\s+\S+\s+\d+\s+\d+\s+(.*)", command, re.DOTALL)
+                raw_content = raw.group(1) if raw else " ".join(rest[3:])
+                content = _decode_content(_strip_quotes(raw_content))
 
             np = vfs._normalize_path(path)
 
@@ -940,14 +1028,19 @@ def make_vfs_shell(session: "AgentSessionV2"):
         # edit <path> <line_start> <line_end> <new_content>
         # ═══════════════════════════════════════════════════════════════════
         elif cmd == "edit":
-            if len(rest) < 4:
+            if _heredoc_payload is None and len(rest) < 4:
                 return _err("edit: usage: edit <path> <line_start> <line_end> <new_content>")
+            if _heredoc_payload is not None and len(rest) < 3:
+                return _err("edit: usage: edit <path> <start> <end> <<'_VFS_END_a799'\\ncontent\\n_VFS_END_a799")
             path = rest[0]
             try:
                 line_start, line_end = int(rest[1]), int(rest[2])
             except ValueError:
                 return _err("edit: line_start and line_end must be integers")
-            new_content = _decode_content(_strip_quotes(" ".join(rest[3:])))
+            if _heredoc_payload is not None:
+                new_content = _heredoc_payload
+            else:
+                new_content = _decode_content(_strip_quotes(" ".join(rest[3:])))
             r = vfs.edit(path, line_start, line_end, new_content)
             return _ok(r.get("message", "ok")) if r.get("success") else _err(r.get("error", ""))
 

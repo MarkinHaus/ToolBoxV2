@@ -419,9 +419,11 @@ def _mock(key: str, lang: str, mini_state=None, context_str: str = "", **fmt) ->
         # Ersetze generische Wörter (intelligent!)
         generic_words = ["problem", "daten", "logik", "situation", "fakten", "data", "informationen", "details"]
         replaced = False
+        latest_entity = latest_entity.replace("\\", "").replace("\\", "").replace("\\", "")
         for gw in generic_words:
             if gw in res.lower():
                 # RegEx für Case-Insensitive Replace
+
                 res = re.sub(rf'\b{gw}\b', f"'{latest_entity}'", res, flags=re.IGNORECASE)
                 replaced = True
                 break
