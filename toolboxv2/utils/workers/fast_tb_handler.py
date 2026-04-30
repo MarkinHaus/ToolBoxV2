@@ -30,7 +30,7 @@ from toolboxv2.utils.workers.server_worker import (
 from toolboxv2.utils.workers.session import SessionData
 
 logger = get_logger()
-
+_inject_style_enabled = True  # Overridden by as_wsgi_app() from app.inject_style
 
 def _file_iter(file_obj, chunk_size: int = 65536):
     """Generator for streaming a file object as WSGI response body."""
@@ -43,6 +43,104 @@ def _file_iter(file_obj, chunk_size: int = 65536):
     finally:
         file_obj.close()
 
+
+def _async_gen_to_sync(async_gen, loop):
+    """Convert async generator to sync iterator for WSGI streaming.
+
+    Each __next__ blocks the Waitress thread until the next chunk arrives.
+    This is unavoidable with WSGI — SSE streams occupy one thread each.
+
+    To prevent thread starvation:
+    - Waitress max_concurrent should be set high enough (50-100)
+    - SSE streams should be finite (not infinite)
+    - For high-concurrency SSE, use the WS worker instead
+
+    Timeout per chunk: 30s. Sends SSE keepalive comment on timeout
+    to prevent proxy/browser disconnect.
+    """
+    import asyncio
+
+    aiter = async_gen.__aiter__()
+    CHUNK_TIMEOUT = 30
+
+    def _gen():
+        while True:
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    aiter.__anext__(), loop
+                )
+                data = future.result(timeout=CHUNK_TIMEOUT)
+
+                if isinstance(data, str):
+                    yield data.encode("utf-8")
+                elif isinstance(data, bytes):
+                    yield data
+                else:
+                    yield str(data).encode("utf-8")
+
+            except StopAsyncIteration:
+                return
+            except TimeoutError:
+                yield b": keepalive\n\n"
+            except GeneratorExit:
+                # Client disconnected — cancel the async generator
+                future = asyncio.run_coroutine_threadsafe(
+                    aiter.aclose(), loop
+                )
+                try:
+                    future.result(timeout=2)
+                except Exception:
+                    pass
+                return
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"SSE stream error: {e}")
+                return
+
+    return _gen()
+
+def _maybe_inject_style(html_str: str) -> str:
+    """Inject Paper CSS into HTML responses that don't have TBJS web_context.
+
+    Skips injection if:
+    - HTML already contains TBJS markers (tbjs, TB.init, web_context)
+    - HTML already has a <style> tag (user styled it themselves)
+    - inject_style is False on the FastTB instance
+
+    Injects right before </head> if present, otherwise prepends.
+    """
+    if not html_str or not isinstance(html_str, str):
+        return html_str
+
+    if not globals().get('_inject_style_enabled', True):
+        return html_str
+
+    lower = html_str[:2000].lower()
+
+    # Already has TBJS — don't touch
+    if "tbjs" in lower or "tb.init" in lower or "web_context" in lower or "tbjs-main" in lower:
+        return html_str
+
+    # Already has substantial styling — don't touch
+    # (small inline styles on elements don't count, only <style> blocks)
+    if "<style>" in lower and len(html_str[lower.index("<style>"):].split("</style>")[0]) > 200:
+        return html_str
+
+    from toolboxv2.utils.workers.fast_tb_defaults import _PAPER_CSS, _FONTS
+
+    style_block = f"{_FONTS}\n<style>{_PAPER_CSS}</style>\n"
+
+    # Inject before </head>
+    if "</head>" in html_str:
+        return html_str.replace("</head>", style_block + "</head>", 1)
+
+    # Inject before <body>
+    if "<body" in html_str:
+        idx = html_str.index("<body")
+        return html_str[:idx] + style_block + html_str[idx:]
+
+    # No head/body — prepend
+    return style_block + html_str
 
 def _is_hashed_filename(path: str) -> bool:
     """Check if filename contains a content hash (e.g. main-5d3f7ed2.js).
@@ -262,7 +360,7 @@ class FastTBHandler:
         # String
         if isinstance(result, str):
             if result.strip().startswith("<"):
-                return html_response(result)
+                return html_response(_maybe_inject_style(result))
             return json_response({"result": result})
 
         # Bytes
@@ -309,7 +407,7 @@ class FastTBHandler:
             return (200, headers, stream_info.get("generator"))
 
         if data_type == "html":
-            return html_response(data, status=getattr(result.info, "exec_code", 200) or 200)
+            return html_response(_maybe_inject_style(data), status=getattr(result.info, "exec_code", 200) or 200)
 
         if data_type == "special_html":
             return html_response(data.get("html", ""), headers=data.get("headers", {}))
@@ -528,7 +626,7 @@ class FastTBHandler:
 
                 # Async generator (SSE / streaming)
                 if inspect.isasyncgen(body):
-                    return AsyncGenToSyncIter(body, loop)
+                    return _async_gen_to_sync(body, loop)
 
                 # Sync generator
                 if inspect.isgenerator(body):
@@ -538,6 +636,29 @@ class FastTBHandler:
 
             # No FastTB match — delegate to HTTPWorker (auth, health, API, etc.)
             return original_wsgi(environ, start_response)
+
+        # Register default pages (/docs, welcome)
+        from toolboxv2.utils.workers.fast_tb_defaults import register_defaults
+        register_defaults(self._app)
+
+        # Store inject_style flag for _maybe_inject_style
+        global _inject_style_enabled
+        _inject_style_enabled = getattr(self._app, 'inject_style', True)
+
+        # Warn if thread count is too low for SSE/streaming
+        if self._app.hot_reload:
+            self._start_hot_reload(app, config, _get_loop)
+        _has_sse = any(
+            r.handler.__name__ == 'sse_wrapper'
+            for r in self._app._routes
+            if hasattr(r, 'handler')
+        )
+        if _has_sse and config.http_worker.max_concurrent < 20:
+            logger.warning(
+                f"[FastTB] SSE routes detected but max_concurrent={config.http_worker.max_concurrent}. "
+                f"Each SSE stream blocks a Waitress thread. "
+                f"Recommend: config.http_worker.max_concurrent >= 50"
+            )
 
         return patched_wsgi
 
@@ -628,3 +749,295 @@ class FastTBHandler:
 
         future = asyncio.run_coroutine_threadsafe(_init_bridge(), loop)
         future.result(timeout=10)  # Block until bridge is ready
+
+    def _start_hot_reload(self, app, config, get_loop_fn):
+        """Start file watcher for hot-reload in development mode.
+
+        Uses watchdog to monitor registered directories. On file change,
+        broadcasts a reload command to all connected WS clients.
+
+        Falls back to no-op if watchdog is not installed.
+        """
+        import threading
+
+        watch_dirs = list(self._app._watch_dirs)
+
+        # Auto-add the directory of the main script
+        import sys
+        import os
+        main_mod = sys.modules.get("__main__")
+        if main_mod and hasattr(main_mod, "__file__") and main_mod.__file__:
+            main_dir = os.path.dirname(os.path.abspath(main_mod.__file__))
+            if main_dir not in watch_dirs:
+                watch_dirs.append(main_dir)
+
+        if not watch_dirs:
+            logger.info("[FastTB] Hot-reload enabled but no directories to watch")
+            return
+
+        try:
+            from watchdog.observers import Observer
+            from watchdog.events import FileSystemEventHandler
+        except ImportError:
+            logger.warning(
+                "[FastTB] Hot-reload enabled but watchdog not installed. "
+                "Install with: pip install watchdog"
+            )
+            return
+
+        WATCH_EXTENSIONS = {".py", ".js", ".css", ".html", ".jsx", ".ts", ".tsx", ".vue", ".svelte"}
+        _last_reload = [0.0]  # debounce tracker
+        app_ref = self._app
+
+        class ReloadHandler(FileSystemEventHandler):
+            def on_modified(self, event):
+                self._handle(event)
+
+            def on_created(self, event):
+                self._handle(event)
+
+            def _handle(self, event):
+                import time
+                import importlib
+                if event.is_directory:
+                    return
+
+                ext = os.path.splitext(event.src_path)[1].lower()
+                if ext not in WATCH_EXTENSIONS:
+                    return
+
+                path_str = event.src_path.replace("\\", "/")
+                if any(skip in path_str for skip in ("__pycache__", ".git/", "node_modules/", ".pyc")):
+                    return
+
+                now = time.time()
+                if now - _last_reload[0] < 0.5:
+                    return
+                _last_reload[0] = now
+
+                rel_path = os.path.relpath(event.src_path)
+                logger.info(f"[FastTB] File changed: {rel_path}")
+
+                # For .py files: reload the module so new code is picked up
+                if ext == ".py":
+                    try:
+                        self._reload_python_module(event.src_path)
+                    except Exception as e:
+                        logger.error(f"[HMR] reload error: {e}", exc_info=True)
+
+                # Broadcast reload to all WS clients
+                if hasattr(app, "ws_broadcast_all"):
+                    loop = get_loop_fn()
+                    asyncio.run_coroutine_threadsafe(
+                        app.ws_broadcast_all({
+                            "type": "hot_reload",
+                            "file": rel_path,
+                            "ext": ext,
+                        }),
+                        loop,
+                    )
+
+            def _exec_reload(self, filepath):
+                """Reload a Python file by extracting only function/class definitions.
+
+                Parses the file AST to find top-level function and class defs,
+                then compiles and executes ONLY those — skipping all module-level
+                side effects (server start, global assignments, etc.).
+                """
+                import ast
+                import types
+
+                main_mod = sys.modules.get("__main__")
+                if not main_mod:
+                    return None
+
+                with open(filepath, "r", encoding="utf-8") as f:
+                    source = f.read()
+
+                try:
+                    tree = ast.parse(source, filepath)
+                except SyntaxError as e:
+                    logger.error(f"[HMR] Syntax error in {filepath}: {e}")
+                    return None
+
+                # Extract only FunctionDef, AsyncFunctionDef, ClassDef at top level
+                safe_nodes = []
+                for node in tree.body:
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        safe_nodes.append(node)
+                    elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                        safe_nodes.append(node)
+
+                if not safe_nodes:
+                    logger.debug(f"[HMR] No reloadable definitions in {filepath}")
+                    return None
+
+                # Build a new module with only the safe definitions
+                new_tree = ast.Module(body=safe_nodes, type_ignores=[])
+                ast.fix_missing_locations(new_tree)
+
+                code = compile(new_tree, filepath, "exec")
+
+                # Execute in a namespace that inherits existing globals
+                namespace = dict(vars(main_mod))
+                namespace["__name__"] = "__hmr_reload__"  # prevent if __name__=="__main__" blocks
+
+                try:
+                    exec(code, namespace)
+                except Exception as e:
+                    logger.error(f"[HMR] Exec error in {filepath}: {e}")
+                    return None
+
+                # Update __main__ with new definitions only
+                updated = []
+                for k, v in namespace.items():
+                    if k.startswith("_"):
+                        continue
+                    old = getattr(main_mod, k, None)
+                    if old is None:
+                        continue
+                    # Only update functions and classes, not instances or data
+                    if isinstance(v, type) and isinstance(old, type):
+                        setattr(main_mod, k, v)
+                        updated.append(k)
+                    elif callable(v) and callable(old) and not isinstance(old, type):
+                        setattr(main_mod, k, v)
+                        updated.append(k)
+
+                # Return a namespace-like object for route updating
+                result = types.SimpleNamespace(**{k: getattr(main_mod, k) for k in updated})
+                logger.info(f"[HMR] Exec-reloaded {os.path.basename(filepath)}: {', '.join(updated) or 'nothing'}")
+                return result
+
+            def _reload_python_module(self, filepath):
+                """Reload a Python module and update MinuBridge view classes.
+
+                Preserves existing view state (ReactiveState values) while
+                swapping in the new class definition (render, handlers).
+                """
+                import importlib
+
+                # Find the module that corresponds to this file
+                abs_path = os.path.abspath(filepath)
+                target_module = None
+                for name, mod in list(sys.modules.items()):
+                    if name == "__main__":
+                        continue  # Skip __main__ — reload would re-execute everything
+                    mod_file = getattr(mod, "__file__", None)
+                    if mod_file and os.path.abspath(mod_file) == abs_path:
+                        target_module = mod
+                        break
+
+                if not target_module:
+                    # For __main__ or unregistered modules: manually exec the file
+                    # to get updated function/class definitions without full re-execute
+                    logger.info(f"[HMR] Exec-reloading: {filepath}")
+                    try:
+                        reloaded = self._exec_reload(abs_path)
+                    except Exception as e:
+                        logger.error(f"[HMR] Exec-reload failed: {e}")
+                        return
+                else:
+                    mod_name = target_module.__name__
+                    logger.info(f"[HMR] Reloading module: {mod_name}")
+                    try:
+                        reloaded = importlib.reload(target_module)
+                    except Exception as e:
+                        logger.error(f"[HMR] Reload failed for {mod_name}: {e}")
+                        return
+
+                # Update MinuBridge view classes with new definitions
+
+                bridge = getattr(app_ref, '_minu_bridge', None)
+                if bridge:
+                    for path, meta in bridge._view_registry.items():
+                        old_class = meta["class"]
+                        new_class = getattr(reloaded, old_class.__name__, None)
+
+                        if new_class is None or new_class is old_class:
+                            continue
+
+                        logger.info(f"[HMR] Updating view class: {old_class.__name__} on {path}")
+                        meta["class"] = new_class
+
+                        # Hot-swap: update existing view instances with new methods
+                        # while preserving their state
+                        for sid, minu_session in bridge._sessions.items():
+                            lookup_key = f"_path:{path}"
+                            view = minu_session.get_view_by_key(lookup_key)
+                            if view is None:
+                                continue
+
+                            # Preserve state values
+                            saved_state = {}
+                            for attr_name, state in view._state_attrs.items():
+                                saved_state[attr_name] = state.value
+
+                            # Swap the class — this updates render(), handlers etc.
+                            view.__class__ = new_class
+
+                            # Re-init state descriptors from new class
+                            # (in case new states were added)
+                            from toolboxv2.mods.Minu.core import ReactiveState
+                            for attr_name in dir(new_class):
+                                if attr_name.startswith("_"):
+                                    continue
+                                class_attr = getattr(new_class, attr_name, None)
+                                if isinstance(class_attr, ReactiveState):
+                                    if attr_name in saved_state:
+                                        # Existing state — restore value
+                                        if attr_name in view._state_attrs:
+                                            view._state_attrs[attr_name].value = saved_state[attr_name]
+                                    else:
+                                        # New state added in updated code
+                                        new_state = ReactiveState(
+                                            class_attr._value,
+                                            path=f"{view._view_id}.{attr_name}"
+                                        )
+                                        new_state.bind(view)
+                                        setattr(view, attr_name, new_state)
+                                        view._state_attrs[attr_name] = new_state
+
+                            logger.info(
+                                f"[HMR] View {view._view_id} hot-swapped "
+                                f"(preserved {len(saved_state)} states)"
+                            )
+
+                # Update FastTB route handlers with new function references
+                for route in app_ref._routes:
+                    old_handler = route.handler
+                    # Check the original function (unwrap SSE wrapper etc.)
+                    orig = getattr(old_handler, '__wrapped__', old_handler)
+                    handler_name = getattr(orig, '__name__', '')
+                    handler_qual = getattr(orig, '__qualname__', '')
+
+                    # Find matching function in reloaded module
+                    new_fn = getattr(reloaded, handler_name, None)
+                    if new_fn is None or new_fn is orig:
+                        continue
+                    if not callable(new_fn):
+                        continue
+
+                    # For SSE-wrapped handlers, re-wrap with new function
+                    if hasattr(old_handler, '__wrapped__'):
+                        old_handler.__wrapped__ = new_fn
+                        logger.info(
+                            f"[HMR] Updated wrapped route: {route.method} {route.path} → {handler_name}")
+                    else:
+                        route.handler = new_fn
+                        logger.info(f"[HMR] Updated route: {route.method} {route.path} → {handler_name}")
+
+                # Mark route index as dirty so next resolve picks up changes
+                app_ref._index_dirty = True
+
+        handler = ReloadHandler()
+        observer = Observer()
+
+        for d in watch_dirs:
+            observer.schedule(handler, d, recursive=True)
+            logger.info(f"[FastTB] Watching: {d}")
+
+        observer.daemon = True
+        observer.start()
+        self._app._hot_reload_running = True
+        logger.info(f"[FastTB] Hot-reload active ({len(watch_dirs)} directories)")

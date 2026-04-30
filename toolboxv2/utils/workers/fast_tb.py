@@ -36,6 +36,7 @@ Usage:
 import asyncio
 import inspect
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple, Pattern
@@ -165,6 +166,13 @@ class FastTB:
         self._route_index: Dict[str, List[Route]] = {}
         self._index_dirty = True
 
+        # Hot-reload: auto-enabled in development, disabled in production
+        env = os.getenv("TB_ENV", "development").lower()
+        self.hot_reload: bool = env != "production"
+        self.inject_style: bool = True  # Inject Paper CSS into default pages (/docs, welcome)
+        self._watch_dirs: List[str] = []
+        self._hot_reload_running = False
+
     # =========================================================================
     # Route Registration Decorators
     # =========================================================================
@@ -201,8 +209,12 @@ class FastTB:
     def sse(self, path: str, name: str = ""):
         """Register SSE (Server-Sent Events) endpoint.
 
-        The decorated function must return an async generator or sync generator.
-        SSE headers (Content-Type, Cache-Control, X-Accel-Buffering) are set automatically.
+        The decorated function must be an async generator (yield items).
+        SSE headers are set automatically.
+
+        IMPORTANT: Each SSE stream blocks one Waitress thread for its
+        entire duration. Keep streams finite and set max_concurrent >= 50.
+        For high-concurrency real-time updates, prefer WebSocket.
 
         Usage:
             @app.sse("/events")
@@ -221,20 +233,30 @@ class FastTB:
                     "Content-Type": "text/event-stream",
                     "Cache-Control": "no-cache",
                     "X-Accel-Buffering": "no",
-                    "Connection": "keep-alive",
                 }
 
+                def _fmt(item):
+                    """Format item as SSE. Extracts event/id keys from dicts."""
+                    if isinstance(item, dict) and "event" in item:
+                        evt = item.get("event")
+                        eid = item.get("id")
+                        payload = item.get("data", item)
+                        return format_sse_event(payload, event=evt, event_id=eid)
+                    return format_sse_event(item)
+
                 async def sse_gen():
-                    if inspect.isasyncgen(gen):
-                        async for item in gen:
-                            yield format_sse_event(item).encode("utf-8")
-                    elif inspect.isgenerator(gen):
-                        for item in gen:
-                            yield format_sse_event(item).encode("utf-8")
-                            await asyncio.sleep(0)
-                    else:
-                        # Single return value — yield once
-                        yield format_sse_event(gen).encode("utf-8")
+                    try:
+                        if inspect.isasyncgen(gen):
+                            async for item in gen:
+                                yield _fmt(item).encode("utf-8")
+                        elif inspect.isgenerator(gen):
+                            for item in gen:
+                                yield _fmt(item).encode("utf-8")
+                                await asyncio.sleep(0)
+                        else:
+                            yield _fmt(gen).encode("utf-8")
+                    finally:
+                        yield b"event: stream_end\ndata: {}\n\n"
 
                 return 200, headers, sse_gen()
 
@@ -287,6 +309,65 @@ class FastTB:
         url_prefix = url_prefix.rstrip("/")
         directory = os.path.abspath(directory)
         self._static_mounts.append((url_prefix, directory))
+
+    def watch(self, *directories: str):
+        """Add directories to watch for hot-reload.
+
+        Changes to .py, .js, .css, .html files trigger a browser reload
+        via WebSocket broadcast.
+
+        Automatically called by MinuBridge for its module directory.
+        Can also be called manually:
+
+            app.watch("./my_app", "./templates")
+
+        Only active when self.hot_reload is True (default in development).
+        """
+        import os
+        for d in directories:
+            abspath = os.path.abspath(d)
+            if os.path.isdir(abspath) and abspath not in self._watch_dirs:
+                self._watch_dirs.append(abspath)
+        return self
+
+    def hot_reload_script(self) -> str:
+        """Return a <script> tag that listens for hot_reload WS messages.
+
+        Automatically connects to the WS worker and reloads on file changes.
+        Returns empty string if hot_reload is disabled or no WS routes exist.
+
+        Usage in custom HTML handlers:
+            @app.get("/")
+            def index():
+                return f'''<html><body>
+                    <h1>My App</h1>
+                    {app.hot_reload_script()}
+                </body></html>'''
+        """
+        if not self.hot_reload or not self._ws_routes:
+            return ""
+
+        return """<script>(function(){
+var proto=location.protocol==='https:'?'wss:':'ws:';
+var port=window.__TB_WS_PORT__||'8100';
+var ws;
+function connect(){
+    try{ws=new WebSocket(proto+'//'+location.hostname+':'+port+'/ws/open_hot_reload');}catch(e){return;}
+    ws.onmessage=function(e){
+        var d;try{d=JSON.parse(e.data);}catch(x){return;}
+        if(d.type==='hot_reload'){
+            console.log('%c[HMR]%c '+d.file+' → reloading',
+                'background:#f59e0b;color:black;padding:1px 6px;border-radius:3px;font-weight:bold',
+                'color:#f59e0b');
+            var T=window.TB&&window.TB.ui&&window.TB.ui.Toast;
+            if(T)T.show({message:d.file+' changed',variant:'info',title:'↻ Reloading',duration:1500});
+            setTimeout(function(){location.reload();},300);
+        }
+    };
+    ws.onclose=function(){setTimeout(connect,2000);};
+}
+connect();
+})();</script>"""
 
     def resolve_static(self, path: str) -> "str | None":
         """Resolve a request path to a local file, or None.

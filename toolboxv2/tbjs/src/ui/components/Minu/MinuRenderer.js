@@ -1024,28 +1024,6 @@ class MinuRenderer {
             accent-color: #3b82f6;
         }
 
-        /* Buttons */
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.5rem 1rem;
-            border-radius: 0.5rem;
-            border: none;
-            cursor: pointer;
-            font-size: 0.875rem;
-            font-weight: 500;
-            transition: all 0.15s;
-        }
-        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .btn-primary { background: #3b82f6; color: white; }
-        .btn-primary:hover:not(:disabled) { background: #2563eb; }
-        .btn-secondary { background: #e5e7eb; color: #374151; }
-        .btn-secondary:hover:not(:disabled) { background: #d1d5db; }
-        .btn-ghost { background: transparent; }
-        .btn-ghost:hover:not(:disabled) { background: #f3f4f6; }
-        .btn-icon { font-size: 1.125rem; }
-
         /* Mobile responsiveness */
         @media (max-width: 640px) {
             .minu-tabs-header { gap: 0; }

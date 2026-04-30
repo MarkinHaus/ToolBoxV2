@@ -1,0 +1,687 @@
+/* ============================================================================
+   TBJS Paper Style v1.0 — Neo-Brutalism Overlay
+   Activates via [data-style="paper"] on <html>.
+   Loads AFTER tbjs-main.css — only overrides what differs.
+
+   Structure:
+   1. Token overrides — shared (both themes)
+   2. Token overrides — Paper Light
+   3. Token overrides — Paper Dark ("Carbon Paper")
+   4. Component overrides (scoped under [data-style="paper"])
+   5. Component-file patches (Desktop, Modal, Toast, CookieBanner)
+   6. Responsive adjustments
+   ============================================================================ */
+
+
+/* ==========================================================================
+   1. SHARED TOKEN OVERRIDES (both themes)
+   ========================================================================== */
+
+[data-style="paper"] {
+  /* --- Typography scale (editorial, generous) --- */
+  /* --- Font role swap --- */
+  --font-display: var(--font-mono);
+  --font-body: var(--font-sans);
+
+  /* --- Borders: sharp, no radius --- */
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  /* --radius-full stays for dots/avatars */
+
+  --border-width: 2px;
+
+  /* --- Glass disabled --- */
+  --glass-blur: 0px;
+
+  /* --- Elevation: hard offset shadows --- */
+  --highlight-inset: none;
+  --shadow-micro: 4px 4px 0 var(--ink);
+
+  /* --- Transition: snappier --- */
+  --duration-fast: 80ms;
+  --ease-default: linear;
+}
+
+
+/* ==========================================================================
+   2. PAPER LIGHT TOKENS
+   ========================================================================== */
+
+[data-style="paper"],
+[data-style="paper"][data-theme="light"] {
+  color-scheme: light;
+
+  --paper-bg: #f4f1ea;
+  --paper-surface: #ffffff;
+  --paper-sunken: #ebe7dc;
+  --ink: #111111;
+  --ink-muted: #555555;
+  --ink-faint: #888888;
+  --rule: #111111;
+
+  /* Map Glass tokens → Paper */
+  --bg-base: var(--paper-bg);
+  --bg-surface: var(--paper-surface);
+  --bg-elevated: var(--paper-surface);
+  --bg-sunken: var(--paper-sunken);
+
+  --text-main: var(--ink);
+  --text-label: var(--ink-muted);
+  --text-muted: var(--ink-faint);
+
+  --glass-bg: var(--paper-surface);
+  --glass-border: var(--ink);
+
+  --border-subtle: var(--ink);
+  --border-active: var(--ink);
+
+  --surface-hover: var(--paper-sunken);
+  --surface-active: var(--paper-sunken);
+  --surface-badge: var(--paper-sunken);
+
+  --input-bg: var(--paper-surface);
+  --input-border: var(--ink);
+
+  --scrollbar-thumb: var(--ink-faint);
+  --scrollbar-track: var(--paper-sunken);
+  --scrollbar-hover: var(--ink-muted);
+
+  --theme-bg-sun: var(--paper-bg);
+  --theme-bg-light: var(--paper-bg);
+}
+
+
+/* ==========================================================================
+   3. PAPER DARK TOKENS ("Carbon Paper")
+   ========================================================================== */
+
+[data-style="paper"][data-theme="dark"] {
+  color-scheme: dark;
+
+  --paper-bg: #111111;
+  --paper-surface: #1e1e1e;
+  --paper-sunken: #080808;
+  --ink: #d4d0c8;
+  --ink-muted: #9a968c;
+  --ink-faint: #636059;
+  --rule: #d4d0c8;
+
+  /* Map Glass tokens → Paper Dark */
+  --bg-base: var(--paper-bg);
+  --bg-surface: var(--paper-surface);
+  --bg-elevated: var(--paper-surface);
+  --bg-sunken: var(--paper-sunken);
+
+  --text-main: var(--ink);
+  --text-label: var(--ink-muted);
+  --text-muted: var(--ink-faint);
+
+  --glass-bg: var(--paper-surface);
+  --glass-border: var(--ink);
+
+  --border-subtle: var(--ink);
+  --border-active: var(--ink);
+
+  --surface-hover: var(--paper-sunken);
+  --surface-active: var(--paper-sunken);
+  --surface-badge: var(--paper-sunken);
+
+  --input-bg: var(--paper-surface);
+  --input-border: var(--ink);
+
+  --scrollbar-thumb: var(--ink-faint);
+  --scrollbar-track: var(--paper-sunken);
+  --scrollbar-hover: var(--ink-muted);
+
+  --theme-bg-sun: var(--paper-bg);
+  --theme-bg-light: var(--paper-bg);
+}
+
+
+/* ==========================================================================
+   4. COMPONENT OVERRIDES — tbjs-main.css
+   ========================================================================== */
+
+/* --- Body --- */
+[data-style="paper"] body {
+  font-family: var(--font-body);
+  background-color: var(--paper-bg);
+}
+
+/* Kill 3D background */
+[data-style="paper"] body::before {
+  display: none;
+}
+
+/* --- Typography --- */
+[data-style="paper"] h1,
+[data-style="paper"] h2,
+[data-style="paper"] h3,
+[data-style="paper"] h4,
+[data-style="paper"] h5,
+[data-style="paper"] h6 {
+  font-family: var(--font-display);
+  letter-spacing: 0;
+}
+
+[data-style="paper"] p {
+  font-family: var(--font-body);
+  color: var(--ink);
+  max-inline-size: 68ch;
+}
+
+[data-style="paper"] .card-content {
+  color: var(--ink-muted);
+}
+
+/* --- Links --- */
+[data-style="paper"] a {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  color: var(--primary);
+}
+
+[data-style="paper"] a:hover {
+  background: var(--primary);
+  color: var(--paper-surface);
+  text-decoration: none;
+}
+
+/* --- Code --- */
+[data-style="paper"] code {
+  background: var(--paper-sunken);
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  color: var(--ink);
+}
+
+[data-style="paper"] pre {
+  background: var(--paper-sunken);
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+[data-style="paper"] pre code {
+  border: none;
+  background: transparent;
+}
+
+/* --- Buttons (base) --- */
+[data-style="paper"] button,
+[data-style="paper"] .btn {
+  font-family: var(--font-display);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 var(--ink);
+  transition: transform 80ms linear, box-shadow 80ms linear, background-color 80ms linear;
+}
+
+[data-style="paper"] button:hover,
+[data-style="paper"] .btn:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+[data-style="paper"] button:active,
+[data-style="paper"] .btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 var(--ink);
+}
+
+/* --- .btn-primary --- */
+[data-style="paper"] .btn-primary,
+[data-style="paper"] button[type="submit"] {
+  background: var(--primary);
+  color: white;
+  border: 2px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+[data-style="paper"] .btn-primary:hover,
+[data-style="paper"] button[type="submit"]:hover {
+  background: var(--primary);
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+[data-style="paper"] .btn-primary:active,
+[data-style="paper"] button[type="submit"]:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 var(--ink);
+}
+
+/* --- .btn-secondary --- */
+[data-style="paper"] .btn-secondary {
+  background: var(--paper-surface);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+}
+
+/* --- .btn-ghost --- */
+[data-style="paper"] .btn-ghost {
+  background: transparent;
+  border: 2px solid var(--ink);
+}
+
+/* --- Form elements --- */
+[data-style="paper"] input,
+[data-style="paper"] textarea,
+[data-style="paper"] select {
+  background: var(--paper-surface);
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 var(--ink);
+  font-family: var(--font-body);
+  color: var(--ink);
+  transition: transform 80ms linear, box-shadow 80ms linear, border-color 80ms linear;
+}
+
+[data-style="paper"] input:focus,
+[data-style="paper"] textarea:focus,
+[data-style="paper"] select:focus {
+  box-shadow: 4px 4px 0 var(--primary);
+  transform: translate(-1px, -1px);
+  border-color: var(--primary);
+  background: var(--paper-surface);
+}
+
+[data-style="paper"] input::placeholder,
+[data-style="paper"] textarea::placeholder {
+  color: var(--ink-faint);
+}
+
+/* Radio/Checkbox: keep functional, strip glass */
+[data-style="paper"] input[type="radio"],
+[data-style="paper"] input[type="checkbox"] {
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper-surface);
+  box-shadow: none;
+}
+
+[data-style="paper"] input[type="radio"] {
+  border-radius: var(--radius-full); /* radios stay round */
+}
+
+[data-style="paper"] input[type="radio"]:checked,
+[data-style="paper"] input[type="checkbox"]:checked {
+  background: var(--primary);
+  border-color: var(--ink);
+  box-shadow: none;
+}
+
+/* --- Label --- */
+[data-style="paper"] label {
+  font-family: var(--font-display);
+  color: var(--ink);
+}
+
+/* --- Cards --- */
+[data-style="paper"] .card {
+  background: var(--paper-surface);
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 6px 6px 0 var(--ink);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-style="paper"] .card:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 8px 8px 0 var(--ink);
+}
+
+/* --- Glass utility --- */
+[data-style="paper"] .glass {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+[data-style="paper"] .glass-effect {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+}
+
+/* --- Main content --- */
+[data-style="paper"] .main-content {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+/* --- Navigation --- */
+[data-style="paper"] .nav-controls {
+  background: var(--paper-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+[data-style="paper"] .nav-toggle {
+  border-radius: 0;
+  color: var(--ink);
+}
+
+[data-style="paper"] .nav-dropdown {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+[data-style="paper"] .nav-dropdown a {
+  border-radius: 0;
+  color: var(--ink-muted);
+}
+
+[data-style="paper"] .nav-dropdown a:hover,
+[data-style="paper"] .nav-dropdown a:focus {
+  color: var(--ink);
+  background: var(--paper-sunken);
+  text-decoration: none;
+}
+
+/* --- Widget --- */
+[data-style="paper"] .widget {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+[data-style="paper"] .widget-btn {
+  border-radius: 0;
+}
+
+/* --- Grid table --- */
+[data-style="paper"] .grid-header .grid-cell {
+  border-bottom: 2px solid var(--ink);
+}
+
+[data-style="paper"] .grid-cell {
+  border-bottom: 2px solid var(--ink);
+}
+
+[data-style="paper"] .grid-row:hover .grid-cell {
+  transform: none;
+}
+
+/* --- Tab nav --- */
+[data-style="paper"] .tab-nav {
+  border-bottom: 2px solid var(--ink);
+}
+
+[data-style="paper"] .tab-item {
+  border-radius: 0;
+}
+
+[data-style="paper"] .tab-item.is-active {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+  background: var(--paper-sunken);
+}
+
+/* --- Score blocks (no LED glow) --- */
+[data-style="paper"] .score-block.is-active {
+  box-shadow: none;
+}
+
+/* --- Badge --- */
+[data-style="paper"] .badge {
+  border: 2px solid var(--ink);
+  border-radius: 0;
+}
+
+[data-style="paper"] .badge--success {
+  background: var(--success);
+}
+
+/* --- hr --- */
+[data-style="paper"] hr {
+  border: none;
+  border-block-start: 2px solid var(--ink);
+}
+
+/* --- Overlay --- */
+[data-style="paper"] .overlay {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* --- Modal (tbjs-main.css .modal) --- */
+[data-style="paper"] .modal {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 8px 8px 0 var(--ink);
+}
+
+/* --- Scrollbar radius --- */
+[data-style="paper"] ::-webkit-scrollbar-track {
+  border-radius: 0;
+}
+
+[data-style="paper"] ::-webkit-scrollbar-thumb {
+  border-radius: 0;
+  border: 1px solid var(--paper-sunken);
+}
+
+
+/* ==========================================================================
+   5. COMPONENT-FILE PATCHES (Desktop, Modal, Toast, CookieBanner)
+   ========================================================================== */
+
+/* ----- Desktop: Status bar ----- */
+[data-style="paper"] .tb-status-bar {
+  background: var(--paper-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-top: 2px solid var(--ink);
+  font-family: var(--font-display);
+  color: var(--ink-faint);
+}
+
+/* ----- Desktop: Bottom nav ----- */
+[data-style="paper"] .tb-bottom-nav {
+  background: var(--paper-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-top: 2px solid var(--ink);
+  box-shadow: none;
+}
+
+[data-style="paper"] .tb-bottom-nav-item {
+  color: var(--ink-muted);
+}
+
+[data-style="paper"] .tb-bottom-nav-item:hover {
+  color: var(--ink);
+}
+
+[data-style="paper"] .tb-bottom-nav-label {
+  font-family: var(--font-display);
+}
+
+/* ----- Desktop: Quick capture ----- */
+[data-style="paper"] .tb-quick-capture {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 8px 8px 0 var(--ink);
+}
+
+[data-style="paper"] .tb-quick-capture-header {
+  border-bottom: 2px solid var(--ink);
+  font-family: var(--font-display);
+  color: var(--ink-muted);
+}
+
+[data-style="paper"] .tb-quick-capture-close {
+  border-radius: 0;
+}
+
+[data-style="paper"] .tb-quick-capture-body textarea {
+  border-radius: 0;
+}
+
+[data-style="paper"] .tb-quick-capture-save {
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+[data-style="paper"] .tb-quick-capture-save:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+/* ----- Modal (component file selectors) ----- */
+[data-style="paper"] [id^="tb-modal-"][id$="-overlay"] {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-style="paper"] [id^="tb-modal-"]:not([id$="-overlay"]) {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 8px 8px 0 var(--ink);
+}
+
+[data-style="paper"] .modal-header,
+[data-style="paper"] [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:not(:only-child) {
+  border-bottom: 2px solid var(--ink);
+}
+
+[data-style="paper"] .modal-footer,
+[data-style="paper"] [id^="tb-modal-"]:not([id$="-overlay"]) > div:last-child:not(:only-child) {
+  border-top: 2px solid var(--ink);
+}
+
+[data-style="paper"] .modal-header button.material-symbols-outlined,
+[data-style="paper"] [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:not(:only-child) button.material-symbols-outlined {
+  border-radius: 0;
+}
+
+/* ----- Toast ----- */
+[data-style="paper"] .tb-toast {
+  background: var(--paper-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+[data-style="paper"] .tb-toast-close {
+  border-radius: 0;
+}
+
+[data-style="paper"] .tb-toast-action-btn {
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+[data-style="paper"] .tb-toast-action-btn:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+[data-style="paper"] .tb-toast-action-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 var(--ink);
+}
+
+[data-style="paper"] .tb-toast-dot {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+[data-style="paper"] .tb-toast-dot:hover {
+  box-shadow: none;
+}
+
+/* ----- CookieBanner ----- */
+[data-style="paper"] #tbjs-cookie-banner {
+  background-color: var(--paper-bg);
+  border-top: 2px solid var(--ink);
+  box-shadow: 0 -4px 0 var(--ink);
+  color: var(--ink);
+}
+
+[data-style="paper"] #tbjs-cookie-banner #tb-cookie-banner-accept-minimal {
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background-color: var(--primary);
+  color: white;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+[data-style="paper"] #tbjs-cookie-banner #tb-cookie-banner-accept-minimal:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--ink);
+  background-color: var(--primary);
+}
+
+
+/* ==========================================================================
+   6. RESPONSIVE ADJUSTMENTS
+   ========================================================================== */
+
+@media screen and (max-width: 767px) {
+  [data-style="paper"] .main-content {
+    border-radius: 0;
+    box-shadow: 4px 4px 0 var(--ink);
+  }
+
+  [data-style="paper"] .nav-controls {
+    box-shadow: 3px 3px 0 var(--ink);
+  }
+
+  /* Reduce shadow offset on small screens */
+  [data-style="paper"] .card,
+  [data-style="paper"] .glass,
+  [data-style="paper"] .widget {
+    box-shadow: 4px 4px 0 var(--ink);
+  }
+
+  [data-style="paper"] .card:hover {
+    box-shadow: 6px 6px 0 var(--ink);
+  }
+
+  [data-style="paper"] [id^="tb-modal-"]:not([id$="-overlay"]) {
+    border-radius: 0;
+    box-shadow: 6px 6px 0 var(--ink);
+  }
+}

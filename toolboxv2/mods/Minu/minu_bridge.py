@@ -56,8 +56,14 @@ class MinuBridge:
     with_3d = False
     style_toggle = True   # Show Glass ↔ Paper toggle button in nav
     default_style = "paper"  # "glass" or "paper" — initial style when no user preference saved
+    public = True  # Default: views are public (no auth). False = all views require auth
+    ws_public = True  # Default: WS connections allowed without auth. False = WS requires auth
 
-    def __init__(self, fast_tb_app, app_instance=None):
+    def __init__(self, fast_tb_app, app_instance=None,
+                 registration_name:str|None = None,
+                 registration_title:str|None = None,
+                 registration_description:str|None = None,
+                 index_view_path: str|None = None):
         """
         Args:
             fast_tb_app: FastTB instance to register routes on
@@ -82,19 +88,55 @@ class MinuBridge:
         if dist_dir and os.path.isdir(dist_dir):
             self._ftb.mount_static("/", dist_dir)
 
+        # Auto-watch Minu module directory for hot-reload
+        if self._ftb.hot_reload:
+            minu_dir = os.path.dirname(os.path.abspath(__file__))
+            self._ftb.watch(minu_dir)
+
+        # Store bridge reference on FastTB for HMR access
+        self._ftb._minu_bridge = self
+
+        # Register Minu starter page + /docs if no user routes
+        from toolboxv2.utils.workers.fast_tb_defaults import register_minu_defaults, register_defaults
+        register_defaults(self._ftb)
+        register_minu_defaults(self._ftb, self)
+
+        self.registration_name = registration_name
+        self.registration_title = registration_title or "My FastTB Minu App"
+        self.registration_description = registration_description
+        self.index_view_path = index_view_path
+
+    def get_wsgi(self, link=True, enable_ws=True):
+        if link:
+            self._app.run_any(
+                ("CloudM", "add_ui"),
+                name=self.registration_name,
+                title=self.registration_title,
+                path=self.index_view_path,
+                description=self.registration_description,
+                auth=not self.public  # Kein Auth für Demo
+            )
+        from toolboxv2.utils.workers.fast_tb_handler import FastTBHandler
+        return FastTBHandler(self).as_wsgi_app(enable_ws=enable_ws)
+
     def view(
         self,
         path: str,
-        require_auth: bool = False,
+        require_auth: bool | None = None,
+        ws_public: bool | None = None,
         icon: str | None = None,
         label: str | None = None,
         nav: bool = True,
+        is_index: bool =False,
     ):
         """Register a MinuView as a FastTB route.
 
         Args:
             path: URL path (e.g. "/dashboard")
-            require_auth: If True, returns 401 for anonymous users
+            require_auth: If True, returns 401 for anonymous users.
+                           None = use bridge default (inverse of self.public)
+            ws_public: If True, WS connection allowed without auth.
+                        None = use bridge default (self.ws_public)
             icon: Material Symbols icon name for NavMenu (e.g. "home", "group")
             label: Display label in NavMenu (defaults to class name)
             nav: If False, view is excluded from auto-generated NavMenu
@@ -102,15 +144,23 @@ class MinuBridge:
         Returns:
             Decorator that accepts a MinuView subclass
         """
+        # Resolve defaults from bridge-level settings
+        _require_auth = require_auth if require_auth is not None else (not self.public)
+        _ws_public = ws_public if ws_public is not None else self.ws_public
+        if _ws_public and not 'open' in path.lower():
+            path = "/open" + path[1].upper() + path[2:]
+        if is_index:
+            self.index_view_path = path
         def decorator(view_class):
             self._view_registry[path] = {
                 "class": view_class,
                 "icon": icon,
                 "label": label or view_class.__name__,
-                "require_auth": require_auth,
+                "require_auth": _require_auth,
+                "ws_public": _ws_public,
                 "nav": nav,
             }
-            self._register_http_routes(path, view_class, require_auth)
+            self._register_http_routes(path, view_class, _require_auth)
             self._register_ws_route(path, view_class)
             return view_class
 
@@ -213,8 +263,30 @@ class MinuBridge:
                 return (400, {"error": "Missing handler name"})
 
             minu_session = bridge._get_session(session)
+
+            # Fallback 1: find session that owns this view by viewId
+            if not minu_session:
+                for sid, ms in bridge._sessions.items():
+                    if ms.get_view(view_id) is not None:
+                        minu_session = ms
+                        break
+
+            # Fallback 2: find session that has a view for this path
+            if not minu_session:
+                lookup_key = f"_path:{path}"
+                for sid, ms in bridge._sessions.items():
+                    if ms.get_view_by_key(lookup_key) is not None:
+                        minu_session = ms
+                        break
+
             view = minu_session.get_view(view_id) if minu_session else None
 
+            # Fallback 3: view_id mismatch (page reload created new view) — find by path
+            if not view and minu_session:
+                lookup_key = f"_path:{path}"
+                view = minu_session.get_view_by_key(lookup_key)
+                if view:
+                    logger.info(f"[MinuBridge] View found via path fallback: {view._view_id} (client sent {view_id})")
             # Fallback: search all sessions by viewId (session cookie may differ between GET and POST)
             if not view:
                 view = bridge._find_view_by_id(view_id)
@@ -255,7 +327,8 @@ class MinuBridge:
                 # Flush pending state changes.
                 # If WS _send_callback is set, this pushes patches live via WS.
                 # If not, patches accumulate and we return them in the HTTP response.
-                await minu_session.force_flush()
+                if minu_session:
+                    await minu_session.force_flush()
 
                 # Collect any remaining patches not yet flushed
                 patches = view.get_patches()
@@ -271,8 +344,47 @@ class MinuBridge:
                         result),
                 }
             except Exception as e:
-                logger.error(f"[MinuBridge] Event handler error: {e}")
-                return (500, {"error": str(e)})
+                import traceback as _tb
+                import difflib
+                tb_str = _tb.format_exc()
+
+                tb_obj = e.__traceback__
+                source_info = ""
+                while tb_obj and tb_obj.tb_next:
+                    tb_obj = tb_obj.tb_next
+                if tb_obj:
+                    frame = tb_obj.tb_frame
+                    source_info = f"{frame.f_code.co_filename}:{tb_obj.tb_lineno} in {frame.f_code.co_name}"
+
+                err_type = type(e).__name__
+                err_msg = str(e)
+                hint = ""
+
+                if "has no attribute" in err_msg:
+                    bad_attr = err_msg.split("'")[-2] if "'" in err_msg else ""
+                    if bad_attr and view:
+                        valid_attrs = [a for a in dir(view) if
+                                       not a.startswith("_") and hasattr(getattr(view, a, None), "value")]
+                        matches = difflib.get_close_matches(bad_attr, valid_attrs, n=1, cutoff=0.5)
+                        hint = f"Did you mean '{matches[0]}'?" if matches else f"Available states: {', '.join(valid_attrs)}"
+                elif "unsupported operand" in err_msg:
+                    hint = f"Type mismatch in '{handler_name}' — check types (e.g. += 1 not += '1')"
+
+                logger.error(
+                    f"[MinuBridge] Handler '{handler_name}' on {view.__class__.__name__ if view else '?'} failed:\n"
+                    f"  {err_type}: {err_msg}\n"
+                    f"  Location: {source_info}\n"
+                    f"  Hint: {hint}\n{tb_str}"
+                )
+
+                return {
+                    "ok": False,
+                    "error": f"{err_type}: {err_msg}",
+                    "handler": handler_name,
+                    "hint": hint,
+                    "source": source_info,
+                    "traceback": tb_str,
+                }
 
     # =========================================================================
     # WebSocket Route Generation
@@ -286,8 +398,14 @@ class MinuBridge:
         # Track conn_id -> session_id mapping for cleanup
         _conn_sessions: Dict[str, str] = {}
 
+        # AccessController checks function name: 'open*' prefix = public, else auth required.
+        # ws_public=True  → openMinuWSHandler → anonymous WS allowed
+        # ws_public=False → MinuWSHandler      → auth required for WS
+        ws_is_public = self._view_registry.get(path, {}).get("ws_public", self.ws_public)
+        handler_cls_name = "openMinuWSHandler" if ws_is_public else "MinuWSHandler"
+
         @self._ftb.websocket(ws_path)
-        class MinuWSHandler:
+        class openMinuWSHandler:
             async def on_connect(self_, conn_id, session):
                 logger.info(f"[MinuBridge WS] {conn_id} connected to {ws_path}")
 
@@ -296,6 +414,11 @@ class MinuBridge:
 
                 if msg_type == "init":
                     session_id = payload.get("sessionId", conn_id)
+                    logger.info(
+                        f"[MinuBridge WS] init: client sessionId={session_id}, "
+                        f"conn_id={conn_id}, bridge sessions={list(bridge._sessions.keys())}"
+                    )
+
                     minu_session = bridge._sessions.get(session_id)
 
                     # Fallback: try conn_id as session key
@@ -309,9 +432,15 @@ class MinuBridge:
                             if ms.get_view_by_key(lookup_key) is not None:
                                 minu_session = ms
                                 session_id = sid
+                                logger.info(f"[MinuBridge WS] init: found session via path lookup: {sid}")
                                 break
 
                     if not minu_session:
+                        logger.warning(
+                            f"[MinuBridge WS] init: NO session found! "
+                            f"tried={session_id}, conn={conn_id}, "
+                            f"available={list(bridge._sessions.keys())}"
+                        )
                         return {"type": "error", "message": f"Session not found (tried: {session_id})"}
 
                     _conn_sessions[conn_id] = session_id
@@ -341,10 +470,11 @@ class MinuBridge:
 
             async def on_disconnect(self_, conn_id, session):
                 logger.info(f"[MinuBridge WS] {conn_id} disconnected from {ws_path}")
-                # Clean up conn->session mapping
                 sid = _conn_sessions.pop(conn_id, None)
-                # Don't destroy the minu_session — view state should survive reconnects
 
+        # Rename class so FastTB registers it with the right name
+        openMinuWSHandler.__name__ = handler_cls_name
+        openMinuWSHandler.__qualname__ = handler_cls_name
     async def _handle_ws_event(self, payload: dict, conn_id: str) -> dict:
         """Handle event message over WebSocket."""
         session_id = payload.get("sessionId", "")
@@ -388,8 +518,59 @@ class MinuBridge:
                 "view": view_dict,
             }
         except Exception as e:
-            logger.error(f"[MinuBridge] WS event handler error: {e}")
-            return {"type": "error", "message": str(e)}
+            import traceback as _tb
+            tb_str = _tb.format_exc()
+
+            # Extract source location from traceback
+            tb_obj = e.__traceback__
+            source_info = ""
+            while tb_obj and tb_obj.tb_next:
+                tb_obj = tb_obj.tb_next
+            if tb_obj:
+                frame = tb_obj.tb_frame
+                source_info = f"{frame.f_code.co_filename}:{tb_obj.tb_lineno} in {frame.f_code.co_name}"
+
+            # Build developer-friendly error message
+            err_type = type(e).__name__
+            hint = ""
+            err_msg = str(e)
+
+            if "has no attribute" in err_msg:
+                # Extract the typo and suggest correction
+                import difflib
+                bad_attr = err_msg.split("'")[-2] if "'" in err_msg else ""
+                if bad_attr and view:
+                    valid_attrs = [a for a in dir(view) if
+                                   not a.startswith("_") and hasattr(getattr(view, a, None), "value")]
+                    matches = difflib.get_close_matches(bad_attr, valid_attrs, n=1, cutoff=0.5)
+                    if matches:
+                        hint = f"Did you mean '{matches[0]}'? (typo: '{bad_attr}')"
+                    else:
+                        hint = f"Available state attributes: {', '.join(valid_attrs)}"
+
+            elif "unsupported operand" in err_msg:
+                hint = f"Type mismatch in handler '{handler_name}'. Check that you're using the correct types (e.g. += 1 not += '1')"
+
+            elif "TypeError" in err_type:
+                hint = f"Check argument types in '{handler_name}'"
+
+            # Log full traceback for terminal
+            logger.error(
+                f"[MinuBridge] Handler '{handler_name}' on {view.__class__.__name__} failed:\n"
+                f"  Error: {err_type}: {err_msg}\n"
+                f"  Location: {source_info}\n"
+                f"  Hint: {hint}\n"
+                f"  Traceback:\n{tb_str}"
+            )
+
+            return {
+                "type": "error",
+                "message": f"{err_type}: {err_msg}",
+                "handler": handler_name,
+                "hint": hint,
+                "source": source_info,
+                "traceback": tb_str,
+            }
 
     async def _handle_ws_state_update(self, payload: dict, conn_id: str) -> dict:
         """Handle client-side state update."""
@@ -616,8 +797,8 @@ class MinuBridge:
             style_attr_script = f"""<script>
 (function(){{var k='tbjs_style_preference',r=document.documentElement;r.setAttribute('data-style',localStorage.getItem(k)||'{default_style}');}})();
 </script>"""
-
-            return get_app().web_context() + style_attr_script + f"""
+            hot_reload_js = self._ftb.hot_reload_script()
+            return get_app().web_context() + style_attr_script + hot_reload_js + f"""
 <nav class="nav-controls" id="Nav-Main" aria-label="Main navigation">
     <button id="links" class="nav-toggle" type="button" aria-label="Menu" aria-expanded="false">
         <span class="material-symbols-outlined" style="font-size: 20px;">menu</span>
@@ -717,7 +898,7 @@ window.__MINU_BRIDGE__ = {{
     var _wsQueue = [];
 
     function _wsSend(msg) {{
-        if (_wsReady && _ws && _ws.readyState === 1) {{
+        if (_ws && _ws.readyState === 1) {{
             _ws.send(JSON.stringify(msg));
         }} else {{
             _wsQueue.push(msg);
@@ -750,6 +931,86 @@ window.__MINU_BRIDGE__ = {{
             }} else if (msg.type === 'event_result') {{
                 if (msg.patches && msg.patches.length) renderer._applyPatches(msg.patches);
                 if (msg.view) renderer._renderView(msg.view);
+            }} else if (msg.type === 'hot_reload') {{
+                console.log('%c[HMR]%c ' + msg.file + ' changed',
+                    'background:#f59e0b;color:black;padding:1px 6px;border-radius:3px;font-weight:bold',
+                    'color:#f59e0b');
+                var Toast = window.TB && window.TB.ui && window.TB.ui.Toast;
+                if (msg.ext === '.py') {{
+                    // Python change: server already hot-swapped the view class.
+                    // Fetch fresh view JSON and re-render (preserves WS connection + state).
+                    if (Toast) Toast.show({{
+                        message: msg.file,
+                        variant: 'info',
+                        title: '↻ Hot Update',
+                        duration: 2000
+                    }});
+                    fetch(window.location.pathname + '?format=json')
+                        .then(function(r) {{ return r.json(); }})
+                        .then(function(data) {{
+                            if (data.view) {{
+                                renderer._renderView(data.view);
+                                console.log('%c[HMR]%c View re-rendered',
+                                    'background:#10b981;color:white;padding:1px 6px;border-radius:3px',
+                                    'color:#10b981');
+                            }}
+                        }})
+                        .catch(function(e) {{
+                            console.warn('[HMR] Fetch failed, full reload:', e);
+                            window.location.reload();
+                        }});
+                }} else {{
+                    // CSS/JS/HTML change: full page reload needed
+                    if (Toast) Toast.show({{
+                        message: msg.file + ' changed',
+                        variant: 'info',
+                        title: '↻ Reloading',
+                        duration: 1500
+                    }});
+                    setTimeout(function() {{ window.location.reload(); }}, 300);
+                }}
+            }} else if (msg.type === 'error') {{
+                var Toast = window.TB && window.TB.ui && window.TB.ui.Toast;
+                var isAuth = msg.code === 'ACCESS_DENIED' || (msg.message && msg.message.indexOf('uthentication') !== -1);
+
+                if (isAuth) {{
+                    console.warn('[MinuBridge] Auth required for WS');
+                    if (Toast) Toast.show({{
+                        message: 'Live updates require login. Using HTTP fallback.',
+                        variant: 'warning', title: 'WebSocket', duration: 5000
+                    }});
+                    _wsReady = false;
+                    try {{ _ws.close(); }} catch(e) {{}}
+                }} else {{
+                    // Developer error — show detailed toast + console output
+                    var handler = msg.handler || '?';
+                    var hint = msg.hint || '';
+                    var source = msg.source || '';
+                    var toastMsg = msg.message || 'Unknown error';
+
+                    // Rich console output for devs
+                    console.error(
+                        '%c[Minu] Handler Error%c ' + handler + '\\n' +
+                        '%c' + toastMsg + '%c\\n' +
+                        (hint ? '💡 ' + hint + '\\n' : '') +
+                        (source ? '📍 ' + source + '\\n' : '') +
+                        (msg.traceback ? '\\n' + msg.traceback : ''),
+                        'background:#e53e3e;color:white;padding:2px 6px;border-radius:3px;font-weight:bold',
+                        'color:#e53e3e;font-weight:bold',
+                        'color:#c53030', 'color:inherit'
+                    );
+
+                    if (Toast) {{
+                        var body = toastMsg;
+                        if (hint) body += '\\n💡 ' + hint;
+                        Toast.show({{
+                            message: body,
+                            variant: 'error',
+                            title: '⚠ ' + handler + '()',
+                            duration: 8000
+                        }});
+                    }}
+                }}
             }}
         }};
         _ws.onclose = function() {{
@@ -760,6 +1021,39 @@ window.__MINU_BRIDGE__ = {{
     }}
 
     // HTTP fallback for when WS is not available
+    function _handleHttpError(resp) {{
+        if (resp && resp.ok === false && resp.error) {{
+            var Toast = window.TB && window.TB.ui && window.TB.ui.Toast;
+            var handler = resp.handler || '?';
+            var hint = resp.hint || '';
+            var source = resp.source || '';
+
+            console.error(
+                '%c[Minu] Handler Error%c ' + handler + '\\n' +
+                '%c' + resp.error + '%c\\n' +
+                (hint ? '💡 ' + hint + '\\n' : '') +
+                (source ? '📍 ' + source + '\\n' : '') +
+                (resp.traceback ? '\\n' + resp.traceback : ''),
+                'background:#e53e3e;color:white;padding:2px 6px;border-radius:3px;font-weight:bold',
+                'color:#e53e3e;font-weight:bold',
+                'color:#c53030', 'color:inherit'
+            );
+
+            if (Toast) {{
+                var body = resp.error;
+                if (hint) body += '\\n💡 ' + hint;
+                Toast.show({{
+                    message: body,
+                    variant: 'error',
+                    title: '⚠ ' + handler + '()',
+                    duration: 8000
+                }});
+            }}
+            return true;
+        }}
+        return false;
+    }}
+
     function _httpSend(data) {{
         if (data.type === 'event') {{
             fetch(eventUrl, {{
@@ -773,10 +1067,11 @@ window.__MINU_BRIDGE__ = {{
             }})
             .then(function(r) {{ return r.json(); }})
             .then(function(resp) {{
+                if (_handleHttpError(resp)) return;
                 if (resp.patches && resp.patches.length) renderer._applyPatches(resp.patches);
                 if (resp.view) renderer._renderView(resp.view);
             }})
-            .catch(function(e) {{ console.error('[MinuBridge] HTTP fallback failed:', e); }});
+            .catch(function(e) {{ console.error('[MinuBridge] HTTP request failed:', e); }});
         }} else if (data.type === 'state_update') {{
             fetch(eventUrl, {{
                 method: 'POST',
@@ -792,7 +1087,20 @@ window.__MINU_BRIDGE__ = {{
 
     renderer._send = function(data) {{
         if (_wsReady) {{
-            _wsSend(data);
+            try {{
+                _wsSend(data);
+            }} catch(e) {{
+                console.warn('[MinuBridge] WS send failed, using HTTP:', e);
+                _wsReady = false;
+                var Toast = window.TB && window.TB.ui && window.TB.ui.Toast;
+                if (Toast) Toast.show({{
+                    message: 'WebSocket connection lost. Switching to HTTP fallback.',
+                    variant: 'warning',
+                    title: 'Connection',
+                    duration: 4000
+                }});
+                _httpSend(data);
+            }}
         }} else {{
             _httpSend(data);
         }}
@@ -819,3 +1127,31 @@ try {{ _wsConnect(); }} catch(e) {{ console.log('[MinuBridge] WS not available, 
             }
             for path, meta in self._view_registry.items()
         ]
+
+
+"""
+
+# App-Level Defaults
+app = FastTB(title="MyApp")
+minu = MinuBridge(app)
+minu.public = True       # All views public by default
+minu.ws_public = True    # WS open for all by default
+
+# Oder: Private App
+minu.public = False      # All views require auth by default
+minu.ws_public = False   # WS requires auth by default
+
+# Per-View Override
+@minu.view("/counter")                              # uses bridge defaults
+class Counter(MinuView): ...
+
+@minu.view("/admin", require_auth=True)              # HTTP auth-gated, WS uses bridge default
+class Admin(MinuView): ...
+
+@minu.view("/dashboard", ws_public=False)             # HTTP public, WS requires auth
+class Dashboard(MinuView): ...
+
+@minu.view("/monitor", require_auth=True, ws_public=True)  # HTTP auth-gated, WS public
+class Monitor(MinuView): ...
+
+"""

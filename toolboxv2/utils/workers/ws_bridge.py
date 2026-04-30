@@ -342,6 +342,8 @@ def install_ws_bridge(app, event_manager: ZMQEventManager, worker_id: str):
     app.ws_leave_channel = bridge.leave_channel
     app.ws_broadcast_all = bridge.broadcast_all
 
+    app.logger.info("[WS BIND DONE]")
+
     # Expose notification method
     async def send_notification(
         title: str,
