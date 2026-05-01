@@ -1,0 +1,3 @@
+# This directory holds dynamically generated nginx configs
+# for container-proxied services (ContainerManager).
+# Files are created/removed at runtime — do not edit manually.

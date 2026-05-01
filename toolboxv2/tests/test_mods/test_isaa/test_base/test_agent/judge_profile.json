@@ -1,0 +1,10 @@
+{
+  "model": "cerebras/llama3.1-8b",
+  "disqualified": false,
+  "batch_sizes": {
+    "tutorial": 2
+  },
+  "accuracy": {
+    "tutorial": 1.0
+  }
+}

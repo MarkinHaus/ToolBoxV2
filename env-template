@@ -167,36 +167,69 @@ VAULTS=
 OBSIDIAN_VAULT_PATH=
 LOCAL_DOCKER_IMAGE=
 EXTERNAL_PATH_RUNNABELS=
-EXTERNAL_PATH_RUNNABLE=                     # (Keep both to satisfy request)
+EXTERNAL_PATH_RUNNABLE=
 LITELLM_LOG="NOTSET"
 ANONYMIZED_TELEMETRY="false"
 
+# ============================================================
+# Docker Compose Stack Configuration
+# ============================================================
+# These vars are consumed by compose.yaml services.
+# If running without Compose, they are ignored.
 
-# ENV Configuration:
-#   OPENOBSERVE_ENDPOINT      = http://localhost:5080       (API endpoint)
-#   OPENOBSERVE_USER          = root@example.com            (root user email)
-#   OPENOBSERVE_PASSWORD      = <password>                  (root user password)
-#   OPENOBSERVE_ORG           = default                     (organization)
-#   OPENOBSERVE_DATA_DIR      = ./openobserve-data          (host volume mount)
-#   OPENOBSERVE_PORT          = 5080                        (exposed port)
+# -- Image & Commands -------------------------------------------------------
+TB_IMAGE=toolboxv2:latest                   # Image for tb-worker / tb-host
+TB_WORKER_CMD="tb workers start"            # Command for tb-worker service
+TB_HOST_CMD="tb workers start"              # Command for tb-host service
+
+# -- Compose Ports (external) -----------------------------------------------
+NGINX_HTTP_PORT=80
+NGINX_HTTPS_PORT=443
+TB_HOST_HTTP_PORT=5000                      # Only used when profile 'host' active
+TB_HOST_WS_PORT=6587
+
+# -- Container Manager -------------------------------------------------------
+CONTAINER_ADMIN_KEY=                        # Admin key for ContainerManager API
+
+# -- Redis (profile: redis) --------------------------------------------------
+REDIS_URL=redis://redis:6379                # Override for external: redis://myhost:6379
+REDIS_MAXMEM=256mb
+
+# -- PostgreSQL (profile: postgres) ------------------------------------------
+POSTGRES_DB=toolboxv2
+POSTGRES_USER=toolbox
+POSTGRES_PASSWORD=                          # REQUIRED if using postgres profile
+
+# -- LLM Gateway (profile: llm) ---------------------------------------------
+# When using profile 'ollama':  http://ollama:11434
+# When Ollama on host:          http://host.docker.internal:11434
+OLLAMA_URL=http://ollama:11434
+
+# -- TB Registry (profile: registry) ----------------------------------------
+REGISTRY_MINIO_ENDPOINT=minio:9000          # Override if registry uses different MinIO
+CLERK_SECRET_KEY=
+CLERK_PUBLISHABLE_KEY=
+
+# -- Observability -----------------------------------------------------------
+#   OPENOBSERVE_ENDPOINT      = http://localhost:5080
+#   OPENOBSERVE_USER          = root@example.com
+#   OPENOBSERVE_PASSWORD      = <password>
+#   OPENOBSERVE_ORG           = default
+#   OPENOBSERVE_DATA_DIR      = ./openobserve-data
+#   OPENOBSERVE_PORT          = 5080
 #   OPENOBSERVE_DOCKER_IMAGE  = public.ecr.aws/zinclabs/openobserve:latest
-#   OPENOBSERVE_CONTAINER     = toolbox-openobserve         (container name)
+#   OPENOBSERVE_CONTAINER     = toolbox-openobserve
 #
-#   # Storage backend — default: local disk. Set these for MinIO-backed storage:
-#   OPENOBSERVE_STORAGE       = disk | s3                   (default: disk)
+#   # Storage backend — default: disk. Set these for MinIO-backed:
+#   OPENOBSERVE_STORAGE       = disk | s3
 #   OPENOBSERVE_S3_ENDPOINT   = http://localhost:9000
 #   OPENOBSERVE_S3_ACCESS_KEY = <key>
 #   OPENOBSERVE_S3_SECRET_KEY = <secret>
-#   OPENOBSERVE_S3_BUCKET     = openobserve-data            (must pre-exist)
+#   OPENOBSERVE_S3_BUCKET     = openobserve-data
 #
-#   # Historical import — set to enable:
+#   # Historical import:
 #   OPENOBSERVE_IMPORT_ENABLED = false | true
-#   OPENOBSERVE_IMPORT_BUCKET  = system-audit-logs          (source MinIO bucket)
-#   OPENOBSERVE_IMPORT_PREFIX  =                            (e.g. "toolbox-instance-01/")
-#   OPENOBSERVE_IMPORT_FROM    =                            (e.g. "2026-01-01")
-#   OPENOBSERVE_IMPORT_TO      =                            (e.g. "2026-02-23")
-#
-#   # MinIO connection for import (reuses S3 keys if not set):
-#   MINIO_ENDPOINT             = localhost:9000
-#   MINIO_ACCESS_KEY           = <key>
-#   MINIO_SECRET_KEY           = <secret>
+#   OPENOBSERVE_IMPORT_BUCKET  = system-audit-logs
+#   OPENOBSERVE_IMPORT_PREFIX  =
+#   OPENOBSERVE_IMPORT_FROM    =
+#   OPENOBSERVE_IMPORT_TO      =
