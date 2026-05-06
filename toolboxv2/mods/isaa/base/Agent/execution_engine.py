@@ -1570,7 +1570,7 @@ BEISPIELE:
 
         final_response = None
         success = True
-        ctx.max_iterations = max_iterations
+
         # 5. Main loop
         while ctx.current_iteration < ctx.max_iterations:
             self.live.max_iterations = ctx.max_iterations
@@ -2377,8 +2377,336 @@ BEISPIELE:
         )
         _is_ollama = _model_for_call.startswith("ollama") or _model_for_call.startswith("cerebras")
         if _is_ollama:
-            raise ValueError(f"{_model_for_call} Stream wit tools not available for this model")
+            async def _non_stream_fallback(ctx: ExecutionContext):
+                async for chunk in self._execute_generator(
+                    ctx, session, query, max_iterations, is_resume,
+                    None, None, persist_blocking, model,
+                ):
+                    yield chunk
+
+            return _non_stream_fallback, ctx
         return stream_generator, ctx
+
+    async def _execute_generator(
+        self,
+        ctx: "ExecutionContext",
+        session,
+        query: str,
+        max_iterations: int,
+        is_resume: bool,
+        trigger_kw,
+        trigger_skill,
+        persist_blocking: bool = False,
+        model=None,
+    ) -> "AsyncGenerator[dict, None]":
+        """
+        Non-streaming execution that yields chunks compatible with stream_generator.
+        LLM is called with stream=False, but output is chunked for consumer compatibility.
+        """
+        final_response = None
+        success = True
+        agent_name = self.agent.amd.name
+        is_sub = self.is_sub_agent
+
+        # --- Init (nur wenn nicht resumed) ---
+        if not is_resume:
+            yield {
+                "type": "status",
+                "status_msg": "Initializing (skills + tools + personas)",
+                "agent": agent_name,
+                "iter": 0,
+            }
+            max_iterations, trigger_kw, trigger_skill = await self._parallel_init(
+                ctx, session, query, max_iterations
+            )
+            system_prompt = self._build_system_prompt(ctx, session)
+            history_depth = 2 if self.is_sub_agent else 6
+            permanent_history = session.get_history_for_llm(last_n=history_depth)
+            ctx.working_history = [
+                {"role": "system", "content": system_prompt},
+                *permanent_history,
+                {"role": "user", "content": query},
+            ]
+
+        # --- Live state ---
+        self.live.run_id = ctx.run_id
+        self.live.max_iterations = max_iterations
+        self.live.t_start = time.time()
+        self.live.skills = [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
+        self.live.tools_loaded = ctx.get_dynamic_tool_names() if ctx.dynamic_tools else []
+        self.live.persona = ctx.active_persona.name
+        self.live.enter(
+            AgentPhase.INIT,
+            f"{'Resume' if is_resume else 'Start'} non-stream [{ctx.run_id}]",
+        )
+        self._narrator.reset(query)
+        self._narrator.on_init(query)
+        self._narrator.schedule_skills_update(query, ctx.working_history, self.skills_manager, ctx=ctx)
+        self._narrator.schedule_ruleset_update(ctx.working_history, session, ctx)
+
+        ctx.max_iterations = max_iterations
+
+        # --- enrich (same as stream_generator) ---
+        def enrich(chunk):
+            chunk.setdefault("agent", agent_name)
+            chunk.setdefault("iter", ctx.current_iteration)
+            chunk.setdefault("max_iter", ctx.max_iterations)
+            chunk.setdefault("is_sub", is_sub)
+            try:
+                chunk.setdefault("tokens_used", self._calculate_context_load(ctx))
+            except Exception:
+                chunk.setdefault("tokens_used", 0)
+            chunk.setdefault("tokens_max", self._get_max_context_tokens())
+            chunk.setdefault("narrator_msg", self.live.narrator_msg)
+            chunk.setdefault("narrator_mini_plan", self._narrator._mini.plan_summary)
+            chunk.setdefault("status_msg", self.live.status_msg)
+            chunk.setdefault(
+                "skills",
+                [s.name for s in ctx.matched_skills] if ctx.matched_skills else [],
+            )
+            persona = ctx.active_persona
+            chunk.setdefault("persona", persona.name if persona else "default")
+            chunk.setdefault("persona_source", persona.source if persona else "default")
+            chunk.setdefault("persona_model", persona.model_preference if persona else "fast")
+            chunk.setdefault(
+                "persona_iterations_factor",
+                persona.max_iterations_factor if persona else 1.0,
+            )
+            return chunk
+
+        # --- Narrator callback (fire-and-forget via yield queue) ---
+        narrator_pending = []
+
+        def narrator_cb(msg):
+            narrator_pending.append(msg)
+
+        self._narrator.on_live_update_callback = narrator_cb
+
+        def _flush_narrator():
+            """Yield-ready list of narrator chunks, then clear."""
+            chunks = [enrich({"type": "narrator", "narrator_msg": m}) for m in narrator_pending]
+            narrator_pending.clear()
+            return chunks
+
+        try:
+            # --- Main loop ---
+            while ctx.current_iteration < ctx.max_iterations:
+                ctx.current_iteration += 1
+                self.live.max_iterations = ctx.max_iterations
+                self.live.iteration = ctx.current_iteration
+
+                self._narrator.on_llm_pre_call(ctx.working_history)
+                self.live.status_msg = f"Thinking (iter {ctx.current_iteration}/{max_iterations})"
+                self.live.enter(AgentPhase.LLM_CALL, f"iter {ctx.current_iteration}/{max_iterations}")
+
+                yield enrich({"type": "iteration_start", "iteration": ctx.current_iteration})
+
+                # Flush narrator updates that accumulated
+                for nc in _flush_narrator():
+                    yield nc
+
+                # Pause / Cancel
+                if ctx.status == "paused":
+                    yield enrich({"type": "paused", "run_id": ctx.run_id})
+                    return
+                if ctx.status == "cancelled":
+                    yield enrich({"type": "cancelled", "run_id": ctx.run_id})
+                    return
+
+                # Loop warning
+                if self._should_warn_loop(ctx):
+                    warning_msg = ctx.loop_detector.get_intervention_message()
+                    if ctx.current_iteration >= max_iterations - 1:
+                        warning_msg += '\nThis is the last iteration! must finalize task immediately and return an final answer with the current status!'
+                    ctx.working_history.append({"role": "system", "content": warning_msg})
+                    ctx.loop_warning_given = True
+                    yield enrich({"type": "warning", "message": warning_msg.splitlines()[0]})
+
+                current_tools = self._get_tool_definitions(ctx)
+                messages = self._inject_auto_focus(ctx)
+                messages = self._sanitize_history_for_api(messages)
+
+                # --- LLM Call (non-streaming) ---
+                try:
+                    llm_kwargs = {"stream": False, "get_response_message": True, "with_context": False}
+                    if model:
+                        llm_kwargs["model"] = model
+                    else:
+                        llm_kwargs["model_preference"] = ctx.active_persona.model_preference
+                    if ctx.active_persona.temperature is not None:
+                        llm_kwargs["temperature"] = ctx.active_persona.temperature
+
+                    response = await self.agent.a_run_llm_completion(
+                        messages=messages,
+                        tools=current_tools,
+                        **llm_kwargs,
+                    )
+                except Exception as e:
+                    self.live.error = str(e)
+                    self.live.enter(AgentPhase.ERROR, f"LLM Error: {e}")
+                    final_response = f"Es ist ein Fehler aufgetreten: {str(e)}\n\nIch konnte die Aufgabe leider nicht abschließen."
+                    success = False
+                    yield enrich({"type": "error", "error": str(e)})
+                    break
+
+                # Flush narrator after LLM call
+                for nc in _flush_narrator():
+                    yield nc
+
+                if not response:
+                    continue
+
+                # --- Extract content + reasoning ---
+                content = response.content or ""
+                reasoning = getattr(response, "reasoning_content", None) or ""
+
+                # Emit reasoning as block
+                if reasoning:
+                    yield enrich({"type": "reasoning", "chunk": reasoning})
+
+                # Add assistant message to history
+                msg_dict = {"role": "assistant", "content": content}
+                if hasattr(response, "tool_calls") and response.tool_calls:
+                    msg_dict["tool_calls"] = response.tool_calls
+                ctx.working_history.append(msg_dict)
+
+                self._narrator._set_thought(content[:250], moc=False)
+                self._narrator._inspier = content
+
+                # --- Process tool calls ---
+                if hasattr(response, "tool_calls") and response.tool_calls:
+                    # Classify
+                    final_tc = None
+                    sub_agent_tcs = []
+                    think_tcs = []
+                    normal_tcs = []
+                    SOLO_TOOLS = {"final_answer", "shift_focus"}
+
+                    for tc in response.tool_calls:
+                        f_name = tc.function.name
+                        if f_name in SOLO_TOOLS:
+                            final_tc = tc
+                            break
+                        elif f_name in ("spawn_sub_agent", "wait_for", "resume_sub_agent") and self._sub_agent_manager:
+                            sub_agent_tcs.append(tc)
+                        elif f_name == "think":
+                            think_tcs.append(tc)
+                        else:
+                            normal_tcs.append(tc)
+
+                    # Emit tool_start for all
+                    for tc in (normal_tcs + think_tcs + sub_agent_tcs + ([final_tc] if final_tc else [])):
+                        f_name = tc.function.name
+                        try:
+                            f_args = tc.function.arguments
+                        except Exception:
+                            f_args = "{}"
+                        yield enrich({"type": "tool_start", "name": f_name, "args": f_args})
+
+                    # Solo tool check
+                    if final_tc and len(response.tool_calls) > 1:
+                        ctx.working_history.append({"role": "system",
+                                                    "content": "Action pattern not valid !!! NO tools called. use final_answer ALONE !"})
+                        continue
+
+                    if final_tc:
+                        try:
+                            args = json.loads(final_tc.function.arguments)
+                            final_response = args.get("answer", "")
+                            success = args.get("success", True)
+                        except Exception:
+                            final_response = ""
+                            success = True
+                        yield enrich({"type": "final_answer", "answer": final_response, "success": success})
+                        self._narrator.on_summarise()
+                        break
+
+                    # Execute normal tools in parallel
+                    all_tcs = normal_tcs + sub_agent_tcs
+                    results = await asyncio.gather(*[self._execute_tool_call(ctx, tc) for tc in all_tcs])
+
+                    for tc, (result, is_final) in zip(all_tcs, results):
+                        f_name = tc.function.name
+                        yield enrich(
+                            {"type": "tool_result", "name": f_name, "is_final": is_final, "result": str(result)})
+                        if is_final:
+                            try:
+                                args = json.loads(tc.function.arguments)
+                                final_response = args.get("answer", result)
+                                success = args.get("success", True)
+                            except Exception:
+                                final_response = result
+                                success = True
+
+                    # Think tools
+                    for tc in think_tcs:
+                        f_args_raw = tc.function.arguments
+                        try:
+                            f_args = json.loads(f_args_raw) if isinstance(f_args_raw, str) else f_args_raw
+                        except Exception:
+                            f_args = {}
+                        async for chunk_event in self._execute_think_streaming(ctx, tc.id, f_args):
+                            yield chunk_event
+
+                    # Flush narrator after tool execution
+                    for nc in _flush_narrator():
+                        yield nc
+
+                    if final_response is not None:
+                        self._narrator.on_summarise()
+                        break
+                else:
+                    # No tool calls — content IS the final answer
+                    if content:
+                        final_response = content
+                        yield enrich({"type": "content", "chunk": content})
+                        yield enrich({"type": "final_answer", "answer": final_response})
+                        break
+
+            # --- Max iterations ---
+            if final_response is None:
+                if self.is_sub_agent:
+                    final_response, should_mark_resumable = await self._handle_sub_agent_max_iterations(ctx, query,
+                                                                                                        max_iterations)
+                    success = False
+                    if should_mark_resumable:
+                        ctx.status = "max_iterations"
+                else:
+                    final_response = self._handle_max_iterations(ctx, query)
+                    success = False
+                yield enrich({"type": "max_iterations", "answer": final_response})
+
+            # --- Stats ---
+            if not hasattr(ctx.active_persona, "stats"):
+                ctx.active_persona.stats = PersonaStats()
+
+            ctx.active_persona.stats.record_use(
+                source=ctx.active_persona.source,
+                query=query,
+                success=success,
+                iterations_used=ctx.current_iteration,
+                iterations_budget=max_iterations,
+                trigger_keyword=trigger_kw,
+                trigger_skill=trigger_skill,
+            )
+
+            # --- Post-processing ---
+            yield enrich({"type": "post_processing", "status_msg": "Saving context"})
+
+            finalize_coro = self._finalize_run(
+                ctx, session, query, final_response, success,
+                trigger_kw, trigger_skill,
+            )
+            if persist_blocking:
+                await finalize_coro
+            else:
+                task = asyncio.create_task(finalize_coro)
+                self._pending_finalize_tasks[ctx.run_id] = task
+
+            yield enrich({"type": "done", "success": success, "final_answer": final_response})
+
+        finally:
+            self._narrator.on_live_update_callback = None
 
     async def _parallel_init(
         self,
@@ -2572,7 +2900,7 @@ BEISPIELE:
         thought_acc = ""
         try:
             stream_response = await self.agent.a_run_llm_completion(
-                messages=messages, max_tokens=2048, stream=True, true_stream=True, with_context=False,
+                messages=messages, max_tokens=2048, stream=True, true_stream=True, with_context=False, tool_choice="none"
             )
             if asyncio.iscoroutine(stream_response):
                 stream_response = await stream_response

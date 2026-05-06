@@ -88,7 +88,7 @@ RUN npm ci --omit=dev 2>/dev/null || npm install --omit=dev && \
 # Copy source and build
 COPY toolboxv2/web/ ./web/
 COPY toolboxv2/index.js toolboxv2/index.html toolboxv2/favicon.ico ./
-RUN npx webpack --mode production 2>/dev/null || true
+RUN npx webpack --mode production 2>/dev/null || mkdir -p /app/toolboxv2/dist
 
 # ============================================================================
 # STAGE 4: Runtime — minimal final image
@@ -150,8 +150,8 @@ COPY --from=requirements-generator /app/active-features.txt /tmp/active-features
 
 # Install TB (no-deps since venv already has everything)
 RUN pip install --no-build-isolation --no-deps -e . && \
-    # Clean up pip cache
-    rm -rf /root/.cache/pip
+    rm -rf /root/.cache/pip && \
+    chown -R toolbox:toolbox /app
 
 USER toolbox
 WORKDIR /home/toolbox

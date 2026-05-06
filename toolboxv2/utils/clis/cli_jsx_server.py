@@ -2,8 +2,8 @@
 """
 jsxserve — Serve JSX files locally. Zero Node.js dependency.
 
-Transpilation happens in-browser via esm.sh + Babel standalone.
-Just point it at a .jsx file and open your browser.
+Transpilation happens in-browser via Babel standalone.
+React/ReactDOM loaded as UMD globals — no import maps needed.
 
 Usage:
     python jsxserve.py                          # serves all .jsx in cwd
@@ -11,23 +11,15 @@ Usage:
     python jsxserve.py app.jsx --port 5173      # custom port
     python jsxserve.py --dir components/        # serve from directory
     python jsxserve.py app.jsx --no-reload      # disable auto-reload
-
-Features:
-    - In-browser JSX transpilation (Babel standalone)
-    - React 18 + ReactDOM via esm.sh CDN
-    - Auto-reload on file changes (WebSocket)
-    - Tailwind CSS via CDN (utility classes ready)
-    - Zero npm, zero node, zero build step
-    - Serves static assets (images, CSS, JSON) from same directory
 """
 
 import argparse
-import asyncio
 import hashlib
 import http.server
 import json
 import mimetypes
 import os
+import re
 import socket
 import sys
 import threading
@@ -38,56 +30,226 @@ from urllib.parse import unquote
 # ─── Config ───
 
 DEFAULT_PORT = 5173
-RELOAD_INTERVAL = 0.5  # seconds between file checks
+RELOAD_INTERVAL = 0.5
 
-# CDN URLs — pinned versions for stability
-REACT_CDN = "https://esm.sh/react@18.3.1"
-REACT_DOM_CDN = "https://esm.sh/react-dom@18.3.1/client"
+# UMD builds — React/ReactDOM become window.React / window.ReactDOM
+REACT_CDN = "https://unpkg.com/react@18/umd/react.production.min.js"
+REACT_DOM_CDN = "https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
 BABEL_CDN = "https://unpkg.com/@babel/standalone@7.26.10/babel.min.js"
 TAILWIND_CDN = "https://cdn.tailwindcss.com"
 
-# Additional libraries available via esm.sh (same as Claude artifacts)
+# Additional libs loaded as UMD globals via script tags
 ESM_LIBS = {
-    "lucide-react": "https://esm.sh/lucide-react@0.383.0",
-    "recharts": "https://esm.sh/recharts@2.15.3?external=react,react-dom",
-    "mathjs": "https://esm.sh/mathjs@13.2.3",
-    "lodash": "https://esm.sh/lodash@4.17.21",
-    "d3": "https://esm.sh/d3@7.9.0",
-    "three": "https://esm.sh/three@0.170.0",
-    "papaparse": "https://esm.sh/papaparse@5.5.2",
-    "chart.js": "https://esm.sh/chart.js@4.4.8",
-    "tone": "https://esm.sh/tone@15.1.22",
+    "lucide-react": "https://esm.sh/lucide-react@0.383.0?bundle&external=react,react-dom",
+    "recharts": "https://esm.sh/recharts@2.15.3?bundle&external=react,react-dom",
+    "mathjs": "https://esm.sh/mathjs@13.2.3?bundle",
+    "lodash": "https://unpkg.com/lodash@4.17.21/lodash.min.js",
+    "d3": "https://unpkg.com/d3@7.9.0/dist/d3.min.js",
+    "three": "https://unpkg.com/three@0.170.0/build/three.min.js",
+    "papaparse": "https://unpkg.com/papaparse@5.5.2/papaparse.min.js",
+    "chart.js": "https://unpkg.com/chart.js@4.4.8/dist/chart.umd.min.js",
+    "tone": "https://unpkg.com/tone@15.1.22/build/Tone.js",
+}
+
+# Map import names to the global variable they expose
+LIB_GLOBALS = {
+    "lucide-react": "lucideReact",
+    "recharts": "Recharts",
+    "mathjs": "math",
+    "lodash": "_",
+    "d3": "d3",
+    "three": "THREE",
+    "papaparse": "Papa",
+    "chart.js": "Chart",
+    "tone": "Tone",
 }
 
 
-def _build_importmap(jsx_source: str) -> dict:
-    """Scan JSX source for imports and build an import map."""
-    imports = {
-        "react": REACT_CDN,
-        "react-dom": REACT_DOM_CDN + "/../",
-        "react-dom/client": REACT_DOM_CDN,
-        "react/": REACT_CDN + "/",
-    }
-    for lib, url in ESM_LIBS.items():
-        # Only include libs that are actually imported
+def _detect_imports(jsx_source: str) -> list[str]:
+    """Detect which libraries are imported in the JSX source."""
+    found = []
+    for lib in ESM_LIBS:
         if f'from "{lib}"' in jsx_source or f"from '{lib}'" in jsx_source:
-            imports[lib] = url
-    return {"imports": imports}
+            found.append(lib)
+    return found
+
+
+def _strip_imports(jsx_source: str) -> tuple[str, str | None]:
+    """
+    Strip ES module import/export statements from JSX source.
+    Returns (cleaned_source, default_export_name).
+
+    Handles:
+    - import { x, y } from 'react';
+    - import React from 'react';
+    - import * as X from 'lib';
+    - Multi-line imports
+    - export default ComponentName;
+    - export default function ...
+    - Named destructured imports from libs → mapped to globals
+    """
+    lines = jsx_source.split('\n')
+    cleaned = []
+    default_export_name = None
+    shim_lines = []  # Global destructuring shims
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Skip empty lines at top
+        # Multi-line import: collect until closing ;
+        if re.match(r'^import\s+', stripped):
+            # Collect full import statement (may span multiple lines)
+            full_import = stripped
+            while not full_import.rstrip().endswith(';') and i + 1 < len(lines):
+                i += 1
+                full_import += ' ' + lines[i].strip()
+
+            # Parse what's being imported and from where
+            # Extract lib name
+            lib_match = re.search(r'''from\s+['"]([^'"]+)['"]''', full_import)
+            if lib_match:
+                lib_name = lib_match.group(1)
+
+                # For non-react libs, generate destructuring shims
+                if lib_name in LIB_GLOBALS:
+                    global_name = LIB_GLOBALS[lib_name]
+                    # Extract named imports: import { X, Y as Z } from 'lib'
+                    named_match = re.search(r'\{([^}]+)\}', full_import)
+                    if named_match:
+                        names = named_match.group(1)
+                        # Parse "X, Y as Z" → "const { X, Y: Z } = global"
+                        parts = []
+                        for part in names.split(','):
+                            part = part.strip()
+                            if ' as ' in part:
+                                orig, alias = part.split(' as ', 1)
+                                parts.append(f"{orig.strip()}: {alias.strip()}")
+                            else:
+                                parts.append(part)
+                        shim_lines.append(
+                            f"const {{ {', '.join(parts)} }} = window.{global_name};"
+                        )
+                    # Default import: import X from 'lib'
+                    default_match = re.match(
+                        r'''import\s+(\w+)\s+from\s+['"]''', full_import
+                    )
+                    if default_match:
+                        alias = default_match.group(1)
+                        shim_lines.append(f"const {alias} = window.{global_name};")
+
+                # React imports → destructure from window.React
+                elif lib_name == 'react':
+                    named_match = re.search(r'\{([^}]+)\}', full_import)
+                    if named_match:
+                        names = named_match.group(1)
+                        parts = []
+                        for part in names.split(','):
+                            part = part.strip()
+                            if ' as ' in part:
+                                orig, alias = part.split(' as ', 1)
+                                parts.append(f"{orig.strip()}: {alias.strip()}")
+                            else:
+                                parts.append(part)
+                        shim_lines.append(
+                            f"const {{ {', '.join(parts)} }} = React;"
+                        )
+
+                elif lib_name == 'react-dom/client':
+                    # import { createRoot } from 'react-dom/client' → skip,
+                    # mount logic handles this
+                    pass
+
+                # Unknown lib → just strip, hope for the best
+            i += 1
+            continue
+
+        # export default ComponentName;
+        export_match = re.match(r'^export\s+default\s+(\w+)\s*;?\s*$', stripped)
+        if export_match:
+            default_export_name = export_match.group(1)
+            i += 1
+            continue
+
+        # export default function ComponentName(...)  { → keep as function, extract name
+        export_fn_match = re.match(
+            r'^export\s+default\s+(function\s+(\w+))', stripped
+        )
+        if export_fn_match:
+            # Replace "export default function X" → "function X"
+            cleaned.append(line.replace('export default ', '', 1))
+            default_export_name = export_fn_match.group(2)
+            i += 1
+            continue
+
+        # export default () => ... or export default class ...
+        if stripped.startswith('export default '):
+            # Generic: assign to a temp name
+            rest = stripped.replace('export default ', '', 1)
+            cleaned.append(f"const __DefaultExport__ = {rest}")
+            default_export_name = '__DefaultExport__'
+            i += 1
+            continue
+
+        # Named exports: export function X / export const X → just strip 'export'
+        if re.match(r'^export\s+(function|const|let|var|class)\s+', stripped):
+            cleaned.append(line.replace('export ', '', 1))
+            i += 1
+            continue
+
+        cleaned.append(line)
+        i += 1
+
+    # Prepend shims at top
+    result = '\n'.join(shim_lines + cleaned)
+    return result, default_export_name
 
 
 def _build_html(jsx_path: Path, jsx_source: str, ws_port: int | None = None) -> str:
     """Wrap a JSX file in a full HTML shell with in-browser transpilation."""
-    importmap = _build_importmap(jsx_source)
     title = jsx_path.stem.replace("-", " ").replace("_", " ").title()
 
-    # Escape JSX for embedding in script tag
-    # We use a separate fetch instead to avoid escaping issues
+    # Detect which extra libs are needed
+    extra_libs = _detect_imports(jsx_source)
+
+    # Strip imports/exports, get default export name
+    cleaned_source, default_export_name = _strip_imports(jsx_source)
+
+    # Build script tags for extra libs
+    lib_scripts = ""
+    for lib in extra_libs:
+        if lib in ESM_LIBS:
+            lib_scripts += f'    <script src="{ESM_LIBS[lib]}"></script>\n'
+
+    # Build mount logic — try multiple detection strategies
+    component_name = default_export_name or "App"
+    # Also try to detect common component names from the source
+    # Look for: function ComponentName( or const ComponentName =
+    detected_names = re.findall(
+        r'(?:function|const|let|var|class)\s+([A-Z]\w+)',
+        cleaned_source
+    )
+    # Build fallback chain
+    candidates = [component_name]
+    for name in detected_names:
+        if name not in candidates and name not in ('React', 'ReactDOM', 'Component'):
+            candidates.append(name)
+
+    fallback_checks = " : ".join(
+        f"typeof {n} !== 'undefined' ? {n}" for n in candidates
+    ) + " : null"
+
+    # Escape </script> in JSX source to prevent premature tag closing
+    safe_source = cleaned_source.replace('</script>', '<\\/script>')
+
     reload_script = ""
     if ws_port:
         reload_script = f"""
     <script>
       (function() {{
-        let ws;
+        var ws;
         function connect() {{
           ws = new WebSocket('ws://localhost:{ws_port}');
           ws.onmessage = function(e) {{
@@ -107,43 +269,30 @@ def _build_html(jsx_path: Path, jsx_source: str, ws_port: int | None = None) -> 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{title}</title>
+    <script src="{REACT_CDN}"></script>
+    <script src="{REACT_DOM_CDN}"></script>
     <script src="{TAILWIND_CDN}"></script>
     <script src="{BABEL_CDN}"></script>
-    <script type="importmap">
-    {json.dumps(importmap, indent=2)}
-    </script>
-    <style>
+{lib_scripts}    <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         #root {{ min-height: 100vh; }}
     </style>{reload_script}
 </head>
 <body>
     <div id="root"></div>
-    <script>var exports = {{}}, module = {{ exports: exports }};</script>
-    <script type="text/babel" data-type="module" data-plugins="transform-modules-commonjs">
-{jsx_source}
+    <script type="text/babel">
+{safe_source}
 
 // ─── Mount ───
-const _mod = typeof App !== 'undefined' ? App
-           : typeof BenchConfigUI !== 'undefined' ? BenchConfigUI
-           : null;
+const _component = {fallback_checks};
 
-// Check for default export pattern
-const _default = (() => {{
-  // Babel commonjs transform puts default export on module.exports or exports.default
-  if (typeof exports !== 'undefined' && exports.default) return exports.default;
-  return _mod;
-}})();
-
-if (_default) {{
-  const React = require('react');
-  const ReactDOM = require('react-dom/client');
+if (_component) {{
   const root = ReactDOM.createRoot(document.getElementById('root'));
-  root.render(React.createElement(_default));
+  root.render(React.createElement(_component));
 }} else {{
   document.getElementById('root').innerHTML =
     '<div style="padding:40px;color:#888;font-family:monospace;">' +
-    'No default export or App/BenchConfigUI component found.' +
+    'No component found. Export a default or define a PascalCase function.' +
     '</div>';
 }}
     </script>
@@ -154,7 +303,7 @@ if (_default) {{
 # ─── File Watcher (no dependencies) ───
 
 class FileWatcher:
-    """Watch files for changes using polling. No watchdog dependency."""
+    """Watch files for changes using polling."""
 
     def __init__(self, paths: list[Path], callback, interval: float = RELOAD_INTERVAL):
         self.paths = paths
@@ -221,7 +370,7 @@ class SimpleWSServer:
 
         while True:
             try:
-                conn, addr = self._server.accept()
+                conn, _ = self._server.accept()
                 t = threading.Thread(target=self._handshake, args=(conn,), daemon=True)
                 t.start()
             except socket.timeout:
@@ -230,14 +379,12 @@ class SimpleWSServer:
                 break
 
     def _handshake(self, conn: socket.socket):
-        """Perform WebSocket handshake."""
         try:
             data = conn.recv(4096).decode("utf-8", errors="replace")
             if "Upgrade: websocket" not in data:
                 conn.close()
                 return
 
-            # Extract Sec-WebSocket-Key
             key = ""
             for line in data.split("\r\n"):
                 if line.startswith("Sec-WebSocket-Key:"):
@@ -249,7 +396,6 @@ class SimpleWSServer:
                 return
 
             import base64
-            import struct
 
             magic = "258EAFA5-E914-47DA-95CA-5AB5DC11B85A"
             accept = base64.b64encode(
@@ -265,7 +411,6 @@ class SimpleWSServer:
             conn.sendall(response.encode())
             self.clients.append(conn)
 
-            # Keep connection alive — read and discard
             while True:
                 try:
                     d = conn.recv(1024)
@@ -284,12 +429,9 @@ class SimpleWSServer:
                 pass
 
     def send_reload(self):
-        """Send 'reload' message to all connected WebSocket clients."""
-        import struct
-
         msg = b"reload"
         frame = bytearray()
-        frame.append(0x81)  # text frame, FIN
+        frame.append(0x81)
         frame.append(len(msg))
         frame.extend(msg)
 
@@ -312,8 +454,6 @@ class SimpleWSServer:
 # ─── HTTP Handler ───
 
 class JSXHandler(http.server.BaseHTTPRequestHandler):
-    """HTTP handler that serves JSX files wrapped in HTML."""
-
     jsx_files: dict[str, Path] = {}
     base_dir: Path = Path(".")
     ws_port: int | None = None
@@ -321,29 +461,23 @@ class JSXHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path = unquote(self.path.lstrip("/"))
 
-        # Root — serve index or file listing
         if not path or path == "/":
             if len(self.jsx_files) == 1:
-                # Single file mode — serve directly
                 name = list(self.jsx_files.keys())[0]
                 self._serve_jsx(self.jsx_files[name])
             else:
                 self._serve_index()
             return
 
-        # Check if it's a JSX route
-        # Strip .html suffix if present
         route = path.removesuffix(".html")
         if route in self.jsx_files:
             self._serve_jsx(self.jsx_files[route])
             return
 
-        # Also try with .jsx extension stripped
         if route.removesuffix(".jsx") in self.jsx_files:
             self._serve_jsx(self.jsx_files[route.removesuffix(".jsx")])
             return
 
-        # Static file
         static_path = self.base_dir / path
         if static_path.is_file():
             self._serve_static(static_path)
@@ -403,7 +537,6 @@ jsxserve</h1>
             self.send_error(500, str(e))
 
     def log_message(self, format, *args):
-        # Quieter logging
         if args and "404" in str(args[0]):
             return
         path = args[0] if args else ""
@@ -424,7 +557,6 @@ def find_free_port(start: int = 9100) -> int:
 
 
 def discover_jsx(directory: Path) -> dict[str, Path]:
-    """Find all .jsx files in directory."""
     files = {}
     for p in sorted(directory.rglob("*.jsx")):
         rel = p.relative_to(directory)
@@ -438,16 +570,15 @@ def main():
         prog="jsxserve",
         description="Serve JSX files locally. Zero Node.js dependency.",
     )
-    parser.add_argument("file", nargs="?", help="JSX file to serve (default: all in cwd)")
-    parser.add_argument("--port", "-p", type=int, default=DEFAULT_PORT, help=f"HTTP port (default: {DEFAULT_PORT})")
-    parser.add_argument("--dir", "-d", default=".", help="Directory to serve from")
-    parser.add_argument("--no-reload", action="store_true", help="Disable auto-reload")
-    parser.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
+    parser.add_argument("file", nargs="?", help="JSX file to serve")
+    parser.add_argument("--port", "-p", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--dir", "-d", default=".")
+    parser.add_argument("--no-reload", action="store_true")
+    parser.add_argument("--host", default="127.0.0.1")
 
     args = parser.parse_args()
     base_dir = Path(args.dir).resolve()
 
-    # Discover JSX files
     if args.file:
         jsx_path = Path(args.file).resolve()
         if not jsx_path.exists():
@@ -461,7 +592,6 @@ def main():
             print(f"No .jsx files found in {base_dir}")
             sys.exit(1)
 
-    # WebSocket for auto-reload
     ws_port = None
     ws_server = None
     watcher = None
@@ -478,17 +608,15 @@ def main():
         watcher = FileWatcher(list(jsx_files.values()), on_change)
         watcher.start()
 
-    # Configure handler
     JSXHandler.jsx_files = jsx_files
     JSXHandler.base_dir = base_dir
     JSXHandler.ws_port = ws_port
 
-    # Start HTTP server
     server = http.server.HTTPServer((args.host, args.port), JSXHandler)
 
     print(f"\n  jsxserve")
     print(f"  {'─' * 40}")
-    for name, path in jsx_files.items():
+    for name in jsx_files:
         print(f"  → http://{args.host}:{args.port}/{name}")
     if len(jsx_files) > 1:
         print(f"  → http://{args.host}:{args.port}/")

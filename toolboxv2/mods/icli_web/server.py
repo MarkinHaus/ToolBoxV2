@@ -740,8 +740,8 @@ def _broadcast_monitor(event: dict):
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 def main():
-    host = os.environ.get("ICLI_WEB_HOST", "127.0.0.1")
-    port = int(os.environ.get("ICLI_WEB_PORT", "5055"))
+    host = os.getenv("ICLI_WEB_HOST", "127.0.0.1")
+    port = int(os.getenv("ICLI_WEB_PORT", "5055"))
     key = load_key()
     os.environ["ICLI_WEB_API_KEY"] = key  # propagate if reloaded
 

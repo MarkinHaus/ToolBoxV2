@@ -100,14 +100,16 @@ def _async_gen_to_sync(async_gen, loop):
     return _gen()
 
 def _maybe_inject_style(html_str: str) -> str:
-    """Inject Paper CSS into HTML responses that don't have TBJS web_context.
+    """Inject Paper CSS into HTML responses that lack TBJS web_context.
 
     Skips injection if:
-    - HTML already contains TBJS markers (tbjs, TB.init, web_context)
-    - HTML already has a <style> tag (user styled it themselves)
-    - inject_style is False on the FastTB instance
+    - Not a string or empty
+    - inject_style globally disabled
+    - HTML already contains TBJS markers (tbjs-main, TB.init, web_context)
+    - HTML already has substantial user CSS (>200 chars in a <style> block
+      that isn't from _SHARED_CSS / ftb-wrap)
 
-    Injects right before </head> if present, otherwise prepends.
+    Injects: fonts + main.css + paper.css + data-style="paper" on <html>.
     """
     if not html_str or not isinstance(html_str, str):
         return html_str
@@ -115,20 +117,34 @@ def _maybe_inject_style(html_str: str) -> str:
     if not globals().get('_inject_style_enabled', True):
         return html_str
 
-    lower = html_str[:2000].lower()
+    lower = html_str[:3000].lower()
 
     # Already has TBJS — don't touch
-    if "tbjs" in lower or "tb.init" in lower or "web_context" in lower or "tbjs-main" in lower:
+    if any(m in lower for m in ("tbjs-main", "tb.init", "web_context", "tbjs.js")):
         return html_str
 
-    # Already has substantial styling — don't touch
-    # (small inline styles on elements don't count, only <style> blocks)
-    if "<style>" in lower and len(html_str[lower.index("<style>"):].split("</style>")[0]) > 200:
-        return html_str
+    # Already has substantial user styling (not our own ftb- classes)
+    if "<style>" in lower:
+        style_start = lower.index("<style>") + 7
+        style_end = lower.find("</style>", style_start)
+        if style_end == -1:
+            style_end = len(lower)
+        style_content = html_str[style_start:style_end]
+        # Our own defaults use .ftb- prefixed classes — don't count those
+        if len(style_content) > 200 and ".ftb-" not in style_content[:100]:
+            return html_str
 
-    from toolboxv2.utils.workers.fast_tb_defaults import _PAPER_CSS, _FONTS
+    from toolboxv2.utils.workers.fast_tb_defaults import _MAIN_CSS, _PAPER_CSS, _FONTS
 
-    style_block = f"{_FONTS}\n<style>{_PAPER_CSS}</style>\n"
+    style_block = f"{_FONTS}\n<style>{_MAIN_CSS}</style>\n<style>{_PAPER_CSS}</style>\n"
+
+    # Ensure data-style="paper" on <html>
+    if "<html" in html_str:
+        if 'data-style=' not in html_str[:500]:
+            html_str = html_str.replace("<html", '<html data-style="paper"', 1)
+    else:
+        # No <html> tag — wrap minimally
+        html_str = '<html data-style="paper">\n' + html_str
 
     # Inject before </head>
     if "</head>" in html_str:
@@ -137,10 +153,11 @@ def _maybe_inject_style(html_str: str) -> str:
     # Inject before <body>
     if "<body" in html_str:
         idx = html_str.index("<body")
-        return html_str[:idx] + style_block + html_str[idx:]
+        return html_str[:idx] + "<head>" + style_block + "</head>\n" + html_str[idx:]
 
-    # No head/body — prepend
-    return style_block + html_str
+    # No head/body — prepend after <html>
+    idx = html_str.index(">", html_str.index("<html")) + 1
+    return html_str[:idx] + "\n<head>" + style_block + "</head>\n" + html_str[idx:]
 
 def _is_hashed_filename(path: str) -> bool:
     """Check if filename contains a content hash (e.g. main-5d3f7ed2.js).

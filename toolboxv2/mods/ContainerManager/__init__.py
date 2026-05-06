@@ -28,9 +28,8 @@ Name, version = "ContainerManager", "1.0.0"
 # Admin Key (aus Environment Variable)
 ADMIN_KEY = os.getenv("CONTAINER_ADMIN_KEY", "admin-change-me")
 
-# Docker SDK (lazy import)
-_docker_client = None
-_docker_available = None
+# Docker abstraction layer (singleton)
+from toolboxv2.mods.ContainerManager.docker_ops import get_docker_ops, DockerOps
 
 
 @dataclass
@@ -71,7 +70,8 @@ class ContainerStats:
     uptime_seconds: float = 0.0
     last_update: float = field(default_factory=time.time)
 
-
+    def to_dict(self) -> dict:
+        return asdict(self)
 # ============================================================================
 # CONFIG
 # ============================================================================
@@ -81,26 +81,10 @@ CONTAINER_TYPES = {
     "cli_v4": {
         "image": "toolboxv2:latest",
         "internal_port": 8080,
-        "command": "python -m toolboxv2.flows.minicli",
+        "command": "tb -m cli",
         "environment": {"MODE": "cli_v4"},
         "memory_limit": "512m",
         "cpu_limit": "0.5",
-    },
-    "project_dev": {
-        "image": "toolboxv2:dev",
-        "internal_port": 8501,
-        "command": "streamlit run app.py",
-        "environment": {"MODE": "project_dev"},
-        "memory_limit": "1g",
-        "cpu_limit": "1.0",
-    },
-    "preview_server": {
-        "image": "toolboxv2:latest",
-        "internal_port": 8600,
-        "command": "python -m preview_server",
-        "environment": {"MODE": "preview"},
-        "memory_limit": "256m",
-        "cpu_limit": "0.3",
     },
     "custom": {
         "image": "toolboxv2:latest",
@@ -109,6 +93,14 @@ CONTAINER_TYPES = {
         "environment": {},
         "memory_limit": "512m",
         "cpu_limit": "0.5",
+    },
+    "isaa": {
+        "image": "toolboxv2:latest",
+        "internal_port": 5055,
+        "command": "sh -c 'tb -c icli_web server & sleep 3 && tb -m icli'",
+        "environment": {"MODE": "isaa"},
+        "memory_limit": "1g",
+        "cpu_limit": "1.0",
     },
 }
 
@@ -123,21 +115,11 @@ SSH_PORT_POOL_END = 22500
 # ============================================================================
 
 def get_docker():
-    """Get Docker SDK client or return None if unavailable"""
-    global _docker_client, _docker_available
-
-    if _docker_available is False:
-        return None
-
-    try:
-        if _docker_client is None:
-            import docker
-            _docker_client = docker.from_env()
-            _docker_available = True
-        return _docker_client
-    except Exception:
-        _docker_available = False
-        return None
+    """Compatibility wrapper — returns DockerOps if available, else None."""
+    ops = get_docker_ops()
+    if ops.is_available():
+        return ops
+    return None
 
 
 def check_admin_key(key: str) -> bool:
@@ -172,6 +154,23 @@ async def db_get_container(app, container_id: str) -> Optional[ContainerSpec]:
     except Exception:
         return None
 
+async def db_resolve_container(app, container_id: str) -> tuple[Optional[ContainerSpec], str]:
+    """Resolve a (possibly truncated) container_id to spec + full ID."""
+    spec = await db_get_container(app, container_id)
+    if spec:
+        return spec, container_id
+    if len(container_id) <= 12:
+        result = await app.a_run_any(TBEF.DB.GET, query="CONTAINER::*", get_results=True)
+        if not result.is_error() and result.get():
+            import json
+            for item in result.get():
+                try:
+                    data = json.loads(item) if isinstance(item, str) else item
+                    if isinstance(data, dict) and data.get("container_id", "").startswith(container_id):
+                        return ContainerSpec.from_dict(data), data["container_id"]
+                except (json.JSONDecodeError, TypeError):
+                    continue
+    return None, container_id
 
 async def db_set_container(app, container: ContainerSpec) -> Result:
     """Speichere Container in TBEF.DB"""
@@ -317,46 +316,13 @@ async def db_release_ssh_port(app, port: int) -> Result:
 
 @export(mod_name=Name, version=version)
 async def start_ui(port=8123, host="localhost", **_):
-    import subprocess, sys
-    from toolboxv2 import tb_root_dir
-    # Check dependencies
-    try:
-        import streamlit
-        print(f"✅ Streamlit version: {streamlit.__version__}")
-    except ImportError:
-        print("❌ Streamlit not installed. Installing...")
-        subprocess.run([sys.executable, "-m", "pip", "install", "streamlit>=1.40.0"])
+    from toolboxv2.mods.ContainerManager.web_ui import container_ui_app
+    from toolboxv2.utils.workers.fast_tb_handler import FastTBHandler
 
-    # Build command
-    cmd = [
-        sys.executable, "-m", "streamlit", "run",
-        str(tb_root_dir /"mods"/"ContainerManager"/"ui.py"),
-        "--server.port", port,
-        "--server.address", host,
-        "--theme.base", "dark",
-        "--theme.primaryColor", "#6366f1",
-        "--theme.backgroundColor", "#0a0e17",
-        "--theme.secondaryBackgroundColor", "#1a2332",
-        "--theme.textColor", "#f1f5f9",
-    ]
-
-    print(f"""
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║   🚀 ProjectDeveloper Studio                                 ║
-║                                                              ║
-║   Starting on http://{host}:{port}                          ║
-║                                                              ║
-║   Press Ctrl+C to stop                                       ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-""")
-
-    # Run Streamlit
-    try:
-        subprocess.run(cmd)
-    except KeyboardInterrupt:
-        print("\n👋 Shutting down...")
+    # With waitress:
+    from waitress import serve
+    print(f"Starting UI at http://{host}:{port}")
+    serve(FastTBHandler(container_ui_app).as_wsgi_app(enable_ws=True), host=host, port=port)
 
 # ============================================================================
 # CONTAINER MANAGEMENT API
@@ -409,8 +375,8 @@ async def create_container(
         return err(f"Unknown container type: {container_type}. Valid: {list(CONTAINER_TYPES.keys())}")
 
     # Docker Check
-    docker = get_docker()
-    if not docker:
+    ops = get_docker_ops()
+    if not ops.is_available():
         return err("Docker not available")
 
     # Config zusammenstellen
@@ -432,10 +398,6 @@ async def create_container(
     if not port:
         return err("No free port available in pool")
 
-    port = await db_allocate_port(app)
-    if not port:
-        return err("No free port available in pool")
-
     ssh_port = None
     ssh_port = await db_allocate_ssh_port(app)
     if not ssh_port:
@@ -443,10 +405,15 @@ async def create_container(
         return err("No free SSH port available (22000-22500)")
 
     if ssh_public_key:
-        if not ssh_public_key.startswith("ssh-"):
+        import re
+        if not re.match(r'^ssh-(ed25519|rsa|ecdsa|dss) [A-Za-z0-9+/=]+ ?\S*$', ssh_public_key):
             await db_release_port(app, port)
             await db_release_ssh_port(app, ssh_port)
-            return err("ssh_public_key must start with 'ssh-'")
+            return err("Invalid SSH public key format")
+        if len(ssh_public_key) > 2048:
+            await db_release_port(app, port)
+            await db_release_ssh_port(app, ssh_port)
+            return err("SSH public key too long")
         env["SSH_PUBLIC_KEY"] = ssh_public_key
 
     name = container_name or f"{user_id}_{container_type}_{secrets.token_hex(4)}"
@@ -457,17 +424,18 @@ async def create_container(
         port_bindings["2222/tcp"] = ssh_port
 
     try:
-        container = docker.containers.run(
+        container_id = ops.create_container(
             image=image,
             name=name,
             command=command or default_command,
-            detach=True,
             ports=port_bindings,
             environment=env,
             volumes={volume_name: {"bind": "/data", "mode": "rw"}},
             mem_limit=memory_limit or default_memory,
             cpu_quota=int(float(cpu_limit or default_cpu) * 100000),
             restart_policy={"Name": "unless-stopped"},
+            tty=True,
+            stdin_open=True,
             labels={
                 "managed-by": "ContainerManager",
                 "user-id": user_id,
@@ -476,10 +444,10 @@ async def create_container(
                 **({"ssh-port": str(ssh_port)} if ssh_port else {}),
             }
         )
-        container.reload()
+        container_status = ops.get_container_status(container_id)
 
         spec = ContainerSpec(
-            container_id=container.id,
+            container_id=container_id,
             container_name=name,
             container_type=container_type,
             user_id=user_id,
@@ -487,29 +455,28 @@ async def create_container(
             internal_port=internal_port,
             image=image,
             volume_name=volume_name,
-            status=container.status,
+            status=container_status,
             env=env,
             ssh_port=ssh_port or 0,
         )
 
         await db_set_container(app, spec)
-        await db_add_user_container(app, user_id, container.id)
+        await db_add_user_container(app, user_id, container_id)
         await deploy_nginx_config(user_id, container_type, port)
 
         result_data = {
-            "container_id": container.id[:12],
+            "container_id": container_id[:12],
             "container_name": name,
             "port": port,
             "url": f"/container/{user_id}/{container_type}",
-            "status": container.status,
+            "status": container_status,
             "image": image,
         }
         if ssh_port:
-            import socket
+            server_ip = DockerOps.get_server_ip()
             result_data["ssh_port"] = ssh_port
             result_data["ssh_connection"] = (
-                f"ssh -i ~/.ssh/docksh_id_ed25519 -p {ssh_port} "
-                f"cli@{socket.gethostbyname(socket.gethostname())}"
+                f"ssh -i ~/.ssh/docksh_id_ed25519 -p {ssh_port} cli@{server_ip}"
             )
         return Result.json(data=result_data)
 
@@ -547,25 +514,31 @@ async def list_containers(
 
     # User Container-IDs laden
     if all:
-        # Alle Container aus DB laden (durch Prefix-Scan)
-        # Dies erfordert eine DB-Iteration - vorerst User-spezifisch
+        result = await app.a_run_any(
+            TBEF.DB.GET,
+            query="CONTAINER::*",
+            get_results=True
+        )
         container_ids = []
-        # TODO: Implementiere DB-Scan für CONTAINER::*
+        if not result.is_error() and result.get():
+            import json
+            for item in result.get():
+                try:
+                    data = json.loads(item) if isinstance(item, str) else item
+                    if isinstance(data, dict) and "container_id" in data:
+                        container_ids.append(data["container_id"])
+                except (json.JSONDecodeError, TypeError):
+                    continue
     else:
         container_ids = await db_get_user_containers(app, user_id)
 
     containers = []
+    ops = get_docker_ops()
     for cid in container_ids:
         spec = await db_get_container(app, cid)
         if spec:
-            # Status von Docker aktualisieren
-            docker = get_docker()
-            if docker:
-                try:
-                    c = docker.containers.get(cid)
-                    spec.status = c.status
-                except Exception:
-                    spec.status = "unknown"
+            # Live status from Docker via DockerOps
+            spec.status = ops.get_container_status(cid)
 
             containers.append({
                 "container_id": spec.container_id[:12],
@@ -596,7 +569,7 @@ async def get_container(
     if not container_id:
         return err("container_id required")
 
-    spec = await db_get_container(app, container_id)
+    spec, container_id = await db_resolve_container(app, container_id)
     if not spec:
         return err("Container not found")
 
@@ -604,43 +577,23 @@ async def get_container(
     if not check_admin_key(admin_key) and spec.user_id != user_id:
         return err("Not authorized to access this container")
 
-    # Status von Docker aktualisieren
-    docker = get_docker()
-    status = spec.status
+    # Live status + stats via DockerOps
+    ops = get_docker_ops()
+    status = ops.get_container_status(container_id)
+    if status == "docker_offline":
+        status = spec.status  # fallback to DB
+    raw_stats = ops.get_container_stats(container_id)
     stats = None
-    if docker:
-        try:
-            c = docker.containers.get(container_id)
-            c.reload()
-            status = c.status
-
-            # Stats sammeln
-            c_stats = c.stats(stream=False)
-            if c_stats:
-                stats = ContainerStats(
-                    container_id=container_id,
-                    last_update=time.time()
-                )
-                # CPU
-                cpu_delta = c_stats.get("cpu_stats", {}).get("cpu_usage", {}).get("total_usage", 0)
-                system_delta = c_stats.get("cpu_stats", {}).get("system_cpu_usage", 0)
-                online_cpus = c_stats.get("cpu_stats", {}).get("online_cpus", 1)
-                if system_delta > 0:
-                    stats.cpu_percent = (cpu_delta / system_delta) * online_cpus * 100
-
-                # Memory
-                mem_usage = c_stats.get("memory_stats", {}).get("usage", 0)
-                mem_limit = c_stats.get("memory_stats", {}).get("limit", 1)
-                stats.memory_mb = mem_usage / (1024 * 1024)
-                stats.memory_percent = (mem_usage / mem_limit) * 100 if mem_limit > 0 else 0
-
-                # Network
-                net_rx = c_stats.get("networks", {})
-                for iface, data in net_rx.items():
-                    stats.network_rx_bytes += data.get("rx_bytes", 0)
-                    stats.network_tx_bytes += data.get("tx_bytes", 0)
-        except Exception:
-            pass
+    if raw_stats:
+        stats = ContainerStats(
+            container_id=container_id,
+            cpu_percent=raw_stats["cpu_percent"],
+            memory_mb=raw_stats["memory_mb"],
+            memory_percent=raw_stats["memory_percent"],
+            network_rx_bytes=raw_stats["network_rx_bytes"],
+            network_tx_bytes=raw_stats["network_tx_bytes"],
+            last_update=time.time(),
+        )
 
     return Result.json(data={
         "container": spec.to_dict(),
@@ -664,7 +617,7 @@ async def delete_container(
     if not container_id:
         return err("container_id required")
 
-    spec = await db_get_container(app, container_id)
+    spec, container_id = await db_resolve_container(app, container_id)
     if not spec:
         return err("Container not found")
 
@@ -672,15 +625,16 @@ async def delete_container(
     if not check_admin_key(admin_key) and spec.user_id != user_id:
         return err("Not authorized to delete this container")
 
-    docker = get_docker()
-    if docker:
-        try:
-            c = docker.containers.get(container_id)
-            if c.status == "running" and not force:
-                return err("Container is running. Use force=True to stop and delete.")
-            c.remove(force=force)
-        except Exception as e:
-            return Result.default_internal_error(info=str(e))
+    ops = get_docker_ops()
+    if ops.is_available():
+        live_status = ops.get_container_status(container_id)
+        if live_status == "running" and not force:
+            return err("Container is running. Use force=True to stop and delete.")
+        if not ops.remove(container_id, force=force):
+            if live_status != "not_found":
+                return Result.default_internal_error(info="Failed to remove container")
+        # Clean up associated volume
+        ops.remove_volume(spec.volume_name)
 
     # Port freigeben
     await db_release_port(app, spec.port)
@@ -712,7 +666,7 @@ async def start_container(
     if not container_id:
         return err("container_id required")
 
-    spec = await db_get_container(app, container_id)
+    spec, container_id = await db_resolve_container(app, container_id)
     if not spec:
         return err("Container not found")
 
@@ -720,19 +674,16 @@ async def start_container(
     if not check_admin_key(admin_key) and spec.user_id != user_id:
         return err("Not authorized")
 
-    docker = get_docker()
-    if not docker:
+    ops = get_docker_ops()
+    if not ops.is_available():
         return err("Docker not available")
 
-    try:
-        c = docker.containers.get(container_id)
-        c.start()
-        c.reload()
-        spec.status = c.status
-        await db_set_container(app, spec)
-        return Result.json(data={"status": c.status})
-    except Exception as e:
-        return Result.default_internal_error(info=str(e))
+    if not ops.start(container_id):
+        return Result.default_internal_error(info="Failed to start container")
+    new_status = ops.get_container_status(container_id)
+    spec.status = new_status
+    await db_set_container(app, spec)
+    return Result.json(data={"status": new_status})
 
 
 @export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
@@ -747,7 +698,7 @@ async def stop_container(
     if not container_id:
         return err("container_id required")
 
-    spec = await db_get_container(app, container_id)
+    spec, container_id = await db_resolve_container(app, container_id)
     if not spec:
         return err("Container not found")
 
@@ -755,19 +706,16 @@ async def stop_container(
     if not check_admin_key(admin_key) and spec.user_id != user_id:
         return err("Not authorized")
 
-    docker = get_docker()
-    if not docker:
+    ops = get_docker_ops()
+    if not ops.is_available():
         return err("Docker not available")
 
-    try:
-        c = docker.containers.get(container_id)
-        c.stop(timeout=30)
-        c.reload()
-        spec.status = c.status
-        await db_set_container(app, spec)
-        return Result.json(data={"status": c.status})
-    except Exception as e:
-        return Result.default_internal_error(info=str(e))
+    if not ops.stop(container_id, timeout=30):
+        return Result.default_internal_error(info="Failed to stop container")
+    new_status = ops.get_container_status(container_id)
+    spec.status = new_status
+    await db_set_container(app, spec)
+    return Result.json(data={"status": new_status})
 
 
 @export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
@@ -782,7 +730,7 @@ async def restart_container(
     if not container_id:
         return err("container_id required")
 
-    spec = await db_get_container(app, container_id)
+    spec, container_id = await db_resolve_container(app, container_id)
     if not spec:
         return err("Container not found")
 
@@ -790,19 +738,16 @@ async def restart_container(
     if not check_admin_key(admin_key) and spec.user_id != user_id:
         return err("Not authorized")
 
-    docker = get_docker()
-    if not docker:
+    ops = get_docker_ops()
+    if not ops.is_available():
         return err("Docker not available")
 
-    try:
-        c = docker.containers.get(container_id)
-        c.restart(timeout=30)
-        c.reload()
-        spec.status = c.status
-        await db_set_container(app, spec)
-        return Result.json(data={"status": c.status})
-    except Exception as e:
-        return Result.default_internal_error(info=str(e))
+    if not ops.restart(container_id, timeout=30):
+        return Result.default_internal_error(info="Failed to restart container")
+    new_status = ops.get_container_status(container_id)
+    spec.status = new_status
+    await db_set_container(app, spec)
+    return Result.json(data={"status": new_status})
 
 
 @export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
@@ -819,7 +764,7 @@ async def container_logs(
     if not container_id:
         return err("container_id required")
 
-    spec = await db_get_container(app, container_id)
+    spec, container_id = await db_resolve_container(app, container_id)
     if not spec:
         return err("Container not found")
 
@@ -827,16 +772,12 @@ async def container_logs(
     if not check_admin_key(admin_key) and spec.user_id != user_id:
         return err("Not authorized")
 
-    docker = get_docker()
-    if not docker:
+    ops = get_docker_ops()
+    if not ops.is_available():
         return err("Docker not available")
 
-    try:
-        c = docker.containers.get(container_id)
-        logs = c.logs(tail=tail, timestamps=True).decode("utf-8")
-        return Result.json(data={"logs": logs, "container_id": container_id[:12]})
-    except Exception as e:
-        return Result.default_internal_error(info=str(e))
+    logs = ops.logs(container_id, tail=tail)
+    return Result.json(data={"logs": logs, "container_id": container_id[:12]})
 
 
 @export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
@@ -853,7 +794,7 @@ async def container_exec(
     if not container_id or not command:
         return err("container_id and command required")
 
-    spec = await db_get_container(app, container_id)
+    spec, container_id = await db_resolve_container(app, container_id)
     if not spec:
         return err("Container not found")
 
@@ -861,20 +802,18 @@ async def container_exec(
     if not check_admin_key(admin_key) and spec.user_id != user_id:
         return err("Not authorized")
 
-    docker = get_docker()
-    if not docker:
+    ops = get_docker_ops()
+    if not ops.is_available():
         return err("Docker not available")
 
-    try:
-        c = docker.containers.get(container_id)
-        exit_code, output = c.exec_run(f"sh -c '{command}'", timeout=timeout)
-        return Result.json(data={
-            "exit_code": exit_code,
-            "output": output.decode("utf-8", errors="replace"),
-            "container_id": container_id[:12]
-        })
-    except Exception as e:
-        return Result.default_internal_error(info=str(e))
+    exit_code, output = ops.exec_run(container_id, ["sh", "-c", command], timeout=timeout)
+    if exit_code == -1 and output == "Docker not available":
+        return Result.default_internal_error(info=output)
+    return Result.json(data={
+        "exit_code": exit_code,
+        "output": output,
+        "container_id": container_id[:12]
+    })
 
 
 # ============================================================================
@@ -938,14 +877,17 @@ async def remove_nginx_config(user_id: str, container_type: str) -> Result:
     if platform.system().lower() != "linux":
         return Result.ok()
 
+    sites_available = "/etc/nginx/box-available"
     sites_enabled = "/etc/nginx/box-enabled"
     symlink = f"{sites_enabled}/container-{user_id}-{container_type}.conf"
+    config_file = f"{sites_available}/container-{user_id}-{container_type}.conf"
 
-    try:
-        if os.path.exists(symlink):
-            os.remove(symlink)
-    except Exception:
-        pass
+    for path in (symlink, config_file):
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
 
     # Nginx reloaden
     try:
@@ -984,16 +926,214 @@ location /container/{user_id}/{container_type}/ {{
     proxy_buffering off;
     proxy_request_buffering off;
 
-    # CORS (für Preview Server)
-    add_header 'Access-Control-Allow-Origin' '*' always;
+    # CORS — restrict to own origin
+    add_header 'Access-Control-Allow-Origin' '$scheme://$host' always;
     add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
-    add_header 'Access-Control-Allow-Headers' '*' always;
+    add_header 'Access-Control-Allow-Headers' 'Authorization, Content-Type' always;
+    add_header 'Access-Control-Allow-Credentials' 'true' always;
 
     if ($request_method = 'OPTIONS') {{
         return 204;
     }}
 }}
 """
+
+
+# ============================================================================
+# NEW API ENDPOINTS — docker health, all containers, update
+# ============================================================================
+
+@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
+async def docker_health(app=None, request=None, admin_key: str = None) -> Result:
+    """Return Docker daemon status and container count."""
+    if not check_admin_key(admin_key or ""):
+        return err("Invalid admin key")
+
+    ops = get_docker_ops()
+    available = ops.is_available()
+    all_containers = ops.list_all_containers() if available else []
+    tb_count = sum(1 for c in all_containers if c.is_tb_managed)
+    ext_count = len(all_containers) - tb_count
+
+    return Result.json(data={
+        "docker_available": available,
+        "status": "online" if available else "offline",
+        "total_containers": len(all_containers),
+        "tb_managed": tb_count,
+        "external": ext_count,
+    })
+
+
+@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
+async def list_all_docker_containers(app=None, request=None, admin_key: str = None) -> Result:
+    """
+    List ALL Docker containers (not just TB-managed).
+    Each container is tagged as 'tb_managed' or 'external'.
+    """
+    if not check_admin_key(admin_key or ""):
+        return err("Invalid admin key")
+
+    ops = get_docker_ops()
+    if not ops.is_available():
+        return Result.json(data={"containers": [], "docker_available": False})
+
+    all_containers = ops.list_all_containers()
+    result = []
+    for c in all_containers:
+        entry = {
+            "container_id": c.container_id[:12],
+            "container_id_full": c.container_id,
+            "name": c.name,
+            "image": c.image,
+            "status": c.status,
+            "ports": c.ports,
+            "networks": c.networks,
+            "is_tb_managed": c.is_tb_managed,
+            "labels": c.labels,
+        }
+        result.append(entry)
+
+    return Result.json(data={"containers": result, "docker_available": True})
+
+
+@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
+async def update_container(
+    app=None,
+    request=None,
+    container_id: str = None,
+    admin_key: str = None,
+    pull: bool = True,
+) -> Result:
+    """
+    Update a container to the latest image without losing config.
+
+    1. Read spec from DB (ports, volumes, env, image)
+    2. Pull latest image (if pull=True)
+    3. Stop + remove old container (keep volume!)
+    4. Create new container with same spec
+    5. Update DB with new container_id
+    """
+    if not check_admin_key(admin_key or ""):
+        return err("Invalid admin key")
+
+    spec, container_id = await db_resolve_container(app, container_id)
+    if not spec:
+        return err(f"Container {container_id} not found")
+
+    ops = get_docker_ops()
+    if not ops.is_available():
+        return err("Docker not available")
+
+    # Step 1: Pull new image (skip for local-only images)
+    if pull:
+        if not ops.pull_image(spec.image):
+            # Image might be local-only (built via tb docker-image)
+            # Check if it exists locally before failing
+            try:
+                client = ops._get_client()
+                client.images.get(spec.image)
+            except Exception:
+                return err(f"Failed to pull image: {spec.image}. Build locally with: tb docker-image")
+
+    # Step 2: Stop and remove old container (keep volume!)
+    ops.stop(container_id, timeout=30)
+    if not ops.remove(container_id, force=True):
+        live_status = ops.get_container_status(container_id)
+        if live_status != "not_found":
+            return err("Failed to remove old container")
+
+    # Step 3: Recreate with same config
+    port_bindings = {f"{spec.internal_port}/tcp": spec.port}
+    if spec.ssh_port:
+        port_bindings["2222/tcp"] = spec.ssh_port
+
+    try:
+        config = CONTAINER_TYPES.get(spec.container_type, CONTAINER_TYPES["custom"])
+        new_id = ops.create_container(
+            image=spec.image,
+            name=spec.container_name,
+            command=config.get("command"),
+            ports=port_bindings,
+            environment=spec.env,
+            volumes={spec.volume_name: {"bind": "/data", "mode": "rw"}},
+            mem_limit=config.get("memory_limit", "512m"),
+            cpu_quota=int(float(config.get("cpu_limit", "0.5")) * 100000),
+            restart_policy={"Name": "unless-stopped"},
+            labels={
+                "managed-by": "ContainerManager",
+                "user-id": spec.user_id,
+                "container-type": spec.container_type,
+                "port": str(spec.port),
+                **({"ssh-port": str(spec.ssh_port)} if spec.ssh_port else {}),
+            },
+        )
+    except Exception as e:
+        return Result.default_internal_error(info=f"Failed to recreate container: {e}")
+
+    # Step 4: Update DB — delete old, save new
+    await db_delete_container(app, container_id)
+    new_status = ops.get_container_status(new_id)
+    new_spec = ContainerSpec(
+        container_id=new_id,
+        container_name=spec.container_name,
+        container_type=spec.container_type,
+        user_id=spec.user_id,
+        port=spec.port,
+        internal_port=spec.internal_port,
+        image=spec.image,
+        volume_name=spec.volume_name,
+        status=new_status,
+        env=spec.env,
+        ssh_port=spec.ssh_port,
+    )
+    await db_set_container(app, new_spec)
+
+    # Update user container list: remove old, add new
+    await db_remove_user_container(app, spec.user_id, container_id)
+    await db_add_user_container(app, spec.user_id, new_id)
+
+    # Re-deploy nginx config (port unchanged, just in case)
+    await deploy_nginx_config(spec.user_id, spec.container_type, spec.port)
+
+    return Result.json(data={
+        "message": f"Container '{spec.container_name}' updated",
+        "old_container_id": container_id[:12],
+        "new_container_id": new_id[:12],
+        "status": new_status,
+        "image": spec.image,
+    })
+
+
+@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
+async def reconcile_status(
+    app=None,
+    request=None,
+    container_id: str = None,
+    admin_key: str = None,
+) -> Result:
+    """
+    Reconcile a single container's status: read live from Docker, update DB.
+    Used by the frontend polling loop (one container per call).
+    """
+    if not check_admin_key(admin_key or ""):
+        return err("Invalid admin key")
+    if not container_id:
+        return err("container_id required")
+
+    ops = get_docker_ops()
+    new_status = ops.get_container_status(container_id)
+
+    # Update DB if we have a spec
+    spec, container_id = await db_resolve_container(app, container_id)
+    if spec and spec.status != new_status:
+        spec.status = new_status
+        await db_set_container(app, spec)
+
+    return Result.json(data={
+        "container_id": container_id[:12],
+        "status": new_status,
+        "docker_available": ops.is_available(),
+    })
 
 
 # ============================================================================
@@ -1134,47 +1274,44 @@ async def add_ssh_key_to_container(
     if not check_admin_key(admin_key or ""):
         return err("Invalid admin key")
 
-    docker = get_docker()
-    if not docker:
+    ops = get_docker_ops()
+    if not ops.is_available():
         return err("Docker not available")
 
-    spec = await db_get_container(app, container_id)
+    spec, container_id = await db_resolve_container(app, container_id)
     if not spec:
         return err(f"Container {container_id} not found")
 
-    spec = await db_get_container(app, container_id)
-    if not spec:
-        return err(f"Container {container_id} not found")
     if not spec.ssh_port:
         return err("Container has no SSH port allocated. Re-create with ssh_public_key.")
 
-    try:
-        container = docker.containers.get(container_id)
-        if container.status != "running":
-            return err("Container must be running to inject SSH key via exec.")
+    live_status = ops.get_container_status(container_id)
+    if live_status != "running":
+        return err("Container must be running to inject SSH key via exec.")
 
-        exec_result = container.exec_run(
-            f"sh -c 'mkdir -p /home/cli/.ssh && "
-            f"echo \"{ssh_public_key}\" >> /home/cli/.ssh/authorized_keys && "
-            f"chmod 700 /home/cli/.ssh && chmod 600 /home/cli/.ssh/authorized_keys && "
-            f"chown -R cli:cli /home/cli/.ssh'",
-            user="root"
-        )
-        if exec_result.exit_code != 0:
-            return err(f"exec failed: {exec_result.output.decode()}")
+    import base64
+    key_b64 = base64.b64encode(ssh_public_key.encode()).decode()
+    exit_code, output = ops.exec_run(
+        container_id,
+        ["sh", "-c",
+         f"mkdir -p /home/cli/.ssh && "
+         f"echo {key_b64} | base64 -d >> /home/cli/.ssh/authorized_keys && "
+         f"chmod 700 /home/cli/.ssh && chmod 600 /home/cli/.ssh/authorized_keys && "
+         f"chown -R cli:cli /home/cli/.ssh"],
+        user="root",
+    )
+    if exit_code != 0:
+        return err(f"exec failed: {output}")
 
-        import socket
-        server_ip = socket.gethostbyname(socket.gethostname())
-        return Result.json(data={
-            "message": "SSH key added",
-            "container_id": container_id,
-            "ssh_connection": f"ssh -i ~/.ssh/docksh_id_ed25519 -p {spec.ssh_port} cli@{server_ip}",
-            "server_ip": server_ip,
-            "ssh_port": spec.ssh_port,
-            "username": "cli",
-        })
-    except Exception as e:
-        return err(f"Failed to add SSH key: {str(e)}")
+    server_ip = DockerOps.get_server_ip()
+    return Result.json(data={
+        "message": "SSH key added",
+        "container_id": container_id,
+        "ssh_connection": f"ssh -i ~/.ssh/docksh_id_ed25519 -p {spec.ssh_port} cli@{server_ip}",
+        "server_ip": server_ip,
+        "ssh_port": spec.ssh_port,
+        "username": "cli",
+    })
 
 
 @export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
@@ -1188,7 +1325,10 @@ async def register_ssh_key(
     Auth über CloudM Session (kein admin_key nötig).
     Gibt SSH-Verbindungsinfos zurück.
     """
-    if not ssh_public_key or not ssh_public_key.startswith("ssh-"):
+    import re
+    if not ssh_public_key or not re.match(r'^ssh-(ed25519|rsa|ecdsa|dss) [A-Za-z0-9+/=]+ ?\S*$', ssh_public_key):
+        return err("Invalid SSH public key format")
+    if len(ssh_public_key) > 2048:
         return err("ssh_public_key required and must start with 'ssh-'")
 
     # CloudM Auth: user_id aus dem Request-Token holen
@@ -1214,28 +1354,31 @@ async def register_ssh_key(
     if spec.user_id != user_id:
         return err("Not authorized")
 
-    docker = get_docker()
-    if not docker:
+    ops = get_docker_ops()
+    if not ops.is_available():
         return err("Docker not available")
 
     try:
-        container = docker.containers.get(spec.container_id)
-        if container.status != "running":
+        container_status = ops.get_container_status(spec.container_id)
+        if container_status != "running":
             return err("Container is not running")
 
-        exec_result = container.exec_run(
-            f"sh -c 'mkdir -p /home/cli/.ssh && "
-            f"echo \"{ssh_public_key}\" >> /home/cli/.ssh/authorized_keys && "
-            f"chmod 700 /home/cli/.ssh && "
-            f"chmod 600 /home/cli/.ssh/authorized_keys && "
-            f"chown -R cli:cli /home/cli/.ssh'",
-            user="root"
+        import base64
+        key_b64 = base64.b64encode(ssh_public_key.encode()).decode()
+        exit_code, output = ops.exec_run(
+            spec.container_id,
+            ["sh", "-c",
+             f"mkdir -p /home/cli/.ssh && "
+             f"echo {key_b64} | base64 -d >> /home/cli/.ssh/authorized_keys && "
+             f"chmod 700 /home/cli/.ssh && "
+             f"chmod 600 /home/cli/.ssh/authorized_keys && "
+             f"chown -R cli:cli /home/cli/.ssh"],
+            user="root",
         )
-        if exec_result.exit_code != 0:
-            return err(f"Key injection failed: {exec_result.output.decode()}")
+        if exit_code != 0:
+            return err(f"Key injection failed: {output}")
 
-        import socket
-        server_ip = socket.gethostbyname(socket.gethostname())
+        server_ip = DockerOps.get_server_ip()
         return Result.json(data={
             "message": "SSH key registered",
             "ssh_port": spec.ssh_port,
@@ -1267,8 +1410,7 @@ async def get_my_ssh_info(
         return err("No container assigned")
 
     results = []
-    import socket
-    server_ip = socket.gethostbyname(socket.gethostname())
+    server_ip = DockerOps.get_server_ip()
 
     for cid in container_ids:
         spec = await db_get_container(app, cid)
@@ -1311,22 +1453,17 @@ async def get_container_ssh_info(
     if not check_admin_key(admin_key or ""):
         return err("Invalid admin key")
 
-    spec = await db_get_container(app, container_id)
-    if not spec:
-        return err(f"Container {container_id} not found")
-
-    docker = get_docker()
-    if not docker:
+    ops = get_docker_ops()
+    if not ops.is_available():
         return err("Docker not available")
 
-    spec = await db_get_container(app, container_id)
+    spec, container_id = await db_resolve_container(app, container_id)
     if not spec:
         return err(f"Container {container_id} not found")
     if not spec.ssh_port:
         return err("Container has no SSH port. Re-create with ssh_public_key parameter.")
 
-    import socket
-    server_ip = socket.gethostbyname(socket.gethostname())
+    server_ip = DockerOps.get_server_ip()
     return Result.json(data={
         "container_id": container_id,
         "container_name": spec.container_name,
@@ -1367,34 +1504,22 @@ async def list_ssh_containers(
 
     containers = result.get().get("containers", [])
 
-    # Filter für Container mit SSH (Port 2222)
+    # Filter for containers with SSH from DB specs
     ssh_containers = []
+    ops = get_docker_ops()
+    server_ip = DockerOps.get_server_ip()
     for c in containers:
-        try:
-            docker = get_docker()
-            container = docker.containers.get(c["container_id"])
-            if "2222/tcp" in container.ports:
-                # SSH Port holen
-                ssh_port = None
-                for port_binding in container.ports.get("2222/tcp", []):
-                    if "HostPort" in port_binding:
-                        ssh_port = int(port_binding["HostPort"])
-                        break
-
-                if ssh_port:
-                    import socket
-                    server_ip = socket.gethostbyname(socket.gethostname())
-
-                    ssh_containers.append({
-                        **c,
-                        "ssh_enabled": True,
-                        "ssh_port": ssh_port,
-                        "server_ip": server_ip,
-                        "connection_string": f"ssh -p {ssh_port} cli@{server_ip}"
-                    })
-        except Exception:
-            # Container nicht verfügbar oder keine SSH
-            pass
+        cid_full = c["container_id"]
+        # Look up spec in DB for ssh_port info
+        spec = await db_get_container(app, cid_full)
+        if spec and spec.ssh_port:
+            ssh_containers.append({
+                **c,
+                "ssh_enabled": True,
+                "ssh_port": spec.ssh_port,
+                "server_ip": server_ip,
+                "connection_string": f"ssh -p {spec.ssh_port} cli@{server_ip}"
+            })
 
     return Result.json(data={
         "containers": ssh_containers,

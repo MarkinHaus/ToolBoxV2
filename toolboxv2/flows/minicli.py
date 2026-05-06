@@ -19,7 +19,6 @@ from prompt_toolkit.shortcuts import set_title
 from prompt_toolkit.styles import Style as PTStyle
 
 from toolboxv2 import App, Result, Code
-from toolboxv2.tb_browser.install import detect_shell
 from toolboxv2.utils.extras.Style import Style, cls
 from toolboxv2.utils.extras.blobs import BlobFile
 
@@ -827,6 +826,30 @@ class BeastCLI:
         signal.signal(signal.SIGINT, signal_handler)
 
         try:
+            import os, platform,shutil
+            def detect_shell():
+                """
+                Detects the best available shell and the argument to execute a command.
+                Returns:
+                    A tuple of (shell_executable, command_argument).
+                    e.g., ('/bin/bash', '-c') or ('powershell.exe', '-Command')
+                """
+                if platform.system() == "Windows":
+                    if shell_path := shutil.which("pwsh"):
+                        return shell_path, "-Command"
+                    if shell_path := shutil.which("powershell"):
+                        return shell_path, "-Command"
+                    return "cmd.exe", "/c"
+
+                shell_env = os.environ.get("SHELL")
+                if shell_env and shutil.which(shell_env):
+                    return shell_env, "-c"
+
+                for shell in ["bash", "zsh", "sh"]:
+                    if shell_path := shutil.which(shell):
+                        return shell_path, "-c"
+
+                return "/bin/sh", "-c"
             # Prozess starten OHNE capture_output
             a,b = detect_shell()
             current_process = subprocess.Popen(

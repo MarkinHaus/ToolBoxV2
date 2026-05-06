@@ -22,11 +22,13 @@ import sys
 from toolboxv2 import tb_root_dir, profile_code, _feature_enabled
 from toolboxv2.utils.system.feature_manager import FeatureManager
 from toolboxv2.flows import flows_dict as flows_dict_func
-from toolboxv2.setup_helper import run_command
+try:
+    from toolboxv2.setup_helper import run_command
+except ImportError as e:
+    run_command = lambda x:print(x, f"run_command error {e}")
 from toolboxv2.utils import get_app
 from toolboxv2.utils.clis.db_cli_manager import cli_db_runner
 from toolboxv2.utils.clis.user_manager import main as user_manager_main
-from toolboxv2.utils.clis.tb_lang_cli import cli_tbx_main
 from toolboxv2.utils.clis.tcm_p2p_cli import cli_tcm_runner
 from toolboxv2.utils.extras.Style import Spinner, Style
 from toolboxv2.utils.system import CallingObject, get_state_from_app
@@ -2045,7 +2047,8 @@ def runner_setup():
         "registry": lambda: __import__(
             "toolboxv2.utils.clis.cli_registry", fromlist=["registry"]
         ).registry(),
-        "run": cli_tbx_main,
+        "run":  lambda: __import__(
+            "toolboxv2.utils.clis.tb_lang_cli", fromlist=["cli_tbx_main"]).cli_tbx_main(),
         "user": user_manager_main,
         "default": interactive_user_dashboard,
         "workers": cli_worker_manager,
