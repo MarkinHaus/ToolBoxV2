@@ -21,7 +21,6 @@ from enum import Enum, auto
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Callable
 
-
 if TYPE_CHECKING:
     from toolboxv2.mods.isaa.base.Agent.lsp_manager import Diagnostic, LSPManager
 
@@ -544,7 +543,6 @@ class VFSFile:
             raise ContentNotLoadedError(f"File not opened: {self.filename}")
         return self._content or ""
 
-
     @content.setter
     def content(self, value: str):
         self._content = value
@@ -575,10 +573,16 @@ class VFSFile:
 # VIRTUAL FILE SYSTEM V2
 # =============================================================================
 
+
 def unescape_string(text: str) -> str:
     """Delegiert an _decode_content — einzige Quelle der Wahrheit."""
-    from toolboxv2.mods.isaa.base.patch.vfs_shell_tool import _decode_content, _strip_quotes
+    from toolboxv2.mods.isaa.base.patch.vfs_shell_tool import (
+        _decode_content,
+        _strip_quotes,
+    )
+
     return _decode_content(_strip_quotes(text))
+
 
 class VirtualFileSystemV2:
     """
@@ -626,7 +630,8 @@ class VirtualFileSystemV2:
 
     def _build_vfs_guide(self) -> str:
         """Build the VFS usage guide that is injected as /vfs_guide.md."""
-        return r"""# VFS — Schnellreferenz
+        return (
+            r"""# VFS — Schnellreferenz
 
 ## Die zwei Kern-Tools
 
@@ -785,7 +790,8 @@ pythonBei Verbindungsabbruch: `write_chunk_status /src/big.py` prüft, welche In
 Wenn Content Quotes, Triple-Quotes oder Sonderzeichen enthält → Heredoc:
 write /src/app.py <<'_VFS_END_a799'
 class App:
-TEMPLATE = """+'''"""<html>{content}</html>"""
+TEMPLATE = """
+            + '''"""<html>{content}</html>"""
 def run(self):
 print('it\'s working')
 _VFS_END_a799
@@ -833,6 +839,16 @@ _VFS_END_a799
 "sync"
 ```
 
+# Alternation — ERE-Syntax direkt (ohne \\|):
+grep -rn 'minio|redis|external|host_network' /tb/.../__init__.py
+
+# Oder einzeln:
+grep -rn 'minio' /path && grep -rn 'redis' /path
+
+# Statt find -exec:
+grep -rn 'create_container|network|docker' /tb/toolboxv2/mods/ContainerManager
+
+
 > ⚠️ **Wichtig — Zeilenumbrüche (`\\n`) sind kein Separator.**
 > Echter Newline in Datei-Inhalten bleibt erhalten:
 > `write /f.py "class Foo:\\n    pass"` → eine Datei, kein Batch.
@@ -864,6 +880,7 @@ vfs_view(
 | `/shared/{id}/` | Cross-Session/Agent Shares  →  `vfs_share_*` Tools |
 | `/project/` | Typischer Einhängepunkt für lokale Projektordner  →  `vfs_mount` |
 '''
+        )
 
     def _init_system_files(self):
         """Initialize read-only system files"""
@@ -1029,7 +1046,10 @@ Session: {self.session_id}
         # Allow removal of readonly system files (but protect core system files)
         protected_files = ["/system_context.md", "/active_rules.md"]
         if vfs_path in protected_files:
-            return {"success": False, "error": f"Cannot remove protected system file: {vfs_path}"}
+            return {
+                "success": False,
+                "error": f"Cannot remove protected system file: {vfs_path}",
+            }
 
         # Store info for response
         local_path = getattr(f, "local_path", None)
@@ -1236,8 +1256,8 @@ Session: {self.session_id}
         local_path = None
 
         if mount:
-            rel_path = path[len(mount.vfs_path):].lstrip('/')
-            local_path = os.path.join(mount.local_path, rel_path.replace('/', os.sep))
+            rel_path = path[len(mount.vfs_path) :].lstrip("/")
+            local_path = os.path.join(mount.local_path, rel_path.replace("/", os.sep))
 
             try:
                 os.makedirs(local_path, exist_ok=True if parents else False)
@@ -1246,8 +1266,7 @@ Session: {self.session_id}
 
         # Create directory
         self.directories[path] = VFSDirectory(
-            name=self._get_basename(path),
-            readonly=mount.readonly if mount else False
+            name=self._get_basename(path), readonly=mount.readonly if mount else False
         )
         self._dirty = True
 
@@ -1300,7 +1319,8 @@ Session: {self.session_id}
         if not contents or force:
             # Sicherheitsnetz: alle verbliebenen Sub-Directories + sich selbst entfernen
             dirs_to_remove = [
-                p for p in list(self.directories.keys())
+                p
+                for p in list(self.directories.keys())
                 if p.startswith(path + "/") or p == path
             ]
             for d in dirs_to_remove:
@@ -1534,8 +1554,8 @@ Session: {self.session_id}
         backing_type = FileBackingType.MEMORY
 
         if mount:
-            rel_path = path[len(mount.vfs_path):].lstrip('/')
-            local_path = os.path.join(mount.local_path, rel_path.replace('/', os.sep))
+            rel_path = path[len(mount.vfs_path) :].lstrip("/")
+            local_path = os.path.join(mount.local_path, rel_path.replace("/", os.sep))
             backing_type = FileBackingType.MODIFIED
 
         self.files[path] = VFSFile(
@@ -1604,6 +1624,7 @@ Session: {self.session_id}
                 mount_key, relative, _ = shared_info
                 try:
                     from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
+
                     gvfs = get_global_vfs()
                     if mount_key == "global":
                         shared = gvfs.get_shared(relative)
@@ -1621,7 +1642,7 @@ Session: {self.session_id}
                                 "content": (
                                     content[:max_chars]
                                     + f"\n\n... [TRUNCATED: File is {len(content)} chars. "
-                                      "Use 'view' for specific lines] ..."
+                                    "Use 'view' for specific lines] ..."
                                     + content[-max_chars:]
                                 ),
                                 "truncated": True,
@@ -1631,15 +1652,22 @@ Session: {self.session_id}
                 except Exception as e:
                     print(e)
         # Auto-refresh for system files with auto-refresh enabled
-        if (isinstance(f, VFSFile) and f.readonly
+        if (
+            isinstance(f, VFSFile)
+            and f.readonly
             and getattr(f, "_auto_refresh", False)
-            and getattr(f, "local_path", None)):
+            and getattr(f, "local_path", None)
+        ):
             refresh_result = self._load_shadow_content(path)
             if not refresh_result["success"]:
                 return refresh_result
 
         # Auto-load for shadow files that were never loaded
-        elif isinstance(f, VFSFile) and f.backing_type == FileBackingType.SHADOW and not f.is_loaded:
+        elif (
+            isinstance(f, VFSFile)
+            and f.backing_type == FileBackingType.SHADOW
+            and not f.is_loaded
+        ):
             load_result = self._load_shadow_content(path)
             if not load_result["success"]:
                 return load_result
@@ -1667,7 +1695,7 @@ Session: {self.session_id}
                 return {
                     "success": False,
                     "error": f"Backing file missing: {f.local_path}",
-                    "hint": "File was deleted externally. Use vfs_refresh_mount to clean up."
+                    "hint": "File was deleted externally. Use vfs_refresh_mount to clean up.",
                 }
 
         content = f.content
@@ -1677,8 +1705,7 @@ Session: {self.session_id}
                 "content": (
                     content[:max_chars]
                     + f"\n\n... [TRUNCATED: File is {len(content)} chars. "
-                      "Use 'view' for specific lines] ...\n\n"
-                    + content[-max_chars:]
+                    "Use 'view' for specific lines] ...\n\n" + content[-max_chars:]
                 ),
                 "truncated": True,
                 "total_chars": len(content),
@@ -1707,14 +1734,15 @@ Session: {self.session_id}
             mount_key, relative, local_base = shared_info
             try:
                 from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
+
                 gvfs = get_global_vfs()
                 if mount_key == "global":
-                    result = gvfs.write_file(
-                        relative, content, author=self.agent_name
-                    )
+                    result = gvfs.write_file(relative, content, author=self.agent_name)
                 else:
                     result = gvfs.shared_write(
-                        mount_key, relative, content,
+                        mount_key,
+                        relative,
+                        content,
                         local_base=local_base,
                         author=self.agent_name,
                     )
@@ -1737,8 +1765,9 @@ Session: {self.session_id}
                             _content=content,
                             backing_type=FileBackingType.SHADOW,
                             local_path=local_path_on_disk,
-                            local_mtime=os.path.getmtime(local_path_on_disk) if os.path.exists(
-                                local_path_on_disk) else None,
+                            local_mtime=os.path.getmtime(local_path_on_disk)
+                            if os.path.exists(local_path_on_disk)
+                            else None,
                             size_bytes=len(content),
                             line_count=len(content.splitlines()),
                             is_dirty=False,
@@ -1763,7 +1792,6 @@ Session: {self.session_id}
                     "error": f"shared_write exception: {type(e).__name__}: {e}",
                 }
 
-
         if self._is_file(path):
             f = self.files[path]
 
@@ -1775,10 +1803,7 @@ Session: {self.session_id}
             if isinstance(f, VFSFile) and f.local_path and not f.is_dirty:
                 try:
                     disk_mtime = os.path.getmtime(f.local_path)
-                    if (
-                        f.local_mtime is not None
-                        and disk_mtime > f.local_mtime
-                    ):
+                    if f.local_mtime is not None and disk_mtime > f.local_mtime:
                         # Disk has newer version — another writer modified it.
                         # Reload transparently since we have no local changes
                         # to lose. This gives the agent the latest baseline.
@@ -1795,10 +1820,7 @@ Session: {self.session_id}
             if isinstance(f, VFSFile) and f.local_path and f.is_dirty:
                 try:
                     disk_mtime = os.path.getmtime(f.local_path)
-                    if (
-                        f.local_mtime is not None
-                        and disk_mtime > f.local_mtime
-                    ):
+                    if f.local_mtime is not None and disk_mtime > f.local_mtime:
                         return {
                             "success": False,
                             "error": f"Write conflict: {path} was modified externally",
@@ -1837,7 +1859,7 @@ Session: {self.session_id}
                             "success": True,
                             "message": f"Updated and synced '{path}'",
                             "synced_to": f.local_path,
-                            "is_dirty": False
+                            "is_dirty": False,
                         }
             else:
                 f.is_dirty = True
@@ -1877,6 +1899,7 @@ Session: {self.session_id}
 
         except Exception as e:
             from toolboxv2 import get_app
+
             get_app().debug_rains(e)
             return {"success": False, "error": f"Sync error: {e}"}
 
@@ -1898,10 +1921,11 @@ Session: {self.session_id}
         if path.startswith("/global/"):
             try:
                 from toolboxv2.mods.isaa.base.patch.power_vfs import (
-                    get_global_vfs,
                     GLOBAL_VFS_PATH,
+                    get_global_vfs,
                 )
-                relative = path[len(GLOBAL_VFS_PATH):].lstrip("/")
+
+                relative = path[len(GLOBAL_VFS_PATH) :].lstrip("/")
                 if not relative:
                     return None
                 gvfs = get_global_vfs()
@@ -1916,12 +1940,13 @@ Session: {self.session_id}
             return None
         try:
             from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
+
             gvfs = get_global_vfs()
             mount_key = gvfs.get_mount_key_for(mount.local_path)
             if mount_key is None:
                 return None
             # relative_path = path minus mount.vfs_path
-            relative = path[len(mount.vfs_path):].lstrip("/")
+            relative = path[len(mount.vfs_path) :].lstrip("/")
             if not relative:
                 return None
             return (mount_key, relative, mount.local_path)
@@ -1959,18 +1984,26 @@ Session: {self.session_id}
             mount_key, relative, local_base = shared_info
             try:
                 from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
+
                 gvfs = get_global_vfs()
 
                 # Wir holen den aktuellen Stand via VFS Read (liest direkt aus RAM-Store)
                 current = self.read(path)
-                new_content = (current["content"] if current.get("success") else "") + content
+                new_content = (
+                    current["content"] if current.get("success") else ""
+                ) + content
 
                 if mount_key == "global":
-                    result = gvfs.write_file(relative, new_content, author=self.agent_name)
+                    result = gvfs.write_file(
+                        relative, new_content, author=self.agent_name
+                    )
                 else:
                     result = gvfs.shared_write(
-                        mount_key, relative, new_content,
-                        local_base=local_base, author=self.agent_name
+                        mount_key,
+                        relative,
+                        new_content,
+                        local_base=local_base,
+                        author=self.agent_name,
                     )
 
                 if result.get("success"):
@@ -1982,8 +2015,14 @@ Session: {self.session_id}
                         f.size_bytes = len(new_content)
                         f.updated_at = datetime.now().isoformat()
                     self._dirty = True
-                    return {"success": True, "message": f"Appended to '{path}' via shared store"}
-                return {"success": False, "error": f"shared_write failed: {result.get('error')}"}
+                    return {
+                        "success": True,
+                        "message": f"Appended to '{path}' via shared store",
+                    }
+                return {
+                    "success": False,
+                    "error": f"shared_write failed: {result.get('error')}",
+                }
             except Exception as e:
                 return {"success": False, "error": f"shared_append exception: {e}"}
 
@@ -2014,7 +2053,10 @@ Session: {self.session_id}
             if mount and mount.auto_sync and f.local_path:
                 sync_result = self._sync_to_local(path)
                 if not sync_result["success"]:
-                    return {"success": False, "error": f"Sync failed: {sync_result['error']}"}
+                    return {
+                        "success": False,
+                        "error": f"Sync failed: {sync_result['error']}",
+                    }
         else:
             f.content += content
 
@@ -2065,7 +2107,10 @@ Session: {self.session_id}
             if mount and mount.auto_sync and f.local_path:
                 sync_result = self._sync_to_local(path)
                 if not sync_result["success"]:
-                    return {"success": False, "error": f"Sync failed: {sync_result['error']}"}
+                    return {
+                        "success": False,
+                        "error": f"Sync failed: {sync_result['error']}",
+                    }
 
                 # FIX: Update Shared-Store nach edit, sonst überschreibt
                 # read() den editierten Content mit dem alten Store-Stand.
@@ -2073,13 +2118,23 @@ Session: {self.session_id}
                 if shared_info is not None:
                     mount_key, relative, local_base = shared_info
                     try:
-                        from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
+                        from toolboxv2.mods.isaa.base.patch.power_vfs import (
+                            get_global_vfs,
+                        )
+
                         gvfs = get_global_vfs()
                         if mount_key == "global":
-                            gvfs.write_file(relative, new_full_content, author=self.agent_name)
+                            gvfs.write_file(
+                                relative, new_full_content, author=self.agent_name
+                            )
                         else:
-                            gvfs.shared_write(mount_key, relative, new_full_content, local_base=local_base,
-                                              author=self.agent_name)
+                            gvfs.shared_write(
+                                mount_key,
+                                relative,
+                                new_full_content,
+                                local_base=local_base,
+                                author=self.agent_name,
+                            )
                     except Exception as e:
                         print(f"Error editing file: {e}")
                         pass  # Disk is already written, shared-store is best-effort
@@ -2109,6 +2164,7 @@ Session: {self.session_id}
             mount_key, relative, local_base = shared_info
             try:
                 from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
+
                 gvfs = get_global_vfs()
                 if mount_key == "global":
                     result = gvfs.delete_file(relative)
@@ -2238,7 +2294,11 @@ Session: {self.session_id}
             current_mtime = os.path.getmtime(f.local_path)
 
             # Check if changed
-            if f.local_mtime and current_mtime == f.local_mtime and f._content is not None:
+            if (
+                f.local_mtime
+                and current_mtime == f.local_mtime
+                and f._content is not None
+            ):
                 return {"success": True, "skipped": "Unchanged"}
 
             # Load content
@@ -2685,6 +2745,7 @@ Session: {self.session_id}
     def to_checkpoint(self) -> dict:
         """Serialize VFS for checkpoint"""
         from toolboxv2.mods.isaa.base.patch.power_vfs import GLOBAL_VFS_PATH
+
         return {
             "session_id": self.session_id,
             "agent_name": self.agent_name,
@@ -2802,9 +2863,8 @@ Session: {self.session_id}
             vfs_path=vfs_path,
             local_path=local_path,
             allowed_extensions=allowed_extensions,
-            exclude_patterns=exclude_patterns or ShadowMount(
-            vfs_path=vfs_path,
-            local_path=local_path).exclude_patterns,
+            exclude_patterns=exclude_patterns
+            or ShadowMount(vfs_path=vfs_path, local_path=local_path).exclude_patterns,
             readonly=readonly,
             auto_sync=auto_sync,
         )
@@ -2822,6 +2882,7 @@ Session: {self.session_id}
             from toolboxv2.mods.isaa.base.patch.mount_poll_registry import (
                 get_mount_poll_registry,
             )
+
             get_mount_poll_registry().subscribe(
                 local_path=local_path,
                 vfs=self,
@@ -2831,6 +2892,7 @@ Session: {self.session_id}
             # Polling is a nice-to-have; don't fail the mount if the
             # registry is unavailable (e.g. during tests).
             import logging
+
             logging.getLogger("vfs.poll").warning(
                 f"Could not subscribe to poll registry: {_poll_err}"
             )
@@ -2915,7 +2977,6 @@ Session: {self.session_id}
                         stats["skipped"] += 1
                         continue
 
-
                     # FIX #1: Respect existing MODIFIED entries.
                     # If the file already exists in the VFS and has unsynced
                     # in-memory changes, do NOT overwrite — the agent is editing.
@@ -2973,7 +3034,9 @@ Session: {self.session_id}
                     stats["skipped"] += 1
         # FIX #2: Remove zombie entries — files/dirs that are in VFS but
         # no longer exist on disk. Protect dirty files (agent's unsynced work).
-        mount_prefix_file = mount.vfs_path if mount.vfs_path.endswith("/") else mount.vfs_path + "/"
+        mount_prefix_file = (
+            mount.vfs_path if mount.vfs_path.endswith("/") else mount.vfs_path + "/"
+        )
         mount_prefix_dir = mount_prefix_file
 
         for path in list(self.files.keys()):
@@ -3006,9 +3069,7 @@ Session: {self.session_id}
                 continue
             # Only remove empty dirs (files under it were removed above,
             # but shared dirs with other mounts should survive)
-            has_remaining = any(
-                p.startswith(path + "/") for p in self.files
-            ) or any(
+            has_remaining = any(p.startswith(path + "/") for p in self.files) or any(
                 p.startswith(path + "/") for p in self.directories if p != path
             )
             if not has_remaining:
@@ -3034,6 +3095,7 @@ Session: {self.session_id}
             from toolboxv2.mods.isaa.base.patch.mount_poll_registry import (
                 get_mount_poll_registry,
             )
+
             get_mount_poll_registry().unsubscribe(mount.local_path, self)
         except Exception as e:
             print(e)
@@ -3204,15 +3266,19 @@ Session: {self.session_id}
             from toolboxv2.mods.isaa.base.patch.mount_poll_registry import (
                 get_mount_poll_registry,
             )
+
             get_mount_poll_registry().unsubscribe_all(self)
         except Exception as e:
             print(e)
             pass  # Destructor must never raise
 
+
 import os
 
 
-def sync_obsidian_vault(vfs: VirtualFileSystemV2, local_vault_path: str, vfs_path: str = "/obsidian") -> dict:
+def sync_obsidian_vault(
+    vfs: VirtualFileSystemV2, local_vault_path: str, vfs_path: str = "/obsidian"
+) -> dict:
     """
     Bindet einen lokalen Obsidian-Vault bi-direktional in das VFS ein.
 
@@ -3234,13 +3300,7 @@ def sync_obsidian_vault(vfs: VirtualFileSystemV2, local_vault_path: str, vfs_pat
     is_new_mount = False
     if vfs_path not in vfs.mounts:
         # Obsidian-spezifische Excludes, damit die KI nicht die Config zerschießt
-        obsidian_excludes = [
-            ".obsidian",
-            ".trash",
-            ".git",
-            "*.lock",
-            ".DS_Store"
-        ]
+        obsidian_excludes = [".obsidian", ".trash", ".git", "*.lock", ".DS_Store"]
 
         # Mount erstellen (Metadata Scan)
         mount_result = vfs.mount(
@@ -3248,7 +3308,7 @@ def sync_obsidian_vault(vfs: VirtualFileSystemV2, local_vault_path: str, vfs_pat
             vfs_path=vfs_path,
             exclude_patterns=obsidian_excludes,
             readonly=False,
-            auto_sync=True  # WICHTIG: VFS schreibt sofort auf Disk
+            auto_sync=True,  # WICHTIG: VFS schreibt sofort auf Disk
         )
 
         if not mount_result["success"]:
@@ -3267,8 +3327,9 @@ def sync_obsidian_vault(vfs: VirtualFileSystemV2, local_vault_path: str, vfs_pat
         "stats": {
             "files_indexed": refresh_result.get("files_indexed", 0),
             "updated_from_disk": len(refresh_result.get("content_synced", [])),
-            "errors": refresh_result.get("errors", [])
-        }
+            "errors": refresh_result.get("errors", []),
+        },
     }
+
 
 VirtualFileSystem = VirtualFileSystemV2

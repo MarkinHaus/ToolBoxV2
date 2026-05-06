@@ -12,16 +12,17 @@ Author: FlowAgent V2
 
 import json
 import os
-import yaml
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any, Callable
 from enum import Enum
+from typing import Any, Callable
 
+import yaml
 
 # =============================================================================
 # DATA STRUCTURES
 # =============================================================================
+
 
 @dataclass
 class ToolGroup:
@@ -29,14 +30,15 @@ class ToolGroup:
     Groups multiple tools under a single display name.
     Instead of showing 50 Discord tools, show "discord_tools: Discord Server APIs"
     """
-    name: str                          # "discord_tools"
-    display_name: str                  # "Discord Server APIs"
-    description: str                   # Short description for agent
-    tool_names: list[str]              # Actual tool names in registry
-    trigger_keywords: list[str]        # ["discord", "server", "bot", "webhook"]
-    priority: int = 5                  # Sorting priority (1=highest)
-    icon: str = "🔧"                   # Display icon
-    auto_generated: bool = False       # True if from ToolManager category
+
+    name: str  # "discord_tools"
+    display_name: str  # "Discord Server APIs"
+    description: str  # Short description for agent
+    tool_names: list[str]  # Actual tool names in registry
+    trigger_keywords: list[str]  # ["discord", "server", "bot", "webhook"]
+    priority: int = 5  # Sorting priority (1=highest)
+    icon: str = "🔧"  # Display icon
+    auto_generated: bool = False  # True if from ToolManager category
 
     def matches_intent(self, intent: str) -> bool:
         """Check if this group matches the given intent"""
@@ -64,17 +66,18 @@ class SituationRule:
             "Only after explicit approval: save permanently"
         ]
     """
+
     id: str
-    situation: str                     # Context description
-    intent: str                        # What user wants to achieve
-    instructions: list[str]            # Step-by-step guidance
-    required_tool_groups: list[str]    # Tool groups needed
+    situation: str  # Context description
+    intent: str  # What user wants to achieve
+    instructions: list[str]  # Step-by-step guidance
+    required_tool_groups: list[str]  # Tool groups needed
 
     # Learning metadata
-    learned: bool = False              # Was this learned at runtime?
-    success_count: int = 0             # How often successfully used
-    failure_count: int = 0             # How often failed
-    confidence: float = 1.0            # Confidence in this rule (0.0-1.0)
+    learned: bool = False  # Was this learned at runtime?
+    success_count: int = 0  # How often successfully used
+    failure_count: int = 0  # How often failed
+    confidence: float = 1.0  # Confidence in this rule (0.0-1.0)
 
     # Timestamps
     created_at: datetime = field(default_factory=datetime.now)
@@ -82,7 +85,7 @@ class SituationRule:
 
     # Optional conditions
     preconditions: list[str] = field(default_factory=list)  # Must be true
-    postconditions: list[str] = field(default_factory=list) # Expected after
+    postconditions: list[str] = field(default_factory=list)  # Expected after
 
     def matches(self, situation: str, intent: str) -> float:
         """
@@ -134,15 +137,16 @@ class LearnedPattern:
         source_situation: "discord api work"
         confidence: 0.85
     """
-    pattern: str                       # The learned information
-    source_situation: str              # Where it was learned
-    confidence: float = 0.5            # How confident (0.0-1.0)
-    usage_count: int = 0               # How often referenced
+
+    pattern: str  # The learned information
+    source_situation: str  # Where it was learned
+    confidence: float = 0.5  # How confident (0.0-1.0)
+    usage_count: int = 0  # How often referenced
     created_at: datetime = field(default_factory=datetime.now)
     last_used: datetime | None = None
 
     # Optional categorization
-    category: str = "general"          # "api", "formatting", "workflow", etc.
+    category: str = "general"  # "api", "formatting", "workflow", etc.
     tags: list[str] = field(default_factory=list)
 
     def is_relevant_to(self, situation: str) -> bool:
@@ -154,8 +158,9 @@ class LearnedPattern:
         situation_words = set(situation_lower.split())
         source_words = set(source_lower.split())
 
-        return bool(situation_words & source_words) or \
-               any(tag.lower() in situation_lower for tag in self.tags)
+        return bool(situation_words & source_words) or any(
+            tag.lower() in situation_lower for tag in self.tags
+        )
 
     def use(self):
         """Mark pattern as used"""
@@ -168,18 +173,54 @@ class LearnedPattern:
 @dataclass
 class RuleResult:
     """Result of rule evaluation for an action"""
-    allowed: bool                      # Can the action proceed?
-    instructions: list[str]            # Additional instructions to follow
-    warnings: list[str]                # Warnings to consider
-    required_steps: list[str]          # Steps that must be done first
-    suggested_tool_group: str | None   # Recommended tool group
+
+    allowed: bool  # Can the action proceed?
+    instructions: list[str]  # Additional instructions to follow
+    warnings: list[str]  # Warnings to consider
+    required_steps: list[str]  # Steps that must be done first
+    suggested_tool_group: str | None  # Recommended tool group
     matched_rule: SituationRule | None = None  # The rule that matched
-    confidence: float = 1.0            # Confidence in this result
+    confidence: float = 1.0  # Confidence in this result
 
 
 # =============================================================================
 # MAIN RULESET CLASS
 # =============================================================================
+
+_VFS_HEADER_TEMPLATE = """\
+# Active Rules & Tool Groups
+
+## WORKING AGREEMENT — READ EVERY RUN
+- Zero-guessing policy: NEVER assume file contents, paths, signatures, state. LOOK IT UP.
+- Four-phase debug ONLY: Analyse → Narrow → Root Cause → Fix. No skipping to fix.
+- Deliver EXACTLY what is requested. No extras. No wrappers. No meta-commentary.
+- Read before write. View before edit. Verify before claiming done.
+- If an action failed: diagnose WHY before retrying. Never blind-retry.
+- Memory tool: EVERY run → recall relevant context. After meaningful work → store learnings.
+- RuleSet functions available — USE THEM:
+  - `ruleset.match_rules(situation, intent)` → find applicable rules
+  - `ruleset.set_situation(situation, intent)` → activate context
+  - `ruleset.learn_pattern(pattern, source)` → store runtime learnings
+  - `ruleset.record_rule_success(id)` / `record_rule_failure(id)` → feedback loop
+  - `ruleset.rule_on_action(action, context)` → check before destructive actions
+
+## General Rules (ALWAYS ACTIVE)
+{general_rules_block}
+
+## Current Situation
+Intent: {intent}
+Context: {situation}
+
+## Situation-Specific Rules
+{situation_rules_block}
+
+## Available Tool Groups
+{tool_groups_block}
+
+## Learned Patterns
+{patterns_block}
+"""
+
 
 class RuleSet:
     """
@@ -190,11 +231,7 @@ class RuleSet:
     - Live VFS integration
     """
 
-    def __init__(
-        self,
-        config_path: str | None = None,
-        auto_sync_vfs: bool = True
-    ):
+    def __init__(self, config_path: str | None = None, auto_sync_vfs: bool = True):
         """
         Initialize RuleSet.
 
@@ -205,6 +242,7 @@ class RuleSet:
         # Tool Groups
         self.tool_groups: dict[str, ToolGroup] = {}
 
+        self.general_rules: dict[str, SituationRule] = {}
         # Situation Rules
         self.situation_rules: dict[str, SituationRule] = {}
 
@@ -241,7 +279,7 @@ class RuleSet:
         description: str = "",
         priority: int = 5,
         icon: str = "🔧",
-        auto_generated: bool = False
+        auto_generated: bool = False,
     ) -> ToolGroup:
         """
         Register a new tool group.
@@ -267,7 +305,7 @@ class RuleSet:
             trigger_keywords=trigger_keywords,
             priority=priority,
             icon=icon,
-            auto_generated=auto_generated
+            auto_generated=auto_generated,
         )
 
         self.tool_groups[name] = group
@@ -278,7 +316,7 @@ class RuleSet:
     def register_tool_groups_from_categories(
         self,
         category_tools: dict[str, list[str]],
-        category_descriptions: dict[str, str] | None = None
+        category_descriptions: dict[str, str] | None = None,
     ):
         """
         Auto-generate tool groups from ToolManager categories.
@@ -310,7 +348,7 @@ class RuleSet:
                 tool_names=tools,
                 trigger_keywords=triggers,
                 description=descriptions.get(category, f"Tools from {category}"),
-                auto_generated=True
+                auto_generated=True,
             )
 
     def unregister_tool_group(self, name: str) -> bool:
@@ -392,7 +430,7 @@ class RuleSet:
             "intent": intent,
             "matching_rules": [r.id for r in matching_rules],
             "suggested_groups": [g.name for g in matching_groups],
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
 
         return self._pending_suggestion.copy()
@@ -403,8 +441,7 @@ class RuleSet:
             return False
 
         self.set_situation(
-            self._pending_suggestion["situation"],
-            self._pending_suggestion["intent"]
+            self._pending_suggestion["situation"], self._pending_suggestion["intent"]
         )
         self._pending_suggestion = None
         return True
@@ -435,7 +472,8 @@ class RuleSet:
         postconditions: list[str] | None = None,
         rule_id: str | None = None,
         learned: bool = False,
-        confidence: float = 1.0
+        confidence: float = 1.0,
+        general: bool = False,
     ) -> SituationRule:
         """
         Add a new situation rule.
@@ -467,10 +505,13 @@ class RuleSet:
             preconditions=preconditions or [],
             postconditions=postconditions or [],
             learned=learned,
-            confidence=confidence
+            confidence=confidence,
         )
 
-        self.situation_rules[rule_id] = rule
+        if general:
+            self.general_rules[rule_id] = rule
+        else:
+            self.situation_rules[rule_id] = rule
         self._mark_dirty()
 
         return rule
@@ -501,10 +542,7 @@ class RuleSet:
         return self.situation_rules.get(rule_id)
 
     def match_rules(
-        self,
-        situation: str,
-        intent: str,
-        min_score: float = 0.3
+        self, situation: str, intent: str, min_score: float = 0.3
     ) -> list[SituationRule]:
         """
         Find rules that match the given situation and intent.
@@ -552,7 +590,7 @@ class RuleSet:
         source_situation: str | None = None,
         confidence: float = 0.5,
         category: str = "general",
-        tags: list[str] | None = None
+        tags: list[str] | None = None,
     ) -> LearnedPattern:
         """
         Learn a new pattern from runtime experience.
@@ -574,7 +612,7 @@ class RuleSet:
             source_situation=source,
             confidence=confidence,
             category=category,
-            tags=tags or []
+            tags=tags or [],
         )
 
         self.learned_patterns.append(learned)
@@ -583,10 +621,7 @@ class RuleSet:
         return learned
 
     def get_relevant_patterns(
-        self,
-        situation: str | None = None,
-        min_confidence: float = 0.3,
-        limit: int = 10
+        self, situation: str | None = None, min_confidence: float = 0.3, limit: int = 10
     ) -> list[LearnedPattern]:
         """
         Get patterns relevant to the given or current situation.
@@ -600,10 +635,7 @@ class RuleSet:
                     relevant.append(pattern)
 
         # Sort by confidence and usage
-        relevant.sort(
-            key=lambda p: (p.confidence, p.usage_count),
-            reverse=True
-        )
+        relevant.sort(key=lambda p: (p.confidence, p.usage_count), reverse=True)
 
         return relevant[:limit]
 
@@ -614,8 +646,7 @@ class RuleSet:
         """
         before_count = len(self.learned_patterns)
         self.learned_patterns = [
-            p for p in self.learned_patterns
-            if p.confidence >= threshold
+            p for p in self.learned_patterns if p.confidence >= threshold
         ]
         removed = before_count - len(self.learned_patterns)
 
@@ -653,7 +684,7 @@ class RuleSet:
                     "description": g.description,
                     "tool_count": len(g.tool_names),
                     "active": g.name in self._active_tool_groups,
-                    "priority": g.priority
+                    "priority": g.priority,
                 }
                 for g in sorted(self.tool_groups.values(), key=lambda x: x.priority)
             ],
@@ -665,25 +696,19 @@ class RuleSet:
                     "instructions": r.instructions,
                     "required_groups": r.required_tool_groups,
                     "confidence": r.confidence,
-                    "success_count": r.success_count
+                    "success_count": r.success_count,
                 }
                 for r in active_rules
             ],
             "patterns": [
-                {
-                    "pattern": p.pattern,
-                    "confidence": p.confidence,
-                    "category": p.category
-                }
+                {"pattern": p.pattern, "confidence": p.confidence, "category": p.category}
                 for p in relevant_patterns
             ],
-            "pending_suggestion": self._pending_suggestion
+            "pending_suggestion": self._pending_suggestion,
         }
 
     def rule_on_action(
-        self,
-        action: str,
-        context: dict[str, Any] | None = None
+        self, action: str, context: dict[str, Any] | None = None
     ) -> RuleResult:
         """
         Evaluate if an action is allowed based on current rules.
@@ -696,7 +721,7 @@ class RuleSet:
             RuleResult with allowed status and instructions
         """
         context = context or {}
-        active_rules = self.get_active_rules()
+        active_rules = list(self.general_rules.values()) + self.get_active_rules()
 
         # Default: allowed with no special instructions
         if not active_rules:
@@ -705,7 +730,7 @@ class RuleSet:
                 instructions=[],
                 warnings=[],
                 required_steps=[],
-                suggested_tool_group=None
+                suggested_tool_group=None,
             )
 
         # Check rules for restrictions
@@ -757,7 +782,7 @@ class RuleSet:
             required_steps=required_steps,
             suggested_tool_group=suggested_group,
             matched_rule=best_match,
-            confidence=best_confidence if best_match else 1.0
+            confidence=best_confidence if best_match else 1.0,
         )
 
     def _evaluate_precondition(self, precondition: str, context: dict[str, Any]) -> bool:
@@ -804,91 +829,50 @@ class RuleSet:
         self._dirty = False
 
     def build_vfs_content(self) -> str:
-        """
-        Build VFS file content for agent visibility.
-        This is what the agent sees in the context window.
-        """
-        lines = []
+        # General rules block
+        general_lines = []
+        for rule in self.general_rules.values():
+            general_lines.append(f"### {rule.id}: {rule.intent[:60]}")
+            for j, instr in enumerate(rule.instructions, 1):
+                general_lines.append(f"   {j}. {instr}")
+            general_lines.append("")
+        general_block = "\n".join(general_lines) or "(none)"
 
-        # Header
-        lines.append("# Active Rules & Tool Groups")
-        lines.append("")
+        # Situation rules block
+        active = self.get_active_rules()
+        sit_lines = []
+        for rule in active[:5]:
+            conf = "●" * int(rule.confidence * 5) + "○" * (5 - int(rule.confidence * 5))
+            sit_lines.append(f"### {rule.id}: {rule.intent[:50]} [{conf}]")
+            for j, instr in enumerate(rule.instructions, 1):
+                sit_lines.append(f"   {j}. {instr}")
+            if rule.required_tool_groups:
+                sit_lines.append(
+                    f"   └─ Required: {', '.join(rule.required_tool_groups)}"
+                )
+            sit_lines.append("")
+        sit_block = "\n".join(sit_lines) or "(No situation-specific rules active)"
 
-        # Tool Groups Section
-        lines.append("## Available Tool Groups")
+        # Tool groups block
+        tg_lines = []
+        for g in sorted(self.tool_groups.values(), key=lambda x: x.priority):
+            active_mark = " ⭐ ACTIVE" if g.name in self._active_tool_groups else ""
+            tg_lines.append(f"- {g.icon} {g.name}: {g.display_name}{active_mark}")
+        tg_block = "\n".join(tg_lines) or "(none)"
 
-        if self.tool_groups:
-            sorted_groups = sorted(
-                self.tool_groups.values(),
-                key=lambda g: (0 if g.name in self._active_tool_groups else 1, g.priority)
-            )
-
-            for group in sorted_groups:
-                is_active = group.name in self._active_tool_groups
-                marker = " ⭐ ACTIVE" if is_active else ""
-                triggers = ", ".join(group.trigger_keywords[:3])
-                lines.append(f"- {group.icon} {group.name}: {group.display_name}{marker}")
-                lines.append(f"  └─ Triggers: {triggers}")
-        else:
-            lines.append("(No tool groups registered)")
-
-        lines.append("")
-
-        # Current Situation Section
-        lines.append("## Current Situation")
-
-        if self.current_intent or self.current_situation:
-            lines.append(f"Intent: {self.current_intent or 'unknown'}")
-            lines.append(f"Context: {self.current_situation or 'none'}")
-        else:
-            lines.append("Intent: unknown")
-            lines.append("Context: none")
-
-        # Pending suggestion
-        if self._pending_suggestion:
-            lines.append("")
-            lines.append("⚠️ PENDING SUGGESTION (confirm or reject):")
-            lines.append(f"  Suggested Intent: {self._pending_suggestion['intent']}")
-            lines.append(f"  Suggested Context: {self._pending_suggestion['situation']}")
-
-        lines.append("")
-
-        # Active Rules Section
-        lines.append("## Active Rules")
-
-        active_rules = self.get_active_rules()
-
-        if active_rules:
-            for i, rule in enumerate(active_rules[:5], 1):  # Max 5 rules shown
-                confidence_indicator = "●" * int(rule.confidence * 5) + "○" * (5 - int(rule.confidence * 5))
-                lines.append(f"### Rule {i}: {rule.intent[:50]} [{confidence_indicator}]")
-
-                for j, instruction in enumerate(rule.instructions, 1):
-                    lines.append(f"   {j}. {instruction}")
-
-                if rule.required_tool_groups:
-                    groups_str = ", ".join(rule.required_tool_groups)
-                    lines.append(f"   └─ Required tools: {groups_str}")
-
-                lines.append("")
-        else:
-            lines.append("(No specific rules active - general operation mode)")
-
-        lines.append("")
-
-        # Learned Patterns Section
-        lines.append("## Learned Patterns")
-
+        # Patterns block
         patterns = self.get_relevant_patterns(limit=5)
+        pat_lines = [f"- {p.pattern} [{p.confidence:.0%}]" for p in patterns]
+        pat_block = "\n".join(pat_lines) or "(none)"
 
-        if patterns:
-            for pattern in patterns:
-                conf = f"[{pattern.confidence:.0%}]"
-                lines.append(f"- {pattern.pattern} {conf}")
-        else:
-            lines.append("(No learned patterns yet)")
-
-        return "\n".join(lines)
+        return _VFS_HEADER_TEMPLATE.format(
+            general_rules_block=general_block,
+            intent=self.current_intent or "unknown",
+            situation=self.current_situation or "none",
+            situation_rules_block=sit_block,
+            tool_groups_block=tg_block,
+            patterns_block=pat_block,
+        )
 
     # =========================================================================
     # CONFIG & SERIALIZATION
@@ -924,45 +908,45 @@ class RuleSet:
         ```
         """
         try:
-            with open(path, 'r', encoding='utf-8') as f:
-                if path.endswith('.yaml') or path.endswith('.yml'):
+            with open(path, "r", encoding="utf-8") as f:
+                if path.endswith(".yaml") or path.endswith(".yml"):
                     config = yaml.safe_load(f)
                 else:
                     config = json.load(f)
 
             # Load tool groups
-            for group_data in config.get('tool_groups', []):
+            for group_data in config.get("tool_groups", []):
                 self.register_tool_group(
-                    name=group_data['name'],
-                    display_name=group_data.get('display_name', group_data['name']),
-                    tool_names=group_data.get('tool_names', []),
-                    trigger_keywords=group_data.get('trigger_keywords', []),
-                    description=group_data.get('description', ''),
-                    priority=group_data.get('priority', 5),
-                    icon=group_data.get('icon', '🔧')
+                    name=group_data["name"],
+                    display_name=group_data.get("display_name", group_data["name"]),
+                    tool_names=group_data.get("tool_names", []),
+                    trigger_keywords=group_data.get("trigger_keywords", []),
+                    description=group_data.get("description", ""),
+                    priority=group_data.get("priority", 5),
+                    icon=group_data.get("icon", "🔧"),
                 )
 
             # Load rules
-            for rule_data in config.get('rules', []):
+            for rule_data in config.get("rules", []):
                 self.add_rule(
-                    situation=rule_data['situation'],
-                    intent=rule_data['intent'],
-                    instructions=rule_data.get('instructions', []),
-                    required_tool_groups=rule_data.get('required_tool_groups', []),
-                    preconditions=rule_data.get('preconditions', []),
-                    postconditions=rule_data.get('postconditions', []),
-                    rule_id=rule_data.get('id'),
-                    confidence=rule_data.get('confidence', 1.0)
+                    situation=rule_data["situation"],
+                    intent=rule_data["intent"],
+                    instructions=rule_data.get("instructions", []),
+                    required_tool_groups=rule_data.get("required_tool_groups", []),
+                    preconditions=rule_data.get("preconditions", []),
+                    postconditions=rule_data.get("postconditions", []),
+                    rule_id=rule_data.get("id"),
+                    confidence=rule_data.get("confidence", 1.0),
                 )
 
             # Load patterns
-            for pattern_data in config.get('patterns', []):
+            for pattern_data in config.get("patterns", []):
                 self.learn_pattern(
-                    pattern=pattern_data['pattern'],
-                    source_situation=pattern_data.get('source_situation', 'config'),
-                    confidence=pattern_data.get('confidence', 0.8),
-                    category=pattern_data.get('category', 'general'),
-                    tags=pattern_data.get('tags', [])
+                    pattern=pattern_data["pattern"],
+                    source_situation=pattern_data.get("source_situation", "config"),
+                    confidence=pattern_data.get("confidence", 0.8),
+                    category=pattern_data.get("category", "general"),
+                    tags=pattern_data.get("tags", []),
                 )
 
             self._mark_dirty()
@@ -976,50 +960,52 @@ class RuleSet:
         """Save current configuration to file"""
         try:
             config = {
-                'tool_groups': [
+                "tool_groups": [
                     {
-                        'name': g.name,
-                        'display_name': g.display_name,
-                        'description': g.description,
-                        'tool_names': g.tool_names,
-                        'trigger_keywords': g.trigger_keywords,
-                        'priority': g.priority,
-                        'icon': g.icon
+                        "name": g.name,
+                        "display_name": g.display_name,
+                        "description": g.description,
+                        "tool_names": g.tool_names,
+                        "trigger_keywords": g.trigger_keywords,
+                        "priority": g.priority,
+                        "icon": g.icon,
                     }
                     for g in self.tool_groups.values()
                     if not g.auto_generated  # Don't save auto-generated
                 ],
-                'rules': [
+                "rules": [
                     {
-                        'id': r.id,
-                        'situation': r.situation,
-                        'intent': r.intent,
-                        'instructions': r.instructions,
-                        'required_tool_groups': r.required_tool_groups,
-                        'preconditions': r.preconditions,
-                        'postconditions': r.postconditions,
-                        'learned': r.learned,
-                        'confidence': r.confidence,
-                        'success_count': r.success_count
+                        "id": r.id,
+                        "situation": r.situation,
+                        "intent": r.intent,
+                        "instructions": r.instructions,
+                        "required_tool_groups": r.required_tool_groups,
+                        "preconditions": r.preconditions,
+                        "postconditions": r.postconditions,
+                        "learned": r.learned,
+                        "confidence": r.confidence,
+                        "success_count": r.success_count,
                     }
                     for r in self.situation_rules.values()
                 ],
-                'patterns': [
+                "patterns": [
                     {
-                        'pattern': p.pattern,
-                        'source_situation': p.source_situation,
-                        'confidence': p.confidence,
-                        'category': p.category,
-                        'tags': p.tags,
-                        'usage_count': p.usage_count
+                        "pattern": p.pattern,
+                        "source_situation": p.source_situation,
+                        "confidence": p.confidence,
+                        "category": p.category,
+                        "tags": p.tags,
+                        "usage_count": p.usage_count,
                     }
                     for p in self.learned_patterns
-                ]
+                ],
             }
 
-            with open(path, 'w', encoding='utf-8') as f:
-                if path.endswith('.yaml') or path.endswith('.yml'):
-                    yaml.safe_dump(config, f, default_flow_style=False, allow_unicode=True)
+            with open(path, "w", encoding="utf-8") as f:
+                if path.endswith(".yaml") or path.endswith(".yml"):
+                    yaml.safe_dump(
+                        config, f, default_flow_style=False, allow_unicode=True
+                    )
                 else:
                     json.dump(config, f, indent=2, ensure_ascii=False)
 
@@ -1032,63 +1018,68 @@ class RuleSet:
     def to_checkpoint(self) -> dict[str, Any]:
         """Serialize for checkpoint"""
         return {
-            'tool_groups': {
-                name: asdict(group)
-                for name, group in self.tool_groups.items()
+            "tool_groups": {
+                name: asdict(group) for name, group in self.tool_groups.items()
             },
-            'situation_rules': {
+            "situation_rules": {
                 rule_id: {
                     **asdict(rule),
-                    'created_at': rule.created_at.isoformat(),
-                    'last_used': rule.last_used.isoformat() if rule.last_used else None
+                    "created_at": rule.created_at.isoformat(),
+                    "last_used": rule.last_used.isoformat() if rule.last_used else None,
                 }
                 for rule_id, rule in self.situation_rules.items()
             },
-            'learned_patterns': [
+            "learned_patterns": [
                 {
                     **asdict(p),
-                    'created_at': p.created_at.isoformat(),
-                    'last_used': p.last_used.isoformat() if p.last_used else None
+                    "created_at": p.created_at.isoformat(),
+                    "last_used": p.last_used.isoformat() if p.last_used else None,
                 }
                 for p in self.learned_patterns
             ],
-            'current_situation': self.current_situation,
-            'current_intent': self.current_intent,
-            'active_tool_groups': list(self._active_tool_groups)
+            "current_situation": self.current_situation,
+            "current_intent": self.current_intent,
+            "active_tool_groups": list(self._active_tool_groups),
         }
 
     def from_checkpoint(self, data: dict[str, Any]):
         """Restore from checkpoint"""
         # Restore tool groups
         self.tool_groups.clear()
-        for name, group_data in data.get('tool_groups', {}).items():
+        for name, group_data in data.get("tool_groups", {}).items():
             self.tool_groups[name] = ToolGroup(**group_data)
 
         # Restore rules
         self.situation_rules.clear()
-        for rule_id, rule_data in data.get('situation_rules', {}).items():
+        for rule_id, rule_data in data.get("situation_rules", {}).items():
             # Convert datetime strings back
-            if isinstance(rule_data.get('created_at'), str):
-                rule_data['created_at'] = datetime.fromisoformat(rule_data['created_at'])
-            if rule_data.get('last_used') and isinstance(rule_data['last_used'], str):
-                rule_data['last_used'] = datetime.fromisoformat(rule_data['last_used'])
+            if isinstance(rule_data.get("created_at"), str):
+                rule_data["created_at"] = datetime.fromisoformat(rule_data["created_at"])
+            if rule_data.get("last_used") and isinstance(rule_data["last_used"], str):
+                rule_data["last_used"] = datetime.fromisoformat(rule_data["last_used"])
 
             self.situation_rules[rule_id] = SituationRule(**rule_data)
 
         # Restore patterns
         self.learned_patterns.clear()
-        for pattern_data in data.get('learned_patterns', []):
-            if isinstance(pattern_data.get('created_at'), str):
-                pattern_data['created_at'] = datetime.fromisoformat(pattern_data['created_at'])
-            if pattern_data.get('last_used') and isinstance(pattern_data['last_used'], str):
-                pattern_data['last_used'] = datetime.fromisoformat(pattern_data['last_used'])
+        for pattern_data in data.get("learned_patterns", []):
+            if isinstance(pattern_data.get("created_at"), str):
+                pattern_data["created_at"] = datetime.fromisoformat(
+                    pattern_data["created_at"]
+                )
+            if pattern_data.get("last_used") and isinstance(
+                pattern_data["last_used"], str
+            ):
+                pattern_data["last_used"] = datetime.fromisoformat(
+                    pattern_data["last_used"]
+                )
 
             self.learned_patterns.append(LearnedPattern(**pattern_data))
 
         # Restore state
-        self.current_situation = data.get('current_situation')
-        self.current_intent = data.get('current_intent')
-        self._active_tool_groups = set(data.get('active_tool_groups', []))
+        self.current_situation = data.get("current_situation")
+        self.current_intent = data.get("current_intent")
+        self._active_tool_groups = set(data.get("active_tool_groups", []))
 
         self._mark_dirty()
 
@@ -1097,6 +1088,7 @@ class RuleSet:
 # UTILITY FUNCTIONS
 # =============================================================================
 
+
 def create_default_ruleset(config_path: str | None = None) -> RuleSet:
     """
     Create a RuleSet with sensible defaults.
@@ -1104,7 +1096,6 @@ def create_default_ruleset(config_path: str | None = None) -> RuleSet:
     ruleset = RuleSet(config_path=config_path)
 
     if not ruleset.situation_rules:
-
         # =========================
         # GENERAL RULES (1)
         # =========================
@@ -1136,16 +1127,12 @@ def create_default_ruleset(config_path: str | None = None) -> RuleSet:
                 "Check whether delay_seconds or scheduled_time is specified",
                 "If neither is provided, ask the user when the task should run",
                 "Schedule the task using kernel_schedule_task",
-                "Confirm scheduling success to the user"
+                "Confirm scheduling success to the user",
             ],
             required_tool_groups=["scheduling", "communication"],
-            preconditions=[
-                "Task description is understandable"
-            ],
-            postconditions=[
-                "Task is scheduled and task_id is returned"
-            ],
-            rule_id="schedule_task_rule"
+            preconditions=["Task description is understandable"],
+            postconditions=["Task is scheduled and task_id is returned"],
+            rule_id="schedule_task_rule",
         )
 
         # 2. Long-running processing
@@ -1156,10 +1143,10 @@ def create_default_ruleset(config_path: str | None = None) -> RuleSet:
                 "Send an initial intermediate response indicating start",
                 "Provide periodic status updates via kernel_send_intermediate",
                 "If processing stalls or blocks, notify the user",
-                "Send final confirmation when finished"
+                "Send final confirmation when finished",
             ],
             required_tool_groups=["communication"],
-            rule_id="long_running_feedback"
+            rule_id="long_running_feedback",
         )
 
         # 3. Memory injection
@@ -1170,16 +1157,14 @@ def create_default_ruleset(config_path: str | None = None) -> RuleSet:
                 "Evaluate whether the information is stable and reusable",
                 "If importance or memory_type is unclear, ask the user for confirmation",
                 "Inject memory using kernel_inject_memory",
-                "Avoid storing temporary or speculative information"
+                "Avoid storing temporary or speculative information",
             ],
             required_tool_groups=["memory", "communication"],
             preconditions=[
                 "Information is explicitly stated or clearly implied by the user"
             ],
-            postconditions=[
-                "Memory entry is persisted"
-            ],
-            rule_id="memory_injection_rule"
+            postconditions=["Memory entry is persisted"],
+            rule_id="memory_injection_rule",
         )
 
         # 4. Personalized response generation
@@ -1189,10 +1174,10 @@ def create_default_ruleset(config_path: str | None = None) -> RuleSet:
             instructions=[
                 "Retrieve user preferences via kernel_get_preferences",
                 "Adapt tone, verbosity, and structure accordingly",
-                "If preferences conflict with the request, ask the user which to prioritize"
+                "If preferences conflict with the request, ask the user which to prioritize",
             ],
             required_tool_groups=["memory", "communication"],
-            rule_id="preference_application_rule"
+            rule_id="preference_application_rule",
         )
 
         # 5. Feedback handling
@@ -1203,23 +1188,271 @@ def create_default_ruleset(config_path: str | None = None) -> RuleSet:
                 "Interpret feedback sentiment and intent",
                 "If feedback is unclear, ask the user to clarify",
                 "Record feedback using kernel_record_feedback",
-                "Adjust future behavior implicitly based on feedback score"
+                "Adjust future behavior implicitly based on feedback score",
             ],
             required_tool_groups=["learning", "communication"],
-            rule_id="feedback_learning_rule"
+            rule_id="feedback_learning_rule",
         )
+
+    return register_alignment_rules(ruleset)
+
+
+def register_alignment_rules(ruleset):
+    """Register core agent alignment rules into a SituationRuleSet."""
+
+    ruleset.add_rule(
+        situation="Agent receives a new task or request from the user",
+        intent="Correctly identify and lock onto the user's actual goal before taking any action",
+        instructions=[
+            "Parse the user's message for the concrete deliverable or outcome they expect",
+            "Restate the goal internally in one sentence — this is the anchor for all subsequent actions",
+            "Reject any internal impulse to add scope, reinterpret, or 'improve' the request",
+            "If the goal has multiple parts, enumerate them explicitly and track each independently",
+        ],
+        preconditions=["User message received", "No prior action taken on this task"],
+        postconditions=[
+            "Goal is locked as a single clear statement",
+            "All subsequent actions trace back to this statement",
+        ],
+        rule_id="align_01_intent_lock",
+        general=True,
+        confidence=1.0,
+    )
+
+    ruleset.add_rule(
+        situation="Task has minor unspecified details but is otherwise clear",
+        intent="Proceed with the most plausible interpretation instead of blocking on clarification",
+        instructions=[
+            "Identify which details are unspecified",
+            "For each, pick the most common/plausible default",
+            "Proceed with execution immediately",
+            "State assumptions briefly AFTER delivering the result, not before",
+            "Only ask the user when the request is genuinely unanswerable without the missing info",
+        ],
+        preconditions=[
+            "Goal is clear enough to act on",
+            "Missing details are non-critical",
+        ],
+        postconditions=[
+            "Task is completed with reasonable defaults",
+            "Assumptions are noted for user review",
+        ],
+        rule_id="align_02_act_dont_ask",
+        general=True,
+        confidence=1.0,
+    )
+
+    ruleset.add_rule(
+        situation="Agent needs to assert a capability, file state, or system fact",
+        intent="Never claim something exists or doesn't exist without verifying first",
+        instructions=[
+            "Before stating 'X is not available' or 'file Y contains Z', perform a lookup",
+            "Use ls, cat, grep, tool_search, or equivalent to ground the claim in reality",
+            "If lookup fails or is ambiguous, say so explicitly — never fabricate",
+            "Treat unverified memory as unreliable — always prefer fresh reads",
+        ],
+        required_tool_groups=["filesystem", "tool_discovery"],
+        preconditions=["Agent is about to make a factual claim about current state"],
+        postconditions=[
+            "Every factual claim in the response is backed by a fresh lookup"
+        ],
+        rule_id="align_03_verify_before_claim",
+        general=True,
+        confidence=1.0,
+    )
+
+    ruleset.add_rule(
+        situation="Agent needs to modify a file, config, or system state",
+        intent="Always read current state before writing to prevent stale-context edits",
+        instructions=[
+            "Read/view the target file or resource in its current state",
+            "Identify the exact location and content that needs to change",
+            "Apply a minimal, surgical edit — not a full rewrite",
+            "After writing, re-read the file to confirm the edit landed correctly",
+        ],
+        required_tool_groups=["filesystem"],
+        preconditions=[
+            "Target resource exists or will be created",
+            "Goal requires modification",
+        ],
+        postconditions=[
+            "File state matches intent",
+            "No unintended side effects from stale context",
+        ],
+        rule_id="align_04_read_before_write",
+        general=True,
+        confidence=1.0,
+    )
+
+    ruleset.add_rule(
+        situation="Agent identifies a bug, error, or deviation from expected behavior",
+        intent="Fix only the root cause with the smallest correct change",
+        instructions=[
+            "Do NOT jump to a fix — first reproduce or confirm the symptom",
+            "Narrow the scope: which component, function, or line is responsible",
+            "Identify the root cause — not a symptom, not a side effect",
+            "Apply a fix that targets exactly the root cause and nothing else",
+            "Verify the fix resolves the original symptom without introducing new ones",
+        ],
+        preconditions=["An error or unexpected behavior has been observed"],
+        postconditions=[
+            "Root cause is identified and documented",
+            "Fix is minimal and verified",
+            "No unrequested refactoring",
+        ],
+        rule_id="align_05_minimal_targeted_fix",
+        general=True,
+        confidence=1.0,
+    )
+
+    ruleset.add_rule(
+        situation="An action or tool call has failed",
+        intent="Diagnose before retrying — never repeat the same failing action blindly",
+        instructions=[
+            "Capture the exact error message, return code, or failure signal",
+            "Analyse: is it a transient failure (network, timeout) or a logic error?",
+            "If transient: retry ONCE with backoff, then escalate",
+            "If logic error: identify what went wrong and change the approach before retrying",
+            "Never loop the same command more than twice without changing strategy",
+        ],
+        preconditions=["A previous action returned an error or unexpected result"],
+        postconditions=[
+            "Failure cause is understood",
+            "Next attempt uses a different strategy or the issue is escalated",
+        ],
+        rule_id="align_06_no_blind_retry",
+        general=True,
+        confidence=1.0,
+    )
+
+    ruleset.add_rule(
+        situation="Agent believes a task is complete",
+        intent="Verify the output matches the original goal before declaring done",
+        instructions=[
+            "Re-read the original goal (from align_01_intent_lock)",
+            "Compare the actual output against each part of the goal",
+            "Run the result if executable — check for errors, correct output, edge cases",
+            "If output diverges from goal: fix before delivering, do not declare done",
+            "Deliver the result with zero meta-commentary unless the user asked for explanation",
+        ],
+        preconditions=["Agent has produced a candidate output"],
+        postconditions=["Output verified against original goal", "No silent deviations"],
+        rule_id="align_07_self_check",
+        general=True,
+        confidence=1.0,
+    )
+
+    ruleset.add_rule(
+        situation="Agent needs to reference file contents, function signatures, paths, or system state",
+        intent="Never fabricate state from memory — always ground in fresh observation",
+        instructions=[
+            "If you need a file path: ls or find it",
+            "If you need file contents: cat or view it",
+            "If you need a function signature: grep or inspect it",
+            "If you need system state: query it with the appropriate tool",
+            "Treat anything from memory or prior context as potentially stale after any write operation",
+        ],
+        required_tool_groups=["filesystem", "tool_discovery"],
+        preconditions=[
+            "Agent is about to use specific details about current system state"
+        ],
+        postconditions=["All referenced details are from fresh observation, not memory"],
+        rule_id="align_08_no_hallucinated_state",
+        general=True,
+        confidence=1.0,
+    )
+
+    ruleset.add_rule(
+        situation="Agent is formulating its response or deliverable",
+        intent="Output exactly what was requested — no extras, no wrappers, no filler",
+        instructions=[
+            "Match the requested format precisely (code → code, file → file, answer → answer)",
+            "Do not add READMEs, docstrings, tests, or refactors unless explicitly asked",
+            "Do not wrap one-liners in classes or simple answers in essays",
+            "Do not add thank-you notes, summaries of what you did, or 'let me know if' closers",
+            "If the user asked for a dict, return a dict — not a dict + explanation + alternatives",
+        ],
+        preconditions=["Task is complete and verified (align_07)"],
+        postconditions=[
+            "Response contains only what was requested",
+            "No token waste on unrequested content",
+        ],
+        rule_id="align_09_exact_delivery",
+        general=True,
+        confidence=1.0,
+    )
+
+    ruleset.add_rule(
+        situation="Agent encounters a non-trivial bug or system misbehavior",
+        intent="Follow structured four-phase debugging: Analyse → Narrow → Root Cause → Fix",
+        instructions=[
+            "PHASE 1 — Analyse: collect symptoms, error messages, logs, reproduction steps",
+            "PHASE 2 — Narrow: isolate the failing component via bisection or targeted tests",
+            "PHASE 3 — Root Cause: identify the exact line, condition, or state that causes the failure",
+            "PHASE 4 — Fix: apply minimal patch, verify fix, confirm no regressions",
+            "Each phase must produce a concrete artifact before moving to the next",
+            "Never skip to Phase 4 — even if you think you know the answer",
+        ],
+        preconditions=["Bug or misbehavior confirmed, not just suspected"],
+        postconditions=[
+            "Each phase has documented output",
+            "Root cause is identified with evidence",
+            "Fix is minimal and verified",
+        ],
+        rule_id="align_10_four_phase_debug",
+        general=True,
+        confidence=1.0,
+    )
+
+    ruleset.add_rule(
+        situation="Agent is about to write code or perform a complex action",
+        intent="Check available tools, skills, and libraries before building from scratch",
+        instructions=[
+            "Scan available tools, installed packages, and skill definitions",
+            "If a tool or library already handles the task, use it",
+            "Only build custom solutions when nothing available fits",
+            "Read relevant SKILL.md or documentation before starting work",
+        ],
+        required_tool_groups=["tool_discovery"],
+        preconditions=["Task requires code or complex multi-step action"],
+        postconditions=[
+            "Best available tool is used",
+            "No redundant custom implementation",
+        ],
+        rule_id="align_11_use_available_tools",
+        general=True,
+        confidence=1.0,
+    )
+
+    ruleset.add_rule(
+        situation="Agent is mid-task and considers adding tangential content or scope",
+        intent="Stay on the user's task — no tangents, no unsolicited alternatives, no meta-commentary",
+        instructions=[
+            "Before adding ANY content, check: did the user ask for this?",
+            "If not explicitly requested, do not include it",
+            "Do not explain your reasoning unless asked",
+            "Do not offer alternative approaches unless the current one failed",
+            "Do not drift into related-but-different topics",
+        ],
+        preconditions=["Agent is mid-execution on a defined task"],
+        postconditions=[
+            "Every piece of output traces directly to the user's original request"
+        ],
+        rule_id="align_12_no_scope_drift",
+        general=True,
+        confidence=1.0,
+    )
 
     return ruleset
 
 
-
 def auto_group_tools_by_name_pattern(
-    tool_manager: 'ToolManager',
-    rule_set: 'RuleSet',
+    tool_manager: "ToolManager",
+    rule_set: "RuleSet",
     min_group_size: int = 2,
     separator: str = "_",
     ignore_prefixes: list[str] = None,
-    ignore_suffixes: list[str] = None
+    ignore_suffixes: list[str] = None,
 ) -> dict[str, list[str]]:
     """
     Automatically create tool groups based on repeating patterns in tool names.
@@ -1292,8 +1525,7 @@ def auto_group_tools_by_name_pattern(
 
     # Sort by prefix length (longer = more specific) then by group size
     sorted_prefixes = sorted(
-        prefix_tools.items(),
-        key=lambda x: (-len(x[0].split(separator)), -len(x[1]))
+        prefix_tools.items(), key=lambda x: (-len(x[0].split(separator)), -len(x[1]))
     )
 
     for prefix, tools in sorted_prefixes:
@@ -1315,10 +1547,13 @@ def auto_group_tools_by_name_pattern(
         display_name = " ".join(word.capitalize() for word in display_parts) + " Tools"
 
         # Generate trigger keywords
-        trigger_keywords = list(set(
-            part for part in group_name.replace("_tools", "").split(separator)
-            if part and len(part) > 1
-        ))
+        trigger_keywords = list(
+            set(
+                part
+                for part in group_name.replace("_tools", "").split(separator)
+                if part and len(part) > 1
+            )
+        )
 
         # Add common action words from tool names as triggers
         for tool_name in tool_names:
@@ -1351,7 +1586,7 @@ def auto_group_tools_by_name_pattern(
             description=description,
             priority=5,
             icon="🔧",
-            auto_generated=True
+            auto_generated=True,
         )
 
         # Also update tool categories in ToolManager
@@ -1361,6 +1596,7 @@ def auto_group_tools_by_name_pattern(
                 entry.category.append(group_name.replace("_tools", ""))
 
     return valid_groups
+
 
 """
 # Nach dem Laden aller Tools
