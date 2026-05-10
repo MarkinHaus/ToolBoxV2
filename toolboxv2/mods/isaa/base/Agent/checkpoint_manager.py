@@ -232,6 +232,96 @@ class CheckpointManager:
         checkpoints.sort(key=lambda x: x[1], reverse=True)
         return checkpoints[0][0]
 
+    def _get_or_create_meta(self, filepath: str) -> dict | None:
+        """Read cached .meta.json for a checkpoint. Create if missing."""
+        import json
+
+        meta_path = filepath.replace('.pkl', '.meta.json')
+
+        # Fast path: meta file exists
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # Slow path (one-time migration): load pkl, extract summary, cache it
+        try:
+            cp = self._load_checkpoint_file(filepath)
+            meta = {
+                'summary': cp.get_summary() if hasattr(cp, 'get_summary') else str(cp),
+                'timestamp': cp.timestamp.isoformat() if hasattr(cp, 'timestamp') else None,
+            }
+            # Write meta cache for next time
+            try:
+                with open(meta_path, 'w', encoding='utf-8') as f:
+                    json.dump(meta, f, ensure_ascii=False)
+            except OSError:
+                pass
+
+            # Explicitly delete the heavy checkpoint object
+            del cp
+
+            return meta
+        except Exception:
+            return None
+
+    def list_checkpoints(self, max_age_hours: int | None = None) -> list[dict]:
+        """
+        List available checkpoints WITHOUT loading full pickle files.
+        Uses .meta.json cache files for summaries.
+        """
+        max_age = max_age_hours or self.max_age_hours
+
+        if not os.path.exists(self.checkpoint_dir):
+            return []
+
+        checkpoints = []
+        for filename in os.listdir(self.checkpoint_dir):
+            if not filename.endswith('.pkl'):
+                continue
+
+            filepath = os.path.join(self.checkpoint_dir, filename)
+            try:
+                file_stat = os.stat(filepath)
+                file_size = file_stat.st_size
+                modified_time = datetime.fromtimestamp(file_stat.st_mtime)
+
+                # Extract timestamp from filename
+                if filename.startswith('agent_checkpoint_'):
+                    ts_str = filename.replace('agent_checkpoint_', '').replace('.pkl', '')
+                    checkpoint_time = datetime.strptime(ts_str, "%Y%m%d_%H%M%S")
+                    checkpoint_type = "regular"
+                elif filename == 'final_checkpoint.pkl':
+                    checkpoint_time = modified_time
+                    checkpoint_type = "final"
+                else:
+                    continue
+
+                age_hours = (datetime.now() - checkpoint_time).total_seconds() / 3600
+
+                if age_hours <= max_age:
+                    # Read summary from lightweight .meta.json — NO pickle.load!
+                    meta = self._get_or_create_meta(filepath)
+                    summary = meta.get('summary', 'Unknown') if meta else 'Unknown'
+
+                    checkpoints.append({
+                        'filepath': filepath,
+                        'filename': filename,
+                        'type': checkpoint_type,
+                        'timestamp': checkpoint_time.isoformat(),
+                        'age_hours': round(age_hours, 1),
+                        'size_kb': round(file_size / 1024, 1),
+                        'summary': summary,
+                    })
+
+            except Exception:
+                continue
+
+        checkpoints.sort(key=lambda x: x['timestamp'], reverse=True)
+        return checkpoints
+
     def _load_checkpoint_file(self, filepath: str) -> AgentCheckpoint:
         """
         Load checkpoint from file and correct timestamp if necessary.
@@ -266,7 +356,6 @@ class CheckpointManager:
         # --- FIX ENDS HERE ---
 
         return checkpoint
-
     # =========================================================================
     # CHECKPOINT CREATION
     # =========================================================================
@@ -371,6 +460,14 @@ class CheckpointManager:
 
         with open(filepath, 'wb') as f:
             pickle.dump(checkpoint, f)
+
+        meta_path = filepath.replace('.pkl', '.meta.json')
+        with open(meta_path, 'w', encoding='utf-8') as f:
+            import json
+            json.dump({
+                'summary': checkpoint.get_summary(),
+                'timestamp': checkpoint.timestamp.isoformat(),
+            }, f, ensure_ascii=False)
 
         self.last_checkpoint = checkpoint.timestamp
 
@@ -654,5 +751,9 @@ class CheckpointManager:
         }
 
     def __repr__(self) -> str:
-        count = len(self.list_checkpoints())
+        """Lightweight repr — counts .pkl files without loading them."""
+        if not os.path.exists(self.checkpoint_dir):
+            count = 0
+        else:
+            count = sum(1 for f in os.listdir(self.checkpoint_dir) if f.endswith('.pkl'))
         return f"<CheckpointManager {self.agent.amd.name} [{count} checkpoints]>"

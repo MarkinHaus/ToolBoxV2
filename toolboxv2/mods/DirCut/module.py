@@ -512,7 +512,7 @@ class Tools(MainTool):
         """Initialisiert die ISAA Agents"""
         # Verhindere mehrfache Initialisierung
         if self.consultation_agent and self.generator_agent:
-            self.app.logger.info("✅ Agents bereits initialisiert")
+            self.app.logger.info("Agents bereits initialisiert")
             return
 
         try:

@@ -205,6 +205,71 @@ def _build_docs_tools(app):
         except Exception as e:
             return f"Docs sync error: {e}"
 
+    async def docs_inventory(
+        focus_dirs: str = "",
+        max_classes_per_file: int = 5,
+        max_methods_per_class: int = 3,
+        include_functions: bool = True,
+    ) -> str:
+        """Generate project inventory: what files, classes, and functions exist."""
+        try:
+            ds = _get_docs()
+            await ds.initialize()
+            result = await ds.generate_inventory(
+                focus_dirs=focus_dirs.split(",") if focus_dirs else None,
+                max_classes_per_file=max_classes_per_file,
+                max_methods_per_class=max_methods_per_class,
+                include_functions=include_functions,
+                format_type="markdown",
+            )
+            return result.get("content", json.dumps(result, ensure_ascii=False, default=str))
+        except Exception as e:
+            return f"Inventory error: {e}"
+
+    async def docs_relationship_map(
+        focus_dirs: str = "",
+        focus_classes: str = "",
+        max_nodes: int = 40,
+        format_type: str = "markdown",
+    ) -> str:
+        """Generate relationship map showing how components connect (Mermaid diagram)."""
+        try:
+            ds = _get_docs()
+            await ds.initialize()
+            result = await ds.generate_relationship_map(
+                focus_dirs=focus_dirs.split(",") if focus_dirs else None,
+                focus_classes=focus_classes.split(",") if focus_classes else None,
+                max_nodes=max_nodes,
+                format_type=format_type,
+            )
+            return result.get("content", json.dumps(result, ensure_ascii=False, default=str))
+        except Exception as e:
+            return f"Relationship map error: {e}"
+
+    async def docs_export_docmap(
+        output_path: str = "",
+        format_type: str = "html",
+        focus_dirs: str = "",
+        title: str = "",
+    ) -> str:
+        """Export complete DocMap (inventory + relationships) as HTML or Markdown file."""
+        try:
+            ds = _get_docs()
+            await ds.initialize()
+            result = await ds.export_docmap(
+                output_path=output_path or None,
+                format_type=format_type,
+                focus_dirs=focus_dirs.split(",") if focus_dirs else None,
+                title=title or None,
+            )
+            if output_path:
+                return f"DocMap exported to {result.get('output_path', output_path)}"
+            return result.get("content", "Export failed — no content generated")
+        except Exception as e:
+            return f"DocMap export error: {e}"
+
+
+
     tools.extend([
         (docs_read, "docs_read",
          "Dokumentation durchsuchen (query, section_id, file_path, tags, max_results)",
@@ -217,6 +282,20 @@ def _build_docs_tools(app):
          ["docs", "read"]),
         (docs_sync, "docs_sync",
          "Docs-Index mit Filesystem synchronisieren",
+         ["docs", "write"]),
+        (docs_inventory, "docs_inventory",
+         "Projekt-Inventar generieren: Dateien, Klassen, Funktionen "
+         "(focus_dirs, max_classes_per_file, max_methods_per_class, include_functions)",
+         ["docs", "read"]),
+
+        (docs_relationship_map, "docs_relationship_map",
+         "Relationship-Map generieren: Mermaid-Diagramm zeigt Vererbung, Nutzung, Imports "
+         "(focus_dirs, focus_classes, max_nodes, format_type)",
+         ["docs", "read"]),
+
+        (docs_export_docmap, "docs_export_docmap",
+         "Komplette DocMap exportieren als HTML oder Markdown "
+         "(output_path, format_type, focus_dirs, title)",
          ["docs", "write"]),
     ])
     return tools

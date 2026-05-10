@@ -425,45 +425,46 @@ FILE_TYPES: dict[str, FileTypeInfo] = {
     ),
 }
 
+_UNKNOWN_TYPE_CACHE: dict[str, FileTypeInfo] = {}
 
 def get_file_type(filename: str) -> FileTypeInfo:
-    """Get file type info from filename"""
-    # Check exact filename match first (e.g., Dockerfile)
+    """Get file type info — with caching for unknown extensions."""
+    # Check exact filename match first
     if filename in FILE_TYPES:
         return FILE_TYPES[filename]
 
-    # Check extension
     _, ext = os.path.splitext(filename)
     ext_lower = ext.lower()
 
     if ext_lower in FILE_TYPES:
         return FILE_TYPES[ext_lower]
 
-    # Default unknown type
-    return FileTypeInfo(
-        ext_lower or "",
-        FileCategory.UNKNOWN,
-        "plaintext",
-        "text/plain",
-        False,
-        None,
-        "📄",
-        "Unknown",
-    )
-
+    # Cache unknown types by extension instead of creating new objects
+    if ext_lower not in _UNKNOWN_TYPE_CACHE:
+        _UNKNOWN_TYPE_CACHE[ext_lower] = FileTypeInfo(
+            ext_lower or "",
+            FileCategory.UNKNOWN,
+            "plaintext",
+            "text/plain",
+            False,
+            None,
+            "📄",
+            "Unknown",
+        )
+    return _UNKNOWN_TYPE_CACHE[ext_lower]
 
 # =============================================================================
 # VFS FILE
 # =============================================================================
 
 
-@dataclass
+@dataclass(slots=True)
 class VFSDirectory:
     """Represents a directory in the Virtual File System"""
 
     name: str
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = ""
+    updated_at: str = ""
     readonly: bool = False
 
 
@@ -475,7 +476,7 @@ class FileBackingType(Enum):
     MODIFIED = auto()  # Shadow, aber mit lokalen Änderungen (dirty)
 
 
-@dataclass
+@dataclass(slots=True)
 class ShadowMount:
     """Ein gemounteter lokaler Ordner"""
 
@@ -497,7 +498,7 @@ class ShadowMount:
     auto_sync: bool = True  # Änderungen sofort schreiben
 
 
-@dataclass
+@dataclass(slots=True)
 class VFSFile:
     """Erweiterte VFS-Datei mit Shadow-Support"""
 
@@ -526,8 +527,8 @@ class VFSFile:
     is_dirty: bool = False  # Hat ungespeicherte Änderungen
 
     # Timestamps
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = ""
+    updated_at: str = ""
 
     @property
     def size(self) -> int:
@@ -729,6 +730,8 @@ Content-Encoding:
   "line1\nline2"    ← echter Newline im JSON-String (STANDARD)
   NIEMALS: \\n      ← erzeugt LITERAL Backslash+n im File, KEINEN Zeilenumbruch!
   NIEMALS: \\\\n    ← erzeugt ebenfalls Backslash+n im File!
+  NIEMALS: \\|      ← das ürde nun | als literal anshen was Fasch ist!
+  NIEMALS: \|      ← das ürde nun | als literal anshen was Fasch ist!
 
 WICHTIG: Der JSON-Parser wandelt \n in echte Newlines um BEVOR
 der Command das VFS erreicht. Das System decodiert NICHT nochmal.
@@ -755,6 +758,10 @@ exec <path> [args...]
 
 ## grep — Hinweise für zuverlässige Suche
 
+**Backend:** grep nutzt ripgrep (`rg`) für alle disk-backed Bereiche (Mounts, `/global/`, `/shared/`).
+Das eliminiert Memory-Spikes bei großen Projekten. Reine In-Memory-Files werden per Python-Regex durchsucht.
+Die Syntax bleibt identisch — das Backend ist transparent.
+
 **Exakte Patterns:** grep ist Regex-basiert. Spaces, Sonderzeichen und Groß/Kleinschreibung
 zählen. `grep "x=y+z"` matcht NICHT `x = y + z`.
 
@@ -763,10 +770,28 @@ zählen. `grep "x=y+z"` matcht NICHT `x = y + z`.
 | Spaces im Code | Kürzeres Pattern: `grep "lastPlatX"` statt `grep "lastPlatX=px+pw"` |
 | Groß/Klein | `-i` Flag: `grep -in "debug" /src` |
 | Sonderzeichen `+.*[]()` | Escapen: `grep "x\+y"` oder kürzeres Pattern ohne Sonderzeichen |
+| Alternation (`\|` oder `\\|`) | **NIEMALS** `\\|` oder `\|` — nutze `|` direkt: `grep -rn 'class|def |async def ' /path` |
+
+pass auf und halte dich and die grep regeln !!!Alternation (`\|` oder `\\|`) | **NIEMALS** `\\|` oder `\|` — nutze `|` direkt: `grep -rn 'class|def |async def ' /path` !!!
+pass auf und halte dich and die grep regeln !!! Alternation (`\|` oder `\\|`) | **NIEMALS** `\\|` oder `\|` — nutze `|` direkt: `grep -rn 'class|def |async def ' /path` !!!
+pass auf und halte dich and die grep regeln !!! Alternation (`\|` oder `\\|`) | **NIEMALS** `\\|` oder `\|` — nutze `|` direkt: `grep -rn 'class|def |async def ' /path` !!!
+
+**⚠️ ALTERNATION — HÄUFIGSTER FEHLER:**
+VFS-grep nutzt ERE/PCRE-Syntax. `|` ist direkt Alternation, KEIN Escaping nötig.
+- ✅ `grep -rn 'class|def |async def ' /src`
+- ✅ `grep -rn 'minio|redis|host_network' /src`
+- ❌ `grep -n 'class\|def \|async def ' /file`  ← matcht NICHTS, `\|` ist Literal wenn du das noch einmal verwendets um nach calssen oder etwas aderme zu sschen pass wirklich auf !!!!!!!!!!!!!!!!!!!!
+- ❌ `grep -n 'class\\|def ' /file`  ← matcht NICHTS, selbes Problem eifac nein nicht machen tu so las ob duch nach dem str "def |class" suchst genau so und nicht ander s !!!!!!!!!!
+
+pass auf und halte dich and die grep regeln !!!
+
+pass auf und halte dich and die grep regeln !!!Alternation (`\|` oder `\\|`) | **NIEMALS** `\\|` oder `\|` — nutze `|` direkt: `grep -rn 'class|def |async def ' /path` !!!
+pass auf und halte dich and die grep regeln !!! Alternation (`\|` oder `\\|`) | **NIEMALS** `\\|` oder `\|` — nutze `|` direkt: `grep -rn 'class|def |async def ' /path` !!!
+pass auf und halte dich and die grep regeln !!! Alternation (`\|` oder `\\|`) | **NIEMALS** `\\|` oder `\|` — nutze `|` direkt: `grep -rn 'class|def |async def ' /path` !!!
 
 **grep in Pipes vs. direkt:**
-- `grep -rn "pattern" /src` → durchsucht Dateien, Output: `datei:zeile:match`
-- `cat /f.py | grep "pattern"` → durchsucht Text-Stream, Output: `match` (kein Dateiname)
+- `grep -rn "pattern" /src` → durchsucht Dateien via ripgrep, Output: `datei:zeile:match`
+- `cat /f.py | grep "pattern"` → durchsucht Text-Stream (Python), Output: `match` (kein Dateiname)
 - `-l` (nur Dateinamen) funktioniert nur bei direktem grep, NICHT in Pipes
 
 **Kein Match ≠ Tool-Fehler.** Wenn grep rc=1 zurückgibt, existiert das Pattern nicht exakt so im Code.
@@ -791,9 +816,9 @@ Wenn Content Quotes, Triple-Quotes oder Sonderzeichen enthält → Heredoc:
 write /src/app.py <<'_VFS_END_a799'
 class App:
 TEMPLATE = """
-            + '''"""<html>{content}</html>"""
+            + r'''"""<html>{content}</html>"""
 def run(self):
-print('it\'s working')
+print('it's working')
 _VFS_END_a799
 
 - Bevorzugter Delimiter: `_VFS_END_a799`
@@ -839,7 +864,7 @@ _VFS_END_a799
 "sync"
 ```
 
-# Alternation — ERE-Syntax direkt (ohne \\|):
+# Alternation — ERE-Syntax direkt (ohne \|):
 grep -rn 'minio|redis|external|host_network' /tb/.../__init__.py
 
 # Oder einzeln:
@@ -849,9 +874,9 @@ grep -rn 'minio' /path && grep -rn 'redis' /path
 grep -rn 'create_container|network|docker' /tb/toolboxv2/mods/ContainerManager
 
 
-> ⚠️ **Wichtig — Zeilenumbrüche (`\\n`) sind kein Separator.**
+> ⚠️ **Wichtig — Zeilenumbrüche (`\n`) sind kein Separator.**
 > Echter Newline in Datei-Inhalten bleibt erhalten:
-> `write /f.py "class Foo:\\n    pass"` → eine Datei, kein Batch.
+> `write /f.py "class Foo:\n    pass"` → eine Datei, kein Batch.
 > Für Batches immer `;` oder `&&` verwenden.
 ```
 
@@ -879,6 +904,14 @@ vfs_view(
 | `/global/` | Geteilt zwischen allen Sessions (persistent auf Disk) |
 | `/shared/{id}/` | Cross-Session/Agent Shares  →  `vfs_share_*` Tools |
 | `/project/` | Typischer Einhängepunkt für lokale Projektordner  →  `vfs_mount` |
+
+
+**⚠️ ALTERNATION — HÄUFIGSTER FEHLER:**
+VFS-grep nutzt ERE/PCRE-Syntax. `|` ist direkt Alternation, KEIN Escaping nötig.
+- ✅ `grep -rn 'class|def |async def ' /src`
+- ✅ `grep -rn 'minio|redis|host_network' /src`
+- ❌ `grep -n 'class\|def \|async def ' /file`  ← matcht NICHTS, `\|` ist Literal
+- ❌ `grep -n 'class\\|def ' /file`  ← matcht NICHTS, selbes Problem
 '''
         )
 
@@ -1309,7 +1342,7 @@ Session: {self.session_id}
         if force and contents:
             # Recursively remove contents
             for item in contents:
-                item_path = f"{path}/{item['name']}"
+                item_path =os.path.join(path, item['name'])
                 if item["type"] == "directory":
                     result = self.rmdir(item_path, force=True)
                 else:
@@ -1452,7 +1485,7 @@ Session: {self.session_id}
 
         # If destination is existing directory, move into it
         if self._is_directory(destination):
-            destination = f"{destination}/{self._get_basename(source)}"
+            destination = os.path.join(destination, self._get_basename(source))
 
         if self._path_exists(destination):
             return {
@@ -2347,6 +2380,11 @@ Session: {self.session_id}
                     )
 
         f.state = "closed"
+        if isinstance(f, VFSFile):
+            if f.backing_type == FileBackingType.SHADOW and not f.is_dirty:
+                f._content = None  # Gibt den String sofort für den Garbage Collector frei!
+                f.size_bytes = 0  # Optional, wird beim nächsten read() neu gesetzt
+
         self._dirty = True
 
         return {"success": True, "summary": f.mini_summary}
@@ -2746,6 +2784,37 @@ Session: {self.session_id}
         """Serialize VFS for checkpoint"""
         from toolboxv2.mods.isaa.base.patch.power_vfs import GLOBAL_VFS_PATH
 
+        files_to_save = {}
+        for path, f in self.files.items():
+            if f.readonly:
+                continue
+            # Fix 2: Skip unmodified shadow files -> Saves ~99% of memory and disk space
+            if f.backing_type == FileBackingType.SHADOW and not f.is_dirty and f.state == "closed":
+                continue
+
+            # Fix 1: Manual dict mapping -> Prevents 120MB+ DeepCopy leak from asdict()
+            files_to_save[path] = {
+                "filename": f.filename,
+                "backing_type": f.backing_type,
+                "_content": f._content,
+                "local_path": f.local_path,
+                "local_mtime": f.local_mtime,
+                "size_bytes": f.size_bytes,
+                "line_count": f.line_count,
+                "state": f.state,
+                "view_start": f.view_start,
+                "view_end": f.view_end,
+                "mini_summary": f.mini_summary,
+                "readonly": f.readonly,
+                "is_dirty": f.is_dirty,
+                "created_at": f.created_at,
+                "updated_at": f.updated_at,
+                "is_executable": f.is_executable,
+                "lsp_enabled": f.lsp_enabled,
+                "diagnostics": f.diagnostics,
+                "file_type": None,
+            }
+
         return {
             "session_id": self.session_id,
             "agent_name": self.agent_name,
@@ -2753,14 +2822,7 @@ Session: {self.session_id}
             "directories": {
                 path: asdict(d) for path, d in self.directories.items() if not d.readonly
             },
-            "files": {
-                path: {
-                    **asdict(f),
-                    "file_type": None,  # Don't serialize FileTypeInfo, reconstruct on load
-                }
-                for path, f in self.files.items()
-                if not f.readonly
-            },
+            "files": files_to_save,
             "mounts": {
                 vfs_path: {
                     "local_path": mount.local_path,
@@ -2775,24 +2837,50 @@ Session: {self.session_id}
         }
 
     def from_checkpoint(self, data: dict):
-        """Restore VFS from checkpoint"""
+        """Restore VFS from checkpoint — skip re-scanning existing mounts."""
         # Restore directories
         for path, dir_data in data.get("directories", {}).items():
             self.directories[path] = VFSDirectory(**dir_data)
 
         # Restore files
         for path, file_data in data.get("files", {}).items():
-            file_data.pop("file_type", None)  # Remove if present
-            file_data.pop("diagnostics", None)  # Remove diagnostics, will be refreshed
+            file_data.pop("file_type", None)
+            file_data.pop("diagnostics", None)
             if "content" in file_data:
                 file_data["_content"] = file_data.pop("content")
             self.files[path] = VFSFile(**file_data)
 
+        # Restore mounts — but DON'T re-scan if files already loaded
         for vfs_path, mount_data in data.get("mounts", {}).items():
             if os.path.isdir(mount_data["local_path"]):
-                self.mount(**mount_data, vfs_path=vfs_path)
+                # Check if we already have files under this mount from the checkpoint
+                mount_prefix = vfs_path if vfs_path.endswith("/") else vfs_path + "/"
+                has_files = any(
+                    p == vfs_path or p.startswith(mount_prefix)
+                    for p in self.files
+                )
+                if has_files:
+                    # Mount exists in checkpoint — register mount metadata only,
+                    # skip the expensive _scan_mount() since files are already loaded.
+                    # _scan_mount will run on next explicit rescan/sync call.
+                    self._register_mount_metadata(mount_data, vfs_path)
+                else:
+                    # No files from checkpoint — do a fresh scan
+                    self.mount(**mount_data, vfs_path=vfs_path)
 
         self._dirty = True
+
+    def _register_mount_metadata(self, mount_data: dict, vfs_path: str):
+        """Register mount config without scanning. For checkpoint restore."""
+        # Store mount config so rescan() can find it later.
+        # Actual implementation depends on how self.mounts is structured.
+        # Minimal version:
+        from toolboxv2.mods.isaa.base.Agent.vfs_v2 import ShadowMount
+        mount = ShadowMount(
+            vfs_path=vfs_path,
+            **{k: v for k, v in mount_data.items() if k != 'vfs_path'}
+        )
+        self.mounts[vfs_path] = mount
 
     # =========================================================================
     # EXECUTABLE FILE HELPERS
@@ -2917,164 +3005,154 @@ Session: {self.session_id}
         import time
 
         start = time.perf_counter()
-        stats = {
-            "files": 0,
-            "dirs": 0,
-            "total_size": 0,
-            "skipped": 0,
-            "removed": 0,
-            "seen": 0,
-        }
-        seen_file_paths: set[str] = set()
-        seen_dir_paths: set[str] = set()
+        stats = {"files": 0, "dirs": 0, "total_size": 0, "skipped": 0, "removed": 0, "seen": 0}
 
-        def should_include(path: str, is_dir: bool) -> bool:
-            name = os.path.basename(path)
-            for pattern in mount.exclude_patterns:
-                if fnmatch.fnmatch(name, pattern):
+        # Pre-split exclude patterns
+        _exclude_exact: set[str] = set()
+        _exclude_globs: list[str] = []
+        for p in mount.exclude_patterns:
+            if "*" in p or "?" in p or "[" in p:
+                _exclude_globs.append(p)
+            else:
+                _exclude_exact.add(p)
+        _allowed_ext = frozenset(mount.allowed_extensions) if mount.allowed_extensions else None
+
+        def should_include(name: str, is_dir: bool) -> bool:
+            if name in _exclude_exact:
+                return False
+            for pat in _exclude_globs:
+                if fnmatch.fnmatch(name, pat):
                     return False
-            if not is_dir and mount.allowed_extensions:
-                ext = os.path.splitext(name)[1].lower()
-                if ext not in mount.allowed_extensions:
+            if not is_dir and _allowed_ext is not None:
+                _, ext = os.path.splitext(name)
+                if ext.lower() not in _allowed_ext:
                     return False
             return True
 
-        # Walk directory tree
-        for root, dirs, files in os.walk(mount.local_path):
-            # Filter directories in-place
-            dirs[:] = [d for d in dirs if should_include(os.path.join(root, d), True)]
+        # Collect paths we visit — but reuse strings from self.files where possible
+        # Instead of building a seen_file_paths set with N new f-strings,
+        # we mark visited paths in a set of ids or use a compact marker.
+        visited_files: set[str] = set()
+        visited_dirs: set[str] = set()
 
-            # Calculate VFS path for current directory
+        mount_vfs = mount.vfs_path  # cache attribute lookup
+
+        for root, dirs, files in os.walk(mount.local_path):
+            dirs[:] = [d for d in dirs if should_include(d, True)]
+
             rel_path = os.path.relpath(root, mount.local_path)
             if rel_path == ".":
-                vfs_dir = mount.vfs_path
+                vfs_dir = mount_vfs
             else:
-                vfs_dir = f"{mount.vfs_path}/{rel_path.replace(os.sep, '/')}"
+                vfs_dir = mount_vfs + "/" + rel_path.replace(os.sep, "/")
 
-            # Create directory entry
+            # Directory entry
             if vfs_dir not in self.directories:
                 self.directories[vfs_dir] = VFSDirectory(
-                    name=os.path.basename(vfs_dir) or mount.vfs_path,
+                    name=os.path.basename(vfs_dir) or mount_vfs,
                     readonly=mount.readonly,
                 )
                 stats["dirs"] += 1
-            seen_dir_paths.add(vfs_dir)
-            # Create shadow file entries (metadata only!)
-            for filename in files:
-                local_file = os.path.join(root, filename)
+            visited_dirs.add(vfs_dir)
 
-                if not should_include(local_file, False):
+            # File entries
+            vfs_dir_slash = vfs_dir + "/"
+            for filename in files:
+                if not should_include(filename, False):
                     stats["skipped"] += 1
                     continue
 
-                try:
-                    file_stat = os.stat(local_file)
+                local_file = os.path.join(root, filename)
+                # Reuse the string from self.files if it already exists,
+                # otherwise build it once
+                vfs_file_path = vfs_dir_slash + filename
 
-                    vfs_file_path = f"{vfs_dir}/{filename}"
-                    # Skip too large files
+                try:
+                    existing = self.files.get(vfs_file_path)
+                    if existing is not None and isinstance(existing, VFSFile):
+                        file_stat = os.stat(local_file)
+                        if file_stat.st_size > mount.max_file_size:
+                            visited_files.add(vfs_file_path)
+                            stats["skipped"] += 1
+                            continue
+                        if existing.is_dirty:
+                            visited_files.add(vfs_file_path)
+                            stats["seen"] += 1
+                            stats["files"] += 1
+                            continue
+                        if (existing.is_loaded and existing.local_mtime is not None
+                            and file_stat.st_mtime > existing.local_mtime):
+                            existing._content = None
+                            existing.backing_type = FileBackingType.SHADOW
+                        existing.local_mtime = file_stat.st_mtime
+                        existing.size_bytes = file_stat.st_size
+                        stats["seen"] += 1
+                        stats["files"] += 1
+                        stats["total_size"] += file_stat.st_size
+                        visited_files.add(vfs_file_path)
+                        continue
+
+                    file_stat = os.stat(local_file)
                     if file_stat.st_size > mount.max_file_size:
-                        seen_file_paths.add(vfs_file_path)
+                        visited_files.add(vfs_file_path)
                         stats["skipped"] += 1
                         continue
 
-                    # FIX #1: Respect existing MODIFIED entries.
-                    # If the file already exists in the VFS and has unsynced
-                    # in-memory changes, do NOT overwrite — the agent is editing.
-                    existing = self.files.get(vfs_file_path)
-                    if isinstance(existing, VFSFile):
-                        if existing.is_dirty:
-                            # Agent has unsynced changes — preserve them.
-                            # Only update the disk-mtime reference so the next
-                            # sync can detect external changes.
-                            seen_file_paths.add(vfs_file_path)
-                            stats["seen"] = stats.get("seen", 0) + 1
-                            stats["files"] += 1
-                            continue
-
-                        # Not dirty: disk may have newer version. If content is
-                        # already loaded but mtime changed, invalidate the cache
-                        # so the next read() reloads from disk.
-                        if (
-                            existing.is_loaded
-                            and existing.local_mtime is not None
-                            and file_stat.st_mtime > existing.local_mtime
-                        ):
-                            existing._content = None
-                            existing.backing_type = FileBackingType.SHADOW
-
-                        existing.local_mtime = file_stat.st_mtime
-                        existing.size_bytes = file_stat.st_size
-                        stats["seen"] = stats.get("seen", 0) + 1
-                        stats["files"] += 1
-                        stats["total_size"] += file_stat.st_size
-                        seen_file_paths.add(vfs_file_path)
-                        continue
-
-                    # New file: create fresh shadow entry
                     file_type = get_file_type(filename)
-
                     self.files[vfs_file_path] = VFSFile(
                         filename=filename,
                         backing_type=FileBackingType.SHADOW,
-                        _content=None,  # NOT LOADED
+                        _content=None,
                         local_path=local_file,
                         local_mtime=file_stat.st_mtime,
                         size_bytes=file_stat.st_size,
-                        line_count=-1,  # Unknown until loaded
+                        line_count=-1,
                         file_type=file_type,
                         readonly=mount.readonly,
                     )
-
                     self._shadow_index[vfs_file_path] = local_file
-                    seen_file_paths.add(vfs_file_path)
+                    visited_files.add(vfs_file_path)
                     stats["files"] += 1
                     stats["total_size"] += file_stat.st_size
-
                 except (OSError, IOError):
                     stats["skipped"] += 1
-        # FIX #2: Remove zombie entries — files/dirs that are in VFS but
-        # no longer exist on disk. Protect dirty files (agent's unsynced work).
-        mount_prefix_file = (
-            mount.vfs_path if mount.vfs_path.endswith("/") else mount.vfs_path + "/"
-        )
-        mount_prefix_dir = mount_prefix_file
 
-        for path in list(self.files.keys()):
-            # Only consider files under this mount
-            if not (path == mount.vfs_path or path.startswith(mount_prefix_file)):
+        # Zombie cleanup — only for this mount's files
+        mount_prefix = mount_vfs if mount_vfs.endswith("/") else mount_vfs + "/"
+        to_remove_files = []
+        for path in self.files:
+            if not (path == mount_vfs or path.startswith(mount_prefix)):
                 continue
-            if path in seen_file_paths:
+            if path in visited_files:
                 continue
             f = self.files[path]
-            if not isinstance(f, VFSFile):
+            if not isinstance(f, VFSFile) or f.is_dirty or f.readonly:
                 continue
-            # Safety: never remove dirty (unsynced) files, even if disk-gone.
-            # Surface as error instead — agent must decide.
-            if f.is_dirty:
-                continue
-            # Safety: never remove readonly/system files
-            if f.readonly:
-                continue
+            to_remove_files.append(path)
+
+        for path in to_remove_files:
             del self.files[path]
             self._shadow_index.pop(path, None)
             stats["removed"] += 1
 
-        for path in list(self.directories.keys()):
-            if not (path == mount.vfs_path or path.startswith(mount_prefix_dir)):
+        to_remove_dirs = []
+        for path in self.directories:
+            if not (path == mount_vfs or path.startswith(mount_prefix)):
                 continue
-            if path in seen_dir_paths:
+            if path in visited_dirs:
                 continue
             d = self.directories[path]
             if d.readonly:
                 continue
-            # Only remove empty dirs (files under it were removed above,
-            # but shared dirs with other mounts should survive)
             has_remaining = any(p.startswith(path + "/") for p in self.files) or any(
                 p.startswith(path + "/") for p in self.directories if p != path
             )
             if not has_remaining:
-                del self.directories[path]
-                stats["removed"] += 1
+                to_remove_dirs.append(path)
+
+        for path in to_remove_dirs:
+            del self.directories[path]
+            stats["removed"] += 1
 
         self._dirty = True
         stats["scan_time_ms"] = (time.perf_counter() - start) * 1000
@@ -3126,10 +3204,14 @@ Session: {self.session_id}
 
         return {"success": True, "unmounted": vfs_path, "files_saved": saved}
 
-    def refresh_mount(self, vfs_path: str) -> dict:
-        """
-        Re-scan mount für neue/gelöschte Dateien und sync Content vom lokalen FS.
-        """
+    def refresh_mount(self, vfs_path: str, skip_rescan: bool = False) -> dict:
+        """Re-scan mount for new/deleted files and sync content from local FS.
+
+            Args:
+                vfs_path: Mount point to refresh
+                skip_rescan: If True, skip the _scan_mount() call (used when
+                             the poll registry already detected and applied changes)
+            """
         vfs_path = self._normalize_path(vfs_path)
 
         if vfs_path not in self.mounts:
@@ -3137,16 +3219,13 @@ Session: {self.session_id}
 
         mount = self.mounts[vfs_path]
 
-        # Sync Content vom lokalen FS
         synced = []
         errors = []
 
         for path, f in list(self.files.items()):
             if path.startswith(vfs_path) and isinstance(f, VFSFile):
-                # Dirty-Dateien überspringen (VFS-Änderungen haben Priorität)
                 if f.is_dirty:
                     continue
-
                 if f.local_path:
                     result = self._sync_from_local(path)
                     if result.get("success"):
@@ -3155,12 +3234,13 @@ Session: {self.session_id}
                     else:
                         errors.append(f"{path}: {result.get('error', 'unknown')}")
 
-        # Re-scan für neue/gelöschte Dateien
-        stats = self._scan_mount(mount)
+        stats = {"files": 0, "dirs": 0}
+        if not skip_rescan:
+            stats = self._scan_mount(mount)
 
         return {
             "success": len(errors) == 0,
-            "files_indexed": stats["files"],
+            "files_indexed": stats.get("files", 0),
             "content_synced": synced,
             "errors": errors,
         }

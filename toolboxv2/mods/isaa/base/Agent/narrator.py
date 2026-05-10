@@ -679,7 +679,7 @@ def init_narrator_handler(
     if fallback_models is None and "groq" in BLITZ_MODEL.lower():
         fallback_models = _resolve_groq_fallbacks(BLITZ_MODEL)
         logger.info(
-            "Narrator: auto-selected groq fallbacks for %s → %s",
+            "Narrator: auto-selected groq fallbacks for %s -> %s",
             BLITZ_MODEL, fallback_models,
         )
 

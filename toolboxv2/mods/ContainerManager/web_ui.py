@@ -50,15 +50,34 @@ async def api_get_container(container_id: str, admin_key: str = ""):
 async def api_create_container(
     container_type: str = "cli_v4", user_id: str = "",
     admin_key: str = "", image: str = "", command: str = "",
-    memory_limit: str = "", cpu_limit: str = "", ssh_public_key: str = ""
+    memory_limit: str = "", cpu_limit: str = "", ssh_public_key: str = "",
+    ext_source: str = "", ext_git_url: str = "", ext_git_branch: str = "",
+    ext_folder_path: str = "", ext_zip_url: str = "",
+    manifest_yaml: str = "",
 ):
     from toolboxv2 import get_app
     from toolboxv2.mods.ContainerManager import create_container
+
+    # Build extra kwargs for tb_external
+    extra = {}
+    if container_type == "tb_external":
+        extra["ext_source"] = ext_source or "image"
+        if ext_source == "git":
+            extra["ext_git_url"] = ext_git_url
+            extra["ext_git_branch"] = ext_git_branch or "main"
+        elif ext_source == "folder":
+            extra["ext_folder_path"] = ext_folder_path
+        elif ext_source == "zip":
+            extra["ext_zip_url"] = ext_zip_url
+    if manifest_yaml:
+        extra["manifest_yaml"] = manifest_yaml
+
     result = await create_container(
         app=get_app(), container_type=container_type, user_id=user_id or None,
         admin_key=admin_key or None, image=image or None,
         command=command or None, memory_limit=memory_limit or None,
         cpu_limit=cpu_limit or None, ssh_public_key=ssh_public_key or None,
+        **extra,
     )
     if result.is_error():
         return (400, {"error": str(result.info)})
@@ -374,6 +393,17 @@ html,body { height:100%; background:var(--term-bg); color:var(--term-fg); font-f
 .toast-title { color:var(--toast-color,var(--primary)); font-size:var(--term-text-xs); text-transform:uppercase; letter-spacing:1px; margin-bottom:4px; }
 @keyframes toast-in { from{opacity:0;transform:translateX(20px)} to{opacity:1;transform:translateX(0)} }
 
+/* Manifest Editor */
+.manifest-section { border:1px solid var(--term-border); margin-bottom:6px; }
+.manifest-section[open] { border-color:color-mix(in oklch, var(--primary) 40%, var(--term-border)); }
+.manifest-summary { padding:6px 10px; cursor:pointer; font-size:var(--term-text-xs); color:var(--term-fg-dim); text-transform:uppercase; letter-spacing:1px; background:var(--term-bg); user-select:none; list-style:none; }
+.manifest-summary::-webkit-details-marker { display:none; }
+.manifest-section[open] .manifest-summary { color:var(--primary); border-bottom:1px solid var(--term-border); }
+.manifest-body { padding:8px 10px; background:var(--term-bg-raised); }
+.mf-toggle { display:block; padding:3px 0; font-size:var(--term-text-sm); color:var(--term-fg); cursor:pointer; }
+.mf-toggle input { margin-right:6px; accent-color:var(--primary); }
+.mf-hint { color:var(--term-fg-muted); font-size:var(--term-text-xs); }
+
 ::-webkit-scrollbar { width:6px; }
 ::-webkit-scrollbar-track { background:var(--term-bg); }
 ::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.15); }
@@ -383,6 +413,7 @@ html,body { height:100%; background:var(--term-bg); color:var(--term-fg); font-f
   .stats-grid { grid-template-columns:1fr 1fr; }
   .tbl-row,.tbl-hdr { font-size:var(--term-text-xs); }
   .auth-bar input { width:120px; }
+  #tab-create > div { grid-template-columns:1fr !important; }
 }
 </style>
 </head>
@@ -435,23 +466,150 @@ html,body { height:100%; background:var(--term-bg); color:var(--term-fg); font-f
 
     <!-- Create -->
     <div id="tab-create" style="display:none">
-      <div class="card" style="max-width:500px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+
+      <!-- Left: Container Config -->
+      <div class="card">
         <div class="card-title">NEW CONTAINER</div>
         <div class="field"><label>User ID</label><input id="cUserId" placeholder="usr_..."></div>
         <div class="field"><label>Type</label>
-          <select id="cType">
+          <select id="cType" onchange="toggleExternalFields()">
             <option value="cli_v4">cli_v4 — Persistent CLI</option>
             <option value="isaa">isaa — ISAA Agent System</option>
+            <option value="tb_external">tb_external — External App</option>
             <option value="custom">custom</option>
           </select>
         </div>
+
+        <!-- tb_external source fields (hidden by default) -->
+        <div id="externalFields" style="display:none">
+          <div class="field"><label>Source</label>
+            <select id="cExtSource" onchange="toggleSourceFields()">
+              <option value="image">Docker Image</option>
+              <option value="git">Git Repository</option>
+              <option value="folder">Local Folder (mount)</option>
+              <option value="zip">ZIP Archive (upload)</option>
+            </select>
+          </div>
+          <div id="srcGit" style="display:none">
+            <div class="field"><label>Git URL</label><input id="cGitUrl" placeholder="https://github.com/user/repo.git"></div>
+            <div class="field"><label>Branch (optional)</label><input id="cGitBranch" placeholder="main"></div>
+          </div>
+          <div id="srcFolder" style="display:none">
+            <div class="field"><label>Host Path</label><input id="cFolderPath" placeholder="/home/user/project"></div>
+          </div>
+          <div id="srcZip" style="display:none">
+            <div class="field"><label>ZIP URL or Registry Path</label><input id="cZipUrl" placeholder="https://... or registry://pkg@1.0"></div>
+          </div>
+        </div>
+
         <div class="field"><label>Image (optional)</label><input id="cImage" placeholder="toolboxv2:latest"></div>
-        <div class="field"><label>Command (optional)</label><input id="cCmd" placeholder="override entrypoint"></div>
+        <div class="field"><label>Start Command</label><input id="cCmd" placeholder="tb workers start"></div>
         <div class="field"><label>Memory Limit</label><input id="cMem" placeholder="512m" value="512m"></div>
         <div class="field"><label>CPU Limit</label><input id="cCpu" placeholder="0.5" value="0.5"></div>
         <div class="field"><label>SSH Public Key (optional)</label><textarea id="cSsh" rows="2" placeholder="ssh-ed25519 AAAAC3..."></textarea></div>
         <div style="margin-top:12px"><button class="btn btn-primary" onclick="createContainer()">deploy</button></div>
       </div>
+
+      <!-- Right: Manifest Editor -->
+      <div class="card">
+        <div class="card-title">MANIFEST
+          <span style="float:right;display:flex;gap:6px">
+            <button class="btn btn-sm" onclick="loadDefaultManifest()">default</button>
+            <button class="btn btn-sm" onclick="validateManifest()">validate</button>
+          </span>
+        </div>
+
+        <!-- Manifest sections as collapsible fieldsets -->
+        <div style="font-size:var(--term-text-xs);color:var(--term-fg-muted);margin-bottom:8px">
+          Configure the tb-manifest for this container. Sections with ● are active.
+        </div>
+
+        <!-- Features -->
+        <details class="manifest-section" open>
+          <summary class="manifest-summary">● FEATURES</summary>
+          <div class="manifest-body">
+            <label class="mf-toggle"><input type="checkbox" id="mfCore" checked disabled> core <span class="mf-hint">(always on)</span></label>
+            <label class="mf-toggle"><input type="checkbox" id="mfCli"> cli <span class="mf-hint">prompt_toolkit, rich</span></label>
+            <label class="mf-toggle"><input type="checkbox" id="mfWeb" checked> web <span class="mf-hint">starlette, uvicorn</span></label>
+            <label class="mf-toggle"><input type="checkbox" id="mfDesktop"> desktop <span class="mf-hint">PyQt6</span></label>
+            <label class="mf-toggle"><input type="checkbox" id="mfIsaa"> isaa <span class="mf-hint">litellm, langchain</span></label>
+            <label class="mf-toggle"><input type="checkbox" id="mfExotic"> exotic <span class="mf-hint">scipy, pandas</span></label>
+          </div>
+        </details>
+
+        <!-- Database Backend -->
+        <details class="manifest-section">
+          <summary class="manifest-summary">○ DATABASE</summary>
+          <div class="manifest-body">
+            <div class="field"><label>DB Mode</label>
+              <select id="mfDbMode">
+                <option value="local">local — SQLite in container</option>
+                <option value="redis">redis — Remote Redis</option>
+                <option value="postgres">postgres — Remote PostgreSQL</option>
+              </select>
+            </div>
+            <div id="mfDbRemote" style="display:none">
+              <div class="field"><label>Connection URL</label><input id="mfDbUrl" placeholder="redis://host:6379 or postgresql://user:pass@host/db"></div>
+              <div class="mf-hint" style="margin-top:4px">
+                In Docker: use service name (redis, postgres) if running in same compose stack.<br>
+                External: use host IP or domain. Container must reach the DB on tb-internal network.
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <!-- OpenObserve -->
+        <details class="manifest-section">
+          <summary class="manifest-summary">○ OPEN OBSERVE</summary>
+          <div class="manifest-body">
+            <label class="mf-toggle"><input type="checkbox" id="mfOtelEnabled"> Enable OTEL export</label>
+            <div id="mfOtelFields" style="display:none">
+              <div class="field"><label>Collector Endpoint</label><input id="mfOtelEndpoint" placeholder="http://otel-collector:4318" value="http://otel-collector:4318"></div>
+              <div class="field"><label>Service Name</label><input id="mfOtelService" placeholder="tb-worker"></div>
+              <div class="mf-hint">
+                Default: connects to the OTEL Collector in the compose stack (profile: monitoring).<br>
+                For external OpenObserve: use its OTLP HTTP endpoint directly.
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <!-- Event Networking -->
+        <details class="manifest-section">
+          <summary class="manifest-summary">○ EVENTS / NETWORKING</summary>
+          <div class="manifest-body">
+            <label class="mf-toggle"><input type="checkbox" id="mfEventsEnabled"> Enable cross-container events</label>
+            <div id="mfEventFields" style="display:none">
+              <div class="field"><label>Event Transport</label>
+                <select id="mfEventTransport">
+                  <option value="http">HTTP — via nginx /api/events</option>
+                  <option value="ws">WebSocket — persistent connection</option>
+                </select>
+              </div>
+              <div class="field"><label>Event Hub URL</label><input id="mfEventHub" placeholder="http://tb-worker:8000/api/events" value="http://tb-worker:8000/api/events"></div>
+              <div class="field"><label>Subscribe Topics (comma-sep)</label><input id="mfEventTopics" placeholder="system.*,module.*"></div>
+              <div class="mf-hint">
+                Containers on tb-internal network can reach each other by service name.<br>
+                Events are routed through the TB worker HTTP endpoint — no ZMQ needed cross-container.
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <!-- Raw YAML -->
+        <details class="manifest-section">
+          <summary class="manifest-summary">○ RAW YAML</summary>
+          <div class="manifest-body">
+            <div class="mf-hint" style="margin-bottom:6px">Direct YAML edit — overrides form values above when deploying.</div>
+            <textarea id="mfYaml" rows="12" style="width:100%;font:inherit;font-size:var(--term-text-xs);color:var(--term-fg);background:var(--term-bg-sunken);border:1px solid var(--term-border);border-radius:0;padding:8px;caret-color:var(--primary);tab-size:2;white-space:pre;resize:vertical" spellcheck="false"></textarea>
+          </div>
+        </details>
+
+        <div id="mfValidation" style="margin-top:8px;font-size:var(--term-text-xs);display:none"></div>
+      </div>
+
+      </div><!-- /grid -->
     </div>
 
     <!-- Logs -->
@@ -707,19 +865,168 @@ function logFromModal(cid) {
 function closeModal() { document.getElementById('detailModal').style.display='none'; }
 
 // ======================================================================
+// EXTERNAL FIELDS TOGGLE
+// ======================================================================
+function toggleExternalFields() {
+  const isExt = document.getElementById('cType').value === 'tb_external';
+  document.getElementById('externalFields').style.display = isExt ? '' : 'none';
+  if (isExt) toggleSourceFields();
+}
+
+function toggleSourceFields() {
+  const src = document.getElementById('cExtSource').value;
+  document.getElementById('srcGit').style.display = src==='git' ? '' : 'none';
+  document.getElementById('srcFolder').style.display = src==='folder' ? '' : 'none';
+  document.getElementById('srcZip').style.display = src==='zip' ? '' : 'none';
+}
+
+// DB mode toggle
+document.addEventListener('change', e => {
+  if (e.target.id === 'mfDbMode') {
+    document.getElementById('mfDbRemote').style.display = e.target.value === 'local' ? 'none' : '';
+  }
+  if (e.target.id === 'mfOtelEnabled') {
+    document.getElementById('mfOtelFields').style.display = e.target.checked ? '' : 'none';
+  }
+  if (e.target.id === 'mfEventsEnabled') {
+    document.getElementById('mfEventFields').style.display = e.target.checked ? '' : 'none';
+  }
+  // Update section indicators
+  updateSectionIndicators();
+});
+
+function updateSectionIndicators() {
+  document.querySelectorAll('.manifest-section').forEach(s => {
+    const sum = s.querySelector('.manifest-summary');
+    const checks = s.querySelectorAll('input[type=checkbox]:checked:not(:disabled)');
+    const selects = s.querySelectorAll('select');
+    let active = checks.length > 0;
+    if (!active) selects.forEach(sel => { if (sel.value !== 'local') active = true; });
+    sum.textContent = sum.textContent.replace(/^[●○]/, active ? '●' : '○');
+  });
+}
+
+// ======================================================================
+// MANIFEST EDITOR
+// ======================================================================
+function buildManifestYaml() {
+  const feat = {
+    core: {enabled: true, immutable: true},
+    cli: {enabled: !!document.getElementById('mfCli').checked},
+    web: {enabled: !!document.getElementById('mfWeb').checked},
+    desktop: {enabled: !!document.getElementById('mfDesktop').checked},
+    isaa: {enabled: !!document.getElementById('mfIsaa').checked},
+    exotic: {enabled: !!document.getElementById('mfExotic').checked},
+  };
+
+  let yaml = 'name: toolboxv2\\nversion: "1.0.0"\\n\\nfeatures:\\n';
+  for (const [k,v] of Object.entries(feat)) {
+    yaml += '  ' + k + ':\\n    enabled: ' + v.enabled + '\\n';
+    if (v.immutable) yaml += '    immutable: true\\n';
+  }
+
+  // Database
+  const dbMode = document.getElementById('mfDbMode').value;
+  yaml += '\\ndatabase:\\n  mode: ' + dbMode + '\\n';
+  if (dbMode !== 'local') {
+    const url = document.getElementById('mfDbUrl').value;
+    if (url) yaml += '  url: "' + url + '"\\n';
+  }
+
+  // OpenObserve
+  if (document.getElementById('mfOtelEnabled').checked) {
+    yaml += '\\notel:\\n  enabled: true\\n';
+    const ep = document.getElementById('mfOtelEndpoint').value;
+    const svc = document.getElementById('mfOtelService').value;
+    if (ep) yaml += '  endpoint: "' + ep + '"\\n';
+    if (svc) yaml += '  service_name: "' + svc + '"\\n';
+  }
+
+  // Events
+  if (document.getElementById('mfEventsEnabled').checked) {
+    yaml += '\\nevents:\\n  enabled: true\\n';
+    yaml += '  transport: ' + document.getElementById('mfEventTransport').value + '\\n';
+    const hub = document.getElementById('mfEventHub').value;
+    if (hub) yaml += '  hub_url: "' + hub + '"\\n';
+    const topics = document.getElementById('mfEventTopics').value;
+    if (topics) yaml += '  subscribe: [' + topics.split(',').map(t=>'"'+t.trim()+'"').join(', ') + ']\\n';
+  }
+
+  return yaml;
+}
+
+function loadDefaultManifest() {
+  const yaml = buildManifestYaml();
+  document.getElementById('mfYaml').value = yaml;
+  toast('manifest generated from form', 'info');
+}
+
+function validateManifest() {
+  const el = document.getElementById('mfValidation');
+  const raw = document.getElementById('mfYaml').value.trim();
+
+  // Basic client-side validation
+  const errors = [];
+  if (!raw) {
+    // Validate from form instead
+    const yaml = buildManifestYaml();
+    document.getElementById('mfYaml').value = yaml;
+    el.style.display = '';
+    el.style.color = 'var(--success)';
+    el.textContent = '✓ manifest generated — looks valid';
+    return;
+  }
+
+  // Check for basic YAML structure
+  if (!raw.includes('name:')) errors.push('missing: name');
+  if (!raw.includes('features:')) errors.push('missing: features section');
+  if (raw.includes('\\t')) errors.push('tabs detected — use spaces');
+
+  el.style.display = '';
+  if (errors.length) {
+    el.style.color = 'var(--error)';
+    el.textContent = '✕ ' + errors.join(' | ');
+  } else {
+    el.style.color = 'var(--success)';
+    el.textContent = '✓ structure looks valid';
+  }
+}
+
+// ======================================================================
 // CREATE
 // ======================================================================
 async function createContainer() {
+  const cType = document.getElementById('cType').value;
   const params = new URLSearchParams({
     admin_key: KEY(),
     user_id: document.getElementById('cUserId').value,
-    container_type: document.getElementById('cType').value,
+    container_type: cType,
     image: document.getElementById('cImage').value,
     command: document.getElementById('cCmd').value,
     memory_limit: document.getElementById('cMem').value,
     cpu_limit: document.getElementById('cCpu').value,
     ssh_public_key: document.getElementById('cSsh').value,
   });
+
+  // Add external source params
+  if (cType === 'tb_external') {
+    const src = document.getElementById('cExtSource').value;
+    params.set('ext_source', src);
+    if (src === 'git') {
+      params.set('ext_git_url', document.getElementById('cGitUrl').value);
+      params.set('ext_git_branch', document.getElementById('cGitBranch').value);
+    } else if (src === 'folder') {
+      params.set('ext_folder_path', document.getElementById('cFolderPath').value);
+    } else if (src === 'zip') {
+      params.set('ext_zip_url', document.getElementById('cZipUrl').value);
+    }
+  }
+
+  // Add manifest (use raw YAML if filled, else generate from form)
+  let manifest = document.getElementById('mfYaml').value.trim();
+  if (!manifest) manifest = buildManifestYaml();
+  if (manifest) params.set('manifest_yaml', manifest);
+
   const d = await api('/cm/api/containers?'+params, {method:'POST'});
   if (d) {
     toast('Container created: '+d.container_id, 'success');

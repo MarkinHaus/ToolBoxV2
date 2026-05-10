@@ -2,7 +2,7 @@
 import threading, sys, traceback, time, os, asyncio, linecache
 
 # === ANPASSEN ===
-PROJECT_ROOT = os.path.normpath(r"C:\Users\Markin\Workspace\ToolBoxV2")
+PROJECT_ROOT = os.path.normpath(r"/")
 TIMEOUT = 60
 # ================
 
@@ -130,6 +130,11 @@ def dump_project_threads(reason="manual"):
 
     lines.append(f"\n{'=' * 70}\n")
     print("\n".join(lines), file=sys.stderr, flush=True)
+    # === NEU: RAM WIEDER FREIGEBEN ===
+    # Löscht den gesamten gecachten Quellcode aus dem RAM.
+    # Da Dumps ohnehin nur selten (z.B. alle 60s) passieren,
+    # ist es völlig egal, wenn er die Datei beim nächsten Mal neu einlesen muss.
+    linecache.clearcache()
 
 
 class HangWatchdog:

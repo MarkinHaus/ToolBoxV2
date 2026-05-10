@@ -617,16 +617,16 @@ class FlowAgent:
             llm_kwargs.pop("tool_choice", None)
 
         session_id = session_id or self.active_session
-        system_msg = self.amd.get_system_message()
-        session = None
-        if session_id:
-            session = self.session_manager.get(session_id)
+
+        if with_context:
+            session = self.session_manager.get(session_id) if session_id else None
+            session_context = None
             if session:
                 await session.initialize()
-                system_msg += "\n\n" + session.build_vfs_context()
-        if with_context:
+                session_context = session.build_vfs_context()
+            system_msg = (session_context or "") + self.amd.get_system_message()
             if session:
-                sysmsg = [{"role": "system", "content": f"{system_msg}"}]
+                sysmsg = [{"role": "system", "content": system_msg}]
                 full_history = session.get_history(kwargs.get("history_size", 6))
                 current_msg = llm_kwargs["messages"]
                 for msg in full_history:
@@ -651,7 +651,7 @@ class FlowAgent:
                 llm_kwargs["messages"] = sysmsg + full_history + current_msg
             else:
                 llm_kwargs["messages"] = [
-                    {"role": "system", "content": f"{system_msg}"}
+                    {"role": "system", "content":system_msg}
                 ] + llm_kwargs["messages"]
 
         # Repair orphaned tool messages (required by Cerebras strict template validation)
@@ -1189,6 +1189,7 @@ class FlowAgent:
                 )
 
                 if isinstance(data, str):
+                    print("PRINTING DATA ",data)
                     data = json.loads(data)
                 validated = pydantic_model.model_validate(data)
                 return validated.model_dump()
@@ -2256,9 +2257,9 @@ class FlowAgent:
             """Unmount a shadow mount, optionally saving all dirty files to disk."""
             return session.vfs.unmount(vfs_path, save_changes=save_changes)
 
-        def vfs_refresh_mount(vfs_path: str) -> dict:
+        def vfs_refresh_mount(vfs_path: str, skip_rescan: bool = False) -> dict:
             """Re-scan a mount to detect new / deleted files on disk."""
-            return session.vfs.refresh_mount(vfs_path)
+            return session.vfs.refresh_mount(vfs_path, skip_rescan)
 
         def vfs_sync_all() -> dict:
             """Sync all modified VFS files back to disk."""

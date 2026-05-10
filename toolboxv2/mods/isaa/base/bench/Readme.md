@@ -5,7 +5,7 @@
 ### 1. Single Model Test (CLI)
 
 ```bash
-python -m bench run \
+python -m toolboxv2.mods.isaa.base.bench run \
   --task-dir tasks/ \
   --model openrouter/google/gemini-2.5-flash \
   --model-id gemini-flash \
@@ -15,7 +15,7 @@ python -m bench run \
 ### 2. Multi-Model Parallel Test
 
 ```bash
-python -m bench.multirun \
+python -m toolboxv2.mods.isaa.base.bench.multirun \
   --task-dir tasks/ \
   --output-dir reports/ \
   gemini=openrouter/google/gemini-2.5-flash \
@@ -29,7 +29,7 @@ A combined `dashboard.html` is generated automatically.
 ### 3. Python API
 
 ```python
-from bench.multirun import multi_benchmark, aggregate_dashboard
+from toolboxv2.mods.isaa.base.bench.multirun import multi_benchmark, aggregate_dashboard
 
 models = {
     "gemini-flash": "openrouter/google/gemini-2.5-flash",
@@ -215,7 +215,7 @@ name: Extraction Suite
 tags_filter: [extraction]     # tasks must have ALL listed tags
 ```
 
-Use suites via CLI: `python -m bench run --suite tasks/suites/quick.yaml ...`
+Use suites via CLI: `python -m toolboxv2.mods.isaa.base.bench run --suite tasks/suites/quick.yaml ...`
 
 ---
 
@@ -242,7 +242,7 @@ Create tasks across all three complexity levels (tutorial / extended / phd).
 ### 2. Run Calibration
 
 ```bash
-python -m bench calibrate --task-dir tasks/calibration/
+python -m toolboxv2.mods.isaa.base.bench calibrate --task-dir tasks/calibration/
 ```
 
 Output: `judge_profile.json` with per-complexity accuracy and optimal batch sizes.
@@ -290,7 +290,7 @@ Tags act as dimensions in the dashboard — if you tag tasks with `logic`, `extr
 Generate from report JSONs:
 
 ```bash
-python -m bench dashboard reports/*.json -o comparison.html
+python -m toolboxv2.mods.isaa.base.bench dashboard reports/*.json -o comparison.html
 ```
 
 Features: leaderboard, dimension comparison chart, cost overview, per-task drill-down, flag analysis.

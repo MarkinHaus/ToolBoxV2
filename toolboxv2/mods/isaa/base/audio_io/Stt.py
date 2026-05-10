@@ -35,6 +35,7 @@ class STTBackend(Enum):
     FASTER_WHISPER = "faster_whisper"
     GROQ_WHISPER = "groq_whisper"
     PARAKEET = "parakeet"
+    #Granite 4.1
 
 
 @dataclass(frozen=True)

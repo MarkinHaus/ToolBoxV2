@@ -1658,6 +1658,7 @@ BEISPIELE:
         self._active_executions[ctx.run_id] = ctx
         ctx.session_id = session_id
         ctx.query = query
+        ctx.max_iterations = max_iterations
 
         await self._wait_for_pending_finalize(session_id)
         # Initialize SubAgentManager (only if NOT a sub-agent)
@@ -1708,13 +1709,13 @@ BEISPIELE:
         self.live.enter(
             AgentPhase.INIT, f"{action} [{agent_type}] {ctx.run_id}: {query[:80]}"
         )
+        log = get_logger()
         self._narrator.reset(query)
         self._narrator.on_init(query)
         self._narrator.schedule_skills_update(
             query, ctx.working_history, self.skills_manager, ctx=ctx
         )
         self._narrator.schedule_ruleset_update(ctx.working_history, session, ctx)
-
         final_response = None
         success = True
 
@@ -1748,6 +1749,9 @@ BEISPIELE:
             # Inject AutoFocus before LLM call
             messages = self._inject_auto_focus(ctx)
             messages = self._sanitize_history_for_api(messages)
+
+
+            log.info(f"messages AutoFocus {len(messages)} done")
 
             # LLM Call
             try:
@@ -1928,6 +1932,7 @@ BEISPIELE:
         self._active_executions[ctx.run_id] = ctx
         ctx.session_id = session_id
         ctx.query = query
+        ctx.max_iterations = max_iterations
 
         await self._wait_for_pending_finalize(session_id)
         # Initialize SubAgentManager
@@ -2026,8 +2031,6 @@ BEISPIELE:
                 query, ctx.working_history, self.skills_manager, ctx=ctx
             )
             self._narrator.schedule_ruleset_update(ctx.working_history, session, ctx)
-
-            ctx.max_iterations = max_iterations
 
             # Helper to enrich chunks
             def enrich(chunk):
@@ -3697,6 +3700,10 @@ BEISPIELE:
                 # Context Budget Management: Szenario A/B/C
                 managed_msg = self._manage_context_budget(ctx, f_name, str(result), f_id)
                 ctx.working_history.append(managed_msg)
+
+                if f_name == "vfs_shell":
+                    f_name = f_name+f_args.get("command", " _").split(" ")[0]
+                    f_name = f_name.strip()
                 ctx.tools_dict.append({"name": f_name, "args": f_args, "result": result})
             ctx.auto_focus.record(f_name, f_args, str(result))
             if f_name in ["think", "load_tools", "list_tools"]:
@@ -4113,15 +4120,15 @@ BEISPIELE:
                 if c:
                     category_map.setdefault(c.lower(), []).append(t.name)
 
-            expanded: list[str] = []
-            for name in names:
-                name = name.strip()
-                if name in self.agent.tool_manager.list_names():
-                    expanded.append(name)
-                elif name.lower() in category_map:
-                    expanded.extend(category_map[name.lower()])
-                else:
-                    expanded.append(name)  # keep original → "not found" error below
+        expanded: list[str] = []
+        for name in names:
+            name = name.strip()
+            if name in self.agent.tool_manager.list_names():
+                expanded.append(name)
+            elif name.lower() in category_map:
+                expanded.extend(category_map[name.lower()])
+            else:
+                expanded.append(name)  # keep original → "not found" error below
             names = expanded
         loaded = []
         failed = []
@@ -4414,28 +4421,51 @@ BEISPIELE:
                         "- Sub-Agent Management: spawn_sub_agent, wait_for, resume_sub_agent",
                         "  → If a sub-agent hits max_iterations but made progress, resume it with more iterations",
                         "",
-                        "MANDATORY WORKFLOW:",
-                        "A. PLAN: Use `think()` to decompose the request.",
-                        "B. ACT: Use tools (`load_tools`, `vfs_*`, etc.) to gather info or execute changes. (if no fitting tool is loaded, discover it with list_tools and load it with load_tools!)",
-                        "C. VERIFY: Check if the tool output matches expectations.",
-                        "   → AFTER state-changing tools (createJob, deleteJob, spawn_sub_agent, etc.), ALWAYS call the corresponding list tool (listJobs, list_agents, etc.) to verify!",
-                        "D. REPORT: Use `final_answer()` only when the objective is met or definitively impossible.",
                     ]
                 )
             )
+        # OODA Decision Loop — every action cycle
+        prompt_parts.append(
+            "MANDATORY WORKFLOW — OODA LOOP (run for EVERY action cycle until objective met):\n"
+            "\n"
+            "O — OBSERVE: Gather raw data about current state.\n"
+            "   • Use tools (vfs_*, list_tools, listJobs, list_agents, etc.) to see what IS, not what you assume.\n"
+            "   • If no fitting tool is loaded → discover with list_tools, load with load_tools.\n"
+            "   • Read errors, outputs, file contents — raw facts only.\n"
+            "\n"
+            "O — ORIENT: Use `think()` to interpret observations.\n"
+            "   • What changed since last cycle? What does the data mean for the objective?\n"
+            "   • Identify gaps: what info is still missing? What assumptions am I making?\n"
+            "   • Match observations against the original request — am I still on target?\n"
+            "\n"
+            "D — DECIDE: Pick exactly ONE next action.\n"
+            "   • If objective is met → decide to REPORT.\n"
+            "   • If objective is impossible → decide to REPORT with reason.\n"
+            "   • Otherwise → decide which tool call moves closest to the goal.\n"
+            "\n"
+            "A — ACT: Execute the decision.\n"
+            "   • Run the tool / make the change / call final_answer().\n"
+            "   • AFTER state-changing actions (createJob, deleteJob, spawn_sub_agent, etc.):\n"
+            "     immediately loop back to OBSERVE — call the corresponding list tool\n"
+            "     (listJobs, list_agents, etc.) to verify the state change landed.\n"
+            "\n"
+            "→ Then START THE NEXT OODA CYCLE from OBSERVE.\n"
+            "→ Use `final_answer()` ONLY when ORIENT confirms: objective met or definitively impossible.\n"
+            "→ Never skip OBSERVE after ACT — every action changes the environment."
+        )
 
         # do not guess part.
         prompt_parts.append(
             "STRICT ZERO-GUESSING POLICY: You must NEVER guess anything, anywhere, under any circumstances! "
-            "Do not guess processes, rules, tools, information, functions, APIs, or documentation. "
-            "Always base your answers strictly on the provided context and facts. "
-            "IF INFORMATION IS MISSING OR INSUFFICIENT: "
-            "1. Think outside the box and look for tools that can help. "
-            "2. Actively retrieve the missing data (e.g., search the web, read files) and bring it into the context. "
-            "3. If tools cannot provide the factual answer, you MUST ASK THE USER. Never guess. "
-            "SOLE EXCEPTION: If the user explicitly requests you to guess in a 'minimal demo setting'. "
-            "If this exception applies, you MUST clearly and explicitly wrap and declare the guessed parts with "
-            "warning labels like '[GUESSED INFO]' so the user knows exactly what is not factual."
+            "\nDo not guess processes, rules, tools, information, functions, APIs, or documentation. "
+            "\nAlways base your actions and answers strictly on the provided context and facts. "
+            "\nIF INFORMATION IS MISSING OR INSUFFICIENT: "
+            "\n1. Think outside the box and look for tools that can help. "
+            "\n2. Actively retrieve the missing data (e.g., search the web, read files) and bring it into the context. "
+            "\n3. If tools cannot provide the factual answer, you MUST ASK THE USER. Never guess. "
+            "\nSOLE EXCEPTION: If the user explicitly requests you to guess in a 'minimal demo setting'. "
+            "\nIf this exception applies, you MUST clearly and explicitly wrap and declare the guessed parts with "
+            "\nwarning labels like '[GUESSED INFO]' so the user knows exactly what is not factual."
         )
 
         # Add skills section if matched

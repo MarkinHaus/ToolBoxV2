@@ -123,6 +123,8 @@ STATUS_SYM = {
     "cancelled": ("⏸", "dim"),
 }
 
+from toolboxv2.utils.extras.code_analyzer.profiler import profile_code
+
 
 def _short(s: str, n: int) -> str:
     return s[:n] + ".." if len(s) > n + 2 else s
@@ -2523,7 +2525,52 @@ def load_docs_feature(fm):
                 "semantic_check_hint": "Muss ein Dict mit 'result' und 'meta' zurückgeben."
             },
             "cleanup_func": None
-        }
+        },
+        "docs_inventory": {
+            "live_test_inputs": [
+                {
+                    "focus_dirs": "",
+                    "max_classes_per_file": 3,
+                    "max_methods_per_class": 2,
+                    "include_functions": True,
+                }
+            ],
+            "result_contract": {
+                "expected_type": str,
+                "semantic_check_hint": "Muss Markdown-String mit '# Project Inventory' zurueckgeben.",
+            },
+            "cleanup_func": None,
+        },
+        "docs_relationship_map": {
+            "live_test_inputs": [
+                {
+                    "focus_dirs": "",
+                    "focus_classes": "",
+                    "max_nodes": 20,
+                    "format_type": "markdown",
+                }
+            ],
+            "result_contract": {
+                "expected_type": str,
+                "semantic_check_hint": "Muss Markdown-String mit mermaid code block zurueckgeben.",
+            },
+            "cleanup_func": None,
+        },
+        "docs_export_docmap": {
+            "live_test_inputs": [
+                {
+                    "output_path": "",
+                    "format_type": "md",
+                    "focus_dirs": "",
+                    "title": "_probe_health_check",
+                }
+            ],
+            "result_contract": {
+                "expected_type": str,
+                "semantic_check_hint": "Muss DocMap Markdown content zurueckgeben.",
+            },
+            "cleanup_func": None,
+        },
     }
     async def enable(agent):
         """Enable documentation system and add tools to agent."""
@@ -2552,6 +2599,71 @@ def load_docs_feature(fm):
                 docs_root=docs_dir,
                 include_dirs=["toolboxv2", "flows", "mods", "utils", "docs", "src"]
             )
+
+            _get_docs = lambda :system
+
+            async def docs_inventory(
+                focus_dirs: str = "",
+                max_classes_per_file: int = 5,
+                max_methods_per_class: int = 3,
+                include_functions: bool = True,
+            ) -> str:
+                """Generate project inventory: what files, classes, and functions exist."""
+                try:
+                    ds = _get_docs()
+                    await ds.initialize()
+                    result = await ds.generate_inventory(
+                        focus_dirs=focus_dirs.split(",") if focus_dirs else None,
+                        max_classes_per_file=max_classes_per_file,
+                        max_methods_per_class=max_methods_per_class,
+                        include_functions=include_functions,
+                        format_type="markdown",
+                    )
+                    return result.get("content", json.dumps(result, ensure_ascii=False, default=str))
+                except Exception as e:
+                    return f"Inventory error: {e}"
+
+            async def docs_relationship_map(
+                focus_dirs: str = "",
+                focus_classes: str = "",
+                max_nodes: int = 40,
+                format_type: str = "markdown",
+            ) -> str:
+                """Generate relationship map showing how components connect (Mermaid diagram)."""
+                try:
+                    ds = _get_docs()
+                    await ds.initialize()
+                    result = await ds.generate_relationship_map(
+                        focus_dirs=focus_dirs.split(",") if focus_dirs else None,
+                        focus_classes=focus_classes.split(",") if focus_classes else None,
+                        max_nodes=max_nodes,
+                        format_type=format_type,
+                    )
+                    return result.get("content", json.dumps(result, ensure_ascii=False, default=str))
+                except Exception as e:
+                    return f"Relationship map error: {e}"
+
+            async def docs_export_docmap(
+                output_path: str = "",
+                format_type: str = "html",
+                focus_dirs: str = "",
+                title: str = "",
+            ) -> str:
+                """Export complete DocMap (inventory + relationships) as HTML or Markdown file."""
+                try:
+                    ds = _get_docs()
+                    await ds.initialize()
+                    result = await ds.export_docmap(
+                        output_path=output_path or None,
+                        format_type=format_type,
+                        focus_dirs=focus_dirs.split(",") if focus_dirs else None,
+                        title=title or None,
+                    )
+                    if output_path:
+                        return f"DocMap exported to {result.get('output_path', output_path)}"
+                    return result.get("content", "Export failed — no content generated")
+                except Exception as e:
+                    return f"DocMap export error: {e}"
 
             # Initialize (load existing index or build new one)
             result = await system.initialize()
@@ -2602,7 +2714,40 @@ def load_docs_feature(fm):
                     "description": "Generiert Kontext-Informationen für Aufgaben wie relevante Dateien, Klassen und Dokumentation basierend auf einer Aufgabenbeschreibung. Hilft dem Agent die Aufgabe besser zu verstehen und die richtigen Ressourcen zu finden.",
                     "category": ["docs", "context"],
                     "flags": {}
-                }
+                },
+                {
+                    "tool_func": docs_inventory,
+                    "name": "docs_inventory",
+                    "description": (
+                        "Generiert ein kompaktes Projekt-Inventar: welche Dateien, Klassen und "
+                        "Funktionen existieren im Projekt. Gruppiert nach Dateien mit den wichtigsten "
+                        "Klassen und deren meistgenutzten Methoden. Beantwortet: 'Was ist alles da?'"
+                    ),
+                    "category": ["docs", "read"],
+                    "flags": {},
+                },
+                {
+                    "tool_func": docs_relationship_map,
+                    "name": "docs_relationship_map",
+                    "description": (
+                        "Generiert eine Beziehungskarte als Mermaid-Diagramm. Zeigt Vererbung, "
+                        "Komposition und Cross-File-Referenzen zwischen Klassen. "
+                        "Beantwortet: 'Wie spielt Komponente A mit B zusammen?'"
+                    ),
+                    "category": ["docs", "read"],
+                    "flags": {},
+                },
+                {
+                    "tool_func": docs_export_docmap,
+                    "name": "docs_export_docmap",
+                    "description": (
+                        "Exportiert eine vollstaendige DocMap (Inventar + Beziehungen) als "
+                        "standalone HTML (mit Neo-Brutalism Paper Style, Mermaid-Rendering, Dark Mode) "
+                        "oder als LLM-optimiertes Markdown. Kombiniert Inventar und Relationship Map."
+                    ),
+                    "category": ["docs", "write"],
+                    "flags": {},
+                },
             ]
 
             for tool in tools:
@@ -11706,6 +11851,8 @@ class ISAA_Host:
                 await asyncio.shield(stream.aclose())
             except BaseException:
                 pass
+            import traceback
+            traceback.print_exc()
             exc = _get_exc()
             if exc:
                 exc.status = "failed"
@@ -11724,6 +11871,23 @@ class ISAA_Host:
     async def run(self):
         """Main CLI execution loop."""
         # Print banner
+
+        # --- Start monitor BEFORE any toolboxv2 imports ---
+        # from toolboxv2.utils.extras.code_analyzer.tb_analyze_runtime import (
+        #     RuntimeMonitor,
+        #     generate_runtime_report,
+        # )
+        # OUTDIR = Path("./runtime_data10")
+        # monitor = RuntimeMonitor(
+        #     outdir=OUTDIR,
+        #     interval=2.0,
+        #     tracemalloc_depth=5,
+        #     collect_objects=True,
+        #     collect_network=True,
+        #     collect_gc=True,
+        # )
+        # monitor.start()  # pid=None → self, tracemalloc active
+
         from prompt_toolkit.styles import Style as PtStyle
         # Switch to audio recording mode (changes animation)
 
@@ -11875,6 +12039,11 @@ class ISAA_Host:
 
         await self.app.a_exit()
         print_status("Goodbye!", "success")
+
+        # monitor.stop()
+        # print(f"\nGenerating report...")
+        # html = generate_runtime_report(OUTDIR, OUTDIR / "runtime_report.html")
+        # print(f"Report: {OUTDIR / 'runtime_report.html'} ({len(html)} bytes)")
 
     # ─── Interrupt-Menü ───────────────────────────────────────────────
 
@@ -12314,12 +12483,8 @@ async def run(app=None, *args):
         print(e)
         print("⚠️ Discord integration not available.")
         pass
-    await host.run()
 
-
-def main():
-    """Synchronous entry point."""
-    asyncio.run(run())
+    await profile_code(override=False, blame_threshold=0.05, min_time=0.15)(host.run)()
 
 
 if __name__ == "__main__":

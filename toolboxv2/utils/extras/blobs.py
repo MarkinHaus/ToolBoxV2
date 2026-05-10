@@ -508,6 +508,8 @@ class BlobStorage:
             bucket: MinIO bucket name
         """
         # Auto-detect mode if not specified
+        self.last_check_time = 0
+        self.is_available = False
         if mode is None:
             mode = detect_storage_mode()
 
@@ -602,6 +604,35 @@ class BlobStorage:
 
         return hashlib.md5(str(uuid.getnode()).encode()).hexdigest()[:16]
 
+    def is_minio_available(self, endpoint: str, timeout: float = 2.0) -> bool:
+        if self.is_available:
+            return True
+        if time.time() - self.last_check_time < 30:
+            return False
+        self.is_available = False
+        self.last_check_time = time.time()
+        try:
+            import socket
+            import requests
+            # host + port extrahieren
+            host, port = endpoint.split(":")
+            port = int(port)
+
+            # TCP Verbindung testen
+            with socket.create_connection((host, port), timeout=timeout):
+                pass
+
+            # optional: HTTP Healthcheck
+            url = f"http://{endpoint}/minio/health/live"
+
+            response = requests.get(url, timeout=timeout)
+            self.is_available = response.status_code == 200
+            return self.is_available
+
+        except Exception as e:
+            print(f"MinIO unavailable: {e}")
+            return False
+
     def _ensure_bucket(self, client: Minio) -> bool:
         """
         Ensure bucket exists.
@@ -609,6 +640,10 @@ class BlobStorage:
         Returns:
             bool: True if bucket check/creation succeeded, False if authentication failed
         """
+        # ping if endpoint is available
+        if not self.is_minio_available(os.getenv("MINIO_ENDPOINT", "127.0.0.1:9000"), timeout=2):
+            return False
+
         try:
             if not client.bucket_exists(self.bucket):
                 client.make_bucket(self.bucket)

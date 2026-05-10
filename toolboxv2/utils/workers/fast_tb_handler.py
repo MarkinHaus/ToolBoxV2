@@ -608,10 +608,15 @@ class FastTBHandler:
                     ftb_handler.handle_request(request), loop
                 )
                 try:
-                    status, headers, body = future.result(timeout=30)
-                except Exception as e:
+                    status, headers, body = future.result(timeout=5)
+                except TimeoutError as e:
                     logger.error(f"FastTB standalone error: {e}")
                     status, headers, body = error_response(str(e), 500)
+                except Exception as e:
+                    import traceback
+                    _e = traceback.format_exc()
+                    logger.error(f"FastTB standalone error: {e} {_e}")
+                    status, headers, body = error_response(str(_e), 500)
 
                 # Session cookie
                 if worker._session_manager and request.session:

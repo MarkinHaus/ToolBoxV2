@@ -9,7 +9,6 @@ import pkgutil
 import sys
 import threading
 import time
-from asyncio import Task
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from enum import Enum
@@ -17,6 +16,7 @@ from functools import partial, wraps
 from importlib import import_module, reload
 from inspect import signature
 from platform import node, system
+from threading import Thread
 from types import ModuleType
 from typing import Any, Optional
 
@@ -30,7 +30,7 @@ from .singelton_class import Singleton
 from .system.cache import FileCache, MemoryCache
 from .system.file_handler import FileHandler
 from .system.getting_and_closing_app import get_app
-from .system.tb_logger import get_logger, setup_logging, loggerNameOfToolboxv2, AuditLogger, set_log_db, LogSyncManager
+from .system.tb_logger import setup_logging, loggerNameOfToolboxv2, AuditLogger, set_log_db, LogSyncManager
 from .system.types import (
     ApiResult,
     AppArgs,
@@ -293,7 +293,7 @@ class App(AppType, metaclass=Singleton):
         if not obs.dashboard.enabled or not obs.dashboard.password:
             return
 
-        from toolboxv2.utils.system.tb_logger import enable_live_observability, get_logger
+        from toolboxv2.utils.system.tb_logger import enable_live_observability
         res = self._obs_adapter.health_check()
         if asyncio.iscoroutine(res):
             res = await res
@@ -409,7 +409,6 @@ class App(AppType, metaclass=Singleton):
         import threading
 
         def _cleanup():
-            import time as _time
             date_cutoff = (
                 datetime.datetime.now() - datetime.timedelta(days=cleanup_config.max_age_days)
             ).strftime("%Y-%m-%d")
@@ -1028,7 +1027,7 @@ class App(AppType, metaclass=Singleton):
             self.logger.error(f"Failed to schedule background task: {e}", exc_info=True)
             return None
 
-    def run_bg_task_advanced(self, task: Callable, *args, get_coro=False, **kwargs) -> threading.Thread:
+    def run_bg_task_advanced(self, task: Callable, *args, get_coro=False, **kwargs) -> Thread | None:
         """
         Runs a task in a separate, dedicated background thread with its own event loop.
 
@@ -1054,7 +1053,7 @@ class App(AppType, metaclass=Singleton):
             # Each thread gets its own event loop.
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-
+            result = None
             try:
                 # Prepare the coroutine we need to run
                 if asyncio.iscoroutinefunction(task):
@@ -1063,13 +1062,15 @@ class App(AppType, metaclass=Singleton):
                     # It's already a coroutine object
                     coro = task
                 else:
-                    # It's a synchronous function, run it in an executor
-                    # to avoid blocking the new event loop.
-                    coro = loop.run_in_executor(None, lambda: task(*args, **kwargs))
+                    result = task(*args, **kwargs)
+                    if asyncio.iscoroutine(result):
+                        result = loop.run_until_complete(result)
+                    coro = None
 
                 # Run the coroutine to completion
                 coro_0[0] = coro
-                result = loop.run_until_complete(coro)
+                if coro is not None:
+                    result = loop.run_until_complete(coro)
                 self.logger.debug(f"Advanced background task '{getattr(task, '__name__', 'unknown')}' completed.")
                 if result is not None:
                     self.logger.debug(f"Task result: {str(result)[:100]}")
@@ -1250,7 +1251,6 @@ class App(AppType, metaclass=Singleton):
 
 
     def load_mod(self, mod_name: str, mlm='I', **kwargs):
-        from .. import __init__
         action_list_helper = ['I (inplace load dill on error python)',
                               # 'C (coppy py file to runtime dir)',
                               # 'S (save py file to dill)',

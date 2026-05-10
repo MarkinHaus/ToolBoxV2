@@ -365,13 +365,14 @@ async def cmd_calibrate_with(task_dir: str, threshold: float, output: str):
     isaa = app.get_mod("isaa")
     profile = await calibrate(gt_tasks, isaa, threshold=threshold)
 
-    Path(output).write_text(json.dumps(profile.to_dict(), indent=2))
+    p = Path(output)
+    p.write_text(json.dumps(profile.to_dict(), indent=2))
     print(f"  Judge: {profile.model}")
     print(f"  Disqualified: {profile.disqualified}")
     for c, bs in profile.batch_sizes.items():
         acc = profile.accuracy.get(c, 0)
         print(f"    {c}: batch_size={bs}, accuracy={acc:.2%}")
-    print(f"  Saved: {output}")
+    print(f"  Saved: {p.absolute()}")
 
 
 def cmd_dashboard_with(files: list[str], output: str, title: str):

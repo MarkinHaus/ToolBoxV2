@@ -1,8 +1,10 @@
 {
-  "model": "zglm/glm-5-turbo",
-  "disqualified": true,
-  "batch_sizes": {},
+  "model": "groq/llama-3.1-8b-instant",
+  "disqualified": false,
+  "batch_sizes": {
+    "tutorial": 2
+  },
   "accuracy": {
-    "tutorial": 0.0
+    "tutorial": 1.0
   }
 }

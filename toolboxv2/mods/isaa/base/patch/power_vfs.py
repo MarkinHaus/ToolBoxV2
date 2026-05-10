@@ -136,7 +136,11 @@ class GlobalVFSManager:
     # =====================================================================
 
     def _hydrate_from_disk(self) -> None:
-        """Beim Start: vorhandene Disk-Dateien in den Shared-Store laden."""
+        """Startup: index existing files with metadata only — NO content loading.
+
+            Content is loaded lazily on first read_file() / get_shared() call.
+            This prevents the multi-GB spike on startup for large /global/ dirs.
+            """
         if not self.data_dir.exists():
             return
         with self._store_lock:
@@ -146,13 +150,14 @@ class GlobalVFSManager:
                     try:
                         rel = os.path.relpath(full, self.data_dir).replace(os.sep, "/")
                         stat = os.stat(full)
-                        content = Path(full).read_text(encoding="utf-8", errors="replace")
                         self._version_counter += 1
                         self._shared_store[rel] = {
-                            "content": content,
+                            "content": None,  # LAZY — loaded on first access
                             "mtime": stat.st_mtime,
+                            "size": stat.st_size,
                             "author": None,
                             "version": self._version_counter,
+                            "_disk_path": full,  # for lazy load
                         }
                     except (OSError, UnicodeError):
                         continue
@@ -201,7 +206,17 @@ class GlobalVFSManager:
         """Thread-safe getter auf den Shared-Store. Gibt Copy zurück."""
         with self._store_lock:
             entry = self._shared_store.get(relative_path)
-            return dict(entry) if entry else None
+            if entry is None:
+                return None
+            # Lazy load content if needed
+            if entry["content"] is None and entry.get("_disk_path"):
+                try:
+                    entry["content"] = Path(entry["_disk_path"]).read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                except (OSError, UnicodeError):
+                    return None
+            return dict(entry)
 
     def has_shared(self, relative_path: str) -> bool:
         with self._store_lock:
@@ -289,7 +304,7 @@ class GlobalVFSManager:
             return info["mount_key"] if info else None
 
     def _hydrate_extra_mount(self, abs_path: str) -> None:
-        """Lade vorhandene Disk-Dateien eines Extra-Mounts in den Store."""
+        """Index extra mount files with metadata only — lazy content."""
         info = self._extra_mounts.get(abs_path)
         if not info:
             return
@@ -311,13 +326,14 @@ class GlobalVFSManager:
                         stat = full.stat()
                         if stat.st_size > 1024 * 1024 * 5:  # Skip >5MB
                             continue
-                        content = full.read_text(encoding="utf-8", errors="replace")
                         self._version_counter += 1
                         self._shared_store[f"{mount_key}::{rel}"] = {
-                            "content": content,
+                            "content": None,  # LAZY
                             "mtime": stat.st_mtime,
+                            "size": stat.st_size,
                             "author": None,
                             "version": self._version_counter,
+                            "_disk_path": str(full),
                         }
                     except (OSError, UnicodeError):
                         continue
@@ -379,7 +395,16 @@ class GlobalVFSManager:
         store_key = f"{mount_key}::{relative_path}"
         with self._store_lock:
             entry = self._shared_store.get(store_key)
-            return dict(entry) if entry else None
+            if entry is None:
+                return None
+            if entry["content"] is None and entry.get("_disk_path"):
+                try:
+                    entry["content"] = Path(entry["_disk_path"]).read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                except (OSError, UnicodeError):
+                    return None
+            return dict(entry)
 
     def shared_delete(
         self,
@@ -560,20 +585,29 @@ class GlobalVFSManager:
         if ".." in relative_path:
             return {"success": False, "error": "Path traversal not allowed"}
 
-        # 1. Shared-Store zuerst (schneller, keine Disk-IO)
         with self._store_lock:
             entry = self._shared_store.get(relative_path)
             if entry is not None:
+                # Lazy load: content is None until first read
+                if entry["content"] is None and entry.get("_disk_path"):
+                    try:
+                        content = Path(entry["_disk_path"]).read_text(
+                            encoding="utf-8", errors="replace"
+                        )
+                        entry["content"] = content
+                    except (OSError, UnicodeError):
+                        return {"success": False, "error": f"Failed to read: {relative_path}"}
+
                 return {
                     "success": True,
                     "path": f"{GLOBAL_VFS_PATH}/{relative_path}",
-                    "content": entry["content"],
-                    "size": len(entry["content"]),
+                    "content": entry["content"] or "",
+                    "size": len(entry["content"] or ""),
                     "version": entry.get("version"),
                     "author": entry.get("author"),
                 }
 
-        # 2. Fallback: von Disk laden und in Store einfügen
+            # Not in store — try disk
         file_path = self.data_dir / relative_path
         if not file_path.exists():
             return {"success": False, "error": f"File not found: {relative_path}"}
@@ -587,8 +621,10 @@ class GlobalVFSManager:
                 self._shared_store[relative_path] = {
                     "content": content,
                     "mtime": stat.st_mtime,
+                    "size": stat.st_size,
                     "author": None,
                     "version": version,
+                    "_disk_path": str(file_path),
                 }
             return {
                 "success": True,
@@ -1005,6 +1041,374 @@ def get_sharing_manager() -> VFSSharingManager:
 
 
 # =============================================================================
+# RIPGREP BACKEND
+# =============================================================================
+
+import logging
+import platform
+import subprocess
+
+_rg_path: str | None = None
+_rg_checked: bool = False
+_rg_log = logging.getLogger("vfs.ripgrep")
+
+
+def ensure_ripgrep() -> str | None:
+    """
+    Ensure ripgrep is available. Install if missing.
+    Returns binary path or None if unavailable.
+    Cached after first call.
+    """
+    global _rg_path, _rg_checked
+    if _rg_checked:
+        return _rg_path
+
+    _rg_checked = True
+
+    # 1. Check PATH
+    import shutil as _shutil
+    found = _shutil.which("rg")
+    if found:
+        _rg_path = found
+        _rg_log.info(f"ripgrep found: {_rg_path}")
+        return _rg_path
+
+    # 2. Try pip install (cross-platform: win/mac/linux/android)
+    try:
+        subprocess.run(
+            [__import__("sys").executable, "-m", "pip", "install", "--quiet",
+             "--break-system-packages", "ripgrep"],
+            capture_output=True, timeout=120,
+        )
+        found = _shutil.which("rg")
+        if found:
+            _rg_path = found
+            _rg_log.info(f"ripgrep installed via pip: {_rg_path}")
+            return _rg_path
+    except Exception as e:
+        _rg_log.warning(f"pip install ripgrep failed: {e}")
+
+    # 3. Platform-specific fallback
+    system = platform.system().lower()
+    try:
+        if system == "linux":
+            # Try apt (debian/ubuntu) or cargo
+            if _shutil.which("apt-get"):
+                subprocess.run(
+                    ["sudo", "apt-get", "install", "-y", "ripgrep"],
+                    capture_output=True, timeout=120,
+                )
+            elif _shutil.which("cargo"):
+                subprocess.run(
+                    ["cargo", "install", "ripgrep"],
+                    capture_output=True, timeout=300,
+                )
+        elif system == "darwin":
+            if _shutil.which("brew"):
+                subprocess.run(
+                    ["brew", "install", "ripgrep"],
+                    capture_output=True, timeout=120,
+                )
+        elif system == "windows":
+            if _shutil.which("choco"):
+                subprocess.run(
+                    ["choco", "install", "ripgrep", "-y"],
+                    capture_output=True, timeout=120,
+                )
+            elif _shutil.which("winget"):
+                subprocess.run(
+                    ["winget", "install", "BurntSushi.ripgrep.MSVC",
+                     "--accept-package-agreements", "--accept-source-agreements"],
+                    capture_output=True, timeout=120,
+                )
+    except Exception as e:
+        _rg_log.warning(f"Platform install failed ({system}): {e}")
+
+    found = _shutil.which("rg")
+    if found:
+        _rg_path = found
+        _rg_log.info(f"ripgrep installed via system package: {_rg_path}")
+    else:
+        _rg_log.error("ripgrep could not be installed — falling back to Python grep")
+
+    return _rg_path
+
+
+def _build_rg_cmd(
+    rg_bin: str,
+    pattern: str,
+    search_dir: str,
+    *,
+    file_glob: str = "*",
+    context_lines: int = 0,
+    case_insensitive: bool = False,
+    files_only: bool = False,
+    invert: bool = False,
+) -> list[str]:
+    """Build the rg command line."""
+    cmd = [rg_bin, "--json", "--no-heading"]
+
+    if case_insensitive:
+        cmd.append("-i")
+    if invert:
+        cmd.append("--invert-match")
+    if files_only:
+        cmd.append("-l")
+    if context_lines > 0:
+        cmd.extend(["-C", str(context_lines)])
+    if file_glob and file_glob != "*":
+        cmd.extend(["--glob", file_glob])
+
+    cmd.append("--")
+    cmd.append(pattern)
+    cmd.append(search_dir)
+    return cmd
+
+
+def _parse_rg_json(
+    stdout: str,
+    disk_root: str,
+    vfs_prefix: str,
+) -> list[dict]:
+    """
+    Parse rg --json output, remap disk paths to VFS paths.
+
+    Returns list of dicts matching grep_vfs format:
+      {"file": vfs_path, "line": int, "match": str, "context": [...]}
+    """
+    results: list[dict] = []
+    current_contexts: dict[str, list[str]] = {}  # file -> context lines
+
+    disk_root_normalized = os.path.normpath(disk_root)
+
+    for raw_line in stdout.splitlines():
+        if not raw_line.strip():
+            continue
+        try:
+            obj = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+
+        msg_type = obj.get("type")
+
+        if msg_type == "match":
+            data = obj["data"]
+            abs_path = os.path.normpath(data["path"]["text"])
+            rel = os.path.relpath(abs_path, disk_root_normalized)
+            vfs_path = vfs_prefix.rstrip("/") + "/" + rel.replace(os.sep, "/")
+
+            line_number = data.get("line_number", 0)
+            line_text = data.get("lines", {}).get("text", "").rstrip("\n")
+
+            result: dict = {
+                "file": vfs_path,
+                "line": line_number,
+                "match": line_text[:200],
+            }
+            results.append(result)
+
+        elif msg_type == "context":
+            data = obj["data"]
+            abs_path = os.path.normpath(data["path"]["text"])
+            rel = os.path.relpath(abs_path, disk_root_normalized)
+            vfs_path = vfs_prefix.rstrip("/") + "/" + rel.replace(os.sep, "/")
+
+            ctx_text = data.get("lines", {}).get("text", "").rstrip("\n")
+
+            # Attach context to the most recent match for this file
+            for r in reversed(results):
+                if r["file"] == vfs_path:
+                    r.setdefault("context", []).append(ctx_text)
+                    break
+
+    return results
+
+
+def _resolve_disk_targets(
+    vfs: "VirtualFileSystemV2",
+    vfs_search_path: str,
+) -> list[tuple[str, str]]:
+    """
+    Given a VFS search path, return list of (disk_path, vfs_prefix) tuples.
+
+    Covers: shadow mounts, /global/, /shared/*.
+    """
+    targets: list[tuple[str, str]] = []
+
+    # Shadow mounts
+    for mount_vfs, mount in vfs.mounts.items():
+        mount_prefix = mount_vfs if mount_vfs.endswith("/") else mount_vfs + "/"
+        search_prefix = vfs_search_path if vfs_search_path.endswith("/") else vfs_search_path + "/"
+
+        if vfs_search_path == mount_vfs or search_prefix.startswith(mount_prefix):
+            # Search path is within or equals this mount
+            if vfs_search_path == mount_vfs or vfs_search_path == "/":
+                targets.append((mount.local_path, mount_vfs))
+            else:
+                # Sub-path within mount
+                rel = os.path.relpath(
+                    vfs_search_path[len(mount_vfs):].lstrip("/"), "."
+                ) if len(vfs_search_path) > len(mount_vfs) else ""
+                disk_sub = os.path.join(mount.local_path, rel) if rel and rel != "." else mount.local_path
+                if os.path.exists(disk_sub):
+                    targets.append((disk_sub, vfs_search_path))
+        elif mount_prefix.startswith(search_prefix):
+            # Mount is inside the search path (e.g., search "/" covers "/project")
+            targets.append((mount.local_path, mount_vfs))
+
+    # /global/ — always on disk
+    try:
+        from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
+        global_mgr = get_global_vfs()
+        global_dir = str(global_mgr.data_dir)
+        gp = GLOBAL_VFS_PATH
+        gp_slash = gp + "/"
+        sp_slash = vfs_search_path if vfs_search_path.endswith("/") else vfs_search_path + "/"
+
+        if vfs_search_path == gp or sp_slash.startswith(gp_slash) or gp_slash.startswith(sp_slash):
+            if os.path.isdir(global_dir):
+                targets.append((global_dir, gp))
+    except Exception:
+        pass
+
+    # /shared/* — each share has a target_path on disk
+    try:
+        from toolboxv2.mods.isaa.base.patch.power_vfs import get_sharing_manager
+        share_mgr = get_sharing_manager()
+        for share_id, info in share_mgr.shares.items():
+            share_vfs = f"{SHARED_VFS_PATH}/{share_id}"
+            share_slash = share_vfs + "/"
+            sp_slash2 = vfs_search_path if vfs_search_path.endswith("/") else vfs_search_path + "/"
+            if (vfs_search_path == share_vfs or sp_slash2.startswith(share_slash)
+                    or share_slash.startswith(sp_slash2)):
+                if os.path.isdir(info.target_path):
+                    targets.append((info.target_path, share_vfs))
+    except Exception:
+        pass
+
+    return targets
+
+
+def rg_grep(
+    vfs: "VirtualFileSystemV2",
+    pattern: str,
+    file_pattern: str = "*",
+    path: str = "/",
+    context_lines: int = 0,
+    case_insensitive: bool = False,
+    files_only: bool = False,
+    invert: bool = False,
+) -> list[dict]:
+    """
+    Ripgrep-backed grep for VFS. Runs rg on disk-backed areas,
+    falls back to Python regex for pure in-memory files.
+
+    Returns list of dicts: {"file", "line", "match", "context"?}
+    """
+    rg_bin = ensure_ripgrep()
+    all_results: list[dict] = []
+
+    # Determine if pattern was wrapped with (?i) — unwrap for rg flag
+    raw_pattern = pattern
+    force_case_i = False
+    if pattern.startswith("(?i)"):
+        raw_pattern = pattern[4:]
+        force_case_i = True
+
+    effective_case_i = case_insensitive or force_case_i
+
+    # ── rg on disk-backed areas ──
+    if rg_bin:
+        disk_targets = _resolve_disk_targets(vfs, path)
+
+        for disk_path, vfs_prefix in disk_targets:
+            try:
+                cmd = _build_rg_cmd(
+                    rg_bin, raw_pattern, disk_path,
+                    file_glob=file_pattern,
+                    context_lines=context_lines,
+                    case_insensitive=effective_case_i,
+                    files_only=files_only,
+                    invert=invert,
+                )
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True, text=True,
+                    timeout=30,
+                    cwd=disk_path,
+                )
+                # rg exit 0 = matches, 1 = no matches, 2 = error
+                if proc.returncode <= 1 and proc.stdout:
+                    parsed = _parse_rg_json(proc.stdout, disk_path, vfs_prefix)
+                    all_results.extend(parsed)
+            except subprocess.TimeoutExpired:
+                _rg_log.warning(f"rg timed out on {disk_path}")
+            except Exception as e:
+                _rg_log.warning(f"rg failed on {disk_path}: {e}")
+
+        # Collect VFS paths that rg already covered
+        covered_prefixes = set()
+        for _, vfs_prefix in disk_targets:
+            covered_prefixes.add(vfs_prefix)
+
+    else:
+        covered_prefixes = set()
+
+    # ── Python fallback for pure in-memory files ──
+    try:
+        regex = re.compile(pattern)
+    except re.error:
+        return all_results
+
+    for file_path, vfs_file in vfs.files.items():
+        if not file_path.startswith(path):
+            continue
+
+        # Skip if already covered by rg
+        skip = False
+        for cp in covered_prefixes:
+            cp_slash = cp if cp.endswith("/") else cp + "/"
+            if file_path == cp or file_path.startswith(cp_slash):
+                skip = True
+                break
+        if skip:
+            continue
+
+        # Only pure in-memory files remain
+        if not vfs_file.is_loaded:
+            continue  # Not loaded + not on disk = nothing to search
+
+        if file_pattern != "*" and not fnmatch.fnmatch(vfs_file.filename, file_pattern):
+            continue
+
+        if vfs_file.filename in ["vfs_guide.md"]:
+            continue
+
+        try:
+            content = vfs_file.content
+            lines = content.split("\n")
+            for line_num, line in enumerate(lines, 1):
+                matched = bool(regex.search(line))
+                if invert:
+                    matched = not matched
+                if matched:
+                    result: dict = {
+                        "file": file_path,
+                        "line": line_num,
+                        "match": line[:200],
+                    }
+                    if context_lines > 0:
+                        start = max(0, line_num - 1 - context_lines)
+                        end = min(len(lines), line_num + context_lines)
+                        result["context"] = lines[start:end]
+                    all_results.append(result)
+        except Exception:
+            continue
+
+    return all_results
+
+
+# =============================================================================
 # VFS SEARCH
 # =============================================================================
 
@@ -1065,6 +1469,9 @@ def search_vfs(
     """
     results: list[SearchResult] = []
 
+    # Save original query for rg_grep (before potential .lower())
+    _original_query = query
+
     # Prepare pattern
     if regex:
         flags = 0 if case_sensitive else re.IGNORECASE
@@ -1105,7 +1512,7 @@ def search_vfs(
 
         return True
 
-    # Durchsuche Dateien
+    # Durchsuche Dateien — Filename search stays in-loop
     for file_path, vfs_file in vfs.files.items():
         if len(results) >= max_results:
             break
@@ -1132,59 +1539,59 @@ def search_vfs(
                 if len(results) >= max_results:
                     break
 
-        # Content Search
-        if mode in (SearchMode.CONTENT, SearchMode.BOTH):
-            try:
-                # Lade Content wenn nötig
-                if vfs_file.is_loaded:
-                    content = vfs_file.content
-                elif vfs_file.local_path and os.path.exists(vfs_file.local_path):
-                    # Read through VFS to ensure consistency with cat/wc/read
-                    read_result = vfs.read(file_path)
-                    if not read_result.get("success"):
-                        continue
-                    content = read_result["content"]
-                else:
+    # Content Search — via ripgrep, outside the per-file loop
+    if mode in (SearchMode.CONTENT, SearchMode.BOTH) and len(results) < max_results:
+        # Build regex pattern string for rg_grep — use original (un-lowered) query
+        if regex:
+            rg_pattern = _original_query if case_sensitive else f"(?i){_original_query}"
+        else:
+            escaped = re.escape(_original_query)
+            rg_pattern = escaped if case_sensitive else f"(?i){escaped}"
+
+        rg_results = rg_grep(
+            vfs=vfs,
+            pattern=rg_pattern,
+            file_pattern="*",
+            path=path,
+            context_lines=context_lines if include_content_context else 0,
+        )
+
+        for m in rg_results:
+            if len(results) >= max_results:
+                break
+
+            m_path = m["file"]
+            m_filename = os.path.basename(m_path)
+
+            # Apply extension filter
+            if file_extensions:
+                ext = os.path.splitext(m_filename)[1].lower()
+                if ext not in file_extensions:
                     continue
 
-                lines = content.split("\n")
-                for line_num, line in enumerate(lines, 1):
-                    if matches_query(line):
-                        # Context
-                        context_before = None
-                        context_after = None
-                        if include_content_context:
-                            start = max(0, line_num - 1 - context_lines)
-                            end = min(len(lines), line_num + context_lines)
-                            context_before = (
-                                "\n".join(lines[start : line_num - 1])
-                                if start < line_num - 1
-                                else None
-                            )
-                            context_after = (
-                                "\n".join(lines[line_num:end]) if line_num < end else None
-                            )
-
-                        results.append(
-                            SearchResult(
-                                path=file_path,
-                                filename=vfs_file.filename,
-                                match_type="content",
-                                line_number=line_num,
-                                line_content=line[:200],  # Truncate long lines
-                                context_before=context_before,
-                                context_after=context_after,
-                                score=0.8,
-                            )
-                        )
-
-                        if len(results) >= max_results:
-                            break
-            except Exception:
+            # Apply exclude patterns
+            if not should_include(m_path, m_filename):
                 continue
 
-        if len(results) >= max_results:
-            break
+            ctx_lines_list = m.get("context", [])
+            context_before = None
+            context_after = None
+            if ctx_lines_list and include_content_context:
+                context_before = "\n".join(ctx_lines_list[:context_lines]) if ctx_lines_list else None
+                context_after = "\n".join(ctx_lines_list[context_lines:]) if len(ctx_lines_list) > context_lines else None
+
+            results.append(
+                SearchResult(
+                    path=m_path,
+                    filename=m_filename,
+                    match_type="content",
+                    line_number=m.get("line"),
+                    line_content=m.get("match", "")[:200],
+                    context_before=context_before,
+                    context_after=context_after,
+                    score=0.8,
+                )
+            )
 
     return results
 
@@ -1227,6 +1634,8 @@ def grep_vfs(
 ) -> list[dict]:
     """
     Grep-ähnliche Suche im VFS.
+    Delegates to rg_grep (ripgrep backend) for disk-backed files,
+    Python regex fallback for pure in-memory files only.
 
     Args:
         vfs: VirtualFileSystemV2 Instanz
@@ -1238,52 +1647,13 @@ def grep_vfs(
     Returns:
         Liste von Match-Dicts
     """
-    results = []
-
-    try:
-        regex = re.compile(pattern)
-    except re.error:
-        return []
-
-    for file_path, vfs_file in vfs.files.items():
-        if not file_path.startswith(path):
-            continue
-
-        if not fnmatch.fnmatch(vfs_file.filename, file_pattern):
-            continue
-
-        if vfs_file.filename in ["vfs_guide.md"]:
-            continue
-
-        try:
-            if vfs_file.is_loaded:
-                content = vfs_file.content
-            elif vfs_file.local_path and os.path.exists(vfs_file.local_path):
-                content = Path(vfs_file.local_path).read_text(
-                    encoding="utf-8", errors="ignore"
-                )
-            else:
-                continue
-
-            lines = content.split("\n")
-            for line_num, line in enumerate(lines, 1):
-                if regex.search(line):
-                    result = {
-                        "file": file_path,
-                        "line": line_num,
-                        "match": line[:200],
-                    }
-
-                    if context_lines > 0:
-                        start = max(0, line_num - 1 - context_lines)
-                        end = min(len(lines), line_num + context_lines)
-                        result["context"] = lines[start:end]
-
-                    results.append(result)
-        except Exception:
-            continue
-
-    return results
+    return rg_grep(
+        vfs=vfs,
+        pattern=pattern,
+        file_pattern=file_pattern,
+        path=path,
+        context_lines=context_lines,
+    )
 
 # =============================================================================
 # AGENT TOOLS REGISTRATION - REMOVED
@@ -1320,6 +1690,9 @@ __all__ = [
     "get_sharing_manager",
     "ShareInfo",
     "SHARED_VFS_PATH",
+    # Ripgrep
+    "ensure_ripgrep",
+    "rg_grep",
     # Search
     "SearchMode",
     "SearchResult",

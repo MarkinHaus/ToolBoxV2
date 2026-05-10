@@ -270,10 +270,15 @@ class LocalStorageBackend(StorageBackendInterface):
             return self._encoder.encode_code(json_str)
         return json_str
 
-    def _decode(self, data: str) -> Any:
+    def _decode(self, data: str, file_path=None) -> Any:
         """Decode value, optionally with decryption."""
         if self.encrypt and self._encoder:
-            data = self._encoder.decode_code(data)
+            from cryptography.fernet import InvalidToken
+            try:
+                data = self._encoder.decode_code(data)
+            except InvalidToken:
+                print(f"Invalid token data not readable {self.base_path or file_path}")
+                return None
         return json.loads(data)
 
     def load(self, key: str) -> Optional[Any]:
@@ -286,7 +291,7 @@ class LocalStorageBackend(StorageBackendInterface):
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-            return self._decode(content)
+            return self._decode(content, file_path=file_path)
         except (json.JSONDecodeError, IOError) as e:
             return None
 

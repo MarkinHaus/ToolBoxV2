@@ -102,6 +102,14 @@ CONTAINER_TYPES = {
         "memory_limit": "1g",
         "cpu_limit": "1.0",
     },
+    "tb_external": {
+        "image": "toolboxv2:latest",
+        "internal_port": 8080,
+        "command": None,  # must be provided by user
+        "environment": {"MODE": "external"},
+        "memory_limit": "512m",
+        "cpu_limit": "0.5",
+    },
 }
 
 # Port-Pool für Container (exklusiv zur Toolbox)
@@ -342,29 +350,31 @@ async def create_container(
     memory_limit: str = None,
     cpu_limit: str = None,
     ssh_public_key: str = None,
+    # tb_external params
+    ext_source: str = None,
+    ext_git_url: str = None,
+    ext_git_branch: str = "main",
+    ext_folder_path: str = None,
+    ext_zip_url: str = None,
+    # manifest
+    manifest_yaml: str = None,
 ) -> Result:
     """
-    Erstelle einen neuen Container für einen User.
+    Create a new container for a user.
 
-    Args:
-        container_type: Typ des Containers (cli_v4, project_dev, preview_server, custom)
-        user_id: User ID aus CloudM Auth
-        container_name: Optionale Name für den Container
-        admin_key: Admin Key für Autorisierung
-        image: Optionales Image (überschreibt Default)
-        command: Optionaler Command (überschreibt Default)
-        environment: Optionale Environment Variables
-        memory_limit: Memory Limit (z.B. "512m", "1g")
-        cpu_limit: CPU Limit (z.B. "0.5", "1.0")
+    For tb_external containers, ext_source determines how the app code is loaded:
+    - "image": use the specified Docker image directly
+    - "git": clone a git repo into the container
+    - "folder": mount a host folder into the container
+    - "zip": download and extract a ZIP archive
 
-    Returns:
-        Result mit container_id, port, url
+    manifest_yaml: optional tb-manifest.yaml content to configure the container.
     """
     # Admin Key Check
     if not check_admin_key(admin_key):
         return err("Invalid admin key")
 
-    # User Validation (über CloudM Auth)
+    # User Validation
     from toolboxv2.mods.CloudM.auth.user_store import _load_user
     user = await _load_user(app, user_id)
     if not user:
@@ -373,6 +383,20 @@ async def create_container(
     # Container-Typ Validierung
     if container_type not in CONTAINER_TYPES:
         return err(f"Unknown container type: {container_type}. Valid: {list(CONTAINER_TYPES.keys())}")
+
+    # tb_external: command is required
+    if container_type == "tb_external" and not command:
+        return err("tb_external requires a start command")
+
+    # tb_external source validation
+    if container_type == "tb_external":
+        ext_source = ext_source or "image"
+        if ext_source == "git" and not ext_git_url:
+            return err("ext_source=git requires ext_git_url")
+        if ext_source == "folder" and not ext_folder_path:
+            return err("ext_source=folder requires ext_folder_path")
+        if ext_source == "zip" and not ext_zip_url:
+            return err("ext_source=zip requires ext_zip_url")
 
     # Docker Check
     ops = get_docker_ops()
@@ -393,12 +417,34 @@ async def create_container(
     if environment:
         env.update(environment)
 
+    # tb_external: build the actual command with source setup
+    actual_command = command or default_command
+    if container_type == "tb_external" and ext_source:
+        setup_cmds = []
+        if ext_source == "git":
+            branch = ext_git_branch or "main"
+            setup_cmds.append(f"git clone --depth 1 -b {branch} {ext_git_url} /app/external")
+            setup_cmds.append("cd /app/external")
+        elif ext_source == "zip":
+            setup_cmds.append(f"mkdir -p /app/external && cd /app/external")
+            setup_cmds.append(
+                f"wget -qO /tmp/app.zip '{ext_zip_url}' && unzip -qo /tmp/app.zip -d /app/external && rm /tmp/app.zip")
+        # folder mount is handled via volumes below, no setup command needed
+
+        if setup_cmds:
+            # Prepend source setup to user command
+            actual_command = f"sh -c '{' && '.join(setup_cmds)} && {command}'"
+        env["TB_EXT_SOURCE"] = ext_source
+
+    # Manifest: inject as environment variable (container reads on startup)
+    if manifest_yaml:
+        env["TB_MANIFEST_YAML"] = manifest_yaml
+
     # Port allozieren
     port = await db_allocate_port(app)
     if not port:
         return err("No free port available in pool")
 
-    ssh_port = None
     ssh_port = await db_allocate_ssh_port(app)
     if not ssh_port:
         await db_release_port(app, port)
@@ -423,14 +469,21 @@ async def create_container(
     if ssh_port:
         port_bindings["2222/tcp"] = ssh_port
 
+    # Volumes
+    volumes = {volume_name: {"bind": "/data", "mode": "rw"}}
+
+    # tb_external folder mount
+    if container_type == "tb_external" and ext_source == "folder" and ext_folder_path:
+        volumes[ext_folder_path] = {"bind": "/app/external", "mode": "rw"}
+
     try:
         container_id = ops.create_container(
             image=image,
             name=name,
-            command=command or default_command,
+            command=actual_command,
             ports=port_bindings,
             environment=env,
-            volumes={volume_name: {"bind": "/data", "mode": "rw"}},
+            volumes=volumes,
             mem_limit=memory_limit or default_memory,
             cpu_quota=int(float(cpu_limit or default_cpu) * 100000),
             restart_policy={"Name": "unless-stopped"},
@@ -442,6 +495,7 @@ async def create_container(
                 "container-type": container_type,
                 "port": str(port),
                 **({"ssh-port": str(ssh_port)} if ssh_port else {}),
+                **({"ext-source": ext_source} if ext_source else {}),
             }
         )
         container_status = ops.get_container_status(container_id)

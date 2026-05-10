@@ -19,7 +19,7 @@ load_dotenv()
 import os
 import sys
 
-from toolboxv2 import tb_root_dir, profile_code, _feature_enabled
+from toolboxv2 import tb_root_dir, _feature_enabled
 from toolboxv2.utils.system.feature_manager import FeatureManager
 from toolboxv2.flows import flows_dict as flows_dict_func
 try:
@@ -423,6 +423,8 @@ RUNNER_KEYS = [
     "registry",
     "manifest",
     "llm-gateway",
+    "mkdocs",
+    "analyze",
     "docksh",
     "docker-image",
     "fl",
@@ -780,9 +782,11 @@ def show_interactive_guide():
     ┌─ ALL RUNNER COMMANDS (A–Z) ────────────────────────────────────────────────┐
     │                                                                            │
     │    access        Global CLI access management                              │
+    │    analyze       Anylse python & JS type code static and runtime           │
     │    broker        ZMQ event broker                                          │
     │    browser       Browser extension build / install                         │
     │    build         Build ToolBoxV2 + features + upload                       │
+    │    depsy         ToolBoxV2 all in on dependency manager cros platform      │
     │    db            Database management                                       │
     │    docksh        Interactive Docker shell                                  │
     │    docker-image  Docker image management                                   │
@@ -797,6 +801,7 @@ def show_interactive_guide():
     │    logout        Logout from ToolBoxV2                                     │
     │    manifest      Manifest configuration                                    │
     │    mcp           MCP server for agents (feature: isaa)                     │
+    │    mkdocs        ToolboxV2 Docs system for internal and external usage     │
     │    mods          Module manager                                            │
     │    obs           Observability layer                                       │
     │    p2p           P2P mesh client                                           │
@@ -2036,6 +2041,12 @@ def runner_setup():
         "gui": helper_gui,
         "p2p": cli_tcm_runner,
         "status": status_helper,
+        "analyze": lambda: __import__(
+            "toolboxv2.utils.extras.code_analyzer.tb_analyze", fromlist=["_cli"]
+        )._cli(),
+        "depsy": lambda: __import__(
+            "toolboxv2.utils.extras.depsy.depmanager", fromlist=["_cli"]
+        )._cli(),
         "browser": lambda: __import__(
             "toolboxv2.tb_browser.install", fromlist=["main"]
         ).main(),
@@ -2057,6 +2068,9 @@ def runner_setup():
         "build": lambda: __import__(
             "toolboxv2.utils.system.Build", fromlist=["run"]
         ).run(get_app("app.build")),
+        "mkdocs": lambda: __import__(
+            "toolboxv2.utils.clis.cli_mkdocs", fromlist=["run"]
+        ).run(get_app("app.mkdocs"), sys.argv),
         "http_worker": cli_http_worker,
         "obs": lambda: __import__(
             "toolboxv2.utils.clis.observability_helper", fromlist=["main"]
@@ -2124,6 +2138,7 @@ def _build_guarded_runners(runner: dict) -> dict:
 
     return runner
 
+from toolboxv2.utils.extras.code_analyzer.profiler import profile_code
 
 @profile_code(
     sort_by="cumulative",

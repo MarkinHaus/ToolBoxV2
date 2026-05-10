@@ -1,0 +1,25 @@
+# tb_analyze configuration
+
+target: ./src
+languages: [python]
+max_files: 200
+
+metrics:
+  - raw
+  - complexity
+  - dead_code
+  - lint
+  - security
+  - imports
+
+exclude:
+  - "tests/*"
+  - "*_test.py"
+  - "conftest.py"
+  - "setup.py"
+  - "migrations/*"
+
+report:
+  format: both                   # html | json | both
+  output: ./reports/analysis.html
+  json_output: ./reports/analysis.json

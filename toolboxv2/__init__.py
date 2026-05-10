@@ -357,7 +357,7 @@ except ImportError:
     TBxSetup = None
 
 try:
-    from .utils.extras.profiler import profile_code
+    from .utils.extras.code_analyzer.profiler import profile_code
 except ImportError:
     profile_code = None
 

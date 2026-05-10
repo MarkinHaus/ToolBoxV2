@@ -20,6 +20,8 @@ Architecture:
 
 from __future__ import annotations
 
+
+
 import asyncio
 import ast
 import hashlib
@@ -33,7 +35,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set, Iterator, Any, Callable, Coroutine
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 from tqdm import tqdm
 
@@ -1016,7 +1018,7 @@ class IndexManager:
 
     def _tokenize(self, text: str) -> Set[str]:
         """Tokenize text into searchable keywords."""
-        words = re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]{2,}\b", text.lower())
+        words = re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]+\b", text.lower())
         return {w for w in words if w not in self.STOP_WORDS and len(w) <= 50}
 
     def _index_section(self, section_id: str, section: DocSection):
@@ -1167,10 +1169,16 @@ class ContextEngine:
                     term_match_counts[sid] += 1
 
             if term_match_counts:
-                # Sort by match count (more matches = better)
-                sorted_ids = sorted(term_match_counts.keys(),
-                                   key=lambda x: term_match_counts[x], reverse=True)
-                candidate_ids = set(sorted_ids)
+                # Require at least 50% of query terms to match (or 1 if single-term)
+                min_matches = max(1, len(all_terms) // 2)
+                filtered = {sid: cnt for sid, cnt in term_match_counts.items()
+                            if cnt >= min_matches}
+                if not filtered:
+                    # Fallback: take top matches even if below threshold
+                    filtered = term_match_counts
+                sorted_ids = sorted(filtered.keys(),
+                                   key=lambda x: filtered[x], reverse=True)
+                candidate_ids = set(sorted_ids[:max_results * 2])
 
         # Filter by tags using inverted index - O(t) where t = tag count
         if tags:
@@ -1232,17 +1240,35 @@ class ContextEngine:
         # Track exact matches separately for prioritization
         exact_match_ids: Set[str] = set()
         if name:
-            name_lower = name.lower()
-            # First get exact matches (highest priority)
-            exact_match_ids = inverted.name_to_elements.get(name_lower, set()).copy()
-            candidate_ids = exact_match_ids.copy() if exact_match_ids else None
-            # Also check partial matches (lower priority)
-            for indexed_name, ids in inverted.name_to_elements.items():
-                if indexed_name != name_lower and (name_lower in indexed_name or indexed_name in name_lower):
-                    if candidate_ids is None:
-                        candidate_ids = ids.copy()
-                    else:
-                        candidate_ids |= ids
+            if name:
+                name_lower = name.lower()
+                # Split multi-word queries into individual terms
+                name_parts = [p for p in re.split(r'[\s_]+', name_lower) if len(p) >= 2]
+                if not name_parts:
+                    name_parts = [name_lower]
+
+                # First get exact matches (highest priority)
+                exact_match_ids = inverted.name_to_elements.get(name_lower, set()).copy()
+                candidate_ids = exact_match_ids.copy() if exact_match_ids else None
+
+                # Match each query part against indexed names
+                for part in name_parts:
+                    part_ids = inverted.name_to_elements.get(part, set())
+                    if part_ids:
+                        if candidate_ids is None:
+                            candidate_ids = part_ids.copy()
+                        else:
+                            candidate_ids |= part_ids
+
+                # Also check partial matches (lower priority)
+                for indexed_name, ids in inverted.name_to_elements.items():
+                    if indexed_name != name_lower and any(
+                        p in indexed_name or indexed_name in p for p in name_parts
+                    ):
+                        if candidate_ids is None:
+                            candidate_ids = ids.copy()
+                        else:
+                            candidate_ids |= ids
 
         # Filter by type using inverted index - O(1)
         if element_type:
@@ -1742,16 +1768,35 @@ class GitTracker:
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
             return stdout.decode().strip() if proc.returncode == 0 else None
+        except NotImplementedError:
+            import subprocess
+            try:
+                result = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=self.root,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5.0,
+                    check=False,
+                    text=True,
+                )
+
+                return result.stdout.strip() if result.returncode == 0 else None
+
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                return None
         except (asyncio.TimeoutError, FileNotFoundError):
             return None
 
     async def get_changes(self, since_commit: Optional[str] = None) -> List[FileChange]:
+
+        cmd = (
+            ["git", "diff", "--name-status", f"{since_commit}..HEAD"]
+            if since_commit
+            else ["git", "ls-files"]
+        )
+
         try:
-            cmd = (
-                ["git", "diff", "--name-status", f"{since_commit}..HEAD"]
-                if since_commit
-                else ["git", "ls-files"]
-            )
 
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -1765,6 +1810,28 @@ class GitTracker:
                 return []
 
             return self._parse_changes(stdout.decode(), bool(since_commit))
+        except NotImplementedError:
+            import subprocess
+
+            try:
+                result = subprocess.run(
+                    cmd,
+                    cwd=self.root,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    timeout=15.0,
+                    check=False,
+                    text=True,
+                )
+
+                if result.returncode != 0:
+                    return []
+
+                return self._parse_changes(result.stdout, bool(since_commit))
+
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                return []
+
         except (asyncio.TimeoutError, FileNotFoundError):
             return []
 
@@ -2282,6 +2349,1114 @@ class DocsSystem:
             },
         }
 
+    # =============================================================================
+    # 1. INVENTORY — "Was ist alles da?"
+    # =============================================================================
+
+    async def generate_inventory(
+        self,
+        *,
+        focus_dirs: Optional[List[str]] = None,
+        max_classes_per_file: int = 5,
+        max_methods_per_class: int = 3,
+        include_functions: bool = True,
+        include_jsts: bool = True,
+        collapse_private: bool = True,
+        format_type: str = "markdown",
+    ) -> dict:
+        """
+        Generate a compact project inventory.
+
+        Answers: "Was ist alles da?"
+
+        Groups by file → top classes (ranked by method count) with top methods
+        (ranked by downstream usage). Remaining classes are listed name-only.
+        Top-level functions included optionally.
+
+        Args:
+            focus_dirs: Only include files under these dirs (relative to project_root).
+                        None = all indexed files.
+            max_classes_per_file: Show full detail for top N classes per file.
+            max_methods_per_class: Show top N most-used methods per detailed class.
+            include_functions: Include top-level functions (not methods).
+            include_jsts: Include JS/TS files.
+            collapse_private: Hide _private and __dunder__ (except __init__).
+            format_type: "markdown" | "structured"
+
+        Returns:
+            dict with "content" (str) or "files" (list) depending on format_type.
+        """
+        start = time.perf_counter()
+
+        if not self.index_mgr.index.code_elements:
+            await self.index_mgr.load()
+
+        # --- Group elements by file ---
+        file_groups: Dict[str, List] = defaultdict(list)
+        for eid, elem in self.index_mgr.index.code_elements.items():
+            if focus_dirs:
+                if not any(d in elem.file_path for d in focus_dirs):
+                    continue
+            if not include_jsts and elem.language in ("javascript", "typescript"):
+                continue
+            file_groups[elem.file_path].append((eid, elem))
+
+        # --- Build usage counts for ranking ---
+        # Count how often each element name appears in OTHER elements' signatures/docstrings
+        usage_counter: Counter = Counter()
+        for eid, elem in self.index_mgr.index.code_elements.items():
+            sig_doc = (elem.signature or "") + " " + (elem.docstring or "")
+            # Count references to known names
+            for name in self.index_mgr.index.inverted.name_to_elements:
+                if name in sig_doc and name != elem.name:
+                    usage_counter[name] += 1
+
+        # --- Build inventory per file ---
+        inventory_files = []
+
+        for fpath in sorted(file_groups.keys()):
+            elements = file_groups[fpath]
+
+            # Separate by type
+            classes = [(eid, e) for eid, e in elements if e.element_type == "class"]
+            methods_by_class: Dict[str, List] = defaultdict(list)
+            functions = []
+
+            for eid, e in elements:
+                if e.element_type == "method":
+                    parent = e.parent_class or "__module__"
+                    methods_by_class[parent].append((eid, e))
+                elif e.element_type == "function":
+                    functions.append((eid, e))
+
+            # Rank classes by method count + usage
+            def class_importance(item):
+                _, cls = item
+                method_count = len(methods_by_class.get(cls.name, []))
+                used = usage_counter.get(cls.name, 0)
+                return method_count + used * 2
+
+            classes.sort(key=class_importance, reverse=True)
+
+            # Build file entry
+            file_entry = {
+                "path": _short_path(fpath, self.project_root),
+                "language": classes[0][1].language if classes else (
+                    functions[0][1].language if functions else "python"
+                ),
+                "detailed_classes": [],
+                "other_classes": [],
+                "functions": [],
+            }
+
+            for i, (eid, cls) in enumerate(classes):
+                if collapse_private and cls.name.startswith("_"):
+                    continue
+
+                if i < max_classes_per_file:
+                    # Detailed: signature + docstring + top methods
+                    cls_methods = methods_by_class.get(cls.name, [])
+
+                    # Rank methods by usage
+                    def method_importance(item):
+                        _, m = item
+                        return usage_counter.get(m.name, 0)
+
+                    cls_methods.sort(key=method_importance, reverse=True)
+
+                    shown_methods = []
+                    for j, (mid, m) in enumerate(cls_methods):
+                        if collapse_private and m.name.startswith("_") and m.name != "__init__":
+                            continue
+                        if len(shown_methods) >= max_methods_per_class:
+                            break
+                        shown_methods.append({
+                            "name": m.name,
+                            "signature": m.signature,
+                            "docstring": (m.docstring or "")[:120] or None,
+                        })
+
+                    file_entry["detailed_classes"].append({
+                        "name": cls.name,
+                        "signature": cls.signature,
+                        "docstring": (cls.docstring or "")[:200] or None,
+                        "method_count": len(cls_methods),
+                        "top_methods": shown_methods,
+                    })
+                else:
+                    # Name-only
+                    file_entry["other_classes"].append(cls.name)
+
+            # Top-level functions
+            if include_functions:
+                for eid, fn in functions:
+                    if collapse_private and fn.name.startswith("_"):
+                        continue
+                    file_entry["functions"].append({
+                        "name": fn.name,
+                        "signature": fn.signature,
+                    })
+
+            # Skip empty files
+            if file_entry["detailed_classes"] or file_entry["other_classes"] or file_entry["functions"]:
+                inventory_files.append(file_entry)
+
+        elapsed = (time.perf_counter() - start) * 1000
+
+        if format_type == "markdown":
+            return {
+                "content": _inventory_to_md(inventory_files),
+                "file_count": len(inventory_files),
+                "time_ms": elapsed,
+            }
+
+        return {
+            "files": inventory_files,
+            "file_count": len(inventory_files),
+            "time_ms": elapsed,
+        }
+
+    # =============================================================================
+    # 2. RELATIONSHIP MAP — "Wie spielt A mit B zusammen?"
+    # =============================================================================
+
+    async def generate_relationship_map(
+        self,
+        *,
+        focus_dirs: Optional[List[str]] = None,
+        focus_classes: Optional[List[str]] = None,
+        max_nodes: int = 40,
+        show_methods: bool = False,
+        relationship_types: Optional[Set[str]] = None,
+        format_type: str = "markdown",
+    ) -> dict:
+        """
+        Generate a relationship map as Mermaid diagram.
+
+        Answers: "Wie spielt Komponente A mit Komponente B zusammen?"
+
+        Resolves:
+        - Inheritance (class A extends B)
+        - Composition (class A references B in signatures/docstrings)
+        - File-level imports (which files reference which classes)
+
+        Args:
+            focus_dirs: Limit to files under these dirs. None = all.
+            focus_classes: Only show relationships involving these classes. None = all.
+            max_nodes: Cap the number of nodes in the diagram to prevent overwhelm.
+            show_methods: Include method-level edges (can get noisy).
+            relationship_types: Subset of {"inherits", "uses", "imports"}.
+                                None = all types.
+            format_type: "markdown" (with mermaid block) | "mermaid" (raw) | "structured"
+
+        Returns:
+            dict with "content" (str) or "edges"/"nodes" (lists).
+        """
+        start = time.perf_counter()
+
+        if not self.index_mgr.index.code_elements:
+            await self.index_mgr.load()
+
+        rel_types = relationship_types or {"inherits", "uses", "imports"}
+
+        # --- Collect classes ---
+        classes: Dict[str, Any] = {}  # name -> CodeElement
+        methods_by_class: Dict[str, List] = defaultdict(list)
+
+        for eid, elem in self.index_mgr.index.code_elements.items():
+            if focus_dirs and not any(d in elem.file_path for d in focus_dirs):
+                continue
+
+            if elem.element_type == "class":
+                if focus_classes and elem.name not in focus_classes:
+                    # Still collect — might be a dependency target
+                    pass
+                classes[elem.name] = elem
+            elif elem.element_type == "method":
+                methods_by_class[elem.parent_class or ""].append(elem)
+
+        # --- Build edges ---
+        edges: List[Dict[str, str]] = []
+        nodes_seen: Set[str] = set()
+
+        # 1. Inheritance from signature parsing
+        if "inherits" in rel_types:
+            for name, elem in classes.items():
+                # Parse "class Foo(Bar, Baz)" -> extract parents
+                sig = elem.signature
+                paren_start = sig.find("(")
+                paren_end = sig.rfind(")")
+                if paren_start > 0 and paren_end > paren_start:
+                    parents_str = sig[paren_start + 1:paren_end]
+                    parents = [p.strip() for p in parents_str.split(",") if p.strip()]
+                    for parent in parents:
+                        # Clean up dotted access (module.Class -> Class)
+                        parent_clean = parent.split(".")[-1]
+                        if parent_clean and parent_clean not in ("object",):
+                            edges.append({
+                                "from": name,
+                                "to": parent_clean,
+                                "type": "inherits",
+                                "label": "extends",
+                            })
+                            nodes_seen.update([name, parent_clean])
+
+        # 2. Composition/Usage: class A's methods reference class B in sig or docstring
+        if "uses" in rel_types:
+            class_names_set = set(classes.keys())
+            for name, elem in classes.items():
+                for method in methods_by_class.get(name, []):
+                    sig_doc = (method.signature or "") + " " + (method.docstring or "")
+                    for other_name in class_names_set:
+                        if other_name != name and other_name in sig_doc:
+                            if show_methods:
+                                # Method-level edge: A.method -.-> B
+                                method_node = f"{name}.{method.name}"
+                                if not any(
+                                    e["from"] == method_node and e["to"] == other_name and e["type"] == "uses"
+                                    for e in edges
+                                ):
+                                    edges.append({
+                                        "from": method_node,
+                                        "to": other_name,
+                                        "type": "uses",
+                                        "label": "uses",
+                                    })
+                                    nodes_seen.update([method_node, other_name])
+                            else:
+                                # Class-level edge: A -.-> B
+                                if not any(
+                                    e["from"] == name and e["to"] == other_name and e["type"] == "uses"
+                                    for e in edges
+                                ):
+                                    edges.append({
+                                        "from": name,
+                                        "to": other_name,
+                                        "type": "uses",
+                                        "label": "uses",
+                                    })
+                                    nodes_seen.update([name, other_name])
+
+        # 3. File-level imports: if file A has elements referencing names defined in file B
+        if "imports" in rel_types:
+            # Group classes by file for file-level edges
+            file_to_classes: Dict[str, List[str]] = defaultdict(list)
+            for name, elem in classes.items():
+                short = _short_path(elem.file_path, self.project_root)
+                file_to_classes[short].append(name)
+
+            # Check cross-file references at class level
+            for name, elem in classes.items():
+                src_file = _short_path(elem.file_path, self.project_root)
+                sig_doc = (elem.signature or "") + " " + (elem.docstring or "")
+                for method in methods_by_class.get(name, []):
+                    sig_doc += " " + (method.signature or "") + " " + (method.docstring or "")
+
+                for other_file, other_classes in file_to_classes.items():
+                    if other_file == src_file:
+                        continue
+                    for other_name in other_classes:
+                        if other_name in sig_doc:
+                            if not any(
+                                e["from"] == name and e["to"] == other_name and e["type"] == "imports"
+                                for e in edges
+                            ):
+                                edges.append({
+                                    "from": name,
+                                    "to": other_name,
+                                    "type": "imports",
+                                    "label": "imports",
+                                })
+                                nodes_seen.update([name, other_name])
+
+        # --- Filter to focus_classes if set ---
+        if focus_classes:
+            focus_set = set(focus_classes)
+            edges = [e for e in edges if e["from"] in focus_set or e["to"] in focus_set]
+            # Rebuild nodes_seen
+            nodes_seen = set()
+            for e in edges:
+                nodes_seen.update([e["from"], e["to"]])
+
+        # --- Cap nodes ---
+        if len(nodes_seen) > max_nodes:
+            # Keep the most connected nodes
+            node_degree: Counter = Counter()
+            for e in edges:
+                node_degree[e["from"]] += 1
+                node_degree[e["to"]] += 1
+            top_nodes = {n for n, _ in node_degree.most_common(max_nodes)}
+            edges = [e for e in edges if e["from"] in top_nodes and e["to"] in top_nodes]
+            nodes_seen = top_nodes
+
+        # --- Build Mermaid ---
+        mermaid = _edges_to_mermaid(edges, nodes_seen, classes)
+
+        elapsed = (time.perf_counter() - start) * 1000
+
+        if format_type == "mermaid":
+            return {"content": mermaid, "node_count": len(nodes_seen),
+                    "edge_count": len(edges), "time_ms": elapsed}
+
+        if format_type == "markdown":
+            md = "# Relationship Map\n\n"
+            md += "```mermaid\n" + mermaid + "\n```\n\n"
+            md += _relationship_legend()
+            return {"content": md, "node_count": len(nodes_seen),
+                    "edge_count": len(edges), "time_ms": elapsed}
+
+        return {
+            "nodes": sorted(nodes_seen),
+            "edges": edges,
+            "mermaid": mermaid,
+            "node_count": len(nodes_seen),
+            "edge_count": len(edges),
+            "time_ms": elapsed,
+        }
+
+    # =============================================================================
+    # 3. EXPORT DOCMAP — Combined Inventory + Relationships
+    # =============================================================================
+
+    async def export_docmap(
+        self,
+        *,
+        output_path: Optional[str] = None,
+        format_type: str = "html",
+        focus_dirs: Optional[List[str]] = None,
+        max_classes_per_file: int = 5,
+        max_methods_per_class: int = 3,
+        max_nodes: int = 40,
+        title: Optional[str] = None,
+    ) -> dict:
+        """
+        Export a complete DocMap combining inventory + relationship map.
+
+        Produces either:
+        - "md": Single markdown file (LLM-optimized, with mermaid code block)
+        - "html": Standalone HTML with nbpaper style, collapsible sections,
+                  Mermaid rendering, dark mode toggle. No external deps except
+                  Mermaid CDN + Google Fonts.
+
+        Args:
+            output_path: Where to write the file. None = return content only.
+            format_type: "md" | "html"
+            focus_dirs: Passed to both inventory and relationship map.
+            max_classes_per_file: Passed to inventory.
+            max_methods_per_class: Passed to inventory.
+            max_nodes: Passed to relationship map.
+            title: Document title. Default = project dir name.
+
+        Returns:
+            dict with "content", "output_path" (if written), "time_ms".
+        """
+        start = time.perf_counter()
+
+        proj_name = title or self.project_root.name
+
+        # Generate both parts
+        inv = await self.generate_inventory(
+            focus_dirs=focus_dirs,
+            max_classes_per_file=max_classes_per_file,
+            max_methods_per_class=max_methods_per_class,
+            format_type="structured",
+        )
+        rel = await self.generate_relationship_map(
+            focus_dirs=focus_dirs,
+            max_nodes=max_nodes,
+            format_type="structured",
+        )
+
+        if format_type == "md":
+            content = _build_md_docmap(proj_name, inv, rel)
+        else:
+            content = _build_html_docmap(proj_name, inv, rel)
+
+        result = {
+            "content": content,
+            "format": format_type,
+            "inventory_files": inv["file_count"],
+            "relationship_nodes": rel["node_count"],
+            "relationship_edges": rel["edge_count"],
+            "time_ms": (time.perf_counter() - start) * 1000,
+        }
+
+        if output_path:
+            p = Path(output_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+            result["output_path"] = str(p.resolve())
+
+        return result
+
+
+# =============================================================================
+# 1. INVENTORY — "Was ist alles da?" HELPERS
+# =============================================================================
+
+def _short_path(fpath: str, project_root) -> str:
+    """Make path relative to project root if possible."""
+    try:
+        return str(Path(fpath).relative_to(project_root))
+    except ValueError:
+        return fpath
+
+
+def _inventory_to_md(files: list) -> str:
+    """Render inventory as compact markdown."""
+    lines = ["# Project Inventory\n"]
+
+    for f in files:
+        lines.append(f"## `{f['path']}` ({f['language']})\n")
+
+        for cls in f["detailed_classes"]:
+            lines.append(f"### {cls['signature']}")
+            if cls["docstring"]:
+                lines.append(f"> {cls['docstring']}\n")
+            lines.append(f"*{cls['method_count']} methods total*\n")
+            if cls["top_methods"]:
+                lines.append("| Method | Signature |")
+                lines.append("|--------|-----------|")
+                for m in cls["top_methods"]:
+                    doc = f" — {m['docstring']}" if m["docstring"] else ""
+                    lines.append(f"| `{m['name']}` | `{m['signature']}`{doc} |")
+                lines.append("")
+
+        if f["other_classes"]:
+            names = ", ".join(f"`{n}`" for n in f["other_classes"])
+            lines.append(f"**Also:** {names}\n")
+
+        if f["functions"]:
+            lines.append("**Functions:**")
+            for fn in f["functions"]:
+                lines.append(f"- `{fn['signature']}`")
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+# =============================================================================
+# 2. RELATIONSHIP MAP — "Wie spielt A mit B zusammen?" HELPERS
+# =============================================================================
+
+
+def _edges_to_mermaid(edges: list, nodes: set, classes: dict) -> str:
+    """Convert edges to Mermaid graph definition."""
+    lines = ["graph LR"]
+
+    for node in sorted(nodes):
+        mid = _mermaid_id(node)
+        cls = classes.get(node)
+        if cls:
+            short_file = Path(cls.file_path).stem
+            lines.append(f'    {mid}["{node}<br/><small>{short_file}</small>"]')
+        elif "." in node:
+            # Method node: ClassName.method_name → render as smaller box
+            lines.append(f'    {mid}(["{node}"])')
+        else:
+            lines.append(f'    {mid}["{node}"]')
+
+    lines.append("")
+
+    # Edge definitions
+    arrow_map = {
+        "inherits": "-->|extends|",
+        "uses": "-.->|uses|",
+        "imports": "-->|imports|",
+    }
+
+    for e in edges:
+        arrow = arrow_map.get(e["type"], "-->")
+        lines.append(f'    {_mermaid_id(e["from"])} {arrow} {_mermaid_id(e["to"])}')
+
+    # Styling
+    lines.append("")
+    lines.append("    classDef default fill:#f4f1ea,stroke:#111,stroke-width:2px")
+    lines.append("    classDef external fill:#ebe7dc,stroke:#555,stroke-width:1px,stroke-dasharray:5 5")
+    lines.append("    classDef methodNode fill:#ebe7dc,stroke:#111,stroke-width:1px,font-size:12px")
+
+    for node in sorted(nodes):
+        if "." in node and node.split(".")[0] in classes:
+            lines.append(f"    class {_mermaid_id(node)} methodNode")
+        elif node not in classes:
+            lines.append(f"    class {_mermaid_id(node)} external")
+
+    return "\n".join(lines)
+
+
+def _mermaid_id(name: str) -> str:
+    """Sanitize name for Mermaid node ID."""
+    return name.replace(" ", "_").replace("-", "_").replace(".", "_")
+
+
+def _relationship_legend() -> str:
+    return (
+        "## Legend\n\n"
+        "| Arrow | Meaning |\n"
+        "|-------|----------|\n"
+        "| `A -->|extends| B` | A inherits from B |\n"
+        "| `A -.->|uses| B` | A references B in method signatures or docstrings |\n"
+        "| `A -->|imports| B` | A (in file X) references B (defined in file Y) |\n"
+        "| Dashed border | External class (not defined in indexed files) |\n\n"
+        "## Tips for Specific Use Cases\n\n"
+        "**Exploring a single module:** Use `focus_dirs=[\"mymodule\"]` to scope.\n\n"
+        "**Understanding one class:** Use `focus_classes=[\"MyClass\"]` to see all its "
+        "connections.\n\n"
+        "**Large projects (100+ classes):** Set `max_nodes=30` and use `focus_dirs` "
+        "to zoom into subsystems. Build multiple focused maps rather than one giant one.\n\n"
+        "**Finding coupling hotspots:** Look for nodes with many incoming `uses` edges — "
+        "those are the central abstractions. Nodes with many outgoing edges are orchestrators.\n\n"
+        "**Refactoring guidance:** Circular `uses` edges (A uses B, B uses A) indicate "
+        "tight coupling that may benefit from an interface extraction.\n"
+    )
+
+
+# =============================================================================
+# 3. EXPORT DOCMAP — Combined Inventory + Relationships HEPERS
+# =============================================================================
+
+
+def _build_md_docmap(title: str, inv: dict, rel: dict) -> str:
+    """Build LLM-optimized markdown DocMap."""
+    lines = [
+        f"# DocMap: {title}\n",
+        f"*Generated at {time.strftime('%Y-%m-%d %H:%M')} "
+        f"| {inv['file_count']} files "
+        f"| {rel['node_count']} nodes "
+        f"| {rel['edge_count']} edges*\n",
+        "---\n",
+        "## Part 1 — What's Here (Inventory)\n",
+    ]
+
+    # Inline the inventory
+    lines.append(_inventory_to_md(inv["files"]))
+    lines.append("\n---\n")
+    lines.append("## Part 2 — How Components Connect (Relationship Map)\n")
+    lines.append("```mermaid")
+    lines.append(rel["mermaid"])
+    lines.append("```\n")
+    lines.append(_relationship_legend())
+
+    return "\n".join(lines)
+
+
+def _build_html_docmap(title: str, inv: dict, rel: dict) -> str:
+    """Build standalone HTML DocMap with nbpaper style."""
+
+    import html as html_mod
+    esc = html_mod.escape
+
+    # Build inventory HTML
+    inv_html_parts = []
+    for f in inv["files"]:
+        file_id = f["path"].replace("/", "_").replace("\\", "_").replace(".", "_")
+
+        cls_html = ""
+        for cls in f["detailed_classes"]:
+            methods_rows = ""
+            for m in cls["top_methods"]:
+                doc = f'<span class="ink-muted"> — {esc(m["docstring"])}</span>' if m["docstring"] else ""
+                methods_rows += (
+                    f"<tr><td><code>{esc(m['name'])}</code></td>"
+                    f"<td><code>{esc(m['signature'])}</code>{doc}</td></tr>\n"
+                )
+
+            methods_table = ""
+            if methods_rows:
+                methods_table = (
+                    '<table class="methods-table">'
+                    "<thead><tr><th>Method</th><th>Signature</th></tr></thead>"
+                    f"<tbody>{methods_rows}</tbody></table>"
+                )
+
+            docstr = f'<blockquote>{esc(cls["docstring"])}</blockquote>' if cls["docstring"] else ""
+            cls_html += (
+                f'<div class="class-detail">'
+                f'<h4><code>{esc(cls["signature"])}</code></h4>'
+                f'{docstr}'
+                f'<p class="ink-muted">{cls["method_count"]} methods total</p>'
+                f'{methods_table}'
+                f'</div>'
+            )
+
+        other_html = ""
+        if f["other_classes"]:
+            names = ", ".join(f"<code>{esc(n)}</code>" for n in f["other_classes"])
+            other_html = f'<p><strong>Also:</strong> {names}</p>'
+
+        fn_html = ""
+        if f["functions"]:
+            fn_items = "".join(
+                f"<li><code>{esc(fn['signature'])}</code></li>"
+                for fn in f["functions"]
+            )
+            fn_html = f'<div class="functions"><strong>Functions:</strong><ul>{fn_items}</ul></div>'
+
+        inv_html_parts.append(
+            f'<details class="file-section card">'
+            f'<summary class="file-header">'
+            f'<span class="badge">{esc(f["language"])}</span> '
+            f'<code>{esc(f["path"])}</code></summary>'
+            f'<div class="file-body">{cls_html}{other_html}{fn_html}</div>'
+            f'</details>'
+        )
+
+    inv_html = "\n".join(inv_html_parts)
+
+    # Mermaid code
+    mermaid_code = esc(rel.get("mermaid", "graph LR\n    A[No relationships found]"))
+
+    # Stats
+    stats = (
+        f'{inv["file_count"]} files | '
+        f'{rel["node_count"]} classes | '
+        f'{rel["edge_count"]} relationships'
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DocMap: {esc(title)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* === NBPAPER TOKENS === */
+:root {{
+    --raw-primary: 55% 0.18 230;
+    --primary: oklch(var(--raw-primary));
+    --raw-success: 65% 0.2 145;
+    --success: oklch(var(--raw-success));
+    --raw-warning: 75% 0.18 85;
+    --warning: oklch(var(--raw-warning));
+    --raw-error: 55% 0.22 25;
+    --error: oklch(var(--raw-error));
+
+    --paper-bg: #f4f1ea;
+    --paper-surface: #ffffff;
+    --paper-sunken: #ebe7dc;
+    --ink: #111111;
+    --ink-muted: #555555;
+    --ink-faint: #888888;
+    --rule: #111111;
+
+    --font-display: 'IBM Plex Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+    --font-body: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+
+    --text-display: clamp(28px, 4vw, 40px);
+    --text-h2: clamp(20px, 2.5vw, 26px);
+    --text-h3: clamp(17px, 2vw, 20px);
+    --text-base: 16px;
+    --text-sm: 14px;
+    --text-xs: 12px;
+}}
+
+[data-theme="dark"] {{
+    --paper-bg: #161616;
+    --paper-surface: #242424;
+    --paper-sunken: #0d0d0d;
+    --ink: #f4f1ea;
+    --ink-muted: #b8b3a8;
+    --ink-faint: #7a7770;
+    --rule: #f4f1ea;
+}}
+
+/* === RESET & BASE === */
+*, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+body {{
+    font-family: var(--font-body);
+    font-size: var(--text-base);
+    line-height: 1.6;
+    color: var(--ink);
+    background: var(--paper-bg);
+    padding: 0;
+}}
+
+/* === NAV === */
+.nav {{
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    padding: 1rem 2rem;
+    background: var(--paper-bg);
+    border-bottom: 3px solid var(--ink);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}}
+
+.nav-title {{
+    font-family: var(--font-display);
+    font-size: var(--text-h3);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+}}
+
+.nav-links {{
+    display: flex;
+    gap: 1.5rem;
+    align-items: center;
+}}
+
+.nav-link {{
+    font-family: var(--font-display);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--ink);
+    text-decoration: none;
+    padding: 0.25rem 0;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+}}
+
+.nav-link:hover {{ border-bottom-color: var(--ink); }}
+
+/* === LAYOUT === */
+.container {{
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 2rem;
+}}
+
+/* === HERO === */
+.hero {{
+    padding: 3rem 0 2rem;
+    border-bottom: 2px solid var(--ink);
+    margin-bottom: 2rem;
+}}
+
+.hero h1 {{
+    font-family: var(--font-display);
+    font-size: var(--text-display);
+    font-weight: 600;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.75rem;
+}}
+
+.hero .stats {{
+    font-family: var(--font-display);
+    font-size: var(--text-sm);
+    color: var(--ink-muted);
+    letter-spacing: 0.5px;
+}}
+
+/* === SECTION HEADINGS === */
+.section-heading {{
+    font-family: var(--font-display);
+    font-size: var(--text-h2);
+    font-weight: 600;
+    padding: 1rem 0 0.5rem;
+    border-bottom: 2px solid var(--ink);
+    margin: 2rem 0 1.5rem;
+}}
+
+/* === CARD / FILE SECTION === */
+.file-section {{
+    margin-bottom: 1rem;
+    background: var(--paper-surface);
+    border: 2px solid var(--ink);
+    border-radius: 0;
+    box-shadow: 4px 4px 0 var(--ink);
+    transition: transform 80ms linear, box-shadow 80ms linear;
+}}
+
+.file-section[open] {{
+    box-shadow: 6px 6px 0 var(--ink);
+}}
+
+.file-header {{
+    padding: 1rem 1.25rem;
+    cursor: pointer;
+    font-family: var(--font-display);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    list-style: none;
+}}
+
+.file-header::-webkit-details-marker {{ display: none; }}
+.file-header::before {{
+    content: "▸";
+    font-size: 0.9em;
+    transition: transform 150ms;
+}}
+.file-section[open] > .file-header::before {{
+    transform: rotate(90deg);
+}}
+
+.file-body {{
+    padding: 0 1.25rem 1.25rem;
+    border-top: 1px solid var(--ink);
+}}
+
+/* === BADGE === */
+.badge {{
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.4rem;
+    font-family: var(--font-display);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    background: var(--ink);
+    color: var(--paper-bg);
+    border: 2px solid var(--ink);
+    border-radius: 0;
+}}
+
+/* === CLASS DETAIL === */
+.class-detail {{
+    margin: 1rem 0;
+    padding: 1rem;
+    background: var(--paper-sunken);
+    border-left: 4px solid var(--ink);
+}}
+
+.class-detail h4 {{
+    font-family: var(--font-display);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}}
+
+.class-detail blockquote {{
+    margin: 0.5rem 0;
+    padding: 0.5rem 0.75rem;
+    border-left: 3px solid var(--ink-faint);
+    color: var(--ink-muted);
+    font-size: var(--text-sm);
+}}
+
+/* === TABLE === */
+.methods-table {{
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.75rem;
+    font-size: var(--text-sm);
+}}
+
+.methods-table th {{
+    font-family: var(--font-display);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-size: var(--text-xs);
+    text-align: left;
+    padding: 0.4rem 0.6rem;
+    border-bottom: 2px solid var(--ink);
+    background: var(--paper-surface);
+}}
+
+.methods-table td {{
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--ink-faint);
+    vertical-align: top;
+}}
+
+.methods-table code {{
+    font-family: var(--font-display);
+    font-size: 0.9em;
+    background: var(--paper-surface);
+    padding: 0.1em 0.3em;
+    border: 1px solid var(--ink);
+}}
+
+/* === FUNCTIONS LIST === */
+.functions {{ margin-top: 1rem; }}
+.functions ul {{ list-style: none; padding-left: 0; margin-top: 0.5rem; }}
+.functions li {{ margin-bottom: 0.3rem; }}
+
+/* === MERMAID CONTAINER === */
+.mermaid-container {{
+    background: var(--paper-surface);
+    border: 2px solid var(--ink);
+    box-shadow: 6px 6px 0 var(--ink);
+    padding: 2rem;
+    margin: 1.5rem 0;
+    overflow-x: auto;
+}}
+
+/* === LEGEND === */
+.legend {{
+    margin: 1.5rem 0;
+    padding: 1rem 1.25rem;
+    background: var(--paper-sunken);
+    border-left: 6px solid var(--ink);
+}}
+
+.legend h3 {{
+    font-family: var(--font-display);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 0.5rem;
+}}
+
+.legend table {{
+    font-size: var(--text-sm);
+    border-collapse: collapse;
+}}
+
+.legend td {{
+    padding: 0.25rem 0.75rem 0.25rem 0;
+    vertical-align: top;
+}}
+
+/* === TIPS === */
+.tips {{
+    margin: 1.5rem 0;
+}}
+
+.tip-card {{
+    padding: 1rem 1.25rem;
+    margin-bottom: 0.75rem;
+    background: var(--paper-surface);
+    border: 2px solid var(--ink);
+    box-shadow: 4px 4px 0 var(--ink);
+}}
+
+.tip-card strong {{
+    font-family: var(--font-display);
+    font-size: var(--text-sm);
+}}
+
+/* === DARK MODE TOGGLE === */
+.theme-toggle {{
+    font-family: var(--font-display);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    padding: 0.4rem 0.8rem;
+    background: var(--paper-surface);
+    color: var(--ink);
+    border: 2px solid var(--ink);
+    box-shadow: 3px 3px 0 var(--ink);
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: transform 80ms linear, box-shadow 80ms linear;
+}}
+
+.theme-toggle:hover {{
+    transform: translate(-2px, -2px);
+    box-shadow: 5px 5px 0 var(--ink);
+}}
+
+.theme-toggle:active {{
+    transform: translate(2px, 2px);
+    box-shadow: 0 0 0 var(--ink);
+}}
+
+/* === UTILITIES === */
+.ink-muted {{ color: var(--ink-muted); }}
+code {{ font-family: var(--font-display); font-size: 0.9em; }}
+
+/* === MOBILE === */
+@media (max-width: 767px) {{
+    .container {{ padding: 1rem; }}
+    .nav {{ padding: 0.75rem 1rem; }}
+    .file-section {{ box-shadow: 3px 3px 0 var(--ink); }}
+    .mermaid-container {{ padding: 1rem; box-shadow: 3px 3px 0 var(--ink); }}
+    .tip-card {{ box-shadow: 3px 3px 0 var(--ink); }}
+}}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+    <span class="nav-title">DocMap</span>
+    <div class="nav-links">
+        <a class="nav-link" href="#inventory">Inventory</a>
+        <a class="nav-link" href="#relationships">Relationships</a>
+        <button class="theme-toggle" onclick="toggleTheme()">◐</button>
+    </div>
+</nav>
+
+<div class="container">
+
+<header class="hero">
+    <h1>{esc(title)}</h1>
+    <p class="stats">{esc(stats)} | {time.strftime('%Y-%m-%d %H:%M')}</p>
+</header>
+
+<h2 class="section-heading" id="inventory">01 — What's Here</h2>
+
+{inv_html}
+
+<h2 class="section-heading" id="relationships">02 — How Components Connect</h2>
+
+<div class="mermaid-container">
+    <pre class="mermaid">{mermaid_code}</pre>
+</div>
+
+<div class="legend">
+    <h3>Legend</h3>
+    <table>
+        <tr><td><code>A →|extends| B</code></td><td>A inherits from B</td></tr>
+        <tr><td><code>A ⇢|uses| B</code></td><td>A references B in signatures or docstrings</td></tr>
+        <tr><td><code>A →|imports| B</code></td><td>Cross-file reference</td></tr>
+        <tr><td>Dashed border</td><td>External class (not in indexed files)</td></tr>
+    </table>
+</div>
+
+<div class="tips">
+    <h3 class="section-heading" style="font-size:var(--text-h3)">Usage Tips</h3>
+    <div class="tip-card">
+        <strong>Exploring a module:</strong>
+        <code>focus_dirs=["mymodule"]</code> to scope both inventory and diagram.
+    </div>
+    <div class="tip-card">
+        <strong>Understanding one class:</strong>
+        <code>focus_classes=["MyClass"]</code> on the relationship map.
+    </div>
+    <div class="tip-card">
+        <strong>Large projects:</strong>
+        Set <code>max_nodes=30</code> and build multiple focused maps per subsystem.
+    </div>
+    <div class="tip-card">
+        <strong>Finding coupling:</strong>
+        Look for bidirectional <em>uses</em> edges — they indicate tight coupling.
+    </div>
+</div>
+
+</div>
+
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+mermaid.initialize({{
+    startOnLoad: true,
+    theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'default',
+    flowchart: {{ curve: 'basis', padding: 15 }},
+    themeVariables: {{
+        primaryColor: '#f4f1ea',
+        primaryBorderColor: '#111111',
+        lineColor: '#111111',
+        primaryTextColor: '#111111',
+    }}
+}});
+</script>
+
+<script>
+function toggleTheme() {{
+    const html = document.documentElement;
+    const isDark = html.getAttribute('data-theme') === 'dark';
+    html.setAttribute('data-theme', isDark ? '' : 'dark');
+    // Re-render mermaid for theme
+    location.reload();
+}}
+</script>
+
+</body>
+</html>"""
+
 
 # =============================================================================
 # APP INTEGRATION
@@ -2327,4 +3502,11 @@ def add_to_app(
     app.docs_init = system.initialize
     app.get_task_context = system.get_task_context
 
+    app.docs_inventory = system.generate_inventory
+    app.docs_relationship_map = system.generate_relationship_map
+    app.docs_export_docmap = system.export_docmap
+
     return system
+
+
+

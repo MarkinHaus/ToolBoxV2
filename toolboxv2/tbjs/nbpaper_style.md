@@ -19,7 +19,7 @@
 - **Offset drop shadows, not ambient.** Shadows are a hard `4px 4px 0 var(--ink)` — a displaced copy of the shape, not a soft blur. Depth is *parallax*, not *glow*.
 - **Shared color primitives.** Pulls from the same `--raw-primary`, `--raw-success` etc. as Glass. Color identity across all three styles is unified — only the *treatment* differs.
 - **Monospace headlines.** IBM Plex Mono is the *display* face here, not the data face. Sans is the body. Inversion vs Glass: in Paper, mono is decorative, sans is functional.
-- **Paper base, not void.** Default background is a warm off-white (`#f4f1ea`). Dark mode exists but is deep charcoal (`#1a1a1a`), not void black. Paper must always read as *paper*.
+- **Paper base, not void.** Default background is a warm off-white (`#f4f1ea`). Dark mode exists but is deep charcoal (`#161616`), not void black. Paper must always read as *paper*.
 - **No motion drift.** Hover is a 2px translate diagonally (`translate(-2px, -2px)`) combined with shadow offset increasing — the card "lifts off the page". No scale, no fade.
 
 ---
@@ -56,9 +56,9 @@ Not a light-to-dark inversion. Paper Dark is *carbon paper* — dark page, light
 
 | Token | Value |
 |---|---|
-| `--paper-bg` | `#1a1a1a` |
-| `--paper-surface` | `#2a2a2a` |
-| `--paper-sunken` | `#0f0f0f` |
+| `--paper-bg` | `#161616` |
+| `--paper-surface` | `#242424` |
+| `--paper-sunken` | `#0d0d0d` |
 | `--ink` | `#f4f1ea` |
 | `--ink-muted` | `#b8b3a8` |
 | `--ink-faint` | `#7a7770` |
