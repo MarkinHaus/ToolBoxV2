@@ -341,6 +341,10 @@
          <lastmod>2026-05-10</lastmod>
     </url>
     <url>
+         <loc>https://MarkinHaus.github.io/ToolBoxV2/toolboxv2/flows/__init__/</loc>
+         <lastmod>2026-05-10</lastmod>
+    </url>
+    <url>
          <loc>https://MarkinHaus.github.io/ToolBoxV2/toolboxv2/flows/adaptive_prompt_system/</loc>
          <lastmod>2026-05-10</lastmod>
     </url>
@@ -349,11 +353,35 @@
          <lastmod>2026-05-10</lastmod>
     </url>
     <url>
+         <loc>https://MarkinHaus.github.io/ToolBoxV2/toolboxv2/flows/bg/</loc>
+         <lastmod>2026-05-10</lastmod>
+    </url>
+    <url>
          <loc>https://MarkinHaus.github.io/ToolBoxV2/toolboxv2/flows/chain/</loc>
          <lastmod>2026-05-10</lastmod>
     </url>
     <url>
          <loc>https://MarkinHaus.github.io/ToolBoxV2/toolboxv2/utils/toolbox/</loc>
+         <lastmod>2026-05-10</lastmod>
+    </url>
+    <url>
+         <loc>https://MarkinHaus.github.io/ToolBoxV2/toolboxv2/utils/workers/event_manager/</loc>
+         <lastmod>2026-05-10</lastmod>
+    </url>
+    <url>
+         <loc>https://MarkinHaus.github.io/ToolBoxV2/toolboxv2/utils/workers/server_worker/</loc>
+         <lastmod>2026-05-10</lastmod>
+    </url>
+    <url>
+         <loc>https://MarkinHaus.github.io/ToolBoxV2/toolboxv2/utils/workers/session/</loc>
+         <lastmod>2026-05-10</lastmod>
+    </url>
+    <url>
+         <loc>https://MarkinHaus.github.io/ToolBoxV2/toolboxv2/utils/workers/ws_bridge/</loc>
+         <lastmod>2026-05-10</lastmod>
+    </url>
+    <url>
+         <loc>https://MarkinHaus.github.io/ToolBoxV2/toolboxv2/utils/workers/ws_worker/</loc>
          <lastmod>2026-05-10</lastmod>
     </url>
     <url>
