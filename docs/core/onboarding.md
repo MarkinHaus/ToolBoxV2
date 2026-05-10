@@ -470,7 +470,7 @@ tb --delete-data-all        ⚠️  ALLE Daten löschen
 
 - [Installation Guide](../new/analysis/installation/installation.md)
 - [Feature Management](../foundations/feature-management.md)
-- [Registry Guide](../services/registry/README.md)
+- [Registry Guide](../toolboxv2/services/registry/README.md)
 - [Worker System](../../toolboxv2/utils/workers/README.md)
 - [CloudM.Auth Modul](../../toolboxv2/mods/CloudM/Auth.py)
 

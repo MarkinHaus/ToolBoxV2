@@ -117,7 +117,7 @@ pip install ToolBoxV2
 
 The installer auto-detects your platform, selects a runtime (`uv` → `venv` → bootstrap), and guides you through feature selection. Supports four install modes: `native` (single binary), `uv`, `docker`, and `source`.
 
-→ [Full Installation Guide](docs/new/analysis/installation/installation.md) · [Quickstart](docs/foundations/quickstart.md)
+→ [Full Installation Guide](docs/new/analysis/installation/installation.md) · [Quickstart](docs/core/quickstart.md)
 
 ---
 

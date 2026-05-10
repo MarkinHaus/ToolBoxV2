@@ -236,6 +236,6 @@ toolboxv2/utils/workers/
 ## Related
 
 - [Server Guide](../guides/howto_server.md) — Full production setup walkthrough
-- [Manifest Reference](../manifest/ref_manifest.md) — Worker configuration schema
+- [Manifest Reference](../toolboxv2/utils/manifest/ref_manifest.md) — Worker configuration schema
 - [System Stack](../new/analysis/installation/stack.md) — Where workers fit in the full architecture
 - [Tauri App Architecture](../new/old_docs/TauriApp_Architecture.md) — Desktop app using `tauri_integration.py`
