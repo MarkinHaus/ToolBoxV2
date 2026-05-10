@@ -525,6 +525,7 @@ class VFSFile:
     mini_summary: str = ""
     readonly: bool = False
     is_dirty: bool = False  # Hat ungespeicherte Änderungen
+    show_full: bool = False  # Gesamten Inhalt anzeigen, max_window_lines ignorieren
 
     # Timestamps
     created_at: str = ""
@@ -772,22 +773,13 @@ zählen. `grep "x=y+z"` matcht NICHT `x = y + z`.
 | Sonderzeichen `+.*[]()` | Escapen: `grep "x\+y"` oder kürzeres Pattern ohne Sonderzeichen |
 | Alternation (`\|` oder `\\|`) | **NIEMALS** `\\|` oder `\|` — nutze `|` direkt: `grep -rn 'class|def |async def ' /path` |
 
-pass auf und halte dich and die grep regeln !!!Alternation (`\|` oder `\\|`) | **NIEMALS** `\\|` oder `\|` — nutze `|` direkt: `grep -rn 'class|def |async def ' /path` !!!
-pass auf und halte dich and die grep regeln !!! Alternation (`\|` oder `\\|`) | **NIEMALS** `\\|` oder `\|` — nutze `|` direkt: `grep -rn 'class|def |async def ' /path` !!!
-pass auf und halte dich and die grep regeln !!! Alternation (`\|` oder `\\|`) | **NIEMALS** `\\|` oder `\|` — nutze `|` direkt: `grep -rn 'class|def |async def ' /path` !!!
-
 **⚠️ ALTERNATION — HÄUFIGSTER FEHLER:**
 VFS-grep nutzt ERE/PCRE-Syntax. `|` ist direkt Alternation, KEIN Escaping nötig.
 - ✅ `grep -rn 'class|def |async def ' /src`
 - ✅ `grep -rn 'minio|redis|host_network' /src`
-- ❌ `grep -n 'class\|def \|async def ' /file`  ← matcht NICHTS, `\|` ist Literal wenn du das noch einmal verwendets um nach calssen oder etwas aderme zu sschen pass wirklich auf !!!!!!!!!!!!!!!!!!!!
+- ❌ `grep -n 'class\|def \|async def ' /file`  ← matcht NICHTS, `\|` ist Literal !!
 - ❌ `grep -n 'class\\|def ' /file`  ← matcht NICHTS, selbes Problem eifac nein nicht machen tu so las ob duch nach dem str "def |class" suchst genau so und nicht ander s !!!!!!!!!!
 
-pass auf und halte dich and die grep regeln !!!
-
-pass auf und halte dich and die grep regeln !!!Alternation (`\|` oder `\\|`) | **NIEMALS** `\\|` oder `\|` — nutze `|` direkt: `grep -rn 'class|def |async def ' /path` !!!
-pass auf und halte dich and die grep regeln !!! Alternation (`\|` oder `\\|`) | **NIEMALS** `\\|` oder `\|` — nutze `|` direkt: `grep -rn 'class|def |async def ' /path` !!!
-pass auf und halte dich and die grep regeln !!! Alternation (`\|` oder `\\|`) | **NIEMALS** `\\|` oder `\|` — nutze `|` direkt: `grep -rn 'class|def |async def ' /path` !!!
 
 **grep in Pipes vs. direkt:**
 - `grep -rn "pattern" /src` → durchsucht Dateien via ripgrep, Output: `datei:zeile:match`
@@ -922,6 +914,7 @@ VFS-grep nutzt ERE/PCRE-Syntax. `|` ist direkt Alternation, KEIN Escaping nötig
             _content=self._build_system_context(),
             state="open",
             readonly=True,
+            show_full=True,
         )
 
         self.files["/vfs_guide.md"] = VFSFile(
@@ -929,6 +922,7 @@ VFS-grep nutzt ERE/PCRE-Syntax. `|` ist direkt Alternation, KEIN Escaping nötig
             _content=self._build_vfs_guide(),
             state="open",
             readonly=True,
+            show_full=True,
         )
 
     def _build_system_context(self) -> str:
@@ -952,22 +946,27 @@ Session: {self.session_id}
         path = "/active_rules.md"
         if path not in self.files:
             self.files[path] = VFSFile(
-                filename="active_rules.md", _content=content, state="open", readonly=True
+                filename="active_rules.md", _content=content, state="open", readonly=True, show_full=True
             )
         else:
             self.files[path].content = content
             self.files[path].updated_at = datetime.now().isoformat()
+            self.files[path].show_full = True
         self._dirty = True
 
     def set_memory_index_file(self, content: str, agent_name="default"):
         """Set the memory_index.md file content (from RuleSet)"""
         path = "/memory_index.md"
+        global_path = "/global/default/memory_index.md"
         if path not in self.files:
-            self.write("/global/default/memory_index.md", content)
-            self.open("/global/default/memory_index.md")
+            self.write(global_path, content)
+            self.open(global_path)
+            if global_path in self.files:
+                self.files[global_path].show_full = True
         else:
             self.files[path].content = content
             self.files[path].updated_at = datetime.now().isoformat()
+            self.files[path].show_full = True
         self._dirty = True
 
     # =========================================================================
@@ -2726,16 +2725,22 @@ Session: {self.session_id}
                 # Dirty indicator
                 dirty = " [MODIFIED]" if isinstance(f, VFSFile) and f.is_dirty else ""
 
-                if len(visible) > self.max_window_lines:
-                    visible = visible[: self.max_window_lines]
+                if getattr(f, "show_full", False):
                     parts.append(
-                        f"\n{icon} [{path}]{dirty} (lines {f.view_start + 1}-{f.view_start + self.max_window_lines}, truncated, {total=}):"
+                        f"\n{icon} [{path}]{dirty} (full content, {total=}):"
                     )
+                    parts.append("\n".join(lines))
                 else:
-                    parts.append(
-                        f"\n{icon} [{path}]{dirty} (lines {f.view_start + 1}-{end}, {total=}):"
-                    )
-                parts.append("\n".join(visible))
+                    if len(visible) > self.max_window_lines:
+                        visible = visible[: self.max_window_lines]
+                        parts.append(
+                            f"\n{icon} [{path}]{dirty} (lines {f.view_start + 1}-{f.view_start + self.max_window_lines}, truncated, {total=}):"
+                        )
+                    else:
+                        parts.append(
+                            f"\n{icon} [{path}]{dirty} (lines {f.view_start + 1}-{end}, {total=}):"
+                        )
+                    parts.append("\n".join(visible))
         closed_count = sum(1 for f in self.files.values() if f.state == "closed")
         if closed_count > 0:
             parts.append(f"\n📋 {closed_count} closed files available")
@@ -2807,6 +2812,7 @@ Session: {self.session_id}
                 "mini_summary": f.mini_summary,
                 "readonly": f.readonly,
                 "is_dirty": f.is_dirty,
+                "show_full": getattr(f, "show_full", False),
                 "created_at": f.created_at,
                 "updated_at": f.updated_at,
                 "is_executable": f.is_executable,

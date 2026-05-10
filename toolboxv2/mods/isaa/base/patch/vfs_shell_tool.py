@@ -285,7 +285,7 @@ def _pipe_exec(cmd: str, stdin_text: str) -> dict:
         if not non_flags:
             return {"success": False, "stdout": "", "stderr": "grep: missing pattern", "returncode": 1}
 
-        pattern      = non_flags[0]
+        pattern      = non_flags[0].replace(r'\\|', '|').replace(r'\|', '|')
         case_i       = any('i' in f for f in flag_args)
         show_n       = any('n' in f for f in flag_args)
         invert       = any('v' in f for f in flag_args)
@@ -833,6 +833,9 @@ def make_vfs_shell(session: "AgentSessionV2"):
 
             if pattern is None:
                 return _err("grep: missing pattern")
+
+            # Unescape \\| and \| to | for extended regex OR support
+            pattern = pattern.replace(r'\\|', '|').replace(r'\|', '|')
 
             # Build case-insensitive pattern if needed
             grep_pattern = f"(?i){pattern}" if case_insensitive else pattern

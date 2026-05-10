@@ -361,7 +361,7 @@ class SubAgentManager:
             await asyncio.wait_for(state._task, timeout=timeout)
         except asyncio.TimeoutError:
             state.status = SubAgentStatus.TIMEOUT
-            state.error = f"Timeout after {timeout} seconds"
+            state.error = f"The chek sub agent status. the wait for call Timeout after {timeout} seconds. you can continue the sub agent ist still running!"
             state.completed_at = datetime.now()
 
             # Cancel the task
@@ -573,13 +573,21 @@ class SubAgentManager:
         """Get status of a sub-agent"""
         if sub_id in self._sub_agents:
             state = self._sub_agents[sub_id]
+
+            # Extract live narrator message if engine is running
+            narrator_msg = ""
+            if state.engine and hasattr(state.engine, "live"):
+                narrator_msg = getattr(state.engine.live, "narrator_msg", "")
+
             return {
                 "id": sub_id,
                 "status": state.status.value,
                 "task": state.task,
                 "output_dir": state.output_dir,
                 "started_at": state.started_at.isoformat() if state.started_at else None,
-                "tokens_used": state.tokens_used
+                "tokens_used": state.tokens_used,
+                "token_budget": state.config.max_tokens,
+                "narrator_msg": narrator_msg
             }
         elif sub_id in self._completed:
             result = self._completed[sub_id]
@@ -587,6 +595,7 @@ class SubAgentManager:
                 "id": sub_id,
                 "status": result.status.value,
                 "success": result.success,
+                "task": result.task,
                 "output_dir": result.output_dir,
                 "files_written": result.files_written,
                 "tokens_used": result.tokens_used,
@@ -716,7 +725,24 @@ Results are automatically added to your context.""",
                 "required": ["sub_agent_ids"]
             }
         }
-    }
+    },
+{
+        "type": "function",
+        "function": {
+            "name": "sub_agents_status",
+            "description": """Check the current status, token usage, and narrator progress of sub-agents.
+Use this to monitor running sub-agents without blocking your execution. If no ID is provided, returns an overview of all.""",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sub_agent_id": {
+                        "type": "string",
+                        "description": "Optional: The specific ID of a sub-agent. Omit to get an overview of all active and completed sub-agents."
+                    }
+                }
+            }
+        }
+    },
 ]
 
 

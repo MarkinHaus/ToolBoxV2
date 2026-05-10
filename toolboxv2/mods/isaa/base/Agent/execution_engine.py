@@ -153,14 +153,6 @@ DISCOVERY_TOOLS = [
                         "type": ["string", "null"],
                         "description": "Optional category filter (e.g., 'discord', 'vfs', 'memory')",
                     },
-                    "auto_load": {
-                        "type": "boolean",
-                        "description": "Whether to automatically load the selected tools into the context",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Optional limit on the number of tools to  automatically load",
-                    },
                 },
             },
         },
@@ -3547,9 +3539,6 @@ BEISPIELE:
         elif f_name == "list_tools":
             result = await self._tool_list_tools(
                 f_args.get("category"),
-                auto=f_args.get("auto_load", True),
-                limit=f_args.get("limit", 3),
-                ctx=ctx,
             )
 
         elif f_name == "load_tools":
@@ -3612,6 +3601,9 @@ BEISPIELE:
                 except Exception as e:
                     result = f"ERROR spawning sub-agent: {str(e)}"
 
+        elif f_name == "sub_agents_status":
+            pass
+
         elif f_name == "wait_for":
             if not self._sub_agent_manager:
                 result = "ERROR: SubAgentManager not initialized."
@@ -3648,31 +3640,45 @@ BEISPIELE:
                 except Exception as e:
                     result = f"ERROR waiting for sub-agents: {str(e)}"
 
-        elif f_name == "resume_sub_agent":
-            if self.is_sub_agent:
-                result = "ERROR: Sub-agents cannot resume other sub-agents!"
-            elif not self._sub_agent_manager:
+        elif f_name == "sub_agents_status":
+            if not self._sub_agent_manager:
                 result = "ERROR: SubAgentManager not initialized."
+
             else:
-                try:
-                    sub_agent_id = f_args.get("sub_agent_id")
-                    additional_iterations = f_args.get("additional_iterations", 10)
-                    additional_budget = f_args.get("additional_budget", 3000)
-                    wait = f_args.get("wait", True)
-                    context = f_args.get("context")  # NEW: Optional additional context
+                sub_agent_id = f_args.get("sub_agent_id", f_args.get("id", f_args.get("agent")))
 
-                    result = await self._tool_resume_sub_agent(
-                        sub_agent_id=sub_agent_id,
-                        additional_iterations=additional_iterations,
-                        additional_budget=additional_budget,
-                        wait=wait,
-                        context=context,  # Pass context parameter
-                    )
-                except Exception as e:
-                    import traceback
+                if sub_agent_id:
+                    status_data = self._sub_agent_manager.get_status(sub_agent_id)
 
-                    traceback.print_exc()
-                    result = f"ERROR resuming sub-agent: {str(e)}"
+                    if status_data:
+                        lines = [f"📊 Status für Sub-Agent [{sub_agent_id}]:"]
+
+                        for k, v in status_data.items():
+                            lines.append(f"  - {k}: {v}")
+
+                        result = "\n".join(lines)
+
+                    else:
+                        result = f"❌ Kein Sub-Agent mit ID '{sub_agent_id}' gefunden."
+
+                else:
+                    all_status = self._sub_agent_manager.get_all_status()
+                    lines = ["📊 Übersicht aller Sub-Agents:"]
+
+                    for category in ["running", "completed"]:
+                        lines.append(f"\n--- {category.upper()} ---")
+
+                        if not all_status[category]:
+                            lines.append("  (Keine)")
+
+                        for sid, data in all_status[category].items():
+                            t_used = data.get('tokens_used', 0)
+                            t_budget = data.get('token_budget', 'N/A')
+                            status_val = data.get('status', 'unknown')
+                            n_msg = data.get('narrator_msg', '')
+                            n_str = f"\n    ↳ Aktuell: {n_msg}" if n_msg else ""
+                            lines.append(f"  • [{sid}] Status: {status_val} | Tokens: {t_used}/{t_budget}{n_str}")
+                    result = "\n".join(lines)
 
         # === VFS & DYNAMIC TOOLS ===
         elif f_name:
@@ -4204,42 +4210,11 @@ BEISPIELE:
     async def _tool_list_tools(
         self,
         category: Optional[str] = None,
-        auto: bool = False,
-        limit: int = 0,
-        ctx: ExecutionContext | None = None,
     ) -> str:
         """List available tools with optional category filter"""
         all_tools = self.agent.tool_manager.get_all()
         lines = []
 
-        if auto:
-            auto = False
-            from pydantic import BaseModel
-
-            class SelectTools(BaseModel):
-                tools_name: list[str] = []
-                reason: str = ""
-
-            try:
-                query = ctx.query if ctx else ""
-                message_context = ctx.working_history[-6:] if ctx else None
-                data: dict | None = await self.agent.a_format_class(
-                    SelectTools,
-                    f"Select up to {limit} fitting tools for the given query {query} and situation",
-                    message_context=message_context,
-                )
-                if data:
-                    tools = data.get("tools_name", [])
-                    reason = data.get("reason", "")
-                    if reason:
-                        lines.append(reason)
-
-                    if ctx and tools:
-                        loading_msg = self._tool_load_tools(ctx, tools)
-                        lines.append(loading_msg)
-            except Exception as e:
-                get_logger().error(f"⚠️ Failed to select tools: {e}")
-                lines.append(f"⚠️ Failed to auto select tools: {e}")
         for t in all_tools:
             # Filter by category
             match = True
